@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button, Card, Badge, Input } from "@devel/ui-react";
 
 interface Document {
   doc_id: string;
@@ -32,11 +33,11 @@ interface StatsResponse {
   by_domain: Record<string, number>;
 }
 
-const VISIBILITY_COLORS: Record<string, string> = {
-  internal: "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300",
-  review: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
-  public: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
-  archived: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+const VISIBILITY_VARIANTS: Record<string, "default" | "warning" | "success" | "error"> = {
+  internal: "default",
+  review: "warning",
+  public: "success",
+  archived: "error",
 };
 
 const VISIBILITY_ICONS: Record<string, string> = {
@@ -178,104 +179,97 @@ function CmsPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-120px)] gap-4">
-      {/* Sidebar */}
-      <div className="w-56 flex-shrink-0 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+    <div style={{ display: "flex", height: "calc(100vh - 120px)", gap: "16px" }}>
+      <Card variant="default" padding="md" style={{ width: "224px", flexShrink: 0 }}>
+        <h2 style={{ marginBottom: "16px", fontSize: "14px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b" }}>
           Navigation
         </h2>
-        <nav className="space-y-1">
+        <nav style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
           {["all", "internal", "review", "public", "archived"].map((v) => (
-            <button
+            <Button
               key={v}
+              variant={filter === v ? "primary" : "ghost"}
+              size="sm"
+              fullWidth
               onClick={() => setFilter(v)}
-              className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
-                filter === v
-                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                  : "text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700"
-              }`}
             >
               {v === "all" ? "All Documents" : v.charAt(0).toUpperCase() + v.slice(1)}
               {stats?.by_visibility[v] !== undefined && (
-                <span className="ml-2 text-xs text-slate-400">
+                <span style={{ marginLeft: "8px", fontSize: "12px", opacity: 0.7 }}>
                   ({stats.by_visibility[v]})
                 </span>
               )}
-            </button>
+            </Button>
           ))}
         </nav>
 
-        <hr className="my-4 border-slate-200 dark:border-slate-700" />
+        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid #e2e8f0" }} />
 
-        <div className="space-y-2">
-          <button
-            onClick={handleCreateDocument}
-            className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <Button variant="primary" size="sm" fullWidth onClick={handleCreateDocument}>
             + New Document
-          </button>
-          <button
-            onClick={() => setShowDraftPanel(!showDraftPanel)}
-            className="w-full rounded-md bg-purple-600 px-3 py-2 text-sm font-medium text-white hover:bg-purple-700"
-          >
+          </Button>
+          <Button variant="primary" size="sm" fullWidth onClick={() => setShowDraftPanel(!showDraftPanel)}>
             ✨ Draft with AI
-          </button>
+          </Button>
         </div>
 
         {stats && (
-          <div className="mt-6 rounded-md bg-slate-50 p-3 dark:bg-slate-900">
-            <h3 className="text-xs font-semibold uppercase text-slate-500">Stats</h3>
-            <p className="mt-2 text-2xl font-bold">{stats.total}</p>
-            <p className="text-xs text-slate-500">total documents</p>
-          </div>
+          <Card variant="outlined" padding="sm" style={{ marginTop: "24px" }}>
+            <h3 style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase", color: "#64748b" }}>Stats</h3>
+            <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 700 }}>{stats.total}</p>
+            <p style={{ fontSize: "12px", color: "#64748b" }}>total documents</p>
+          </Card>
         )}
-      </div>
+      </Card>
 
-      {/* Main content */}
-      <div className="flex-1 overflow-hidden">
-        <div className="flex h-full gap-4">
-          {/* Document list */}
-          <div className={`flex-1 overflow-auto rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800 ${showDraftPanel ? "w-1/2" : ""}`}>
-            <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 p-4 backdrop-blur dark:border-slate-700 dark:bg-slate-800/95">
-              <h2 className="text-lg font-semibold">Content Library</h2>
-              <p className="text-sm text-slate-500">
+      <div style={{ flex: 1, overflow: "hidden" }}>
+        <div style={{ display: "flex", height: "100%", gap: "16px" }}>
+          <Card
+            variant="default"
+            padding="none"
+            style={{ flex: 1, overflow: "auto", width: showDraftPanel ? "50%" : undefined }}
+          >
+            <div style={{ position: "sticky", top: 0, zIndex: 10, borderBottom: "1px solid #e2e8f0", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)", padding: "16px" }}>
+              <h2 style={{ fontSize: "18px", fontWeight: 600 }}>Content Library</h2>
+              <p style={{ fontSize: "14px", color: "#64748b" }}>
                 {loading ? "Loading..." : `${documents.length} documents`}
               </p>
             </div>
 
-            <div className="divide-y divide-slate-100 dark:divide-slate-700">
+            <div style={{ display: "flex", flexDirection: "column" }}>
               {documents.map((doc) => (
                 <div
                   key={doc.doc_id}
                   onClick={() => setSelectedDoc(doc)}
-                  className={`cursor-pointer p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-700 ${
-                    selectedDoc?.doc_id === doc.doc_id ? "bg-blue-50 dark:bg-blue-900/20" : ""
-                  }`}
+                  style={{
+                    cursor: "pointer",
+                    padding: "16px",
+                    borderBottom: "1px solid #f1f5f9",
+                    background: selectedDoc?.doc_id === doc.doc_id ? "rgba(59, 130, 246, 0.1)" : "transparent",
+                    transition: "background 0.15s",
+                  }}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <h3 className="truncate font-medium">{doc.title}</h3>
-                      <p className="mt-1 line-clamp-2 text-sm text-slate-500">
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <h3 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{doc.title}</h3>
+                      <p style={{ marginTop: "4px", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", fontSize: "14px", color: "#64748b" }}>
                         {doc.content.slice(0, 150)}...
                       </p>
                     </div>
-                    <span
-                      className={`flex-shrink-0 rounded-full px-2 py-1 text-xs font-medium ${
-                        VISIBILITY_COLORS[doc.visibility]
-                      }`}
-                    >
+                    <Badge variant={VISIBILITY_VARIANTS[doc.visibility]} size="sm" rounded>
                       {VISIBILITY_ICONS[doc.visibility]} {doc.visibility}
-                    </span>
+                    </Badge>
                   </div>
                   
-                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                  <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "#94a3b8" }}>
                     <span>{doc.source}</span>
                     <span>•</span>
                     <span>{new Date(doc.created_at).toLocaleDateString()}</span>
                     {doc.ai_drafted && (
                       <>
                         <span>•</span>
-                        <span className="text-purple-500">AI-drafted</span>
+                        <span style={{ color: "#a855f7" }}>AI-drafted</span>
                       </>
                     )}
                   </div>
@@ -283,134 +277,115 @@ function CmsPage() {
               ))}
 
               {documents.length === 0 && !loading && (
-                <div className="p-8 text-center text-slate-500">
+                <div style={{ padding: "32px", textAlign: "center", color: "#64748b" }}>
                   <p>No documents found.</p>
-                  <p className="mt-1 text-sm">Create a new document or generate an AI draft.</p>
+                  <p style={{ marginTop: "4px", fontSize: "14px" }}>Create a new document or generate an AI draft.</p>
                 </div>
               )}
             </div>
-          </div>
+          </Card>
 
-          {/* Draft panel */}
           {showDraftPanel && (
-            <div className="w-80 flex-shrink-0 overflow-auto rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-              <h3 className="text-lg font-semibold">AI Draft Assistant</h3>
-              <p className="mt-1 text-sm text-slate-500">
+            <Card variant="default" padding="md" style={{ width: "320px", flexShrink: 0, overflow: "auto" }}>
+              <h3 style={{ fontSize: "18px", fontWeight: 600 }}>AI Draft Assistant</h3>
+              <p style={{ marginTop: "4px", fontSize: "14px", color: "#64748b" }}>
                 Generate content from your knowledge base
               </p>
 
-              <div className="mt-4 space-y-4">
+              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
                 <div>
-                  <label className="block text-sm font-medium">Topic</label>
+                  <label style={{ display: "block", fontSize: "14px", fontWeight: 500 }}>Topic</label>
                   <textarea
                     value={draftTopic}
                     onChange={(e) => setDraftTopic(e.target.value)}
                     placeholder="What should the document be about?"
-                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-700"
+                    style={{ marginTop: "4px", width: "100%", borderRadius: "6px", border: "1px solid #d1d5db", padding: "8px 12px", fontSize: "14px", resize: "vertical" }}
                     rows={3}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium">Sources</label>
-                  <select className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-700">
+                  <label style={{ display: "block", fontSize: "14px", fontWeight: 500 }}>Sources</label>
+                  <select style={{ marginTop: "4px", width: "100%", borderRadius: "6px", border: "1px solid #d1d5db", padding: "8px 12px", fontSize: "14px" }}>
                     <option>devel_docs (all internal docs)</option>
                     <option>devel_specs (design docs)</option>
                   </select>
                 </div>
 
-                <button
+                <Button
+                  variant="primary"
+                  fullWidth
+                  loading={drafting}
+                  disabled={!draftTopic.trim()}
                   onClick={handleGenerateDraft}
-                  disabled={drafting || !draftTopic.trim()}
-                  className="w-full rounded-md bg-purple-600 px-4 py-2 font-medium text-white hover:bg-purple-700 disabled:opacity-50"
                 >
                   {drafting ? "Generating..." : "Generate Draft"}
-                </button>
+                </Button>
               </div>
 
-              <hr className="my-4 border-slate-200 dark:border-slate-700" />
+              <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid #e2e8f0" }} />
 
-              <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-900">
-                <h4 className="text-sm font-medium">How it works</h4>
-                <ol className="mt-2 space-y-1 text-xs text-slate-500">
-                  <li>1. AI searches your knowledge base</li>
-                  <li>2. Generates a draft document</li>
-                  <li>3. You review and edit</li>
-                  <li>4. Publish to make public</li>
+              <Card variant="outlined" padding="sm">
+                <h4 style={{ fontSize: "14px", fontWeight: 500 }}>How it works</h4>
+                <ol style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#64748b", paddingLeft: "20px" }}>
+                  <li>AI searches your knowledge base</li>
+                  <li>Generates a draft document</li>
+                  <li>You review and edit</li>
+                  <li>Publish to make public</li>
                 </ol>
-              </div>
-            </div>
+              </Card>
+            </Card>
           )}
 
-          {/* Document detail panel */}
           {selectedDoc && !showDraftPanel && (
-            <div className="w-96 flex-shrink-0 overflow-auto rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
-              <div className="flex items-start justify-between">
-                <h3 className="text-lg font-semibold">{selectedDoc.title}</h3>
-                <button
-                  onClick={() => setSelectedDoc(null)}
-                  className="text-slate-400 hover:text-slate-600"
-                >
+            <Card variant="default" padding="md" style={{ width: "384px", flexShrink: 0, overflow: "auto" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                <h3 style={{ fontSize: "18px", fontWeight: 600 }}>{selectedDoc.title}</h3>
+                <Button variant="ghost" size="sm" onClick={() => setSelectedDoc(null)}>
                   ✕
-                </button>
+                </Button>
               </div>
 
-              <div className="mt-2 flex gap-2">
-                <span
-                  className={`rounded-full px-2 py-1 text-xs font-medium ${
-                    VISIBILITY_COLORS[selectedDoc.visibility]
-                  }`}
-                >
+              <div style={{ marginTop: "8px", display: "flex", gap: "8px" }}>
+                <Badge variant={VISIBILITY_VARIANTS[selectedDoc.visibility]} size="sm" rounded>
                   {VISIBILITY_ICONS[selectedDoc.visibility]} {selectedDoc.visibility}
-                </span>
-                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs dark:bg-slate-700">
+                </Badge>
+                <Badge variant="default" size="sm">
                   {selectedDoc.source}
-                </span>
+                </Badge>
               </div>
 
-              <div className="mt-4 max-h-64 overflow-auto rounded-md bg-slate-50 p-3 text-sm dark:bg-slate-900">
+              <div style={{ marginTop: "16px", maxHeight: "256px", overflow: "auto", borderRadius: "6px", background: "#f8fafc", padding: "12px", fontSize: "14px" }}>
                 {selectedDoc.content}
               </div>
 
-              <div className="mt-4 space-y-2">
+              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 {selectedDoc.visibility === "internal" && (
-                  <button
-                    onClick={() => handlePublish(selectedDoc.doc_id)}
-                    className="w-full rounded-md bg-green-600 px-4 py-2 font-medium text-white hover:bg-green-700"
-                  >
+                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)}>
                     🚀 Publish to Public
-                  </button>
+                  </Button>
                 )}
                 
                 {selectedDoc.visibility === "review" && (
-                  <button
-                    onClick={() => handlePublish(selectedDoc.doc_id)}
-                    className="w-full rounded-md bg-green-600 px-4 py-2 font-medium text-white hover:bg-green-700"
-                  >
+                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)}>
                     ✅ Approve & Publish
-                  </button>
+                  </Button>
                 )}
 
                 {selectedDoc.visibility === "public" && (
-                  <button
-                    onClick={() => handleArchive(selectedDoc.doc_id)}
-                    className="w-full rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700"
-                  >
+                  <Button variant="danger" fullWidth onClick={() => handleArchive(selectedDoc.doc_id)}>
                     📦 Archive
-                  </button>
+                  </Button>
                 )}
 
                 {selectedDoc.visibility === "archived" && (
-                  <button
-                    onClick={() => handlePublish(selectedDoc.doc_id)}
-                    className="w-full rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
-                  >
+                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)}>
                     🔄 Re-publish
-                  </button>
+                  </Button>
                 )}
               </div>
 
-              <div className="mt-4 space-y-1 text-xs text-slate-500">
+              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#64748b" }}>
                 <p>Created: {new Date(selectedDoc.created_at).toLocaleString()}</p>
                 <p>By: {selectedDoc.created_by}</p>
                 {selectedDoc.source_path && <p>Source: {selectedDoc.source_path}</p>}
@@ -418,7 +393,7 @@ function CmsPage() {
                   <p>Published: {new Date(selectedDoc.published_at).toLocaleString()}</p>
                 )}
               </div>
-            </div>
+            </Card>
           )}
         </div>
       </div>
