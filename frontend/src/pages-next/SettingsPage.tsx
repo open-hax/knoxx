@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { getModelLabStatus, getSettings, listModels, updateSettings } from '../lib/nextApi';
+import { getKnoxxStatus, getSettings, listModels, updateSettings } from '../lib/nextApi';
 
 type ModelOption = { id?: string; name?: string };
 
@@ -18,7 +18,7 @@ export default function SettingsPage() {
 
   const loadSettings = async () => {
     try {
-      const [data, st] = await Promise.all([getSettings(), getModelLabStatus()]);
+      const [data, st] = await Promise.all([getSettings(), getKnoxxStatus()]);
       setSettings(data);
       setStatus(st);
       try {
@@ -107,9 +107,9 @@ export default function SettingsPage() {
 
       {status ? (
         <div className="bg-slate-900 border border-slate-700 p-4 rounded shadow mb-6">
-          <h2 className="text-lg font-semibold border-b pb-2 mb-4">Model Lab Integration Diagnostics</h2>
+          <h2 className="text-lg font-semibold border-b pb-2 mb-4">Knoxx Integration Diagnostics</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <div><strong>Using Model Lab:</strong> {status.usingModelLab ? 'Yes' : 'No'}</div>
+            <div><strong>Using Knoxx:</strong> {status.usingKnoxx ? 'Yes' : 'No'}</div>
             <div><strong>Models Reachable:</strong> {status.modelsReachable ? 'Yes' : 'No'}</div>
             <div><strong>Embeddings Reachable:</strong> {status.embedReachable ? 'Yes' : 'No'}</div>
             <div><strong>Models Count:</strong> {status.modelsCount}</div>

@@ -99,8 +99,8 @@ export async function updateSettings(settings: any) {
   });
 }
 
-export async function getModelLabStatus() {
-  return proxyRequest<any>('settings/model-lab-status');
+export async function getKnoxxStatus() {
+  return proxyRequest<any>('settings/knoxx-status');
 }
 
 export async function knoxxRagChat(payload: {

@@ -82,7 +82,7 @@ function ModelSelector(props: ModelSelectorProps) {
         <button className="btn-ghost" onClick={onStop}>Stop Server</button>
         <button className="btn-ghost" onClick={onWarmup}>Warmup</button>
         <span className={`text-xs ${serverRunning ? "text-emerald-600" : "text-slate-500"}`}>
-          {serverRunning ? "llama-server running" : "llama-server stopped"}
+          {serverRunning ? "inference running" : "inference stopped"}
         </span>
         <div className="min-w-[260px] flex-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
           <div className="relative h-8 w-full overflow-hidden rounded-md bg-slate-200">

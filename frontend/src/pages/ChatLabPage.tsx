@@ -760,7 +760,6 @@ function ChatLabPage() {
               value={chatProvider}
               onChange={(e) => setChatProvider(e.target.value as ChatProvider)}
             >
-              <option value="local">Local llama.cpp</option>
               <option value="proxx">Proxx</option>
               <option value="knoxx-rag">Knoxx RAG</option>
               <option value="knoxx-direct">Knoxx Direct</option>
@@ -874,7 +873,7 @@ function ChatLabPage() {
             <button className="btn-ghost" onClick={handleNewChat}>New Chat</button>
           </div>
           <p className="mb-2 text-xs text-slate-500">
-            Mode: {chatProvider === "local" ? "Local llama.cpp" : chatProvider === "knoxx-rag" ? "Knoxx RAG" : "Knoxx Direct"}
+            Mode: {chatProvider === "proxx" ? "Proxx" : chatProvider === "knoxx-rag" ? "Knoxx RAG" : "Knoxx Direct"}
           </p>
           <div className="min-h-72 flex-1 space-y-3 overflow-auto rounded-md bg-slate-50 p-3">
             {messages.length === 0 ? (
@@ -895,10 +894,8 @@ function ChatLabPage() {
           </div>
           <ChatComposer
             onSend={handleSend}
-            isSending={isSending || (chatProvider === "local" ? !serverHealthy : chatProvider === "proxx" ? (!proxxReachable || !selectedProxxModel) : !knoxxReachable)}
+            isSending={isSending || (chatProvider === "proxx" ? (!proxxReachable || !selectedProxxModel) : !knoxxReachable)}
           />
-          {chatProvider === "local" && !serverRunning ? <p className="mt-2 text-xs text-amber-700">Server is stopped. Start it from the top bar.</p> : null}
-          {chatProvider === "local" && serverRunning && !serverHealthy ? <p className="mt-2 text-xs text-amber-700">Server is loading model... wait until healthy before sending.</p> : null}
           {chatProvider === "proxx" && !proxxConfigured ? <p className="mt-2 text-xs text-amber-700">Proxx is not configured in backend env (set PROXX_AUTH_TOKEN).</p> : null}
           {chatProvider === "proxx" && proxxConfigured && !proxxReachable ? <p className="mt-2 text-xs text-amber-700">Proxx is unreachable at configured base URL.</p> : null}
           {(chatProvider === "knoxx-rag" || chatProvider === "knoxx-direct") && !knoxxConfigured ? <p className="mt-2 text-xs text-amber-700">Knoxx is not configured in backend env (set KNOXX_API_KEY).</p> : null}

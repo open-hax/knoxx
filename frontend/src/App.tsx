@@ -38,7 +38,7 @@ function App() {
     <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-100 to-slate-200 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 text-slate-900 dark:text-slate-100 transition-colors duration-200">
       <header className="border-b border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-900/85 backdrop-blur">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between px-4 py-3">
-          <h1 className="text-lg font-semibold">LLM Model Lab</h1>
+          <h1 className="text-lg font-semibold">Knoxx</h1>
           <nav className="flex gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 p-1">
             <NavLink
               to="/"

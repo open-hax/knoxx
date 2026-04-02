@@ -277,7 +277,7 @@ export default function DashboardPage() {
           <AlertCircle className="mt-0.5 h-5 w-5 text-amber-300" />
           <div>
             <p className="font-semibold text-amber-200">API key not configured</p>
-            <p className="text-sm text-amber-100/80">Set `KNOXX_API_KEY` in Model Lab backend environment.</p>
+            <p className="text-sm text-amber-100/80">Set `KNOXX_API_KEY` in Knoxx backend environment.</p>
           </div>
         </div>
       ) : null}

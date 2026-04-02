@@ -143,4 +143,4 @@ export interface ShibbolethHandoffResponse {
   imported_item_count: number;
 }
 
-export type ChatProvider = "local" | "proxx" | "knoxx-rag" | "knoxx-direct";
+export type ChatProvider = "proxx" | "knoxx-rag" | "knoxx-direct";
