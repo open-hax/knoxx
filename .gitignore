@@ -1,0 +1,17 @@
+.env
+node_modules/
+dist/
+*.log
+.DS_Store
+__pycache__/
+*.pyc
+.pyo
+.pyd
+.Python
+*.so
+.venv/
+venv/
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: llm-model-lab-backend
+    ports:
+      - "8000:8000"
+    environment:
+      MODELS_DIR: /workspace/models
+      RUNS_DIR: /workspace/runs
+      RUNS_DB_PATH: /workspace/runs/runs.db
+      LLAMA_SERVER_PATH: /workspace/llama.cpp/build/bin/llama-server
+      LLAMA_PORT: 8081
+      DEFAULT_THREADS: 8
+      DEFAULT_CTX: 4096
+      DEFAULT_GPU_LAYERS: 99
+    volumes:
+      - ./models:/workspace/models
+      - ./runs:/workspace/runs
+      - ./llama.cpp:/workspace/llama.cpp
+
+  frontend:
+    build: ./frontend
+    container_name: llm-model-lab-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+  discord-bot:
+    build: ./discord-bot
+    container_name: knoxx-discord-bot
+    env_file:
+      - ./discord-bot/.env
+    depends_on:
+      - backend
+    profiles:
+      - with-discord
