@@ -7,6 +7,7 @@ import {
   createChatRun,
   getFrontendConfig,
   listLoungeMessages,
+  listProxxModels,
   postLoungeMessage,
   proxxChat,
   proxxHealth,
