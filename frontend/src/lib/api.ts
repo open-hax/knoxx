@@ -1,6 +1,5 @@
 import type {
   ChatRequest,
-  ChatStartResponse,
   FrontendConfig,
   LoungeMessage,
   ModelInfo,
@@ -10,7 +9,6 @@ import type {
   RunDetail,
   RunSummary,
   ShibbolethHandoffResponse,
-  ServerStartPayload
 } from "./types";
 
 export const API_BASE =
@@ -38,34 +36,8 @@ export async function listModels(): Promise<ModelInfo[]> {
   return data.models;
 }
 
-export async function serverStatus() {
-  return request<{ running: boolean; model_path?: string; pid?: number; command: string[] }>("/api/server/status");
-}
-
-export async function serverHealth() {
-  return request<{ running: boolean; healthy: boolean; status_code?: number }>("/api/server/health");
-}
-
-export async function startServer(payload: ServerStartPayload) {
-  return request("/api/server/start", {
-    method: "POST",
-    body: JSON.stringify(payload)
-  });
-}
-
-export async function stopServer() {
-  return request("/api/server/stop", { method: "POST" });
-}
-
-export async function warmupServer(prompt: string) {
-  return request<{ ok: boolean; latency_ms: number }>("/api/server/warmup", {
-    method: "POST",
-    body: JSON.stringify({ prompt, max_tokens: 16 })
-  });
-}
-
-export async function createChatRun(payload: ChatRequest): Promise<ChatStartResponse> {
-  return request<ChatStartResponse>("/api/chat", {
+export async function createChatRun(payload: ChatRequest) {
+  return request("/api/chat", {
     method: "POST",
     body: JSON.stringify(payload)
   });
