@@ -1,61 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button, Card, Badge, Input } from "@devel/ui-react";
 import ChatComposer from "../components/ChatComposer";
 import ConsolePanel from "../components/ConsolePanel";
 import LoungePanel from "../components/LoungePanel";
-import ModelSelector from "../components/ModelSelector";
-import SettingsPanel, { QUICK_PRESETS } from "../components/SettingsPanel";
-import StatsPanel from "../components/StatsPanel";
 import {
   createChatRun,
   getFrontendConfig,
   listLoungeMessages,
-  listModels,
-  listProxxModels,
   postLoungeMessage,
   proxxChat,
   proxxHealth,
   knoxxChat,
   knoxxHealth,
-  serverHealth,
-  serverStatus,
-  startServer,
-  stopServer,
-  warmupServer
 } from "../lib/api";
-import type { ChatMessage, ChatProvider, FrontendConfig, LoungeMessage, ModelInfo, ProxxModelInfo, SamplingSettings } from "../lib/types";
+import type { ChatMessage, ChatProvider, FrontendConfig, LoungeMessage, ProxxModelInfo, SamplingSettings } from "../lib/types";
 import { connectStream } from "../lib/ws";
 
-const DEFAULT_SETTINGS: SamplingSettings = { ...QUICK_PRESETS.Balanced };
-const PROMPT_HISTORY_KEY = "llm_lab_prompt_history";
-const PRESETS_KEY = "llm_lab_custom_presets";
-const CONSOLE_HEIGHT_KEY = "llm_lab_console_height_pct";
-const SESSION_ID_KEY = "llm_lab_session_id";
-const LOUNGE_COLLAPSED_KEY = "llm_lab_lounge_collapsed";
-const LOUNGE_ALIAS_KEY = "llm_lab_lounge_alias";
-const LAYOUT_MODE_KEY = "llm_lab_layout_mode";
-const CHAT_PROVIDER_KEY = "llm_lab_chat_provider";
+const PROMPT_HISTORY_KEY = "knoxx_prompt_history";
+const CONSOLE_HEIGHT_KEY = "knoxx_console_height_pct";
+const SESSION_ID_KEY = "knoxx_session_id";
+const LOUNGE_COLLAPSED_KEY = "knoxx_lounge_collapsed";
+const LOUNGE_ALIAS_KEY = "knoxx_lounge_alias";
+const LAYOUT_MODE_KEY = "knoxx_layout_mode";
+const CHAT_PROVIDER_KEY = "knoxx_chat_provider";
 
 type LayoutMode = "default" | "chat-right" | "console-right";
-
-interface CustomPreset {
-  name: string;
-  systemPrompt: string;
-  settings: SamplingSettings;
-  runtime: {
-    ctxSize: number;
-    gpuLayers: number;
-    threads: number;
-    batchSize: number;
-    ubatchSize: number;
-    flashAttention: boolean;
-    mmap: boolean;
-    mlock: boolean;
-    serverPort: number;
-    extraArgsText: string;
-    reasoningEnabled: boolean;
-    reasoningBudget: number;
-  };
-}
 
 function makeId(): string {
   const maybeCrypto = globalThis.crypto as Crypto | undefined;
@@ -63,13 +32,6 @@ function makeId(): string {
     return maybeCrypto.randomUUID();
   }
   return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function parseExtraArgs(text: string): string[] {
-  return text
-    .split(" ")
-    .map((v) => v.trim())
-    .filter(Boolean);
 }
 
 function resolveExternalUrl(rawUrl: string): string {
@@ -89,59 +51,42 @@ function resolveExternalUrl(rawUrl: string): string {
 }
 
 function ChatLabPage() {
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [selectedModelPath, setSelectedModelPath] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("You are a careful assistant.");
-  const [settings, setSettings] = useState<SamplingSettings>(DEFAULT_SETTINGS);
-  const [ctxSize, setCtxSize] = useState(8192);
-  const [gpuLayers, setGpuLayers] = useState(99);
-  const [threads, setThreads] = useState(8);
-  const [batchSize, setBatchSize] = useState(512);
-  const [ubatchSize, setUbatchSize] = useState(512);
-  const [flashAttention, setFlashAttention] = useState(true);
-  const [mmap, setMmap] = useState(true);
-  const [mlock, setMlock] = useState(false);
-  const [serverPort, setServerPort] = useState(8081);
-  const [extraArgsText, setExtraArgsText] = useState("");
-  const [reasoningEnabled, setReasoningEnabled] = useState(true);
-  const [reasoningBudget, setReasoningBudget] = useState(-1);
+  const [settings, setSettings] = useState<SamplingSettings>({
+    temperature: 0.7,
+    top_p: 0.9,
+    top_k: 40,
+    min_p: 0.0,
+    repeat_penalty: 1.1,
+    presence_penalty: 0.0,
+    frequency_penalty: 0.0,
+    seed: null,
+    max_tokens: 2048,
+    stop_sequences: [],
+  });
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
-  const [customPresets, setCustomPresets] = useState<CustomPreset[]>([]);
-  const [lastAppliedRuntimeSig, setLastAppliedRuntimeSig] = useState("");
-  const [lastRunInputTokens, setLastRunInputTokens] = useState(0);
   const [consoleHeightPct, setConsoleHeightPct] = useState(35);
   const [sessionId, setSessionId] = useState("");
   const [loungeMessages, setLoungeMessages] = useState<LoungeMessage[]>([]);
   const [loungeCollapsed, setLoungeCollapsed] = useState(false);
   const [loungeAlias, setLoungeAlias] = useState("");
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("default");
-  const [chatProvider, setChatProvider] = useState<ChatProvider>("local");
+  const [chatProvider, setChatProvider] = useState<ChatProvider>("proxx");
   const [knoxxConversationId, setKnoxxConversationId] = useState<string | null>(null);
   const [knoxxDirectConversationId, setKnoxxDirectConversationId] = useState<string | null>(null);
   const [frontendConfig, setFrontendConfig] = useState<FrontendConfig | null>(null);
   const [knoxxReachable, setKnoxxReachable] = useState(false);
   const [knoxxConfigured, setKnoxxConfigured] = useState(false);
-  // Proxx state
   const [proxxModels, setProxxModels] = useState<ProxxModelInfo[]>([]);
   const [selectedProxxModel, setSelectedProxxModel] = useState("");
   const [proxxReachable, setProxxReachable] = useState(false);
   const [proxxConfigured, setProxxConfigured] = useState(false);
-  // RAG state
   const [ragEnabled, setRagEnabled] = useState(true);
   const [ragCollection, setRagCollection] = useState("devel_docs");
   const [ragLimit, setRagLimit] = useState(5);
   const [ragThreshold, setRagThreshold] = useState(0.6);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [stats, setStats] = useState<Record<string, unknown>>({});
-  const [statsHistory, setStatsHistory] = useState<{
-    cpu: number[];
-    ram: number[];
-    gpu: number[];
-    rssGb: number[];
-  }>({ cpu: [], ram: [], gpu: [], rssGb: [] });
   const [consoleLines, setConsoleLines] = useState<string[]>([]);
-  const [serverRunning, setServerRunning] = useState(false);
-  const [serverHealthy, setServerHealthy] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [wsStatus, setWsStatus] = useState<"connected" | "closed" | "error" | "connecting">("connecting");
@@ -151,55 +96,6 @@ function ChatLabPage() {
   useEffect(() => {
     activeRunIdRef.current = activeRunId;
   }, [activeRunId]);
-
-  useEffect(() => {
-    void listModels().then((items) => {
-      setModels(items);
-      if (!selectedModelPath && items.length > 0) {
-        setSelectedModelPath(items[0].path);
-        if (items[0].suggested_ctx) {
-          setCtxSize(items[0].suggested_ctx);
-        }
-      }
-    });
-    void serverStatus()
-      .then((s) => setServerRunning(Boolean(s.running)))
-      .catch(() => setServerRunning(false));
-  }, [selectedModelPath]);
-
-  useEffect(() => {
-    void listProxxModels().then((items) => {
-      setProxxModels(items);
-      if (!selectedProxxModel && items.length > 0) {
-        setSelectedProxxModel(items[0].id);
-      }
-    }).catch(() => setProxxModels([]));
-  }, []);
-
-  useEffect(() => {
-    let timer: number | null = null;
-
-    const poll = async () => {
-      try {
-        const h = await serverHealth();
-        setServerRunning(Boolean(h.running));
-        setServerHealthy(Boolean(h.running && h.healthy));
-      } catch {
-        setServerHealthy(false);
-      }
-    };
-
-    void poll();
-    timer = window.setInterval(() => {
-      void poll();
-    }, 2000);
-
-    return () => {
-      if (timer !== null) {
-        window.clearInterval(timer);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     try {
@@ -212,7 +108,7 @@ function ChatLabPage() {
         setLayoutMode(rawLayout);
       }
       const rawProvider = localStorage.getItem(CHAT_PROVIDER_KEY);
-      if (rawProvider === "local" || rawProvider === "knoxx-rag" || rawProvider === "knoxx-direct") {
+      if (rawProvider === "proxx" || rawProvider === "knoxx-rag" || rawProvider === "knoxx-direct") {
         setChatProvider(rawProvider);
       }
     } catch {
@@ -259,6 +155,14 @@ function ChatLabPage() {
         const status = await proxxHealth();
         setProxxReachable(Boolean(status.reachable));
         setProxxConfigured(Boolean(status.configured));
+        if (status.model_count && proxxModels.length === 0) {
+          void listProxxModels().then((items) => {
+            setProxxModels(items);
+            if (!selectedProxxModel && items.length > 0) {
+              setSelectedProxxModel(items[0].id);
+            }
+          }).catch(() => setProxxModels([]));
+        }
       } catch {
         setProxxReachable(false);
       }
@@ -335,16 +239,6 @@ function ChatLabPage() {
     } catch {
       setPromptHistory([]);
     }
-
-    try {
-      const rawPresets = localStorage.getItem(PRESETS_KEY);
-      if (rawPresets) {
-        const parsed = JSON.parse(rawPresets) as CustomPreset[];
-        setCustomPresets(Array.isArray(parsed) ? parsed : []);
-      }
-    } catch {
-      setCustomPresets([]);
-    }
   }, []);
 
   useEffect(() => {
@@ -355,39 +249,11 @@ function ChatLabPage() {
           setIsSending(false);
         }
       },
-      onStats: (snapshot) => {
-        setStats(snapshot);
-        const cpu = Number(snapshot.cpu_percent ?? 0);
-        const ram = Number(snapshot.memory_percent ?? 0);
-        const gpuList = Array.isArray(snapshot.gpu) ? (snapshot.gpu as Array<Record<string, unknown>>) : [];
-        const gpu = gpuList.length > 0 ? Number(gpuList[0].util_gpu ?? 0) : 0;
-        const llama = (snapshot.llama as Record<string, unknown> | undefined) ?? {};
-        const rssGb = Number(llama.rss_bytes ?? 0) / (1024 ** 3);
-
-        setStatsHistory((prev) => ({
-          cpu: [...prev.cpu.slice(-59), cpu],
-          ram: [...prev.ram.slice(-59), ram],
-          gpu: [...prev.gpu.slice(-59), gpu],
-          rssGb: [...prev.rssGb.slice(-59), rssGb]
-        }));
-      },
-      onConsole: (line) => setConsoleLines((prev) => [...prev.slice(-400), line]),
-      onToken: (token, runId) => {
+      onToken: (_token, runId) => {
         const currentRun = activeRunIdRef.current;
         if (currentRun && runId && runId !== currentRun) {
           return;
         }
-        setMessages((prev) => {
-          if (prev.length === 0 || prev[prev.length - 1].role !== "assistant") {
-            return [...prev, { id: makeId(), role: "assistant", content: token }];
-          }
-          const copy = [...prev];
-          copy[copy.length - 1] = {
-            ...copy[copy.length - 1],
-            content: copy[copy.length - 1].content + token
-          };
-          return copy;
-        });
       },
       onEvent: (event) => {
         const name = String(event.event ?? "");
@@ -397,10 +263,6 @@ function ChatLabPage() {
         }
         if (name === "run_finished") {
           setIsSending(false);
-          const input = Number(event.input_tokens ?? NaN);
-          if (!Number.isNaN(input) && input >= 0) {
-            setLastRunInputTokens(input);
-          }
         }
         if (name === "run_completed" || name === "run_failed") {
           setIsSending(false);
@@ -444,112 +306,9 @@ function ChatLabPage() {
     };
   }, [isSending]);
 
-  const selected = useMemo(
-    () => models.find((m) => m.path === selectedModelPath),
-    [models, selectedModelPath]
-  );
-
-  const kvEstimateGb = useMemo(() => {
-    const modelGb = selected ? selected.size_bytes / (1024 ** 3) : 4;
-    return ((ctxSize / 8192) * (modelGb * 0.35)).toFixed(2);
-  }, [ctxSize, selected]);
-
-  const estimatedConversationTokens = useMemo(() => {
-    const text = [systemPrompt, ...messages.map((m) => `${m.role}: ${m.content}`)].join("\n");
-    return Math.max(1, Math.round(text.length / 4));
-  }, [messages, systemPrompt]);
-
-  const contextUsedTokens = Math.max(lastRunInputTokens, estimatedConversationTokens);
-  const contextFillPercent = (contextUsedTokens / Math.max(1, ctxSize)) * 100;
-
-  const runtimeSignature = useMemo(
-    () =>
-      JSON.stringify({
-        model: selectedModelPath,
-        ctxSize,
-        gpuLayers,
-        threads,
-        batchSize,
-        ubatchSize,
-        flashAttention,
-        mmap,
-        mlock,
-        serverPort,
-        extraArgsText,
-        reasoningEnabled,
-        reasoningBudget
-      }),
-    [
-      selectedModelPath,
-      ctxSize,
-      gpuLayers,
-      threads,
-      batchSize,
-      ubatchSize,
-      flashAttention,
-      mmap,
-      mlock,
-      serverPort,
-      extraArgsText,
-      reasoningEnabled,
-      reasoningBudget
-    ]
-  );
-
-  const runtimeDirty = lastAppliedRuntimeSig !== "" && runtimeSignature !== lastAppliedRuntimeSig;
-  const middleHeightPct = 100 - consoleHeightPct;
   const chatRight = layoutMode === "chat-right";
   const consoleRight = layoutMode === "console-right";
-
-  async function handleServerStart() {
-    if (!selectedModelPath) return;
-    try {
-      const extraArgs = parseExtraArgs(extraArgsText);
-
-      extraArgs.push("--reasoning-format", reasoningEnabled ? "deepseek" : "none");
-      extraArgs.push("--reasoning-budget", String(reasoningEnabled ? reasoningBudget : 0));
-
-      await startServer({
-        model_path: selectedModelPath,
-        port: serverPort,
-        ctx_size: ctxSize,
-        gpu_layers: gpuLayers,
-        threads,
-        batch_size: batchSize,
-        ubatch_size: ubatchSize,
-        flash_attention: flashAttention,
-        mmap,
-        mlock,
-        extra_args: extraArgs
-      });
-      setServerRunning(true);
-      setServerHealthy(false);
-      setLastAppliedRuntimeSig(runtimeSignature);
-      setConsoleLines((prev) => [...prev.slice(-400), "[server] started"]);
-    } catch (error) {
-      setConsoleLines((prev) => [...prev.slice(-400), `[server] start failed: ${(error as Error).message}`]);
-    }
-  }
-
-  async function handleServerStop() {
-    try {
-      await stopServer();
-      setServerRunning(false);
-      setServerHealthy(false);
-      setConsoleLines((prev) => [...prev.slice(-400), "[server] stopped"]);
-    } catch (error) {
-      setConsoleLines((prev) => [...prev.slice(-400), `[server] stop failed: ${(error as Error).message}`]);
-    }
-  }
-
-  async function handleWarmup() {
-    try {
-      const resp = await warmupServer("Reply with one short sentence.");
-      setConsoleLines((prev) => [...prev.slice(-400), `[warmup] ${resp.latency_ms.toFixed(1)} ms`]);
-    } catch (error) {
-      setConsoleLines((prev) => [...prev.slice(-400), `[warmup] failed: ${(error as Error).message}`]);
-    }
-  }
+  const middleHeightPct = 100 - consoleHeightPct;
 
   async function handleSend(text: string) {
     if (!sessionId) {
@@ -603,25 +362,13 @@ function ChatLabPage() {
       }
 
       const run = await createChatRun({
-        model: selected?.name,
         system_prompt: systemPrompt,
         messages: [...messages, userMessage].map((m) => ({ role: m.role, content: m.content })),
         temperature: settings.temperature,
         top_p: settings.top_p,
-        top_k: settings.top_k,
-        min_p: settings.min_p,
-        repeat_penalty: settings.repeat_penalty,
-        presence_penalty: settings.presence_penalty,
-        frequency_penalty: settings.frequency_penalty,
-        seed: settings.seed,
         max_tokens: settings.max_tokens,
         stop: settings.stop_sequences,
-        metadata: {
-          session_id: sessionId,
-          model_path: selectedModelPath,
-          ctx_size: ctxSize,
-          kv_estimate_gb: kvEstimateGb
-        }
+        metadata: { session_id: sessionId }
       });
       setActiveRunId(run.run_id);
       setConsoleLines((prev) => [...prev.slice(-400), `[run] queued: ${run.run_id}`]);
@@ -648,69 +395,8 @@ function ChatLabPage() {
   }
 
   function handleLoadPromptVersion(prompt: string) {
-    onSystemPromptChangeSafe(prompt);
-    setConsoleLines((prev) => [...prev.slice(-400), "[prompt] loaded from history"]);
-  }
-
-  function onSystemPromptChangeSafe(prompt: string) {
     setSystemPrompt(prompt);
-  }
-
-  function handleSavePreset(name: string) {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      return;
-    }
-    const preset: CustomPreset = {
-      name: trimmed,
-      systemPrompt,
-      settings,
-      runtime: {
-        ctxSize,
-        gpuLayers,
-        threads,
-        batchSize,
-        ubatchSize,
-        flashAttention,
-        mmap,
-        mlock,
-        serverPort,
-        extraArgsText,
-        reasoningEnabled,
-        reasoningBudget
-      }
-    };
-    const next = [preset, ...customPresets.filter((p) => p.name !== trimmed)].slice(0, 50);
-    setCustomPresets(next);
-    localStorage.setItem(PRESETS_KEY, JSON.stringify(next));
-    setConsoleLines((prev) => [...prev.slice(-400), `[preset] saved: ${trimmed}`]);
-  }
-
-  function handleLoadPreset(name: string) {
-    const preset = customPresets.find((p) => p.name === name);
-    if (!preset) return;
-    setSystemPrompt(preset.systemPrompt);
-    setSettings(preset.settings);
-    setCtxSize(preset.runtime.ctxSize);
-    setGpuLayers(preset.runtime.gpuLayers);
-    setThreads(preset.runtime.threads);
-    setBatchSize(preset.runtime.batchSize);
-    setUbatchSize(preset.runtime.ubatchSize);
-    setFlashAttention(preset.runtime.flashAttention);
-    setMmap(preset.runtime.mmap);
-    setMlock(preset.runtime.mlock);
-    setServerPort(preset.runtime.serverPort);
-    setExtraArgsText(preset.runtime.extraArgsText);
-    setReasoningEnabled(preset.runtime.reasoningEnabled);
-    setReasoningBudget(preset.runtime.reasoningBudget);
-    setConsoleLines((prev) => [...prev.slice(-400), `[preset] loaded: ${name}`]);
-  }
-
-  function handleDeletePreset(name: string) {
-    const next = customPresets.filter((p) => p.name !== name);
-    setCustomPresets(next);
-    localStorage.setItem(PRESETS_KEY, JSON.stringify(next));
-    setConsoleLines((prev) => [...prev.slice(-400), `[preset] deleted: ${name}`]);
+    setConsoleLines((prev) => [...prev.slice(-400), "[prompt] loaded from history"]);
   }
 
   async function handleSendLounge(text: string) {
@@ -727,215 +413,194 @@ function ChatLabPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-96px)] flex-col gap-4">
-      <div>
-        <ModelSelector
-          models={models}
-          value={selectedModelPath}
-          onChange={setSelectedModelPath}
-          serverRunning={serverRunning}
-          onStart={handleServerStart}
-          onStop={handleServerStop}
-          onWarmup={handleWarmup}
-          ctxSize={ctxSize}
-          onCtxSizeChange={setCtxSize}
-          gpuLayers={gpuLayers}
-          onGpuLayersChange={setGpuLayers}
-          threads={threads}
-          onThreadsChange={setThreads}
-          batchSize={batchSize}
-          onBatchSizeChange={setBatchSize}
-          contextUsedTokens={contextUsedTokens}
-          contextFillPercent={contextFillPercent}
-        />
-        <div className="mt-2 flex items-center gap-2 text-xs">
-          <span className={runtimeDirty ? "text-amber-700" : "text-emerald-700"}>
-            {runtimeDirty ? "Runtime settings changed (not applied)" : "Runtime settings in sync"}
-          </span>
-          {runtimeDirty ? <button className="btn-ghost" onClick={handleServerStart}>Restart With New Runtime</button> : null}
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-slate-500">Provider</span>
-            <select
-              className="input h-8 py-0 text-xs"
-              value={chatProvider}
-              onChange={(e) => setChatProvider(e.target.value as ChatProvider)}
-            >
-              <option value="proxx">Proxx</option>
-              <option value="knoxx-rag">Knoxx RAG</option>
-              <option value="knoxx-direct">Knoxx Direct</option>
-            </select>
-            {chatProvider === "proxx" ? (
-              <>
-                <span className="text-slate-500">Model</span>
-                <select
-                  className="input h-8 max-w-[22rem] py-0 text-xs"
-                  value={selectedProxxModel}
-                  onChange={(e) => setSelectedProxxModel(e.target.value)}
-                >
-                  {proxxModels.length === 0 ? <option value="">No Proxx models</option> : null}
-                  {proxxModels.map((model) => (
-                    <option key={model.id} value={model.id}>{model.id}</option>
-                  ))}
-                </select>
-                <label className="flex items-center gap-1 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={ragEnabled}
-                    onChange={(e) => setRagEnabled(e.target.checked)}
-                    className="h-3 w-3"
-                  />
-                  <span>RAG</span>
-                </label>
-                {ragEnabled ? (
-                  <>
-                    <select
-                      className="input h-8 w-28 py-0 text-xs"
-                      value={ragCollection}
-                      onChange={(e) => setRagCollection(e.target.value)}
-                    >
-                      <option value="devel_docs">devel_docs</option>
-                      <option value="test_docs">test_docs</option>
-                    </select>
-                    <input
-                      type="number"
-                      min={1}
-                      max={20}
-                      value={ragLimit}
-                      onChange={(e) => setRagLimit(parseInt(e.target.value) || 5)}
-                      className="input h-8 w-12 py-0 text-xs"
-                      title="Max RAG results"
-                    />
-                  </>
-                ) : null}
-                <span className={proxxReachable ? "text-emerald-700" : "text-amber-700"}>
-                  Proxx {proxxReachable ? "online" : proxxConfigured ? "offline" : "not configured"}
-                </span>
-              </>
-            ) : (
-              <span className={knoxxReachable ? "text-emerald-700" : "text-amber-700"}>
-                Knoxx {knoxxReachable ? "online" : knoxxConfigured ? "offline" : "not configured"}
-              </span>
-            )}
-            <span className="text-slate-500">Layout</span>
-            <select
-              className="input h-8 py-0 text-xs"
-              value={layoutMode}
-              onChange={(e) => setLayoutMode(e.target.value as LayoutMode)}
-            >
-              <option value="default">Default</option>
-              <option value="chat-right">Chat Right</option>
-              <option value="console-right">Console Right</option>
-            </select>
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 96px)", gap: 16 }}>
+      <Card variant="default" padding="sm">
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "#64748b" }}>Provider</span>
+          <select
+            value={chatProvider}
+            onChange={(e) => setChatProvider(e.target.value as ChatProvider)}
+            style={{ borderRadius: 6, border: "1px solid #d1d5db", padding: "4px 8px", fontSize: 12 }}
+          >
+            <option value="proxx">Proxx</option>
+            <option value="knoxx-rag">Knoxx RAG</option>
+            <option value="knoxx-direct">Knoxx Direct</option>
+          </select>
+          {chatProvider === "proxx" ? (
+            <>
+              <span style={{ fontSize: 12, color: "#64748b" }}>Model</span>
+              <select
+                value={selectedProxxModel}
+                onChange={(e) => setSelectedProxxModel(e.target.value)}
+                style={{ borderRadius: 6, border: "1px solid #d1d5db", padding: "4px 8px", fontSize: 12, maxWidth: 352 }}
+              >
+                {proxxModels.length === 0 ? <option value="">No Proxx models</option> : null}
+                {proxxModels.map((model) => (
+                  <option key={model.id} value={model.id}>{model.id}</option>
+                ))}
+              </select>
+              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={ragEnabled}
+                  onChange={(e) => setRagEnabled(e.target.checked)}
+                  style={{ height: 12, width: 12 }}
+                />
+                <span>RAG</span>
+              </label>
+              {ragEnabled ? (
+                <>
+                  <select
+                    value={ragCollection}
+                    onChange={(e) => setRagCollection(e.target.value)}
+                    style={{ borderRadius: 6, border: "1px solid #d1d5db", padding: "4px 8px", fontSize: 12, width: 112 }}
+                  >
+                    <option value="devel_docs">devel_docs</option>
+                    <option value="test_docs">test_docs</option>
+                  </select>
+                </>
+              ) : null}
+              <Badge variant={proxxReachable ? "success" : proxxConfigured ? "warning" : "error"} size="sm" dot>
+                Proxx {proxxReachable ? "online" : proxxConfigured ? "offline" : "not configured"}
+              </Badge>
+            </>
+          ) : (
+            <Badge variant={knoxxReachable ? "success" : knoxxConfigured ? "warning" : "error"} size="sm" dot>
+              Knoxx {knoxxReachable ? "online" : knoxxConfigured ? "offline" : "not configured"}
+            </Badge>
+          )}
+          <span style={{ fontSize: 12, color: "#64748b" }}>Layout</span>
+          <select
+            value={layoutMode}
+            onChange={(e) => setLayoutMode(e.target.value as LayoutMode)}
+            style={{ borderRadius: 6, border: "1px solid #d1d5db", padding: "4px 8px", fontSize: 12 }}
+          >
+            <option value="default">Default</option>
+            <option value="chat-right">Chat Right</option>
+            <option value="console-right">Console Right</option>
+          </select>
         </div>
-      </div>
+      </Card>
 
       <div
-        className="grid min-h-0 grid-cols-1 gap-4 lg:grid-cols-12"
-        style={{ flex: `0 0 ${middleHeightPct}%` }}
+        style={{ display: "grid", gridTemplateColumns: "1fr", minHeight: 0, gap: 16, flex: `0 0 ${middleHeightPct}%` }}
       >
-      <div className={`min-h-0 lg:col-span-3 ${chatRight && !consoleRight ? "lg:order-1" : ""}`}>
-        <SettingsPanel
-          systemPrompt={systemPrompt}
-          onSystemPromptChange={onSystemPromptChangeSafe}
-          settings={settings}
-          onChange={setSettings}
-          reasoningEnabled={reasoningEnabled}
-          reasoningBudget={reasoningBudget}
-          onReasoningEnabledChange={setReasoningEnabled}
-          onReasoningBudgetChange={setReasoningBudget}
-          flashAttention={flashAttention}
-          mmap={mmap}
-          mlock={mlock}
-          ubatchSize={ubatchSize}
-          serverPort={serverPort}
-          extraArgs={extraArgsText}
-          onFlashAttentionChange={setFlashAttention}
-          onMmapChange={setMmap}
-          onMlockChange={setMlock}
-          onUbatchSizeChange={setUbatchSize}
-          onServerPortChange={setServerPort}
-          onExtraArgsChange={setExtraArgsText}
-          promptHistory={promptHistory}
-          onSavePromptVersion={handleSavePromptVersion}
-          onLoadPromptVersion={handleLoadPromptVersion}
-          customPresets={customPresets.map((p) => p.name)}
-          onSavePreset={handleSavePreset}
-          onLoadPreset={handleLoadPreset}
-          onDeletePreset={handleDeletePreset}
-        />
-      </div>
+        <div style={{ minWidth: 0, gridColumn: chatRight && !consoleRight ? "1" : undefined, order: chatRight && !consoleRight ? 1 : undefined }}>
+          <Card variant="default" padding="md" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 500, marginBottom: 4 }}>System Prompt</label>
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                rows={3}
+                style={{ width: "100%", borderRadius: 6, border: "1px solid #d1d5db", padding: 8, fontSize: 14, resize: "vertical" }}
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <Button variant="secondary" size="sm" onClick={handleSavePromptVersion}>Save Prompt</Button>
+                {promptHistory.length > 0 && (
+                  <select
+                    onChange={(e) => { if (e.target.value) handleLoadPromptVersion(e.target.value); e.target.value = ""; }}
+                    style={{ borderRadius: 6, border: "1px solid #d1d5db", padding: "2px 8px", fontSize: 12 }}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Load from history...</option>
+                    {promptHistory.map((p, i) => (
+                      <option key={i} value={p}>{p.slice(0, 60)}{p.length > 60 ? "..." : ""}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, marginBottom: 4 }}>Temperature</label>
+                <Input type="number" value={String(settings.temperature)} onChange={(e) => setSettings({ ...settings, temperature: Number(e.target.value) || 0.7 })} size="sm" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, marginBottom: 4 }}>Max Tokens</label>
+                <Input type="number" value={String(settings.max_tokens)} onChange={(e) => setSettings({ ...settings, max_tokens: Number(e.target.value) || 2048 })} size="sm" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 500, marginBottom: 4 }}>Top P</label>
+                <Input type="number" value={String(settings.top_p)} onChange={(e) => setSettings({ ...settings, top_p: Number(e.target.value) || 0.9 })} size="sm" />
+              </div>
+            </div>
+          </Card>
+        </div>
 
-      <div className={`min-h-0 lg:col-span-6 ${chatRight && !consoleRight ? "lg:order-3" : ""}`}>
-        <section className="panel flex h-full flex-col">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="panel-title">Transcript</h2>
-            <button className="btn-ghost" onClick={handleNewChat}>New Chat</button>
-          </div>
-          <p className="mb-2 text-xs text-slate-500">
-            Mode: {chatProvider === "proxx" ? "Proxx" : chatProvider === "knoxx-rag" ? "Knoxx RAG" : "Knoxx Direct"}
-          </p>
-          <div className="min-h-72 flex-1 space-y-3 overflow-auto rounded-md bg-slate-50 p-3">
-            {messages.length === 0 ? (
-              <p className="text-sm text-slate-500">No conversation yet.</p>
-            ) : (
-              messages.map((message) => (
-                <article
-                  key={message.id}
-                  className={`rounded-md border px-3 py-2 text-sm ${
-                    message.role === "user" ? "border-teal-200 bg-teal-50" : "border-slate-200 bg-white"
-                  }`}
-                >
-                  <p className="mb-1 text-xs uppercase tracking-wide text-slate-500">{message.role}</p>
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                </article>
-              ))
-            )}
-          </div>
-          <ChatComposer
-            onSend={handleSend}
-            isSending={isSending || (chatProvider === "proxx" ? (!proxxReachable || !selectedProxxModel) : !knoxxReachable)}
-          />
-          {chatProvider === "proxx" && !proxxConfigured ? <p className="mt-2 text-xs text-amber-700">Proxx is not configured in backend env (set PROXX_AUTH_TOKEN).</p> : null}
-          {chatProvider === "proxx" && proxxConfigured && !proxxReachable ? <p className="mt-2 text-xs text-amber-700">Proxx is unreachable at configured base URL.</p> : null}
-          {(chatProvider === "knoxx-rag" || chatProvider === "knoxx-direct") && !knoxxConfigured ? <p className="mt-2 text-xs text-amber-700">Knoxx is not configured in backend env (set KNOXX_API_KEY).</p> : null}
-          {(chatProvider === "knoxx-rag" || chatProvider === "knoxx-direct") && knoxxConfigured && !knoxxReachable ? <p className="mt-2 text-xs text-amber-700">Knoxx is unreachable at configured base URL.</p> : null}
-          {frontendConfig?.knoxx_admin_url ? (
-            <a className="mt-2 inline-block text-xs text-teal-700 hover:underline" href={resolveExternalUrl(frontendConfig.knoxx_admin_url)} target="_blank" rel="noreferrer">
-              Open Knoxx Admin
-            </a>
-          ) : null}
-        </section>
-      </div>
+        <div style={{ minWidth: 0, order: chatRight && !consoleRight ? 3 : undefined }}>
+          <Card variant="default" padding="md" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 600 }}>Transcript</h2>
+              <Button variant="ghost" size="sm" onClick={handleNewChat}>New Chat</Button>
+            </div>
+            <p style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+              Mode: {chatProvider === "proxx" ? "Proxx" : chatProvider === "knoxx-rag" ? "Knoxx RAG" : "Knoxx Direct"}
+            </p>
+            <div style={{ minHeight: 288, flex: 1, overflow: "auto", borderRadius: 6, background: "#f8fafc", padding: 12 }}>
+              {messages.length === 0 ? (
+                <p style={{ fontSize: 14, color: "#64748b" }}>No conversation yet.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {messages.map((message) => (
+                    <Card
+                      key={message.id}
+                      variant="outlined"
+                      padding="sm"
+                      style={{
+                        borderColor: message.role === "user" ? "#99f6e4" : "#e2e8f0",
+                        background: message.role === "user" ? "#f0fdfa" : "#ffffff",
+                      }}
+                    >
+                      <p style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b", marginBottom: 4 }}>{message.role}</p>
+                      <p style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>{message.content}</p>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+            <ChatComposer
+              onSend={handleSend}
+              isSending={isSending || (chatProvider === "proxx" ? (!proxxReachable || !selectedProxxModel) : !knoxxReachable)}
+            />
+            {chatProvider === "proxx" && !proxxConfigured && <p style={{ marginTop: 8, fontSize: 12, color: "#b45309" }}>Proxx is not configured in backend env (set PROXX_AUTH_TOKEN).</p>}
+            {chatProvider === "proxx" && proxxConfigured && !proxxReachable && <p style={{ marginTop: 8, fontSize: 12, color: "#b45309" }}>Proxx is unreachable at configured base URL.</p>}
+            {(chatProvider === "knoxx-rag" || chatProvider === "knoxx-direct") && !knoxxConfigured && <p style={{ marginTop: 8, fontSize: 12, color: "#b45309" }}>Knoxx is not configured in backend env (set KNOXX_API_KEY).</p>}
+            {(chatProvider === "knoxx-rag" || chatProvider === "knoxx-direct") && knoxxConfigured && !knoxxReachable && <p style={{ marginTop: 8, fontSize: 12, color: "#b45309" }}>Knoxx is unreachable at configured base URL.</p>}
+            {frontendConfig?.knoxx_admin_url ? (
+              <a style={{ marginTop: 8, display: "inline-block", fontSize: 12, color: "#0d9488", textDecoration: "underline" }} href={resolveExternalUrl(frontendConfig.knoxx_admin_url)} target="_blank" rel="noreferrer">
+                Open Knoxx Admin
+              </a>
+            ) : null}
+          </Card>
+        </div>
 
-      <div className={`min-h-0 lg:col-span-3 ${chatRight && !consoleRight ? "lg:order-2" : ""}`}>
-        {consoleRight ? (
-          <ConsolePanel lines={consoleLines} />
-        ) : (
-          <StatsPanel
-            stats={stats}
-            status={wsStatus}
-            history={statsHistory}
-            contextTokens={ctxSize}
-            kvEstimateGb={kvEstimateGb}
-          />
-        )}
-      </div>
+        <div style={{ minWidth: 0, order: chatRight && !consoleRight ? 2 : undefined }}>
+          {consoleRight ? (
+            <ConsolePanel lines={consoleLines} />
+          ) : (
+            <Card variant="default" padding="md">
+              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>WebSocket</h3>
+              <Badge variant={wsStatus === "connected" ? "success" : wsStatus === "error" ? "error" : "warning"} size="sm" dot>
+                {wsStatus}
+              </Badge>
+            </Card>
+          )}
+        </div>
       </div>
 
       {consoleRight ? (
-        <div className="min-h-0" style={{ flex: "0 0 20%" }}>
-          <StatsPanel
-            stats={stats}
-            status={wsStatus}
-            history={statsHistory}
-            contextTokens={ctxSize}
-            kvEstimateGb={kvEstimateGb}
-          />
+        <div style={{ minWidth: 0, flex: "0 0 20%" }}>
+          <Card variant="default" padding="md">
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>WebSocket</h3>
+            <Badge variant={wsStatus === "connected" ? "success" : wsStatus === "error" ? "error" : "warning"} size="sm" dot>
+              {wsStatus}
+            </Badge>
+          </Card>
         </div>
       ) : null}
 
-      <div className="min-h-0" style={{ flex: loungeCollapsed ? "0 0 auto" : "0 0 24%" }}>
+      <div style={{ minWidth: 0, flex: loungeCollapsed ? "0 0 auto" : "0 0 24%" }}>
         <LoungePanel
           collapsed={loungeCollapsed}
           onToggle={() => setLoungeCollapsed((v) => !v)}
@@ -948,18 +613,18 @@ function ChatLabPage() {
 
       {!consoleRight ? (
         <>
-          <div className="-mt-1 flex items-center gap-2 px-1">
-            <span className="text-[11px] text-slate-500">Console size</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 4px", marginTop: -4 }}>
+            <span style={{ fontSize: 11, color: "#64748b" }}>Console size</span>
             <input
-              className="w-56"
               type="range"
               min={20}
               max={70}
               step={1}
               value={consoleHeightPct}
               onChange={(e) => setConsoleHeightPct(Number(e.target.value))}
+              style={{ width: 224 }}
             />
-            <span className="text-[11px] text-slate-600">{consoleHeightPct}%</span>
+            <span style={{ fontSize: 11, color: "#475569" }}>{consoleHeightPct}%</span>
           </div>
 
           <div style={{ flex: `0 0 ${consoleHeightPct}%` }}>
