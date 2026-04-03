@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { getFrontendConfig } from "./lib/api";
-import ChatLabPage from "./pages/ChatLabPage";
+import ChatPage from "./pages/ChatPage";
 import CmsPage from "./pages/CmsPage";
 import GardensPage from "./pages/GardensPage";
 import IngestionPage from "./pages/IngestionPage";
@@ -48,17 +48,7 @@ function App() {
                 }`
               }
             >
-              Chat Lab
-            </NavLink>
-            <NavLink
-              to="/runs"
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow" : "text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                }`
-              }
-            >
-              Runs
+              Chat
             </NavLink>
             <NavLink
               to="/cms"
@@ -101,14 +91,14 @@ function App() {
               Gardens
             </NavLink>
             <NavLink
-              to="/next/dashboard"
+              to="/runs"
               className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 ${
-                  isActive ? "bg-white dark:bg-slate-700 shadow" : ""
+                `rounded-md px-3 py-1.5 text-sm ${
+                  isActive ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow" : "text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-slate-700/50"
                 }`
               }
             >
-              Next UI ✨
+              Runs
             </NavLink>
             {knoxxAdminUrl ? (
               <a
@@ -126,12 +116,12 @@ function App() {
 
       <main className="mx-auto max-w-[1500px] p-4">
         <Routes>
-          <Route path="/" element={<ChatLabPage />} />
-          <Route path="/runs" element={<RunsPage />} />
+          <Route path="/" element={<ChatPage />} />
           <Route path="/cms" element={<CmsPage />} />
           <Route path="/ingestion" element={<IngestionPage />} />
           <Route path="/query" element={<QueryPage />} />
           <Route path="/gardens" element={<GardensPage />} />
+          <Route path="/runs" element={<RunsPage />} />
           <Route path="/next/*" element={<NextRoot />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
