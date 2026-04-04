@@ -2542,17 +2542,14 @@
               (let [membership-id (or (aget request "params" "membershipId") "")]
                 (with-request-context! runtime request reply
                   (fn [ctx]
-                    (policy-db-promise
-                     runtime
-                     reply
-                     200
-                     (-> (.getMembership db membership-id)
-                         (.then (fn [result]
-                                  (let [membership (js->clj (aget result "membership") :keywordize-keys true)]
-                                    (when-not membership
-                                      (throw (http-error 404 "membership_not_found" "membership not found")))
-                                    (ensure-org-scope! ctx (:orgId membership) "org.members.update")
-                                    (.setMembershipRoles db membership-id (or (aget request "body") #js {})))))))))
+                    (let [promise (-> (.getMembership db membership-id)
+                                      (.then (fn [result]
+                                               (let [membership (js->clj (aget result "membership") :keywordize-keys true)]
+                                                 (when-not membership
+                                                   (throw (http-error 404 "membership_not_found" "membership not found")))
+                                                 (ensure-org-scope! ctx (:orgId membership) "org.members.update")
+                                                 (.setMembershipRoles db membership-id (or (aget request "body") #js {}))))))]
+                      (policy-db-promise runtime reply 200 promise)))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"}))))
 
   (route! app "PATCH" "/api/admin/memberships/:membershipId/tool-policies"
@@ -2561,17 +2558,14 @@
               (let [membership-id (or (aget request "params" "membershipId") "")]
                 (with-request-context! runtime request reply
                   (fn [ctx]
-                    (policy-db-promise
-                     runtime
-                     reply
-                     200
-                     (-> (.getMembership db membership-id)
-                         (.then (fn [result]
-                                  (let [membership (js->clj (aget result "membership") :keywordize-keys true)]
-                                    (when-not membership
-                                      (throw (http-error 404 "membership_not_found" "membership not found")))
-                                    (ensure-org-scope! ctx (:orgId membership) "org.user_policy.update")
-                                    (.setMembershipToolPolicies db membership-id (or (aget request "body") #js {})))))))))
+                    (let [promise (-> (.getMembership db membership-id)
+                                      (.then (fn [result]
+                                               (let [membership (js->clj (aget result "membership") :keywordize-keys true)]
+                                                 (when-not membership
+                                                   (throw (http-error 404 "membership_not_found" "membership not found")))
+                                                 (ensure-org-scope! ctx (:orgId membership) "org.user_policy.update")
+                                                 (.setMembershipToolPolicies db membership-id (or (aget request "body") #js {}))))))]
+                      (policy-db-promise runtime reply 200 promise)))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"}))))
 
   (route! app "GET" "/api/admin/orgs/:orgId/roles"
@@ -2602,17 +2596,14 @@
               (let [role-id (or (aget request "params" "roleId") "")]
                 (with-request-context! runtime request reply
                   (fn [ctx]
-                    (policy-db-promise
-                     runtime
-                     reply
-                     200
-                     (-> (.getRole db role-id)
-                         (.then (fn [result]
-                                  (let [role (js->clj (aget result "role") :keywordize-keys true)]
-                                    (when-not role
-                                      (throw (http-error 404 "role_not_found" "role not found")))
-                                    (ensure-org-scope! ctx (:orgId role) "org.tool_policy.update")
-                                    (.setRoleToolPolicies db role-id (or (aget request "body") #js {})))))))))
+                    (let [promise (-> (.getRole db role-id)
+                                      (.then (fn [result]
+                                               (let [role (js->clj (aget result "role") :keywordize-keys true)]
+                                                 (when-not role
+                                                   (throw (http-error 404 "role_not_found" "role not found")))
+                                                 (ensure-org-scope! ctx (:orgId role) "org.tool_policy.update")
+                                                 (.setRoleToolPolicies db role-id (or (aget request "body") #js {}))))))]
+                      (policy-db-promise runtime reply 200 promise)))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"}))))
 
   (route! app "GET" "/api/admin/orgs/:orgId/data-lakes"
@@ -2783,7 +2774,7 @@
                   (cond
                     (nil? run) (json-response! reply 404 {:detail "Run not found"})
                     (not (run-visible? ctx run)) (error-response! reply (http-error 403 "run_scope_denied" "Run is outside the current Knoxx scope"))
-                    :else (json-response! reply 200 run)))))))
+                    :else (json-response! reply 200 run))))))))
 
   (route! app "GET" "/api/memory/sessions"
           (fn [request reply]
@@ -2884,7 +2875,7 @@
                 (fn [ctx]
                   (when ctx
                     (ensure-permission! ctx "agent.chat.use"))
-                  (json-response! reply 200 (tool-catalog config role ctx)))))))
+                  (json-response! reply 200 (tool-catalog config role ctx))))))))
 
   (route! app "POST" "/api/tools/email/send"
           (fn [_request reply]
@@ -2971,7 +2962,7 @@
                         (.catch (fn [err]
                                   (json-response! reply 409 {:detail (str err)})))))
                   (catch :default err
-                    (error-response! reply err))))))
+                    (error-response! reply err)))))))
 
   (route! app "POST" "/api/tools/edit"
           (fn [request reply]
@@ -3004,7 +2995,7 @@
                         (.catch (fn [err]
                                   (json-response! reply 409 {:detail (str err)})))))
                   (catch :default err
-                    (error-response! reply err))))))
+                    (error-response! reply err)))))))
 
   (route! app "POST" "/api/tools/bash"
           (fn [request reply]
@@ -3044,7 +3035,7 @@
                                                                  :stdout stdout
                                                                  :stderr stderr})))))))
                   (catch :default err
-                    (error-response! reply err)))))))
+                    (error-response! reply err))))))))
 
   (route! app "GET" "/v1/models"
           (fn [request reply]
@@ -3424,7 +3415,7 @@
                                            :privateToSession true
                                            :ownerSessionId session-id)]
                         (swap! database-state* assoc-in [:profiles db-id] updated)
-                        (json-response! reply 200 updated))))))))
+                        (json-response! reply 200 updated)))))))))
 
   (route! app "GET" "/api/knoxx/proxy/*"
           (fn [request reply]
@@ -3616,6 +3607,7 @@
                                  (json-response! reply 502 {:detail (str "Shibboleth import failed: " (or (aget (aget resp "body") "raw") (js/JSON.stringify (aget resp "body"))))}))))
                       (.catch (fn [err]
                                 (json-response! reply 502 {:detail (str "Shibboleth is unreachable: " err)})))))))))))
+  )
 
 (defn config-js
   []
