@@ -2774,7 +2774,7 @@
                   (cond
                     (nil? run) (json-response! reply 404 {:detail "Run not found"})
                     (not (run-visible? ctx run)) (error-response! reply (http-error 403 "run_scope_denied" "Run is outside the current Knoxx scope"))
-                    :else (json-response! reply 200 run))))))))
+                    :else (json-response! reply 200 run)))))))
 
   (route! app "GET" "/api/memory/sessions"
           (fn [request reply]
@@ -3595,8 +3595,8 @@
                                        ui-url (if (and (not (str/blank? session-id))
                                                        (not (str/blank? (:shibboleth-ui-url config))))
                                                 (with-query-param (rewrite-localhost-url (:shibboleth-ui-url config) request)
-                                                  "session"
-                                                  session-id)
+                                                                  "session"
+                                                                  session-id)
                                                 "")]
                                    (if (str/blank? session-id)
                                      (json-response! reply 502 {:detail "Shibboleth import did not return a session id"})
@@ -3604,9 +3604,11 @@
                                                                 :session_id session-id
                                                                 :ui_url ui-url
                                                                 :imported_item_count (count (js-array-seq (aget body "items")))})))
-                                 (json-response! reply 502 {:detail (str "Shibboleth import failed: " (or (aget (aget resp "body") "raw") (js/JSON.stringify (aget resp "body"))))}))))
+                                 (json-response! reply 502 {:detail (str "Shibboleth import failed: "
+                                                                        (or (aget (aget resp "body") "raw")
+                                                                            (js/JSON.stringify (aget resp "body"))))}))))
                       (.catch (fn [err]
-                                (json-response! reply 502 {:detail (str "Shibboleth is unreachable: " err)})))))))))))
+                                (json-response! reply 502 {:detail (str "Shibboleth is unreachable: " err)})))))))))
   )
 
 (defn config-js
