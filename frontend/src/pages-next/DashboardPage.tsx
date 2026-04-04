@@ -176,9 +176,9 @@ export default function DashboardPage() {
     () => ({
       labels: systemSeries.map((s) => s.t),
       datasets: [
-        { label: 'CPU %', data: systemSeries.map((s) => s.cpu), borderColor: '#22d3ee', backgroundColor: 'rgba(34,211,238,.12)', fill: true, tension: 0.3, pointRadius: 0 },
-        { label: 'RAM %', data: systemSeries.map((s) => s.ram), borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.12)', fill: true, tension: 0.3, pointRadius: 0 },
-        { label: 'GPU %', data: systemSeries.map((s) => s.gpu), borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,.12)', fill: true, tension: 0.3, pointRadius: 0 },
+        { label: 'CPU %', data: systemSeries.map((s) => s.cpu), borderColor: 'var(--token-colors-accent-blue)', backgroundColor: 'var(--token-colors-alpha-blue-_12)', fill: true, tension: 0.3, pointRadius: 0 },
+        { label: 'RAM %', data: systemSeries.map((s) => s.ram), borderColor: 'var(--token-colors-accent-orange)', backgroundColor: 'var(--token-colors-alpha-orange-_12)', fill: true, tension: 0.3, pointRadius: 0 },
+        { label: 'GPU %', data: systemSeries.map((s) => s.gpu), borderColor: 'var(--token-colors-accent-magenta)', backgroundColor: 'var(--token-colors-alpha-magenta-_14)', fill: true, tension: 0.3, pointRadius: 0 },
       ],
     }),
     [systemSeries]
@@ -188,7 +188,7 @@ export default function DashboardPage() {
     () => ({
       labels: systemSeries.map((s) => s.t),
       datasets: [
-        { label: 'Network MB/s', data: systemSeries.map((s) => s.net), borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,.14)', fill: true, tension: 0.3, pointRadius: 0 },
+        { label: 'Network MB/s', data: systemSeries.map((s) => s.net), borderColor: 'var(--token-colors-accent-green)', backgroundColor: 'var(--token-colors-alpha-green-_14)', fill: true, tension: 0.3, pointRadius: 0 },
       ],
     }),
     [systemSeries]
@@ -199,10 +199,10 @@ export default function DashboardPage() {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      plugins: { legend: { labels: { color: '#cbd5e1', boxWidth: 10, boxHeight: 10 } } },
+      plugins: { legend: { labels: { color: 'var(--token-colors-text-muted)', boxWidth: 10, boxHeight: 10 } } },
       scales: {
-        x: { ticks: { color: '#64748b', maxTicksLimit: 6 }, grid: { color: 'rgba(100,116,139,0.15)' } },
-        y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(100,116,139,0.15)' } },
+        x: { ticks: { color: 'var(--token-colors-text-muted)', maxTicksLimit: 6 }, grid: { color: 'var(--token-colors-alpha-bg-_25)' } },
+        y: { ticks: { color: 'var(--token-colors-text-muted)' }, grid: { color: 'var(--token-colors-alpha-bg-_25)' } },
       },
     }),
     []

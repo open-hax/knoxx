@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Card } from '@devel/ui-react';
+import { Button, Card } from '@open-hax/uxx';
 
 type Garden = {
   garden_id: string;

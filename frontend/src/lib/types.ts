@@ -1,9 +1,42 @@
 export type Role = "system" | "user" | "assistant";
 
+export interface AgentSource {
+  title: string;
+  url: string;
+  section?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
   content: string;
+  model?: string | null;
+  contextRows?: GroundedContextRow[];
+  sources?: AgentSource[];
+  runId?: string | null;
+  status?: "streaming" | "done" | "error";
+}
+
+export interface GroundedContextRow {
+  id: string;
+  ts?: string;
+  source?: string;
+  source_path?: string;
+  kind?: string;
+  project?: string;
+  session?: string;
+  message?: string;
+  snippet?: string;
+  text?: string;
+  tier?: string;
+}
+
+export interface GroundedAnswerResponse {
+  projects: string[];
+  count: number;
+  rows: GroundedContextRow[];
+  answer: string;
+  model?: string | null;
 }
 
 export interface SamplingSettings {
@@ -64,10 +97,77 @@ export interface RunSummary {
   error?: string;
 }
 
+export interface RunEvent {
+  at?: string;
+  type?: string;
+  status?: string;
+  tool_name?: string;
+  tool_call_id?: string;
+  preview?: string;
+  error?: string;
+  ttft_ms?: number;
+  hits?: number;
+  elapsed_ms?: number;
+  tool_result_count?: number;
+  [key: string]: unknown;
+}
+
+export interface ToolReceipt {
+  id: string;
+  tool_name?: string;
+  status?: string;
+  started_at?: string;
+  ended_at?: string;
+  input_preview?: string;
+  result_preview?: string;
+  updates?: string[];
+  is_error?: boolean;
+  [key: string]: unknown;
+}
+
 export interface RunDetail extends RunSummary {
+  session_id?: string | null;
+  conversation_id?: string | null;
+  answer?: string | null;
   request_messages: Array<{ role: string; content: string }>;
   settings: Record<string, unknown>;
   resources: Record<string, unknown>;
+  events?: RunEvent[];
+  tool_receipts?: ToolReceipt[];
+  sources?: AgentSource[];
+}
+
+export interface MemorySessionSummary {
+  project?: string;
+  session: string;
+  last_ts?: string;
+  event_count?: number;
+}
+
+export interface MemorySessionRow {
+  id: string;
+  ts?: string;
+  source?: string;
+  kind?: string;
+  project?: string;
+  session?: string;
+  message?: string;
+  role?: Role | string;
+  author?: string;
+  model?: string | null;
+  text?: string;
+  attachments?: string;
+  extra?: string | Record<string, unknown> | null;
+}
+
+export interface MemorySearchHit {
+  session?: string;
+  role?: string;
+  text?: string;
+  snippet?: string;
+  document?: string;
+  distance?: number | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ChatRequest {
@@ -115,6 +215,59 @@ export interface FrontendConfig {
   proxx_default_model: string;
   shibboleth_ui_url: string;
   shibboleth_enabled: boolean;
+  default_role: string;
+  email_enabled: boolean;
+}
+
+export interface ToolDefinition {
+  id: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+}
+
+export interface ToolCatalogResponse {
+  role: string;
+  tools: ToolDefinition[];
+  email_enabled: boolean;
+}
+
+export interface EmailSendResponse {
+  ok: boolean;
+  role: string;
+  sent_to: string[];
+  subject: string;
+}
+
+export interface ToolReadResponse {
+  ok: boolean;
+  role: string;
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface ToolWriteResponse {
+  ok: boolean;
+  role: string;
+  path: string;
+  bytes_written: number;
+}
+
+export interface ToolEditResponse {
+  ok: boolean;
+  role: string;
+  path: string;
+  replacements: number;
+}
+
+export interface ToolBashResponse {
+  ok: boolean;
+  role: string;
+  command: string;
+  exit_code: number;
+  stdout: string;
+  stderr: string;
 }
 
 export interface ProxxHealth {

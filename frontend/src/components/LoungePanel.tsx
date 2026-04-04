@@ -29,11 +29,11 @@ function LoungePanel({ collapsed, onToggle, messages, alias, onAliasChange, onSe
       </div>
 
       {collapsed ? (
-        <p className="text-xs text-slate-500">Lounge hidden. Expand to chat with other users.</p>
+        <p style={{ fontSize: 12, color: 'var(--token-colors-text-muted)' }}>Lounge hidden. Expand to chat with other users.</p>
       ) : (
         <>
           <div className="mb-2 flex items-center gap-2">
-            <label className="text-xs text-slate-600">Alias</label>
+            <label style={{ fontSize: 12, color: 'var(--token-colors-text-soft)' }}>Alias</label>
             <input
               className="input max-w-48"
               value={alias}
@@ -42,15 +42,25 @@ function LoungePanel({ collapsed, onToggle, messages, alias, onAliasChange, onSe
             />
           </div>
 
-          <div className="max-h-40 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2 text-sm">
+          <div
+            style={{
+              maxHeight: 160,
+              overflow: 'auto',
+              borderRadius: 8,
+              border: '1px solid var(--token-colors-border-default)',
+              background: 'var(--token-colors-alpha-bg-_12)',
+              padding: 8,
+              fontSize: 14,
+            }}
+          >
             {messages.length === 0 ? (
-              <p className="text-slate-500">No lounge messages yet.</p>
+              <p style={{ color: 'var(--token-colors-text-muted)' }}>No lounge messages yet.</p>
             ) : (
               messages.map((m) => (
                 <div key={m.id} className="mb-1">
-                  <span className="font-semibold text-slate-700">{m.alias}</span>
-                  <span className="ml-2 text-xs text-slate-500">{new Date(m.timestamp).toLocaleTimeString()}</span>
-                  <p className="whitespace-pre-wrap text-slate-800">{m.text}</p>
+                  <span style={{ fontWeight: 600, color: 'var(--token-colors-text-default)' }}>{m.alias}</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--token-colors-text-muted)' }}>{new Date(m.timestamp).toLocaleTimeString()}</span>
+                  <p style={{ whiteSpace: 'pre-wrap', color: 'var(--token-colors-text-panel)' }}>{m.text}</p>
                 </div>
               ))
             )}

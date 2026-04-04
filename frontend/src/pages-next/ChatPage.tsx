@@ -405,8 +405,8 @@ export default function ChatPage() {
         {
           label: 'CPU %',
           data: systemSeries.map((s) => s.cpu),
-          borderColor: '#22d3ee',
-          backgroundColor: 'rgba(34, 211, 238, 0.14)',
+          borderColor: 'var(--token-colors-accent-blue)',
+          backgroundColor: 'var(--token-colors-alpha-blue-_15)',
           fill: true,
           tension: 0.32,
           pointRadius: 0,
@@ -414,8 +414,8 @@ export default function ChatPage() {
         {
           label: 'RAM %',
           data: systemSeries.map((s) => s.ram),
-          borderColor: '#f59e0b',
-          backgroundColor: 'rgba(245, 158, 11, 0.12)',
+          borderColor: 'var(--token-colors-accent-orange)',
+          backgroundColor: 'var(--token-colors-alpha-orange-_12)',
           fill: true,
           tension: 0.32,
           pointRadius: 0,
@@ -423,8 +423,8 @@ export default function ChatPage() {
         {
           label: 'GPU %',
           data: systemSeries.map((s) => s.gpu),
-          borderColor: '#a78bfa',
-          backgroundColor: 'rgba(167, 139, 250, 0.12)',
+          borderColor: 'var(--token-colors-accent-magenta)',
+          backgroundColor: 'var(--token-colors-alpha-magenta-_14)',
           fill: true,
           tension: 0.32,
           pointRadius: 0,
@@ -440,8 +440,8 @@ export default function ChatPage() {
         {
           label: 'Network MB/s',
           data: systemSeries.map((s) => s.net),
-          borderColor: '#10b981',
-          backgroundColor: 'rgba(16, 185, 129, 0.12)',
+          borderColor: 'var(--token-colors-accent-green)',
+          backgroundColor: 'var(--token-colors-alpha-green-_12)',
           fill: true,
           tension: 0.32,
           pointRadius: 0,
@@ -457,17 +457,17 @@ export default function ChatPage() {
       animation: false,
       plugins: {
         legend: {
-          labels: { color: '#cbd5e1', boxWidth: 10, boxHeight: 10 },
+          labels: { color: 'var(--token-colors-text-muted)', boxWidth: 10, boxHeight: 10 },
         },
       },
       scales: {
         x: {
-          ticks: { color: '#64748b', maxTicksLimit: 6 },
-          grid: { color: 'rgba(100,116,139,0.15)' },
+          ticks: { color: 'var(--token-colors-text-muted)', maxTicksLimit: 6 },
+          grid: { color: 'var(--token-colors-alpha-bg-_25)' },
         },
         y: {
-          ticks: { color: '#94a3b8' },
-          grid: { color: 'rgba(100,116,139,0.15)' },
+          ticks: { color: 'var(--token-colors-text-muted)' },
+          grid: { color: 'var(--token-colors-alpha-bg-_25)' },
         },
       },
     }),

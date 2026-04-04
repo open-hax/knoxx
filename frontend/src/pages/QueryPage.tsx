@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { Button, Card, Input } from '@devel/ui-react';
+import { Button, Card, Input } from '@open-hax/uxx';
 
 type PresetsResponse = {
   presets: Record<string, string[]>;
@@ -28,7 +28,7 @@ type AnswerResponse = SearchResponse & {
   answer: string;
 };
 
-const DEFAULT_ROLE = "knowledge";
+const DEFAULT_ROLE = "workspace";
 
 function parseProjects(raw: string): string[] {
   return raw

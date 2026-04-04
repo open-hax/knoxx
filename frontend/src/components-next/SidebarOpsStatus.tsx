@@ -76,9 +76,9 @@ export default function SidebarOpsStatus() {
           <MetricRow label="GPU" value={`${(latest?.gpu ?? 0).toFixed(1)}%`} color="text-violet-300" />
         </div>
         <svg viewBox="0 0 220 56" className="mt-2 h-16 w-full rounded bg-slate-900/70">
-          <path d={cpuPath} fill="none" stroke="#22d3ee" strokeWidth="2" />
-          <path d={ramPath} fill="none" stroke="#f59e0b" strokeWidth="1.8" />
-          <path d={gpuPath} fill="none" stroke="#a78bfa" strokeWidth="1.8" />
+          <path d={cpuPath} fill="none" stroke="var(--token-colors-accent-blue)" strokeWidth="2" />
+          <path d={ramPath} fill="none" stroke="var(--token-colors-accent-orange)" strokeWidth="1.8" />
+          <path d={gpuPath} fill="none" stroke="var(--token-colors-accent-magenta)" strokeWidth="1.8" />
         </svg>
       </div>
 

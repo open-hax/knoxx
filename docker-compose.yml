@@ -21,7 +21,9 @@ services:
       - ./llama.cpp:/workspace/llama.cpp
 
   frontend:
-    build: ./frontend
+    build:
+      context: ../../..
+      dockerfile: orgs/open-hax/knoxx/frontend/Dockerfile.workspace
     container_name: llm-model-lab-frontend
     ports:
       - "5173:80"

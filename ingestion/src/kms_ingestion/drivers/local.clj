@@ -34,12 +34,17 @@
 
 (def default-text-extensions
   #{".md" ".markdown" ".txt" ".rst" ".org" ".adoc"
+    ".mdx" ".astro"
     ".json" ".jsonl" ".yaml" ".yml" ".toml" ".ini" ".cfg" ".conf" ".env"
+    ".http" ".graphql" ".gql" ".proto" ".ipynb"
     ".xml" ".csv" ".tsv"
-    ".html" ".htm" ".css" ".js" ".jsx" ".ts" ".tsx"
+    ".html" ".htm" ".css" ".js" ".jsx" ".ts" ".tsx" ".mjs" ".cjs" ".cts" ".mts"
     ".py" ".rb" ".php" ".java" ".kt" ".go" ".rs" ".c" ".cc" ".cpp" ".h" ".hpp"
-    ".clj" ".cljs" ".cljc" ".edn" ".sql" ".sh" ".bash" ".zsh" ".fish"
-    ".tex" ".bib" ".nix" ".dockerfile" ".gradle" ".properties"})
+    ".clj" ".cljs" ".cljc" ".edn" ".sql" ".sh" ".bash" ".zsh" ".fish" ".el" ".lisp" ".scm"
+    ".tex" ".bib" ".nix" ".dockerfile" ".gradle" ".properties" ".patch" ".diff" ".traffic"})
+
+(def default-text-filenames
+  #{"dockerfile" "makefile" "justfile" "license" "copying" "release" "publish" "hooks"})
 
 (defn text-like-file?
   "Default heuristic for files we can safely treat as text documents."
@@ -48,12 +53,11 @@
         ext-raw (str/lower-case (or (fs/extension path) ""))
         ext (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
         result (or (default-text-extensions ext)
+                   (default-text-filenames name)
                    (= name "dockerfile")
                    (str/ends-with? name ".env.example")
                    (str/ends-with? name ".service")
                    (str/ends-with? name ".desktop"))]
-    (when-not result
-      (println (str "[TEXT-LIKE-FALSE] name=" name " ext=" ext " in-set?=" (contains? default-text-extensions ext))))
     result))
 
 (defn path-matches-glob?
@@ -121,23 +125,127 @@
         (.toInstant))
     (catch Exception _ nil)))
 
+(defn skip-directory-name?
+  [name]
+  (or (and (str/starts-with? name ".") (not= name ".github"))
+      (skip-dirs name)))
+
 (defn- file-seq-recursive
-  "Recursively list all files under a directory using java.nio.file.Files/walkFileTree."
+  "Lazy depth-first file walk that skips hidden/generated dirs before descent."
   [^java.io.File root]
   (if-not (.exists root)
     (do (println "[FILE-SEQ-RECURSIVE] root does not exist:" (.getAbsolutePath root))
-        [])
-    (let [results (atom [])
-          visitor (proxy [java.nio.file.SimpleFileVisitor] []
-                    (visitFile [file attrs]
-                      (swap! results conj (.toFile file))
-                      java.nio.file.FileVisitResult/CONTINUE)
-                    (visitFileFailed [file exc]
-                      (println "[FILE-SEQ-RECURSIVE] visitFileFailed:" file exc)
-                      java.nio.file.FileVisitResult/CONTINUE))]
-      (Files/walkFileTree (.toPath root) visitor)
-      (println (str "[FILE-SEQ-RECURSIVE] Found " (count @results) " files under " (.getAbsolutePath root)))
-      @results)))
+        ())
+    (letfn [(walk [stack]
+              (lazy-seq
+               (when-let [^java.io.File entry (first stack)]
+                 (let [rest-stack (rest stack)
+                       name (.getName entry)]
+                   (cond
+                     (.isDirectory entry)
+                     (if (skip-directory-name? name)
+                       (walk rest-stack)
+                       (let [children (->> (or (.listFiles entry) (into-array java.io.File []))
+                                           (sort-by #(.getName ^java.io.File %))
+                                           reverse)]
+                         (walk (concat children rest-stack))))
+
+                     (.isFile entry)
+                     (cons entry (walk rest-stack))
+
+                     :else
+                     (walk rest-stack))))))]
+      (walk (list root)))))
+
+(defn- candidate-file?
+  [rel-path f-name ext file-types include-patterns exclude-patterns abs-path]
+  (not
+   (or (some #(str/starts-with? % ".") (str/split rel-path #"/"))
+       (some skip-dirs (str/split rel-path #"/"))
+       (skip-files f-name)
+       (skip-extensions ext)
+       (and (seq include-patterns)
+            (not (some #(path-matches-glob? rel-path %) include-patterns)))
+       (and (seq exclude-patterns)
+            (some #(path-matches-glob? rel-path %) exclude-patterns))
+       (and (seq file-types)
+            (not (some #(path-matches-glob? f-name (str "*" %)) file-types)))
+       (and (empty? file-types)
+            (not (text-like-file? abs-path))))))
+
+(defn stream-files
+  "Lazy stream of new/changed file metadata based on size+mtime first.
+   Does not read file contents or hash unchanged files during discovery."
+  [root-path opts]
+  (if (or (nil? root-path) (str/blank? (str root-path)))
+    ()
+    (let [root-file (java.io.File. (str root-path))
+          root-abs (.getAbsoluteFile root-file)
+          existing-state (:existing-state opts)
+          file-types (:file-types opts)
+          include-patterns (:include-patterns opts)
+          exclude-patterns (:exclude-patterns opts)]
+      (when (.exists root-abs)
+        (->> (file-seq-recursive root-abs)
+             (keep (fn [^java.io.File file]
+                     (let [abs-path (.getAbsolutePath file)
+                           rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
+                           f-name (.getName file)
+                           ext (let [dot (.lastIndexOf f-name ".")]
+                                 (if (>= dot 0) (subs f-name dot) ""))]
+                       (when (candidate-file? rel-path f-name ext file-types include-patterns exclude-patterns abs-path)
+                         (let [file-id abs-path
+                               mod-time (modified-time abs-path)
+                               size (.length file)
+                               existing (get existing-state file-id)
+                               existing-meta (:metadata existing)
+                               same-version? (and existing
+                                                  (= (:size existing-meta) size)
+                                                  (= (str (:modified_at existing-meta)) (some-> mod-time str)))]
+                           (when-not same-version?
+                             {:id file-id
+                              :path rel-path
+                              :size size
+                              :modified-at mod-time
+                              :change (if existing :changed :new)})))))))))))
+
+(defn snapshot-files
+  "Lightweight file snapshot for passive watch diffing.
+   Uses path/size/mtime only, no content hashing."
+  [root-path opts]
+  (if (or (nil? root-path) (str/blank? (str root-path)))
+    {}
+    (let [root-file (java.io.File. (str root-path))
+          root-abs (.getAbsoluteFile root-file)
+          file-types (:file-types opts)
+          include-patterns (:include-patterns opts)
+          exclude-patterns (:exclude-patterns opts)
+          entries (atom {})]
+      (when (.exists root-abs)
+        (doseq [^java.io.File file (file-seq-recursive root-abs)]
+          (let [abs-path (.getAbsolutePath file)
+                rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
+                f-name (.getName file)
+                ext (let [dot (.lastIndexOf f-name ".")]
+                      (if (>= dot 0) (subs f-name dot) ""))]
+            (when-not
+             (or (some #(str/starts-with? % ".") (str/split rel-path #"/"))
+                 (some skip-dirs (str/split rel-path #"/"))
+                 (skip-files f-name)
+                 (skip-extensions ext)
+                 (and (seq include-patterns)
+                      (not (some #(path-matches-glob? rel-path %) include-patterns)))
+                 (and (seq exclude-patterns)
+                      (some #(path-matches-glob? rel-path %) exclude-patterns))
+                 (and (seq file-types)
+                      (not (some #(path-matches-glob? f-name (str "*" %)) file-types)))
+                 (and (empty? file-types)
+                      (not (text-like-file? abs-path))))
+              (swap! entries assoc rel-path {:id abs-path
+                                             :path rel-path
+                                             :size (.length file)
+                                             :modified-at (modified-time abs-path)})))))
+      @entries)))
 
 (defn find-files
   "Find all files under root-path, applying filters."
@@ -148,7 +256,7 @@
     (let [root-path-str (str root-path)
         root-file (java.io.File. root-path-str)
         root-abs (.getAbsoluteFile root-file)
-        existing-hashes (:existing-hashes opts)
+        existing-state (:existing-state opts)
         file-types (:file-types opts)
         include-patterns (:include-patterns opts)
         exclude-patterns (:exclude-patterns opts)
@@ -166,64 +274,65 @@
             ;; Skip dot-files and dot-dirs
             (some #(str/starts-with? % ".")
                   (str/split rel-path #"/"))
-            (do (println "[SKIP] dot:" rel-path) (swap! stats update :skipped inc))
+            (swap! stats update :skipped inc)
+
+            ;; Skip well-known generated or vendored directories anywhere in the path
+            (some skip-dirs (str/split rel-path #"/"))
+            (swap! stats update :skipped inc)
 
             ;; Skip by name
             (skip-files f-name)
-            (do (println "[SKIP] name:" f-name) (swap! stats update :skipped inc))
+            (swap! stats update :skipped inc)
 
             ;; Skip by extension
             (skip-extensions ext)
-            (do (println "[SKIP] ext:" ext) (swap! stats update :skipped inc))
+            (swap! stats update :skipped inc)
 
             ;; Apply include patterns
             (and (seq include-patterns)
                  (not (some #(path-matches-glob? rel-path %) include-patterns)))
-            (do (println "[SKIP] include:" rel-path) (swap! stats update :skipped inc))
+            (swap! stats update :skipped inc)
 
             ;; Apply exclude patterns
             (and (seq exclude-patterns)
                  (some #(path-matches-glob? rel-path %) exclude-patterns))
-            (do (println "[SKIP] exclude:" rel-path) (swap! stats update :skipped inc))
+            (swap! stats update :skipped inc)
 
             ;; Apply file type filter
             (and (seq file-types)
                  (not (some #(path-matches-glob? f-name (str "*" %)) file-types)))
-            (do (println "[SKIP] file-type:" f-name "ext=" ext "types=" file-types) (swap! stats update :skipped inc))
+            (swap! stats update :skipped inc)
 
             ;; Default: text-like only if no file-types specified
             (and (empty? file-types)
                  (not (text-like-file? abs-path)))
-            (do (println "[SKIP] text-like:" f-name) (swap! stats update :skipped inc))
+            (swap! stats update :skipped inc)
 
             ;; Include file
             :else
             (do
-              (println (str "[INCLUDE] " rel-path))
               (let [file-id abs-path
-                  content-hash (try
-                                 (let [digest (java.security.MessageDigest/getInstance "SHA-256")
-                                       bytes (java.nio.file.Files/readAllBytes (.toPath file))]
-                                   (format "%064x" (BigInteger. 1 (.digest digest bytes))))
-                                 (catch Exception _ nil))
                   mod-time (try
                              (-> (java.nio.file.Files/getLastModifiedTime (.toPath file)
                                    (make-array java.nio.file.LinkOption 0))
-                                 (.toInstant))
+                                  (.toInstant))
                              (catch Exception _ nil))
                   size (.length file)
-                  existing-hash (get existing-hashes file-id)]
-              (swap! stats update :total inc)
-              (cond
-                (and existing-hash (= existing-hash content-hash))
+                  existing (get existing-state file-id)
+                  existing-meta (:metadata existing)
+                  same-version? (and existing
+                                     (= (:size existing-meta) size)
+                                     (= (str (:modified_at existing-meta)) (some-> mod-time str)))]
+               (swap! stats update :total inc)
+               (cond
+                same-version?
                 (swap! stats update :unchanged inc)
 
-                existing-hash
+                existing
                 (do
                   (swap! stats update :changed inc)
                   (swap! files conj {:id file-id
                                      :path rel-path
-                                     :content-hash content-hash
                                      :size size
                                      :modified-at mod-time}))
 
@@ -232,7 +341,6 @@
                   (swap! stats update :new inc)
                   (swap! files conj {:id file-id
                                      :path rel-path
-                                     :content-hash content-hash
                                      :size size
                                       :modified-at mod-time}))))))))
     {:total-files (:total @stats)

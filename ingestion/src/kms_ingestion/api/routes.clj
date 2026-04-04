@@ -25,7 +25,9 @@
   (when s
     (if (string? s)
       (json/parse-string s keyword)
-      s)))
+      (if (instance? org.postgresql.util.PGobject s)
+        (json/parse-string (.getValue ^org.postgresql.util.PGobject s) keyword)
+        s))))
 
 (defn clj->json
   "Serialize Clojure data to JSON string."
@@ -37,6 +39,14 @@
   [x]
   (str x))
 
+(defn ts-str
+  "Convert SQL timestamp to ISO-8601 UTC string."
+  [x]
+  (when x
+    (if (instance? java.sql.Timestamp x)
+      (str (.toInstant ^java.sql.Timestamp x))
+      (str x))))
+
 (defn get-tenant-id
   "Extract tenant-id from request."
   [request]
@@ -47,7 +57,8 @@
       "devel"))
 
 (def role-presets
-  {"knowledge" ["devel-docs"]
+  {"workspace" ["devel-docs" "devel-code" "devel-config" "devel-data"]
+   "knowledge" ["devel-docs"]
    "development" ["devel-code" "devel-docs" "cephalon-hive"]
    "devsecops" ["devel-config" "devel-code" "devel-docs" "devel-data" "devel-events" "sintel"]
    "analyst" ["devel-data" "devel-events" "sintel" "devel-docs"]
@@ -65,7 +76,15 @@
       (get role-presets role)
 
       :else
-      [(str tenant-id "-docs")])))
+       [(str tenant-id "-docs")])))
+
+(defn- row-path
+  [row]
+  (or (:source_path row)
+      (:source-path row)
+      (:message row)
+      (:source row)
+      (:id row)))
 
 (defn call-openplanner-fts
   [{:keys [q limit project kind]}]
@@ -91,6 +110,52 @@
       (get-in resp [:body :rows] [])
       [])))
 
+(defn call-openplanner-vector
+  [{:keys [q limit project kind]}]
+  (let [base-url (config/openplanner-url)
+        api-key (config/openplanner-api-key)
+        payload (cond-> {:q q :k (or limit 20)}
+                  project (assoc :project project)
+                  kind (assoc :kind kind))
+        headers (cond-> {"Content-Type" "application/json"
+                         "Accept-Encoding" "identity"}
+                  (not (str/blank? api-key))
+                  (assoc "Authorization" (str "Bearer " api-key)))
+        resp (http/post
+              (str base-url "/v1/search/vector")
+              {:headers headers
+               :body (clj->json payload)
+               :content-type :json
+               :accept :json
+               :as :json
+               :throw-exceptions false
+               :socket-timeout 30000
+               :connection-timeout 30000})]
+    (if (= 200 (:status resp))
+      (let [result (get-in resp [:body :result])
+            ids (or (first (:ids result)) [])
+            docs (or (first (:documents result)) [])
+            metas (or (first (:metadatas result)) [])
+            distances (or (first (:distances result)) [])]
+        (map-indexed
+         (fn [idx id]
+           (let [metadata (or (nth metas idx nil) {})
+                 doc (or (nth docs idx nil) "")
+                 distance (nth distances idx nil)]
+             {:id id
+              :path (or (:sourcePath metadata)
+                        (:source_path metadata)
+                        (:source metadata)
+                        (:path metadata)
+                        (:file metadata)
+                        id)
+              :project (or (:project metadata) project)
+              :kind (or (:kind metadata) kind)
+              :snippet (if (> (count doc) 240) (subs doc 0 240) doc)
+              :distance distance}))
+         ids))
+      [])))
+
 (defn federated-fts
   [{:keys [tenant-id q role projects kinds limit]}]
   (let [resolved-projects (expand-projects tenant-id role projects)
@@ -106,34 +171,96 @@
      :count (count rows)
      :rows (take (or limit 10) rows)}))
 
+(defn semantic-file-search
+  [{:keys [tenant-id q role projects kinds limit path-prefix]}]
+  (let [resolved-projects (expand-projects tenant-id role projects)
+        resolved-kinds (seq kinds)
+        search-args (if resolved-kinds
+                      (for [project resolved-projects
+                            kind resolved-kinds]
+                        {:q q :limit limit :project project :kind kind})
+                      (for [project resolved-projects]
+                        {:q q :limit limit :project project}))
+        path-match? (fn [row]
+                      (if (str/blank? path-prefix)
+                        true
+                        (let [current-row-path (str (:path row))
+                              prefix (str path-prefix)]
+                          (or (= current-row-path prefix)
+                              (str/starts-with? current-row-path (str prefix "/"))))))
+        normalized-fts (map (fn [row]
+                              {:id (or (:id row) (str (random-uuid)))
+                               :path (row-path row)
+                               :project (:project row)
+                               :kind (:kind row)
+                               :snippet (or (:snippet row) (:text row) "")
+                               :distance nil})
+                            (:rows (federated-fts {:tenant-id tenant-id
+                                                   :q q
+                                                   :role role
+                                                   :projects projects
+                                                   :kinds kinds
+                                                   :limit limit})))
+        vector-rows (filter path-match? (mapcat call-openplanner-vector search-args))
+        base-rows (if (seq vector-rows)
+                    vector-rows
+                    (filter path-match? normalized-fts))
+        rows (->> base-rows
+                  (sort-by (fn [row] (or (:distance row) 999999)))
+                  (reduce (fn [acc row]
+                            (if (some #(= (:path %) (:path row)) acc)
+                              acc
+                              (conj acc row)))
+                          [])
+                  (take (or limit 20)))]
+    {:projects resolved-projects
+     :count (count rows)
+     :rows rows}))
+
 (defn call-proxx-chat
   [{:keys [messages model system-prompt]}]
-  (let [base-url (config/proxx-url)
-        auth-token (config/proxx-auth-token)
-        headers (cond-> {"Content-Type" "application/json"}
-                  (not (str/blank? auth-token))
-                  (assoc "Authorization" (str "Bearer " auth-token)))
-        payload {:model (or model (config/proxx-default-model))
-                 :messages messages
-                 :stream false
-                 :temperature 0.2}
-        payload (cond-> payload
-                  system-prompt (assoc :system_prompt system-prompt))
-        resp (http/post
-              (str base-url "/v1/chat/completions")
-              {:headers headers
-               :body (clj->json payload)
-               :content-type :json
-               :accept :json
-               :as :json
-               :throw-exceptions false
-               :socket-timeout 60000
-               :connection-timeout 30000})]
-    (if (= 200 (:status resp))
-      (or (get-in resp [:body :choices 0 :message :content])
-          (get-in resp [:body :choices 0 :text])
-          "")
-      nil)))
+  (try
+    (let [base-url (config/proxx-url)
+          auth-token (config/proxx-auth-token)
+          connection-timeout (config/proxx-connection-timeout-ms)
+          socket-timeout (config/proxx-socket-timeout-ms)
+          payload {:model (or model (config/proxx-default-model))
+                   :messages messages
+                   :stream false
+                   :temperature 0.2}
+          payload (cond-> payload
+                    system-prompt (assoc :system_prompt system-prompt))
+          headers (cond-> {"Content-Type" "application/json"}
+                    (not (str/blank? auth-token))
+                    (assoc "Authorization" (str "Bearer " auth-token)))]
+      (if (str/blank? base-url)
+        {:ok false
+         :status 0
+         :error "Proxx base URL is not configured"}
+        (let [resp (http/post
+                    (str base-url "/v1/chat/completions")
+                    {:headers headers
+                     :body (clj->json payload)
+                     :content-type :json
+                     :accept :json
+                     :as :json
+                     :decompress-body false
+                     :throw-exceptions false
+                     :socket-timeout socket-timeout
+                     :connection-timeout connection-timeout})]
+          (if (= 200 (:status resp))
+            (let [body (:body resp)]
+              {:ok true
+               :text (or (get-in body [:choices 0 :message :content])
+                         (get-in body [:choices 0 :text])
+                         "")})
+            {:ok false
+             :status (:status resp)
+             :error (str "Proxx returned " (:status resp) ": " (get-in resp [:body :error :message] "unknown"))}))))
+    (catch Exception e
+      {:ok false
+       :status 0
+       :error (.getMessage e)})))
 
 (defn format-search-context
   [rows]
@@ -141,9 +268,55 @@
        (map-indexed (fn [idx row]
                       (str "[" (inc idx) "] project=" (:project row)
                            " kind=" (:kind row)
-                           " source=" (:source row) "\n"
-                           (:snippet row))))
+                           " file=" (row-path row) "\n"
+                           (or (:snippet row) (:text row) ""))))
        (str/join "\n\n")))
+
+(defn retrieval-brief
+  [projects rows]
+  (if-not (seq rows)
+    "No relevant workspace evidence was retrieved from OpenPlanner. Use general knowledge if needed, but say that the devel corpus did not return a match."
+    (let [project-summary (->> projects (remove str/blank?) distinct (str/join ", "))
+          kind-summary (->> rows (map :kind) (remove str/blank?) distinct sort (str/join ", "))]
+      (str "Workspace evidence is available"
+           (when-not (str/blank? project-summary)
+             (str " from projects: " project-summary))
+           ". Focus on the strongest supporting snippets, reconcile agreements or conflicts across them, and cite the most relevant file paths inline."
+           (when-not (str/blank? kind-summary)
+             (str " Retrieved material spans kinds: " kind-summary "."))))))
+
+(defn devel-answer-system-prompt
+  [{:keys [projects context-found?]}]
+  (str
+   "You are Knoxx, the grounded workspace assistant for the devel corpus. "
+   (if context-found?
+     "Use the supplied OpenPlanner context first. Synthesize across snippets instead of merely reporting that terms appear in files. Give the best grounded answer you can, then support it with the most relevant file paths and evidence. If the context is incomplete, combine it with general knowledge and clearly say where workspace evidence stops and inference begins. "
+     "No relevant workspace context was found. Answer helpfully using general knowledge, clearly say that the devel corpus did not return a match, and avoid pretending you saw workspace evidence that was not retrieved. ")
+   "Do not default to frequency-counting or phrasing like 'based on the context this appears in X places' unless the user explicitly asks for counts. "
+   "Prefer insight, relationships, implications, and concrete next steps over enumeration. "
+   "If the question is ambiguous, state your best interpretation before answering. "
+   "Mention the relevant project names and file paths inline when you make claims. "
+   "Structure your answer with markdown headings: ## Answer, ## Why it matters, ## Evidence, and optionally ## Gaps. "
+   "Keep ## Answer concise and direct, use ## Why it matters for implications or decisions, and use ## Evidence for the specific snippets or files that support the answer. "
+   "The active lakes searched were: " (str/join ", " projects) "."))
+
+(defn build-answer-user-prompt
+  [{:keys [q projects rows]}]
+  (str
+   "Question:\n" q
+   "\n\nAnswer contract:\n"
+   "- Start with ## Answer and give the best direct answer in 2-5 sentences.\n"
+   "- Then add ## Why it matters with 1 short paragraph on implications, tradeoffs, or recommended action when relevant.\n"
+   "- Then add ## Evidence with 2-6 bullet points citing the most relevant snippets as [1], [2], etc., plus file paths.\n"
+   "- Add ## Gaps only when the retrieved evidence is missing, weak, or requires inference.\n"
+   "- Do not pad with counts, frequency summaries, or 'appears in X places' language unless the question explicitly asks for counting.\n"
+   "- Prefer synthesis over enumeration: explain what the retrieved context means, not just where it appeared.\n"
+   "- If the evidence conflicts, say so explicitly and explain which evidence seems stronger.\n"
+   "\nRetrieval brief:\n" (retrieval-brief projects rows)
+   "\n\nRetrieved context:\n"
+   (if (seq rows)
+     (format-search-context rows)
+     "No relevant workspace context was retrieved from OpenPlanner.")))
 
 (defn grounded-summary
   [projects rows]
@@ -163,6 +336,12 @@
            (when latest-ts (str "Latest event: " latest-ts ". "))
            (when (not (str/blank? snippet-summary))
              (str "Representative snippets: " snippet-summary))))))
+
+(defn- timeout-error?
+  [value]
+  (let [s (some-> value str str/lower-case)]
+    (boolean (and s (or (str/includes? s "timed out")
+                        (str/includes? s "timeout"))))))
 
 (defn request-body->map
   "Return a request body as a Clojure map regardless of whether muuntaja decoded it.
@@ -239,6 +418,57 @@
       ""
       (str (.relativize root-path file-path)))))
 
+(defn- path-segments
+  [path]
+  (->> (str/split (or path "") #"/")
+       (remove str/blank?)))
+
+(defn- summarize-entry-states
+  [tenant-id current-path entries]
+  (let [rows (db/list-file-states-under-path tenant-id current-path)
+        current-depth (count (path-segments current-path))
+        row-maps (map (fn [row]
+                        (let [row-path (str (:path row))
+                              segments (path-segments row-path)]
+                          {:path row-path
+                           :segments segments
+                           :status (:status row)
+                           :chunks (:chunks row)
+                           :metadata (json->clj (:metadata row))
+                           :last_ingested_at (:last_ingested_at row)}))
+                      rows)]
+    (into {}
+          (map (fn [entry]
+                 (let [entry-path (:path entry)
+                       prefix-segments (path-segments entry-path)
+                       exact (some #(when (= (:path %) entry-path) %) row-maps)
+                       subtree (filter (fn [row]
+                                         (let [row-segments (:segments row)]
+                                           (and (> (count row-segments) current-depth)
+                                                (= prefix-segments (take (count prefix-segments) row-segments)))))
+                                       row-maps)
+                       relevant (concat (when exact [exact]) subtree)
+                       ingested-count (count (filter #(= "ingested" (:status %)) relevant))
+                       failed-count (count (filter #(= "failed" (:status %)) relevant))
+                       latest-ingested (last (sort (remove nil? (map :last_ingested_at relevant))))
+                       last-error (->> relevant
+                                       (filter #(= "failed" (:status %)))
+                                       (map #(get-in % [:metadata :error]))
+                                       (remove str/blank?)
+                                       last)
+                       status (cond
+                                (= "failed" (:status exact)) "failed"
+                                (= "ingested" (:status exact)) "ingested"
+                                (and (seq subtree) (zero? ingested-count) (pos? failed-count)) "failed"
+                                (seq subtree) "partial"
+                                :else "not_ingested")]
+                   [entry-path {:ingested_count ingested-count
+                                :failed_count failed-count
+                                :ingestion_status status
+                                :last_ingested_at (some-> latest-ingested str)
+                                :last_error last-error}]))
+               entries))))
+
 (defn- file-ext
   [name]
   (let [n (str/lower-case (or name ""))
@@ -254,6 +484,7 @@
   [request]
   (let [requested (or (-> request :query-params :path)
                       (get (:query-params request) "path"))
+        tenant-id (get-tenant-id request)
         target (resolve-workspace-file requested)]
     (println "[BROWSE] requested=" requested "query-params=" (:query-params request) "target=" (some-> target .getPath))
     (cond
@@ -268,18 +499,48 @@
 
       :else
       (let [entries (->> (or (.listFiles ^File target) (into-array File []))
-                         (sort-by (fn [^File f] [(if (.isDirectory f) 0 1) (.toLowerCase (.getName f))]))
-                         (map (fn [^File f]
-                                {:name (.getName f)
-                                 :path (rel-workspace-path f)
-                                 :type (if (.isDirectory f) "dir" "file")
-                                 :size (when (.isFile f) (.length f))
-                                 :previewable (and (.isFile f) (text-previewable? f))}))
-                         vec)]
+                          (sort-by (fn [^File f] [(if (.isDirectory f) 0 1) (.toLowerCase (.getName f))]))
+                          (map (fn [^File f]
+                                 {:name (.getName f)
+                                  :path (rel-workspace-path f)
+                                  :type (if (.isDirectory f) "dir" "file")
+                                  :size (when (.isFile f) (.length f))
+                                  :previewable (and (.isFile f) (text-previewable? f))}))
+                          vec)
+            state-by-path (summarize-entry-states tenant-id (rel-workspace-path target) entries)
+             entries (mapv (fn [entry]
+                             (merge entry (get state-by-path (:path entry)
+                                               {:ingestion_status "not_ingested"
+                                                :ingested_count 0
+                                                :failed_count 0
+                                                :last_ingested_at nil
+                                                :last_error nil})))
+                           entries)]
         {:status 200
          :body {:workspace_root (str (workspace-root-file))
-                :current_path (rel-workspace-path target)
-                :entries entries}}))))
+                 :current_path (rel-workspace-path target)
+                 :entries entries}}))))
+
+(defn semantic-file-search-handler
+  [request]
+  (let [tenant-id (get-tenant-id request)
+        body (request-body->map request)
+        q (:q body)
+        role (:role body)
+        projects (:projects body)
+        kinds (:kinds body)
+        path-prefix (or (:path body) (:path_prefix body) (:path-prefix body))
+        limit (or (:limit body) 20)]
+    (if (str/blank? q)
+      {:status 400 :body {:error "q is required"}}
+      {:status 200
+       :body (semantic-file-search {:tenant-id tenant-id
+                                    :q q
+                                    :role role
+                                    :projects projects
+                                    :kinds kinds
+                                    :path-prefix path-prefix
+                                    :limit limit})})))
 
 (defn preview-file-handler
   [request]
@@ -350,7 +611,7 @@
         driver-type (or (:driver_type body) (:driver-type body))
         name (:name body)
         config (or (:config body) {})
-        collections (or (:collections body) ["devel_docs"])
+        collections (or (:collections body) ["devel-docs" "devel-code" "devel-config" "devel-data"])
         file-types (or (:file_types body) (:file-types body))
         include-patterns (or (:include_patterns body) (:include-patterns body))
         exclude-patterns (or (:exclude_patterns body) (:exclude-patterns body))
@@ -437,11 +698,11 @@
                    :failed_files (:failed_files j)
                    :skipped_files (:skipped_files j)
                    :chunks_created (:chunks_created j)
-                   :started_at (str (:started_at j))
-                   :completed_at (str (:completed_at j))
-                   :error_message (:error_message j)
-                   :created_at (str (:created_at j))})
-                jobs)}))
+                    :started_at (ts-str (:started_at j))
+                    :completed_at (ts-str (:completed_at j))
+                    :error_message (:error_message j)
+                    :created_at (ts-str (:created_at j))})
+                 jobs)}))
 
 (defn create-job-handler
   [request]
@@ -459,13 +720,14 @@
         (let [job (db/create-job! source-id tenant-id {:full_scan full-scan})
               job-id (uuid-str (:job_id job))]
           ;; Start job in background
+          (db/mark-source-scanned! source-id)
           (worker/queue-job! job-id source)
           {:status 200
            :body {:job_id job-id
                   :source_id source-id
                   :tenant_id tenant-id
                   :status (:status job)
-                  :created_at (str (:created_at job))}})))))
+                  :created_at (ts-str (:created_at job))}})))))
 
 (defn get-job-handler
   [request]
@@ -483,10 +745,10 @@
               :failed_files (:failed_files job)
               :skipped_files (:skipped_files job)
               :chunks_created (:chunks_created job)
-              :started_at (str (:started_at job))
-              :completed_at (str (:completed_at job))
+               :started_at (ts-str (:started_at job))
+               :completed_at (ts-str (:completed_at job))
               :error_message (:error_message job)
-              :created_at (str (:created_at job))}}
+               :created_at (ts-str (:created_at job))}}
       {:status 404
        :body {:error "Job not found"}})))
 
@@ -567,6 +829,8 @@
         role (:role body)
         projects (:projects body)
         kinds (:kinds body)
+        model (:model body)
+        system-prompt (or (:system_prompt body) (:system-prompt body))
         limit (or (:limit body) 8)]
     (if (str/blank? q)
       {:status 400 :body {:error "q is required"}}
@@ -577,12 +841,32 @@
                             :projects projects
                             :kinds kinds
                             :limit limit})
-            answer (grounded-summary projects rows)]
-        {:status 200
-         :body {:projects projects
-                :count (:count result)
-                :rows rows
-                :answer answer}}))))
+            proxx-result (call-proxx-chat {:model model
+                                           :system-prompt (or system-prompt (devel-answer-system-prompt {:projects projects :context-found? (seq rows)}))
+                                           :messages [{:role "user"
+                                                       :content (build-answer-user-prompt {:q q
+                                                                                           :projects projects
+                                                                                           :rows rows})}]})
+            timeout? (or (timeout-error? (:error proxx-result))
+                         (contains? #{408 504} (:status proxx-result)))]
+        (if (:ok proxx-result)
+          {:status 200
+           :body {:projects projects
+                  :count (:count result)
+                  :rows rows
+                  :model model
+                  :answer_mode "model"
+                  :answer (:text proxx-result)}}
+          {:status (if timeout? 504 502)
+           :body {:error (if timeout?
+                           "Proxx timed out while generating the chat response."
+                           "Proxx failed while generating the chat response.")
+                  :error_code (if timeout? "proxx_timeout" "proxx_request_failed")
+                  :model_error (:error proxx-result)
+                  :projects projects
+                  :count (:count result)
+                  :rows rows
+                  :model model}})))))
 
 ;; ============================================================
 ;; Routes
@@ -593,10 +877,10 @@
     {:get health-handler}]
 
    ["/api/query"
-    ["/presets" {:get query-presets-handler}]
-    ["/gardens" {:get query-gardens-handler}]
-    ["/search" {:post search-handler}]
-    ["/answer" {:post answer-handler}]]
+     ["/presets" {:get query-presets-handler}]
+     ["/gardens" {:get query-gardens-handler}]
+     ["/search" {:post search-handler}]
+     ["/answer" {:post answer-handler}]]
    
    ["/api/ingestion"
      {:middleware [muuntaja/format-middleware]
@@ -605,11 +889,14 @@
     ["/drivers"
      {:get list-drivers-handler}]
 
-    ["/browse"
-     {:get browse-path-handler}]
+     ["/browse"
+      {:get browse-path-handler}]
 
-    ["/file"
-     {:get preview-file-handler}]
+     ["/search"
+      {:post semantic-file-search-handler}]
+
+     ["/file"
+      {:get preview-file-handler}]
      
     ["/sources"
      {:get list-sources-handler

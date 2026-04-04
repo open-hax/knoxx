@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Card, Badge, Input } from "@devel/ui-react";
+import { Button, Card, Badge, Input } from "@open-hax/uxx";
 
 interface Document {
   doc_id: string;
@@ -181,7 +181,7 @@ function CmsPage() {
   return (
     <div style={{ display: "flex", height: "calc(100vh - 120px)", gap: "16px" }}>
       <Card variant="default" padding="md" style={{ width: "224px", flexShrink: 0 }}>
-        <h2 style={{ marginBottom: "16px", fontSize: "14px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "#64748b" }}>
+        <h2 style={{ marginBottom: "16px", fontSize: "14px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--token-colors-text-muted)" }}>
           Navigation
         </h2>
         <nav style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
@@ -203,7 +203,7 @@ function CmsPage() {
           ))}
         </nav>
 
-        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid #e2e8f0" }} />
+        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--token-colors-border-default)" }} />
 
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <Button variant="primary" size="sm" fullWidth onClick={handleCreateDocument}>
@@ -216,9 +216,9 @@ function CmsPage() {
 
         {stats && (
           <Card variant="outlined" padding="sm" style={{ marginTop: "24px" }}>
-            <h3 style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase", color: "#64748b" }}>Stats</h3>
+            <h3 style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase", color: "var(--token-colors-text-muted)" }}>Stats</h3>
             <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 700 }}>{stats.total}</p>
-            <p style={{ fontSize: "12px", color: "#64748b" }}>total documents</p>
+            <p style={{ fontSize: "12px", color: "var(--token-colors-text-muted)" }}>total documents</p>
           </Card>
         )}
       </Card>
@@ -230,9 +230,9 @@ function CmsPage() {
             padding="none"
             style={{ flex: 1, overflow: "auto", width: showDraftPanel ? "50%" : undefined }}
           >
-            <div style={{ position: "sticky", top: 0, zIndex: 10, borderBottom: "1px solid #e2e8f0", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)", padding: "16px" }}>
+            <div style={{ position: "sticky", top: 0, zIndex: 10, borderBottom: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-surface)", backdropFilter: "blur(8px)", padding: "16px" }}>
               <h2 style={{ fontSize: "18px", fontWeight: 600 }}>Content Library</h2>
-              <p style={{ fontSize: "14px", color: "#64748b" }}>
+              <p style={{ fontSize: "14px", color: "var(--token-colors-text-muted)" }}>
                 {loading ? "Loading..." : `${documents.length} documents`}
               </p>
             </div>
@@ -245,15 +245,15 @@ function CmsPage() {
                   style={{
                     cursor: "pointer",
                     padding: "16px",
-                    borderBottom: "1px solid #f1f5f9",
-                    background: selectedDoc?.doc_id === doc.doc_id ? "rgba(59, 130, 246, 0.1)" : "transparent",
+                    borderBottom: "1px solid var(--token-colors-alpha-bg-_08)",
+                    background: selectedDoc?.doc_id === doc.doc_id ? "var(--token-colors-alpha-blue-_15)" : "transparent",
                     transition: "background 0.15s",
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <h3 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{doc.title}</h3>
-                      <p style={{ marginTop: "4px", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", fontSize: "14px", color: "#64748b" }}>
+                      <p style={{ marginTop: "4px", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", fontSize: "14px", color: "var(--token-colors-text-muted)" }}>
                         {doc.content.slice(0, 150)}...
                       </p>
                     </div>
@@ -262,14 +262,14 @@ function CmsPage() {
                     </Badge>
                   </div>
                   
-                  <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "#94a3b8" }}>
+                  <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--token-colors-text-muted)" }}>
                     <span>{doc.source}</span>
                     <span>•</span>
                     <span>{new Date(doc.created_at).toLocaleDateString()}</span>
                     {doc.ai_drafted && (
                       <>
                         <span>•</span>
-                        <span style={{ color: "#a855f7" }}>AI-drafted</span>
+                        <span style={{ color: "var(--token-colors-accent-magenta)" }}>AI-drafted</span>
                       </>
                     )}
                   </div>
@@ -277,7 +277,7 @@ function CmsPage() {
               ))}
 
               {documents.length === 0 && !loading && (
-                <div style={{ padding: "32px", textAlign: "center", color: "#64748b" }}>
+                <div style={{ padding: "32px", textAlign: "center", color: "var(--token-colors-text-muted)" }}>
                   <p>No documents found.</p>
                   <p style={{ marginTop: "4px", fontSize: "14px" }}>Create a new document or generate an AI draft.</p>
                 </div>
@@ -288,7 +288,7 @@ function CmsPage() {
           {showDraftPanel && (
             <Card variant="default" padding="md" style={{ width: "320px", flexShrink: 0, overflow: "auto" }}>
               <h3 style={{ fontSize: "18px", fontWeight: 600 }}>AI Draft Assistant</h3>
-              <p style={{ marginTop: "4px", fontSize: "14px", color: "#64748b" }}>
+              <p style={{ marginTop: "4px", fontSize: "14px", color: "var(--token-colors-text-muted)" }}>
                 Generate content from your knowledge base
               </p>
 
@@ -299,14 +299,14 @@ function CmsPage() {
                     value={draftTopic}
                     onChange={(e) => setDraftTopic(e.target.value)}
                     placeholder="What should the document be about?"
-                    style={{ marginTop: "4px", width: "100%", borderRadius: "6px", border: "1px solid #d1d5db", padding: "8px 12px", fontSize: "14px", resize: "vertical" }}
+                    style={{ marginTop: "4px", width: "100%", borderRadius: "6px", border: "1px solid var(--token-colors-border-subtle)", padding: "8px 12px", fontSize: "14px", resize: "vertical" }}
                     rows={3}
                   />
                 </div>
 
                 <div>
                   <label style={{ display: "block", fontSize: "14px", fontWeight: 500 }}>Sources</label>
-                  <select style={{ marginTop: "4px", width: "100%", borderRadius: "6px", border: "1px solid #d1d5db", padding: "8px 12px", fontSize: "14px" }}>
+                  <select style={{ marginTop: "4px", width: "100%", borderRadius: "6px", border: "1px solid var(--token-colors-border-subtle)", padding: "8px 12px", fontSize: "14px" }}>
                     <option>devel_docs (all internal docs)</option>
                     <option>devel_specs (design docs)</option>
                   </select>
@@ -323,11 +323,11 @@ function CmsPage() {
                 </Button>
               </div>
 
-              <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid #e2e8f0" }} />
+              <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--token-colors-border-default)" }} />
 
               <Card variant="outlined" padding="sm">
                 <h4 style={{ fontSize: "14px", fontWeight: 500 }}>How it works</h4>
-                <ol style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#64748b", paddingLeft: "20px" }}>
+                <ol style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "var(--token-colors-text-muted)", paddingLeft: "20px" }}>
                   <li>AI searches your knowledge base</li>
                   <li>Generates a draft document</li>
                   <li>You review and edit</li>
@@ -355,7 +355,7 @@ function CmsPage() {
                 </Badge>
               </div>
 
-              <div style={{ marginTop: "16px", maxHeight: "256px", overflow: "auto", borderRadius: "6px", background: "#f8fafc", padding: "12px", fontSize: "14px" }}>
+              <div style={{ marginTop: "16px", maxHeight: "256px", overflow: "auto", borderRadius: "6px", background: "var(--token-colors-alpha-bg-_08)", padding: "12px", fontSize: "14px" }}>
                 {selectedDoc.content}
               </div>
 
@@ -385,7 +385,7 @@ function CmsPage() {
                 )}
               </div>
 
-              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "#64748b" }}>
+              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "var(--token-colors-text-muted)" }}>
                 <p>Created: {new Date(selectedDoc.created_at).toLocaleString()}</p>
                 <p>By: {selectedDoc.created_by}</p>
                 {selectedDoc.source_path && <p>Source: {selectedDoc.source_path}</p>}
