@@ -207,7 +207,7 @@ export default function SettingsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Vector Dim</label>
+              <label className="block text-sm font-medium mb-1">Embedding Dimension</label>
               <input type="number" name="vectorDim" value={settings.vectorDim ?? 1024} onChange={handleChange} className="field-input" min={1} />
             </div>
             <div>
@@ -241,15 +241,15 @@ export default function SettingsPage() {
           <h2 className="text-lg font-semibold border-b pb-2">Project and Security</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">Project Name</label>
+              <label className="block text-sm font-medium mb-1">Default Lake Key</label>
               <input type="text" name="projectName" value={settings.projectName || ''} onChange={handleChange} className="field-input" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Qdrant Collection</label>
+              <label className="block text-sm font-medium mb-1">Index Collection</label>
               <input type="text" name="qdrantCollection" value={settings.qdrantCollection || ''} onChange={handleChange} className="field-input" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Docs Path</label>
+              <label className="block text-sm font-medium mb-1">Default Lake Docs Path</label>
               <input type="text" name="docsPath" value={settings.docsPath || ''} onChange={handleChange} className="field-input" />
             </div>
             <div>

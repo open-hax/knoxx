@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Markdown } from '@open-hax/uxx';
 import { fetchDocumentContent } from '../lib/nextApi';
 
 interface ForumPost {
@@ -44,6 +44,46 @@ function formatPostDate(post: ForumPost): string {
   return date.toLocaleString();
 }
 
+function isExternalHref(href: string): boolean {
+  return /^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(href)
+    || href.startsWith('mailto:')
+    || href.startsWith('tel:');
+}
+
+function normalizeRelativeDocPath(input: string): string {
+  const stack: string[] = [];
+
+  for (const part of input.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      stack.pop();
+      continue;
+    }
+    stack.push(part);
+  }
+
+  return stack.join('/');
+}
+
+function resolveDocumentHref(currentPath: string, href: string): string | null {
+  const trimmed = href.trim();
+  if (!trimmed || isExternalHref(trimmed) || trimmed.startsWith('#')) {
+    return null;
+  }
+
+  const withoutHash = trimmed.split('#')[0] || '';
+  const withoutQuery = withoutHash.split('?')[0] || '';
+  if (!withoutQuery) return null;
+
+  if (withoutQuery.startsWith('/')) {
+    return normalizeRelativeDocPath(withoutQuery.replace(/^\/+/, ''));
+  }
+
+  const baseParts = currentPath.split('/').filter(Boolean);
+  baseParts.pop();
+  return normalizeRelativeDocPath([...baseParts, withoutQuery].join('/'));
+}
+
 function parseForumThread(path: string, content: string): ForumThread | null {
   if (!/\.json$/i.test(path)) return null;
   try {
@@ -56,6 +96,7 @@ function parseForumThread(path: string, content: string): ForumThread | null {
 }
 
 export default function SourceDocPage() {
+  const navigate = useNavigate();
   const query = useQuery();
   const rawPath = query.get('path') || '';
   const [loading, setLoading] = useState(true);
@@ -249,6 +290,29 @@ export default function SourceDocPage() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [zoomImageUrl, zoomGallery.length]);
 
+  const handleMarkdownLink = (href: string) => {
+    if (!href) return;
+
+    if (href.startsWith('#')) {
+      const targetId = decodeURIComponent(href.slice(1));
+      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    if (isExternalHref(href)) {
+      window.open(href, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    const nextPath = resolveDocumentHref(rawPath, href);
+    if (!nextPath) {
+      window.open(href, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    navigate(`/next/docs/view?path=${encodeURIComponent(nextPath)}`);
+  };
+
   return (
     <div className="mx-auto w-full max-w-6xl p-6">
       <div className="mb-4 flex items-center justify-between">
@@ -439,26 +503,14 @@ export default function SourceDocPage() {
                 </div>
               </div>
             ) : isMarkdown ? (
-              <article className="space-y-3 text-slate-100">
-                <ReactMarkdown
-                  components={{
-                    h1: ({ children }) => <h1 className="text-3xl font-bold text-slate-50">{children}</h1>,
-                    h2: ({ children }) => <h2 className="text-2xl font-semibold text-slate-100">{children}</h2>,
-                    h3: ({ children }) => <h3 className="text-xl font-semibold text-slate-200">{children}</h3>,
-                    p: ({ children }) => <p className="text-sm leading-7 text-slate-200">{children}</p>,
-                    code: ({ children }) => <code className="rounded bg-slate-900 px-1 py-0.5 text-cyan-300">{children}</code>,
-                    pre: ({ children }) => <pre className="overflow-auto rounded-md border border-slate-700 bg-slate-900 p-3">{children}</pre>,
-                    ul: ({ children }) => <ul className="list-disc space-y-1 pl-6 text-slate-200">{children}</ul>,
-                    ol: ({ children }) => <ol className="list-decimal space-y-1 pl-6 text-slate-200">{children}</ol>,
-                    a: ({ href, children }) => (
-                      <a href={href} target="_blank" rel="noreferrer" className="text-cyan-300 underline hover:text-cyan-200">
-                        {children}
-                      </a>
-                    ),
-                  }}
-                >
-                  {content}
-                </ReactMarkdown>
+              <article className="text-slate-100">
+                <Markdown
+                  content={content}
+                  theme="dark"
+                  variant="full"
+                  linkTarget="_self"
+                  onLinkClick={(href) => handleMarkdownLink(href)}
+                />
               </article>
             ) : (
               <pre className="whitespace-pre-wrap text-sm leading-6 text-slate-100">{content}</pre>

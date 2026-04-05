@@ -438,7 +438,7 @@ function CreateSourceModal({ onClose, onCreate }: { onClose: () => void; onCreat
   const [driverType, setDriverType] = useState('local');
   const [name, setName] = useState('');
   const [rootPath, setRootPath] = useState('/app/workspace/docs');
-  const [collections, setCollections] = useState('devel_docs');
+  const [collections, setCollections] = useState('devel');
   const [fileTypes, setFileTypes] = useState('.md,.txt,.clj,.cljs,.cljc,.edn,.json,.yml,.yaml,.ts,.tsx,.js,.html,.css');
   const [includePatterns, setIncludePatterns] = useState('');
   const [excludePatterns, setExcludePatterns] = useState('**/node_modules/**,**/.git/**,**/dist/**,**/coverage/**,**/*.png,**/*.jpg,**/*.jpeg,**/*.gif,**/*.pdf,**/*.zip,**/*.tar.gz');
@@ -494,9 +494,9 @@ function CreateSourceModal({ onClose, onCreate }: { onClose: () => void; onCreat
             <Input value={excludePatterns} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExcludePatterns(e.target.value)} placeholder="**/node_modules/**,**/*.png" />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Collections</label>
-            <Input value={collections} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCollections(e.target.value)} placeholder="devel_docs" />
-            <p style={{ fontSize: 12, color: 'var(--token-colors-text-muted)', marginTop: 4 }}>Comma-separated list of collections to index into</p>
+            <label style={{ display: 'block', fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Lakes</label>
+            <Input value={collections} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCollections(e.target.value)} placeholder="devel" />
+            <p style={{ fontSize: 12, color: 'var(--token-colors-text-muted)', marginTop: 4 }}>Comma-separated list of lake keys to ingest into</p>
           </div>
           <div style={{ display: 'flex', gap: 8, paddingTop: 16 }}>
             <Button variant="secondary" fullWidth onClick={onClose}>Cancel</Button>

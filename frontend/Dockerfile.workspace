@@ -5,11 +5,20 @@ ENV PATH=/pnpm:${PATH}
 
 RUN corepack enable && corepack prepare pnpm@10.14.0 --activate
 
+WORKDIR /app
+
+RUN printf '{"name":"knoxx-frontend-workspace-build","private":true}\n' > /app/package.json \
+ && printf 'packages:\n  - orgs/open-hax/knoxx/frontend\n  - orgs/open-hax/uxx\n  - packages/webgl-graph-view\n' > /app/pnpm-workspace.yaml
+
 WORKDIR /app/orgs/open-hax/knoxx/frontend
 
 COPY orgs/open-hax/knoxx/frontend/package.json orgs/open-hax/knoxx/frontend/pnpm-lock.yaml ./
+COPY orgs/open-hax/uxx/package.json /app/orgs/open-hax/uxx/package.json
+COPY orgs/open-hax/uxx/dist /app/orgs/open-hax/uxx/dist
+COPY packages/webgl-graph-view/package.json /app/packages/webgl-graph-view/package.json
+COPY packages/webgl-graph-view/dist /app/packages/webgl-graph-view/dist
 
-RUN pnpm install --ignore-workspace --no-frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 COPY orgs/open-hax/knoxx/frontend/src ./src
 COPY orgs/open-hax/knoxx/frontend/public ./public

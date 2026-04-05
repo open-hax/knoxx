@@ -1,66 +1,88 @@
-import { useState, useEffect } from "react";
-import * as api from "../lib/nextApi";
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ExternalLink, Orbit, RefreshCw } from 'lucide-react';
+
+function resolveGraphWeaverUrl(): string {
+  if (typeof window === 'undefined') {
+    return 'http://127.0.0.1:8796/';
+  }
+
+  const protocol = window.location.protocol || 'http:';
+  const hostname = window.location.hostname || '127.0.0.1';
+  return `${protocol}//${hostname}:8796/`;
+}
 
 export default function VectorsPage() {
-  const [health, setHealth] = useState<any>(null);
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<any[]>([]);
-
-  const fetchHealth = async () => {
-    try {
-      const res = await api.knoxxHealth();
-      setHealth(res);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  useEffect(() => {
-    fetchHealth();
-  }, []);
-
-  const handleSearch = () => {
-    setResults([{ id: 1, score: 0.98, text: "Mock search result 1" }]);
-  };
+  const graphWeaverUrl = useMemo(() => resolveGraphWeaverUrl(), []);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   return (
-    <div className="p-4 max-w-4xl mx-auto space-y-4 text-slate-100">
-      <h1 className="text-2xl font-bold">Vector Store / RAG Internals</h1>
-      
-      <div className="grid grid-cols-2 gap-4">
-        <div className="border border-slate-700 p-4 rounded bg-slate-900">
-          <h2 className="font-bold mb-2">Collection Health</h2>
-          <pre className="text-sm text-slate-300">{JSON.stringify(health, null, 2)}</pre>
+    <div className="mx-auto w-full max-w-7xl p-6 md:p-8 text-slate-100">
+      <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="flex items-center gap-3 text-3xl font-bold text-slate-100">
+            <Orbit className="h-8 w-8 text-cyan-300" />
+            Semantic Graph Weaver
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm text-slate-400">
+            This page now embeds the live Graph Weaver surface rather than an approximate Knoxx-side reimplementation. That means you get the actual
+            semantic-gravity layout written by <code className="rounded bg-slate-800 px-1.5 py-0.5">eros-eris-field-app</code> into Graph Weaver node positions.
+          </p>
         </div>
-        
-        <div className="border border-slate-700 p-4 rounded bg-slate-900">
-          <h2 className="font-bold mb-2">Hybrid Migration Helper</h2>
-          <p className="text-sm mb-4 text-slate-300">Migrate your dense index to hybrid search with sparse embeddings.</p>
-          <button className="bg-orange-500 text-white px-4 py-2 rounded">Trigger Migration</button>
-        </div>
-      </div>
 
-      <div className="border border-slate-700 bg-slate-900 p-4 rounded mt-8">
-        <h2 className="font-bold mb-4">Search Debug Tool</h2>
-        <div className="flex space-x-2 mb-4">
-          <input 
-            type="text" 
-            value={query} 
-            onChange={(e) => setQuery(e.target.value)}
-            className="field-input flex-1"
-            placeholder="Search query..."
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setRefreshKey((value) => value + 1)}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Reload embed
+          </button>
+          <a
+            href={graphWeaverUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800"
+          >
+            <ExternalLink className="h-4 w-4" />
+            Open Graph Weaver directly
+          </a>
+          <Link
+            to="/next/graph-export-debug"
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800"
+          >
+            Raw export debug
+          </Link>
+        </div>
+      </header>
+
+      <section className="mb-6 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm text-cyan-100 shadow-xl">
+        <div className="font-semibold text-cyan-200">Why this differs from the previous Knoxx graph page</div>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-cyan-100/90">
+          <li>The previous page rendered a fresh client-side layout over raw graph export data.</li>
+          <li>Graph Weaver uses the live graph workbench state, including persisted node positions.</li>
+          <li>
+            Those positions are continuously shaped by the semantic layout worker, which applies attraction/repulsion from embeddings and writes the resulting
+            coordinates back into Graph Weaver.
+          </li>
+        </ul>
+      </section>
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-2xl">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-2 pt-2 text-xs text-slate-400">
+          <span>Embedded source: {graphWeaverUrl}</span>
+          <span>If the iframe fails, use the direct-open button above.</span>
+        </div>
+        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+          <iframe
+            key={refreshKey}
+            title="Graph Weaver"
+            src={graphWeaverUrl}
+            className="h-[76vh] min-h-[720px] w-full bg-slate-950"
           />
-          <button onClick={handleSearch} className="bg-blue-500 text-white px-4 py-2 rounded">Search</button>
         </div>
-        
-        <div className="space-y-2">
-          {results.map((r, i) => (
-            <div key={i} className="p-2 bg-slate-800 rounded text-sm text-slate-200 border border-slate-700">
-              <strong>{r.score.toFixed(3)}:</strong> {r.text}
-            </div>
-          ))}
-        </div>
-      </div>
+      </section>
     </div>
   );
 }

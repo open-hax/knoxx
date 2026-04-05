@@ -15,7 +15,7 @@ function wsUrl(base: string, sessionId?: string): string {
 }
 
 export interface StreamHandlers {
-  onToken?: (token: string, runId?: string) => void;
+  onToken?: (token: string, meta?: { runId?: string; kind?: string }) => void;
   onStats?: (stats: Record<string, unknown>) => void;
   onConsole?: (line: string) => void;
   onEvent?: (event: Record<string, unknown>) => void;
@@ -36,7 +36,10 @@ export function connectStream(handlers: StreamHandlers, sessionId?: string): () 
       const payload = message.payload ?? {};
 
       if (message.channel === "tokens") {
-        handlers.onToken?.(String(payload.token ?? ""), payload.run_id as string | undefined);
+        handlers.onToken?.(String(payload.token ?? ""), {
+          runId: payload.run_id as string | undefined,
+          kind: typeof payload.kind === "string" ? payload.kind : undefined,
+        });
       } else if (message.channel === "stats") {
         handlers.onStats?.(payload);
       } else if (message.channel === "console") {

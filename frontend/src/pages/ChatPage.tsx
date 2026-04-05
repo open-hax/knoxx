@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Badge, Button, Card, Input, Markdown, Spinner } from "@open-hax/uxx";
 import ChatComposer from "../components/ChatComposer";
 import ConsolePanel from "../components/ConsolePanel";
@@ -14,9 +14,11 @@ import {
   proxxHealth,
   sendEmailDraft,
   toolWrite,
+  getSessionStatus,
 } from "../lib/api";
 import type {
   ChatMessage,
+  ChatTraceBlock,
   FrontendConfig,
   GroundedContextRow,
   MemorySessionRow,
@@ -28,11 +30,13 @@ import type {
   ToolCatalogResponse,
 } from "../lib/types";
 import { connectStream } from "../lib/ws";
+import { AgentTraceTimeline, ToolReceiptGroup } from "../components/ToolReceiptBlock";
 
 const SESSION_ID_KEY = "knoxx_session_id";
 const SCRATCHPAD_STATE_KEY = "knoxx_scratchpad_state";
 const PINNED_CONTEXT_KEY = "knoxx_pinned_context";
 const CHAT_SESSION_STATE_KEY = "knoxx_chat_session_state";
+const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_chat_sidebar_width_px";
 
 const DEFAULT_ROLE = "executive";
 const DEFAULT_SYNC_INTERVAL_MINUTES = 30;
@@ -147,6 +151,28 @@ function makeId(): string {
     return maybeCrypto.randomUUID();
   }
   return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getChatStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.sessionStorage;
+  } catch {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function getLegacyLocalStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function contextPath(row: GroundedContextRow): string {
@@ -315,6 +341,143 @@ function controlTimelineMessageFromEvent(
   };
 }
 
+function traceToolBlockId(event: RunEvent & { tool_call_id?: string; tool_name?: string }): string {
+  const toolCallId = typeof event.tool_call_id === "string" && event.tool_call_id.trim().length > 0
+    ? event.tool_call_id
+    : null;
+  if (toolCallId) return `tool:${toolCallId}`;
+  const toolName = typeof event.tool_name === "string" && event.tool_name.trim().length > 0
+    ? event.tool_name
+    : "tool";
+  return `tool:${toolName}:${event.at ?? ""}`;
+}
+
+function appendTraceTextDelta(
+  blocks: ChatTraceBlock[],
+  kind: "agent_message" | "reasoning",
+  delta: string,
+  at?: string,
+): ChatTraceBlock[] {
+  if (delta.length === 0) return blocks;
+
+  const next = [...blocks];
+  const last = next[next.length - 1];
+
+  if (last && last.kind === kind && last.status === "streaming") {
+    next[next.length - 1] = {
+      ...last,
+      content: `${last.content ?? ""}${delta}`,
+      at: at ?? last.at,
+    };
+    return next;
+  }
+
+  next.push({
+    id: makeId(),
+    kind,
+    status: "streaming",
+    content: delta,
+    at,
+  });
+  return next;
+}
+
+function applyToolTraceEvent(
+  blocks: ChatTraceBlock[],
+  event: RunEvent & { type?: string; tool_name?: string; tool_call_id?: string; preview?: string; is_error?: boolean },
+): ChatTraceBlock[] {
+  const type = String(event.type ?? "");
+  const blockId = traceToolBlockId(event);
+  const next = [...blocks];
+  const index = next.findIndex((block) => block.id === blockId);
+  const existing = index >= 0 ? next[index] : null;
+
+  if (type === "tool_start") {
+    const block: ChatTraceBlock = {
+      id: blockId,
+      kind: "tool_call",
+      toolName: event.tool_name,
+      toolCallId: event.tool_call_id,
+      inputPreview: typeof event.preview === "string" ? event.preview : undefined,
+      status: "streaming",
+      at: typeof event.at === "string" ? event.at : undefined,
+      updates: [],
+    };
+    if (index >= 0) {
+      next[index] = { ...existing, ...block } as ChatTraceBlock;
+    } else {
+      next.push(block);
+    }
+    return next;
+  }
+
+  if (type === "tool_update") {
+    const preview = typeof event.preview === "string" ? event.preview : undefined;
+    if (index >= 0) {
+      next[index] = {
+        ...(existing as ChatTraceBlock),
+        status: "streaming",
+        at: typeof event.at === "string" ? event.at : existing?.at,
+        updates: preview
+          ? [...((existing?.updates ?? []).slice(-7)), preview]
+          : existing?.updates,
+      };
+    } else {
+      next.push({
+        id: blockId,
+        kind: "tool_call",
+        toolName: event.tool_name,
+        toolCallId: event.tool_call_id,
+        status: "streaming",
+        at: typeof event.at === "string" ? event.at : undefined,
+        updates: preview ? [preview] : [],
+      });
+    }
+    return next;
+  }
+
+  if (type === "tool_end") {
+    const block: ChatTraceBlock = {
+      id: blockId,
+      kind: "tool_call",
+      toolName: event.tool_name,
+      toolCallId: event.tool_call_id,
+      status: event.is_error ? "error" : "done",
+      outputPreview: typeof event.preview === "string" ? event.preview : undefined,
+      isError: Boolean(event.is_error),
+      at: typeof event.at === "string" ? event.at : undefined,
+    };
+    if (index >= 0) {
+      next[index] = {
+        ...(existing as ChatTraceBlock),
+        ...block,
+        updates: existing?.updates,
+        inputPreview: existing?.inputPreview,
+      };
+    } else {
+      next.push({ ...block, updates: [] });
+    }
+    return next;
+  }
+
+  return blocks;
+}
+
+function finalizeTraceBlocks(
+  blocks: ChatTraceBlock[],
+  status: "done" | "error",
+): ChatTraceBlock[] {
+  return blocks.map((block) =>
+    block.status === "streaming"
+      ? {
+          ...block,
+          status,
+          isError: status === "error" ? block.isError ?? block.kind === "tool_call" : block.isError,
+        }
+      : block,
+  );
+}
+
 function latestRunHydrationSources(run: RunDetail | null): Array<{ title: string; path: string; section?: string }> {
   const passiveHydration = run?.resources?.passiveHydration as { results?: Array<Record<string, unknown>> } | undefined;
   if (!passiveHydration || !Array.isArray(passiveHydration.results)) return [];
@@ -380,9 +543,12 @@ function ChatPage() {
   const [recentSessions, setRecentSessions] = useState<MemorySessionSummary[]>([]);
   const [loadingRecentSessions, setLoadingRecentSessions] = useState(false);
   const [loadingMemorySessionId, setLoadingMemorySessionId] = useState<string | null>(null);
+  const [sidebarPaneSplitPct, setSidebarPaneSplitPct] = useState(50);
+  const [sidebarWidthPx, setSidebarWidthPx] = useState(320);
   const sendTimeoutRef = useRef<number | null>(null);
   const pendingAssistantIdRef = useRef<string | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
+  const sidebarSplitContainerRef = useRef<HTMLDivElement | null>(null);
 
   const currentPath = browseData?.current_path ?? "";
   const currentParentPath = useMemo(() => parentPath(currentPath), [currentPath]);
@@ -402,12 +568,27 @@ function ChatPage() {
     ? Math.min(100, Math.round(((workspaceJob.processed_files + workspaceJob.failed_files) / workspaceJob.total_files) * 100))
     : 0;
   const latestToolReceipts = useMemo(() => (latestRun?.tool_receipts ?? []) as ToolReceipt[], [latestRun]);
-  const hydrationSources = useMemo(() => latestRunHydrationSources(latestRun), [latestRun]);
+
+  // Get live tool receipts for the current streaming message
+  const liveToolReceipts = useMemo(() => {
+    if (!isSending || !pendingAssistantIdRef.current) return [];
+    return latestToolReceipts;
+  }, [isSending, latestToolReceipts]);
+
+  // Get runtime events for live tool updates
+  const liveToolEvents = useMemo(() => {
+    if (!isSending) return [];
+    return runtimeEvents.filter((event) =>
+      ["tool_start", "tool_update", "tool_end"].includes(String(event.type ?? ""))
+    );
+  }, [isSending, runtimeEvents]);
+
   const liveControlEnabled = Boolean(
     isSending
       && conversationId
       && runtimeEvents.some((event) => ["run_started", "passive_hydration", "assistant_first_token", "tool_start"].includes(String(event.type ?? ""))),
   );
+  const hydrationSources = useMemo(() => latestRunHydrationSources(latestRun), [latestRun]);
   const assistantSurfaceBackground = "var(--token-colors-background-surface)";
   const assistantSurfaceBorder = "var(--token-colors-border-default)";
   const assistantSurfaceText = "var(--token-colors-text-default)";
@@ -431,10 +612,18 @@ function ChatPage() {
 
   useEffect(() => {
     try {
-      let sid = localStorage.getItem(SESSION_ID_KEY) || "";
+      const store = getChatStorage();
+      const legacy = getLegacyLocalStorage();
+      let sid = store?.getItem(SESSION_ID_KEY) || "";
+      if (!sid && legacy && legacy !== store) {
+        sid = legacy.getItem(SESSION_ID_KEY) || "";
+      }
       if (!sid) {
         sid = makeId();
-        localStorage.setItem(SESSION_ID_KEY, sid);
+      }
+      store?.setItem(SESSION_ID_KEY, sid);
+      if (legacy && legacy !== store) {
+        legacy.removeItem(SESSION_ID_KEY);
       }
       setSessionId(sid);
     } catch {
@@ -443,10 +632,55 @@ function ChatPage() {
   }, []);
 
   useEffect(() => {
+    if (!sessionId) return;
     try {
-      const raw = localStorage.getItem(CHAT_SESSION_STATE_KEY);
+      const store = getChatStorage();
+      const legacy = getLegacyLocalStorage();
+      store?.setItem(SESSION_ID_KEY, sessionId);
+      if (legacy && legacy !== store) {
+        legacy.removeItem(SESSION_ID_KEY);
+      }
+    } catch {
+      // ignore storage failures
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    try {
+      const raw = getChatStorage()?.getItem(CHAT_SIDEBAR_WIDTH_KEY);
+      if (!raw) return;
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed)) {
+        setSidebarWidthPx(Math.min(640, Math.max(260, parsed)));
+      }
+    } catch {
+      // ignore storage failures
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      getChatStorage()?.setItem(CHAT_SIDEBAR_WIDTH_KEY, String(sidebarWidthPx));
+    } catch {
+      // ignore storage failures
+    }
+  }, [sidebarWidthPx]);
+
+  useEffect(() => {
+    try {
+      const store = getChatStorage();
+      const legacy = getLegacyLocalStorage();
+      let raw = store?.getItem(CHAT_SESSION_STATE_KEY) || "";
+      if (!raw && legacy && legacy !== store) {
+        raw = legacy.getItem(CHAT_SESSION_STATE_KEY) || "";
+        if (raw) {
+          store?.setItem(CHAT_SESSION_STATE_KEY, raw);
+          legacy.removeItem(CHAT_SESSION_STATE_KEY);
+        }
+      }
       if (!raw) return;
       const parsed = JSON.parse(raw) as {
+        sessionId?: string;
         systemPrompt?: string;
         selectedModel?: string;
         conversationId?: string | null;
@@ -487,9 +721,10 @@ function ChatPage() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(
+      getChatStorage()?.setItem(
         CHAT_SESSION_STATE_KEY,
         JSON.stringify({
+          sessionId,
           systemPrompt,
           selectedModel,
           conversationId,
@@ -502,7 +737,108 @@ function ChatPage() {
     } catch {
       // ignore storage failures
     }
-  }, [systemPrompt, selectedModel, conversationId, messages, latestRun, runtimeEvents, isSending]);
+  }, [sessionId, systemPrompt, selectedModel, conversationId, messages, latestRun, runtimeEvents, isSending]);
+
+  // Session recovery: check session status from Redis on page refresh
+  const [isRecovering, setIsRecovering] = useState(false);
+
+  useEffect(() => {
+    // Only run this effect once on mount, after sessionId is set
+    if (!sessionId) return;
+
+    const savedState = getChatStorage()?.getItem(CHAT_SESSION_STATE_KEY);
+    if (!savedState) return;
+
+    const parsed = JSON.parse(savedState) as {
+      conversationId?: string | null;
+      isSending?: boolean;
+      messages?: ChatMessage[];
+    };
+
+    // Only recover if we were actively sending
+    if (!parsed.isSending || !parsed.conversationId) return;
+
+    let cancelled = false;
+
+    const recoverSession = async () => {
+      setIsRecovering(true);
+      setConsoleLines((prev) => [...prev.slice(-400), `[session] checking session status...`]);
+
+      try {
+        const status = await getSessionStatus(sessionId, parsed.conversationId);
+
+        if (cancelled) return;
+
+        setConsoleLines((prev) => [...prev.slice(-400), `[session] status: ${status.status}, streaming: ${status.has_active_stream}, can_send: ${status.can_send}`]);
+
+        if (status.status === "running" && status.has_active_stream) {
+          // Session is actively streaming - reconnect
+          setConversationId(status.conversation_id ?? null);
+          setIsSending(true);
+          setConsoleLines((prev) => [...prev.slice(-400), `[session] reconnecting to active stream...`]);
+          // WebSocket will auto-reconnect and resume streaming
+        } else if (status.status === "running" && !status.has_active_stream) {
+          // Agent is waiting for input - enable steer controls
+          setConversationId(status.conversation_id ?? null);
+          setIsSending(true);
+          setConsoleLines((prev) => [...prev.slice(-400), `[session] agent waiting for input, enable controls`]);
+        } else if (status.status === "completed" || status.status === "failed") {
+          // Session completed while away
+          setIsSending(false);
+          pendingAssistantIdRef.current = null;
+          setConsoleLines((prev) => [...prev.slice(-400), `[session] session ${status.status}, ready for new message`]);
+        } else if (status.status === "not_found" || status.status === "unknown") {
+          // Session not in Redis - check if run ID exists
+          const lastRunId = parsed.messages
+            ?.filter((m) => m.runId)
+            .map((m) => m.runId)
+            .pop();
+
+          if (lastRunId) {
+            setConsoleLines((prev) => [...prev.slice(-400), `[session] session not in Redis, checking run ${lastRunId.slice(0, 8)}...`]);
+            const run = await getRun(lastRunId);
+
+            if (cancelled) return;
+
+            if (run.status === "running" || run.status === "queued") {
+              setLatestRun(run);
+              setConversationId(run.conversation_id ?? null);
+              setIsSending(true);
+              activeRunIdRef.current = lastRunId;
+              setConsoleLines((prev) => [...prev.slice(-400), `[session] run still active, polling...`]);
+            } else {
+              setIsSending(false);
+              pendingAssistantIdRef.current = null;
+              setConsoleLines((prev) => [...prev.slice(-400), `[session] run ${run.status}, ready for new message`]);
+            }
+          } else {
+            // No run ID - reset state
+            setIsSending(false);
+            setConsoleLines((prev) => [...prev.slice(-400), `[session] no active run, starting fresh`]);
+          }
+        }
+      } catch (error) {
+        if (cancelled) return;
+
+        setConsoleLines((prev) => [...prev.slice(-400), `[session] recovery failed: ${(error as Error).message}`]);
+        // On error, reset to safe state
+        setIsSending(false);
+        pendingAssistantIdRef.current = null;
+      } finally {
+        if (!cancelled) {
+          setIsRecovering(false);
+        }
+      }
+    };
+
+    // Small delay to let WebSocket connect first
+    const timeout = window.setTimeout(recoverSession, 500);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [sessionId]); // Only depends on sessionId
 
   useEffect(() => {
     try {
@@ -597,23 +933,32 @@ function ChatPage() {
           setWsStatus(status);
           if (status !== "connected") setIsSending(false);
         },
-        onToken: (token, runId) => {
+        onToken: (token, meta) => {
           const pendingId = pendingAssistantIdRef.current;
           if (!pendingId) return;
+          const runId = meta?.runId;
           if (runId) activeRunIdRef.current = runId;
+          const blockKind = meta?.kind === "reasoning" ? "reasoning" : "agent_message";
+          updateTraceBlocksByMessageId(pendingId, (blocks) =>
+            appendTraceTextDelta(blocks, blockKind, token),
+          );
           updateMessageById(pendingId, (message) => ({
             ...message,
             runId: runId ?? message.runId ?? null,
             status: "streaming",
-            content: `${message.content}${token}`,
+            content: blockKind === "agent_message" ? `${message.content}${token}` : message.content,
           }));
         },
         onEvent: (event) => {
-          const runtimeEvent = event as RunEvent & { run_id?: string; session_id?: string; type?: string; status?: string };
+          const runtimeEvent = event as RunEvent & { run_id?: string; session_id?: string; type?: string; status?: string; tool_name?: string; tool_call_id?: string; preview?: string; is_error?: boolean };
           setRuntimeEvents((prev) => [...prev.slice(-79), runtimeEvent]);
           const controlTimelineMessage = controlTimelineMessageFromEvent(runtimeEvent);
           if (controlTimelineMessage) {
             appendMessageIfMissing(controlTimelineMessage);
+          }
+          const pendingId = pendingAssistantIdRef.current;
+          if (pendingId && ["tool_start", "tool_update", "tool_end"].includes(String(runtimeEvent.type ?? ""))) {
+            updateTraceBlocksByMessageId(pendingId, (blocks) => applyToolTraceEvent(blocks, runtimeEvent));
           }
           if (typeof runtimeEvent.run_id === "string") {
             activeRunIdRef.current = runtimeEvent.run_id;
@@ -621,6 +966,12 @@ function ChatPage() {
               setLatestRun(null);
             }
             if (runtimeEvent.type === "run_completed" || runtimeEvent.type === "run_failed") {
+              if (pendingId) {
+                updateTraceBlocksByMessageId(
+                  pendingId,
+                  (blocks) => finalizeTraceBlocks(blocks, runtimeEvent.type === "run_failed" ? "error" : "done"),
+                );
+              }
               setIsSending(false);
               void loadRunDetail(runtimeEvent.run_id);
             }
@@ -675,6 +1026,13 @@ function ChatPage() {
     void loadDirectory("docs");
     void refreshWorkspaceStatus();
     void refreshRecentSessions();
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void refreshRecentSessions();
+    }, 15000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -812,7 +1170,7 @@ function ChatPage() {
               root_path: "/app/workspace/devel",
               sync_interval_minutes: DEFAULT_SYNC_INTERVAL_MINUTES,
             },
-            collections: ["devel-docs", "devel-code", "devel-config", "devel-data"],
+            collections: ["devel"],
             file_types: DEFAULT_FILE_TYPES,
             exclude_patterns: DEFAULT_EXCLUDE_PATTERNS,
           }),
@@ -847,6 +1205,16 @@ function ChatPage() {
 
   function updateMessageById(messageId: string, updater: (message: ChatMessage) => ChatMessage) {
     setMessages((prev) => prev.map((message) => (message.id === messageId ? updater(message) : message)));
+  }
+
+  function updateTraceBlocksByMessageId(
+    messageId: string,
+    updater: (blocks: ChatTraceBlock[]) => ChatTraceBlock[],
+  ) {
+    updateMessageById(messageId, (message) => ({
+      ...message,
+      traceBlocks: updater([...(message.traceBlocks ?? [])]),
+    }));
   }
 
   function appendMessageIfMissing(message: ChatMessage) {
@@ -886,7 +1254,7 @@ function ChatPage() {
   async function refreshRecentSessions() {
     setLoadingRecentSessions(true);
     try {
-      const sessions = await listMemorySessions(8);
+      const sessions = await listMemorySessions(50);
       setRecentSessions(sessions);
     } catch (error) {
       setConsoleLines((prev) => [...prev.slice(-400), `[memory] failed to load recent sessions: ${(error as Error).message}`]);
@@ -999,6 +1367,7 @@ function ChatPage() {
       content: "",
       model: selectedModel,
       sources: [],
+      traceBlocks: [],
       status: "streaming",
     };
     const requestText = systemPrompt.trim()
@@ -1049,6 +1418,15 @@ function ChatPage() {
   }
 
   function handleNewChat() {
+    const nextSessionId = makeId();
+    try {
+      const store = getChatStorage();
+      store?.setItem(SESSION_ID_KEY, nextSessionId);
+      store?.removeItem(CHAT_SESSION_STATE_KEY);
+    } catch {
+      // ignore storage failures
+    }
+    setSessionId(nextSessionId);
     setMessages([]);
     setConversationId(null);
     setLatestRun(null);
@@ -1257,6 +1635,58 @@ function ChatPage() {
     }
   }
 
+  function startSidebarPaneResize(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const container = sidebarSplitContainerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - rect.top;
+      const nextPct = Math.min(75, Math.max(25, (deltaY / rect.height) * 100));
+      setSidebarPaneSplitPct(nextPct);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  function startSidebarWidthResize(event: ReactMouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    const startX = event.clientX;
+    const startWidth = sidebarWidthPx;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const maxWidth = Math.min(640, Math.floor(window.innerWidth * 0.55));
+      const nextWidth = Math.min(maxWidth, Math.max(260, startWidth + deltaX));
+      setSidebarWidthPx(nextWidth);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   return (
     <div
       style={{
@@ -1269,10 +1699,11 @@ function ChatPage() {
       }}
     >
       {showFiles ? (
+        <>
         <Card
           variant="default"
           padding="none"
-          style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid var(--token-colors-border-default)", minHeight: 0 }}
+          style={{ width: sidebarWidthPx, minWidth: 0, flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid var(--token-colors-border-default)", minHeight: 0, overflow: "hidden" }}
         >
           <div style={{ padding: 10, borderBottom: "1px solid var(--token-colors-border-default)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div style={{ minWidth: 0 }}>
@@ -1289,7 +1720,8 @@ function ChatPage() {
             </div>
           </div>
 
-          <div style={{ padding: 10, borderBottom: "1px solid var(--token-colors-border-default)", display: "grid", gap: 8 }}>
+          <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ padding: 10, borderBottom: "1px solid var(--token-colors-border-default)", display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0 }}>
             <div style={{ display: "grid", gap: 6 }}>
               <Input value={entryFilter} onChange={(event: ChangeEvent<HTMLInputElement>) => setEntryFilter(event.target.value)} placeholder="Filter current list..." size="sm" />
               <div style={{ display: "flex", gap: 6 }}>
@@ -1345,220 +1777,270 @@ function ChatPage() {
             <Button variant="secondary" size="sm" loading={syncingWorkspace} onClick={ensureWorkspaceSync}>
               Sync Devel Workspace
             </Button>
-            <Card variant="outlined" padding="sm">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
-                <div style={{ fontSize: 11, fontWeight: 600 }}>Recent Sessions</div>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <Badge size="sm" variant="default">{recentSessions.length}</Badge>
-                  <Button variant="ghost" size="sm" loading={loadingRecentSessions} onClick={() => void refreshRecentSessions()}>
-                    Refresh
-                  </Button>
-                </div>
-              </div>
-              {recentSessions.length === 0 ? (
-                <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", lineHeight: 1.5 }}>
-                  No OpenPlanner-backed Knoxx sessions yet.
-                </div>
-              ) : (
-                <div style={{ display: "grid", gap: 6 }}>
-                  {recentSessions.slice(0, 6).map((item) => {
-                    const isActive = conversationId === item.session;
-                    return (
-                      <div key={item.session} style={{ border: "1px solid var(--token-colors-border-default)", borderRadius: 8, padding: 8, background: isActive ? "var(--token-colors-alpha-blue-_15)" : "var(--token-colors-alpha-bg-_08)" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.session}</div>
-                            <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {formatMaybeDate(item.last_ts) ?? item.last_ts ?? "unknown time"}
-                            </div>
-                          </div>
-                          <Badge size="sm" variant={isActive ? "info" : "default"}>{item.event_count ?? 0} ev</Badge>
-                        </div>
-                        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                          <Button variant="ghost" size="sm" loading={loadingMemorySessionId === item.session} onClick={() => void resumeMemorySession(item.session)}>
-                            {isActive ? "Reload" : "Resume"}
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Card>
-            <Card variant="outlined" padding="sm">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
-                <div style={{ fontSize: 11, fontWeight: 600 }}>Pinned Context</div>
-                <Badge size="sm" variant="default">{pinnedContext.length}</Badge>
-              </div>
-              {pinnedContext.length === 0 ? (
-                <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", lineHeight: 1.5 }}>
-                  Pin a previewed file, semantic hit, or injected context snippet to keep it in your working set.
-                </div>
-              ) : (
-                <div style={{ display: "grid", gap: 6 }}>
-                  {pinnedContext.slice(0, 8).map((item) => (
-                    <div key={`${item.kind}:${item.path}`} style={{ border: "1px solid var(--token-colors-border-default)", borderRadius: 8, padding: 8, background: "var(--token-colors-alpha-bg-_08)" }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
-                          <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.path}</div>
-                        </div>
-                        <Badge size="sm" variant="info">{item.kind}</Badge>
-                      </div>
-                      {item.snippet ? (
-                        <div style={{ marginTop: 6, fontSize: 10, color: "var(--token-colors-text-subtle)", lineHeight: 1.5 }}>{item.snippet.slice(0, 180)}</div>
-                      ) : null}
-                      <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                        <Button variant="ghost" size="sm" onClick={() => void openPinnedInCanvas(item)}>Open</Button>
-                        <Button variant="ghost" size="sm" onClick={() => insertPinnedIntoCanvas(item)}>Insert</Button>
-                        <Button variant="ghost" size="sm" onClick={() => unpinContextItem(item.path)}>Unpin</Button>
+
+            <div ref={sidebarSplitContainerRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8, overflow: "hidden" }}>
+              <div
+                style={{
+                  flex: `0 0 ${sidebarPaneSplitPct}%`,
+                  minHeight: 0,
+                  display: "grid",
+                  gap: 8,
+                  gridTemplateRows: pinnedContext.length > 0 ? "minmax(0, 1fr) minmax(0, 1fr)" : "minmax(0, 1fr)",
+                }}
+              >
+                <Card variant="outlined" padding="sm" style={{ minHeight: 0, display: "flex", flexDirection: "column" }}>
+                  <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, flexShrink: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>Recent Sessions</div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <Badge size="sm" variant="default">{recentSessions.length}</Badge>
+                        <Button variant="ghost" size="sm" loading={loadingRecentSessions} onClick={() => void refreshRecentSessions()}>
+                          Refresh
+                        </Button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-          </div>
+                    {recentSessions.length === 0 ? (
+                      <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", lineHeight: 1.5 }}>
+                        No OpenPlanner-backed Knoxx sessions yet.
+                      </div>
+                    ) : (
+                      <div style={{ display: "grid", gap: 8, flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", paddingRight: 4 }}>
+                        {recentSessions.map((item) => {
+                          const isSelected = conversationId === item.session;
+                          const isLive = Boolean(item.is_active);
+                          const statusLabel = item.has_active_stream
+                            ? "Live"
+                            : item.active_status === "waiting_input"
+                              ? "Waiting"
+                              : item.active_status === "running"
+                                ? "Active"
+                                : "Idle";
+                          const statusVariant = item.has_active_stream
+                            ? "warning"
+                            : isLive
+                              ? "info"
+                              : "default";
+                          return (
+                            <div key={item.session} style={{ minWidth: 0, maxWidth: "100%", overflow: "hidden", border: `1px solid ${isSelected ? "var(--token-colors-accent-cyan)" : isLive ? "var(--token-colors-accent-green)" : "var(--token-colors-border-default)"}`, borderRadius: 8, padding: 10, background: isSelected ? "var(--token-colors-alpha-blue-_15)" : isLive ? "var(--token-colors-alpha-green-_14)" : "var(--token-colors-alpha-bg-_08)" }}>
+                              <div style={{ display: "grid", gap: 8, minWidth: 0 }}>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {item.title || item.session}
+                                  </div>
+                                  <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {item.title ? `${item.session} • ` : ""}{formatMaybeDate(item.last_ts) ?? item.last_ts ?? "unknown time"}
+                                  </div>
+                                </div>
+                                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                  {isSelected ? <Badge size="sm" variant="info">Open</Badge> : null}
+                                  <Badge size="sm" variant={statusVariant}>{statusLabel}</Badge>
+                                  <Badge size="sm" variant={isSelected ? "info" : "default"}>{item.event_count ?? 0} ev</Badge>
+                                  <Button variant="ghost" size="sm" loading={loadingMemorySessionId === item.session} onClick={() => void resumeMemorySession(item.session)}>
+                                    {isSelected ? "Reload" : "Resume"}
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </Card>
 
-          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", borderBottom: "1px solid var(--token-colors-border-default)" }}>
-            {loadingBrowse && !browseData ? (
-              <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
-                <Spinner size="md" />
-              </div>
-            ) : (
-              <div>
-                <div style={{ padding: "6px 8px", fontSize: 10, color: "var(--token-colors-text-muted)", borderBottom: "1px solid var(--token-colors-alpha-bg-_08)" }}>
-                  {semanticMode ? "Semantic hits" : "Explorer"} •
-                  {semanticMode ? `${activeEntryCount} semantic match(es)` : `${activeEntryCount} visible entr${activeEntryCount === 1 ? "y" : "ies"}`}
-                  {semanticMode && semanticProjects.length ? ` across ${semanticProjects.join(", ")}` : ""}
-                </div>
-                {semanticMode
-                  ? semanticResults.map((entry) => (
-                      <button
-                        key={`semantic:${entry.id}`}
-                        type="button"
-                        onClick={() => {
-                          void previewFile(entry.path);
-                        }}
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "8px 8px",
-                          border: "none",
-                          borderBottom: "1px solid var(--token-colors-alpha-bg-_08)",
-                          background: previewData?.path === entry.path ? "var(--token-colors-alpha-blue-_15)" : "transparent",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                          <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--token-colors-accent-cyan)", flexShrink: 0 }} />
-                          <span style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.path}</span>
-                        </div>
-                        <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                          {entry.project ? <Badge size="sm" variant="default">{entry.project}</Badge> : null}
-                          {entry.kind ? <Badge size="sm" variant="default">{entry.kind}</Badge> : null}
-                          {entry.distance != null ? <Badge size="sm" variant="info">{entry.distance.toFixed(3)}</Badge> : null}
-                        </div>
-                        {entry.snippet ? (
-                          <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", marginTop: 6, lineHeight: 1.5 }}>{entry.snippet}</div>
-                        ) : null}
-                        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                          <Button variant="ghost" size="sm" onClick={() => pinSemanticResult(entry)}>Pin</Button>
-                          <Button variant="ghost" size="sm" onClick={() => appendToScratchpad(entry.snippet || entry.path, entry.path)}>Insert</Button>
-                        </div>
-                      </button>
-                    ))
-                  : filteredEntries.map((entry) => (
-                      <button
-                        key={`${entry.type}:${entry.path}`}
-                        type="button"
-                        onClick={() => {
-                          if (entry.type === "dir") {
-                            void loadDirectory(entry.path);
-                          } else if (entry.previewable) {
-                            void previewFile(entry.path);
-                          }
-                        }}
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "5px 8px",
-                          border: "none",
-                          borderBottom: "1px solid var(--token-colors-alpha-bg-_08)",
-                          background: previewData?.path === entry.path ? "var(--token-colors-alpha-blue-_15)" : "transparent",
-                          cursor: "pointer",
-                        }}
-                        title={entry.last_error ?? entry.path}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                            <span style={{ fontSize: 11, color: "var(--token-colors-text-subtle)", flexShrink: 0 }}>{entry.type === "dir" ? "▸" : "·"}</span>
-                            <span
-                              style={{
-                                width: 6,
-                                height: 6,
-                                borderRadius: 999,
-                                background:
-                                  entry.ingestion_status === "failed"
-                                    ? "var(--token-colors-accent-red)"
-                                    :
-                                  entry.ingestion_status === "ingested"
-                                    ? "var(--token-colors-accent-green)"
-                                    : entry.ingestion_status === "partial"
-                                      ? "var(--token-colors-accent-cyan)"
-                                      : "var(--token-colors-text-muted)",
-                                flexShrink: 0,
-                              }}
-                            />
-                            <span style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
-                          </div>
-                          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                            {entry.failed_count && entry.failed_count > 0 ? (
-                              <span style={{ fontSize: 10, color: "var(--token-colors-accent-red)" }}>{entry.failed_count} failed</span>
+                {pinnedContext.length > 0 ? (
+                  <Card variant="outlined" padding="sm" style={{ minHeight: 0, display: "flex", flexDirection: "column" }}>
+                    <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, flexShrink: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600 }}>Pinned Context</div>
+                        <Badge size="sm" variant="default">{pinnedContext.length}</Badge>
+                      </div>
+                      <div style={{ display: "grid", gap: 6, flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 4 }}>
+                        {pinnedContext.slice(0, 12).map((item) => (
+                          <div key={`${item.kind}:${item.path}`} style={{ border: "1px solid var(--token-colors-border-default)", borderRadius: 8, padding: 8, background: "var(--token-colors-alpha-bg-_08)" }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                                <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.path}</div>
+                              </div>
+                              <Badge size="sm" variant="info">{item.kind}</Badge>
+                            </div>
+                            {item.snippet ? (
+                              <div style={{ marginTop: 6, fontSize: 10, color: "var(--token-colors-text-subtle)", lineHeight: 1.5 }}>{item.snippet.slice(0, 180)}</div>
                             ) : null}
-                            {entry.ingested_count && entry.ingested_count > 0 ? (
-                              <span style={{ fontSize: 10, color: "var(--token-colors-text-muted)" }}>{entry.ingested_count}</span>
-                            ) : null}
+                            <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                              <Button variant="ghost" size="sm" onClick={() => void openPinnedInCanvas(item)}>Open</Button>
+                              <Button variant="ghost" size="sm" onClick={() => insertPinnedIntoCanvas(item)}>Insert</Button>
+                              <Button variant="ghost" size="sm" onClick={() => unpinContextItem(item.path)}>Unpin</Button>
+                            </div>
                           </div>
-                        </div>
-                        <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", marginLeft: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {entry.path}
-                          {entry.last_ingested_at ? ` • ${entry.last_ingested_at}` : ""}
-                        </div>
-                        {entry.last_error ? (
-                          <div style={{ fontSize: 10, color: "var(--token-colors-accent-red)", marginLeft: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {entry.last_error}
-                          </div>
-                        ) : null}
-                      </button>
-                    ))}
+                        ))}
+                      </div>
+                    </div>
+                  </Card>
+                ) : null}
               </div>
-            )}
-          </div>
 
-          <div style={{ minHeight: 200, maxHeight: 280, overflowY: "auto", padding: 10, background: "var(--token-colors-alpha-bg-_08)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 600 }}>Preview</div>
-              {previewData ? (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <Button variant="ghost" size="sm" onClick={pinPreviewContext}>Pin</Button>
-                  <Button variant="ghost" size="sm" onClick={() => void openPreviewInCanvas()}>Open in Scratchpad</Button>
-                  <Button variant="ghost" size="sm" onClick={() => appendToScratchpad(previewData.content, previewData.path)}>Insert</Button>
-                </div>
-              ) : null}
+              <div role="separator" aria-orientation="horizontal" onMouseDown={startSidebarPaneResize} className="group flex h-4 cursor-row-resize items-center justify-center">
+                <div style={{ height: 6, width: 56, borderRadius: 999, border: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-alpha-bg-_16)" }} />
+              </div>
+
+              <div style={{ flex: `1 1 ${100 - sidebarPaneSplitPct}%`, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <Card variant="outlined" padding="none" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: "6px 8px", fontSize: 10, color: "var(--token-colors-text-muted)", borderBottom: "1px solid var(--token-colors-alpha-bg-_08)", flexShrink: 0 }}>
+                    {semanticMode ? "Semantic hits" : "Explorer"} •
+                    {semanticMode ? `${activeEntryCount} semantic match(es)` : `${activeEntryCount} visible entr${activeEntryCount === 1 ? "y" : "ies"}`}
+                    {semanticMode && semanticProjects.length ? ` across ${semanticProjects.join(", ")}` : ""}
+                  </div>
+
+                  <div style={{ flex: 1, minHeight: 0, overflowY: "auto", borderBottom: "1px solid var(--token-colors-border-default)" }}>
+                    {loadingBrowse && !browseData ? (
+                      <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
+                        <Spinner size="md" />
+                      </div>
+                    ) : (
+                      <div>
+                        {semanticMode
+                          ? semanticResults.map((entry) => (
+                              <button
+                                key={`semantic:${entry.id}`}
+                                type="button"
+                                onClick={() => {
+                                  void previewFile(entry.path);
+                                }}
+                                style={{
+                                  width: "100%",
+                                  textAlign: "left",
+                                  padding: "8px 8px",
+                                  border: "none",
+                                  borderBottom: "1px solid var(--token-colors-alpha-bg-_08)",
+                                  background: previewData?.path === entry.path ? "var(--token-colors-alpha-blue-_15)" : "transparent",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                  <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--token-colors-accent-cyan)", flexShrink: 0 }} />
+                                  <span style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.path}</span>
+                                </div>
+                                <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                                  {entry.project ? <Badge size="sm" variant="default">{entry.project}</Badge> : null}
+                                  {entry.kind ? <Badge size="sm" variant="default">{entry.kind}</Badge> : null}
+                                  {entry.distance != null ? <Badge size="sm" variant="info">{entry.distance.toFixed(3)}</Badge> : null}
+                                </div>
+                                {entry.snippet ? (
+                                  <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", marginTop: 6, lineHeight: 1.5 }}>{entry.snippet}</div>
+                                ) : null}
+                                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                                  <Button variant="ghost" size="sm" onClick={() => pinSemanticResult(entry)}>Pin</Button>
+                                  <Button variant="ghost" size="sm" onClick={() => appendToScratchpad(entry.snippet || entry.path, entry.path)}>Insert</Button>
+                                </div>
+                              </button>
+                            ))
+                          : filteredEntries.map((entry) => (
+                              <button
+                                key={`${entry.type}:${entry.path}`}
+                                type="button"
+                                onClick={() => {
+                                  if (entry.type === "dir") {
+                                    void loadDirectory(entry.path);
+                                  } else if (entry.previewable) {
+                                    void previewFile(entry.path);
+                                  }
+                                }}
+                                style={{
+                                  width: "100%",
+                                  textAlign: "left",
+                                  padding: "5px 8px",
+                                  border: "none",
+                                  borderBottom: "1px solid var(--token-colors-alpha-bg-_08)",
+                                  background: previewData?.path === entry.path ? "var(--token-colors-alpha-blue-_15)" : "transparent",
+                                  cursor: "pointer",
+                                }}
+                                title={entry.last_error ?? entry.path}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                    <span style={{ fontSize: 11, color: "var(--token-colors-text-subtle)", flexShrink: 0 }}>{entry.type === "dir" ? "▸" : "·"}</span>
+                                    <span
+                                      style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: 999,
+                                        background:
+                                          entry.ingestion_status === "failed"
+                                            ? "var(--token-colors-accent-red)"
+                                            : entry.ingestion_status === "ingested"
+                                              ? "var(--token-colors-accent-green)"
+                                              : entry.ingestion_status === "partial"
+                                                ? "var(--token-colors-accent-cyan)"
+                                                : "var(--token-colors-text-muted)",
+                                        flexShrink: 0,
+                                      }}
+                                    />
+                                    <span style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+                                  </div>
+                                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                                    {entry.failed_count && entry.failed_count > 0 ? (
+                                      <span style={{ fontSize: 10, color: "var(--token-colors-accent-red)" }}>{entry.failed_count} failed</span>
+                                    ) : null}
+                                    {entry.ingested_count && entry.ingested_count > 0 ? (
+                                      <span style={{ fontSize: 10, color: "var(--token-colors-text-muted)" }}>{entry.ingested_count}</span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                                <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", marginLeft: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {entry.path}
+                                  {entry.last_ingested_at ? ` • ${entry.last_ingested_at}` : ""}
+                                </div>
+                                {entry.last_error ? (
+                                  <div style={{ fontSize: 10, color: "var(--token-colors-accent-red)", marginLeft: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {entry.last_error}
+                                  </div>
+                                ) : null}
+                              </button>
+                            ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ minHeight: 160, maxHeight: 220, overflowY: "auto", padding: 10, background: "var(--token-colors-alpha-bg-_08)", flexShrink: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>Preview</div>
+                      {previewData ? (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <Button variant="ghost" size="sm" onClick={pinPreviewContext}>Pin</Button>
+                          <Button variant="ghost" size="sm" onClick={() => void openPreviewInCanvas()}>Open in Scratchpad</Button>
+                          <Button variant="ghost" size="sm" onClick={() => appendToScratchpad(previewData.content, previewData.path)}>Insert</Button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {loadingPreview ? (
+                      <Spinner size="sm" />
+                    ) : previewData ? (
+                      <>
+                        <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", marginBottom: 8 }}>{previewData.path}</div>
+                        <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 10, lineHeight: 1.5 }}>{previewData.content}</pre>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>Select a previewable file to inspect it.</div>
+                    )}
+                  </div>
+                </Card>
+              </div>
             </div>
-            {loadingPreview ? (
-              <Spinner size="sm" />
-            ) : previewData ? (
-              <>
-                <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", marginBottom: 8 }}>{previewData.path}</div>
-                <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 10, lineHeight: 1.5 }}>{previewData.content}</pre>
-              </>
-            ) : (
-              <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>Select a previewable file to inspect it.</div>
-            )}
+          </div>
           </div>
         </Card>
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize context bar"
+          onMouseDown={startSidebarWidthResize}
+          style={{ width: 8, cursor: "col-resize", flexShrink: 0, display: "flex", alignItems: "stretch", justifyContent: "center", background: "transparent" }}
+        >
+          <div style={{ width: 2, borderRadius: 999, background: "var(--token-colors-alpha-bg-_16)", margin: "8px 0" }} />
+        </div>
+        </>
       ) : null}
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: "var(--token-monokai-bg-default)" }}>
@@ -1661,6 +2143,7 @@ function ChatPage() {
               </div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <Badge size="sm" variant={wsStatus === "connected" ? "success" : wsStatus === "connecting" ? "warning" : "error"}>{wsStatus}</Badge>
+                {isRecovering && <Badge size="sm" variant="warning">recovering</Badge>}
                 <Badge size="sm" variant={latestRun?.status === "completed" ? "success" : latestRun?.status === "failed" ? "error" : isSending ? "warning" : "default"}>
                   {latestRun?.status ?? (isSending ? "running" : "idle")}
                 </Badge>
@@ -1839,7 +2322,28 @@ function ChatPage() {
                       <Button variant="ghost" size="sm" onClick={() => openMessageInCanvas(message)}>Open in Scratchpad</Button>
                     ) : null}
                   </div>
-                  {message.role === "assistant" || message.role === "system" ? (
+                  {message.role === "assistant" && (message.traceBlocks?.length ?? 0) > 0 ? (
+                    <AgentTraceTimeline blocks={message.traceBlocks ?? []} />
+                  ) : null}
+                  {message.role === "assistant" && (message.traceBlocks?.length ?? 0) === 0 && message.status === "streaming" && liveToolReceipts.length > 0 && (
+                    <ToolReceiptGroup
+                      receipts={liveToolReceipts}
+                      liveEvents={liveToolEvents}
+                      defaultExpanded={false}
+                    />
+                  )}
+                  {message.role === "assistant" && (message.traceBlocks?.length ?? 0) === 0 && message.status === "done" && message.runId && latestRun?.run_id === message.runId && latestToolReceipts.length > 0 && (
+                    <details style={{ marginTop: 8, marginBottom: 8 }} open={false}>
+                      <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)" }}>
+                        Tool calls ({latestToolReceipts.length})
+                      </summary>
+                      <ToolReceiptGroup
+                        receipts={latestToolReceipts}
+                        defaultExpanded={false}
+                      />
+                    </details>
+                  )}
+                  {message.role === "assistant" && (message.traceBlocks?.length ?? 0) > 0 ? null : message.role === "assistant" || message.role === "system" ? (
                     <Markdown content={message.content || ""} theme="dark" variant="full" />
                   ) : (
                     <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{message.content}</div>
@@ -1901,7 +2405,7 @@ function ChatPage() {
         </div>
 
         <div style={{ padding: 12, borderTop: "1px solid var(--token-colors-border-default)", flexShrink: 0 }}>
-          <ChatComposer onSend={handleSend} isSending={isSending || !selectedModel} />
+          <ChatComposer onSend={handleSend} isSending={isSending || isRecovering || !selectedModel} />
         </div>
 
         {showConsole ? (
@@ -1931,7 +2435,8 @@ function ChatPage() {
             </div>
           </div>
 
-          <div style={{ padding: 12, display: "grid", gap: 10, borderBottom: "1px solid var(--token-colors-border-default)" }}>
+          <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
+          <div style={{ padding: 12, display: "grid", gap: 10, borderBottom: "1px solid var(--token-colors-border-default)", flexShrink: 0 }}>
             <Input value={canvasTitle} onChange={(event: ChangeEvent<HTMLInputElement>) => setCanvasTitle(event.target.value)} placeholder="Scratchpad title" size="sm" />
             <Input value={canvasPath} onChange={(event: ChangeEvent<HTMLInputElement>) => setCanvasPath(event.target.value)} placeholder="Workspace path for saving the scratchpad" size="sm" />
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1954,7 +2459,7 @@ function ChatPage() {
             {canvasStatus ? <div style={{ fontSize: 11, color: "var(--token-colors-text-subtle)" }}>{canvasStatus}</div> : null}
           </div>
 
-          <div style={{ flex: 1, minHeight: 0, padding: 12 }}>
+          <div style={{ flex: 1, minHeight: 0, padding: 12, display: "flex" }}>
             <textarea
               value={canvasContent}
               onChange={(event) => setCanvasContent(event.target.value)}
@@ -1974,6 +2479,7 @@ function ChatPage() {
                 color: "var(--token-colors-text-default)",
               }}
             />
+          </div>
           </div>
         </Card>
       ) : null}

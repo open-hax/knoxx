@@ -293,9 +293,10 @@
                                     :else {})]
                  [(:file_id row)
                   {:content_hash (:content_hash row)
+                   :path (:path row)
                    :status (:status row)
                    :metadata metadata-map}])))
-        (query "SELECT file_id, content_hash, status, metadata FROM ingestion_file_state WHERE source_id = ?::uuid"
+        (query "SELECT file_id, path, content_hash, status, metadata FROM ingestion_file_state WHERE source_id = ?::uuid"
                source-id)))
 
 (defn reset-orphaned-jobs!
@@ -322,10 +323,10 @@
        metadata = EXCLUDED.metadata,
        last_ingested_at = NOW(),
        updated_at = NOW()
-    RETURNING *"
+   RETURNING *"
    file-id source-id tenant-id path content-hash (or status "ingested")
    chunks
-   (cheshire.core/generate-string (or collections ["devel-docs" "devel-code" "devel-config" "devel-data"]))
+   (cheshire.core/generate-string (or collections [tenant-id]))
    (when metadata (cheshire.core/generate-string metadata))))
 
 (defn list-file-states-under-path

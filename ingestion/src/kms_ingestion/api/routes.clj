@@ -57,13 +57,13 @@
       "devel"))
 
 (def role-presets
-  {"workspace" ["devel-docs" "devel-code" "devel-config" "devel-data"]
-   "knowledge" ["devel-docs"]
-   "development" ["devel-code" "devel-docs" "cephalon-hive"]
-   "devsecops" ["devel-config" "devel-code" "devel-docs" "devel-data" "devel-events" "sintel"]
-   "analyst" ["devel-data" "devel-events" "sintel" "devel-docs"]
-   "owner" ["devel-docs" "devel-code" "devel-config" "devel-data" "devel-events" "cephalon-hive" "sintel"]
-   "cto" ["devel-docs" "devel-code" "devel-config" "devel-data" "devel-events" "cephalon-hive" "sintel"]})
+  {"workspace" ["devel"]
+   "knowledge" ["devel"]
+   "development" ["devel" "cephalon-hive"]
+   "devsecops" ["devel" "web" "bluesky" "cephalon-hive"]
+   "analyst" ["devel" "web" "bluesky"]
+   "owner" ["devel" "web" "bluesky" "cephalon-hive"]
+   "cto" ["devel" "web" "bluesky" "cephalon-hive"]})
 
 (defn expand-projects
   [tenant-id role projects]
@@ -76,7 +76,7 @@
       (get role-presets role)
 
       :else
-       [(str tenant-id "-docs")])))
+       [tenant-id])))
 
 (defn- row-path
   [row]
@@ -611,7 +611,7 @@
         driver-type (or (:driver_type body) (:driver-type body))
         name (:name body)
         config (or (:config body) {})
-        collections (or (:collections body) ["devel-docs" "devel-code" "devel-config" "devel-data"])
+        collections (or (:collections body) [tenant-id])
         file-types (or (:file_types body) (:file-types body))
         include-patterns (or (:include_patterns body) (:include-patterns body))
         exclude-patterns (or (:exclude_patterns body) (:exclude-patterns body))

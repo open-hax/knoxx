@@ -9,7 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@open-hax/uxx": "0.1.0",
+    "@open-hax/uxx": "workspace:*",
+    "@workspace/webgl-graph-view": "workspace:*",
     "chart.js": "^4.5.1",
     "lucide-react": "^0.576.0",
     "prism-react-renderer": "^2.4.1",

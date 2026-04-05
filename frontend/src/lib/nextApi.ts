@@ -1,5 +1,6 @@
 export * from "./api";
 import { buildKnoxxAuthHeaders } from "./api";
+import type { GraphExportResponse } from './types';
 
 const KNOXX_SESSION_KEY = 'knoxx_session_id';
 
@@ -137,6 +138,27 @@ export async function knoxxDirectChat(payload: {
   return res.json();
 }
 
+export async function knoxxSessionStatus(sessionId: string, conversationId?: string | null) {
+  const params = new URLSearchParams({ session_id: sessionId });
+  if (conversationId) {
+    params.set('conversation_id', conversationId);
+  }
+  const res = await fetch(`/api/knoxx/session/status?${params.toString()}`, {
+    headers: buildKnoxxAuthHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to check session status');
+  return res.json() as Promise<{
+    session_id: string;
+    conversation_id: string;
+    status: string;
+    has_active_stream: boolean;
+    can_send: boolean;
+    reason?: string;
+    model?: string;
+    updated_at?: string;
+  }>;
+}
+
 export async function fetchRetrievalStats() {
   const res = await fetch('/api/retrieval/stats', { headers: buildKnoxxAuthHeaders() });
   if (!res.ok) throw new Error('Failed to load retrieval stats');
@@ -231,4 +253,26 @@ export async function deleteDatabaseProfile(id: string) {
 
 export async function fetchIngestionHistory() {
   return sessionRequest<{ collection: string; items: any[] }>('/api/documents/ingestion-history');
+}
+
+export async function fetchGraphExport(params: {
+  projects?: string[];
+  nodeTypes?: string[];
+  edgeTypes?: string[];
+} = {}) {
+  const query = new URLSearchParams();
+
+  if (params.projects && params.projects.length > 0) {
+    query.set('projects', params.projects.join(','));
+  }
+
+  if (params.nodeTypes && params.nodeTypes.length > 0) {
+    query.set('nodeTypes', params.nodeTypes.join(','));
+  }
+
+  if (params.edgeTypes && params.edgeTypes.length > 0) {
+    query.set('edgeTypes', params.edgeTypes.join(','));
+  }
+
+  return sessionRequest<GraphExportResponse>(`/api/graph/export${query.size > 0 ? `?${query.toString()}` : ''}`);
 }

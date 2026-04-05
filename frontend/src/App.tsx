@@ -62,6 +62,9 @@ function App() {
             <NavLink to="/runs" className={navLinkClass}>
               Runs
             </NavLink>
+            <NavLink to="/next/admin" className={navLinkClass}>
+              Admin
+            </NavLink>
             {knoxxAdminUrl ? (
               <a
                 href={knoxxAdminUrl}
@@ -69,7 +72,7 @@ function App() {
                 rel="noreferrer"
                 className="app-shell__nav-link"
               >
-                Knoxx Admin
+                Legacy Admin
               </a>
             ) : null}
           </nav>

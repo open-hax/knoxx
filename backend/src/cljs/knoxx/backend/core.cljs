@@ -1,5 +1,7 @@
 (ns knoxx.backend.core
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.session-store :as session-store]))
 
 (defonce server* (atom nil))
 (defonce sdk-runtime* (atom nil))
@@ -17,6 +19,16 @@
                                  :p95RetrievalMs 0
                                  :recentSamples 0
                                  :modeCounts {:dense 0 :hybrid 0 :hybrid_rerank 0}}))
+(defonce session-titles* (atom {}))
+(defonce session-title-promises* (atom {}))
+(defonce session-title-backfill* (atom {:active false
+                                        :processed 0
+                                        :total 0
+                                        :failed 0
+                                        :force false
+                                        :started_at nil
+                                        :completed_at nil
+                                        :last_error nil}))
 
 (def role-tools
   {"system_admin" [["read" "Read" "Read files and retrieved context"]
@@ -67,16 +79,28 @@
   [k default]
   (or (aget js/process.env k) default))
 
+(def ^:private thinking-levels
+  #{"off" "minimal" "low" "medium" "high" "xhigh"})
+
+(defn normalize-thinking-level
+  [value]
+  (let [normalized (some-> value str str/trim str/lower-case not-empty)]
+    (when (contains? thinking-levels normalized)
+      normalized)))
+
 (defn cfg []
   {:app-name (env "APP_NAME" "Knoxx Backend CLJS")
    :host (env "HOST" "0.0.0.0")
    :port (js/parseInt (env "PORT" "8000") 10)
    :workspace-root (env "WORKSPACE_ROOT" "/app/workspace/devel")
    :project-name (env "WORKSPACE_PROJECT_NAME" "devel")
+   :session-project-name (env "KNOXX_SESSION_PROJECT_NAME" "knoxx-session")
    :collection-name (env "KNOXX_COLLECTION_NAME" "devel_docs")
    :proxx-base-url (env "PROXX_BASE_URL" "http://proxx:8789")
    :proxx-auth-token (env "PROXX_AUTH_TOKEN" "")
    :proxx-default-model (env "PROXX_DEFAULT_MODEL" "glm-5")
+   :agent-thinking-level (or (normalize-thinking-level (env "KNOXX_THINKING_LEVEL" "off")) "off")
+   :reasoning-model-prefixes (env "KNOXX_REASONING_MODEL_PREFIXES" "glm-")
    :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")
    :openplanner-base-url (or (aget js/process.env "OPENPLANNER_BASE_URL")
                              (aget js/process.env "OPENPLANNER_URL")
@@ -92,11 +116,54 @@
    :gmail-app-email (env "GMAIL_APP_EMAIL" "")
    :gmail-app-password (env "GMAIL_APP_PASSWORD" "")
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
+   :redis-url (env "REDIS_URL" "")
    :agent-system-prompt (env "KNOXX_AGENT_SYSTEM_PROMPT"
-                             "You are Knoxx, the grounded workspace assistant for the devel corpus. Preserve multi-turn context within the active conversation, use workspace tools when needed, cite file paths when they matter, and prefer grounded synthesis over shallow enumeration. Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, use semantic_query and semantic_read instead of guessing. Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember.")})
+                             "You are Knoxx, the grounded workspace assistant for the devel corpus. Preserve multi-turn context within the active conversation, use workspace tools when needed, cite file paths when they matter, and prefer grounded synthesis over shallow enumeration. Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, use semantic_query, semantic_read, and graph_query instead of guessing. Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember.")})
+
+(defn model-supports-reasoning?
+  [config model-id]
+  (let [normalized-model (some-> model-id str str/trim str/lower-case)
+        prefixes (->> (str/split (or (:reasoning-model-prefixes config) "") #",")
+                      (map str/trim)
+                      (remove str/blank?))]
+    (boolean
+     (and normalized-model
+          (some (fn [prefix]
+                  (let [normalized-prefix (-> prefix
+                                              str/lower-case
+                                              (str/replace #"\*$" ""))]
+                    (str/starts-with? normalized-model normalized-prefix)))
+                prefixes)))))
+
+(defn model-thinking-format
+  [model-id]
+  (let [normalized-model (some-> model-id str str/trim str/lower-case)]
+    (cond
+      (and normalized-model (str/starts-with? normalized-model "glm-")) "zai"
+      :else nil)))
 
 (defn now-iso []
   (.toISOString (js/Date.)))
+
+(defn parse-positive-int
+  [value]
+  (let [n (cond
+            (string? value) (js/parseInt value 10)
+            (number? value) value
+            :else js/NaN)]
+    (when (and (number? n)
+               (not (js/isNaN n))
+               (pos? n))
+      n)))
+
+(defn truthy-param?
+  [value]
+  (cond
+    (true? value) true
+    (number? value) (pos? value)
+    (string? value) (contains? #{"1" "true" "yes" "on" "force"}
+                                (str/lower-case (str/trim value)))
+    :else false))
 
 (defn json-response!
   [reply status body]
@@ -385,7 +452,19 @@
    :user_id (ctx-user-id ctx)
    :user_email (ctx-user-email ctx)
    :membership_id (ctx-membership-id ctx)
-   :role_slugs (vec (or (:roleSlugs ctx) []))})
+   :role_slugs (vec (or (:roleSlugs ctx) []))
+   :permissions (vec (or (:permissions ctx) []))
+   :tool_policies (vec (or (:toolPolicies ctx) []))
+   :membership_tool_policies (vec (or (:membershipToolPolicies ctx) []))
+   :is_system_admin (boolean (:isSystemAdmin ctx))})
+
+(defn auth-snapshot-has-principal?
+  [snapshot]
+  (boolean (or (:org_id snapshot)
+               (:user_id snapshot)
+               (:user_email snapshot)
+               (:membership_id snapshot)
+               (:is_system_admin snapshot))))
 
 (defn ensure-conversation-access!
   [ctx conversation-id]
@@ -398,8 +477,10 @@
 (defn remember-conversation-access!
   [ctx conversation-id]
   (when (and ctx (not (str/blank? (str conversation-id))))
-    (ensure-conversation-access! ctx conversation-id)
-    (swap! conversation-access* assoc conversation-id (auth-snapshot ctx))))
+    (let [snapshot (auth-snapshot ctx)]
+      (when (auth-snapshot-has-principal? snapshot)
+        (ensure-conversation-access! ctx conversation-id)
+        (swap! conversation-access* assoc conversation-id snapshot)))))
 
 (defn run-visible?
   [ctx run]
@@ -426,6 +507,62 @@
   [row]
   (or (parse-json-object (:extra row)) {}))
 
+(declare normalize-relative-path)
+
+(def devel-path-pattern
+  #"((?:orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.pi)/[A-Za-z0-9._~:/+-]+)")
+
+(def url-pattern
+  #"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
+
+(defn trim-mention-token
+  [value]
+  (-> (str value)
+      (str/replace #"^[\s`'\"\(\[\{<]+" "")
+      (str/replace #"[\s`'\"\)\]\}>:;,.!?]+$" "")))
+
+(defn normalize-web-url
+  [value]
+  (let [raw (trim-mention-token value)]
+    (if (str/blank? raw)
+      nil
+      (try
+        (let [parsed (js/URL. raw)]
+          (set! (.-hash parsed) "")
+          (when (str/blank? (.-pathname parsed))
+            (set! (.-pathname parsed) "/"))
+          (.toString parsed))
+        (catch :default _ nil)))))
+
+(defn normalize-devel-path
+  [value]
+  (let [trimmed (trim-mention-token value)
+        no-prefix (cond
+                    (str/starts-with? trimmed "/app/workspace/devel/") (subs trimmed (count "/app/workspace/devel/"))
+                    (str/starts-with? trimmed (:workspace-root (cfg))) (subs trimmed (inc (count (:workspace-root (cfg)))))
+                    :else trimmed)
+        normalized (normalize-relative-path no-prefix)]
+    (when (and (not (str/blank? normalized))
+               (re-find #"^(orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.pi)/" normalized))
+      normalized)))
+
+(defn extract-mentioned-urls
+  [text]
+  (->> (re-seq url-pattern (or text ""))
+       (map normalize-web-url)
+       (remove nil?)
+       distinct
+       vec))
+
+(defn extract-mentioned-devel-paths
+  [text]
+  (->> (re-seq devel-path-pattern (or text ""))
+       (map second)
+       (map normalize-devel-path)
+       (remove nil?)
+       distinct
+       vec))
+
 (defn session-visible?
   [ctx rows]
   (cond
@@ -446,7 +583,8 @@
 
 (defn fetch-openplanner-session-rows!
   [config session-id]
-  (-> (openplanner-request! config "GET" (str "/v1/sessions/" (js/encodeURIComponent (str session-id))))
+  (-> (openplanner-request! config "GET" (str "/v1/sessions/" (js/encodeURIComponent (str session-id))
+                                               "?project=" (js/encodeURIComponent (:session-project-name config))))
       (.then (fn [body]
                (vec (or (:rows body) []))))))
 
@@ -559,10 +697,10 @@
   {:input 0 :output 0 :cacheRead 0 :cacheWrite 0})
 
 (defn provider-model-config
-  [model-id]
+  [config model-id]
   {:id model-id
    :name model-id
-   :reasoning false
+   :reasoning (model-supports-reasoning? config model-id)
    :input ["text"]
    :contextWindow 128000
    :maxTokens 8192
@@ -578,15 +716,20 @@
 
 (defn models-config
   [config]
-  {:providers
-   {:proxx
-    {:baseUrl (proxx-openai-base-url config)
-     :apiKey "PROXX_AUTH_TOKEN"
-     :authHeader true
-     :api "openai-completions"
-     :compat {:supportsDeveloperRole false
-              :supportsReasoningEffort false}
-     :models [(provider-model-config (:proxx-default-model config))]}}})
+  (let [default-model (:proxx-default-model config)
+        compat (cond-> {:supportsDeveloperRole false}
+                 (model-supports-reasoning? config default-model)
+                 (assoc :supportsReasoningEffort true)
+                 (some? (model-thinking-format default-model))
+                 (assoc :thinkingFormat (model-thinking-format default-model)))]
+    {:providers
+     {:proxx
+      {:baseUrl (proxx-openai-base-url config)
+       :apiKey "PROXX_AUTH_TOKEN"
+       :authHeader true
+       :api "openai-completions"
+       :compat compat
+       :models [(provider-model-config config default-model)]}}}))
 
 (defn default-settings
   [config]
@@ -1167,6 +1310,12 @@
                                 #js {:query (.String Type #js {:description "Semantic memory search across prior Knoxx sessions and actions indexed in OpenPlanner."})
                                      :k (.Optional Type (.Number Type #js {:description "Maximum number of memory hits to return." :minimum 1 :maximum 8}))
                                      :sessionId (.Optional Type (.String Type #js {:description "Optional conversation/session id to scope the search."}))})
+         graph-params (.Object Type
+                               #js {:query (.String Type #js {:description "Search text for canonical graph nodes across OpenPlanner lakes."})
+                                    :lake (.Optional Type (.String Type #js {:description "Optional lake/project filter such as devel, web, bluesky, or knoxx-session."}))
+                                    :nodeType (.Optional Type (.String Type #js {:description "Optional node_type filter such as docs, code, visited, assistant_message, tool_result, or reasoning."}))
+                                    :limit (.Optional Type (.Number Type #js {:description "Maximum number of graph nodes to return." :minimum 1 :maximum 20}))
+                                    :edgeLimit (.Optional Type (.Number Type #js {:description "Maximum number of incident edges to include." :minimum 0 :maximum 60}))})
          session-params (.Object Type
                                  #js {:sessionId (.String Type #js {:description "Knoxx conversation/session id stored in OpenPlanner."})})
          memory-search-execute (fn [_tool-call-id params a b c]
@@ -1186,13 +1335,28 @@
                                         session-id (or (aget params "sessionId") "")]
                                     (maybe-tool-update! on-update "Loading Knoxx session from OpenPlanner…")
                                     (-> (fetch-openplanner-session-rows! config session-id)
-                                        (.then (fn [rows]
-                                                 (when-not (session-visible? auth-context rows)
-                                                   (throw (http-error 403 "memory_scope_denied" "OpenPlanner session is outside the current Knoxx scope")))
-                                                 (let [payload (doto (js-obj)
+                                       (.then (fn [rows]
+                                                (when-not (session-visible? auth-context rows)
+                                                  (throw (http-error 403 "memory_scope_denied" "OpenPlanner session is outside the current Knoxx scope")))
+                                                (let [payload (doto (js-obj)
                                                                  (aset "sessionId" session-id)
                                                                  (aset "rows" (clj->js rows)))]
-                                                   (tool-text-result (openplanner-session-text session-id rows) payload)))))))
+                                                  (tool-text-result (openplanner-session-text session-id rows) payload)))))))
+         graph-query-execute (fn [_tool-call-id params a b c]
+                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                     query (or (aget params "query") "")
+                                     lake (or (aget params "lake") "")
+                                     node-type (or (aget params "nodeType") "")
+                                     limit (aget params "limit")
+                                     edge-limit (aget params "edgeLimit")]
+                                 (maybe-tool-update! on-update "Querying canonical knowledge graph…")
+                                 (-> (openplanner-graph-query! config {:query query
+                                                                       :lake lake
+                                                                       :node-type node-type
+                                                                       :limit limit
+                                                                       :edge-limit edge-limit})
+                                     (.then (fn [result]
+                                              (tool-text-result (graph-query-result-text result) result))))))
          memory-search-tool (doto (js-obj)
                               (aset "name" "memory_search")
                               (aset "label" "Memory Search")
@@ -1203,6 +1367,16 @@
                                                                  "If one session looks relevant, follow with memory_session to inspect the full transcript slice."]))
                               (aset "parameters" search-params)
                               (aset "execute" memory-search-execute))
+         graph-query-tool (doto (js-obj)
+                            (aset "name" "graph_query")
+                            (aset "label" "Graph Query")
+                            (aset "description" "Query the canonical OpenPlanner knowledge graph across the devel, web, bluesky, and knoxx-session lakes.")
+                            (aset "promptSnippet" "Search the canonical knowledge graph when you need entities or cross-lake links rather than plain transcript memory or semantic document snippets.")
+                            (aset "promptGuidelines" (clj->js ["Use graph_query when the question is about entities, paths, URLs, provenance across lakes, or graph connectivity."
+                                                               "Prefer graph_query over semantic_query when node/edge structure matters."
+                                                               "Use the lake filter to focus on devel, web, bluesky, or knoxx-session when the search space is obvious."]))
+                            (aset "parameters" graph-params)
+                            (aset "execute" graph-query-execute))
          memory-session-tool (doto (js-obj)
                                (aset "name" "memory_session")
                                (aset "label" "Memory Session")
@@ -1213,9 +1387,13 @@
                                (aset "parameters" session-params)
                                (aset "execute" memory-session-execute))]
      (clj->js
-      (vec
+     (vec
        (remove nil?
                [(when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "graph_query")
+                          (ctx-tool-allowed? auth-context "semantic_query"))
+                  graph-query-tool)
+                (when (or (nil? auth-context)
                           (ctx-tool-allowed? auth-context "memory_search"))
                   memory-search-tool)
                 (when (or (nil? auth-context)
@@ -1401,39 +1579,48 @@
   ([config role auth-context]
    (if auth-context
      (let [email? (email-enabled? config)
-           tools (->> (:toolPolicies auth-context)
-                      (filter #(= "allow" (:effect %)))
-                      (map (fn [policy]
-                             (let [tool-id (:toolId policy)]
-                               {:id tool-id
-                                :label (case tool-id
-                                         "read" "Read"
-                                         "write" "Write"
-                                         "edit" "Edit"
-                                         "bash" "Shell"
-                                         "canvas" "Canvas"
-                                         "email.send" "Email"
-                                         "discord.publish" "Discord"
-                                         "bluesky.publish" "Bluesky"
-                                         "semantic_query" "Semantic Query"
-                                         "memory_search" "Memory Search"
-                                         "memory_session" "Memory Session"
-                                         tool-id)
-                                :description (case tool-id
-                                               "read" "Read files and retrieved context"
-                                               "write" "Create new markdown drafts and artifacts"
-                                               "edit" "Revise existing documents and drafts"
-                                               "bash" "Run controlled shell commands"
-                                               "canvas" "Open long-form markdown drafting canvas"
-                                               "email.send" "Send drafts through configured email account"
-                                               "discord.publish" "Publish updates to Discord"
-                                               "bluesky.publish" "Publish updates to Bluesky"
-                                               "semantic_query" "Query semantic context in the active corpus"
-                                               "memory_search" "Search prior Knoxx sessions in OpenPlanner"
-                                               "memory_session" "Load a specific Knoxx session from OpenPlanner"
+           allowed-tool-ids (->> (:toolPolicies auth-context)
+                                 (filter #(= "allow" (:effect %)))
+                                 (map :toolId)
+                                 set)
+           tools (cond-> (->> allowed-tool-ids
+                              (map (fn [tool-id]
+                                     {:id tool-id
+                                      :label (case tool-id
+                                               "read" "Read"
+                                               "write" "Write"
+                                               "edit" "Edit"
+                                               "bash" "Shell"
+                                               "canvas" "Canvas"
+                                               "email.send" "Email"
+                                               "discord.publish" "Discord"
+                                               "bluesky.publish" "Bluesky"
+                                               "semantic_query" "Semantic Query"
+                                               "graph_query" "Graph Query"
+                                               "memory_search" "Memory Search"
+                                               "memory_session" "Memory Session"
                                                tool-id)
-                                :enabled (if (= tool-id "email.send") email? true)})))
-                      vec)]
+                                      :description (case tool-id
+                                                     "read" "Read files and retrieved context"
+                                                     "write" "Create new markdown drafts and artifacts"
+                                                     "edit" "Revise existing documents and drafts"
+                                                     "bash" "Run controlled shell commands"
+                                                     "canvas" "Open long-form markdown drafting canvas"
+                                                     "email.send" "Send drafts through configured email account"
+                                                     "discord.publish" "Publish updates to Discord"
+                                                     "bluesky.publish" "Publish updates to Bluesky"
+                                                     "semantic_query" "Query semantic context in the active corpus"
+                                                     "graph_query" "Query the canonical knowledge graph across devel/web/bluesky/knoxx-session lakes"
+                                                     "memory_search" "Search prior Knoxx sessions in OpenPlanner"
+                                                     "memory_session" "Load a specific Knoxx session from OpenPlanner"
+                                                     tool-id)
+                                      :enabled (if (= tool-id "email.send") email? true)}))
+                              vec)
+                   (contains? allowed-tool-ids "semantic_query")
+                   (conj {:id "graph_query"
+                          :label "Graph Query"
+                          :description "Query the canonical knowledge graph across devel/web/bluesky/knoxx-session lakes"
+                          :enabled true}))]
        {:role (primary-context-role auth-context)
         :email_enabled email?
         :tools tools})
@@ -1499,6 +1686,17 @@
     (= (aget part "type") "output_text") (or (aget part "text") "")
     :else ""))
 
+(defn reasoning-part-text
+  [part]
+  (cond
+    (string? part) ""
+    (= (aget part "type") "reasoning") (or (aget part "text") "")
+    (= (aget part "type") "reasoning_text") (or (aget part "text") "")
+    (= (aget part "type") "thinking") (or (aget part "thinking")
+                                           (aget part "text")
+                                           "")
+    :else ""))
+
 (defn assistant-message-text
   [message]
   (let [content (aget message "content")
@@ -1512,6 +1710,21 @@
       (string? (aget message "errorMessage")) (aget message "errorMessage")
       :else "")))
 
+(defn assistant-message-reasoning-text
+  [message]
+  (let [content (aget message "content")
+        merged (cond
+                 (array? content) (apply str (map reasoning-part-text (array-seq content)))
+                 :else "")]
+    (cond
+      (not (str/blank? merged)) merged
+      (string? (aget message "reasoning_content")) (aget message "reasoning_content")
+      (string? (aget message "reasoningContent")) (aget message "reasoningContent")
+      (string? (aget message "reasoning_text")) (aget message "reasoning_text")
+      (string? (aget message "reasoning")) (aget message "reasoning")
+      (string? (aget message "thinking")) (aget message "thinking")
+      :else "")))
+
 (defn ws-envelope
   [channel payload]
   {:channel channel
@@ -1523,20 +1736,77 @@
   (when (= (aget socket "readyState") 1)
     (.send socket (.stringify js/JSON (clj->js payload)))))
 
-(defn system-stats
+(def ^:private nvidia-smi-query-args
+  #js ["--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw"
+       "--format=csv,noheader,nounits"])
+
+(defn parse-float-safe
+  [value]
+  (let [parsed (js/parseFloat (str (or value "")))]
+    (when-not (js/isNaN parsed)
+      parsed)))
+
+(defn mib->bytes
+  [value]
+  (when-let [parsed (parse-float-safe value)]
+    (* parsed 1024 1024)))
+
+(defn parse-nvidia-smi-line
+  [line]
+  (let [[index name util-gpu util-mem mem-used mem-total temp-c power-w]
+        (map str/trim (str/split line #","))]
+    {:index (or (some-> index js/parseInt) 0)
+     :name (or name "NVIDIA GPU")
+     :util_gpu (or (parse-float-safe util-gpu) 0)
+     :util_mem (or (parse-float-safe util-mem) 0)
+     :mem_used_bytes (or (mib->bytes mem-used) 0)
+     :mem_total_bytes (or (mib->bytes mem-total) 0)
+     :temp_c (parse-float-safe temp-c)
+     :power_w (parse-float-safe power-w)}))
+
+(defn collect-nvidia-gpu-stats!
+  [runtime]
+  (if-let [exec-file-async (aget runtime "execFileAsync")]
+    (-> (exec-file-async "nvidia-smi" nvidia-smi-query-args #js {:timeout 1200})
+        (.then (fn [result]
+                 (->> (str/split-lines (or (aget result "stdout") ""))
+                      (map str/trim)
+                      (remove str/blank?)
+                      (mapv parse-nvidia-smi-line))))
+        (.catch (fn [_]
+                  (js/Promise.resolve []))))
+    (js/Promise.resolve [])))
+
+(defn active-runs-count
+  []
+  (->> @runs*
+       vals
+       (filter #(contains? #{"queued" "running"} (:status %)))
+       count))
+
+(defn system-stats!
   [runtime]
   (let [node-os (aget runtime "os")
         cpu-count (max 1 (.availableParallelism node-os))
         load1 (or (aget (.loadavg node-os) 0) 0)
         total-mem (or (.totalmem node-os) 1)
         free-mem (or (.freemem node-os) 0)
+        used-mem (max 0 (- total-mem free-mem))
         cpu-percent (min 100 (* 100 (/ load1 cpu-count)))
         mem-percent (min 100 (* 100 (- 1 (/ free-mem total-mem))))]
-    {:timestamp (now-iso)
-     :cpu_percent cpu-percent
-     :memory_percent mem-percent
-     :gpu []
-     :network {:total_bytes_per_sec 0}}))
+    (-> (collect-nvidia-gpu-stats! runtime)
+        (.then (fn [gpu]
+                 {:timestamp (now-iso)
+                  :cpu_percent cpu-percent
+                  :memory_percent mem-percent
+                  :memory_used_bytes used-mem
+                  :memory_total_bytes total-mem
+                  :active_clients (count @ws-clients*)
+                  :active_runs (active-runs-count)
+                  :gpu gpu
+                  :network {:total_bytes_per_sec 0
+                            :rx_bytes_per_sec 0
+                            :tx_bytes_per_sec 0}})))))
 
 (defn broadcast-ws!
   [channel payload]
@@ -1564,7 +1834,10 @@
             (js/setInterval
              (fn []
                (when (seq @ws-clients*)
-                 (broadcast-ws! "stats" (system-stats runtime))))
+                 (-> (system-stats! runtime)
+                     (.then (fn [stats]
+                              (broadcast-ws! "stats" stats)))
+                     (.catch (fn [_] nil)))))
              5000))))
 
 (defn register-ws-routes!
@@ -1586,7 +1859,10 @@
                               (swap! ws-clients* assoc client-id #js {:socket ws :sessionId session-id})
                               (.on ws "close" (fn [] (swap! ws-clients* dissoc client-id)))
                               (.on ws "error" (fn [] (swap! ws-clients* dissoc client-id)))
-                              (safe-ws-send! ws (ws-envelope "stats" (system-stats runtime)))
+                              (-> (system-stats! runtime)
+                                  (.then (fn [stats]
+                                           (safe-ws-send! ws (ws-envelope "stats" stats))))
+                                  (.catch (fn [_] nil)))
                               (doseq [msg (take-last 20 @lounge-messages*)]
                                 (safe-ws-send! ws (ws-envelope "lounge" msg)))))}))
 
@@ -1641,6 +1917,328 @@
        (if truncated
          (str text "…")
          text)))))
+
+(defn sanitize-session-title
+  [value]
+  (let [text (-> (str (or value ""))
+                 (str/replace #"\s+" " ")
+                 str/trim
+                 (str/replace #"^[`'\"“”‘’]+|[`'\"“”‘’]+$" "")
+                 str/trim)
+        lowered (str/lower-case text)
+        text (cond
+               (str/starts-with? lowered "title: ") (subs text 7)
+               (str/starts-with? lowered "title-") (subs text 6)
+               (str/starts-with? lowered "title:") (subs text 6)
+               :else text)
+        text (str/trim text)]
+    (when-not (str/blank? text)
+      (subs text 0 (min 80 (count text))))))
+
+(defn heuristic-session-title
+  [seed-text]
+  (let [line (->> (str/split-lines (or seed-text ""))
+                  (map str/trim)
+                  (remove str/blank?)
+                  first)
+        cleaned (some-> line
+                        (str/replace #"^[#>*\-\d.\s]+" "")
+                        sanitize-session-title)]
+    (or cleaned "Untitled session")))
+
+(defn session-title-cache-path
+  [runtime config]
+  (.join (aget runtime "path") (:workspace-root config) ".knoxx" "session-titles.json"))
+
+(defn acceptable-session-title?
+  [value]
+  (let [title (sanitize-session-title value)
+        lowered (some-> title str/lower-case)]
+    (boolean
+     (and title
+          (>= (count title) 4)
+          (not (contains? #{"title"
+                            "session"
+                            "chat"
+                            "new chat"
+                            "untitled"
+                            "untitled session"
+                            "res"}
+                          lowered))))))
+
+(defn normalize-session-title
+  ([value] (normalize-session-title value nil))
+  ([value fallback]
+   (let [title (sanitize-session-title value)
+         fallback-title (sanitize-session-title fallback)]
+     (cond
+       (acceptable-session-title? title) title
+       (not (str/blank? fallback-title)) fallback-title
+       :else nil))))
+
+(defn session-title-seed-text
+  [rows]
+  (let [user-texts (->> (or rows [])
+                        (filter #(= "user" (:role %)))
+                        (map #(str/trim (str (or (:text %) ""))))
+                        (remove str/blank?)
+                        vec)
+        substantive (first (filter (fn [text]
+                                     (or (>= (count text) 12)
+                                         (>= (count (str/split text #"\s+")) 3)))
+                                   user-texts))
+        combined (some->> user-texts
+                          (take 3)
+                          (str/join "\n\n")
+                          str/trim
+                          not-empty)
+        fallback (->> (or rows [])
+                      (map #(str/trim (str (or (:text %) ""))))
+                      (remove str/blank?)
+                      first)]
+    (or substantive combined fallback "")))
+
+(defn title-from-reasoning-content
+  [value]
+  (let [text (str (or value ""))]
+    (or (some-> (re-find #"(?i)(?:i(?:'|’)ll|i will) go with\s+[\"“]([^\"”]{4,80})[\"”]" text)
+                second
+                sanitize-session-title)
+        (some->> (re-seq #"[\"“]([^\"”]{4,80})[\"”]" text)
+                 last
+                 second
+                 sanitize-session-title))))
+
+(defn persist-session-titles!
+  [runtime config]
+  (let [node-fs (aget runtime "fs")
+        node-path (aget runtime "path")
+        cache-path (session-title-cache-path runtime config)
+        parent (.dirname node-path cache-path)
+        payload (.stringify js/JSON (clj->js @session-titles*) nil 2)]
+    (-> (.mkdir node-fs parent #js {:recursive true})
+        (.then (fn []
+                 (.writeFile node-fs cache-path payload "utf8"))))))
+
+(defn cache-session-title!
+  [runtime config session-id title title-model]
+  (let [resolved {:title (or (normalize-session-title title) "Untitled session")
+                  :title_model title-model
+                  :session session-id
+                  :updated_at (now-iso)}]
+    (swap! session-titles* assoc session-id resolved)
+    (swap! session-title-promises* dissoc session-id)
+    (-> (persist-session-titles! runtime config)
+        (.catch (fn [err]
+                  (.error js/console "Failed to persist session title cache" err)
+                  nil)))
+    resolved))
+
+(defn load-session-titles!
+  [runtime config]
+  (let [node-fs (aget runtime "fs")
+        cache-path (session-title-cache-path runtime config)]
+    (-> (.readFile node-fs cache-path "utf8")
+        (.then (fn [raw]
+                 (let [parsed (js->clj (.parse js/JSON raw))
+                       loaded (reduce-kv (fn [acc session-id entry]
+                                           (let [session-id (str session-id)
+                                                 title (normalize-session-title (get entry "title"))
+                                                 title-model (or (get entry "title_model")
+                                                                 (get entry "titleModel"))
+                                                 updated-at (or (get entry "updated_at")
+                                                                (get entry "updatedAt")
+                                                                (now-iso))]
+                                             (if title
+                                               (assoc acc session-id {:title title
+                                                                      :title_model title-model
+                                                                      :session session-id
+                                                                      :updated_at updated-at})
+                                               acc)))
+                                         {}
+                                         parsed)]
+                   (reset! session-titles* loaded)
+                   loaded)))
+        (.catch (fn [_]
+                  (js/Promise.resolve @session-titles*)))))
+
+(defn resolve-session-title!
+  [config seed-text]
+  (let [fallback (heuristic-session-title seed-text)]
+    (-> (generate-session-title! config seed-text)
+        (.then (fn [entry]
+                 {:title (or (normalize-session-title (:title entry) fallback)
+                             fallback)
+                  :title_model (:title_model entry)}))
+        (.catch (fn [_]
+                  (js/Promise.resolve {:title fallback
+                                       :title_model nil}))))))
+
+(defn generate-session-title!
+  [config seed-text]
+  (let [fallback (heuristic-session-title seed-text)]
+    (if (or (str/blank? seed-text)
+            (str/blank? (:proxx-base-url config))
+            (str/blank? (:proxx-auth-token config)))
+      (js/Promise.resolve {:title fallback
+                           :title_model nil})
+      (let [payload #js {:model "auto:cheapest"
+                         :messages (clj->js [{:role "system"
+                                              :content "You create very short, useful session titles. Return only the title text, 2 to 6 words, with no quotes, no markdown, and no explanation."}
+                                             {:role "user"
+                                              :content (str "Create a concise title for this Knoxx session based on the opening request.\n\nRequest:\n"
+                                                            (or (value->preview-text seed-text 900) ""))}])
+                         :temperature 0.1
+                         :max_tokens 24
+                         :stream false}]
+        (-> (fetch-json (str (:proxx-base-url config) "/v1/chat/completions")
+                        #js {:method "POST"
+                             :headers (bearer-headers (:proxx-auth-token config))
+                             :body (.stringify js/JSON payload)})
+            (.then (fn [resp]
+                     (if (aget resp "ok")
+                       (let [body (aget resp "body")
+                             choices (or (aget body "choices") #js [])
+                             first-choice (aget choices 0)
+                             message (or (aget first-choice "message") #js {})
+                             content (or (aget message "content")
+                                         (aget first-choice "text")
+                                         "")
+                             reasoning-content (or (aget message "reasoning_content")
+                                                   (aget message "reasoningContent")
+                                                   "")
+                             title-candidate (or (normalize-session-title content)
+                                                 (title-from-reasoning-content reasoning-content)
+                                                 fallback)]
+                         {:title (or (normalize-session-title title-candidate fallback) fallback)
+                          :title_model (or (aget body "model") "auto:cheapest")})
+                       {:title fallback
+                        :title_model nil})))
+            (.catch (fn [_]
+                      (js/Promise.resolve {:title fallback
+                                           :title_model nil}))))))))
+
+(defn ensure-session-title!
+  ([runtime config session-id rows]
+   (ensure-session-title! runtime config session-id rows false))
+  ([runtime config session-id rows force?]
+  (let [session-id (str (or session-id ""))]
+    (when force?
+      (swap! session-titles* dissoc session-id))
+    (cond
+      (str/blank? session-id)
+      (js/Promise.resolve {:title "Untitled session"
+                           :title_model nil})
+
+      (contains? @session-titles* session-id)
+      (js/Promise.resolve (get @session-titles* session-id))
+
+      (contains? @session-title-promises* session-id)
+      (get @session-title-promises* session-id)
+
+      :else
+      (let [title-promise (-> (if (seq rows)
+                                (js/Promise.resolve rows)
+                                (fetch-openplanner-session-rows! config session-id))
+                              (.then (fn [resolved-rows]
+                                       (resolve-session-title! config (session-title-seed-text (vec (or resolved-rows []))))))
+                              (.then (fn [entry]
+                                       (cache-session-title! runtime config session-id (:title entry) (:title_model entry))))
+                              (.catch (fn [_]
+                                        (cache-session-title! runtime config session-id "Untitled session" nil))))]
+        (swap! session-title-promises* assoc session-id title-promise)
+        title-promise))))))
+
+(defn maybe-prime-session-title!
+  [runtime config session-id seed-text]
+  (let [session-id (str (or session-id ""))
+        seed-text (str (or seed-text ""))]
+    (when (and (not (str/blank? session-id))
+               (not (str/blank? seed-text))
+               (not (contains? @session-titles* session-id))
+               (not (contains? @session-title-promises* session-id)))
+      (let [title-promise (-> (resolve-session-title! config seed-text)
+                              (.then (fn [entry]
+                                       (cache-session-title! runtime config session-id (:title entry) (:title_model entry))))
+                              (.catch (fn [_]
+                                        (cache-session-title! runtime config session-id (heuristic-session-title seed-text) nil))))]
+        (swap! session-title-promises* assoc session-id title-promise)
+        title-promise))))
+
+(defn start-session-title-backfill!
+  [runtime config {:keys [force limit]}]
+  (if (:active @session-title-backfill*)
+    (js/Promise.resolve @session-title-backfill*)
+    (-> (openplanner-request! config "GET"
+                              (str "/v1/sessions?project="
+                                   (js/encodeURIComponent (:session-project-name config))))
+        (.then (fn [body]
+                 (let [session-ids (cond->> (->> (or (:rows body) [])
+                                                (map :session)
+                                                (map str)
+                                                (remove str/blank?)
+                                                distinct)
+                                     limit (take limit))
+                       session-ids (vec session-ids)]
+                   (reset! session-title-backfill* {:active true
+                                                    :processed 0
+                                                    :total (count session-ids)
+                                                    :failed 0
+                                                    :force (boolean force)
+                                                    :started_at (now-iso)
+                                                    :completed_at nil
+                                                    :last_error nil})
+                   (if (empty? session-ids)
+                     (do
+                       (swap! session-title-backfill* assoc :active false :completed_at (now-iso))
+                       @session-title-backfill*)
+                     (letfn [(step [remaining]
+                               (if-let [session-id (first remaining)]
+                                 (do
+                                   (when force
+                                     (swap! session-titles* dissoc session-id))
+                                   (-> (fetch-openplanner-session-rows! config session-id)
+                                       (.then (fn [title-rows]
+                                                (let [seed-text (session-title-seed-text title-rows)
+                                                      fallback-title (heuristic-session-title seed-text)]
+                                                  (-> (resolve-session-title! config seed-text)
+                                                      (.then (fn [entry]
+                                                               (cache-session-title! runtime config session-id
+                                                                                     (or (normalize-session-title (:title entry) fallback-title)
+                                                                                         fallback-title)
+                                                                                     (:title_model entry))))
+                                                      (.catch (fn [_]
+                                                                (cache-session-title! runtime config session-id fallback-title nil)))))))
+                                       (.catch (fn [_]
+                                                 (cache-session-title! runtime config session-id "Untitled session" nil)))
+                                       (.then (fn [_]
+                                                (swap! session-title-backfill* update :processed (fnil inc 0))))
+                                       (.catch (fn [err]
+                                                 (swap! session-title-backfill* (fn [state]
+                                                                                  (-> state
+                                                                                      (update :processed (fnil inc 0))
+                                                                                      (update :failed (fnil inc 0))
+                                                                                      (assoc :last_error (str err)))))
+                                                 nil))
+                                       (.then (fn [_]
+                                                (step (rest remaining))))))
+                                 (do
+                                   (swap! session-title-backfill* assoc :active false :completed_at (now-iso))
+                                   (js/Promise.resolve @session-title-backfill*))))]
+                       (-> (step session-ids)
+                           (.catch (fn [err]
+                                     (swap! session-title-backfill* assoc
+                                            :active false
+                                            :completed_at (now-iso)
+                                            :last_error (str err))
+                                     nil)))
+                       @session-title-backfill*)))))
+        (.catch (fn [err]
+                  (swap! session-title-backfill* assoc
+                         :active false
+                         :completed_at (now-iso)
+                         :last_error (str err))
+                  (js/Promise.resolve @session-title-backfill*))))))
 
 (defn update-run!
   [run-id f]
@@ -1766,7 +2364,7 @@
 
 (defn openplanner-recent-session-summaries!
   [config]
-  (-> (openplanner-request! config "GET" "/v1/sessions")
+  (-> (openplanner-request! config "GET" (str "/v1/sessions?project=" (js/encodeURIComponent (:session-project-name config))))
       (.then (fn [body]
                (let [session-ids (->> (or (:rows body) [])
                                       (map :session)
@@ -1806,7 +2404,7 @@
                                 (cond-> {:q query
                                          :k k
                                          :source "knoxx"
-                                         :project (:project-name config)}
+                                         :project (:session-project-name config)}
                                   (not (str/blank? session-id)) (assoc :session session-id)))
           (.then (fn [body]
                    {:query query
@@ -1817,7 +2415,7 @@
                                               (cond-> {:q query
                                                        :limit k
                                                        :source "knoxx"
-                                                       :project (:project-name config)}
+                                                       :project (:session-project-name config)}
                                                 (not (str/blank? session-id)) (assoc :session session-id)))
                         (.then (fn [body]
                                  (let [hits (vec (or (:rows body) []))]
@@ -1868,14 +2466,67 @@
            rows)))
     (str "OpenPlanner session " session-id " is empty or missing.")))
 
+(defn openplanner-graph-query!
+  [config {:keys [query lake node-type limit edge-limit]}]
+  (let [params (js/URLSearchParams.)]
+    (when-not (str/blank? (or query ""))
+      (.set params "q" query))
+    (when-not (str/blank? (or lake ""))
+      (.set params "projects" lake))
+    (when-not (str/blank? (or node-type ""))
+      (.set params "nodeTypes" node-type))
+    (.set params "limit" (str (max 1 (min 20 (or limit 8)))))
+    (.set params "edgeLimit" (str (max 0 (min 60 (or edge-limit 16)))))
+    (openplanner-request! config "GET" (str "/v1/graph/query?" (.toString params)))))
+
+(defn openplanner-graph-export!
+  [config request]
+  (openplanner-request! config "GET" (str "/v1/graph/export" (request-query-string request))))
+
+(defn graph-query-result-text
+  [result]
+  (let [nodes (vec (or (:nodes result) []))
+        edges (vec (or (:edges result) []))]
+    (if (seq nodes)
+      (let [node-text (str/join
+                       "\n\n"
+                       (map-indexed
+                        (fn [idx node]
+                          (let [data (or (:data node) {})]
+                            (str (inc idx) ". [" (:lake node) "/" (:nodeType node) "] " (:label node)
+                                 "\n   id=" (:id node)
+                                 (when-let [path (:path data)]
+                                   (str "\n   path=" path))
+                                 (when-let [url (:url data)]
+                                   (str "\n   url=" url))
+                                 (when-let [preview (:preview data)]
+                                   (str "\n   preview=" (or (value->preview-text preview 220) ""))))))
+                        nodes))
+            edge-text (when (seq edges)
+                        (str/join
+                         "\n"
+                         (map (fn [edge]
+                                (str "- [" (:edgeType edge) "] " (:source edge) " -> " (:target edge)))
+                              edges)))]
+        (str "Knowledge graph query"
+             (when-let [q (:query result)]
+               (str "\nQuery: " q))
+             (when-let [projects (seq (:projects result))]
+               (str "\nProjects: " (str/join ", " projects)))
+             "\n\nNodes:\n"
+             node-text
+             (when edge-text
+               (str "\n\nEdges:\n" edge-text))))
+      "Knowledge graph query returned no matching nodes.")))
+
 (defn openplanner-event
-  [config {:keys [id ts kind session message role model text extra]}]
+  [config {:keys [id ts kind project session message role model text extra]}]
   {:schema "openplanner.event.v1"
    :id id
    :ts (or ts (now-iso))
    :source "knoxx"
    :kind kind
-   :source_ref {:project (:project-name config)
+   :source_ref {:project (or project (:project-name config))
                 :session session
                 :message message}
    :text text
@@ -1909,6 +2560,100 @@
   [run]
   (select-keys run [:org_id :org_slug :user_id :user_email :membership_id]))
 
+(defn session-node-kind
+  [node-type]
+  (case node-type
+    "tool_call" "tool_call"
+    "tool_result" "tool_result"
+    "reasoning" "reasoning"
+    "message"))
+
+(defn session-graph-node-event
+  [config {:keys [event-id node-id ts session message node-type text label model extra]}]
+  (openplanner-event config {:id event-id
+                             :ts ts
+                             :kind "graph.node"
+                             :project (:session-project-name config)
+                             :session session
+                             :message message
+                             :role "system"
+                             :model model
+                             :text text
+                             :extra (merge {:lake (:session-project-name config)
+                                            :node_id node-id
+                                            :node_type node-type
+                                            :node_kind (session-node-kind node-type)
+                                            :label label
+                                            :entity_key node-id}
+                                           extra)}))
+
+(defn session-graph-edge-event
+  [config {:keys [event-id ts session message edge-type source-node-id target-node-id source-lake target-lake extra]}]
+  (openplanner-event config {:id event-id
+                             :ts ts
+                             :kind "graph.edge"
+                             :project (:session-project-name config)
+                             :session session
+                             :message message
+                             :role "system"
+                             :text (str source-node-id " -> " target-node-id)
+                             :extra (merge {:lake (:session-project-name config)
+                                            :edge_id event-id
+                                            :edge_type edge-type
+                                            :source_node_id source-node-id
+                                            :target_node_id target-node-id
+                                            :source_lake source-lake
+                                            :target_lake target-lake}
+                                           extra)}))
+
+(defn session-text-graph-events
+  [config {:keys [run-id conversation-id session-id ts node-id node-type text label model scope-extra]}]
+  (let [safe-text (or text "")
+        node-event (session-graph-node-event config {:event-id (str node-id ":node")
+                                                     :node-id node-id
+                                                     :ts ts
+                                                     :session conversation-id
+                                                     :message node-id
+                                                     :node-type node-type
+                                                     :text safe-text
+                                                     :label label
+                                                     :model model
+                                                     :extra (merge {:run_id run-id
+                                                                    :conversation_id conversation-id
+                                                                    :session_id session-id}
+                                                                   scope-extra)})
+        devel-edges (for [path (extract-mentioned-devel-paths safe-text)]
+                      (session-graph-edge-event config {:event-id (str node-id ":mentions_devel:" path)
+                                                        :ts ts
+                                                        :session conversation-id
+                                                        :message node-id
+                                                        :edge-type "mentions_devel_path"
+                                                        :source-node-id node-id
+                                                        :target-node-id (str "devel:file:" path)
+                                                        :source-lake (:session-project-name config)
+                                                        :target-lake "devel"
+                                                        :extra (merge {:run_id run-id
+                                                                       :conversation_id conversation-id
+                                                                       :session_id session-id
+                                                                       :path path}
+                                                                      scope-extra)}))
+        web-edges (for [url (extract-mentioned-urls safe-text)]
+                    (session-graph-edge-event config {:event-id (str node-id ":mentions_web:" url)
+                                                      :ts ts
+                                                      :session conversation-id
+                                                      :message node-id
+                                                      :edge-type "mentions_web_url"
+                                                      :source-node-id node-id
+                                                      :target-node-id (str "web:url:" url)
+                                                      :source-lake (:session-project-name config)
+                                                      :target-lake "web"
+                                                      :extra (merge {:run_id run-id
+                                                                     :conversation_id conversation-id
+                                                                     :session_id session-id
+                                                                     :url url}
+                                                                    scope-extra)}))]
+    (into [node-event] (concat devel-edges web-edges))))
+
 (defn index-run-memory!
   [config run]
   (if-not (openplanner-enabled? config)
@@ -1916,69 +2661,134 @@
     (let [conversation-id (:conversation_id run)
           session-id (:session_id run)
           scope-extra (run-scope-extra run)
+          session-project (:session-project-name config)
           request-text (or (some-> (:request_messages run) first :content) "")
           answer (:answer run)
-          base-events [(openplanner-event config {:id (str (:run_id run) ":user")
-                                                  :ts (:created_at run)
-                                                  :kind "knoxx.message"
-                                                  :session conversation-id
-                                                  :message (str (:run_id run) ":user")
-                                                  :role "user"
-                                                  :model (:model run)
-                                                  :text request-text
-                                                  :extra (merge {:run_id (:run_id run)
-                                                                 :conversation_id conversation-id
-                                                                 :session_id session-id
-                                                                 :mode (get-in run [:settings :mode])}
-                                                                scope-extra)})
-                       (openplanner-event config {:id (str (:run_id run) ":summary")
-                                                  :ts (:updated_at run)
-                                                  :kind "knoxx.run"
-                                                  :session conversation-id
-                                                  :message (str (:run_id run) ":summary")
-                                                  :role "system"
-                                                  :model (:model run)
-                                                  :text (run-summary-text run)
-                                                  :extra (merge {:run_id (:run_id run)
-                                                                 :conversation_id conversation-id
-                                                                 :session_id session-id
-                                                                 :status (:status run)
-                                                                 :ttft_ms (:ttft_ms run)
-                                                                 :total_time_ms (:total_time_ms run)}
-                                                                scope-extra)})]
-          events (if (str/blank? (or answer ""))
-                   base-events
-                   (conj base-events
-                         (openplanner-event config {:id (str (:run_id run) ":assistant")
-                                                    :ts (:updated_at run)
-                                                    :kind "knoxx.message"
-                                                    :session conversation-id
-                                                    :message (str (:run_id run) ":assistant")
-                                                    :role "assistant"
-                                                    :model (:model run)
-                                                    :text answer
-                                                    :extra (merge {:run_id (:run_id run)
-                                                                   :conversation_id conversation-id
-                                                                   :session_id session-id
-                                                                   :status (:status run)}
-                                                                  scope-extra)})))
-          tool-events (map (fn [receipt]
-                             (openplanner-event config {:id (str (:run_id run) ":tool:" (:id receipt))
-                                                        :ts (or (:ended_at receipt) (:started_at receipt) (:updated_at run))
-                                                        :kind "knoxx.tool_receipt"
-                                                        :session conversation-id
-                                                        :message (str (:run_id run) ":tool:" (:id receipt))
-                                                        :role "system"
-                                                        :model (:model run)
-                                                        :text (tool-receipt-summary-text receipt)
-                                                        :extra (merge {:run_id (:run_id run)
-                                                                       :conversation_id conversation-id
-                                                                       :session_id session-id
-                                                                       :receipt receipt}
-                                                                      scope-extra)}))
-                           (:tool_receipts run))]
+          reasoning-text (or (:reasoning run) "")
+          run-id (:run_id run)
+          common-extra (merge {:run_id run-id
+                               :conversation_id conversation-id
+                               :session_id session-id
+                               :mode (get-in run [:settings :mode])}
+                              scope-extra)
+          base-events (cond-> [(openplanner-event config {:id (str run-id ":user")
+                                                          :ts (:created_at run)
+                                                          :kind "knoxx.message"
+                                                          :project session-project
+                                                          :session conversation-id
+                                                          :message (str run-id ":user")
+                                                          :role "user"
+                                                          :model (:model run)
+                                                          :text request-text
+                                                          :extra common-extra})
+                               (openplanner-event config {:id (str run-id ":summary")
+                                                          :ts (:updated_at run)
+                                                          :kind "knoxx.run"
+                                                          :project session-project
+                                                          :session conversation-id
+                                                          :message (str run-id ":summary")
+                                                          :role "system"
+                                                          :model (:model run)
+                                                          :text (run-summary-text run)
+                                                          :extra (merge common-extra
+                                                                        {:status (:status run)
+                                                                         :ttft_ms (:ttft_ms run)
+                                                                         :total_time_ms (:total_time_ms run)})})]
+                        (not (str/blank? (or answer "")))
+                        (conj (openplanner-event config {:id (str run-id ":assistant")
+                                                         :ts (:updated_at run)
+                                                         :kind "knoxx.message"
+                                                         :project session-project
+                                                         :session conversation-id
+                                                         :message (str run-id ":assistant")
+                                                         :role "assistant"
+                                                         :model (:model run)
+                                                         :text answer
+                                                         :extra (merge common-extra {:status (:status run)})}))
+                        (not (str/blank? reasoning-text))
+                        (conj (openplanner-event config {:id (str run-id ":reasoning")
+                                                         :ts (:updated_at run)
+                                                         :kind "knoxx.reasoning"
+                                                         :project session-project
+                                                         :session conversation-id
+                                                         :message (str run-id ":reasoning")
+                                                         :role "system"
+                                                         :model (:model run)
+                                                         :text reasoning-text
+                                                         :extra (merge common-extra {:status (:status run)})})))
+          tool-events (mapcat (fn [receipt]
+                                (let [tool-id (or (:id receipt) "tool")
+                                      tool-ts (or (:ended_at receipt) (:started_at receipt) (:updated_at run))
+                                      summary-text (tool-receipt-summary-text receipt)
+                                      call-text (or (:input_preview receipt) summary-text)
+                                      result-text (or (:result_preview receipt) summary-text)]
+                                  (cond-> [(openplanner-event config {:id (str run-id ":tool:" tool-id)
+                                                                      :ts tool-ts
+                                                                      :kind "knoxx.tool_receipt"
+                                                                      :project session-project
+                                                                      :session conversation-id
+                                                                      :message (str run-id ":tool:" tool-id)
+                                                                      :role "system"
+                                                                      :model (:model run)
+                                                                      :text summary-text
+                                                                      :extra (merge common-extra {:receipt receipt})})]
+                                    true (into (session-text-graph-events config {:run-id run-id
+                                                                                  :conversation-id conversation-id
+                                                                                  :session-id session-id
+                                                                                  :ts tool-ts
+                                                                                  :node-id (str session-project ":run:" run-id ":tool-call:" tool-id)
+                                                                                  :node-type "tool_call"
+                                                                                  :text call-text
+                                                                                  :label (str "Tool call · " (or (:tool_name receipt) tool-id))
+                                                                                  :model (:model run)
+                                                                                  :scope-extra scope-extra}))
+                                    true (into (session-text-graph-events config {:run-id run-id
+                                                                                  :conversation-id conversation-id
+                                                                                  :session-id session-id
+                                                                                  :ts tool-ts
+                                                                                  :node-id (str session-project ":run:" run-id ":tool-result:" tool-id)
+                                                                                  :node-type "tool_result"
+                                                                                  :text result-text
+                                                                                  :label (str "Tool result · " (or (:tool_name receipt) tool-id))
+                                                                                  :model (:model run)
+                                                                                  :scope-extra scope-extra})))))
+                              (:tool_receipts run))
+          graph-events (concat
+                        (session-text-graph-events config {:run-id run-id
+                                                           :conversation-id conversation-id
+                                                           :session-id session-id
+                                                           :ts (:created_at run)
+                                                           :node-id (str session-project ":run:" run-id ":user")
+                                                           :node-type "user_message"
+                                                           :text request-text
+                                                           :label "User message"
+                                                           :model (:model run)
+                                                           :scope-extra scope-extra})
+                        (when-not (str/blank? (or answer ""))
+                          (session-text-graph-events config {:run-id run-id
+                                                             :conversation-id conversation-id
+                                                             :session-id session-id
+                                                             :ts (:updated_at run)
+                                                             :node-id (str session-project ":run:" run-id ":assistant")
+                                                             :node-type "assistant_message"
+                                                             :text answer
+                                                             :label "Assistant message"
+                                                             :model (:model run)
+                                                             :scope-extra scope-extra}))
+                        (when-not (str/blank? reasoning-text)
+                          (session-text-graph-events config {:run-id run-id
+                                                             :conversation-id conversation-id
+                                                             :session-id session-id
+                                                             :ts (:updated_at run)
+                                                             :node-id (str session-project ":run:" run-id ":reasoning")
+                                                             :node-type "reasoning"
+                                                             :text reasoning-text
+                                                             :label "Reasoning"
+                                                             :model (:model run)
+                                                             :scope-extra scope-extra})))
+          all-events (vec (concat base-events graph-events tool-events))]
       (-> (openplanner-request! config "POST" "/v1/events"
-                                {:events (into events tool-events)})
+                                {:events all-events})
           (.catch (fn [err]
                     (.warn js/console "[knoxx] failed to index run memory into OpenPlanner" err)
                     nil))))))
@@ -2026,8 +2836,9 @@
       p)))
 
 (defn create-agent-session!
-  ([runtime config conversation-id model-id] (create-agent-session! runtime config conversation-id model-id nil))
-  ([runtime config conversation-id model-id auth-context]
+  ([runtime config conversation-id model-id] (create-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
+  ([runtime config conversation-id model-id auth-context] (create-agent-session! runtime config conversation-id model-id auth-context (:agent-thinking-level config)))
+  ([runtime config conversation-id model-id auth-context thinking-level]
   (-> (ensure-sdk-runtime! runtime config)
       (.then
        (fn [sdk-runtime]
@@ -2038,11 +2849,14 @@
                 auth-storage (aget sdk-runtime "authStorage")
                 loader (aget sdk-runtime "loader")
                 settings-manager (aget sdk-runtime "settingsManager")
+                thinking-level (or (normalize-thinking-level thinking-level)
+                                   (:agent-thinking-level config)
+                                   "off")
                 model (or (.find model-registry "proxx" model-id)
                           (.find model-registry "proxx" (:proxx-default-model config)))
-               create-session (fn [session-manager]
-                                (-> (createAgentSession
-                                     #js {:cwd (:workspace-root config)
+                create-session (fn [session-manager]
+                                 (-> (createAgentSession
+                                      #js {:cwd (:workspace-root config)
                                           :agentDir (aget sdk-runtime "runtimeDir")
                                           :authStorage auth-storage
                                           :modelRegistry model-registry
@@ -2050,29 +2864,37 @@
                                           :settingsManager settings-manager
                                           :sessionManager session-manager
                                           :model model
-                                          :thinkingLevel "off"
-                                          :tools (clj->js (create-runtime-tools runtime config auth-context))
-                                          :customTools (create-knoxx-custom-tools runtime config auth-context)})
-                                    (.then (fn [result]
-                                             (aget result "session")))))]
+                                           :thinkingLevel thinking-level
+                                           :tools (clj->js (create-runtime-tools runtime config auth-context))
+                                           :customTools (create-knoxx-custom-tools runtime config auth-context)})
+                                     (.then (fn [result]
+                                              (let [session (aget result "session")]
+                                                (.setThinkingLevel session thinking-level)
+                                                session)))))]
            (if (no-content? model)
              (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))
              (let [session-manager (.inMemory SessionManager (:workspace-root config))]
                (.appendModelChange session-manager "proxx" model-id)
-               (.appendThinkingLevelChange session-manager "off")
+               (.appendThinkingLevelChange session-manager thinking-level)
                (-> (rehydrate-session-manager! config session-manager conversation-id model-id)
                    (.then (fn [hydrated-manager]
                             (create-session hydrated-manager))))))))))))
 
 (defn ensure-agent-session!
-  ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil))
-  ([runtime config conversation-id model-id auth-context]
-  (if-let [session (get @agent-sessions* conversation-id)]
-    (js/Promise.resolve session)
-    (-> (create-agent-session! runtime config conversation-id model-id auth-context)
-        (.then (fn [session]
-                 (swap! agent-sessions* assoc conversation-id session)
-                 session))))))
+  ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
+  ([runtime config conversation-id model-id auth-context] (ensure-agent-session! runtime config conversation-id model-id auth-context (:agent-thinking-level config)))
+  ([runtime config conversation-id model-id auth-context thinking-level]
+  (let [thinking-level (or (normalize-thinking-level thinking-level)
+                           (:agent-thinking-level config)
+                           "off")]
+    (if-let [session (get @agent-sessions* conversation-id)]
+      (do
+        (.setThinkingLevel session thinking-level)
+        (js/Promise.resolve session))
+      (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level)
+          (.then (fn [session]
+                   (swap! agent-sessions* assoc conversation-id session)
+                   session)))))))
 
 (defn active-agent-session
   [conversation-id]
@@ -2124,17 +2946,24 @@
       (js/Promise.reject (js/Error. "Conversation is not active in the agent runtime")))))
 
 (defn send-agent-turn!
-  [runtime config {:keys [conversation-id session-id message model mode run-id auth-context]}]
+  [runtime config {:keys [conversation-id session-id message model mode run-id auth-context thinking-level]}]
   (let [node-crypto (aget runtime "crypto")
         conversation-id (or conversation-id (.randomUUID node-crypto))
         _ (ensure-conversation-access! auth-context conversation-id)
         _ (remember-conversation-access! auth-context conversation-id)
         mode (or mode "direct")
         model-id (or model (:llmModel (ensure-settings! config)) (:proxx-default-model config))
+        thinking-level-raw thinking-level
+        parsed-thinking-level (when thinking-level-raw
+                                (normalize-thinking-level thinking-level-raw))
+        thinking-level (or parsed-thinking-level
+                           (:agent-thinking-level config)
+                           "off")
         run-id (or run-id (.randomUUID node-crypto))
         started-at (now-iso)
         started-ms (.now js/Date)
         request-messages [{:role "user" :content message}]
+        _title-prime (maybe-prime-session-title! runtime config conversation-id message)
         auth-extra (auth-snapshot auth-context)
         base-run (merge {:run_id run-id
                          :session_id session-id
@@ -2156,19 +2985,44 @@
                          :settings {:sessionId session-id
                                     :conversationId conversation-id
                                     :mode mode
+                                    :thinkingLevel thinking-level
                                     :workspaceRoot (:workspace-root config)}
                          :resources {:provider "proxx"
                                      :collection (:collection-name config)}}
                         auth-extra)
         _ (store-run! run-id base-run)
+        _ (session-store/put-session! (redis/get-client)
+                                      (merge {:session_id session-id
+                                              :conversation_id conversation-id
+                                              :run_id run-id
+                                              :status "running"
+                                              :model model-id
+                                              :mode mode
+                                              :thinking_level thinking-level
+                                              :created_at started-at
+                                              :updated_at started-at
+                                              :has_active_stream false
+                                              :messages request-messages}
+                                             auth-extra))
         initial-event (tool-event-payload run-id conversation-id session-id "run_started"
                                           {:status "running"
                                            :mode mode
-                                           :model model-id})
+                                           :model model-id
+                                           :thinking_level thinking-level})
         _ (append-run-event! run-id initial-event)
         _ (broadcast-ws-session! session-id "events" initial-event)
-        chunks (atom [])]
-    (-> (.all js/Promise
+        chunks (atom [])
+        reasoning-chunks (atom [])]
+    (cond
+      (and thinking-level-raw (nil? parsed-thinking-level))
+      (js/Promise.reject (js/Error. (str "Unsupported thinking level: " thinking-level-raw ". Expected one of off, minimal, low, medium, high, xhigh.")))
+
+      (and (not= thinking-level "off")
+           (not (model-supports-reasoning? config model-id)))
+      (js/Promise.reject (js/Error. (str "Model " model-id " is not marked reasoning-capable in Knoxx/Proxx configuration. Set thinkingLevel to off or extend KNOXX_REASONING_MODEL_PREFIXES if this model truly supports reasoning.")))
+
+      :else
+      (-> (.all js/Promise
               #js [(passive-hydration! runtime config mode message auth-context)
                    (passive-memory-hydration! config conversation-id message auth-context)])
         (.then (fn [results]
@@ -2198,7 +3052,7 @@
                                           (assoc :updated_at (now-iso)))))
                        (append-run-event! run-id memory-event)
                        (broadcast-ws-session! session-id "events" memory-event)))
-                   (-> (ensure-agent-session! runtime config conversation-id model-id auth-context)
+                   (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level)
                      (.then (fn [session]
                               (let [ttft-recorded? (atom false)
                                     unsubscribe (.subscribe session
@@ -2206,8 +3060,10 @@
                                                             (let [event-type (aget event "type")]
                                                               (cond
                                                                 (= event-type "message_update")
-                                                                (let [assistant-event (aget event "assistantMessageEvent")]
-                                                                  (when (= (aget assistant-event "type") "text_delta")
+                                                                (let [assistant-event (aget event "assistantMessageEvent")
+                                                                      assistant-event-type (aget assistant-event "type")]
+                                                                  (cond
+                                                                    (= assistant-event-type "text_delta")
                                                                     (let [delta (or (aget assistant-event "delta") "")]
                                                                       (when-not @ttft-recorded?
                                                                         (reset! ttft-recorded? true)
@@ -2217,14 +3073,34 @@
                                                                                                               :ttft_ms ttft-ms})]
                                                                           (update-run! run-id #(assoc % :ttft_ms ttft-ms))
                                                                           (append-run-event! run-id ttft-event)
-                                                                          (broadcast-ws-session! session-id "events" ttft-event)))
+                                                                          (broadcast-ws-session! session-id "events" ttft-event)
+                                                                          ;; Mark session as actively streaming in Redis
+                                                                          (session-store/mark-session-streaming! (redis/get-client) session-id true)))
                                                                       (swap! chunks conj delta)
-                                                                      (when-not (str/blank? delta)
+                                                                      (when (seq delta)
                                                                         (broadcast-ws-session! session-id "tokens"
                                                                                                {:run_id run-id
                                                                                                 :conversation_id conversation-id
                                                                                                 :session_id session-id
-                                                                                                :token delta})))))
+                                                                                                :kind "assistant_message"
+                                                                                                :token delta})))
+
+                                                                    (contains? #{"reasoning_delta" "reasoning" "reasoning_content_delta" "thinking_delta" "thinking"} assistant-event-type)
+                                                                    (let [delta (or (aget assistant-event "delta")
+                                                                                    (aget assistant-event "text")
+                                                                                    (aget assistant-event "reasoning")
+                                                                                    (aget assistant-event "thinking")
+                                                                                    "")]
+                                                                      (when (seq delta)
+                                                                        (swap! reasoning-chunks conj delta)
+                                                                        (broadcast-ws-session! session-id "tokens"
+                                                                                               {:run_id run-id
+                                                                                                :conversation_id conversation-id
+                                                                                                :session_id session-id
+                                                                                                :kind "reasoning"
+                                                                                                :token delta})))
+
+                                                                    :else nil))
 
                                                                 (= event-type "tool_execution_start")
                                                                 (let [tool-name (or (aget event "toolName") "tool")
@@ -2313,12 +3189,26 @@
                                                              (assistant-message-text assistant-message)
                                                              chunked))
                                                   usage (or (aget assistant-message "usage") #js {})
+                                                  reasoning-text (let [streamed (apply str @reasoning-chunks)
+                                                                       final-reasoning (assistant-message-reasoning-text assistant-message)]
+                                                                   (cond
+                                                                     (and (str/blank? streamed) (not (str/blank? final-reasoning))) final-reasoning
+                                                                     (and (not (str/blank? final-reasoning)) (> (count final-reasoning) (count streamed))) final-reasoning
+                                                                     :else streamed))
                                                   elapsed (- (.now js/Date) started-ms)
                                                   output-tokens (or (aget usage "output") 0)
                                                   tokens-per-second (if (and (pos? output-tokens) (pos? elapsed))
                                                                       (* 1000 (/ output-tokens elapsed))
                                                                       nil)
                                                   sources (hydration-sources hydration)
+                                                  message-parts (cond-> []
+                                                               (not (str/blank? reasoning-text))
+                                                               (conj {:role "thinking"
+                                                                      :content reasoning-text
+                                                                      :reasoningType "reasoning_summary"})
+                                                               (not (str/blank? answer))
+                                                               (conj {:role "assistant"
+                                                                      :content answer}))
                                                   response {:answer answer
                                                             :run_id run-id
                                                             :runId run-id
@@ -2327,6 +3217,7 @@
                                                             :session_id session-id
                                                             :model model-id
                                                             :sources sources
+                                                            :message_parts message-parts
                                                             :compare nil}
                                                   completed-event (tool-event-payload run-id conversation-id session-id "run_completed"
                                                                                       {:status "completed"
@@ -2347,12 +3238,20 @@
                                                                                               :output_tokens output-tokens
                                                                                               :tokens_per_s tokens-per-second
                                                                                               :answer answer
+                                                                                              :reasoning reasoning-text
                                                                                               :sources sources)
                                                                                        (update :resources merge resource-patch)))))
                                                     _ (when completed-run
                                                         (index-run-memory! config completed-run))]
                                                 (append-run-event! run-id completed-event)
                                                 (broadcast-ws-session! session-id "events" completed-event)
+                                                ;; Mark session as completed in Redis
+                                                (session-store/complete-session! (redis/get-client)
+                                                                                  session-id
+                                                                                  conversation-id
+                                                                                  {:status "completed"
+                                                                                   :answer answer
+                                                                                   :messages (conj request-messages {:role "assistant" :content answer})})
                                                 response)))
                                    (fn [err]
                                      (unsubscribe)
@@ -2368,13 +3267,140 @@
                                                                              (assoc :updated_at (now-iso)
                                                                                     :status "failed"
                                                                                     :total_time_ms (- (.now js/Date) started-ms)
+                                                                                    :reasoning (apply str @reasoning-chunks)
                                                                                     :error (str err))
                                                                              (update :resources merge resource-patch)))))
                                              _ (when failed-run
                                                  (index-run-memory! config failed-run))]
                                          (append-run-event! run-id error-event)
-                                         (broadcast-ws-session! session-id "events" error-event))
-                                     (throw err))))))))))))))))
+                                         (broadcast-ws-session! session-id "events" error-event)
+                                         ;; Mark session as failed in Redis
+                                         (session-store/complete-session! (redis/get-client)
+                                                                           session-id
+                                                                           conversation-id
+                                                                           {:status "failed"
+                                                                            :error (str err)}))
+                                     (throw err)))))))))))))))))
+
+(defn recovered-auth-context
+  [session]
+  {:orgId (:org_id session)
+   :orgSlug (:org_slug session)
+   :userId (:user_id session)
+   :userEmail (:user_email session)
+   :membershipId (:membership_id session)
+   :roleSlugs (vec (or (:role_slugs session) []))
+   :permissions (vec (or (:permissions session) []))
+   :toolPolicies (vec (or (:tool_policies session) []))
+   :membershipToolPolicies (vec (or (:membership_tool_policies session) []))
+   :isSystemAdmin (boolean (:is_system_admin session))})
+
+(defn restore-recovered-conversation-access!
+  [session]
+  (let [conversation-id (str (or (:conversation_id session) ""))
+        snapshot (select-keys session [:org_id
+                                       :org_slug
+                                       :user_id
+                                       :user_email
+                                       :membership_id
+                                       :role_slugs
+                                       :permissions
+                                       :tool_policies
+                                       :membership_tool_policies
+                                       :is_system_admin])]
+    (when (and (not (str/blank? conversation-id))
+               (auth-snapshot-has-principal? snapshot))
+      (swap! conversation-access* assoc conversation-id snapshot))))
+
+(defn last-session-user-message
+  [session]
+  (some (fn [message]
+          (let [role (some-> (:role message) str str/lower-case)
+                content (some-> (:content message) str)]
+            (when (and (= role "user")
+                       (not (str/blank? content)))
+              content)))
+        (reverse (vec (or (:messages session) [])))))
+
+(defn resume-recovered-session!
+  [runtime config session]
+  (let [conversation-id (str (or (:conversation_id session) ""))
+        session-id (str (or (:session_id session) ""))
+        run-id (or (:run_id session) nil)
+        model-id (or (:model session) nil)
+        mode (or (:mode session) "direct")
+        thinking-level (or (:thinking_level session)
+                           (:agent-thinking-level config)
+                           "off")
+        auth-context (recovered-auth-context session)
+        message (last-session-user-message session)]
+    (restore-recovered-conversation-access! session)
+    (cond
+      (or (str/blank? conversation-id)
+          (str/blank? session-id))
+      (js/Promise.resolve {:session_id session-id
+                           :conversation_id conversation-id
+                           :resumed false
+                           :reason "missing session or conversation id"})
+
+      (str/blank? message)
+      (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level)
+          (.then (fn [_]
+                   (-> (session-store/update-session! (redis/get-client) session-id
+                                                     {:status "waiting_input"
+                                                      :has_active_stream false
+                                                      :recovered_at (now-iso)})
+                       (.then (fn [_]
+                                {:session_id session-id
+                                 :conversation_id conversation-id
+                                 :resumed false
+                                 :reason "no pending user message to resume"}))))))
+
+      :else
+      (-> (session-store/update-session! (redis/get-client) session-id
+                                         {:status "running"
+                                          :has_active_stream false
+                                          :recovered_at (now-iso)})
+          (.then (fn [_]
+                   (send-agent-turn! runtime config {:conversation-id conversation-id
+                                                     :session-id session-id
+                                                     :run-id run-id
+                                                     :message message
+                                                     :model model-id
+                                                     :mode mode
+                                                     :thinking-level thinking-level
+                                                     :auth-context auth-context})))
+          (.then (fn [_]
+                   {:session_id session-id
+                    :conversation_id conversation-id
+                    :resumed true}))
+          (.catch (fn [err]
+                    (js/console.error "[knoxx] failed to resume recovered session"
+                                      #js {:sessionId session-id
+                                           :conversationId conversation-id
+                                           :error (str err)})
+                    (-> (session-store/complete-session! (redis/get-client)
+                                                         session-id
+                                                         conversation-id
+                                                         {:status "failed"
+                                                          :error (str "Session recovery failed: " err)
+                                                          :messages (:messages session)})
+                        (.then (fn [_]
+                                 {:session_id session-id
+                                  :conversation_id conversation-id
+                                  :resumed false
+                                  :error (str err)})))))))))
+
+(defn recover-active-agent-sessions!
+  [runtime config redis-client]
+  (-> (session-store/recover-sessions! redis-client)
+      (.then (fn [sessions]
+               (let [items (vec sessions)]
+                 (if (seq items)
+                   (-> (.all js/Promise (clj->js (mapv #(resume-recovered-session! runtime config %) items)))
+                       (.then (fn [results]
+                                (vec (js->clj results :keywordize-keys true)))))
+                   (js/Promise.resolve [])))))))
 
 (defn normalize-chat-body
   [body]
@@ -2386,6 +3412,10 @@
    :run-id (or (aget body "runId")
                (aget body "run_id"))
    :model (or (aget body "model") nil)
+   :thinking-level (or (aget body "thinkingLevel")
+                       (aget body "thinking_level")
+                       (aget body "reasoningEffort")
+                       (aget body "reasoning_effort"))
    :mode (or (aget body "mode") "direct")})
 
 (defn normalize-control-body
@@ -2410,7 +3440,45 @@
 
   (route! app "GET" "/health"
           (fn [_request reply]
-            (json-response! reply 200 {:status "ok" :service "knoxx-backend-cljs"})))
+            (let [proxx-configured (and (not (str/blank? (:proxx-base-url config)))
+                                        (not (str/blank? (:proxx-auth-token config))))
+                  openplanner-configured (openplanner-enabled? config)
+                  proxx-promise (if proxx-configured
+                                 (fetch-json (str (:proxx-base-url config) "/health")
+                                             #js {:headers (bearer-headers (:proxx-auth-token config))})
+                                 (js/Promise.resolve #js {:ok false
+                                                         :status 503
+                                                         :body #js {:detail "Proxx is not configured"}}))
+                  openplanner-promise (if openplanner-configured
+                                       (fetch-json (openplanner-url config "/v1/health")
+                                                   #js {:headers (openplanner-headers config)})
+                                       (js/Promise.resolve #js {:ok false
+                                                               :status 503
+                                                               :body #js {:detail "OpenPlanner is not configured"}}))]
+              (-> (js/Promise.all #js [proxx-promise openplanner-promise])
+                  (.then (fn [parts]
+                           (let [proxx-res (aget parts 0)
+                                 openplanner-res (aget parts 1)
+                                 proxx-ok (and proxx-configured (aget proxx-res "ok"))
+                                 openplanner-ok (and openplanner-configured (aget openplanner-res "ok"))
+                                 healthy (and proxx-ok openplanner-ok)]
+                             (json-response!
+                              reply
+                              (if healthy 200 503)
+                              {:status (if healthy "ok" "unhealthy")
+                               :service "knoxx-backend-cljs"
+                               :dependencies {:proxx {:configured proxx-configured
+                                                      :reachable (boolean proxx-ok)
+                                                      :status_code (aget proxx-res "status")
+                                                      :detail (js->clj (aget proxx-res "body") :keywordize-keys true)}
+                                              :openplanner {:configured openplanner-configured
+                                                            :reachable (boolean openplanner-ok)
+                                                            :status_code (aget openplanner-res "status")
+                                                            :detail (js->clj (aget openplanner-res "body") :keywordize-keys true)}}}))))
+                  (.catch (fn [err]
+                            (json-response! reply 503 {:status "unhealthy"
+                                                       :service "knoxx-backend-cljs"
+                                                       :error (str err)})))))))
 
   (route! app "GET" "/api/config"
           (fn [request reply]
@@ -2431,6 +3499,23 @@
               :default_role (:knoxx-default-role config)
               :email_enabled (email-enabled? config)
               :rbac_enabled (policy-db-enabled? runtime)})))
+
+  (route! app "GET" "/api/auth/context"
+          (fn [request reply]
+            (if-not (policy-db-enabled? runtime)
+              (json-response! reply 503 {:detail "Knoxx policy database is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (json-response! reply 200 {:user (:user ctx)
+                                             :org (:org ctx)
+                                             :membership (:membership ctx)
+                                             :roles (vec (or (:roles ctx) []))
+                                             :roleSlugs (vec (or (:roleSlugs ctx) []))
+                                             :permissions (vec (or (:permissions ctx) []))
+                                             :toolPolicies (vec (or (:toolPolicies ctx) []))
+                                             :membershipToolPolicies (vec (or (:membershipToolPolicies ctx) []))
+                                             :isSystemAdmin (boolean (:isSystemAdmin ctx))
+                                             :primaryRole (primary-context-role ctx)}))))))
 
   (route! app "GET" "/api/admin/bootstrap"
           (fn [request reply]
@@ -2784,22 +3869,139 @@
                 (fn [ctx]
                   (ensure-permission! ctx "agent.memory.cross_session")
                   (let [limit-raw (aget request "query" "limit")
-                        limit (cond
-                                (string? limit-raw) (or (js/parseInt limit-raw 10) 12)
-                                (number? limit-raw) limit-raw
-                                :else 12)]
-                    (-> (openplanner-request! config "GET" "/v1/sessions")
+                        limit (or (parse-positive-int limit-raw) 12)
+                        session-promise (openplanner-request! config "GET"
+                                                            (str "/v1/sessions?project="
+                                                                 (js/encodeURIComponent (:session-project-name config))))]
+                    (-> session-promise
                         (.then (fn [body]
                                  (-> (authorized-session-ids! config ctx (map :session (or (:rows body) [])))
                                      (.then (fn [allowed]
                                               (let [rows (->> (or (:rows body) [])
                                                               (filter #(contains? allowed (str (:session %))))
                                                               (take (max 1 limit))
-                                                              vec)]
-                                                (json-response! reply 200 {:ok true
-                                                                           :rows rows})))))))
+                                                              vec)
+                                                    _ (doseq [row rows]
+                                                        (let [session-id (str (:session row))]
+                                                          (when-not (contains? @session-titles* session-id)
+                                                            (-> (fetch-openplanner-session-rows! config session-id)
+                                                                (.then (fn [title-rows]
+                                                                         (let [seed-text (session-title-seed-text title-rows)
+                                                                               fallback-title (heuristic-session-title seed-text)]
+                                                                           (-> (resolve-session-title! config seed-text)
+                                                                               (.then (fn [entry]
+                                                                                        (cache-session-title! runtime config session-id
+                                                                                                              (or (normalize-session-title (:title entry) fallback-title)
+                                                                                                                  fallback-title)
+                                                                                                              (:title_model entry))))
+                                                                               (.catch (fn [_]
+                                                                                         (cache-session-title! runtime config session-id fallback-title nil)))))))
+                                                                (.catch (fn [_]
+                                                                          (cache-session-title! runtime config session-id "Untitled session" nil)))))))
+                                                    redis-client (redis/get-client)
+                                                    enrich-row (fn [row]
+                                                                 (let [session-id (str (:session row))
+                                                                       titled-row (if-let [title-entry (get @session-titles* session-id)]
+                                                                                    (assoc row
+                                                                                           :title (:title title-entry)
+                                                                                           :title_model (:title_model title-entry))
+                                                                                    row)]
+                                                                   (if-not redis-client
+                                                                     (js/Promise.resolve (assoc titled-row
+                                                                                              :is_active false
+                                                                                              :active_status "inactive"
+                                                                                              :has_active_stream false))
+                                                                     (-> (session-store/get-conversation-active-session redis-client session-id)
+                                                                         (.then (fn [active-session-id]
+                                                                                  (if (str/blank? (str active-session-id))
+                                                                                    (assoc titled-row
+                                                                                           :is_active false
+                                                                                           :active_status "inactive"
+                                                                                           :has_active_stream false)
+                                                                                    (-> (session-store/get-session redis-client active-session-id)
+                                                                                        (.then (fn [active-session]
+                                                                                                 (let [status (or (:status active-session) "inactive")
+                                                                                                       is-active (contains? #{"running" "waiting_input"} status)]
+                                                                                                   (assoc titled-row
+                                                                                                          :active_session_id active-session-id
+                                                                                                          :is_active is-active
+                                                                                                          :active_status status
+                                                                                                          :has_active_stream (boolean (:has_active_stream active-session))))))
+                                                                                        (.catch (fn [_]
+                                                                                                  (assoc titled-row
+                                                                                                         :is_active false
+                                                                                                         :active_status "inactive"
+                                                                                                         :has_active_stream false)))))))))))
+                                                    enrich-promises (mapv enrich-row rows)]
+                                                (-> (.all js/Promise (clj->js enrich-promises))
+                                                    (.then (fn [enriched-rows]
+                                                             (json-response! reply 200 {:ok true
+                                                                                        :rows (vec (js->clj enriched-rows :keywordize-keys true))}))))))))))
                         (.catch (fn [err]
-                                  (error-response! reply err 502)))))))))
+                                  (error-response! reply err 502))))))))))
+
+  (route! app "GET" "/api/memory/session-titles/status"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (ensure-permission! ctx "agent.memory.cross_session")
+                  (json-response! reply 200 {:ok true
+                                             :status @session-title-backfill*
+                                             :cached_count (count @session-titles*)}))))))
+
+  (route! app "POST" "/api/memory/sessions/backfill-titles"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (ensure-permission! ctx "agent.memory.cross_session")
+                  (let [body (or (aget request "body") #js {})
+                        limit (or (parse-positive-int (aget body "limit"))
+                                  (parse-positive-int (aget request "query" "limit")))
+                        force? (or (truthy-param? (aget body "force"))
+                                   (truthy-param? (aget request "query" "force")))]
+                    (-> (start-session-title-backfill! runtime config {:force force?
+                                                                       :limit limit})
+                        (.then (fn [status]
+                                 (json-response! reply 202 {:ok true
+                                                            :status status
+                                                            :cached_count (count @session-titles*)})))
+                        (.catch (fn [err]
+                                  (error-response! reply err 502))))))))))
+
+  (route! app "POST" "/api/memory/sessions/import-titles"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (ensure-permission! ctx "agent.memory.cross_session")
+                  (let [body (js->clj (or (aget request "body") #js {}))
+                        titles (or (get body "titles") {})
+                        updated (reduce-kv (fn [total session-id entry]
+                                             (let [session-id (str session-id)
+                                                   raw-title (if (map? entry) (or (get entry "title") (get entry :title)) entry)
+                                                   title-model (when (map? entry)
+                                                                 (or (get entry "title_model")
+                                                                     (get entry "title-model")
+                                                                     (get entry "model")
+                                                                     (:title_model entry)
+                                                                     (:title-model entry)
+                                                                     (:model entry)))
+                                                   normalized (normalize-session-title raw-title)]
+                                               (if (or (str/blank? session-id) (nil? normalized))
+                                                 total
+                                                 (do
+                                                   (cache-session-title! runtime config session-id normalized (or title-model "retro:heuristic"))
+                                                   (inc total)))))
+                                           0
+                                           titles)]
+                    (json-response! reply 200 {:ok true
+                                               :updated updated
+                                               :cached_count (count @session-titles*)})))))))
 
   (route! app "GET" "/api/memory/sessions/:sessionId"
           (fn [request reply]
@@ -2875,7 +4077,7 @@
                 (fn [ctx]
                   (when ctx
                     (ensure-permission! ctx "agent.chat.use"))
-                  (json-response! reply 200 (tool-catalog config role ctx))))))))
+                  (json-response! reply 200 (tool-catalog config role ctx)))))))
 
   (route! app "POST" "/api/tools/email/send"
           (fn [_request reply]
@@ -2924,7 +4126,7 @@
                         (.catch (fn [err]
                                   (json-response! reply 404 {:detail (str err)})))))
                   (catch :default err
-                    (error-response! reply err))))))
+                    (error-response! reply err)))))))
 
   (route! app "POST" "/api/tools/write"
           (fn [request reply]
@@ -3035,7 +4237,7 @@
                                                                  :stdout stdout
                                                                  :stderr stderr})))))))
                   (catch :default err
-                    (error-response! reply err))))))))
+                    (error-response! reply err)))))))
 
   (route! app "GET" "/v1/models"
           (fn [request reply]
@@ -3275,6 +4477,17 @@
                                                               :results results}))))
                         (.catch (fn [err]
                                   (json-response! reply 500 {:detail (str "Retrieval debug failed: " err)}))))))))))
+
+  (route! app "GET" "/api/graph/export"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "datalake.query"))
+                (-> (openplanner-graph-export! config request)
+                    (.then (fn [resp]
+                             (json-response! reply 200 resp)))
+                    (.catch (fn [err]
+                              (error-response! reply err 502))))))))
 
   (route! app "GET" "/api/settings/databases"
           (fn [request reply]
@@ -3571,6 +4784,54 @@
                       (.catch (fn [err]
                                 (error-response! reply err 409)))))))))
 
+  ;; Session status endpoint for frontend resume detection
+  (route! app "GET" "/api/knoxx/session/status"
+          (fn [request reply]
+            (let [session-id (or (aget request "query" "session_id")
+                                 (aget request "query" "sessionId")
+                                 "")
+                  conversation-id (or (aget request "query" "conversation_id")
+                                       (aget request "query" "conversationId")
+                                       "")]
+              (cond
+                (str/blank? session-id)
+                (json-response! reply 400 {:error "session_id is required"})
+
+                :else
+                (-> (session-store/get-session (redis/get-client) session-id)
+                    (.then (fn [session]
+                             (if session
+                               (let [can-send (session-store/session-can-send? session)]
+                                 (json-response! reply 200
+                                                   {:session_id session-id
+                                                    :conversation_id (:conversation_id session)
+                                                    :status (:status session)
+                                                    :has_active_stream (:has_active_stream session)
+                                                    :can_send (:can-send can-send)
+                                                    :reason (:reason can-send)
+                                                    :model (:model session)
+                                                    :updated_at (:updated_at session)}))
+                               ;; No session in Redis - check if conversation has active agent session
+                               (let [agent-session (active-agent-session conversation-id)]
+                                 (if (and agent-session (aget agent-session "isStreaming"))
+                                   (json-response! reply 200
+                                                     {:session_id session-id
+                                                      :conversation_id conversation-id
+                                                      :status "running"
+                                                      :has_active_stream true
+                                                      :can_send false
+                                                      :reason "Session is actively streaming"})
+                                   (json-response! reply 200
+                                                     {:session_id session-id
+                                                      :conversation_id conversation-id
+                                                      :status "not_found"
+                                                      :has_active_stream false
+                                                      :can_send true
+                                                      :reason "No session state found. Ready for new turn."}))))))
+                    (.catch (fn [err]
+                              (js/console.error "Session status check failed" err)
+                              (json-response! reply 500 {:error (str err)}))))))))
+
   (route! app "POST" "/api/shibboleth/handoff"
           (fn [request reply]
             (let [body (or (aget request "body") #js {})]
@@ -3630,7 +4891,27 @@
           fastify-cors (aget runtime "fastifyCors")
           app (Fastify #js {:logger true})]
       (ensure-settings! config)
-      (-> (.register app fastify-cors #js {:origin true})
+
+      (let [redis-startup (-> (redis/init-redis! (:redis-url config))
+                              (.then (fn [redis-client]
+                                       (if redis-client
+                                         (do
+                                           (.log.info app "Redis client initialized for session persistence")
+                                           (-> (recover-active-agent-sessions! runtime config redis-client)
+                                               (.then (fn [results]
+                                                        (let [resumed (count (filter :resumed results))]
+                                                          (when (seq results)
+                                                            (.log.info app (str "Recovered " (count results) " active sessions from Redis; resumed " resumed))))
+                                                        nil))))
+                                         nil)))
+                              (.catch (fn [err]
+                                        (.log.error app "Failed to initialize Redis-backed session recovery" err)
+                                        nil)))]
+        (-> redis-startup
+          (.then (fn []
+                   (load-session-titles! runtime config)))
+          (.then (fn []
+                   (.register app fastify-cors #js {:origin true})))
           (.then (fn []
                    (.register app (aget runtime "fastifyWebsocket"))))
           (.then (fn []
@@ -3647,4 +4928,4 @@
                    (.log.info app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))))
           (.catch (fn [err]
                     (.error js/console "Knoxx backend CLJS failed to start" err)
-                    (js/process.exit 1)))))))
+                    (js/process.exit 1))))))))

@@ -291,12 +291,12 @@
     (println "[bootstrap] creating default devel workspace source")
     (db/create-source!
      {:tenant-id "devel"
-      :driver-type "local"
-      :name "devel workspace"
-      :config {:root_path "/app/workspace/devel"
+     :driver-type "local"
+     :name "devel workspace"
+     :config {:root_path "/app/workspace/devel"
                :sync_interval_minutes 30
                :passive_watch true}
-      :collections ["devel-docs" "devel-code" "devel-config" "devel-data"]
+      :collections ["devel"]
       :file-types [".md" ".markdown" ".txt" ".rst" ".org" ".adoc"
                    ".json" ".jsonl" ".yaml" ".yml" ".toml" ".ini" ".cfg" ".conf" ".env"
                    ".xml" ".csv" ".tsv" ".html" ".htm" ".css" ".js" ".jsx" ".ts" ".tsx"
@@ -304,6 +304,7 @@
                    ".clj" ".cljs" ".cljc" ".edn" ".sql" ".sh" ".bash" ".zsh" ".fish"
                    ".tex" ".bib" ".nix" ".dockerfile" ".gradle" ".properties"]
        :exclude-patterns ["**/.git/**" "**/node_modules/**" "**/dist/**" "**/coverage/**"
+                          "**/.clj-kondo/**" "**/.cpcache/**" "**/.shadow-cljs/**" "**/.pnpm-store/**"
                           "**/.next/**" "**/.venv/**" "**/venv/**" "**/__pycache__/**"
                           "**/*.png" "**/*.jpg" "**/*.jpeg" "**/*.gif" "**/*.pdf"
                           "**/*.zip" "**/*.tar.gz"]})))

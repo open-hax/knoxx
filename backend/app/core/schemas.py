@@ -258,6 +258,8 @@ class KnoxxChatRequest(BaseModel):
 class KnoxxChatResponse(BaseModel):
     answer: str
     conversation_id: str | None = None
+    # Structured message parts for reasoning models
+    message_parts: list[dict[str, Any]] | None = None
 
 
 class KnoxxHealthResponse(BaseModel):

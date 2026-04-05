@@ -26,9 +26,11 @@ First-pass canonicalization has started in these high-value specs:
 - `knowledge-ops-role-scoped-lakes.md`
 - `knowledge-ops-workbench-ui.md`
 - `knowledge-ops-deployment.md`
+- `knowledge-ops-adaptive-web-frontier-and-multiscale-backbone.md`
 
 ## Spec inventory
 
+- `knowledge-ops-adaptive-web-frontier-and-multiscale-backbone.md`
 - `knowledge-ops-architecture-migration.md`
 - `knowledge-ops-chat-ui-library.md`
 - `knowledge-ops-chat-widget-layers.md`

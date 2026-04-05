@@ -15,6 +15,23 @@ export interface ChatMessage {
   sources?: AgentSource[];
   runId?: string | null;
   status?: "streaming" | "done" | "error";
+  traceBlocks?: ChatTraceBlock[];
+}
+
+export type ChatTraceBlockKind = "agent_message" | "reasoning" | "tool_call";
+
+export interface ChatTraceBlock {
+  id: string;
+  kind: ChatTraceBlockKind;
+  status?: "streaming" | "done" | "error";
+  at?: string;
+  content?: string;
+  toolName?: string;
+  toolCallId?: string;
+  inputPreview?: string;
+  outputPreview?: string;
+  updates?: string[];
+  isError?: boolean;
 }
 
 export interface GroundedContextRow {
@@ -140,8 +157,14 @@ export interface RunDetail extends RunSummary {
 export interface MemorySessionSummary {
   project?: string;
   session: string;
+  title?: string | null;
+  title_model?: string | null;
   last_ts?: string;
   event_count?: number;
+  is_active?: boolean;
+  active_status?: "running" | "waiting_input" | "completed" | "failed" | "inactive" | "unknown" | string;
+  has_active_stream?: boolean;
+  active_session_id?: string | null;
 }
 
 export interface MemorySessionRow {
@@ -294,6 +317,170 @@ export interface ShibbolethHandoffResponse {
   session_id: string;
   ui_url: string;
   imported_item_count: number;
+}
+
+export interface KnoxxAuthIdentity {
+  userEmail: string;
+  orgSlug: string;
+}
+
+export interface AdminToolPolicy {
+  toolId: string;
+  effect: "allow" | "deny";
+  constraints?: Record<string, unknown>;
+}
+
+export interface AdminOrgSummary {
+  id: string;
+  slug: string;
+  name: string;
+  kind: string;
+  isPrimary: boolean;
+  status: string;
+  memberCount?: number;
+  roleCount?: number;
+  dataLakeCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AdminRoleSummary {
+  id: string;
+  slug: string;
+  name: string;
+  scopeKind?: string;
+  orgId?: string | null;
+  builtIn?: boolean;
+  systemManaged?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  permissions: string[];
+  toolPolicies: AdminToolPolicy[];
+}
+
+export interface AdminMembershipSummary {
+  id: string;
+  orgId: string;
+  orgName?: string;
+  orgSlug?: string;
+  status: string;
+  isDefault?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  roles: Array<Pick<AdminRoleSummary, "id" | "slug" | "name" | "scopeKind" | "orgId">>;
+  toolPolicies: AdminToolPolicy[];
+}
+
+export interface AdminUserSummary {
+  id: string;
+  email: string;
+  displayName: string;
+  authProvider?: string;
+  externalSubject?: string | null;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+  memberships: AdminMembershipSummary[];
+}
+
+export interface AdminDataLakeSummary {
+  id: string;
+  orgId: string;
+  name: string;
+  slug: string;
+  kind: string;
+  config: Record<string, unknown>;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface GraphExportNode {
+  id: string;
+  kind: string;
+  label: string;
+  lake: string;
+  nodeType: string;
+  source: string;
+  project: string;
+  ts?: string | null;
+  data: Record<string, unknown>;
+}
+
+export interface GraphExportEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: string;
+  lake: string;
+  edgeType: string;
+  sourceLake: string;
+  targetLake: string;
+  sourceEventId?: string;
+  data: Record<string, unknown>;
+}
+
+export interface GraphExportResponse {
+  ok: boolean;
+  projects?: string[];
+  nodes: GraphExportNode[];
+  edges: GraphExportEdge[];
+}
+
+export interface AdminPermissionDefinition {
+  id: string;
+  code: string;
+  resourceKind: string;
+  action: string;
+  description: string;
+}
+
+export interface AdminToolDefinition {
+  id: string;
+  label: string;
+  description: string;
+  riskLevel: string;
+}
+
+export interface KnoxxAuthContext {
+  user: {
+    id: string;
+    email: string;
+    displayName: string;
+    status: string;
+  };
+  org: {
+    id: string;
+    slug: string;
+    name: string;
+    status: string;
+    isPrimary?: boolean;
+    kind?: string;
+  };
+  membership: {
+    id: string;
+    status: string;
+    isDefault?: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+  };
+  roles: AdminRoleSummary[];
+  roleSlugs: string[];
+  permissions: string[];
+  toolPolicies: AdminToolPolicy[];
+  membershipToolPolicies: AdminToolPolicy[];
+  isSystemAdmin: boolean;
+  primaryRole: string;
+}
+
+export interface AdminBootstrapContext {
+  primaryOrg: AdminOrgSummary;
+  bootstrapUser: {
+    id: string;
+    email: string;
+    displayName: string;
+    membershipId: string;
+  };
 }
 
 export type ChatProvider = "proxx" | "knoxx-rag" | "knoxx-direct";

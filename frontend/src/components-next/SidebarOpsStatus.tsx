@@ -67,7 +67,7 @@ export default function SidebarOpsStatus() {
   const gpuPath = useMemo(() => sparklinePath(samples.map((s) => s.gpu), 220, 56), [samples]);
 
   return (
-    <div className="border-t border-slate-200 dark:border-slate-700/60 p-3 space-y-3">
+    <div className="border-t border-slate-200 dark:border-slate-700/60 p-3 space-y-3 overflow-y-auto">
       <div>
         <p className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">System Usage</p>
         <div className="mt-2 space-y-1 text-xs text-slate-300">

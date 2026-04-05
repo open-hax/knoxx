@@ -182,7 +182,7 @@ export default function DocumentsPage() {
 
   const handleDeleteDatabase = async () => {
     if (!selectedDbId || selectedDbId === dbInfo?.activeDatabaseId) return;
-    if (!confirm('Delete this database profile? This does not delete Qdrant data, only the profile.')) return;
+    if (!confirm('Delete this lake profile? This does not delete the underlying vector index, only the Knoxx lake profile.')) return;
     setIsDeletingDb(true);
     try {
       await deleteDatabaseProfile(selectedDbId);
@@ -196,7 +196,7 @@ export default function DocumentsPage() {
 
   const handleMakeDatabasePrivate = async () => {
     if (!selectedDbId) return;
-    if (!confirm('Make this database private to your current browser session? Other sessions will no longer see it.')) return;
+    if (!confirm('Make this lake profile private to your current browser session? Other sessions will no longer see it.')) return;
     setIsPrivatizingDb(true);
     try {
       await makeDatabasePrivate(selectedDbId);
@@ -351,7 +351,12 @@ export default function DocumentsPage() {
   return (
     <div className="p-8 max-w-5xl mx-auto space-y-6 text-slate-100">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Documents</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Data Lakes</h1>
+          <p className="mt-1 text-sm text-slate-400">
+            Knoxx now treats lakes as the primary document boundary. This page manages the active runtime lake profile that ingestion and retrieval are using right now.
+          </p>
+        </div>
         <div className="flex gap-4">
           <input
             type="file"
@@ -371,8 +376,8 @@ export default function DocumentsPage() {
       </div>
 
       <div className="rounded-md border border-slate-700 bg-slate-900 p-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Upload Files to Active Database</h2>
-        <p className="text-xs text-slate-400 mt-1">Upload files or zip archives. They will be placed in the active database docs path and auto-ingested.</p>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Upload Files to Active Lake</h2>
+        <p className="text-xs text-slate-400 mt-1">Upload files or zip archives. They will be placed in the active lake docs path and auto-ingested.</p>
         <div className="mt-3 flex items-center gap-3">
           <input
             type="file"
@@ -384,10 +389,13 @@ export default function DocumentsPage() {
       </div>
 
       <div className="rounded-md border border-slate-700 bg-slate-900 p-4 space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Databases</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Lake Runtime Profiles</h2>
+        <p className="text-xs text-slate-400">
+          Org-owned data lakes are the control-plane truth. This runtime surface lets you activate and tune the lake profile currently mounted for document ingest, preview, and retrieval.
+        </p>
         <div className="grid gap-3 md:grid-cols-3">
           <div className="md:col-span-2">
-            <label className="text-xs text-slate-400">Active Database</label>
+            <label className="text-xs text-slate-400">Active Lake Profile</label>
             <div className="mt-1 flex gap-2">
               <select
                 className="field-input"
@@ -396,7 +404,7 @@ export default function DocumentsPage() {
               >
                 {(dbInfo?.databases || []).map((db: any) => (
                   <option key={db.id} value={db.id}>
-                    {db.name} ({db.qdrantCollection}){db.privateToSession ? (db.canAccess === false ? ' [private: other session]' : ' [private]') : ''}
+                    {db.name} · index {db.qdrantCollection}{db.privateToSession ? (db.canAccess === false ? ' [private: other session]' : ' [private]') : ''}
                   </option>
                 ))}
               </select>
@@ -405,17 +413,17 @@ export default function DocumentsPage() {
                 disabled={isIngesting || isSwitchingDb || !selectedDbId || selectedDbId === dbInfo?.activeDatabaseId || !selectedDbCanAccess}
                 className="px-3 py-2 rounded bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-50"
               >
-                {isSwitchingDb ? 'Switching...' : 'Switch'}
+                {isSwitchingDb ? 'Activating...' : 'Activate'}
               </button>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Docs path: {dbInfo?.activeRuntime?.docsPath || 'N/A'}
+              Mounted docs path: {dbInfo?.activeRuntime?.docsPath || 'N/A'}
             </p>
-            {isIngesting ? <p className="text-xs text-amber-300 mt-1">Database switching is disabled while ingestion is active.</p> : null}
-            {!selectedDbCanAccess ? <p className="text-xs text-rose-300 mt-1">This profile is private to another session. You can view it but cannot switch/edit it.</p> : null}
+            {isIngesting ? <p className="text-xs text-amber-300 mt-1">Lake switching is disabled while ingestion is active.</p> : null}
+            {!selectedDbCanAccess ? <p className="text-xs text-rose-300 mt-1">This lake profile is private to another session. You can view it but cannot activate or edit it.</p> : null}
           </div>
           <div>
-            <label className="text-xs text-slate-400">Create New Database</label>
+            <label className="text-xs text-slate-400">Create New Lake Profile</label>
             <div className="mt-1 flex gap-2">
               <input
                 value={newDbName}
@@ -434,7 +442,7 @@ export default function DocumentsPage() {
             <div className="mt-2 space-y-2">
               <label className="flex items-center gap-2 text-xs text-slate-300">
                 <input type="checkbox" checked={newDbForumMode} onChange={(e) => setNewDbForumMode(e.target.checked)} />
-                Forum mode for this database
+                Forum mode for this lake
               </label>
               <label className="flex items-center gap-2 text-xs text-slate-300">
                 <input type="checkbox" checked={newDbUseLocalDocs} onChange={(e) => setNewDbUseLocalDocs(e.target.checked)} />
@@ -454,7 +462,7 @@ export default function DocumentsPage() {
                 onChange={(e) => setNewDbFiles(Array.from(e.target.files || []))}
                 className="block w-full text-xs text-slate-300 file:mr-3 file:rounded file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-slate-100"
               />
-              <p className="text-[11px] text-slate-400">Optional bootstrap upload (.zip or files) after creating the database.</p>
+              <p className="text-[11px] text-slate-400">Optional bootstrap upload (.zip or files) after creating the lake profile.</p>
             </div>
           </div>
         </div>
@@ -485,14 +493,14 @@ export default function DocumentsPage() {
             disabled={isSavingDbMeta || !selectedDbId || !selectedDbCanAccess}
             className="px-3 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50"
           >
-            {isSavingDbMeta ? 'Saving...' : 'Save Profile'}
+            {isSavingDbMeta ? 'Saving...' : 'Save Lake Profile'}
           </button>
           <button
             onClick={handleDeleteDatabase}
             disabled={isDeletingDb || !selectedDbId || selectedDbId === dbInfo?.activeDatabaseId || isIngesting || !selectedDbCanAccess}
             className="px-3 py-2 rounded bg-rose-700 text-white hover:bg-rose-600 disabled:opacity-50"
           >
-            {isDeletingDb ? 'Deleting...' : 'Delete Profile'}
+            {isDeletingDb ? 'Deleting...' : 'Delete Lake Profile'}
           </button>
           <button
             onClick={handleMakeDatabasePrivate}
@@ -636,7 +644,7 @@ export default function DocumentsPage() {
       </div>
 
       <div className="rounded-md border border-slate-700 bg-slate-900 p-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300 mb-3">Ingestion History (Current Database)</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300 mb-3">Ingestion History (Current Lake)</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
@@ -652,7 +660,7 @@ export default function DocumentsPage() {
             <tbody>
               {ingestionHistory.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-3 text-slate-400">No ingestion runs yet for this database.</td>
+                  <td colSpan={6} className="p-3 text-slate-400">No ingestion runs yet for this lake.</td>
                 </tr>
               ) : (
                 ingestionHistory.map((item: any) => (

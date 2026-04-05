@@ -3,17 +3,18 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import DashboardPage from './DashboardPage';
 import SettingsPage from './SettingsPage';
 import DocumentsPage from './DocumentsPage';
-import ChatPage from './ChatPage';
 import VectorsPage from './VectorsPage';
+import RawGraphExportPage from './RawGraphExportPage';
 import SourceDocPage from './SourceDocPage';
+import AdminPage from './AdminPage';
 import SidebarOpsStatus from '../components-next/SidebarOpsStatus';
 
 const navItems = [
   { label: 'Dashboard', path: '/next/dashboard' },
-  { label: 'Chat', path: '/next/chat' },
-  { label: 'Documents', path: '/next/documents' },
-  { label: 'Vectors', path: '/next/vectors' },
+  { label: 'Lakes', path: '/next/documents' },
+  { label: 'Graph', path: '/next/vectors' },
   { label: 'Settings', path: '/next/settings' },
+  { label: 'Admin', path: '/next/admin' },
 ];
 
 export default function NextRoot() {
@@ -25,8 +26,9 @@ export default function NextRoot() {
     <div className="flex h-[calc(100vh-80px)] w-full flex-col bg-slate-50 dark:bg-slate-900 overflow-hidden text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg transition-colors duration-200">
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar Nav */}
-        <aside className="w-64 flex flex-col bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transition-colors duration-200">
-          <div className="p-4 border-b border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
+        <aside className="w-64 min-h-0 overflow-hidden flex flex-col bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transition-colors duration-200 h-full">
+          {/* Fixed Header */}
+          <div className="shrink-0 p-4 border-b border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
             <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400">Knoxx Ops</h2>
             <button 
               onClick={() => document.documentElement.classList.toggle('dark')}
@@ -36,7 +38,8 @@ export default function NextRoot() {
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
             </button>
           </div>
-          <nav className="py-4">
+          {/* Scrollable Navigation */}
+          <nav className="flex-1 overflow-y-auto py-4 min-h-0">
             <ul className="space-y-1 px-3">
               {navItems.map((item) => (
                 <li key={item.path}>
@@ -56,7 +59,10 @@ export default function NextRoot() {
               ))}
             </ul>
           </nav>
-          <SidebarOpsStatus />
+          {/* Fixed Status Panel */}
+          <div className="min-h-0 shrink-0 overflow-y-auto max-h-72">
+            <SidebarOpsStatus />
+          </div>
         </aside>
 
         {/* Main Content Area */}
@@ -64,12 +70,13 @@ export default function NextRoot() {
           <Routes>
             <Route path="/" element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="chat" element={<ChatPage />} />
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="docs/view" element={<SourceDocPage />} />
             <Route path="vectors" element={<VectorsPage />} />
+            <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="dashboard" replace />} />
+            <Route path="admin" element={<AdminPage />} />
+            <Route path="*" element={<Navigate to="/next/dashboard" replace />} />
           </Routes>
         </main>
       </div>

@@ -257,7 +257,8 @@ export default function DashboardPage() {
               <option value={30}>30s</option>
             </select>
           </label>
-          <Link to="/next/documents" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Documents</Link>
+          <Link to="/next/documents" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Lakes</Link>
+          <Link to="/next/vectors" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Graph</Link>
           <Link to="/next/chat" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Chat</Link>
           <button
             onClick={() => setShowRaw((v) => !v)}
@@ -291,16 +292,16 @@ export default function DashboardPage() {
           ok={systemOnline}
         />
         <StatCard
-          title="Vector DB"
+          title="Lake Index"
           value={data.qdrantOk ? 'Healthy' : 'Issue Detected'}
           subtitle={`${Number(data.pointsCount || 0).toLocaleString()} points`}
           icon={<Database className="h-5 w-5 text-emerald-300" />}
           ok={Boolean(data.qdrantOk)}
         />
         <StatCard
-          title="Collection"
+          title="Indexed Chunks"
           value={Number(data.indexedVectorsCount || 0).toLocaleString()}
-          subtitle="Indexed vectors"
+          subtitle="active retrieval substrate"
           icon={<Layers className="h-5 w-5 text-violet-300" />}
           ok
         />
@@ -319,9 +320,9 @@ export default function DashboardPage() {
           ok={memoryPressure < 85}
         />
         <StatCard
-          title="Index Gap"
+          title="Lake Index Gap"
           value={vectorGap.toLocaleString()}
-          subtitle="Points minus indexed vectors"
+          subtitle="points minus indexed chunks"
           icon={<Layers className="h-5 w-5 text-indigo-300" />}
           ok={vectorGap === 0}
         />
@@ -394,7 +395,7 @@ export default function DashboardPage() {
             <MetricRow label="Mode" value={data.retrievalMode ?? 'N/A'} />
             <MetricRow label="Top K" value={data.retrievalTopK ?? 'N/A'} />
             <MetricRow label="Fusion" value={data.fusion ?? 'N/A'} />
-            <MetricRow label="Vector Dimension" value={data.vectorDim ?? 'N/A'} />
+            <MetricRow label="Embedding Dimension" value={data.vectorDim ?? 'N/A'} />
             <MetricRow label="Chunk Target Tokens" value={data.chunkTargetTokens ?? 'N/A'} />
             <MetricRow label="Project" value={data.project ?? 'N/A'} />
           </div>
@@ -410,7 +411,7 @@ export default function DashboardPage() {
             <RuntimeRow icon={<Cpu className="h-4 w-4" />} label="Heap Used" value={formatBytes(data.heapUsed)} />
             <RuntimeRow icon={<Cpu className="h-4 w-4" />} label="Heap Total" value={formatBytes(data.heapTotal)} />
             <RuntimeRow icon={<Activity className="h-4 w-4" />} label="API Service" value={data.apiOk ? 'ok' : 'down'} />
-            <RuntimeRow icon={<Database className="h-4 w-4" />} label="Qdrant Service" value={data.qdrantOk ? 'ok' : 'down'} />
+            <RuntimeRow icon={<Database className="h-4 w-4" />} label="Lake Index Service" value={data.qdrantOk ? 'ok' : 'down'} />
           </div>
           <p className="mt-5 border-t border-slate-700 pt-3 text-xs text-slate-400">
             {lastUpdated ? `Auto-refresh every 15s. Last refreshed ${lastUpdated.toLocaleTimeString()}.` : 'Auto-refresh every 15s.'}
