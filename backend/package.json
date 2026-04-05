@@ -8,7 +8,10 @@
     "watch": "shadow-cljs watch app",
     "start": "node src/server.mjs",
     "test:e2e": "node --test tests/*.e2e.test.mjs",
-    "import:agent-sessions": "python3 scripts/import_agent_sessions.py"
+    "import:agent-sessions": "python3 scripts/import_agent_sessions.py",
+    "lint": "clj-kondo --lint src/cljs",
+    "typecheck": "shadow-cljs compile app",
+    "lint:size": "node ../scripts/lint-file-sizes.mjs backend/src/cljs"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",

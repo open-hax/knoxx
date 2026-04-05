@@ -13,6 +13,15 @@ Map the moved `knowledge-ops-*.md` corpus against the **current Knoxx applicatio
 
 This is a roadmap/status document, not a replacement for the individual specs.
 
+For the graph-memory initiative specifically, see:
+
+- `knowledge-ops-graph-memory-reconciliation.md`
+- `knowledge-ops-graph-memory-roadmap.md`
+
+For the full cross-corpus roadmap, see:
+
+- `knowledge-ops-full-roadmap.md`
+
 ## Status taxonomy
 
 | Status | Meaning |

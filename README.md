@@ -93,6 +93,59 @@ pnpm install
 pnpm dev -- --host 0.0.0.0 --port 5173
 ```
 
+## File Size Budgets
+
+Knoxx includes a repo-local size linter for Clojure, ClojureScript, TypeScript, and TSX files.
+
+- warning threshold: 350 lines
+- error threshold: 500 lines
+
+Run the full check from the Knoxx root:
+
+```bash
+node scripts/lint-file-sizes.mjs
+```
+
+Or run package-local checks:
+
+```bash
+cd backend && pnpm run lint:size
+cd frontend && pnpm run lint:size
+cd discord-bot && pnpm run lint:size
+```
+
+## Git Hooks
+
+Knoxx ships a tracked pre-push hook that runs lint and typecheck gates before a push:
+
+- repo-wide size lint
+- backend `clj-kondo`
+- backend `shadow-cljs compile app`
+- ingestion `clj-kondo`
+- frontend size lint + TypeScript typecheck
+- discord-bot size lint + TypeScript typecheck
+
+Install the tracked hook path once per clone:
+
+```bash
+cd orgs/open-hax/knoxx
+bash scripts/install-hooks.sh
+```
+
+Run the same checks manually:
+
+```bash
+bash scripts/pre-push-checks.sh
+```
+
+Temporary escape hatch:
+
+```bash
+git push --no-verify
+# or
+KNOXX_SKIP_PRE_PUSH=1 git push
+```
+
 ## API Surface
 
 ### Ingestion Worker (Clojure)
