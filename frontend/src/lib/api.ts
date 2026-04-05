@@ -38,35 +38,42 @@ export const API_BASE =
 
 const KNOXX_USER_EMAIL_KEY = "knoxx_user_email";
 const KNOXX_ORG_SLUG_KEY = "knoxx_org_slug";
-const DEFAULT_KNOXX_USER_EMAIL = "system-admin@open-hax.local";
-const DEFAULT_KNOXX_ORG_SLUG = "open-hax";
 
-function getStoredAuthValue(key: string, fallback: string): string {
-  if (typeof window === "undefined") return fallback;
+function getStoredAuthValue(key: string): string | null {
+  if (typeof window === "undefined") return null;
   try {
-    return localStorage.getItem(key) || fallback;
+    const value = localStorage.getItem(key)?.trim();
+    return value ? value : null;
   } catch {
-    return fallback;
+    return null;
   }
 }
 
 export function getKnoxxAuthIdentity(): KnoxxAuthIdentity {
   return {
-    userEmail: getStoredAuthValue(KNOXX_USER_EMAIL_KEY, DEFAULT_KNOXX_USER_EMAIL),
-    orgSlug: getStoredAuthValue(KNOXX_ORG_SLUG_KEY, DEFAULT_KNOXX_ORG_SLUG),
+    userEmail: getStoredAuthValue(KNOXX_USER_EMAIL_KEY) ?? "",
+    orgSlug: getStoredAuthValue(KNOXX_ORG_SLUG_KEY) ?? "",
   };
 }
 
 export function setKnoxxAuthIdentity(next: KnoxxAuthIdentity): KnoxxAuthIdentity {
   const resolved = {
-    userEmail: next.userEmail.trim() || DEFAULT_KNOXX_USER_EMAIL,
-    orgSlug: next.orgSlug.trim() || DEFAULT_KNOXX_ORG_SLUG,
+    userEmail: next.userEmail.trim(),
+    orgSlug: next.orgSlug.trim(),
   };
 
   if (typeof window !== "undefined") {
     try {
-      localStorage.setItem(KNOXX_USER_EMAIL_KEY, resolved.userEmail);
-      localStorage.setItem(KNOXX_ORG_SLUG_KEY, resolved.orgSlug);
+      if (resolved.userEmail) {
+        localStorage.setItem(KNOXX_USER_EMAIL_KEY, resolved.userEmail);
+      } else {
+        localStorage.removeItem(KNOXX_USER_EMAIL_KEY);
+      }
+      if (resolved.orgSlug) {
+        localStorage.setItem(KNOXX_ORG_SLUG_KEY, resolved.orgSlug);
+      } else {
+        localStorage.removeItem(KNOXX_ORG_SLUG_KEY);
+      }
     } catch {
       // ignore storage failures and still return the resolved identity
     }
@@ -77,11 +84,13 @@ export function setKnoxxAuthIdentity(next: KnoxxAuthIdentity): KnoxxAuthIdentity
 
 export function buildKnoxxAuthHeaders(headersInit?: HeadersInit): Headers {
   const headers = new Headers(headersInit || {});
-  if (!headers.has("x-knoxx-user-email")) {
-    headers.set("x-knoxx-user-email", getStoredAuthValue(KNOXX_USER_EMAIL_KEY, DEFAULT_KNOXX_USER_EMAIL));
+  const userEmail = getStoredAuthValue(KNOXX_USER_EMAIL_KEY);
+  const orgSlug = getStoredAuthValue(KNOXX_ORG_SLUG_KEY);
+  if (userEmail && !headers.has("x-knoxx-user-email")) {
+    headers.set("x-knoxx-user-email", userEmail);
   }
-  if (!headers.has("x-knoxx-org-slug")) {
-    headers.set("x-knoxx-org-slug", getStoredAuthValue(KNOXX_ORG_SLUG_KEY, DEFAULT_KNOXX_ORG_SLUG));
+  if (orgSlug && !headers.has("x-knoxx-org-slug")) {
+    headers.set("x-knoxx-org-slug", orgSlug);
   }
   return headers;
 }
