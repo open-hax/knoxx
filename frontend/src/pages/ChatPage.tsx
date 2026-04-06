@@ -1,33 +1,29 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Button } from "@open-hax/uxx";
+import { useRef, useState } from "react";
 import { ChatMainPane } from "../components/chat-page/ChatMainPane";
 import { ChatWorkspaceSidebar } from "../components/chat-page/ChatWorkspaceSidebar";
+import { useChatPagePersistenceSuite } from "../components/chat-page/chat-page-persistence-suite";
 import { createChatRuntimeActions } from "../components/chat-page/chat-runtime-actions";
 import { useChatRuntimeEffects } from "../components/chat-page/chat-runtime-effects";
+import { useChatPageConfig } from "../components/chat-page/chat-page-config";
+import { useChatPageDerivedState } from "../components/chat-page/chat-page-derived";
+import { makeId } from "../components/chat-page/make-id";
 import { createChatScratchpadActions } from "../components/chat-page/scratchpad-actions";
 import { createChatWorkspaceActions } from "../components/chat-page/workspace-actions";
+import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
 import {
-  getChatStorage,
-  useChatSessionPersistence,
+  DEFAULT_EXCLUDE_PATTERNS,
+  DEFAULT_FILE_TYPES,
+  DEFAULT_SYNC_INTERVAL_MINUTES,
+} from "../components/chat-page/workspace-sync-constants";
+import {
   useChatSessionRecovery,
-  usePinnedContextPersistence,
-  useProxxStatusPolling,
-  useScratchpadPersistence,
 } from "../components/chat-page/hooks";
-import {
-  getFrontendConfig,
-  getToolCatalog,
-} from "../lib/api";
 import type {
   ChatMessage,
-  ChatTraceBlock,
-  FrontendConfig,
-  GroundedContextRow,
   MemorySessionSummary,
   ProxxModelInfo,
   RunDetail,
   RunEvent,
-  ToolReceipt,
   ToolCatalogResponse,
 } from "../lib/types";
 import type {
@@ -36,58 +32,18 @@ import type {
   PinnedContextItem,
   PreviewResponse,
   SemanticSearchMatch,
-  SemanticSearchResponse,
   WorkspaceJob,
 } from "../components/chat-page/types";
-import {
-  latestRunHydrationSources,
-  parentPath,
-} from "../components/chat-page/utils";
 
 const SESSION_ID_KEY = "knoxx_session_id";
 const SCRATCHPAD_STATE_KEY = "knoxx_scratchpad_state";
 const PINNED_CONTEXT_KEY = "knoxx_pinned_context";
 const CHAT_SESSION_STATE_KEY = "knoxx_chat_session_state";
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_chat_sidebar_width_px";
-
 const DEFAULT_ROLE = "executive";
-const DEFAULT_SYNC_INTERVAL_MINUTES = 30;
 const SEND_UI_GUARD_TIMEOUT_MS = 30 * 60 * 1000;
-const DEFAULT_FILE_TYPES = [
-  ".md", ".markdown", ".txt", ".rst", ".org", ".adoc",
-  ".json", ".jsonl", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".env",
-  ".xml", ".csv", ".tsv", ".html", ".htm", ".css",
-  ".js", ".jsx", ".ts", ".tsx", ".py", ".rb", ".php", ".java", ".kt", ".go", ".rs",
-  ".c", ".cc", ".cpp", ".h", ".hpp", ".clj", ".cljs", ".cljc", ".edn", ".sql", ".sh",
-  ".bash", ".zsh", ".fish", ".tex", ".bib", ".nix", ".dockerfile", ".gradle", ".properties",
-];
-const DEFAULT_EXCLUDE_PATTERNS = [
-  "**/.git/**",
-  "**/node_modules/**",
-  "**/dist/**",
-  "**/coverage/**",
-  "**/.next/**",
-  "**/.venv/**",
-  "**/venv/**",
-  "**/__pycache__/**",
-  "**/*.png",
-  "**/*.jpg",
-  "**/*.jpeg",
-  "**/*.gif",
-  "**/*.pdf",
-  "**/*.zip",
-  "**/*.tar.gz",
-];
-function makeId(): string {
-  const maybeCrypto = globalThis.crypto as Crypto | undefined;
-  if (maybeCrypto && typeof maybeCrypto.randomUUID === "function") {
-    return maybeCrypto.randomUUID();
-  }
-  return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
 
 function ChatPage() {
-  const [frontendConfig, setFrontendConfig] = useState<FrontendConfig | null>(null);
   const [activeRole, setActiveRole] = useState(DEFAULT_ROLE);
   const [toolCatalog, setToolCatalog] = useState<ToolCatalogResponse | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
@@ -151,51 +107,41 @@ function ChatPage() {
     setLatestRun,
     setConsoleLines,
   });
+  const {
+    activeEntryCount,
+    assistantSurfaceBackground,
+    assistantSurfaceBorder,
+    assistantSurfaceText,
+    currentParentPath,
+    currentPath,
+    filteredEntries,
+    hydrationSources,
+    latestToolReceipts,
+    liveControlEnabled,
+    liveToolEvents,
+    liveToolReceipts,
+    semanticMode,
+    workspaceProgressPercent,
+  } = useChatPageDerivedState({
+    browseData,
+    entryFilter,
+    semanticQuery,
+    semanticResults,
+    workspaceJob,
+    latestRun,
+    isSending,
+    runtimeEvents,
+    pendingAssistantId: pendingAssistantIdRef.current,
+    conversationId,
+  });
+  const { startSidebarPaneResize, startSidebarWidthResize } = createSidebarResizeHandlers({
+    sidebarSplitContainerRef,
+    sidebarWidthPx,
+    setSidebarPaneSplitPct,
+    setSidebarWidthPx,
+  });
 
-  const currentPath = browseData?.current_path ?? "";
-  const currentParentPath = useMemo(() => parentPath(currentPath), [currentPath]);
-
-  const filteredEntries = useMemo(() => {
-    const entries = browseData?.entries ?? [];
-    const query = entryFilter.trim().toLowerCase();
-    if (!query) return entries;
-    return entries.filter((entry) =>
-      entry.name.toLowerCase().includes(query) || entry.path.toLowerCase().includes(query),
-    );
-  }, [browseData?.entries, entryFilter]);
-
-  const semanticMode = semanticQuery.trim().length > 0;
-  const activeEntryCount = semanticMode ? semanticResults.length : filteredEntries.length;
-  const workspaceProgressPercent = workspaceJob && workspaceJob.total_files > 0
-    ? Math.min(100, Math.round(((workspaceJob.processed_files + workspaceJob.failed_files) / workspaceJob.total_files) * 100))
-    : 0;
-  const latestToolReceipts = useMemo(() => (latestRun?.tool_receipts ?? []) as ToolReceipt[], [latestRun]);
-
-  // Get live tool receipts for the current streaming message
-  const liveToolReceipts = useMemo(() => {
-    if (!isSending || !pendingAssistantIdRef.current) return [];
-    return latestToolReceipts;
-  }, [isSending, latestToolReceipts]);
-
-  // Get runtime events for live tool updates
-  const liveToolEvents = useMemo(() => {
-    if (!isSending) return [];
-    return runtimeEvents.filter((event) =>
-      ["tool_start", "tool_update", "tool_end"].includes(String(event.type ?? ""))
-    );
-  }, [isSending, runtimeEvents]);
-
-  const liveControlEnabled = Boolean(
-    isSending
-      && conversationId
-      && runtimeEvents.some((event) => ["run_started", "passive_hydration", "assistant_first_token", "tool_start"].includes(String(event.type ?? ""))),
-  );
-  const hydrationSources = useMemo(() => latestRunHydrationSources(latestRun), [latestRun]);
-  const assistantSurfaceBackground = "var(--token-colors-background-surface)";
-  const assistantSurfaceBorder = "var(--token-colors-border-default)";
-  const assistantSurfaceText = "var(--token-colors-text-default)";
-
-  useChatSessionPersistence({
+  useChatPagePersistenceSuite({
     makeId,
     sessionId,
     setSessionId,
@@ -220,10 +166,7 @@ function ChatPage() {
     sessionIdKey: SESSION_ID_KEY,
     sessionStateKey: CHAT_SESSION_STATE_KEY,
     sidebarWidthKey: CHAT_SIDEBAR_WIDTH_KEY,
-  });
-
-  useScratchpadPersistence({
-    storageKey: SCRATCHPAD_STATE_KEY,
+    scratchpadStorageKey: SCRATCHPAD_STATE_KEY,
     canvasTitle,
     setCanvasTitle,
     canvasSubject,
@@ -236,17 +179,9 @@ function ChatPage() {
     setCanvasCc,
     canvasContent,
     setCanvasContent,
-  });
-
-  usePinnedContextPersistence({
-    storageKey: PINNED_CONTEXT_KEY,
+    pinnedContextStorageKey: PINNED_CONTEXT_KEY,
     pinnedContext,
     setPinnedContext,
-  });
-
-  useProxxStatusPolling({
-    selectedModel,
-    setSelectedModel,
     setProxxReachable,
     setProxxConfigured,
     setProxxModels,
@@ -368,22 +303,13 @@ function ChatPage() {
     defaultExcludePatterns: DEFAULT_EXCLUDE_PATTERNS,
   });
 
-  useEffect(() => {
-    void getFrontendConfig()
-      .then((config) => {
-        setFrontendConfig(config);
-        setActiveRole(config.default_role || DEFAULT_ROLE);
-      })
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    void getToolCatalog(activeRole)
-      .then(setToolCatalog)
-      .catch((error) => {
-        setConsoleLines((prev) => [...prev.slice(-400), `[tools] failed: ${(error as Error).message}`]);
-      });
-  }, [activeRole]);
+  useChatPageConfig({
+    defaultRole: DEFAULT_ROLE,
+    activeRole,
+    setActiveRole,
+    setToolCatalog,
+    setConsoleLines,
+  });
 
   useChatRuntimeEffects({
     sessionId,
@@ -424,58 +350,6 @@ function ChatPage() {
 
   async function openHydrationSource(source: { path: string }) {
     await previewFile(source.path);
-  }
-
-  function startSidebarPaneResize(event: ReactMouseEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const container = sidebarSplitContainerRef.current;
-    if (!container) return;
-
-    const rect = container.getBoundingClientRect();
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-
-    const onMove = (moveEvent: MouseEvent) => {
-      const deltaY = moveEvent.clientY - rect.top;
-      const nextPct = Math.min(75, Math.max(25, (deltaY / rect.height) * 100));
-      setSidebarPaneSplitPct(nextPct);
-    };
-
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }
-
-  function startSidebarWidthResize(event: ReactMouseEvent<HTMLDivElement>) {
-    event.preventDefault();
-
-    const startX = event.clientX;
-    const startWidth = sidebarWidthPx;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-
-    const onMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const maxWidth = Math.min(640, Math.floor(window.innerWidth * 0.55));
-      const nextWidth = Math.min(maxWidth, Math.max(260, startWidth + deltaX));
-      setSidebarWidthPx(nextWidth);
-    };
-
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
   }
 
   return (

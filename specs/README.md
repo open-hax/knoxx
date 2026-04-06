@@ -2,11 +2,40 @@
 
 This directory is now the canonical home for the Knoxx / knowledge-ops spec set that previously lived in `specs/drafts/`.
 
-## Move summary
+## Spec Size Rules
 
-- moved: 34 `knowledge-ops-*.md` specs
-- source: `specs/drafts/`
-- destination: `orgs/open-hax/knoxx/specs/`
+- No executable spec may exceed **5 story points**
+- Specs over 5 points must be split into an **epic wrapper** + **child specs**
+- Each child spec is independently executable
+
+## Active Epics
+
+### Graph Memory (P1B)
+
+Epic: `knowledge-ops-graph-memory-reconciliation.md`
+
+Child specs:
+- `knowledge-ops-knoxx-health-route-coherence.md` (3 pts)
+- `knowledge-ops-kms-openplanner-ingest-arity-fix.md` (2 pts)
+- `knowledge-ops-openplanner-graph-population-smoke.md` (5 pts)
+- `knowledge-ops-myrmex-openplanner-write-recovery.md` (3 pts)
+- `knowledge-ops-graph-weaver-live-sync-truth.md` (5 pts)
+- `knowledge-ops-graph-memory-runtime-smoke-e2e.md` (3 pts)
+- `knowledge-ops-knoxx-graph-query-contract-v1.md` (3 pts)
+- `knowledge-ops-docs-source-of-truth-normalization.md` (2 pts)
+- `knowledge-ops-openplanner-derived-edge-projections-slice.md` (5 pts)
+- `knowledge-ops-adaptive-expand-policy-seam.md` (2 pts)
+- `knowledge-ops-adaptive-expand-policy-telemetry.md` (2 pts)
+
+### Translation Review (Client Priority)
+
+Epic: `knowledge-ops-translation-review-epic.md` (15 pts total)
+
+Child specs:
+- `knowledge-ops-translation-routes.md` (5 pts) — critical path
+- `knowledge-ops-translation-export.md` (2 pts)
+- `knowledge-ops-translation-review-ui.md` (5 pts)
+- `knowledge-ops-translation-mt-pipeline.md` (3 pts) — deferrable
 
 ## Review notes
 

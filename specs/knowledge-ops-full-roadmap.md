@@ -127,6 +127,31 @@ Before later product claims, Knoxx needs request-scoped identity, fail-closed au
 This is the primary **architecture-truth** tranche.
 Do not jump to adaptive traversal or derived graph cleverness until P1B is green.
 
+## P1C — translation review (client priority)
+
+**Demo deadline: 9 days**
+
+| Spec / epic | Status | Slot | Note |
+|-------------|--------|------|------|
+| `knowledge-ops-translation-review-epic.md` | active epic wrapper | P1C | client's top priority for demo |
+| `knowledge-ops-translation-routes.md` | next | P1C / critical path | OpenPlanner translation CRUD + permissions (5 pts) |
+| `knowledge-ops-translation-export.md` | next | P1C | SFT export + manifest (2 pts) |
+| `knowledge-ops-translation-review-ui.md` | next | P1C | Shibboleth UI wiring (5 pts) |
+| `knowledge-ops-translation-mt-pipeline.md` | next | P1C / deferrable | GLM-5 MT pipeline (3 pts) |
+
+### P1C interpretation
+
+Translation review is the client's most requested feature. It runs parallel to P1B after MongoDB migration lands. MT pipeline is deferrable — manually seeded segments suffice for demo.
+
+**Dependencies:**
+- Translation routes require MongoDB migration complete
+- Review UI requires translation routes + export
+- MT pipeline can be deferred or run in parallel
+
+**Demo scope:**
+- Routes + Export + UI = 12 pts
+- At 5 pts/sprint → ~2.5 sprints → 5 focused days
+
 ## P2 — retrieval, lake, and ingestion convergence
 
 | Spec / epic | Status | Slot | Note |

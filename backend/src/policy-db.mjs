@@ -55,6 +55,10 @@ const PERMISSIONS = [
   ['tool.semantic_query.use', 'tool', 'semantic_query', 'Use semantic query tool'],
   ['tool.memory_search.use', 'tool', 'memory_search', 'Use memory search tool'],
   ['tool.memory_session.use', 'tool', 'memory_session', 'Use memory session tool'],
+  ['org.translations.read', 'org_translations', 'read', 'Read translation segments'],
+  ['org.translations.review', 'org_translations', 'review', 'Review and label translations'],
+  ['org.translations.export', 'org_translations', 'export', 'Export translation training data'],
+  ['org.translations.manage', 'org_translations', 'manage', 'Manage translation pipeline config'],
 ];
 
 const TOOL_DEFINITIONS = [
@@ -129,6 +133,10 @@ const ORG_ROLE_SEEDS = [
       'tool.semantic_query.use',
       'tool.memory_search.use',
       'tool.memory_session.use',
+      'org.translations.read',
+      'org.translations.review',
+      'org.translations.export',
+      'org.translations.manage',
     ],
     toolPolicies: TOOL_DEFINITIONS.map(([toolId]) => ({ toolId, effect: 'allow' })),
   },
@@ -215,6 +223,22 @@ const ORG_ROLE_SEEDS = [
       { toolId: 'semantic_query', effect: 'allow' },
       { toolId: 'memory_search', effect: 'allow' },
       { toolId: 'memory_session', effect: 'allow' },
+    ],
+  },
+  {
+    slug: 'translator',
+    name: 'Translator',
+    permissions: [
+      'org.datalakes.read',
+      'datalake.read',
+      'agent.chat.use',
+      'org.translations.read',
+      'org.translations.review',
+    ],
+    toolPolicies: [
+      { toolId: 'read', effect: 'allow' },
+      { toolId: 'canvas', effect: 'allow' },
+      { toolId: 'semantic_query', effect: 'allow' },
     ],
   },
 ];
