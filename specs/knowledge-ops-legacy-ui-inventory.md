@@ -35,7 +35,7 @@ Any existing UI that still uses custom HTML/Tailwind/CSS directly must be listed
 | `orgs/open-hax/knoxx/frontend/src/pages/QueryPage.tsx` | partial migration | uses `@open-hax/uxx` for some components |
 | `orgs/open-hax/knoxx/frontend/src/pages/GardensPage.tsx` | partial migration | uses `@open-hax/uxx` for some components |
 | `orgs/open-hax/knoxx/frontend/src/pages/RunsPage.tsx` | legacy custom UI | migrate tables/cards/buttons |
-| `orgs/open-hax/knoxx/frontend/src/pages/NextRoot.tsx` and canonical `src/pages/*` companions | active ops/admin surface | canonicalized from the old shadow page tree on 2026-04-06 |
+| `orgs/open-hax/knoxx/frontend/src/pages/OpsRoot.tsx` and canonical `src/pages/*` companions | active ops/admin surface | canonicalized from the old shadow page tree on 2026-04-06; legacy `/next/*` now redirects to `/ops/*` |
 
 ### Partially migrated
 
@@ -72,7 +72,7 @@ These are the core workbench surfaces.
 - `RunsPage.tsx`
 
 ### P2
-- `pages/NextRoot.tsx` plus the canonical ops/admin pages it routes to
+- `pages/OpsRoot.tsx` plus the canonical ops/admin pages it routes to
 - external garden surfaces
 
 ---

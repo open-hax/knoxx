@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ExternalLink, Orbit, RefreshCw } from 'lucide-react';
+import { opsRoutes } from '../lib/app-routes';
 
 function resolveGraphWeaverUrl(): string {
   if (typeof window === 'undefined') {
@@ -49,7 +50,7 @@ export default function VectorsPage() {
             Open Graph Weaver directly
           </a>
           <Link
-            to="/next/graph-export-debug"
+            to={opsRoutes.graphExportDebug}
             className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800"
           >
             Raw export debug

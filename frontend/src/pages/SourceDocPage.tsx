@@ -1,52 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Markdown } from '@open-hax/uxx';
+import { opsRoutes } from '../lib/app-routes';
+import { isExternalHref, resolveDocumentHref } from '../lib/document-links';
 import { fetchDocumentContent } from '../lib/api';
 import { ForumThreadView, parseForumThread } from './source-doc-page/ForumThreadView';
 
 function useQuery() {
   const { search } = useLocation();
   return useMemo(() => new URLSearchParams(search), [search]);
-}
-
-function isExternalHref(href: string): boolean {
-  return /^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(href)
-    || href.startsWith('mailto:')
-    || href.startsWith('tel:');
-}
-
-function normalizeRelativeDocPath(input: string): string {
-  const stack: string[] = [];
-
-  for (const part of input.split('/')) {
-    if (!part || part === '.') continue;
-    if (part === '..') {
-      stack.pop();
-      continue;
-    }
-    stack.push(part);
-  }
-
-  return stack.join('/');
-}
-
-function resolveDocumentHref(currentPath: string, href: string): string | null {
-  const trimmed = href.trim();
-  if (!trimmed || isExternalHref(trimmed) || trimmed.startsWith('#')) {
-    return null;
-  }
-
-  const withoutHash = trimmed.split('#')[0] || '';
-  const withoutQuery = withoutHash.split('?')[0] || '';
-  if (!withoutQuery) return null;
-
-  if (withoutQuery.startsWith('/')) {
-    return normalizeRelativeDocPath(withoutQuery.replace(/^\/+/, ''));
-  }
-
-  const baseParts = currentPath.split('/').filter(Boolean);
-  baseParts.pop();
-  return normalizeRelativeDocPath([...baseParts, withoutQuery].join('/'));
 }
 
 export default function SourceDocPage() {
@@ -100,7 +62,7 @@ export default function SourceDocPage() {
       return;
     }
 
-    navigate(`/next/docs/view?path=${encodeURIComponent(nextPath)}`);
+    navigate(`${opsRoutes.docsView}?path=${encodeURIComponent(nextPath)}`);
   };
 
   return (

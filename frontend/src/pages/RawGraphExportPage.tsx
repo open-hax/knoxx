@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { opsRoutes } from '../lib/app-routes';
 import { ExternalLink, Filter, Move, Network, RefreshCw } from 'lucide-react';
 import {
   WebGLGraphView,
@@ -288,7 +289,7 @@ export default function VectorsPage() {
             <Move className="h-4 w-4" />
             Fit graph
           </button>
-          <Link to="/next/documents" className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800">
+          <Link to={opsRoutes.documents} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800">
             Open Lakes
           </Link>
         </div>

@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { getFrontendConfig } from "./lib/api";
+import { opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import ChatPage from "./pages/ChatPage";
 import CmsPage from "./pages/CmsPage";
 import GardensPage from "./pages/GardensPage";
 import IngestionPage from "./pages/IngestionPage";
+import OpsRoot from "./pages/OpsRoot";
 import QueryPage from "./pages/QueryPage";
 import RunsPage from "./pages/RunsPage";
 import TranslationPage from "./pages/TranslationPage";
-import NextRoot from "./pages/NextRoot";
 
 function resolveExternalUrl(rawUrl: string): string {
   try {
@@ -66,7 +67,7 @@ function App() {
             <NavLink to="/translations" className={navLinkClass}>
               Translations
             </NavLink>
-            <NavLink to="/next/admin" className={navLinkClass}>
+            <NavLink to={opsRoutes.admin} className={navLinkClass}>
               Admin
             </NavLink>
             {knoxxAdminUrl ? (
@@ -92,12 +93,18 @@ function App() {
           <Route path="/gardens" element={<GardensPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/translations" element={<TranslationPage />} />
-          <Route path="/next/*" element={<NextRoot />} />
+          <Route path="/ops/*" element={<OpsRoot />} />
+          <Route path="/next/*" element={<LegacyOpsRedirect />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </div>
   );
+}
+
+function LegacyOpsRedirect() {
+  const location = useLocation();
+  return <Navigate to={remapLegacyOpsPath(location.pathname, location.search, location.hash)} replace />;
 }
 
 export default App;

@@ -15,6 +15,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { opsRoutes } from '../lib/app-routes';
 import { fetchIngestionProgress, knoxxHealth } from '../lib/nextApi';
 import { connectStream } from '../lib/ws';
 import { Line } from 'react-chartjs-2';
@@ -257,8 +258,8 @@ export default function DashboardPage() {
               <option value={30}>30s</option>
             </select>
           </label>
-          <Link to="/next/documents" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Lakes</Link>
-          <Link to="/next/vectors" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Graph</Link>
+          <Link to={opsRoutes.documents} className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Lakes</Link>
+          <Link to={opsRoutes.vectors} className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Graph</Link>
           <Link to="/" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Chat</Link>
           <button
             onClick={() => setShowRaw((v) => !v)}

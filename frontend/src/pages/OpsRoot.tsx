@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { opsRoutes } from '../lib/app-routes';
 import DashboardPage from './DashboardPage';
 import SettingsPage from './SettingsPage';
 import DocumentsPage from './DocumentsPage';
@@ -10,14 +11,14 @@ import AdminPage from './AdminPage';
 import SidebarOpsStatus from '../components/SidebarOpsStatus';
 
 const navItems = [
-  { label: 'Dashboard', path: '/next/dashboard' },
-  { label: 'Lakes', path: '/next/documents' },
-  { label: 'Graph', path: '/next/vectors' },
-  { label: 'Settings', path: '/next/settings' },
-  { label: 'Admin', path: '/next/admin' },
+  { label: 'Dashboard', path: opsRoutes.dashboard },
+  { label: 'Lakes', path: opsRoutes.documents },
+  { label: 'Graph', path: opsRoutes.vectors },
+  { label: 'Settings', path: opsRoutes.settings },
+  { label: 'Admin', path: opsRoutes.admin },
 ];
 
-export default function NextRoot() {
+export default function OpsRoot() {
   useEffect(() => {
     document.documentElement.classList.add('dark');
   }, []);
@@ -76,7 +77,7 @@ export default function NextRoot() {
             <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="admin" element={<AdminPage />} />
-            <Route path="*" element={<Navigate to="/next/dashboard" replace />} />
+            <Route path="*" element={<Navigate to={opsRoutes.dashboard} replace />} />
           </Routes>
         </main>
       </div>
