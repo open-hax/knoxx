@@ -259,7 +259,7 @@ export default function DashboardPage() {
           </label>
           <Link to="/next/documents" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Lakes</Link>
           <Link to="/next/vectors" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Graph</Link>
-          <Link to="/next/chat" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Chat</Link>
+          <Link to="/" className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">Open Chat</Link>
           <button
             onClick={() => setShowRaw((v) => !v)}
             className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"

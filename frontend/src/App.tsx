@@ -7,7 +7,8 @@ import GardensPage from "./pages/GardensPage";
 import IngestionPage from "./pages/IngestionPage";
 import QueryPage from "./pages/QueryPage";
 import RunsPage from "./pages/RunsPage";
-import NextRoot from "./pages-next/NextRoot";
+import TranslationPage from "./pages/TranslationPage";
+import NextRoot from "./pages/NextRoot";
 
 function resolveExternalUrl(rawUrl: string): string {
   try {
@@ -62,6 +63,9 @@ function App() {
             <NavLink to="/runs" className={navLinkClass}>
               Runs
             </NavLink>
+            <NavLink to="/translations" className={navLinkClass}>
+              Translations
+            </NavLink>
             <NavLink to="/next/admin" className={navLinkClass}>
               Admin
             </NavLink>
@@ -87,6 +91,7 @@ function App() {
           <Route path="/query" element={<QueryPage />} />
           <Route path="/gardens" element={<GardensPage />} />
           <Route path="/runs" element={<RunsPage />} />
+          <Route path="/translations" element={<TranslationPage />} />
           <Route path="/next/*" element={<NextRoot />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -55,7 +55,7 @@ No Shibboleth UI involved. Knoxx frontend calls OpenPlanner translation API dire
 Main review page at `/translations`:
 
 ```tsx
-// orgs/open-hax/knoxx/frontend/src/pages-next/TranslationReviewPage.tsx
+// orgs/open-hax/knoxx/frontend/src/pages/TranslationPage.tsx
 
 export function TranslationReviewPage() {
   const { user, org } = useAuth();
@@ -208,7 +208,7 @@ Knoxx backend proxies translation requests to OpenPlanner:
 
 | File | Purpose |
 |------|---------|
-| `orgs/open-hax/knoxx/frontend/src/pages-next/TranslationReviewPage.tsx` | Main translation review page |
+| `orgs/open-hax/knoxx/frontend/src/pages/TranslationPage.tsx` | Main translation review page |
 | `orgs/open-hax/knoxx/frontend/src/components/LabelPanel.tsx` | Label selection panel |
 | `orgs/open-hax/knoxx/frontend/src/components/TranslationPanel.tsx` | Source/translated text panels |
 | `orgs/open-hax/knoxx/backend/src/cljs/knoxx/backend/core.cljs` | API proxy routes |

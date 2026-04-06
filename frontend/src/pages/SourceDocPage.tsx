@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Markdown } from '@open-hax/uxx';
-import { fetchDocumentContent } from '../lib/nextApi';
+import { fetchDocumentContent } from '../lib/api';
 import { ForumThreadView, parseForumThread } from './source-doc-page/ForumThreadView';
 
 function useQuery() {
@@ -110,7 +110,7 @@ export default function SourceDocPage() {
           <h1 className="text-2xl font-semibold text-slate-100">Document Viewer</h1>
           <p className="mt-1 font-mono text-xs text-slate-400">{rawPath || 'N/A'}</p>
         </div>
-        <Link to="/next/chat" className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800">
+        <Link to="/" className="rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800">
           Back to Chat
         </Link>
       </div>
@@ -130,7 +130,7 @@ export default function SourceDocPage() {
                   theme="dark"
                   variant="full"
                   linkTarget="_self"
-                  onLinkClick={(href) => handleMarkdownLink(href)}
+                  onLinkClick={(href: string) => handleMarkdownLink(href)}
                 />
               </article>
             ) : (

@@ -7,7 +7,7 @@ import VectorsPage from './VectorsPage';
 import RawGraphExportPage from './RawGraphExportPage';
 import SourceDocPage from './SourceDocPage';
 import AdminPage from './AdminPage';
-import SidebarOpsStatus from '../components-next/SidebarOpsStatus';
+import SidebarOpsStatus from '../components/SidebarOpsStatus';
 
 const navItems = [
   { label: 'Dashboard', path: '/next/dashboard' },
