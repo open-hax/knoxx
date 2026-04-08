@@ -1,16 +1,20 @@
 import { API_BASE } from "./api";
 import type { WsMessage } from "./types";
 
-function wsUrl(base: string, sessionId?: string): string {
+function wsUrl(base: string, sessionId?: string, conversationId?: string | null): string {
+  const params = new URLSearchParams();
+  if (sessionId) params.set("session_id", sessionId);
+  if (conversationId) params.set("conversation_id", conversationId);
+  const q = params.toString() ? `?${params.toString()}` : "";
+
   if (!base) {
     const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const q = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
     return `${protocol}://${window.location.host}/ws/stream${q}`;
   }
   const url = new URL(base);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = "/ws/stream";
-  url.search = sessionId ? `session_id=${encodeURIComponent(sessionId)}` : "";
+  url.search = q;
   return url.toString();
 }
 
@@ -23,36 +27,71 @@ export interface StreamHandlers {
   onStatus?: (status: "connected" | "closed" | "error") => void;
 }
 
-export function connectStream(handlers: StreamHandlers, sessionId?: string): () => void {
-  const socket = new WebSocket(wsUrl(API_BASE, sessionId));
+export interface StreamConnection {
+  (): void; // Callable as cleanup function
+  disconnect: () => void;
+  setConversationId: (conversationId: string | null) => void;
+}
 
-  socket.addEventListener("open", () => handlers.onStatus?.("connected"));
-  socket.addEventListener("close", () => handlers.onStatus?.("closed"));
-  socket.addEventListener("error", () => handlers.onStatus?.("error"));
+export function connectStream(
+  handlers: StreamHandlers,
+  sessionId?: string,
+  initialConversationId?: string | null,
+): StreamConnection {
+  let socket: WebSocket | null = null;
+  let currentConversationId = initialConversationId ?? null;
 
-  socket.addEventListener("message", (event) => {
-    try {
-      const message = JSON.parse(event.data as string) as WsMessage;
-      const payload = message.payload ?? {};
+  const connectSocket = () => {
+    socket = new WebSocket(wsUrl(API_BASE, sessionId, currentConversationId));
 
-      if (message.channel === "tokens") {
-        handlers.onToken?.(String(payload.token ?? ""), {
-          runId: payload.run_id as string | undefined,
-          kind: typeof payload.kind === "string" ? payload.kind : undefined,
-        });
-      } else if (message.channel === "stats") {
-        handlers.onStats?.(payload);
-      } else if (message.channel === "console") {
-        handlers.onConsole?.(`[${String(payload.stream ?? "log")}] ${String(payload.line ?? "")}`);
-      } else if (message.channel === "events") {
-        handlers.onEvent?.(payload);
-      } else if (message.channel === "lounge") {
-        handlers.onLounge?.(payload);
+    socket.addEventListener("open", () => handlers.onStatus?.("connected"));
+    socket.addEventListener("close", () => handlers.onStatus?.("closed"));
+    socket.addEventListener("error", () => handlers.onStatus?.("error"));
+
+    socket.addEventListener("message", (event) => {
+      try {
+        const message = JSON.parse(event.data as string) as WsMessage;
+        const payload = message.payload ?? {};
+
+        if (message.channel === "tokens") {
+          handlers.onToken?.(String(payload.token ?? ""), {
+            runId: payload.run_id as string | undefined,
+            kind: typeof payload.kind === "string" ? payload.kind : undefined,
+          });
+        } else if (message.channel === "stats") {
+          handlers.onStats?.(payload);
+        } else if (message.channel === "console") {
+          handlers.onConsole?.(`[${String(payload.stream ?? "log")}] ${String(payload.line ?? "")}`);
+        } else if (message.channel === "events") {
+          handlers.onEvent?.(payload);
+        } else if (message.channel === "lounge") {
+          handlers.onLounge?.(payload);
+        }
+      } catch {
+        handlers.onConsole?.("Malformed websocket packet");
       }
-    } catch {
-      handlers.onConsole?.("Malformed websocket packet");
-    }
-  });
+    });
+  };
 
-  return () => socket.close();
+  connectSocket();
+
+  const disconnect = () => socket?.close();
+  const setConversationId = (conversationId: string | null) => {
+    if (conversationId !== currentConversationId) {
+      currentConversationId = conversationId;
+      if (!socket) {
+        connectSocket();
+        return;
+      }
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "set_conversation", conversation_id: conversationId }));
+      } else if (socket.readyState === WebSocket.CLOSED) {
+        connectSocket();
+      }
+    }
+  };
+
+  // Return a callable function with additional methods
+  const connection = Object.assign(disconnect, { disconnect, setConversationId });
+  return connection as StreamConnection;
 }

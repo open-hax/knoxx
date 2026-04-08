@@ -89,7 +89,12 @@ function ChatPage() {
   const [sendingCanvas, setSendingCanvas] = useState(false);
   const [pinnedContext, setPinnedContext] = useState<PinnedContextItem[]>([]);
   const [recentSessions, setRecentSessions] = useState<MemorySessionSummary[]>([]);
+  const recentSessionsRef = useRef<MemorySessionSummary[]>([]);
+  recentSessionsRef.current = recentSessions;
+  const [recentSessionsHasMore, setRecentSessionsHasMore] = useState(false);
+  const [recentSessionsTotal, setRecentSessionsTotal] = useState(0);
   const [loadingRecentSessions, setLoadingRecentSessions] = useState(false);
+  const [loadingMoreRecentSessions, setLoadingMoreRecentSessions] = useState(false);
   const [loadingMemorySessionId, setLoadingMemorySessionId] = useState<string | null>(null);
   const [sidebarPaneSplitPct, setSidebarPaneSplitPct] = useState(50);
   const [sidebarWidthPx, setSidebarWidthPx] = useState(320);
@@ -264,6 +269,7 @@ function ChatPage() {
   const {
     ensureWorkspaceSync,
     loadDirectory,
+    loadMoreRecentSessions,
     previewFile,
     refreshRecentSessions,
     refreshWorkspaceStatus,
@@ -284,8 +290,12 @@ function ChatPage() {
     setSyncingWorkspace,
     setWorkspaceSourceId,
     setWorkspaceJob,
+    recentSessionsRef,
     setRecentSessions,
+    setRecentSessionsHasMore,
+    setRecentSessionsTotal,
     setLoadingRecentSessions,
+    setLoadingMoreRecentSessions,
     setLoadingMemorySessionId,
     setMessages,
     setConversationId,
@@ -313,6 +323,7 @@ function ChatPage() {
 
   useChatRuntimeEffects({
     sessionId,
+    conversationId,
     isSending,
     latestRun,
     semanticQuery,
@@ -388,7 +399,10 @@ function ChatPage() {
           workspaceProgressPercent={workspaceProgressPercent}
           pinnedContext={pinnedContext}
           recentSessions={recentSessions}
+          recentSessionsHasMore={recentSessionsHasMore}
+          recentSessionsTotal={recentSessionsTotal}
           loadingRecentSessions={loadingRecentSessions}
+          loadingMoreRecentSessions={loadingMoreRecentSessions}
           loadingMemorySessionId={loadingMemorySessionId}
           conversationId={conversationId}
           onHide={() => setShowFiles(false)}
@@ -403,6 +417,7 @@ function ChatPage() {
           }}
           onEnsureWorkspaceSync={ensureWorkspaceSync}
           onRefreshRecentSessions={refreshRecentSessions}
+          onLoadMoreRecentSessions={loadMoreRecentSessions}
           onResumeMemorySession={resumeMemorySession}
           onPreviewFile={previewFile}
           onPinSemanticResult={pinSemanticResult}

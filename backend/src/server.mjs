@@ -43,6 +43,7 @@ const app = Fastify({ logger: true });
 await app.register(fastifyCors, { origin: true });
 await app.register(fastifyMultipart);
 await app.register(fastifyWebsocket);
+
 await app.register((instance, _opts, done) => {
   registerWsRoutes(runtime, instance);
   done();

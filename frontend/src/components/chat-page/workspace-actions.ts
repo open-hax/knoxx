@@ -13,6 +13,19 @@ import { isWorkspaceSource, memoryRowRunId, memoryRowsToMessages, selectWorkspac
 
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
+const RECENT_SESSION_PAGE_SIZE = 20;
+
+function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
+  const merged = [...primary];
+  const seen = new Set(primary.map((item) => item.session));
+  for (const item of secondary) {
+    if (seen.has(item.session)) continue;
+    seen.add(item.session);
+    merged.push(item);
+  }
+  return merged;
+}
+
 type ChatWorkspaceActionParams = {
   currentPath: string;
   showFiles: boolean;
@@ -28,8 +41,12 @@ type ChatWorkspaceActionParams = {
   setSyncingWorkspace: SetState<boolean>;
   setWorkspaceSourceId: SetState<string | null>;
   setWorkspaceJob: SetState<WorkspaceJob | null>;
+  recentSessionsRef: MutableRefObject<MemorySessionSummary[]>;
   setRecentSessions: SetState<MemorySessionSummary[]>;
+  setRecentSessionsHasMore: SetState<boolean>;
+  setRecentSessionsTotal: SetState<number>;
   setLoadingRecentSessions: SetState<boolean>;
+  setLoadingMoreRecentSessions: SetState<boolean>;
   setLoadingMemorySessionId: SetState<string | null>;
   setMessages: SetState<ChatMessage[]>;
   setConversationId: SetState<string | null>;
@@ -62,8 +79,12 @@ export function createChatWorkspaceActions({
   setSyncingWorkspace,
   setWorkspaceSourceId,
   setWorkspaceJob,
+  recentSessionsRef,
   setRecentSessions,
+  setRecentSessionsHasMore,
+  setRecentSessionsTotal,
   setLoadingRecentSessions,
+  setLoadingMoreRecentSessions,
   setLoadingMemorySessionId,
   setMessages,
   setConversationId,
@@ -215,12 +236,43 @@ export function createChatWorkspaceActions({
   const refreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
     try {
-      const sessions = await listMemorySessions(50);
-      setRecentSessions(sessions);
+      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: 0 });
+      const preservedTail = recentSessionsRef.current.filter((item) => !page.rows.some((row) => row.session === item.session));
+      const merged = mergeSessionPages(page.rows, preservedTail);
+      recentSessionsRef.current = merged;
+      setRecentSessions(merged);
+      const total = typeof page.total === "number" ? page.total : merged.length;
+      setRecentSessionsTotal(total);
+      setRecentSessionsHasMore(
+        typeof page.total === "number"
+          ? merged.length < page.total
+          : Boolean(page.has_more ?? page.rows.length >= RECENT_SESSION_PAGE_SIZE),
+      );
     } catch (error) {
       appendConsoleLine(`[memory] failed to load recent sessions: ${(error as Error).message}`);
     } finally {
       setLoadingRecentSessions(false);
+    }
+  };
+
+  const loadMoreRecentSessions = async () => {
+    setLoadingMoreRecentSessions(true);
+    try {
+      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: recentSessionsRef.current.length });
+      const merged = mergeSessionPages(recentSessionsRef.current, page.rows);
+      recentSessionsRef.current = merged;
+      setRecentSessions(merged);
+      const total = typeof page.total === "number" ? page.total : merged.length;
+      setRecentSessionsTotal(total);
+      setRecentSessionsHasMore(
+        typeof page.total === "number"
+          ? merged.length < page.total
+          : Boolean(page.has_more ?? page.rows.length >= RECENT_SESSION_PAGE_SIZE),
+      );
+    } catch (error) {
+      appendConsoleLine(`[memory] failed to load more sessions: ${(error as Error).message}`);
+    } finally {
+      setLoadingMoreRecentSessions(false);
     }
   };
 
@@ -252,6 +304,7 @@ export function createChatWorkspaceActions({
   return {
     ensureWorkspaceSync,
     loadDirectory,
+    loadMoreRecentSessions,
     previewFile,
     refreshRecentSessions,
     refreshWorkspaceStatus,

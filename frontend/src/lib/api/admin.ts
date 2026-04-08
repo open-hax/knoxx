@@ -102,3 +102,33 @@ export async function createOrgDataLake(orgId: string, payload: {
     body: JSON.stringify(payload),
   });
 }
+
+export interface GraphMonitoringStats {
+  ok: boolean;
+  stats: {
+    nodes: number;
+    edges: number;
+    embeddings: number;
+    layouts: number;
+  };
+  projectBreakdown: Array<{ project: string; count: number }>;
+  recentEmbeddings: Array<{
+    nodeId: string;
+    model: string | null;
+    dimensions: number;
+    updatedAt: Date | null;
+  }>;
+  storageBackend: string;
+}
+
+export async function getGraphMonitoring(): Promise<GraphMonitoringStats> {
+  const res = await fetch(`${import.meta.env.VITE_OPENPLANNER_URL || "http://127.0.0.1:7777"}/v1/graph/monitoring`, {
+    headers: {
+      "Authorization": `Bearer ${import.meta.env.VITE_OPENPLANNER_API_KEY || "change-me"}`,
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Graph monitoring request failed: ${res.status}`);
+  }
+  return res.json();
+}

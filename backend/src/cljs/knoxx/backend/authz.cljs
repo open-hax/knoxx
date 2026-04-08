@@ -14,11 +14,12 @@
   [runtime reply status promise]
   (if-not (policy-db-enabled? runtime)
     (http/json-response! reply 503 {:detail "Knoxx policy database is not configured"})
-    (-> promise
-        (.then (fn [result]
-                 (http/json-response! reply status (js->clj result :keywordize-keys true))))
-        (.catch (fn [err]
-                  (http/error-response! reply err))))))
+    (.then promise
+           (fn [result]
+             (http/json-response! reply status (js->clj result :keywordize-keys true)))
+           (fn [err]
+             (http/error-response! reply err)
+             reply))))
 
 (defn resolve-request-context!
   [runtime request]
@@ -36,10 +37,11 @@
   [runtime request reply f]
   (if-not (policy-db-enabled? runtime)
     (f nil)
-    (-> (resolve-request-context! runtime request)
-        (.then f)
-        (.catch (fn [err]
-                  (http/error-response! reply err))))))
+    (.then (resolve-request-context! runtime request)
+           f
+           (fn [err]
+             (http/error-response! reply err)
+             reply))))
 
 (defn ctx-org-id [ctx] (or (:orgId ctx) (get-in ctx [:org :id])))
 (defn ctx-org-slug [ctx] (or (:orgSlug ctx) (get-in ctx [:org :slug])))

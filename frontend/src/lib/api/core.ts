@@ -6,6 +6,8 @@ export const API_BASE = importMetaEnv?.VITE_API_BASE ?? "";
 
 const KNOXX_USER_EMAIL_KEY = "knoxx_user_email";
 const KNOXX_ORG_SLUG_KEY = "knoxx_org_slug";
+const DEFAULT_KNOXX_USER_EMAIL = importMetaEnv?.VITE_KNOXX_DEV_USER_EMAIL?.trim() ?? "";
+const DEFAULT_KNOXX_ORG_SLUG = importMetaEnv?.VITE_KNOXX_DEV_ORG_SLUG?.trim() ?? "";
 
 function getStoredAuthValue(key: string): string | null {
   if (typeof window === "undefined") return null;
@@ -19,8 +21,8 @@ function getStoredAuthValue(key: string): string | null {
 
 export function getKnoxxAuthIdentity(): KnoxxAuthIdentity {
   return {
-    userEmail: getStoredAuthValue(KNOXX_USER_EMAIL_KEY) ?? "",
-    orgSlug: getStoredAuthValue(KNOXX_ORG_SLUG_KEY) ?? "",
+    userEmail: getStoredAuthValue(KNOXX_USER_EMAIL_KEY) ?? DEFAULT_KNOXX_USER_EMAIL,
+    orgSlug: getStoredAuthValue(KNOXX_ORG_SLUG_KEY) ?? DEFAULT_KNOXX_ORG_SLUG,
   };
 }
 
@@ -52,8 +54,8 @@ export function setKnoxxAuthIdentity(next: KnoxxAuthIdentity): KnoxxAuthIdentity
 
 export function buildKnoxxAuthHeaders(headersInit?: HeadersInit): Headers {
   const headers = new Headers(headersInit || {});
-  const userEmail = getStoredAuthValue(KNOXX_USER_EMAIL_KEY);
-  const orgSlug = getStoredAuthValue(KNOXX_ORG_SLUG_KEY);
+  const userEmail = getStoredAuthValue(KNOXX_USER_EMAIL_KEY) ?? DEFAULT_KNOXX_USER_EMAIL;
+  const orgSlug = getStoredAuthValue(KNOXX_ORG_SLUG_KEY) ?? DEFAULT_KNOXX_ORG_SLUG;
   if (userEmail && !headers.has("x-knoxx-user-email")) {
     headers.set("x-knoxx-user-email", userEmail);
   }

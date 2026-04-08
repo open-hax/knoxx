@@ -167,6 +167,14 @@ export interface MemorySessionSummary {
   active_session_id?: string | null;
 }
 
+export interface MemorySessionListResponse {
+  rows: MemorySessionSummary[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  has_more?: boolean;
+}
+
 export interface MemorySessionRow {
   id: string;
   ts?: string;
@@ -440,6 +448,80 @@ export interface AdminToolDefinition {
   label: string;
   description: string;
   riskLevel: string;
+}
+
+export type TranslationAdequacy = "excellent" | "good" | "adequate" | "poor" | "unusable";
+export type TranslationFluency = "excellent" | "good" | "adequate" | "poor" | "unusable";
+export type TranslationTerminology = "correct" | "minor_errors" | "major_errors";
+export type TranslationRisk = "safe" | "sensitive" | "policy_violation";
+export type TranslationOverall = "approve" | "needs_edit" | "reject";
+export type TranslationStatus = "pending" | "in_review" | "approved" | "rejected";
+
+export interface TranslationLabel {
+  id: string;
+  segment_id: string;
+  labeler_id: string;
+  labeler_email: string;
+  adequacy: TranslationAdequacy;
+  fluency: TranslationFluency;
+  terminology: TranslationTerminology;
+  risk: TranslationRisk;
+  overall: TranslationOverall;
+  corrected_text?: string | null;
+  editor_notes?: string | null;
+  ts: string;
+}
+
+export interface TranslationSegment {
+  id: string;
+  source_text: string;
+  translated_text: string;
+  source_lang: string;
+  target_lang: string;
+  status: TranslationStatus;
+  confidence?: number | null;
+  mt_model?: string | null;
+  document_id: string;
+  segment_index: number;
+  domain?: string | null;
+  tenant_id: string;
+  org_id: string;
+  labels: TranslationLabel[];
+  ts: string;
+}
+
+export interface TranslationSegmentListResponse {
+  segments: TranslationSegment[];
+  total: number;
+  has_more: boolean;
+}
+
+export interface TranslationLabelPayload {
+  adequacy: TranslationAdequacy;
+  fluency: TranslationFluency;
+  terminology: TranslationTerminology;
+  risk: TranslationRisk;
+  overall: TranslationOverall;
+  corrected_text?: string;
+  editor_notes?: string;
+}
+
+export interface TranslationManifestLanguageStats {
+  total_segments: number;
+  approved: number;
+  rejected: number;
+  pending: number;
+  in_review: number;
+  avg_labels_per_segment: number;
+  with_corrections: number;
+}
+
+export interface TranslationManifest {
+  project: string;
+  generated_at: string;
+  languages: Record<string, TranslationManifestLanguageStats>;
+  labelers: Array<{ email: string; segments_labeled: number }>;
+  export_sizes: Record<string, { rows: number; bytes_estimate: number }>;
 }
 
 export interface KnoxxAuthContext {

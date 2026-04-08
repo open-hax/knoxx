@@ -1,5 +1,28 @@
 (ns knoxx.backend.tool-routes
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            ["nodemailer" :as nodemailer]))
+
+(defn send-email!
+  "Send an email via Gmail SMTP using nodemailer.
+   Returns a promise that resolves with the result on success or rejects on failure."
+  [config to subject text-body cc bcc]
+  (let [email (:gmail-app-email config)
+        password (:gmail-app-password config)]
+    (if (or (str/blank? email) (str/blank? password))
+      (js/Promise.reject (js/Error. "Gmail credentials not configured"))
+      (let [transporter (.createTransport nodemailer
+                                           #js {:host "smtp.gmail.com"
+                                                :port 587
+                                                :secure false
+                                                :auth #js {:user email
+                                                           :pass password}})]
+        (.sendMail transporter
+                   #js {:from email
+                        :to (str/join ", " to)
+                        :cc (when (seq cc) (str/join ", " cc))
+                        :bcc (when (seq bcc) (str/join ", " bcc))
+                        :subject subject
+                        :text text-body})))))
 
 (defn register-tool-routes!
   [app runtime config {:keys [route!
@@ -23,8 +46,28 @@
                   (json-response! reply 200 (tool-catalog config role ctx)))))))
 
   (route! app "POST" "/api/tools/email/send"
-          (fn [_request reply]
-            (json-response! reply 503 {:detail "Email send is not implemented yet in the CLJS backend"})))
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (let [body (or (aget request "body") #js {})
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "email.send")
+                        to (or (aget body "to") #js [])
+                        cc (or (aget body "cc") #js [])
+                        bcc (or (aget body "bcc") #js [])
+                        subject (str (or (aget body "subject") "(no subject)"))
+                        markdown (str (or (aget body "markdown") ""))]
+                    (if (empty? to)
+                      (json-response! reply 400 {:detail "Missing required field: to array"})
+                      (-> (send-email! config to subject markdown cc bcc)
+                          (.then (fn [result]
+                                   (json-response! reply 200 {:ok true
+                                                              :role role
+                                                              :message_id (aget result "messageId")})))
+                          (.catch (fn [err]
+                                    (json-response! reply 502 {:detail (str "Failed to send email: " (or (aget err "message") (str err)))}))))))
+                  (catch :default err
+                    (error-response! reply err)))))))
 
   (route! app "POST" "/api/tools/read"
           (fn [request reply]

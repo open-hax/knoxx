@@ -1,4 +1,4 @@
-import type { ChangeEvent, MouseEvent as ReactMouseEvent, Ref } from "react";
+import type { ChangeEvent, MouseEvent as ReactMouseEvent, UIEvent, Ref } from "react";
 import { Badge, Button, Card, Input } from "@open-hax/uxx";
 import type { MemorySessionSummary } from "../../lib/types";
 import { ChatWorkspaceSidebarExplorer } from "./ChatWorkspaceSidebarExplorer";
@@ -46,7 +46,10 @@ type ChatWorkspaceSidebarProps = {
   workspaceProgressPercent: number;
   pinnedContext: PinnedContextItem[];
   recentSessions: MemorySessionSummary[];
+  recentSessionsHasMore: boolean;
+  recentSessionsTotal: number;
   loadingRecentSessions: boolean;
+  loadingMoreRecentSessions: boolean;
   loadingMemorySessionId: string | null;
   conversationId: string | null;
   onHide: () => void;
@@ -57,6 +60,7 @@ type ChatWorkspaceSidebarProps = {
   onClearSemanticSearch: () => void;
   onEnsureWorkspaceSync: () => void | Promise<void>;
   onRefreshRecentSessions: () => void | Promise<void>;
+  onLoadMoreRecentSessions: () => void | Promise<void>;
   onResumeMemorySession: (sessionId: string) => void | Promise<void>;
   onPreviewFile: (path: string) => void | Promise<void>;
   onPinSemanticResult: (entry: SemanticSearchMatch) => void;
@@ -94,7 +98,10 @@ export function ChatWorkspaceSidebar({
   workspaceProgressPercent,
   pinnedContext,
   recentSessions,
+  recentSessionsHasMore,
+  recentSessionsTotal,
   loadingRecentSessions,
+  loadingMoreRecentSessions,
   loadingMemorySessionId,
   conversationId,
   onHide,
@@ -105,6 +112,7 @@ export function ChatWorkspaceSidebar({
   onClearSemanticSearch,
   onEnsureWorkspaceSync,
   onRefreshRecentSessions,
+  onLoadMoreRecentSessions,
   onResumeMemorySession,
   onPreviewFile,
   onPinSemanticResult,
@@ -117,6 +125,15 @@ export function ChatWorkspaceSidebar({
   onStartSidebarPaneResize,
   onStartSidebarWidthResize,
 }: ChatWorkspaceSidebarProps) {
+  const handleRecentSessionsScroll = (event: UIEvent<HTMLDivElement>) => {
+    if (!recentSessionsHasMore || loadingMoreRecentSessions || loadingRecentSessions) return;
+    const target = event.currentTarget;
+    const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (remaining <= 120) {
+      void onLoadMoreRecentSessions();
+    }
+  };
+
   return (
     <>
       <Card
@@ -285,12 +302,12 @@ export function ChatWorkspaceSidebar({
                   gridTemplateRows: pinnedContext.length > 0 ? "minmax(0, 1fr) minmax(0, 1fr)" : "minmax(0, 1fr)",
                 }}
               >
-                <Card variant="outlined" padding="sm" style={{ minHeight: 0, display: "flex", flexDirection: "column" }}>
-                  <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <Card variant="outlined" padding="sm" style={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                  <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, flexShrink: 0 }}>
                       <div style={{ fontSize: 11, fontWeight: 600 }}>Recent Sessions</div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <Badge size="sm" variant="default">{recentSessions.length}</Badge>
+                        <Badge size="sm" variant="default">{recentSessionsTotal > 0 ? `${recentSessions.length}/${recentSessionsTotal}` : recentSessions.length}</Badge>
                         <Button variant="ghost" size="sm" loading={loadingRecentSessions} onClick={() => void onRefreshRecentSessions()}>
                           Refresh
                         </Button>
@@ -301,7 +318,20 @@ export function ChatWorkspaceSidebar({
                         No OpenPlanner-backed Knoxx sessions yet.
                       </div>
                     ) : (
-                      <div style={{ display: "grid", gap: 8, flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", paddingRight: 4 }}>
+                      <div
+                        onScroll={handleRecentSessionsScroll}
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                          flex: 1,
+                          minHeight: 0,
+                          overflowY: "auto",
+                          overflowX: "hidden",
+                          overscrollBehavior: "contain",
+                          paddingRight: 4,
+                        }}
+                      >
                         {recentSessions.map((item) => {
                           const isSelected = conversationId === item.session;
                           const isLive = Boolean(item.is_active);
@@ -323,6 +353,7 @@ export function ChatWorkspaceSidebar({
                               style={{
                                 minWidth: 0,
                                 maxWidth: "100%",
+                                flexShrink: 0,
                                 overflow: "hidden",
                                 border: `1px solid ${isSelected ? "var(--token-colors-accent-cyan)" : isLive ? "var(--token-colors-accent-green)" : "var(--token-colors-border-default)"}`,
                                 borderRadius: 8,
@@ -356,6 +387,19 @@ export function ChatWorkspaceSidebar({
                             </div>
                           );
                         })}
+                        {loadingMoreRecentSessions ? (
+                          <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", padding: "4px 0 8px" }}>
+                            Loading more sessions…
+                          </div>
+                        ) : recentSessionsHasMore ? (
+                          <Button variant="ghost" size="sm" onClick={() => void onLoadMoreRecentSessions()}>
+                            Load more
+                          </Button>
+                        ) : recentSessions.length > 0 ? (
+                          <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", padding: "4px 0 8px" }}>
+                            End of recent sessions.
+                          </div>
+                        ) : null}
                       </div>
                     )}
                   </div>

@@ -1,5 +1,5 @@
-import { useEffect, type MutableRefObject } from 'react';
-import { connectStream } from '../../lib/ws';
+import { useEffect, useRef, type MutableRefObject } from 'react';
+import { connectStream, type StreamConnection } from '../../lib/ws';
 import type { ChatMessage, RunDetail, RunEvent } from '../../lib/types';
 import type { SemanticSearchMatch } from './types';
 import {
@@ -12,6 +12,7 @@ import {
 
 type UseChatRuntimeEffectsParams = {
   sessionId: string;
+  conversationId: string | null;
   isSending: boolean;
   latestRun: RunDetail | null;
   semanticQuery: string;
@@ -39,6 +40,7 @@ type UseChatRuntimeEffectsParams = {
 
 export function useChatRuntimeEffects({
   sessionId,
+  conversationId,
   isSending,
   latestRun,
   semanticQuery,
@@ -63,78 +65,118 @@ export function useChatRuntimeEffects({
   refreshRecentSessions,
   runSemanticSearch,
 }: UseChatRuntimeEffectsParams) {
+  const streamRef = useRef<StreamConnection | null>(null);
+  const conversationIdRef = useRef(conversationId);
+  const callbacksRef = useRef({
+    appendMessageIfMissing,
+    loadDirectory,
+    loadRunDetail,
+    refreshRecentSessions,
+    refreshWorkspaceStatus,
+    runSemanticSearch,
+    updateMessageById,
+    updateTraceBlocksByMessageId,
+  });
+
+  callbacksRef.current = {
+    appendMessageIfMissing,
+    loadDirectory,
+    loadRunDetail,
+    refreshRecentSessions,
+    refreshWorkspaceStatus,
+    runSemanticSearch,
+    updateMessageById,
+    updateTraceBlocksByMessageId,
+  };
+  conversationIdRef.current = conversationId;
+
   useEffect(() => {
-    const disconnect = connectStream(
-      {
-        onStatus: (status) => {
-          setWsStatus(status);
-          if (status !== 'connected') setIsSending(false);
-        },
-        onToken: (token, meta) => {
-          const pendingId = pendingAssistantIdRef.current;
-          if (!pendingId) return;
-          const runId = meta?.runId;
-          if (runId) activeRunIdRef.current = runId;
-          const blockKind = meta?.kind === 'reasoning' ? 'reasoning' : 'agent_message';
-          updateTraceBlocksByMessageId(pendingId, (blocks) => appendTraceTextDelta(blocks, blockKind, token));
-          updateMessageById(pendingId, (message) => ({
-            ...message,
-            runId: runId ?? message.runId ?? null,
-            status: 'streaming',
-            content: blockKind === 'agent_message' ? `${message.content}${token}` : message.content,
-          }));
-        },
-        onEvent: (event) => {
-          const runtimeEvent = event as RunEvent & {
-            run_id?: string;
-            session_id?: string;
-            type?: string;
-            status?: string;
-            tool_name?: string;
-            tool_call_id?: string;
-            preview?: string;
-            is_error?: boolean;
-          };
-          setRuntimeEvents((previous) => [...previous.slice(-79), runtimeEvent]);
-          const controlTimelineMessage = controlTimelineMessageFromEvent(runtimeEvent);
-          if (controlTimelineMessage) {
-            appendMessageIfMissing(controlTimelineMessage);
-          }
-          const pendingId = pendingAssistantIdRef.current;
-          if (pendingId && ['tool_start', 'tool_update', 'tool_end'].includes(String(runtimeEvent.type ?? ''))) {
-            updateTraceBlocksByMessageId(pendingId, (blocks) => applyToolTraceEvent(blocks, runtimeEvent));
-          }
-          if (typeof runtimeEvent.run_id === 'string') {
-            activeRunIdRef.current = runtimeEvent.run_id;
-            if (runtimeEvent.type === 'run_started') {
-              setLatestRun(null);
+    if (!sessionId) {
+      return;
+    }
+    let cancelled = false;
+    let stream: StreamConnection | null = null;
+    const connectTimer = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+      stream = connectStream(
+        {
+          onStatus: (status) => {
+            setWsStatus(status);
+            if (status !== 'connected') setIsSending(false);
+          },
+          onToken: (token, meta) => {
+            const pendingId = pendingAssistantIdRef.current;
+            if (!pendingId) return;
+            const runId = meta?.runId;
+            if (runId) activeRunIdRef.current = runId;
+            const blockKind = meta?.kind === 'reasoning' ? 'reasoning' : 'agent_message';
+            callbacksRef.current.updateTraceBlocksByMessageId(pendingId, (blocks) => appendTraceTextDelta(blocks, blockKind, token));
+            callbacksRef.current.updateMessageById(pendingId, (message) => ({
+              ...message,
+              runId: runId ?? message.runId ?? null,
+              status: 'streaming',
+              content: blockKind === 'agent_message' ? `${message.content}${token}` : message.content,
+            }));
+          },
+          onEvent: (event) => {
+            const runtimeEvent = event as RunEvent & {
+              run_id?: string;
+              session_id?: string;
+              type?: string;
+              status?: string;
+              tool_name?: string;
+              tool_call_id?: string;
+              preview?: string;
+              is_error?: boolean;
+            };
+            setRuntimeEvents((previous) => [...previous.slice(-79), runtimeEvent]);
+            const controlTimelineMessage = controlTimelineMessageFromEvent(runtimeEvent);
+            if (controlTimelineMessage) {
+              callbacksRef.current.appendMessageIfMissing(controlTimelineMessage);
             }
-            if (runtimeEvent.type === 'run_completed' || runtimeEvent.type === 'run_failed') {
-              if (pendingId) {
-                updateTraceBlocksByMessageId(
-                  pendingId,
-                  (blocks) => finalizeTraceBlocks(blocks, runtimeEvent.type === 'run_failed' ? 'error' : 'done'),
-                );
+            const pendingId = pendingAssistantIdRef.current;
+            if (pendingId && ['tool_start', 'tool_update', 'tool_end'].includes(String(runtimeEvent.type ?? ''))) {
+              callbacksRef.current.updateTraceBlocksByMessageId(pendingId, (blocks) => applyToolTraceEvent(blocks, runtimeEvent));
+            }
+            if (typeof runtimeEvent.run_id === 'string') {
+              activeRunIdRef.current = runtimeEvent.run_id;
+              if (runtimeEvent.type === 'run_started') {
+                setLatestRun(null);
               }
-              setIsSending(false);
-              void loadRunDetail(runtimeEvent.run_id);
+              if (runtimeEvent.type === 'run_completed' || runtimeEvent.type === 'run_failed') {
+                if (pendingId) {
+                  callbacksRef.current.updateTraceBlocksByMessageId(
+                    pendingId,
+                    (blocks) => finalizeTraceBlocks(blocks, runtimeEvent.type === 'run_failed' ? 'error' : 'done'),
+                  );
+                }
+                setIsSending(false);
+                void callbacksRef.current.loadRunDetail(runtimeEvent.run_id);
+              }
             }
-          }
-          const label = runtimeEvent.type ?? 'event';
-          const toolName = typeof runtimeEvent.tool_name === 'string' ? ` ${runtimeEvent.tool_name}` : '';
-          const preview = typeof runtimeEvent.preview === 'string' && runtimeEvent.preview.trim().length > 0
-            ? ` :: ${truncateText(runtimeEvent.preview, 120)}`
-            : '';
-          setConsoleLines((previous) => [...previous.slice(-400), `[agent:${label}]${toolName}${preview}`]);
+            const label = runtimeEvent.type ?? 'event';
+            const toolName = typeof runtimeEvent.tool_name === 'string' ? ` ${runtimeEvent.tool_name}` : '';
+            const preview = typeof runtimeEvent.preview === 'string' && runtimeEvent.preview.trim().length > 0
+              ? ` :: ${truncateText(runtimeEvent.preview, 120)}`
+              : '';
+            setConsoleLines((previous) => [...previous.slice(-400), `[agent:${label}]${toolName}${preview}`]);
+          },
         },
-      },
-      sessionId || undefined,
-    );
-    return disconnect;
+        sessionId,
+        conversationIdRef.current,
+      );
+      streamRef.current = stream;
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(connectTimer);
+      stream?.disconnect();
+      streamRef.current = null;
+    };
   }, [
     activeRunIdRef,
-    appendMessageIfMissing,
-    loadRunDetail,
     pendingAssistantIdRef,
     sessionId,
     setConsoleLines,
@@ -142,9 +184,14 @@ export function useChatRuntimeEffects({
     setLatestRun,
     setRuntimeEvents,
     setWsStatus,
-    updateMessageById,
-    updateTraceBlocksByMessageId,
   ]);
+
+  // Update conversation_id on the websocket when it changes
+  useEffect(() => {
+    if (streamRef.current) {
+      streamRef.current.setConversationId(conversationId);
+    }
+  }, [conversationId]);
 
   useEffect(() => {
     if (!isSending) {
@@ -173,43 +220,46 @@ export function useChatRuntimeEffects({
     const interval = window.setInterval(() => {
       const runId = activeRunIdRef.current;
       if (runId) {
-        void loadRunDetail(runId);
+        void callbacksRef.current.loadRunDetail(runId);
       }
-    }, 2000);
+    }, 4000);
     return () => window.clearInterval(interval);
-  }, [activeRunIdRef, isSending, loadRunDetail]);
+  }, [isSending, activeRunIdRef]);
 
   useEffect(() => {
-    void loadDirectory('docs');
-    void refreshWorkspaceStatus();
-    void refreshRecentSessions();
-  }, [loadDirectory, refreshRecentSessions, refreshWorkspaceStatus]);
+    void callbacksRef.current.loadDirectory('docs');
+    void callbacksRef.current.refreshWorkspaceStatus();
+    void callbacksRef.current.refreshRecentSessions();
+  }, []);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      void refreshRecentSessions();
-    }, 15000);
+      void callbacksRef.current.refreshRecentSessions();
+    }, 30000);
     return () => window.clearInterval(interval);
-  }, [refreshRecentSessions]);
+  }, []);
 
   useEffect(() => {
-    if (latestRun?.status === 'completed' || latestRun?.status === 'failed') {
-      void refreshRecentSessions();
+    if (!latestRun?.run_id) {
+      return;
     }
-  }, [latestRun?.run_id, latestRun?.status, refreshRecentSessions]);
+    if (latestRun.status === 'completed' || latestRun.status === 'failed') {
+      void callbacksRef.current.refreshRecentSessions();
+    }
+  }, [latestRun?.run_id, latestRun?.status]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      void refreshWorkspaceStatus();
-    }, 3000);
+      void callbacksRef.current.refreshWorkspaceStatus();
+    }, 10000);
     return () => window.clearInterval(interval);
-  }, [refreshWorkspaceStatus]);
+  }, []);
 
   useEffect(() => {
     if (semanticQuery.trim()) {
-      void runSemanticSearch(semanticQuery, currentPath);
+      void callbacksRef.current.runSemanticSearch(semanticQuery, currentPath);
     }
-  }, [currentPath, runSemanticSearch, semanticQuery]);
+  }, [currentPath, semanticQuery]);
 
   useEffect(() => {
     const trimmed = semanticQuery.trim();
@@ -219,8 +269,8 @@ export function useChatRuntimeEffects({
       return;
     }
     const timeout = window.setTimeout(() => {
-      void runSemanticSearch(trimmed, currentPath);
+      void callbacksRef.current.runSemanticSearch(trimmed, currentPath);
     }, 300);
     return () => window.clearTimeout(timeout);
-  }, [currentPath, runSemanticSearch, semanticQuery, setSemanticProjects, setSemanticResults]);
+  }, [currentPath, semanticQuery, setSemanticResults, setSemanticProjects]);
 }

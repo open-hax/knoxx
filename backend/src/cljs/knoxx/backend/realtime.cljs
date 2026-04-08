@@ -90,15 +90,31 @@
         (swap! ws-clients* dissoc client-id)))))
 
 (defn broadcast-ws-session!
+  "Broadcast to clients scoped by conversation-id for isolation.
+   Falls back to session-id matching for backwards compatibility.
+   Never broadcasts to all clients - requires explicit conversation or session match."
   [session-id channel payload]
-  (doseq [[client-id client] @ws-clients*]
-    (let [client-session-id (or (aget client "sessionId") "")]
-      (when (or (str/blank? session-id)
-                (= session-id client-session-id))
-        (try
-          (safe-ws-send! (aget client "socket") (ws-envelope channel payload))
-          (catch :default _
-            (swap! ws-clients* dissoc client-id)))))))
+  (let [payload-conversation-id (str (or (:conversation_id payload) (aget payload "conversation_id") ""))]
+    (doseq [[client-id client] @ws-clients*]
+      (let [client-session-id (or (aget client "sessionId") "")
+            client-conversation-id (or (aget client "conversationId") "")
+            ;; Match by conversation-id (primary) or session-id (fallback)
+            ;; Never match blank-to-blank to prevent cross-session contamination
+            matches? (cond
+                       (not (str/blank? payload-conversation-id))
+                       (and (not (str/blank? client-conversation-id))
+                            (= payload-conversation-id client-conversation-id))
+
+                       (not (str/blank? session-id))
+                       (and (not (str/blank? client-session-id))
+                            (= session-id client-session-id))
+
+                       :else false)]
+        (when matches?
+          (try
+            (safe-ws-send! (aget client "socket") (ws-envelope channel payload))
+            (catch :default _
+              (swap! ws-clients* dissoc client-id))))))))
 
 (defn ensure-ws-stats-loop!
   [runtime active-runs-count]
@@ -126,12 +142,26 @@
                :wsHandler (fn [socket request]
                             (let [ws (or (aget socket "socket") socket)
                                   client-id (.randomUUID (aget runtime "crypto"))
+                                  url-params (try
+                                               (js/URL. (str "http://localhost" (or (aget request "url") "/ws/stream")))
+                                               (catch :default _ nil))
                                   session-id (try
-                                               (or (.get (.-searchParams (js/URL. (str "http://localhost" (or (aget request "url") "/ws/stream")))) "session_id") "")
-                                               (catch :default _ ""))]
-                              (swap! ws-clients* assoc client-id #js {:socket ws :sessionId session-id})
+                                               (or (.get (.-searchParams url-params) "session_id") "")
+                                               (catch :default _ ""))
+                                  conversation-id (try
+                                                    (or (.get (.-searchParams url-params) "conversation_id") "")
+                                                    (catch :default _ ""))]
+                              (swap! ws-clients* assoc client-id #js {:socket ws :sessionId session-id :conversationId conversation-id})
                               (.on ws "close" (fn [] (swap! ws-clients* dissoc client-id)))
                               (.on ws "error" (fn [] (swap! ws-clients* dissoc client-id)))
+                              (.on ws "message" (fn [data]
+                                                  (try
+                                                    (let [msg (.parse js/JSON (str data))]
+                                                      (when (= (aget msg "type") "set_conversation")
+                                                        (let [new-cid (str (or (aget msg "conversation_id") ""))]
+                                                          (swap! ws-clients* update client-id
+                                                                 (fn [c] (when c (js/Object.assign #js {} c #js {:conversationId new-cid})))))))
+                                                    (catch :default _ nil))))
                               (-> (system-stats! runtime active-runs-count)
                                   (.then (fn [stats]
                                            (safe-ws-send! ws (ws-envelope "stats" stats))))

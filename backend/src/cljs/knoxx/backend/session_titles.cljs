@@ -1,6 +1,7 @@
 (ns knoxx.backend.session-titles
   (:require [clojure.string :as str]
             [knoxx.backend.http :as backend-http]
+            [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime-config :as runtime-config]
             [knoxx.backend.text :as text]))
 
@@ -14,6 +15,16 @@
                                         :started_at nil
                                         :completed_at nil
                                         :last_error nil}))
+
+(def SESSION_TITLE_TTL_SECONDS (* 60 60 24 7))
+
+(defn session-title-key
+  [session-id]
+  (str "knoxx:session-title:" (str session-id)))
+
+(defn resolved
+  [value]
+  (js/Promise.resolve value))
 
 (declare generate-session-title!)
 
@@ -44,10 +55,6 @@
                         (str/replace #"^[#>*\-\d.\s]+" "")
                         sanitize-session-title)]
     (or cleaned "Untitled session")))
-
-(defn session-title-cache-path
-  [runtime config]
-  (.join (aget runtime "path") (:workspace-root config) ".knoxx" "session-titles.json"))
 
 (defn acceptable-session-title?
   [value]
@@ -108,57 +115,177 @@
                  second
                  sanitize-session-title))))
 
-(defn persist-session-titles!
-  [runtime config]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        cache-path (session-title-cache-path runtime config)
-        parent (.dirname node-path cache-path)
-        payload (.stringify js/JSON (clj->js @session-titles*) nil 2)]
-    (-> (.mkdir node-fs parent #js {:recursive true})
-        (.then (fn []
-                 (.writeFile node-fs cache-path payload "utf8"))))))
+(defn parse-json-object
+  [value]
+  (cond
+    (map? value) value
+    (string? value) (try
+                      (js->clj (.parse js/JSON value) :keywordize-keys true)
+                      (catch :default _ nil))
+    :else nil))
 
-(defn cache-session-title!
-  [runtime config session-id title title-model]
+(defn session-title-row-entry
+  [row]
+  (let [extra (or (parse-json-object (:extra row)) {})
+        kind (or (:kind row)
+                 (:event_kind row)
+                 (get extra :kind)
+                 (get extra :event_kind))
+        raw-title (or (get extra :title)
+                      (:title row)
+                      (when (= kind "knoxx.session_title")
+                        (:text row)))
+        title (normalize-session-title raw-title)
+        title-model (or (get extra :title_model)
+                        (get extra :titleModel)
+                        (:title_model row)
+                        (:titleModel row)
+                        (:model row))
+        updated-at (or (:ts row)
+                       (:created_at row)
+                       (:updated_at row)
+                       (runtime-config/now-iso))]
+    (when (and (= kind "knoxx.session_title") title)
+      {:title title
+       :title_model title-model
+       :updated_at updated-at})))
+
+(defn stored-session-title-entry
+  [session-id rows]
+  (when-let [entry (some->> (or rows []) reverse (keep session-title-row-entry) first)]
+    (assoc entry :session session-id)))
+
+(defn cache-session-title-entry!
+  [session-id title title-model updated-at]
   (let [resolved {:title (or (normalize-session-title title) "Untitled session")
                   :title_model title-model
                   :session session-id
-                  :updated_at (runtime-config/now-iso)}]
+                  :updated_at (or updated-at (runtime-config/now-iso))}]
     (swap! session-titles* assoc session-id resolved)
     (swap! session-title-promises* dissoc session-id)
-    (-> (persist-session-titles! runtime config)
-        (.catch (fn [err]
-                  (.error js/console "Failed to persist session title cache" err)
-                  nil)))
+    (when-let [redis-client (redis/get-client)]
+      (-> (redis/set-json redis-client
+                          (session-title-key session-id)
+                          resolved
+                          SESSION_TITLE_TTL_SECONDS)
+          (.catch (fn [err]
+                    (.warn js/console "Failed to persist session title cache into Redis" err)
+                    nil))))
     resolved))
 
+(defn clear-session-title-entry!
+  [session-id]
+  (swap! session-titles* dissoc session-id)
+  (swap! session-title-promises* dissoc session-id)
+  (when-let [redis-client (redis/get-client)]
+    (-> (redis/del redis-client (session-title-key session-id))
+        (.catch (fn [err]
+                  (.warn js/console "Failed to clear session title cache from Redis" err)
+                  nil))))
+  nil)
+
+(defn get-cached-session-title!
+  [session-id]
+  (let [session-id (str (or session-id ""))]
+    (cond
+      (str/blank? session-id)
+      (resolved nil)
+
+      (contains? @session-titles* session-id)
+      (resolved (get @session-titles* session-id))
+
+      :else
+      (if-let [redis-client (redis/get-client)]
+        (-> (redis/get-json redis-client (session-title-key session-id))
+            (.then (fn [entry]
+                     (when entry
+                       (swap! session-titles* assoc session-id entry))
+                     entry)))
+        (resolved nil)))))
+
+(defn session-title-event
+  [config session-id title title-model]
+  (let [event-id (str "knoxx:session-title:" session-id)
+        ts (runtime-config/now-iso)
+        normalized-title (or (normalize-session-title title) "Untitled session")]
+    {:schema "openplanner.event.v1"
+     :id event-id
+     :ts ts
+     :source "knoxx"
+     :kind "knoxx.session_title"
+     :source_ref {:project (:session-project-name config)
+                  :session session-id
+                  :message event-id}
+     :text normalized-title
+     :meta {:role "system"
+            :author "knoxx"
+            :model title-model
+            :tags ["knoxx" "session_title" "metadata"]}
+     :extra {:kind "knoxx.session_title"
+             :title normalized-title
+             :title_model title-model
+             :session_id session-id}}))
+
+(defn persist-session-title!
+  [config session-id title title-model]
+  (if (or (str/blank? (str session-id))
+          (not (backend-http/openplanner-enabled? config)))
+    (js/Promise.resolve nil)
+    (-> (backend-http/openplanner-request! config
+                                           "POST"
+                                           "/v1/events"
+                                           {:events [(session-title-event config session-id title title-model)]})
+        (.catch (fn [err]
+                  (.warn js/console "Failed to persist session title into OpenPlanner" err)
+                  nil)))))
+
+(defn cache-session-title!
+  [runtime config session-id title title-model]
+  (let [session-id (str (or session-id ""))
+        resolved (cache-session-title-entry! session-id title title-model nil)]
+    resolved))
+
+(defn preload-session-title-entry!
+  [config session-id]
+  (-> (backend-http/openplanner-request! config
+                                         "GET"
+                                         (str "/v1/sessions/"
+                                              (js/encodeURIComponent session-id)
+                                              "?project="
+                                              (js/encodeURIComponent (:session-project-name config))))
+      (.then (fn [body]
+               (when-let [entry (stored-session-title-entry session-id (:rows body))]
+                 (cache-session-title-entry! session-id
+                                             (:title entry)
+                                             (:title_model entry)
+                                             (:updated_at entry)))) )
+      (.catch (fn [_]
+                nil))))
+
 (defn load-session-titles!
-  [runtime config]
-  (let [node-fs (aget runtime "fs")
-        cache-path (session-title-cache-path runtime config)]
-    (-> (.readFile node-fs cache-path "utf8")
-        (.then (fn [raw]
-                 (let [parsed (js->clj (.parse js/JSON raw))
-                       loaded (reduce-kv (fn [acc session-id entry]
-                                           (let [session-id (str session-id)
-                                                 title (normalize-session-title (get entry "title"))
-                                                 title-model (or (get entry "title_model")
-                                                                 (get entry "titleModel"))
-                                                 updated-at (or (get entry "updated_at")
-                                                                (get entry "updatedAt")
-                                                                (runtime-config/now-iso))]
-                                             (if title
-                                               (assoc acc session-id {:title title
-                                                                      :title_model title-model
-                                                                      :session session-id
-                                                                      :updated_at updated-at})
-                                               acc)))
-                                         {}
-                                         parsed)]
-                   (reset! session-titles* loaded)
-                   loaded)))
-        (.catch (fn [_]
+  [_runtime config]
+  (if-not (backend-http/openplanner-enabled? config)
+    (js/Promise.resolve @session-titles*)
+    (-> (backend-http/openplanner-request! config
+                                           "GET"
+                                           (str "/v1/sessions?project="
+                                                (js/encodeURIComponent (:session-project-name config))))
+        (.then (fn [body]
+                 (let [session-ids (->> (or (:rows body) [])
+                                        (map :session)
+                                        (map str)
+                                        (remove str/blank?)
+                                        distinct
+                                        (take 64)
+                                        vec)]
+                   (if (empty? session-ids)
+                     @session-titles*
+                     (-> (.all js/Promise
+                               (clj->js (map preload-session-title-entry! (repeat config) session-ids)))
+                         (.then (fn [_]
+                                  @session-titles*)))))))
+        (.catch (fn [err]
+                  (.warn js/console "Failed to preload session titles from OpenPlanner" err)
                   (js/Promise.resolve @session-titles*))))))
 
 (defn resolve-session-title!
@@ -217,32 +344,49 @@
                       (js/Promise.resolve {:title fallback
                                            :title_model nil}))))))))
 
+(defn resolve-session-title-from-rows!
+  [config session-id rows]
+  (if-let [stored (stored-session-title-entry session-id rows)]
+    (js/Promise.resolve (assoc stored :stored true))
+    (let [seed-text (session-title-seed-text (vec (or rows [])))]
+      (-> (resolve-session-title! config seed-text)
+          (.then (fn [entry]
+                   {:title (:title entry)
+                    :title_model (:title_model entry)
+                    :session session-id
+                    :updated_at (runtime-config/now-iso)
+                    :stored false}))))))
+
 (defn ensure-session-title!
   ([runtime config session-id rows force? fetch-session-rows!]
    (let [session-id (str (or session-id ""))]
      (when force?
-       (swap! session-titles* dissoc session-id))
+       (clear-session-title-entry! session-id))
      (cond
        (str/blank? session-id)
-       (js/Promise.resolve {:title "Untitled session"
-                            :title_model nil})
-
-       (contains? @session-titles* session-id)
-       (js/Promise.resolve (get @session-titles* session-id))
+       (resolved {:title "Untitled session"
+                  :title_model nil})
 
        (contains? @session-title-promises* session-id)
        (get @session-title-promises* session-id)
 
        :else
-       (let [title-promise (-> (if (seq rows)
-                                 (js/Promise.resolve rows)
-                                 (fetch-session-rows! config session-id))
-                               (.then (fn [resolved-rows]
-                                        (resolve-session-title! config (session-title-seed-text (vec (or resolved-rows []))))))
-                               (.then (fn [entry]
-                                        (cache-session-title! runtime config session-id (:title entry) (:title_model entry))))
-                               (.catch (fn [_]
-                                         (cache-session-title! runtime config session-id "Untitled session" nil))))]
+       (let [title-promise
+             (-> (get-cached-session-title! session-id)
+                 (.then (fn [cached]
+                          (if cached
+                            cached
+                            (-> (if (seq rows)
+                                  (resolved rows)
+                                  (fetch-session-rows! config session-id))
+                                (.then (fn [resolved-rows]
+                                         (resolve-session-title-from-rows! config session-id resolved-rows)))
+                                (.then (fn [entry]
+                                         (if (:stored entry)
+                                           (cache-session-title-entry! session-id (:title entry) (:title_model entry) (:updated_at entry))
+                                           (cache-session-title! runtime config session-id (:title entry) (:title_model entry)))))
+                                (.catch (fn [_]
+                                          (cache-session-title! runtime config session-id "Untitled session" nil))))))) )]
          (swap! session-title-promises* assoc session-id title-promise)
          title-promise)))))
 
@@ -252,13 +396,17 @@
         seed-text (str (or seed-text ""))]
     (when (and (not (str/blank? session-id))
                (not (str/blank? seed-text))
-               (not (contains? @session-titles* session-id))
                (not (contains? @session-title-promises* session-id)))
-      (let [title-promise (-> (resolve-session-title! config seed-text)
-                              (.then (fn [entry]
-                                       (cache-session-title! runtime config session-id (:title entry) (:title_model entry))))
-                              (.catch (fn [_]
-                                        (cache-session-title! runtime config session-id (heuristic-session-title seed-text) nil))))]
+      (let [title-promise
+            (-> (get-cached-session-title! session-id)
+                (.then (fn [cached]
+                         (if cached
+                           cached
+                           (-> (resolve-session-title! config seed-text)
+                               (.then (fn [entry]
+                                        (cache-session-title! runtime config session-id (:title entry) (:title_model entry))))
+                               (.catch (fn [_]
+                                         (cache-session-title! runtime config session-id (heuristic-session-title seed-text) nil))))))) )]
         (swap! session-title-promises* assoc session-id title-promise)
         title-promise))))
 
@@ -266,70 +414,72 @@
   [runtime config {:keys [force limit]} fetch-session-rows!]
   (if (:active @session-title-backfill*)
     (js/Promise.resolve @session-title-backfill*)
-    (-> (backend-http/openplanner-request! config "GET"
-                                          (str "/v1/sessions?project="
-                                               (js/encodeURIComponent (:session-project-name config))))
-        (.then (fn [body]
-                 (let [session-ids (cond->> (->> (or (:rows body) [])
-                                                 (map :session)
-                                                 (map str)
-                                                 (remove str/blank?)
-                                                 distinct)
-                                     limit (take limit))
-                       session-ids (vec session-ids)]
-                   (reset! session-title-backfill* {:active true
-                                                    :processed 0
-                                                    :total (count session-ids)
-                                                    :failed 0
-                                                    :force (boolean force)
-                                                    :started_at (runtime-config/now-iso)
-                                                    :completed_at nil
-                                                    :last_error nil})
-                   (if (empty? session-ids)
-                     (do
-                       (swap! session-title-backfill* assoc :active false :completed_at (runtime-config/now-iso))
-                       @session-title-backfill*)
-                     (letfn [(step [remaining]
-                               (if-let [session-id (first remaining)]
-                                 (do
-                                   (when force
-                                     (swap! session-titles* dissoc session-id))
-                                   (-> (fetch-session-rows! config session-id)
-                                       (.then (fn [title-rows]
-                                                (let [seed-text (session-title-seed-text title-rows)
-                                                      fallback-title (heuristic-session-title seed-text)]
-                                                  (-> (resolve-session-title! config seed-text)
-                                                      (.then (fn [entry]
-                                                               (cache-session-title! runtime config session-id
-                                                                                     (or (normalize-session-title (:title entry) fallback-title)
-                                                                                         fallback-title)
-                                                                                     (:title_model entry))))
-                                                      (.catch (fn [_]
-                                                                (cache-session-title! runtime config session-id fallback-title nil)))))))
-                                       (.catch (fn [_]
-                                                 (cache-session-title! runtime config session-id "Untitled session" nil)))
-                                       (.then (fn [_]
-                                                (swap! session-title-backfill* update :processed (fnil inc 0))))
-                                       (.catch (fn [err]
-                                                 (swap! session-title-backfill* (fn [state]
-                                                                                  (-> state
-                                                                                      (update :processed (fnil inc 0))
-                                                                                      (update :failed (fnil inc 0))
-                                                                                      (assoc :last_error (str err)))))
-                                                 nil))
-                                       (.then (fn [_]
-                                                (step (rest remaining))))))
-                                 (do
-                                   (swap! session-title-backfill* assoc :active false :completed_at (runtime-config/now-iso))
-                                   (js/Promise.resolve @session-title-backfill*))))]
-                       (-> (step session-ids)
-                           (.catch (fn [err]
-                                     (swap! session-title-backfill* assoc
-                                            :active false
-                                            :completed_at (runtime-config/now-iso)
-                                            :last_error (str err))
-                                     nil)))
-                       @session-title-backfill*)))))
+    (-> (backend-http/openplanner-request! config
+                                           "GET"
+                                           (str "/v1/sessions?project="
+                                                (js/encodeURIComponent (:session-project-name config))))
+        (.then
+         (fn [body]
+           (let [session-ids (cond->> (->> (or (:rows body) [])
+                                           (map :session)
+                                           (map str)
+                                           (remove str/blank?)
+                                           distinct)
+                               limit (take limit))
+                 session-ids (vec session-ids)]
+             (reset! session-title-backfill* {:active true
+                                              :processed 0
+                                              :total (count session-ids)
+                                              :failed 0
+                                              :force (boolean force)
+                                              :started_at (runtime-config/now-iso)
+                                              :completed_at nil
+                                              :last_error nil})
+             (if (empty? session-ids)
+               (do
+                 (swap! session-title-backfill* assoc
+                        :active false
+                        :completed_at (runtime-config/now-iso))
+                 @session-title-backfill*)
+               (letfn [(step [remaining]
+                         (if-let [session-id (first remaining)]
+                           (do
+                             (when force
+                               (clear-session-title-entry! session-id))
+                             (-> (fetch-session-rows! config session-id)
+                                 (.then (fn [title-rows]
+                                          (-> (resolve-session-title-from-rows! config session-id title-rows)
+                                              (.then (fn [entry]
+                                                       (if (:stored entry)
+                                                         (cache-session-title-entry! session-id (:title entry) (:title_model entry) (:updated_at entry))
+                                                         (cache-session-title! runtime config session-id (:title entry) (:title_model entry))))))))
+                                 (.catch (fn [_]
+                                           (cache-session-title! runtime config session-id "Untitled session" nil)))
+                                 (.then (fn [_]
+                                          (swap! session-title-backfill* update :processed (fnil inc 0))))
+                                 (.catch (fn [err]
+                                           (swap! session-title-backfill*
+                                                  (fn [state]
+                                                    (-> state
+                                                        (update :processed (fnil inc 0))
+                                                        (update :failed (fnil inc 0))
+                                                        (assoc :last_error (str err)))))
+                                           nil))
+                                 (.then (fn [_]
+                                          (step (rest remaining))))))
+                           (do
+                             (swap! session-title-backfill* assoc
+                                    :active false
+                                    :completed_at (runtime-config/now-iso))
+                             (js/Promise.resolve @session-title-backfill*))))]
+                 (-> (step session-ids)
+                     (.catch (fn [err]
+                               (swap! session-title-backfill* assoc
+                                      :active false
+                                      :completed_at (runtime-config/now-iso)
+                                      :last_error (str err))
+                               nil)))
+                 @session-title-backfill*)))))
         (.catch (fn [err]
                   (swap! session-title-backfill* assoc
                          :active false

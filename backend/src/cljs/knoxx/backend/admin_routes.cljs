@@ -1,4 +1,5 @@
-(ns knoxx.backend.admin-routes)
+(ns knoxx.backend.admin-routes
+  (:require [clojure.string]))
 
 (defn register-admin-routes!
   [app runtime {:keys [route!

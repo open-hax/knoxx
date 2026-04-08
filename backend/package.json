@@ -19,9 +19,14 @@
     "@fastify/websocket": "^11.2.0",
     "@mariozechner/pi-coding-agent": "^0.63.1",
     "@sinclair/typebox": "^0.34.41",
+    "events": "^3.3.0",
     "fastify": "^5.6.1",
+    "nodemailer": "^6.9.16",
     "pg": "^8.16.3",
+    "punycode": "^2.3.1",
+    "qs": "^6.15.0",
     "redis": "^4.6.0",
-    "shadow-cljs": "^3.3.5"
+    "shadow-cljs": "^3.3.5",
+    "url": "^0.11.4"
   }
 }
