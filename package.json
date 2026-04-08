@@ -1,0 +1,15 @@
+{
+  "name": "@open-hax/knoxx",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Knoxx - Knowledge mining and RAG platform",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @open-hax/knoxx-frontend dev",
+    "build": "pnpm --filter @open-hax/knoxx-frontend build",
+    "lint:size": "node scripts/lint-file-sizes.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

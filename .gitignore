@@ -15,3 +15,11 @@ venv/
 .idea/
 *.swp
 *.swo
+**/.clj-kondo/
+**/.cpcache/
+**/.shadow-cljs/
+**/.lsp
+
+# Workspace symlink targets (resolved at install time)
+packages/uxx
+packages/webgl-graph-view
