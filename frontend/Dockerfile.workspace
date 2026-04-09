@@ -7,12 +7,14 @@ RUN corepack enable && corepack prepare pnpm@10.14.0 --activate
 
 WORKDIR /app
 
+# Create workspace structure matching devel layout
 RUN printf '{"name":"knoxx-frontend-workspace-build","private":true}\n' > /app/package.json \
- && printf 'packages:\n  - orgs/open-hax/knoxx/frontend\n  - orgs/open-hax/uxx\n  - packages/webgl-graph-view\n' > /app/pnpm-workspace.yaml
+ && printf 'packages:\n  - orgs/open-hax/openplanner/packages/knoxx/frontend\n  - orgs/open-hax/uxx\n  - packages/webgl-graph-view\n' > /app/pnpm-workspace.yaml
 
-WORKDIR /app/orgs/open-hax/knoxx/frontend
+WORKDIR /app/orgs/open-hax/openplanner/packages/knoxx/frontend
 
-COPY orgs/open-hax/knoxx/frontend/package.json orgs/open-hax/knoxx/frontend/pnpm-lock.yaml ./
+# Copy package manifests first for better layer caching
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/package.json ./
 COPY orgs/open-hax/uxx/package.json /app/orgs/open-hax/uxx/package.json
 COPY orgs/open-hax/uxx/dist /app/orgs/open-hax/uxx/dist
 COPY packages/webgl-graph-view/package.json /app/packages/webgl-graph-view/package.json
@@ -20,21 +22,22 @@ COPY packages/webgl-graph-view/dist /app/packages/webgl-graph-view/dist
 
 RUN pnpm install --no-frozen-lockfile
 
-COPY orgs/open-hax/knoxx/frontend/src ./src
-COPY orgs/open-hax/knoxx/frontend/public ./public
-COPY orgs/open-hax/knoxx/frontend/index.html ./index.html
-COPY orgs/open-hax/knoxx/frontend/nginx.conf ./nginx.conf
-COPY orgs/open-hax/knoxx/frontend/postcss.config.js ./postcss.config.js
-COPY orgs/open-hax/knoxx/frontend/tailwind.config.js ./tailwind.config.js
-COPY orgs/open-hax/knoxx/frontend/tailwind.config.ts ./tailwind.config.ts
-COPY orgs/open-hax/knoxx/frontend/tsconfig.json ./tsconfig.json
-COPY orgs/open-hax/knoxx/frontend/tsconfig.node.json ./tsconfig.node.json
-COPY orgs/open-hax/knoxx/frontend/vite.config.ts ./vite.config.ts
+# Copy source files
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/src ./src
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/public ./public
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/index.html ./index.html
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/nginx.conf ./nginx.conf
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/postcss.config.js ./postcss.config.js
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/tailwind.config.js ./tailwind.config.js
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/tailwind.config.ts ./tailwind.config.ts
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/tsconfig.json ./tsconfig.json
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/tsconfig.node.json ./tsconfig.node.json
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/vite.config.ts ./vite.config.ts
 
 RUN pnpm build
 
 FROM nginx:1.27-alpine
-COPY --from=build /app/orgs/open-hax/knoxx/frontend/dist /usr/share/nginx/html
-COPY orgs/open-hax/knoxx/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/orgs/open-hax/openplanner/packages/knoxx/frontend/dist /usr/share/nginx/html
+COPY orgs/open-hax/openplanner/packages/knoxx/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
