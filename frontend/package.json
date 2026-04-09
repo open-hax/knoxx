@@ -5,14 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node ./node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "test:watch": "node ./node_modules/vitest/vitest.mjs --config vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint:size": "node ../scripts/lint-file-sizes.mjs frontend/src"
   },
   "dependencies": {
-    "@devel/ui-react": "file:../../../../packages/ui/react",
-    "@devel/ui-tokens": "file:../../../../packages/ui/tokens",
+    "@open-hax/uxx": "workspace:*",
+    "@workspace/webgl-graph-view": "workspace:*",
     "chart.js": "^4.5.1",
     "lucide-react": "^0.576.0",
+    "prism-react-renderer": "^2.4.1",
     "react": "^18.3.1",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^18.3.1",
@@ -27,6 +32,7 @@
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.2",
-    "vite": "^5.4.15"
+    "vite": "^5.4.15",
+    "vitest": "^1.6.1"
   }
 }

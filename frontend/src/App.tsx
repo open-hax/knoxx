@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { getFrontendConfig } from "./lib/api";
+import { opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import ChatPage from "./pages/ChatPage";
 import CmsPage from "./pages/CmsPage";
 import GardensPage from "./pages/GardensPage";
 import IngestionPage from "./pages/IngestionPage";
+import OpsRoot from "./pages/OpsRoot";
 import QueryPage from "./pages/QueryPage";
 import RunsPage from "./pages/RunsPage";
-import NextRoot from "./pages-next/NextRoot";
+import TranslationPage from "./pages/TranslationPage";
 
 function resolveExternalUrl(rawUrl: string): string {
   try {
@@ -28,93 +30,61 @@ function resolveExternalUrl(rawUrl: string): string {
 function App() {
   const [knoxxAdminUrl, setKnoxxAdminUrl] = useState<string>("");
 
+  const navLinkClass = ({ isActive }: { isActive: boolean }): string =>
+    `app-shell__nav-link${isActive ? " app-shell__nav-link--active" : ""}`;
+
   useEffect(() => {
+    document.documentElement.classList.add("dark");
     getFrontendConfig()
       .then((cfg) => setKnoxxAdminUrl(resolveExternalUrl(cfg.knoxx_admin_url)))
       .catch(() => setKnoxxAdminUrl(""));
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-100 to-slate-200 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 text-slate-900 dark:text-slate-100 transition-colors duration-200">
-      <header className="border-b border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-900/85 backdrop-blur">
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between px-4 py-3">
-          <h1 className="text-lg font-semibold">Knoxx</h1>
-          <nav className="flex gap-2 rounded-lg bg-slate-100 dark:bg-slate-800 p-1">
-            <NavLink
-              to="/"
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow" : "text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                }`
-              }
-            >
+    <div className="app-shell">
+      <header className="app-shell__header">
+        <div className="app-shell__header-inner">
+          <h1 className="app-shell__brand">Knoxx</h1>
+          <nav className="app-shell__nav">
+            <NavLink to="/" className={navLinkClass}>
               Chat
             </NavLink>
-            <NavLink
-              to="/cms"
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow" : "text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                }`
-              }
-            >
+            <NavLink to="/cms" className={navLinkClass}>
               CMS
             </NavLink>
-            <NavLink
-              to="/ingestion"
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow" : "text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                }`
-              }
-            >
+            <NavLink to="/ingestion" className={navLinkClass}>
               Ingestion
             </NavLink>
-            <NavLink
-              to="/query"
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow" : "text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                }`
-              }
-            >
+            <NavLink to="/query" className={navLinkClass}>
               Query
             </NavLink>
-            <NavLink
-              to="/gardens"
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow" : "text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                }`
-              }
-            >
+            <NavLink to="/gardens" className={navLinkClass}>
               Gardens
             </NavLink>
-            <NavLink
-              to="/runs"
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm ${
-                  isActive ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow" : "text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                }`
-              }
-            >
+            <NavLink to="/runs" className={navLinkClass}>
               Runs
+            </NavLink>
+            <NavLink to="/translations" className={navLinkClass}>
+              Translations
+            </NavLink>
+            <NavLink to={opsRoutes.admin} className={navLinkClass}>
+              Admin
             </NavLink>
             {knoxxAdminUrl ? (
               <a
                 href={knoxxAdminUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-md px-3 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700/50"
+                className="app-shell__nav-link"
               >
-                Knoxx Admin
+                Legacy Admin
               </a>
             ) : null}
           </nav>
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1500px] p-4">
+      <main className="app-shell__main">
         <Routes>
           <Route path="/" element={<ChatPage />} />
           <Route path="/cms" element={<CmsPage />} />
@@ -122,12 +92,19 @@ function App() {
           <Route path="/query" element={<QueryPage />} />
           <Route path="/gardens" element={<GardensPage />} />
           <Route path="/runs" element={<RunsPage />} />
-          <Route path="/next/*" element={<NextRoot />} />
+          <Route path="/translations" element={<TranslationPage />} />
+          <Route path="/ops/*" element={<OpsRoot />} />
+          <Route path="/next/*" element={<LegacyOpsRedirect />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </div>
   );
+}
+
+function LegacyOpsRedirect() {
+  const location = useLocation();
+  return <Navigate to={remapLegacyOpsPath(location.pathname, location.search, location.hash)} replace />;
 }
 
 export default App;

@@ -1,346 +1,220 @@
 (ns kms-ingestion.jobs.worker
   "Job processing worker for ingestion."
   (:require
-   [kms-ingestion.db :as db]
-   [kms-ingestion.drivers.registry :as registry]
+   [clojure.string :as str]
    [kms-ingestion.config :as config]
-   [cheshire.core :as json]
-   [clj-http.client :as http]
-    [clojure.string :as str])
+   [kms-ingestion.db :as db]
+   [kms-ingestion.drivers.local :as local]
+   [kms-ingestion.drivers.protocol :as protocol]
+   [kms-ingestion.drivers.registry :as registry]
+   [kms-ingestion.graph :as graph]
+   [kms-ingestion.jobs.control :as control]
+   [kms-ingestion.jobs.ingest-support :as support])
   (:import
-    [java.lang.management ManagementFactory]
-    [java.time Instant Duration]
-    [java.sql Timestamp]
-    [java.util UUID]
-    [java.util.concurrent Executors ExecutorService]))
-
-;; Thread pool for job execution
-(defonce ^:private executor (atom nil))
+   [java.sql Timestamp]
+   [java.time Duration Instant]))
 
 (defn init-executor!
   "Initialize the job executor thread pool."
   []
-  (reset! executor (Executors/newFixedThreadPool 4))
-  (println "Job executor initialized with 4 threads"))
+  (control/init-executor!))
 
 (defn submit-task!
   "Submit a task to the executor."
   [f]
-  (when @executor
-    (.submit ^ExecutorService @executor f)))
-
-(defn- log!
-  [& xs]
-  (apply println xs)
-  (flush))
-
-(defn- parse-jsonish
-  [value]
-  (cond
-    (nil? value) nil
-    (string? value) (json/parse-string value keyword)
-    (map? value) value
-    (vector? value) value
-    (instance? org.postgresql.util.PGobject value)
-    (let [s (.getValue ^org.postgresql.util.PGobject value)]
-      (when-not (str/blank? s)
-        (json/parse-string s keyword)))
-    :else value))
-
-(defn- system-load-per-core
-  []
-  (let [bean (ManagementFactory/getOperatingSystemMXBean)
-        load (.getSystemLoadAverage bean)
-        cores (.availableProcessors (Runtime/getRuntime))]
-    (when (and (number? load) (not (neg? load)) (pos? cores))
-      (/ load cores))))
-
-(defn- maybe-throttle!
-  [job-id]
-  (when (config/ingest-throttle-enabled?)
-    (loop [attempt 0]
-      (when-let [load (system-load-per-core)]
-        (when (> load (config/ingest-max-load-per-core))
-          (when (zero? (mod attempt 5))
-            (log! (str "[JOB " job-id "] Throttling: load/core="
-                       (format "%.2f" load)
-                       " > "
-                       (format "%.2f" (config/ingest-max-load-per-core))
-                       ", sleeping "
-                       (config/ingest-throttle-sleep-ms)
-                       "ms")))
-          (Thread/sleep (long (config/ingest-throttle-sleep-ms)))
-          (recur (inc attempt)))))))
-
-;; ============================================================
-;; Job Execution
-;; ============================================================
+  (control/submit-task! f))
 
 (declare process-job!)
 
 (defn queue-job!
   "Queue a job for execution."
   [job-id source]
-  (when-not @executor
+  (when-not (control/executor-ready?)
     (init-executor!))
   (submit-task! (fn [] (process-job! job-id source))))
 
-(def doc-exts
-  #{".md" ".markdown" ".txt" ".rst" ".org" ".adoc" ".tex" ".bib"})
+(defn- persist-result!
+  [source source-id collections result]
+  (let [file (:file result)
+        metadata (cond-> {:size (:size file)
+                          :modified_at (some-> (:modified-at file) str)}
+                   (= :failed (:status result))
+                   (assoc :error (:error result)))]
+    (db/upsert-file-state!
+     {:file-id (:id file)
+      :source-id source-id
+      :tenant-id (:tenant_id source)
+      :path (:path file)
+      :content-hash (:content-hash file)
+      :status (if (= :success (:status result)) "ingested" "failed")
+      :chunks (if (= :success (:status result)) (:chunks result) 0)
+      :collections collections
+      :metadata metadata})))
 
-(def code-exts
-  #{".clj" ".cljs" ".cljc" ".edn" ".ts" ".tsx" ".js" ".jsx"
-    ".py" ".rb" ".php" ".java" ".kt" ".go" ".rs" ".c" ".cc" ".cpp" ".h" ".hpp"
-    ".sh" ".bash" ".zsh" ".fish" ".sql"})
-
-(def config-exts
-  #{".json" ".jsonc" ".yaml" ".yml" ".toml" ".ini" ".cfg" ".conf" ".env" ".properties"})
-
-(def data-exts
-  #{".jsonl" ".csv" ".tsv" ".parquet"})
-
-(defn- file-ext [path]
-  (let [p (str/lower-case (or path ""))
-        idx (.lastIndexOf p ".")]
-    (if (neg? idx) "" (subs p idx))))
-
-(defn- classify-file-lake [path]
-  (let [p (str/lower-case (or path ""))
-        ext (file-ext p)
-        name (last (str/split p #"/"))]
-    (cond
-      (or (str/includes? p "/data/")
-          (str/includes? p "/datasets/")
-          (data-exts ext))
-      :data
-
-      (or (str/includes? p "/docs/")
-          (str/includes? p "/specs/")
-          (str/includes? p "/inbox/")
-          (doc-exts ext))
-      :docs
-
-      (or (= name "dockerfile")
-          (str/starts-with? name ".env")
-          (str/includes? p "/config/")
-          (str/includes? p "/configs/")
-          (config-exts ext))
-      :config
-
-      (code-exts ext)
-      :code
-
-      :else
-      :docs)))
-
-(defn- lake-project [tenant-id lake]
-  (str tenant-id "-" (name lake)))
-
-(defn- stable-event-id [source-id file-id]
-  (str (UUID/nameUUIDFromBytes (.getBytes (str source-id "|" file-id) "UTF-8"))))
-
-(defn- derive-domain [path]
-  (let [parts (->> (str/split (str path) #"/") (remove str/blank?) vec)]
-    (cond
-      (empty? parts) "general"
-      (= 1 (count parts)) "general"
-      :else (or (first parts) "general"))))
-
-(defn- ingest-via-ragussy! [ragussy-url collections file]
-  (let [resp (http/post
-              (str ragussy-url "/api/rag/ingest/text")
-              {:headers {"Content-Type" "application/json"}
-               :body (json/generate-string
-                      {:text (:content file)
-                       :source (:path file)
-                       :collection (first collections)})
-               :as :json
-               :socket-timeout 60000
-               :connection-timeout 60000})]
-    (if (= 200 (:status resp))
-      {:status :success
-       :chunks (or (-> resp :body :chunks) 0)
-       :target :ragussy}
+(defn- ingest-file
+  [job-id driver file-meta {:keys [tenant-id source-id ragussy-url collections
+                                   use-openplanner? openplanner-url openplanner-api-key
+                                   graph-context]}]
+  (when (config/ingest-throttle-enabled?)
+    (let [cpu-cores (control/container-cpu-cores)
+          target-cores (* (config/ingest-max-load-per-core) (control/available-cores))]
+      (when (and cpu-cores (> cpu-cores target-cores))
+        (let [delay (control/control-delay-ms cpu-cores)]
+          (when (pos? delay)
+            (Thread/sleep (long delay)))))))
+  (try
+    (let [file-data (protocol/extract driver (:id file-meta))
+          content-hash (when (:content file-data)
+                         (local/sha256 (:id file-meta)))
+          file-meta-with-hash (assoc file-meta :content-hash content-hash)
+          payload-file (assoc file-data :content-hash content-hash)
+          ingest-result (if (:content file-data)
+                          (if use-openplanner?
+                            (support/ingest-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file graph-context)
+                            (support/ingest-via-ragussy! ragussy-url collections payload-file))
+                          {:status :failed :error "no content"})]
+      (assoc ingest-result :file file-meta-with-hash))
+    (catch Exception e
+      (when use-openplanner?
+        (control/note-openplanner-failure! job-id (.getMessage e)))
       {:status :failed
-       :error (:body resp)
-       :target :ragussy})))
-
-(defn- ingest-via-openplanner! [tenant-id source-id openplanner-url openplanner-api-key file]
-  (let [lake (classify-file-lake (:path file))
-         project (lake-project tenant-id lake)
-         doc-id (stable-event-id source-id (:id file))
-         title (:path file)
-         payload {:document {:id doc-id
-                             :title title
-                             :content (:content file)
-                             :project project
-                             :kind (name lake)
-                             :visibility "internal"
-                             :source "kms-ingestion"
-                             :sourcePath (:path file)
-                             :domain (derive-domain (:path file))
-                             :language "en"
-                             :createdBy "kms-ingestion"
-                             :metadata {:tenant_id tenant-id
-                                        :lake (name lake)
-                                        :path (:path file)
-                                        :content_hash (:content-hash file)
-                                        :source_id source-id
-                                        :file_id (:id file)}}}
-         headers (cond-> {"Content-Type" "application/json"}
-                   (not (str/blank? openplanner-api-key))
-                   (assoc "Authorization" (str "Bearer " openplanner-api-key)))
-         resp (http/post
-              (str openplanner-url "/v1/documents")
-              {:headers headers
-                :body (json/generate-string payload)
-                :as :json
-                :socket-timeout 60000
-                :connection-timeout 60000})]
-    (if (= 200 (:status resp))
-      {:status :success
-       :chunks 1
-       :target :openplanner
-       :lake (name lake)
-       :doc-id doc-id}
-      {:status :failed
-       :error (:body resp)
-       :target :openplanner
-       :lake (name lake)})))
+       :file file-meta
+       :error (.getMessage e)})))
 
 (defn process-job!
   "Process an ingestion job."
   [job-id source]
-  (log! (str "[JOB " job-id "] Starting..."))
-  
+  (control/log! (str "[JOB " job-id "] Starting..."))
   (try
-    ;; Update job status
     (db/update-job! job-id {:status "running"
                             :started_at (Timestamp/from (Instant/now))})
-    
-    ;; Get existing file hashes
-        (let [source-id (str (:source_id source))
-              tenant-id (:tenant_id source)
-              existing-hashes (db/get-existing-hashes source-id)
-          
-          ;; Create driver
+    (let [source-id (str (:source_id source))
+          tenant-id (:tenant_id source)
+          job-row (db/get-job-by-id job-id)
+          job-config (or (support/parse-jsonish (:config job-row)) {})
+          full-scan? (true? (or (:full_scan job-config) (:full-scan job-config)))
+          watch-paths (vec (or (:watch_paths job-config) (:watch-paths job-config) []))
+          deleted-paths (vec (or (:deleted_paths job-config) (:deleted-paths job-config) []))
+          existing-state (if full-scan? {} (db/get-existing-state source-id))
+          existing-hashes (into {} (map (fn [[file-id row]] [file-id (:content_hash row)]) existing-state))
           driver-type (:driver_type source)
-          driver-config (or (parse-jsonish (:config source)) {})
+          driver-config (or (support/parse-jsonish (:config source)) {})
           driver (registry/create-driver driver-type driver-config)]
-      
-      (log! (str "[JOB " job-id "] Created " driver-type " driver"))
-      
-      ;; Restore driver state
-      (when-let [state (parse-jsonish (:state source))]
+      (control/log! (str "[JOB " job-id "] Created " driver-type " driver"))
+      (when-let [state (support/parse-jsonish (:state source))]
         (.set-state driver state))
-      
-      ;; Discover files
-      (log! (str "[JOB " job-id "] Starting discovery..."))
-      (let [discovery (.discover driver {:existing-hashes existing-hashes})
-            total-files (+ (:new-files discovery) (:changed-files discovery))]
-        
-        (log! (str "[JOB " job-id "] Discovery complete: "
-                   (:new-files discovery) " new, "
-                   (:changed-files discovery) " changed, "
-                   (:unchanged-files discovery) " unchanged"))
-        
-        ;; Update job totals
+      (control/log! (str "[JOB " job-id "] Starting discovery..."
+                         (when full-scan? " full-scan=true")
+                         (when (seq watch-paths)
+                           (str " incremental=" (count watch-paths) " changed, deleted=" (count deleted-paths)))))
+      (let [discover-opts (cond-> {:existing-state existing-state}
+                            (seq watch-paths) (assoc :include-patterns watch-paths))
+            root-path (or (:root-path driver-config) (:root_path driver-config))
+            streaming? (= driver-type "local")
+            streamed-files (when streaming?
+                             (local/stream-files root-path discover-opts))
+            discovery (when-not streaming?
+                        (.discover driver discover-opts))
+            file-entries (if streaming?
+                           (vec streamed-files)
+                           (vec (:files discovery)))
+            total-files (+ (count file-entries) (count deleted-paths))
+            graph-context (graph/index-context existing-state file-entries)]
+        (when-not streaming?
+          (control/log! (str "[JOB " job-id "] Discovery complete: "
+                             (:new-files discovery) " new, "
+                             (:changed-files discovery) " changed, "
+                             (:unchanged-files discovery) " unchanged")))
         (db/update-job! job-id {:total_files total-files})
-        
-        (if (zero? total-files)
-          (do
-            (log! (str "[JOB " job-id "] No new files to process"))
-            (db/update-job! job-id {:status "completed"
-                                    :completed_at (Timestamp/from (Instant/now))}))
-          
-          ;; Process files
-          (let [files (filter #(not= (existing-hashes (:id %)) (:content-hash %))
-                              (:files discovery))
-                batch-size (config/ingest-batch-size)
-                ragussy-url (config/ragussy-url)
-                openplanner-url (config/openplanner-url)
-                openplanner-api-key (config/openplanner-api-key)
-                use-openplanner? (not (str/blank? openplanner-url))
-                collections (or (parse-jsonish (:collections source)) ["devel_docs"])]
-            (log! (str "[JOB " job-id "] Ingest target: " (if use-openplanner? "openplanner" "ragussy")
-                       ", files=" (count files) ", batch-size=" batch-size))
-            
-            (loop [remaining files
-                    processed 0
-                    failed 0
-                    chunks-total 0
-                    start-time (Instant/now)]
-              (if (empty? remaining)
-                ;; Done
+        (when (seq deleted-paths)
+          (support/apply-deleted-paths! source source-id existing-hashes
+                                        (or (support/parse-jsonish (:collections source)) [tenant-id])
+                                        deleted-paths))
+        (let [files file-entries
+              batch-size (config/ingest-batch-size)
+              batch-parallelism (config/ingest-batch-parallelism)
+              ragussy-url (config/ragussy-url)
+              openplanner-url (config/openplanner-url)
+              openplanner-api-key (config/openplanner-api-key)
+              use-openplanner? (not (str/blank? openplanner-url))
+              collections (or (support/parse-jsonish (:collections source)) [tenant-id])
+              ingest-opts {:tenant-id tenant-id
+                           :source-id source-id
+                           :ragussy-url ragussy-url
+                           :collections collections
+                           :use-openplanner? use-openplanner?
+                           :openplanner-url openplanner-url
+                           :openplanner-api-key openplanner-api-key
+                           :graph-context graph-context}]
+          (control/log! (str "[JOB " job-id "] Ingest target: "
+                             (if use-openplanner? "openplanner" "ragussy")
+                             ", batch-size=" batch-size
+                             ", batch-parallelism=" batch-parallelism
+                             (when streaming? ", mode=streaming")))
+          (loop [remaining (seq files)
+                 discovered 0
+                 processed 0
+                 failed 0
+                 chunks-total 0
+                 start-time (Instant/now)]
+            (let [job-status (:status (db/get-job-by-id job-id))]
+              (cond
+                (= job-status "cancelled")
+                (control/log! (str "[JOB " job-id "] Cancel acknowledged, stopping worker loop"))
+
+                (empty? remaining)
                 (let [elapsed (.getSeconds (Duration/between start-time (Instant/now)))]
-                  (log! (str "[JOB " job-id "] Completed: "
-                             processed " processed, "
-                             failed " failed, "
-                             chunks-total " chunks in "
-                             elapsed "s"))
+                  (control/log! (str "[JOB " job-id "] Completed: "
+                                     discovered " discovered, "
+                                     processed " processed, "
+                                     failed " failed, "
+                                     (count deleted-paths) " deleted, "
+                                     chunks-total " chunks in "
+                                     elapsed "s"))
                   (db/update-job! job-id {:status "completed"
-                                          :processed_files processed
+                                          :total_files (+ discovered (count deleted-paths))
+                                          :processed_files (+ processed (count deleted-paths))
                                           :failed_files failed
                                           :chunks_created chunks-total
-                                          :completed_at (Timestamp/from (Instant/now))}))
-                
-                ;; Process batch
-                (let [batch (take batch-size remaining)
-                      file-ids (map :id batch)
-                      _ (maybe-throttle! job-id)
-                      files-with-content (.extract-batch driver file-ids)
-                       
-                        ;; Ingest each file
-                       results (->> files-with-content
-                                    (filter :content)
-                                    (mapv (fn [file]
-                                            (try
-                                              (let [ingest-result (if use-openplanner?
-                                                                    (ingest-via-openplanner! tenant-id source-id openplanner-url openplanner-api-key file)
-                                                                    (ingest-via-ragussy! ragussy-url collections file))]
-                                                (assoc ingest-result :file file))
-                                              (catch Exception e
-                                                {:status :failed
-                                                 :file file
-                                                 :error (.getMessage e)})))))
-                      
-                      ;; Update file state
+                                          :completed_at (Timestamp/from (Instant/now))})
+                  (db/mark-source-scanned! source-id))
+
+                :else
+                (let [batch (vec (take batch-size remaining))
+                      batch-size-actual (count batch)
+                      batch-parallelism-actual (min batch-size-actual (max 1 batch-parallelism))
+                      results (control/bounded-future-mapv batch-parallelism-actual
+                                                           #(ingest-file job-id driver % ingest-opts)
+                                                           batch)
                       _ (doseq [result results]
-                          (when (= :success (:status result))
-                            (db/upsert-file-state!
-                             {:file-id (-> result :file :id)
-                              :source-id source-id
-                              :tenant-id (:tenant_id source)
-                              :path (-> result :file :path)
-                              :content-hash (-> result :file :content-hash)
-                              :status "ingested"
-                              :chunks (:chunks result)
-                              :collections collections})))
-                      
-                      ;; Count results
+                          (persist-result! source source-id collections result))
                       batch-processed (count (filter #(= :success (:status %)) results))
                       batch-failed (count (filter #(= :failed (:status %)) results))
                       batch-chunks (reduce + 0 (map :chunks (filter #(= :success (:status %)) results)))]
-                  (log! (str "[JOB " job-id "] Batch done: processed=" batch-processed
-                             " failed=" batch-failed
-                             " chunks=" batch-chunks
-                             " remaining=" (max 0 (- (count remaining) batch-size))))
-                  (when (pos? (config/ingest-batch-delay-ms))
-                    (Thread/sleep (long (config/ingest-batch-delay-ms))))
-                   
+                  (control/log! (str "[JOB " job-id "] Batch done: processed=" batch-processed
+                                     " failed=" batch-failed
+                                     " chunks=" batch-chunks
+                                     " discovered=" batch-size-actual))
+                  (db/update-job! job-id {:total_files (+ discovered batch-size-actual (count deleted-paths))
+                                          :processed_files (+ processed batch-processed (count deleted-paths))
+                                          :failed_files (+ failed batch-failed)
+                                          :chunks_created (+ chunks-total batch-chunks)})
+                  (let [cpu-cores (control/container-cpu-cores)
+                        delay (if (config/ingest-throttle-enabled?)
+                                (control/control-delay-ms cpu-cores)
+                                0)]
+                    (when (pos? delay)
+                      (Thread/sleep (long delay))))
                   (recur (drop batch-size remaining)
+                         (+ discovered batch-size-actual)
                          (+ processed batch-processed)
                          (+ failed batch-failed)
                          (+ chunks-total batch-chunks)
                          start-time))))))
-        
-        ;; Save driver state
-        (let [driver-state (.get-state driver)]
-          (db/update-job! job-id {:status "completed"})
-          (log! (str "[JOB " job-id "] Driver state: " driver-state)))))
-    
+      (let [driver-state (.get-state driver)]
+        (control/log! (str "[JOB " job-id "] Driver state: " driver-state)))))
     (catch Exception e
-      (log! (str "[JOB " job-id "] FAILED: " (.getMessage e)))
+      (control/log! (str "[JOB " job-id "] FAILED: " (.getMessage e)))
       (.printStackTrace e)
       (db/update-job! job-id {:status "failed"
                               :error_message (.getMessage e)}))))

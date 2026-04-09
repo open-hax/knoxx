@@ -1,9 +1,59 @@
 export type Role = "system" | "user" | "assistant";
 
+export interface AgentSource {
+  title: string;
+  url: string;
+  section?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
   content: string;
+  model?: string | null;
+  contextRows?: GroundedContextRow[];
+  sources?: AgentSource[];
+  runId?: string | null;
+  status?: "streaming" | "done" | "error";
+  traceBlocks?: ChatTraceBlock[];
+}
+
+export type ChatTraceBlockKind = "agent_message" | "reasoning" | "tool_call";
+
+export interface ChatTraceBlock {
+  id: string;
+  kind: ChatTraceBlockKind;
+  status?: "streaming" | "done" | "error";
+  at?: string;
+  content?: string;
+  toolName?: string;
+  toolCallId?: string;
+  inputPreview?: string;
+  outputPreview?: string;
+  updates?: string[];
+  isError?: boolean;
+}
+
+export interface GroundedContextRow {
+  id: string;
+  ts?: string;
+  source?: string;
+  source_path?: string;
+  kind?: string;
+  project?: string;
+  session?: string;
+  message?: string;
+  snippet?: string;
+  text?: string;
+  tier?: string;
+}
+
+export interface GroundedAnswerResponse {
+  projects: string[];
+  count: number;
+  rows: GroundedContextRow[];
+  answer: string;
+  model?: string | null;
 }
 
 export interface SamplingSettings {
@@ -64,10 +114,91 @@ export interface RunSummary {
   error?: string;
 }
 
+export interface RunEvent {
+  at?: string;
+  type?: string;
+  status?: string;
+  tool_name?: string;
+  tool_call_id?: string;
+  preview?: string;
+  error?: string;
+  ttft_ms?: number;
+  hits?: number;
+  elapsed_ms?: number;
+  tool_result_count?: number;
+  [key: string]: unknown;
+}
+
+export interface ToolReceipt {
+  id: string;
+  tool_name?: string;
+  status?: string;
+  started_at?: string;
+  ended_at?: string;
+  input_preview?: string;
+  result_preview?: string;
+  updates?: string[];
+  is_error?: boolean;
+  [key: string]: unknown;
+}
+
 export interface RunDetail extends RunSummary {
+  session_id?: string | null;
+  conversation_id?: string | null;
+  answer?: string | null;
   request_messages: Array<{ role: string; content: string }>;
   settings: Record<string, unknown>;
   resources: Record<string, unknown>;
+  events?: RunEvent[];
+  tool_receipts?: ToolReceipt[];
+  sources?: AgentSource[];
+}
+
+export interface MemorySessionSummary {
+  project?: string;
+  session: string;
+  title?: string | null;
+  title_model?: string | null;
+  last_ts?: string;
+  event_count?: number;
+  is_active?: boolean;
+  active_status?: "running" | "waiting_input" | "completed" | "failed" | "inactive" | "unknown" | string;
+  has_active_stream?: boolean;
+  active_session_id?: string | null;
+}
+
+export interface MemorySessionListResponse {
+  rows: MemorySessionSummary[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  has_more?: boolean;
+}
+
+export interface MemorySessionRow {
+  id: string;
+  ts?: string;
+  source?: string;
+  kind?: string;
+  project?: string;
+  session?: string;
+  message?: string;
+  role?: Role | string;
+  author?: string;
+  model?: string | null;
+  text?: string;
+  attachments?: string;
+  extra?: string | Record<string, unknown> | null;
+}
+
+export interface MemorySearchHit {
+  session?: string;
+  role?: string;
+  text?: string;
+  snippet?: string;
+  document?: string;
+  distance?: number | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ChatRequest {
@@ -115,6 +246,59 @@ export interface FrontendConfig {
   proxx_default_model: string;
   shibboleth_ui_url: string;
   shibboleth_enabled: boolean;
+  default_role: string;
+  email_enabled: boolean;
+}
+
+export interface ToolDefinition {
+  id: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+}
+
+export interface ToolCatalogResponse {
+  role: string;
+  tools: ToolDefinition[];
+  email_enabled: boolean;
+}
+
+export interface EmailSendResponse {
+  ok: boolean;
+  role: string;
+  sent_to: string[];
+  subject: string;
+}
+
+export interface ToolReadResponse {
+  ok: boolean;
+  role: string;
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface ToolWriteResponse {
+  ok: boolean;
+  role: string;
+  path: string;
+  bytes_written: number;
+}
+
+export interface ToolEditResponse {
+  ok: boolean;
+  role: string;
+  path: string;
+  replacements: number;
+}
+
+export interface ToolBashResponse {
+  ok: boolean;
+  role: string;
+  command: string;
+  exit_code: number;
+  stdout: string;
+  stderr: string;
 }
 
 export interface ProxxHealth {
@@ -141,6 +325,244 @@ export interface ShibbolethHandoffResponse {
   session_id: string;
   ui_url: string;
   imported_item_count: number;
+}
+
+export interface KnoxxAuthIdentity {
+  userEmail: string;
+  orgSlug: string;
+}
+
+export interface AdminToolPolicy {
+  toolId: string;
+  effect: "allow" | "deny";
+  constraints?: Record<string, unknown>;
+}
+
+export interface AdminOrgSummary {
+  id: string;
+  slug: string;
+  name: string;
+  kind: string;
+  isPrimary: boolean;
+  status: string;
+  memberCount?: number;
+  roleCount?: number;
+  dataLakeCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AdminRoleSummary {
+  id: string;
+  slug: string;
+  name: string;
+  scopeKind?: string;
+  orgId?: string | null;
+  builtIn?: boolean;
+  systemManaged?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  permissions: string[];
+  toolPolicies: AdminToolPolicy[];
+}
+
+export interface AdminMembershipSummary {
+  id: string;
+  orgId: string;
+  orgName?: string;
+  orgSlug?: string;
+  status: string;
+  isDefault?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  roles: Array<Pick<AdminRoleSummary, "id" | "slug" | "name" | "scopeKind" | "orgId">>;
+  toolPolicies: AdminToolPolicy[];
+}
+
+export interface AdminUserSummary {
+  id: string;
+  email: string;
+  displayName: string;
+  authProvider?: string;
+  externalSubject?: string | null;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+  memberships: AdminMembershipSummary[];
+}
+
+export interface AdminDataLakeSummary {
+  id: string;
+  orgId: string;
+  name: string;
+  slug: string;
+  kind: string;
+  config: Record<string, unknown>;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface GraphExportNode {
+  id: string;
+  kind: string;
+  label: string;
+  lake: string;
+  nodeType: string;
+  source: string;
+  project: string;
+  ts?: string | null;
+  data: Record<string, unknown>;
+}
+
+export interface GraphExportEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: string;
+  lake: string;
+  edgeType: string;
+  sourceLake: string;
+  targetLake: string;
+  sourceEventId?: string;
+  data: Record<string, unknown>;
+}
+
+export interface GraphExportResponse {
+  ok: boolean;
+  projects?: string[];
+  nodes: GraphExportNode[];
+  edges: GraphExportEdge[];
+}
+
+export interface AdminPermissionDefinition {
+  id: string;
+  code: string;
+  resourceKind: string;
+  action: string;
+  description: string;
+}
+
+export interface AdminToolDefinition {
+  id: string;
+  label: string;
+  description: string;
+  riskLevel: string;
+}
+
+export type TranslationAdequacy = "excellent" | "good" | "adequate" | "poor" | "unusable";
+export type TranslationFluency = "excellent" | "good" | "adequate" | "poor" | "unusable";
+export type TranslationTerminology = "correct" | "minor_errors" | "major_errors";
+export type TranslationRisk = "safe" | "sensitive" | "policy_violation";
+export type TranslationOverall = "approve" | "needs_edit" | "reject";
+export type TranslationStatus = "pending" | "in_review" | "approved" | "rejected";
+
+export interface TranslationLabel {
+  id: string;
+  segment_id: string;
+  labeler_id: string;
+  labeler_email: string;
+  adequacy: TranslationAdequacy;
+  fluency: TranslationFluency;
+  terminology: TranslationTerminology;
+  risk: TranslationRisk;
+  overall: TranslationOverall;
+  corrected_text?: string | null;
+  editor_notes?: string | null;
+  ts: string;
+}
+
+export interface TranslationSegment {
+  id: string;
+  source_text: string;
+  translated_text: string;
+  source_lang: string;
+  target_lang: string;
+  status: TranslationStatus;
+  confidence?: number | null;
+  mt_model?: string | null;
+  document_id: string;
+  segment_index: number;
+  domain?: string | null;
+  tenant_id: string;
+  org_id: string;
+  labels: TranslationLabel[];
+  ts: string;
+}
+
+export interface TranslationSegmentListResponse {
+  segments: TranslationSegment[];
+  total: number;
+  has_more: boolean;
+}
+
+export interface TranslationLabelPayload {
+  adequacy: TranslationAdequacy;
+  fluency: TranslationFluency;
+  terminology: TranslationTerminology;
+  risk: TranslationRisk;
+  overall: TranslationOverall;
+  corrected_text?: string;
+  editor_notes?: string;
+}
+
+export interface TranslationManifestLanguageStats {
+  total_segments: number;
+  approved: number;
+  rejected: number;
+  pending: number;
+  in_review: number;
+  avg_labels_per_segment: number;
+  with_corrections: number;
+}
+
+export interface TranslationManifest {
+  project: string;
+  generated_at: string;
+  languages: Record<string, TranslationManifestLanguageStats>;
+  labelers: Array<{ email: string; segments_labeled: number }>;
+  export_sizes: Record<string, { rows: number; bytes_estimate: number }>;
+}
+
+export interface KnoxxAuthContext {
+  user: {
+    id: string;
+    email: string;
+    displayName: string;
+    status: string;
+  };
+  org: {
+    id: string;
+    slug: string;
+    name: string;
+    status: string;
+    isPrimary?: boolean;
+    kind?: string;
+  };
+  membership: {
+    id: string;
+    status: string;
+    isDefault?: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+  };
+  roles: AdminRoleSummary[];
+  roleSlugs: string[];
+  permissions: string[];
+  toolPolicies: AdminToolPolicy[];
+  membershipToolPolicies: AdminToolPolicy[];
+  isSystemAdmin: boolean;
+  primaryRole: string;
+}
+
+export interface AdminBootstrapContext {
+  primaryOrg: AdminOrgSummary;
+  bootstrapUser: {
+    id: string;
+    email: string;
+    displayName: string;
+    membershipId: string;
+  };
 }
 
 export type ChatProvider = "proxx" | "knoxx-rag" | "knoxx-direct";

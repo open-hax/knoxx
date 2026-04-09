@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Card, Badge } from "@devel/ui-react";
+import { Button, Card, Badge } from "@open-hax/uxx";
 import { getRun, listRuns } from "../lib/api";
 import type { RunDetail, RunSummary } from "../lib/types";
 
@@ -71,7 +71,7 @@ function RunsPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
         <h1 style={{ fontSize: 24, fontWeight: 700 }}>Runs</h1>
-        <p style={{ marginTop: 4, fontSize: 14, color: "#64748b" }}>
+        <p style={{ marginTop: 4, fontSize: 14, color: "var(--token-colors-text-muted)" }}>
           Select at least 2 for compare
         </p>
       </div>
@@ -80,7 +80,7 @@ function RunsPage() {
         <div style={{ overflow: "auto" }}>
           <table style={{ width: "100%", textAlign: "left", fontSize: 14, borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ borderBottom: "1px solid #e2e8f0", color: "#475569" }}>
+              <tr style={{ borderBottom: "1px solid var(--token-colors-border-default)", color: "var(--token-colors-text-subtle)" }}>
                 <th style={{ padding: 12, paddingRight: 8 }}></th>
                 <th style={{ padding: 12, paddingRight: 16, cursor: "pointer" }} onClick={() => toggleSort("created_at")}>
                   Created {sortArrow("created_at")}
@@ -99,7 +99,7 @@ function RunsPage() {
             </thead>
             <tbody>
               {sortedRuns.map((run) => (
-                <tr key={run.run_id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                <tr key={run.run_id} style={{ borderBottom: "1px solid var(--token-colors-alpha-bg-_08)" }}>
                   <td style={{ padding: 12, paddingRight: 8 }}>
                     <input
                       type="checkbox"
@@ -124,7 +124,7 @@ function RunsPage() {
       <Card variant="default" padding="md">
         <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Compare</h2>
         {selectedDetails.length < 2 ? (
-          <p style={{ fontSize: 14, color: "#64748b" }}>Select at least two runs.</p>
+          <p style={{ fontSize: 14, color: "var(--token-colors-text-muted)" }}>Select at least two runs.</p>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
             {selectedDetails.map((run) => {
@@ -139,16 +139,16 @@ function RunsPage() {
                     <div><strong>Tok/s:</strong> {run.tokens_per_s?.toFixed(2) ?? "-"}</div>
                   </div>
                   <div style={{ marginTop: 12 }}>
-                    <p style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", color: "#64748b", marginBottom: 4 }}>Prompt</p>
-                    <pre style={{ maxHeight: 96, overflow: "auto", borderRadius: 4, background: "#f8fafc", padding: 8, fontSize: 12 }}>{prompt}</pre>
+                    <p style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", color: "var(--token-colors-text-muted)", marginBottom: 4 }}>Prompt</p>
+                    <pre style={{ maxHeight: 96, overflow: "auto", borderRadius: 4, background: "var(--token-colors-alpha-bg-_08)", padding: 8, fontSize: 12 }}>{prompt}</pre>
                   </div>
                   <div style={{ marginTop: 12 }}>
-                    <p style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", color: "#64748b", marginBottom: 4 }}>Settings</p>
-                    <pre style={{ maxHeight: 96, overflow: "auto", borderRadius: 4, background: "#f8fafc", padding: 8, fontSize: 12 }}>{JSON.stringify(run.settings, null, 2)}</pre>
+                    <p style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", color: "var(--token-colors-text-muted)", marginBottom: 4 }}>Settings</p>
+                    <pre style={{ maxHeight: 96, overflow: "auto", borderRadius: 4, background: "var(--token-colors-alpha-bg-_08)", padding: 8, fontSize: 12 }}>{JSON.stringify(run.settings, null, 2)}</pre>
                   </div>
                   <div style={{ marginTop: 12 }}>
-                    <p style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", color: "#64748b", marginBottom: 4 }}>Resource summary</p>
-                    <pre style={{ maxHeight: 96, overflow: "auto", borderRadius: 4, background: "#f8fafc", padding: 8, fontSize: 12 }}>{JSON.stringify(run.resources, null, 2)}</pre>
+                    <p style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", color: "var(--token-colors-text-muted)", marginBottom: 4 }}>Resource summary</p>
+                    <pre style={{ maxHeight: 96, overflow: "auto", borderRadius: 4, background: "var(--token-colors-alpha-bg-_08)", padding: 8, fontSize: 12 }}>{JSON.stringify(run.resources, null, 2)}</pre>
                   </div>
                 </Card>
               );

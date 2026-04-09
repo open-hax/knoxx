@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Button, Card, Input, Spinner } from '@devel/ui-react';
+import { Button, Card, Input, Spinner } from '@open-hax/uxx';
 
 type BrowserEntry = {
   name: string;

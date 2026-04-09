@@ -14,8 +14,8 @@ from app.api.proxx import router as proxx_router
 from app.api.rag import router as rag_router
 from app.api.runs import router as runs_router
 from app.api.knoxx import router as knoxx_router
-from app.api.server import router as server_router
 from app.api.shibboleth import router as shibboleth_router
+from app.api.tools import router as tools_router
 from app.core.config import get_settings
 from app.services.chat_service import ChatService
 from app.services.event_bus import CHANNELS, EventBus
@@ -37,7 +37,9 @@ async def lifespan(app: FastAPI):
     metrics_sampler = MetricsSampler(settings, event_bus, llama_manager)
     lounge_service = LoungeService()
     embeddings_service = EmbeddingsService(settings)
-    chat_service = ChatService(settings, event_bus, llama_manager, run_store, metrics_sampler)
+    chat_service = ChatService(
+        settings, event_bus, llama_manager, run_store, metrics_sampler
+    )
     metrics_sampler.set_activity_providers(
         active_clients_provider=event_bus.active_subscriber_count,
         active_runs_provider=chat_service.active_run_count,
@@ -59,7 +61,7 @@ async def lifespan(app: FastAPI):
     await llama_manager.stop()
 
 
-app = FastAPI(title="LLM Model Lab Backend", lifespan=lifespan)
+app = FastAPI(title="Knoxx Backend", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -68,7 +70,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(models_router)
-app.include_router(server_router)
 app.include_router(chat_router)
 app.include_router(runs_router)
 app.include_router(lounge_router)
@@ -76,6 +77,7 @@ app.include_router(config_router)
 app.include_router(knoxx_router)
 app.include_router(proxx_router)
 app.include_router(shibboleth_router)
+app.include_router(tools_router)
 app.include_router(rag_router)
 app.include_router(openai_router)
 

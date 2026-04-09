@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { Button, Card, Input } from '@devel/ui-react';
+import { Button, Card, Input } from '@open-hax/uxx';
 
 type PresetsResponse = {
   presets: Record<string, string[]>;
@@ -28,7 +28,7 @@ type AnswerResponse = SearchResponse & {
   answer: string;
 };
 
-const DEFAULT_ROLE = "knowledge";
+const DEFAULT_ROLE = "workspace";
 
 function parseProjects(raw: string): string[] {
   return raw
@@ -41,7 +41,7 @@ function QueryPage() {
   const [presets, setPresets] = useState<Record<string, string[]>>({});
   const [role, setRole] = useState(DEFAULT_ROLE);
   const [projectsInput, setProjectsInput] = useState("");
-  const [query, setQuery] = useState("What knowledge lakes exist in this system?");
+  const [query, setQuery] = useState("What entities or links exist across the devel, web, bluesky, and knoxx-session lakes?");
   const [limit, setLimit] = useState(5);
   const [loadingPresets, setLoadingPresets] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -135,7 +135,7 @@ function QueryPage() {
     <div className="grid gap-4 xl:grid-cols-[360px,minmax(0,1fr)]">
       <Card variant="elevated" title="Federated Lake Query">
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Query `devel`, `cephalon-hive`, and `sintel` through one Clojure surface.
+          Query the canonical `devel`, `web`, `bluesky`, and `knoxx-session` lakes through one Clojure surface.
         </p>
 
         <div className="mt-4 space-y-4">
@@ -170,7 +170,7 @@ function QueryPage() {
               type="text"
               value={projectsInput}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setProjectsInput(e.target.value)}
-              placeholder="devel-docs,cephalon-hive,sintel"
+              placeholder="devel,web,bluesky,knoxx-session"
             />
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Leave blank to use the selected role preset.

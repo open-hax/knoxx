@@ -11,7 +11,9 @@ router = APIRouter(prefix="/api", tags=["config"])
 
 def _request_hostname(request: Request) -> str | None:
     forwarded_host = request.headers.get("x-forwarded-host")
-    raw_host = (forwarded_host or request.headers.get("host") or "").split(",")[0].strip()
+    raw_host = (
+        (forwarded_host or request.headers.get("host") or "").split(",")[0].strip()
+    )
     if not raw_host:
         return request.url.hostname
     parsed = urlsplit(f"http://{raw_host}")
@@ -55,7 +57,11 @@ async def frontend_config(request: Request) -> FrontendConfigResponse:
     settings = request.app.state.settings
     knoxx_admin_url = _rewrite_localhost_url(settings.knoxx_admin_url, request)
     knoxx_base_url = _rewrite_localhost_url(settings.knoxx_base_url, request)
-    shibboleth_ui_url = _rewrite_localhost_url(settings.shibboleth_ui_url, request) if settings.shibboleth_ui_url else ""
+    shibboleth_ui_url = (
+        _rewrite_localhost_url(settings.shibboleth_ui_url, request)
+        if settings.shibboleth_ui_url
+        else ""
+    )
     return FrontendConfigResponse(
         knoxx_admin_url=knoxx_admin_url,
         knoxx_base_url=knoxx_base_url,
@@ -63,5 +69,9 @@ async def frontend_config(request: Request) -> FrontendConfigResponse:
         proxx_enabled=bool(settings.proxx_base_url and settings.proxx_auth_token),
         proxx_default_model=settings.proxx_default_model,
         shibboleth_ui_url=shibboleth_ui_url,
-        shibboleth_enabled=bool(settings.shibboleth_base_url and settings.shibboleth_ui_url),
+        shibboleth_enabled=bool(
+            settings.shibboleth_base_url and settings.shibboleth_ui_url
+        ),
+        default_role=settings.knoxx_default_role,
+        email_enabled=bool(settings.gmail_app_email and settings.gmail_app_password),
     )

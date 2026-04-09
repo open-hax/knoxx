@@ -1,0 +1,6 @@
+packages:
+  - frontend
+  - backend
+  - discord-bot
+  - packages/uxx
+  - packages/webgl-graph-view

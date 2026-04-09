@@ -1,4 +1,6 @@
 export * from "./api";
+import { buildKnoxxAuthHeaders } from "./api";
+import type { GraphExportResponse } from './types';
 
 const KNOXX_SESSION_KEY = 'knoxx_session_id';
 
@@ -25,22 +27,22 @@ function getKnoxxSessionId(): string {
   return current;
 }
 
-async function proxyRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers || {});
+async function sessionRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = buildKnoxxAuthHeaders(init?.headers);
   headers.set('x-knoxx-session-id', getKnoxxSessionId());
-  const res = await fetch(`/api/knoxx/proxy/${path}`, {
+  const res = await fetch(path, {
     ...init,
     headers,
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new ProxyApiError(res.status, text || `Proxy request failed: ${res.status}`);
+    throw new ProxyApiError(res.status, text || `Request failed: ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
 
 export async function fetchDocuments() {
-  return proxyRequest<any>('documents');
+  return sessionRequest<any>('/api/documents');
 }
 
 export async function uploadDocuments(files: File[], autoIngest: boolean = false) {
@@ -48,9 +50,9 @@ export async function uploadDocuments(files: File[], autoIngest: boolean = false
   files.forEach(file => formData.append('files', file));
   formData.append('autoIngest', String(autoIngest));
 
-  const headers = new Headers();
+  const headers = buildKnoxxAuthHeaders();
   headers.set('x-knoxx-session-id', getKnoxxSessionId());
-  const res = await fetch('/api/knoxx/proxy/documents/upload', {
+  const res = await fetch('/api/documents/upload', {
     method: 'POST',
     headers,
     body: formData,
@@ -60,11 +62,11 @@ export async function uploadDocuments(files: File[], autoIngest: boolean = false
 }
 
 export async function deleteDocument(path: string) {
-  return proxyRequest<any>(`documents/${encodeURIComponent(path)}`, { method: 'DELETE' });
+  return sessionRequest<any>(`/api/documents/${encodeURIComponent(path)}`, { method: 'DELETE' });
 }
 
 export async function ingestDocuments(options: { full?: boolean, selectedFiles?: string[] } = {}) {
-  return proxyRequest<any>('documents/ingest', {
+  return sessionRequest<any>('/api/documents/ingest', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(options),
@@ -72,7 +74,7 @@ export async function ingestDocuments(options: { full?: boolean, selectedFiles?:
 }
 
 export async function restartIngestion(forceFresh: boolean = false) {
-  return proxyRequest<any>('documents/ingest/restart', {
+  return sessionRequest<any>('/api/documents/ingest/restart', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ forceFresh }),
@@ -80,27 +82,33 @@ export async function restartIngestion(forceFresh: boolean = false) {
 }
 
 export async function fetchIngestionStatus() {
-  return proxyRequest<any>('documents/ingestion-status');
+  return sessionRequest<any>('/api/documents/ingestion-status');
 }
 
 export async function fetchIngestionProgress() {
-  return proxyRequest<any>('documents/ingestion-progress');
+  return sessionRequest<any>('/api/documents/ingestion-progress');
 }
 
 export async function getSettings() {
-  return proxyRequest<any>('settings');
+  const res = await fetch('/api/settings', { headers: buildKnoxxAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to load settings');
+  return res.json();
 }
 
 export async function updateSettings(settings: any) {
-  return proxyRequest<any>('settings', {
+  const res = await fetch('/api/settings', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildKnoxxAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(settings),
   });
+  if (!res.ok) throw new Error('Failed to update settings');
+  return res.json();
 }
 
 export async function getKnoxxStatus() {
-  return proxyRequest<any>('settings/knoxx-status');
+  const res = await fetch('/api/settings/knoxx-status', { headers: buildKnoxxAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to load Knoxx status');
+  return res.json();
 }
 
 export async function knoxxRagChat(payload: {
@@ -108,30 +116,57 @@ export async function knoxxRagChat(payload: {
   conversationId?: string | null;
   includeCompare?: boolean;
 }) {
-  return proxyRequest<any>('chat', {
+  const res = await fetch('/api/knoxx/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildKnoxxAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
+  if (!res.ok) throw new Error(await res.text() || 'Knoxx chat failed');
+  return res.json();
 }
 
 export async function knoxxDirectChat(payload: {
   message: string;
   conversationId?: string | null;
 }) {
-  return proxyRequest<any>('llm/chat', {
+  const res = await fetch('/api/knoxx/direct', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: buildKnoxxAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
+  if (!res.ok) throw new Error(await res.text() || 'Knoxx direct chat failed');
+  return res.json();
+}
+
+export async function knoxxSessionStatus(sessionId: string, conversationId?: string | null) {
+  const params = new URLSearchParams({ session_id: sessionId });
+  if (conversationId) {
+    params.set('conversation_id', conversationId);
+  }
+  const res = await fetch(`/api/knoxx/session/status?${params.toString()}`, {
+    headers: buildKnoxxAuthHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to check session status');
+  return res.json() as Promise<{
+    session_id: string;
+    conversation_id: string;
+    status: string;
+    has_active_stream: boolean;
+    can_send: boolean;
+    reason?: string;
+    model?: string;
+    updated_at?: string;
+  }>;
 }
 
 export async function fetchRetrievalStats() {
-  return proxyRequest<any>('chat/stats');
+  const res = await fetch('/api/retrieval/stats', { headers: buildKnoxxAuthHeaders() });
+  if (!res.ok) throw new Error('Failed to load retrieval stats');
+  return res.json();
 }
 
 export async function runRetrievalDebug(payload: { message: string; topK?: number }) {
-  return proxyRequest<any>('chat/retrieval-debug', {
+  return sessionRequest<any>('/api/chat/retrieval-debug', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -144,11 +179,11 @@ export async function fetchDocumentContent(relativePath: string) {
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
     .join('/');
-  return proxyRequest<{ content: string; path: string }>(`documents/content/${encoded}`);
+  return sessionRequest<{ content: string; path: string }>(`/api/documents/content/${encoded}`);
 }
 
 export async function listDatabaseProfiles() {
-  return proxyRequest<{
+  return sessionRequest<{
     activeDatabaseId: string;
     databases: Array<{
       id: string;
@@ -168,7 +203,7 @@ export async function listDatabaseProfiles() {
       docsPath: string;
       qdrantCollection: string;
     };
-  }>('settings/databases');
+  }>('/api/settings/databases');
 }
 
 export async function createDatabaseProfile(payload: {
@@ -181,7 +216,7 @@ export async function createDatabaseProfile(payload: {
   privateToSession?: boolean;
   activate?: boolean;
 }) {
-  return proxyRequest<any>('settings/databases', {
+  return sessionRequest<any>('/api/settings/databases', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -189,13 +224,13 @@ export async function createDatabaseProfile(payload: {
 }
 
 export async function makeDatabasePrivate(id: string) {
-  return proxyRequest<any>(`settings/databases/${encodeURIComponent(id)}/make-private`, {
+  return sessionRequest<any>(`/api/settings/databases/${encodeURIComponent(id)}/make-private`, {
     method: 'POST',
   });
 }
 
 export async function activateDatabaseProfile(id: string) {
-  return proxyRequest<any>('settings/databases/activate', {
+  return sessionRequest<any>('/api/settings/databases/activate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id }),
@@ -203,7 +238,7 @@ export async function activateDatabaseProfile(id: string) {
 }
 
 export async function updateDatabaseProfile(id: string, payload: { name?: string; publicDocsBaseUrl?: string; useLocalDocsBaseUrl?: boolean; forumMode?: boolean }) {
-  return proxyRequest<any>(`settings/databases/${encodeURIComponent(id)}`, {
+  return sessionRequest<any>(`/api/settings/databases/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -211,11 +246,33 @@ export async function updateDatabaseProfile(id: string, payload: { name?: string
 }
 
 export async function deleteDatabaseProfile(id: string) {
-  return proxyRequest<any>(`settings/databases/${encodeURIComponent(id)}`, {
+  return sessionRequest<any>(`/api/settings/databases/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
 }
 
 export async function fetchIngestionHistory() {
-  return proxyRequest<{ collection: string; items: any[] }>('documents/ingestion-history');
+  return sessionRequest<{ collection: string; items: any[] }>('/api/documents/ingestion-history');
+}
+
+export async function fetchGraphExport(params: {
+  projects?: string[];
+  nodeTypes?: string[];
+  edgeTypes?: string[];
+} = {}) {
+  const query = new URLSearchParams();
+
+  if (params.projects && params.projects.length > 0) {
+    query.set('projects', params.projects.join(','));
+  }
+
+  if (params.nodeTypes && params.nodeTypes.length > 0) {
+    query.set('nodeTypes', params.nodeTypes.join(','));
+  }
+
+  if (params.edgeTypes && params.edgeTypes.length > 0) {
+    query.set('edgeTypes', params.edgeTypes.join(','));
+  }
+
+  return sessionRequest<GraphExportResponse>(`/api/graph/export${query.size > 0 ? `?${query.toString()}` : ''}`);
 }

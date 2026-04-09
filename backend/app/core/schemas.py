@@ -157,6 +157,97 @@ class FrontendConfigResponse(BaseModel):
     proxx_default_model: str = ""
     shibboleth_ui_url: str = ""
     shibboleth_enabled: bool = False
+    default_role: str = "executive"
+    email_enabled: bool = False
+
+
+class ToolDefinition(BaseModel):
+    id: str
+    label: str
+    description: str
+    enabled: bool = True
+
+
+class ToolCatalogResponse(BaseModel):
+    role: str
+    tools: list[ToolDefinition]
+    email_enabled: bool = False
+
+
+class EmailSendRequest(BaseModel):
+    role: str = "executive"
+    to: list[str]
+    cc: list[str] = Field(default_factory=list)
+    bcc: list[str] = Field(default_factory=list)
+    subject: str
+    markdown: str
+
+
+class EmailSendResponse(BaseModel):
+    ok: bool
+    role: str
+    sent_to: list[str]
+    subject: str
+
+
+class ToolPathRequest(BaseModel):
+    role: str = "executive"
+    path: str
+
+
+class ToolReadRequest(ToolPathRequest):
+    offset: int = 1
+    limit: int = 400
+
+
+class ToolReadResponse(BaseModel):
+    ok: bool
+    role: str
+    path: str
+    content: str
+    truncated: bool = False
+
+
+class ToolWriteRequest(ToolPathRequest):
+    content: str
+    create_parents: bool = True
+    overwrite: bool = True
+
+
+class ToolWriteResponse(BaseModel):
+    ok: bool
+    role: str
+    path: str
+    bytes_written: int
+
+
+class ToolEditRequest(ToolPathRequest):
+    old_string: str
+    new_string: str
+    replace_all: bool = False
+
+
+class ToolEditResponse(BaseModel):
+    ok: bool
+    role: str
+    path: str
+    replacements: int
+
+
+class ToolBashRequest(BaseModel):
+    role: str = "executive"
+    command: str
+    workdir: str | None = None
+    timeout_ms: int = 120000
+
+
+class ToolBashResponse(BaseModel):
+    ok: bool
+    role: str
+    command: str
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
 
 
 class KnoxxChatRequest(BaseModel):
@@ -167,6 +258,8 @@ class KnoxxChatRequest(BaseModel):
 class KnoxxChatResponse(BaseModel):
     answer: str
     conversation_id: str | None = None
+    # Structured message parts for reasoning models
+    message_parts: list[dict[str, Any]] | None = None
 
 
 class KnoxxHealthResponse(BaseModel):

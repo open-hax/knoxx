@@ -103,6 +103,7 @@ async def _proxy_chat(
     return KnoxxChatResponse(
         answer=str(data.get("answer", "")),
         conversation_id=data.get("conversationId"),
+        message_parts=data.get("message_parts") or data.get("messageParts"),
     )
 
 

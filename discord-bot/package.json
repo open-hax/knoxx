@@ -11,7 +11,9 @@
     "register": "tsx src/register-commands.ts",
     "setup": "tsx src/setup.ts",
     "lint": "eslint src --ext .ts",
-    "check-types": "tsc --noEmit"
+    "lint:size": "node ../scripts/lint-file-sizes.mjs discord-bot/src",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check-types": "pnpm run typecheck"
   },
   "dependencies": {
     "discord.js": "^14.16.0",
