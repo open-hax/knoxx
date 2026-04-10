@@ -274,7 +274,7 @@
                                   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                         session-id (or (aget params "sessionId") "")]
                                     (maybe-tool-update! on-update "Loading Knoxx session from OpenPlanner…")
-                                    (-> (fetch-openplanner-session-rows! config session-id)
+                                    (-> (fetch-openplanner-session-rows! config session-id {:mode :resume :limit 400})
                                        (.then (fn [rows]
                                                 (when-not (session-visible? auth-context rows)
                                                   (throw (http-error 403 "memory_scope_denied" "OpenPlanner session is outside the current Knoxx scope")))

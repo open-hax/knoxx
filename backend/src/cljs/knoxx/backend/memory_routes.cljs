@@ -62,7 +62,7 @@
                                                                   :has_active_stream false))
                                             warm-title-cache! (fn [session-id]
                                                                 (when-not (contains? @session-titles* session-id)
-                                                                  (.then (fetch-openplanner-session-rows! config session-id)
+                                                                  (.then (fetch-openplanner-session-rows! config session-id {:mode :resume :limit 120})
                                                                          (fn [title-rows]
                                                                            (let [seed-text (session-title-seed-text title-rows)
                                                                                  fallback-title (heuristic-session-title seed-text)]
@@ -190,7 +190,7 @@
                   (let [session-id (or (aget request "params" "sessionId") "")]
                     (if (str/blank? session-id)
                       (json-response! reply 400 {:detail "sessionId is required"})
-                      (-> (fetch-openplanner-session-rows! config session-id)
+                      (-> (fetch-openplanner-session-rows! config session-id {:mode :resume :limit 400})
                           (.then (fn [rows]
                                    (if (session-visible? ctx rows)
                                      (json-response! reply 200 {:ok true

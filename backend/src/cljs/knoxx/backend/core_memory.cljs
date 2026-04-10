@@ -91,11 +91,17 @@
                   (contains? user-ids (str (ctx-user-id ctx))))))))
 
 (defn fetch-openplanner-session-rows!
-  [config session-id]
-  (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" (js/encodeURIComponent (str session-id))
-                                               "?project=" (js/encodeURIComponent (:session-project-name config))))
-      (.then (fn [body]
-               (vec (or (:rows body) []))))))
+  ([config session-id]
+   (fetch-openplanner-session-rows! config session-id nil))
+  ([config session-id {:keys [mode limit]}]
+   (let [params (cond-> [(str "project=" (js/encodeURIComponent (:session-project-name config)))]
+                  mode (conj (str "mode=" (js/encodeURIComponent (name mode))))
+                  limit (conj (str "limit=" (js/encodeURIComponent (str limit)))))
+         suffix (str "/v1/sessions/" (js/encodeURIComponent (str session-id))
+                     "?" (str/join "&" params))]
+     (-> (backend-http/openplanner-request! config "GET" suffix)
+         (.then (fn [body]
+                  (vec (or (:rows body) []))))))))
 
 (defn authorized-session-ids!
   [config ctx session-ids]
@@ -109,7 +115,7 @@
       (.then (js/Promise.all
               (clj->js
                (map (fn [session-id]
-                      (.then (fetch-openplanner-session-rows! config session-id)
+                      (.then (fetch-openplanner-session-rows! config session-id {:mode :visibility :limit 32})
                              (fn [rows]
                                {:session session-id
                                 :allowed (session-visible? ctx rows)})
