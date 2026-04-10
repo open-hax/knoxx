@@ -11,11 +11,11 @@ import type {
 } from "../../lib/types";
 import { asMarkdownPreview, contextPath, fileNameFromPath, sourceUrlToPath } from "./utils";
 
-function extractToolCallBlocks(blocks: ChatTraceBlock[]): ChatTraceBlock[] {
+export function extractToolCallBlocks(blocks: ChatTraceBlock[]): ChatTraceBlock[] {
   return blocks.filter((b) => b.kind === "tool_call");
 }
 
-function hasVisibleToolCalls(blocks: ChatTraceBlock[]): boolean {
+export function hasVisibleToolCalls(blocks: ChatTraceBlock[]): boolean {
   return blocks.some((b) => b.kind === "tool_call");
 }
 
