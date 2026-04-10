@@ -7,6 +7,7 @@
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
             [knoxx.backend.runtime-config :refer [normalize-thinking-level models-config]]
+            [knoxx.backend.session-lifecycle :as lifecycle]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [create-runtime-tools]]))
 
@@ -175,7 +176,7 @@
   (let [thinking-level (or (normalize-thinking-level thinking-level)
                            (:agent-thinking-level config)
                            "off")]
-    (if-let [session (get @agent-sessions* conversation-id)]
+    (if-let [session (lifecycle/validate-or-remove-session! agent-sessions* conversation-id)]
       (do
         (.setThinkingLevel session thinking-level)
         (js/Promise.resolve session))
@@ -189,10 +190,11 @@
   (get @agent-sessions* conversation-id))
 
 (defn remove-agent-session!
-  "Keep completed conversation sessions warm in-process so follow-up turns retain live context.
-   Redis/OpenPlanner rehydration remains the fallback path across restarts or instance changes."
-  [_conversation-id]
-  nil)
+  "Remove agent session from in-memory cache.
+   Called when a turn completes or fails to prevent stale session reuse.
+   Redis/OpenPlanner rehydration remains the fallback path across restarts."
+  [conversation-id]
+  (lifecycle/remove-session! agent-sessions* conversation-id))
 
 (defn queue-agent-control!
   [_runtime _config {:keys [conversation-id session-id run-id message kind]}]

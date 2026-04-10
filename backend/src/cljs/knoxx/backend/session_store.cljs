@@ -176,6 +176,42 @@
   [redis-client session-id is-streaming]
   (update-session! redis-client session-id {:has_active_stream is-streaming}))
 
+(def SESSION_EVENTS_KEY_PREFIX "knoxx:session_events:")
+
+(defn session-events-key
+  [session-id]
+  (str SESSION_EVENTS_KEY_PREFIX session-id))
+
+(defn append-session-event!
+  "Append an event to the session's event list in Redis.
+   Events are stored as a Redis list for efficient append operations.
+   This ensures events persist even if the backend restarts mid-session."
+  [redis-client session-id event]
+  (if redis-client
+    (-> (redis/rpush redis-client (session-events-key session-id) (.stringify js/JSON (clj->js event)))
+        (.then (fn []
+                 (redis/expire redis-client (session-events-key session-id) SESSION_TTL_SECONDS)))
+        (.catch (fn [err]
+                  (js/console.error "Failed to append session event to Redis:" err))))
+    (resolved nil)))
+
+(defn get-session-events
+  "Get all events for a session from Redis.
+   Returns an array of events parsed from JSON."
+  [redis-client session-id]
+  (if redis-client
+    (-> (redis/lrange redis-client (session-events-key session-id) 0 -1)
+        (.then (fn [events]
+                 (mapv (fn [e]
+                        (try
+                          (js->clj (js/JSON.parse e) :keywordize-keys true)
+                          (catch :default _ nil)))
+                      events)))
+        (.catch (fn [err]
+                  (js/console.error "Failed to get session events from Redis:" err)
+                  [])))
+    (resolved [])))
+
 (defn complete-session!
   "Mark session as completed and remove from active set.
    Optionally archive to OpenPlanner for long-term memory."

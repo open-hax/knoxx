@@ -1,5 +1,6 @@
 (ns knoxx.backend.agent-turns
   (:require [clojure.string :as str]
+            [knoxx.backend.agent-events :as agent-events]
             [knoxx.backend.agent-hydration :refer [settings-state* ensure-settings! passive-hydration! passive-memory-hydration! build-agent-user-message hydration-sources]]
             [knoxx.backend.agent-runtime :refer [ensure-agent-session! remove-agent-session!]]
             [knoxx.backend.authz :as authz :refer [auth-snapshot auth-snapshot-has-principal?]]
@@ -8,11 +9,11 @@
             [knoxx.backend.openplanner-memory :as openplanner-memory]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.run-state :refer [store-run! append-run-event! update-run! update-run-tool-receipt! append-limited latest-assistant-message record-retrieval-sample! tool-event-payload]]
+            [knoxx.backend.run-state :refer [store-run! append-run-event! update-run! latest-assistant-message record-retrieval-sample! tool-event-payload]]
             [knoxx.backend.runtime-config :refer [model-supports-reasoning? normalize-thinking-level now-iso]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
-            [knoxx.backend.text :refer [value->preview-text assistant-message-text assistant-message-reasoning-text]]))
+            [knoxx.backend.text :refer [assistant-message-text assistant-message-reasoning-text]]))
 
 (defonce conversation-access* (atom {}))
 (defonce lounge-messages* (atom []))
@@ -90,14 +91,13 @@
                                               :has_active_stream false
                                               :messages request-messages}
                                              auth-extra))
-        ;; Initialize loop detection for this turn
-        _ (loop-detection/start-turn! session-id)
         initial-event (tool-event-payload run-id conversation-id session-id "run_started"
                                           {:status "running"
                                            :mode mode
                                            :model model-id
                                            :thinking_level thinking-level})
         _ (append-run-event! run-id initial-event)
+        _ (loop-detection/start-turn! session-id)
         _ (broadcast-ws-session! session-id "events" initial-event)
         chunks (atom [])
         reasoning-chunks (atom [])]
@@ -143,138 +143,8 @@
                    (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level)
                      (.then (fn [session]
                               (let [ttft-recorded? (atom false)
-                                    unsubscribe (.subscribe session
-                                                          (fn [event]
-                                                            (let [event-type (aget event "type")]
-                                                              (cond
-                                                                (= event-type "message_update")
-                                                                (let [assistant-event (aget event "assistantMessageEvent")
-                                                                      assistant-event-type (aget assistant-event "type")]
-                                                                  (cond
-                                                                    (= assistant-event-type "text_delta")
-                                                                    (let [delta (or (aget assistant-event "delta") "")]
-                                                                      (when-not @ttft-recorded?
-                                                                        (reset! ttft-recorded? true)
-                                                                        (let [ttft-ms (- (.now js/Date) started-ms)
-                                                                              ttft-event (tool-event-payload run-id conversation-id session-id "assistant_first_token"
-                                                                                                             {:status "streaming"
-                                                                                                              :ttft_ms ttft-ms})]
-                                                                          (update-run! run-id #(assoc % :ttft_ms ttft-ms))
-                                                                          (append-run-event! run-id ttft-event)
-                                                                          (broadcast-ws-session! session-id "events" ttft-event)
-                                                                          ;; Mark session as actively streaming in Redis
-                                                                          (session-store/mark-session-streaming! (redis/get-client) session-id true)))
-                                                                      (swap! chunks conj delta)
-                                                                      ;; Record progress for loop detection
-                                                                      (loop-detection/record-progress! session-id)
-                                                                      ;; Check for message loop
-                                                                      (when (seq delta)
-                                                                        (let [loop-result (loop-detection/check-and-handle-loop session-id conversation-id {:message-chunk delta})]
-                                                                          (when (= (:status loop-result) :abort)
-                                                                            ;; TODO: inject loop breaker or abort streaming
-                                                                            (js/console.warn "[loop] Aborting due to message loop:" (pr-str (:reason loop-result)))
-                                                                          ))
-                                                                      (when (seq delta)
-                                                                        (broadcast-ws-session! session-id "tokens"
-                                                                                               {:run_id run-id
-                                                                                                :conversation_id conversation-id
-                                                                                                :session_id session-id
-                                                                                                :kind "assistant_message"
-                                                                                                :token delta})))
-
-                                                                    (contains? #{"reasoning_delta" "reasoning" "reasoning_content_delta" "thinking_delta" "thinking"} assistant-event-type)
-                                                                    (let [delta (or (aget assistant-event "delta")
-                                                                                    (aget assistant-event "text")
-                                                                                    (aget assistant-event "reasoning")
-                                                                                    (aget assistant-event "thinking")
-                                                                                    "")]
-                                                                      (when (seq delta)
-                                                                        (swap! reasoning-chunks conj delta)
-                                                                        (broadcast-ws-session! session-id "tokens"
-                                                                                               {:run_id run-id
-                                                                                                :conversation_id conversation-id
-                                                                                                :session_id session-id
-                                                                                                :kind "reasoning"
-                                                                                                :token delta})))
-
-                                                                    :else nil))
-
-                                                                (= event-type "tool_execution_start")
-                                                                (let [tool-name (or (aget event "toolName") "tool")
-                                                                      tool-call-id (or (aget event "toolCallId") (.randomUUID node-crypto))
-                                                                      input-preview (or (value->preview-text (aget event "params") 600)
-                                                                                        (value->preview-text (aget event "toolArgs") 600)
-                                                                                        (value->preview-text (aget event "args") 600))
-                                                                      tool-event (tool-event-payload run-id conversation-id session-id "tool_start"
-                                                                                                     {:status "running"
-                                                                                                      :tool_name tool-name
-                                                                                                      :tool_call_id tool-call-id
-                                                                                                      :preview input-preview})]
-                                                                  (update-run-tool-receipt! run-id tool-call-id {:tool_name tool-name}
-                                                                                            (fn [receipt]
-                                                                                              (cond-> (merge receipt {:tool_name tool-name
-                                                                                                                      :status "running"
-                                                                                                                      :started_at (or (:started_at receipt) (now-iso))})
-                                                                                                input-preview (assoc :input_preview input-preview))))
-                                                                  (append-run-event! run-id tool-event)
-                                                                  (broadcast-ws-session! session-id "events" tool-event))
-
-                                                                (= event-type "tool_execution_update")
-                                                                (let [tool-name (or (aget event "toolName") "tool")
-                                                                      tool-call-id (or (aget event "toolCallId") (str tool-name "-update"))
-                                                                      preview (or (value->preview-text (aget event "delta") 400)
-                                                                                  (value->preview-text (aget event "update") 400)
-                                                                                  (value->preview-text (aget event "message") 400)
-                                                                                  (value->preview-text (aget event "statusMessage") 400))]
-                                                                  (update-run-tool-receipt! run-id tool-call-id {:tool_name tool-name}
-                                                                                            (fn [receipt]
-                                                                                              (cond-> (merge receipt {:tool_name tool-name
-                                                                                                                      :status "running"})
-                                                                                                preview (update :updates #(append-limited % preview 8)))))
-                                                                  (when preview
-                                                                    (let [tool-event (tool-event-payload run-id conversation-id session-id "tool_update"
-                                                                                                         {:status "running"
-                                                                                                          :tool_name tool-name
-                                                                                                          :tool_call_id tool-call-id
-                                                                                                          :preview preview})]
-                                                                      (append-run-event! run-id tool-event)
-                                                                      (broadcast-ws-session! session-id "events" tool-event))))
-
-                                                                (= event-type "tool_execution_end")
-                                                                (let [tool-name (or (aget event "toolName") "tool")
-                                                                      tool-call-id (or (aget event "toolCallId") (.randomUUID node-crypto))
-                                                                      is-error (boolean (aget event "isError"))
-                                                                      result-preview (or (value->preview-text (aget event "result") 800)
-                                                                                         (value->preview-text (aget event "toolResult") 800)
-                                                                                         (value->preview-text (aget event "output") 800))
-                                                                      tool-event (tool-event-payload run-id conversation-id session-id "tool_end"
-                                                                                                     {:status (if is-error "failed" "completed")
-                                                                                                      :tool_name tool-name
-                                                                                                      :tool_call_id tool-call-id
-                                                                                                      :is_error is-error
-                                                                                                      :preview result-preview})]
-                                                                  (update-run-tool-receipt! run-id tool-call-id {:tool_name tool-name}
-                                                                                            (fn [receipt]
-                                                                                              (cond-> (merge receipt {:tool_name tool-name
-                                                                                                                      :status (if is-error "failed" "completed")
-                                                                                                                      :ended_at (now-iso)
-                                                                                                                      :is_error is-error})
-                                                                                                result-preview (assoc :result_preview result-preview))))
-                                                                  (append-run-event! run-id tool-event)
-                                                                  (broadcast-ws-session! session-id "events" tool-event))
-
-                                                                (= event-type "turn_end")
-                                                                (let [tool-results (or (aget event "toolResults") #js [])
-                                                                      turn-event (tool-event-payload run-id conversation-id session-id "turn_end"
-                                                                                                     {:status "completed"
-                                                                                                      :tool_result_count (or (.-length tool-results) 0)})]
-                                                                  (append-run-event! run-id turn-event)
-                                                                  (broadcast-ws-session! session-id "events" turn-event))
-
-                                                                (= event-type "agent_end")
-                                                                (broadcast-ws-session! session-id "events"
-                                                                                       (tool-event-payload run-id conversation-id session-id "agent_end"
-                                                                                                           {:status "completed"}))))))]
+                                    ctx (agent-events/make-context run-id session-id conversation-id started-ms node-crypto chunks reasoning-chunks ttft-recorded?)
+                                    unsubscribe (.subscribe session (agent-events/make-subscription-callback ctx))]
                                 (let [prompt-promise (.prompt session (build-agent-user-message message hydration memory-hydration))]
                                   (.catch
                                    (.then prompt-promise
@@ -350,6 +220,7 @@
                                                                                    :answer answer
                                                                                    :messages (conj request-messages {:role "assistant" :content answer})})
                                                 ;; Remove from in-memory cache to prevent stale isStreaming
+                                                (loop-detection/end-turn! session-id)
                                                 (remove-agent-session! conversation-id)
                                                 response)))
                                    (fn [err]
@@ -381,6 +252,7 @@
                                                                             :error (str err)
                                                                             :messages request-messages})
                                          ;; Remove from in-memory cache to prevent stale isStreaming
+                                         (loop-detection/end-turn! session-id)
                                          (remove-agent-session! conversation-id))
                                      (throw err)))))))))))))))))
 

@@ -144,6 +144,26 @@
                 (js/console.error "Redis SMEMBERS error:" err)
                 []))))
 
+(defn rpush
+  "Push value to the right of a list. Returns the new length of the list."
+  [client key value]
+  (-> client
+      (.rPush key value)
+      (.catch (fn [err]
+                (js/console.error "Redis RPUSH error:" err)
+                0))))
+
+(defn lrange
+  "Get a range of elements from a list. Use 0 -1 for all elements."
+  [client key start stop]
+  (-> client
+      (.lRange key start stop)
+      (.then (fn [elements]
+               (js->clj elements)))
+      (.catch (fn [err]
+                (js/console.error "Redis LRANGE error:" err)
+                []))))
+
 (defn expire
   "Set TTL on a key."
   [client key ttl-seconds]
