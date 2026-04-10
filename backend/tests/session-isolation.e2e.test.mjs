@@ -11,7 +11,7 @@
  */
 
 import test from 'node:test';
-import assert from 'nodeassert/strict';
+import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
 const BASE_URL = (process.env.KNOXX_E2E_BASE_URL || 'http://localhost:3001').replace(/\/$/, '');
