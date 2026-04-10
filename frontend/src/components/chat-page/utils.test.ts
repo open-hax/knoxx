@@ -726,6 +726,32 @@ describe("applyToolTraceEvent", () => {
     expect(result[0].updates).toEqual([]);
   });
 
+  it("creates tool_update block even if no prior start exists", () => {
+    const result = applyToolTraceEvent([], makeRunEvent({
+      type: "tool_update",
+      tool_name: "late_tool",
+      tool_call_id: "late-1",
+      preview: "late update",
+      at: "2026-04-10T10:01:00Z",
+    }));
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe("tool_call");
+    expect(result[0].toolName).toBe("late_tool");
+    expect(result[0].status).toBe("streaming");
+    expect(result[0].updates).toEqual(["late update"]);
+    expect(result[0].at).toBe("2026-04-10T10:01:00Z");
+  });
+
+  it("tool_update creates block without preview", () => {
+    const result = applyToolTraceEvent([], makeRunEvent({
+      type: "tool_update",
+      tool_name: "silent_tool",
+      tool_call_id: "silent-1",
+    }));
+    expect(result).toHaveLength(1);
+    expect(result[0].updates).toEqual([]);
+  });
+
   it("ignores unrecognized event types", () => {
     const blocks: ChatTraceBlock[] = [{ id: "b1", kind: "agent_message", status: "streaming", content: "hi" }];
     const result = applyToolTraceEvent(blocks, makeRunEvent({ type: "token" }));
