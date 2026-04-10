@@ -1,14 +1,23 @@
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
-import { AgentTraceTimeline, ToolReceiptGroup } from "../ToolReceiptBlock";
+import { ToolReceiptGroup } from "../ToolReceiptBlock";
 import type {
   AgentSource,
   ChatMessage,
+  ChatTraceBlock,
   GroundedContextRow,
   RunDetail,
   RunEvent,
   ToolReceipt,
 } from "../../lib/types";
 import { asMarkdownPreview, contextPath, fileNameFromPath, sourceUrlToPath } from "./utils";
+
+function extractToolCallBlocks(blocks: ChatTraceBlock[]): ChatTraceBlock[] {
+  return blocks.filter((b) => b.kind === "tool_call");
+}
+
+function hasVisibleToolCalls(blocks: ChatTraceBlock[]): boolean {
+  return blocks.some((b) => b.kind === "tool_call");
+}
 
 type ChatMessageListProps = {
   messages: ChatMessage[];
@@ -85,25 +94,47 @@ export function ChatMessageList({
               <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
             ) : null}
           </div>
-          {message.role === "assistant" && (message.traceBlocks?.length ?? 0) > 0 ? (
-            <AgentTraceTimeline blocks={message.traceBlocks ?? []} />
-          ) : null}
-          {message.role === "assistant" && (message.traceBlocks?.length ?? 0) === 0 && message.status === "streaming" && liveToolReceipts.length > 0 && (
-            <ToolReceiptGroup receipts={liveToolReceipts} liveEvents={liveToolEvents} defaultExpanded={false} />
+          {/* Always render assistant/system message content as a full dark card — unified whether live or resumed */}
+          {message.role === "assistant" || message.role === "system" ? (
+            <Markdown content={message.content || ""} theme="dark" variant="full" />
+          ) : (
+            <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{message.content}</div>
           )}
-          {message.role === "assistant" && (message.traceBlocks?.length ?? 0) === 0 && message.status === "done" && message.runId && latestRun?.run_id === message.runId && latestToolReceipts.length > 0 && (
+          {/* Tool calls from traceBlocks (live session): collapsed by default, same shape as done sessions */}
+          {message.role === "assistant" && hasVisibleToolCalls(message.traceBlocks ?? []) ? (
+            <details style={{ marginTop: 8, marginBottom: 8 }} open={false}>
+              <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)" }}>
+                Tool calls ({extractToolCallBlocks(message.traceBlocks ?? []).length})
+              </summary>
+              <ToolReceiptGroup
+                receipts={(message.traceBlocks ?? [])
+                  .filter((b) => b.kind === "tool_call")
+                  .map((b) => ({
+                    id: b.toolCallId ?? b.id,
+                    tool_name: b.toolName,
+                    status: b.status === "done" ? "completed" : b.status === "error" ? "failed" : "running",
+                    input_preview: b.inputPreview,
+                    result_preview: b.outputPreview,
+                    updates: b.updates,
+                    is_error: b.isError,
+                  }))}
+                defaultExpanded={false}
+              />
+            </details>
+          ) : null}
+          {/* Live tool receipts (streaming, before traceBlocks are finalized) */}
+          {message.role === "assistant" && !hasVisibleToolCalls(message.traceBlocks ?? []) && message.status === "streaming" && liveToolReceipts.length > 0 ? (
+            <ToolReceiptGroup receipts={liveToolReceipts} liveEvents={liveToolEvents} defaultExpanded={false} />
+          ) : null}
+          {/* Completed run tool receipts (done session, no traceBlocks on message) */}
+          {message.role === "assistant" && !hasVisibleToolCalls(message.traceBlocks ?? []) && message.status === "done" && message.runId && latestRun?.run_id === message.runId && latestToolReceipts.length > 0 ? (
             <details style={{ marginTop: 8, marginBottom: 8 }} open={false}>
               <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)" }}>
                 Tool calls ({latestToolReceipts.length})
               </summary>
               <ToolReceiptGroup receipts={latestToolReceipts} defaultExpanded={false} />
             </details>
-          )}
-          {message.role === "assistant" && (message.traceBlocks?.length ?? 0) > 0 ? null : message.role === "assistant" || message.role === "system" ? (
-            <Markdown content={message.content || ""} theme="dark" variant="full" />
-          ) : (
-            <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{message.content}</div>
-          )}
+          ) : null}
           {message.sources?.length ? (
             <details style={{ marginTop: 12 }} open>
               <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--token-colors-text-muted)" }}>
