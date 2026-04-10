@@ -4,7 +4,7 @@
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
             [knoxx.backend.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? http-error js-array-seq]]
-            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query!]]
+            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-memory! openplanner-graph-query!]]
             [knoxx.backend.runtime-config :refer [default-settings]]
             [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-session-text graph-query-result-text]]))
 
@@ -20,6 +20,13 @@
   [f text]
   (when (fn? f)
     (f #js {:content #js [#js {:type "text" :text text}]})))
+
+(defn parse-csv-list
+  [value]
+  (->> (str/split (str (or value "")) #",")
+       (map str/trim)
+       (remove str/blank?)
+       vec))
 
 (defn semantic-search-documents!
   ([runtime config opts] (semantic-search-documents! runtime config opts nil))
@@ -156,7 +163,7 @@
 (defn passive-memory-hydration-text
   [memory]
   (when (seq (:hits memory))
-    (str "Passive conversational memory hydration from OpenPlanner follows. This is prior Knoxx session memory and action history; verify with memory_search or memory_session if precision matters.\n\n"
+    (str "Passive conversational memory hydration from OpenPlanner follows. This is prior Knoxx session memory and action history; verify with graph_query, the knoxx-session scoped memory_search alias, or memory_session if precision matters.\n\n"
          (str/join
           "\n\n"
           (map-indexed
@@ -246,30 +253,51 @@
   ([runtime config] (create-openplanner-custom-tools runtime config nil))
   ([runtime config auth-context]
    (let [Type (aget runtime "Type")
-         search-params (.Object Type
-                                #js {:query (.String Type #js {:description "Semantic memory search across prior Knoxx sessions and actions indexed in OpenPlanner."})
-                                     :k (.Optional Type (.Number Type #js {:description "Maximum number of memory hits to return." :minimum 1 :maximum 8}))
-                                     :sessionId (.Optional Type (.String Type #js {:description "Optional conversation/session id to scope the search."}))})
-         graph-params (.Object Type
-                               #js {:query (.String Type #js {:description "Search text for canonical graph nodes across OpenPlanner lakes."})
-                                    :lake (.Optional Type (.String Type #js {:description "Optional lake/project filter such as devel, web, bluesky, or knoxx-session."}))
-                                    :nodeType (.Optional Type (.String Type #js {:description "Optional node_type filter such as docs, code, visited, assistant_message, tool_result, or reasoning."}))
-                                    :limit (.Optional Type (.Number Type #js {:description "Maximum number of graph nodes to return." :minimum 1 :maximum 20}))
-                                    :edgeLimit (.Optional Type (.Number Type #js {:description "Maximum number of incident edges to include." :minimum 0 :maximum 60}))})
+         unified-params (.Object Type
+                                 #js {:query (.String Type #js {:description "Semantic seed query for unified graph/memory traversal."})
+                                      :lakes (.Optional Type (.String Type #js {:description "Optional comma-separated lakes such as devel,web,bluesky,knoxx-session."}))
+                                      :nodeTypes (.Optional Type (.String Type #js {:description "Optional comma-separated node types such as file,url,run,tool_call."}))
+                                      :k (.Optional Type (.Number Type #js {:description "Maximum semantic seed count." :minimum 1 :maximum 20}))
+                                      :maxCost (.Optional Type (.Number Type #js {:description "Maximum traversal cost from seed nodes." :minimum 0.1 :maximum 20}))
+                                      :maxNodes (.Optional Type (.Number Type #js {:description "Maximum traversed nodes to return." :minimum 1 :maximum 120}))
+                                      :minSimilarity (.Optional Type (.Number Type #js {:description "Minimum semantic edge similarity to traverse." :minimum 0 :maximum 1}))
+                                      :minVectorSimilarity (.Optional Type (.Number Type #js {:description "Minimum vector similarity for semantic seeds." :minimum 0 :maximum 1}))})
          session-params (.Object Type
                                  #js {:sessionId (.String Type #js {:description "Knoxx conversation/session id stored in OpenPlanner."})})
+         run-unified-graph-memory! (fn [params forced-lakes]
+                                     (let [query (or (aget params "query") "")
+                                           lakes (vec (distinct (concat forced-lakes (parse-csv-list (aget params "lakes")))))
+                                           node-types (parse-csv-list (aget params "nodeTypes"))
+                                           k (aget params "k")
+                                           max-cost (aget params "maxCost")
+                                           max-nodes (aget params "maxNodes")
+                                           min-similarity (aget params "minSimilarity")
+                                           min-vector-similarity (aget params "minVectorSimilarity")]
+                                       (openplanner-graph-memory! config {:query query
+                                                                          :lakes lakes
+                                                                          :node-types node-types
+                                                                          :k k
+                                                                          :max-cost max-cost
+                                                                          :max-nodes max-nodes
+                                                                          :min-similarity min-similarity
+                                                                          :min-vector-similarity min-vector-similarity})))
          memory-search-execute (fn [_tool-call-id params a b c]
                                  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                        query (or (aget params "query") "")
-                                       k (aget params "k")
-                                       session-id (or (aget params "sessionId") "")]
-                                   (maybe-tool-update! on-update "Searching Knoxx memory in OpenPlanner…")
-                                   (-> (openplanner-memory-search! config {:query query :k k :session-id session-id})
+                                       k (aget params "k")]
+                                   (maybe-tool-update! on-update "Walking Knoxx session memory as a semantic cost graph…")
+                                   (-> (run-unified-graph-memory! params ["knoxx-session"])
                                        (.then (fn [result]
-                                                (-> (filter-authorized-memory-hits! config auth-context (:hits result))
-                                                    (.then (fn [hits]
-                                                             (let [filtered (assoc result :hits hits)]
-                                                               (tool-text-result (openplanner-memory-search-text filtered) filtered))))))))))
+                                                (if (seq (:nodes result))
+                                                  (tool-text-result (graph-query-result-text result) result)
+                                                  (do
+                                                    (maybe-tool-update! on-update "Unified graph walk found no seeds; falling back to transcript memory search…")
+                                                    (-> (openplanner-memory-search! config {:query query :k k :session-id ""})
+                                                        (.then (fn [legacy-result]
+                                                                 (-> (filter-authorized-memory-hits! config auth-context (:hits legacy-result))
+                                                                     (.then (fn [hits]
+                                                                              (let [filtered (assoc legacy-result :hits hits)]
+                                                                                (tool-text-result (openplanner-memory-search-text filtered) filtered)))))))))))))))
          memory-session-execute (fn [_tool-call-id params a b c]
                                   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                         session-id (or (aget params "sessionId") "")]
@@ -285,45 +313,50 @@
          graph-query-execute (fn [_tool-call-id params a b c]
                                (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                      query (or (aget params "query") "")
-                                     lake (or (aget params "lake") "")
-                                     node-type (or (aget params "nodeType") "")
-                                     limit (aget params "limit")
-                                     edge-limit (aget params "edgeLimit")]
-                                 (maybe-tool-update! on-update "Querying canonical knowledge graph…")
-                                 (-> (openplanner-graph-query! config {:query query
-                                                                       :lake lake
-                                                                       :node-type node-type
-                                                                       :limit limit
-                                                                       :edge-limit edge-limit})
+                                     lakes (parse-csv-list (aget params "lakes"))
+                                     node-types (parse-csv-list (aget params "nodeTypes"))
+                                     max-nodes (aget params "maxNodes")]
+                                 (maybe-tool-update! on-update "Walking unified graph/memory field from semantic seeds…")
+                                 (-> (run-unified-graph-memory! params [])
                                      (.then (fn [result]
-                                              (tool-text-result (graph-query-result-text result) result))))))
+                                              (if (seq (:nodes result))
+                                                (tool-text-result (graph-query-result-text result) result)
+                                                (do
+                                                  (maybe-tool-update! on-update "Unified graph walk found no seeds; falling back to legacy graph query…")
+                                                  (-> (openplanner-graph-query! config {:query query
+                                                                                        :lake (first lakes)
+                                                                                        :node-type (first node-types)
+                                                                                        :limit max-nodes
+                                                                                        :edge-limit 40})
+                                                      (.then (fn [legacy-result]
+                                                               (tool-text-result (graph-query-result-text legacy-result) legacy-result)))))))))))
          memory-search-tool (doto (js-obj)
                               (aset "name" "memory_search")
                               (aset "label" "Memory Search")
-                              (aset "description" "Search prior Knoxx sessions, answers, and tool/action receipts stored in OpenPlanner.")
-                              (aset "promptSnippet" "Search Knoxx long-term memory in OpenPlanner when the user asks about earlier sessions, prior decisions, or the agent's own past actions.")
-                              (aset "promptGuidelines" (clj->js ["Use memory_search when the user references previous sessions, past work, or asks you to remember what happened before."
-                                                                 "Prefer memory_search over guessing about prior conversations or actions."
-                                                                 "If one session looks relevant, follow with memory_session to inspect the full transcript slice."]))
-                              (aset "parameters" search-params)
+                              (aset "description" "Unified graph-memory traversal scoped to the Knoxx session lake.")
+                              (aset "promptSnippet" "Walk prior Knoxx session memory as a semantic-seed cost graph when the user asks about earlier sessions, prior decisions, or past actions.")
+                              (aset "promptGuidelines" (clj->js ["memory_search is now a knoxx-session scoped alias of the unified graph/memory tool."
+                                                                 "Use it when the user asks what happened before, what you already tried, or which prior session matters."
+                                                                 "If one session looks relevant, follow with memory_session to inspect the exact transcript slice."]))
+                              (aset "parameters" unified-params)
                               (aset "execute" memory-search-execute))
          graph-query-tool (doto (js-obj)
                             (aset "name" "graph_query")
-                            (aset "label" "Graph Query")
-                            (aset "description" "Query the canonical OpenPlanner knowledge graph across the devel, web, bluesky, and knoxx-session lakes.")
-                            (aset "promptSnippet" "Search the canonical knowledge graph when you need entities or cross-lake links rather than plain transcript memory or semantic document snippets.")
-                            (aset "promptGuidelines" (clj->js ["Use graph_query when the question is about entities, paths, URLs, provenance across lakes, or graph connectivity."
-                                                               "Prefer graph_query over semantic_query when node/edge structure matters."
-                                                               "Use the lake filter to focus on devel, web, bluesky, or knoxx-session when the search space is obvious."]))
-                            (aset "parameters" graph-params)
+                            (aset "label" "Graph Memory Query")
+                            (aset "description" "Unified semantic-seed graph/memory traversal across OpenPlanner lakes using bounded cost expansion.")
+                            (aset "promptSnippet" "Use semantic seeds plus bounded graph traversal when you need entities, provenance, paths, prior sessions, or cross-lake memory in one query.")
+                            (aset "promptGuidelines" (clj->js ["graph_query is the primary unified graph/memory tool."
+                                                               "It replaces the old split between graph and memory search by seeding semantically, then traversing the graph with bounded cost."
+                                                               "Use lakes and nodeTypes to focus the walk when the search space is obvious."]))
+                            (aset "parameters" unified-params)
                             (aset "execute" graph-query-execute))
          memory-session-tool (doto (js-obj)
                                (aset "name" "memory_session")
                                (aset "label" "Memory Session")
                                (aset "description" "Load the indexed transcript/events for a specific Knoxx session from OpenPlanner.")
                                (aset "promptSnippet" "Load a specific Knoxx OpenPlanner session when you need the exact previous transcript or action trace.")
-                               (aset "promptGuidelines" (clj->js ["Use memory_session after memory_search identifies a promising session id."
-                                                                  "memory_session is the exact transcript/action drill-down companion to memory_search."]))
+                               (aset "promptGuidelines" (clj->js ["Use memory_session after graph_query or memory_search identifies a promising Knoxx session."
+                                                                  "memory_session is the exact transcript/action drill-down companion to the unified graph/memory query surface."]))
                                (aset "parameters" session-params)
                                (aset "execute" memory-session-execute))]
      (clj->js

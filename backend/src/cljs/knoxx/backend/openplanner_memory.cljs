@@ -153,6 +153,21 @@
                                                 :mode :recent
                                                 :hits recent}))))))))))))
 
+(defn openplanner-graph-memory!
+  [config {:keys [query lakes node-types k max-cost max-nodes min-similarity min-vector-similarity include-text]}]
+  (backend-http/openplanner-request! config
+                                    "POST"
+                                    "/v1/graph/memory"
+                                    (cond-> {:q (or query "")
+                                             :k (max 1 (min 20 (or k 15)))
+                                             :maxCost (or max-cost 2.0)
+                                             :maxNodes (max 1 (min 120 (or max-nodes 60)))
+                                             :minSimilarity (or min-similarity 0.55)
+                                             :minVectorSimilarity (or min-vector-similarity 0.35)
+                                             :includeText (if (nil? include-text) true (boolean include-text))}
+                                      (seq lakes) (assoc :lakes (vec lakes))
+                                      (seq node-types) (assoc :nodeTypes (vec node-types)))))
+
 (defn openplanner-graph-query!
   [config {:keys [query lake node-type limit edge-limit]}]
   (let [params (js/URLSearchParams.)]

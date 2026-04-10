@@ -232,35 +232,64 @@
 (defn graph-query-result-text
   [result]
   (let [nodes (vec (or (:nodes result) []))
-        edges (vec (or (:edges result) []))]
+        edges (vec (or (:edges result) []))
+        clusters (vec (or (:clusters result) []))
+        stats (:stats result)]
     (if (seq nodes)
       (let [node-text (str/join
                        "\n\n"
                        (map-indexed
                         (fn [idx node]
-                          (let [data (or (:data node) {})]
-                            (str (inc idx) ". [" (:lake node) "/" (:nodeType node) "] " (:label node)
+                          (let [data (or (:data node) {})
+                                lake (or (:lake node) (:project node) "unknown")
+                                node-type (or (:nodeType node) (:type node) "node")
+                                label (or (:label node) (:title node) (:id node))
+                                preview (or (:text node)
+                                            (:preview data)
+                                            (:snippet data))]
+                            (str (inc idx) ". [" lake "/" node-type "] " label
                                  "\n   id=" (:id node)
+                                 (when-let [score (:score node)]
+                                   (str "\n   score=" (.toFixed (js/Number. score) 3)))
+                                 (when-let [cost (:traversalCost node)]
+                                   (str "\n   traversal_cost=" (.toFixed (js/Number. cost) 3)))
                                  (when-let [path (:path data)]
                                    (str "\n   path=" path))
                                  (when-let [url (:url data)]
                                    (str "\n   url=" url))
-                                 (when-let [preview (:preview data)]
+                                 (when (true? (:isSeed node))
+                                   "\n   seed=true")
+                                 (when preview
                                    (str "\n   preview=" (or (value->preview-text preview 220) ""))))))
                         nodes))
+            cluster-text (when (seq clusters)
+                           (str/join
+                            "\n"
+                            (map (fn [cluster]
+                                   (str "- " (:lake cluster) ": " (:count cluster) " nodes"))
+                                 clusters)))
             edge-text (when (seq edges)
                         (str/join
                          "\n"
                          (map (fn [edge]
-                                (str "- [" (:edgeType edge) "] " (:source edge) " -> " (:target edge)))
+                                (str "- " (:source edge) " -> " (:target edge)
+                                     (when-let [edge-type (or (:edgeType edge) (:edgeKind edge))]
+                                       (str " [" edge-type "]"))
+                                     (when-let [similarity (:similarity edge)]
+                                       (str " similarity=" (.toFixed (js/Number. similarity) 3)))))
                               edges)))]
-        (str "Knowledge graph query"
+        (str "Unified graph/memory query"
              (when-let [q (:query result)]
                (str "\nQuery: " q))
-             (when-let [projects (seq (:projects result))]
-               (str "\nProjects: " (str/join ", " projects)))
+             (when cluster-text
+               (str "\nClusters:\n" cluster-text))
+             (when stats
+               (str "\nStats: seeds=" (or (:seeds stats) 0)
+                    ", visited=" (or (:visited stats) 0)
+                    ", vectorHits=" (or (:vectorHits stats) 0)
+                    ", edges=" (or (:edges stats) 0)))
              "\n\nNodes:\n"
              node-text
              (when edge-text
                (str "\n\nEdges:\n" edge-text))))
-      "Knowledge graph query returned no matching nodes.")))
+      "Unified graph/memory query returned no matching nodes.")))

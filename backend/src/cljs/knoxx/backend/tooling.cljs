@@ -83,16 +83,16 @@
                                                      "discord.publish" "Publish updates to Discord"
                                                      "bluesky.publish" "Publish updates to Bluesky"
                                                      "semantic_query" "Query semantic context in the active corpus"
-                                                     "graph_query" "Query the canonical knowledge graph across devel/web/bluesky/knoxx-session lakes"
-                                                     "memory_search" "Search prior Knoxx sessions in OpenPlanner"
+                                                     "graph_query" "Unified semantic-seed graph/memory traversal across devel/web/bluesky/knoxx-session lakes"
+                                                     "memory_search" "Unified graph-memory traversal scoped to prior Knoxx sessions"
                                                      "memory_session" "Load a specific Knoxx session from OpenPlanner"
                                                      tool-id)
                                       :enabled (if (= tool-id "email.send") email? true)}))
                               vec)
                    (contains? allowed-tool-ids "semantic_query")
                    (conj {:id "graph_query"
-                          :label "Graph Query"
-                          :description "Query the canonical knowledge graph across devel/web/bluesky/knoxx-session lakes"
+                          :label "Graph Memory Query"
+                          :description "Unified semantic-seed graph/memory traversal across devel/web/bluesky/knoxx-session lakes"
                           :enabled true}))]
        {:role (authz/primary-context-role auth-context)
         :email_enabled email?
