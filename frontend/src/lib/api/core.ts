@@ -65,7 +65,7 @@ export function buildKnoxxAuthHeaders(headersInit?: HeadersInit): Headers {
   return headers;
 }
 
-function summarizeErrorPayload(payload: unknown): string | null {
+export function summarizeErrorPayload(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
 
   const record = payload as Record<string, unknown>;

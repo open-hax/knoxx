@@ -13,7 +13,7 @@ import type {
 } from "../types";
 import { request } from "./core";
 
-function normalizeConversationResponse(response: Record<string, unknown>) {
+export function normalizeConversationResponse(response: Record<string, unknown>) {
   return {
     answer: typeof response.answer === "string" ? response.answer : "",
     run_id:

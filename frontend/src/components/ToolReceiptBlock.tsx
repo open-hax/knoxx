@@ -170,7 +170,7 @@ export function ToolReceiptGroup({ receipts, liveEvents, defaultExpanded = false
   );
 }
 
-function traceTextStatusVariant(status?: ChatTraceBlock["status"]): "info" | "warning" | "success" | "error" {
+export function traceTextStatusVariant(status?: ChatTraceBlock["status"]): "info" | "warning" | "success" | "error" {
   if (status === "done") return "success";
   if (status === "error") return "error";
   return "warning";
