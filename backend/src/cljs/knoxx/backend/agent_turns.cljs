@@ -30,6 +30,15 @@
   [config run]
   (openplanner-memory/index-run-memory! config run extract-mentioned-devel-paths extract-mentioned-urls))
 
+(defn persist-event!
+  "Persist an event to both in-memory run state and Redis session events.
+   This ensures events survive backend restarts and can be recovered
+   for orphaned sessions."
+  [run-id session-id event]
+  (append-run-event! run-id event)
+  (when session-id
+    (session-store/append-session-event! (redis/get-client) session-id event)))
+
 
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message model mode run-id auth-context thinking-level]}]
@@ -96,7 +105,7 @@
                                            :mode mode
                                            :model model-id
                                            :thinking_level thinking-level})
-        _ (append-run-event! run-id initial-event)
+        _ (persist-event! run-id session-id initial-event)
         _ (loop-detection/start-turn! session-id)
         _ (broadcast-ws-session! session-id "events" initial-event)
         chunks (atom [])
@@ -126,7 +135,7 @@
                                       (-> run
                                           (update :resources merge {:passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results])})
                                           (assoc :updated_at (now-iso)))))
-                       (append-run-event! run-id hydration-event)
+                       (persist-event! run-id session-id hydration-event)
                        (broadcast-ws-session! session-id "events" hydration-event)))
                    (when (seq (:hits memory-hydration))
                      (let [memory-event (tool-event-payload run-id conversation-id session-id "memory_hydration"
@@ -138,7 +147,7 @@
                                       (-> run
                                           (update :resources merge {:memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])})
                                           (assoc :updated_at (now-iso)))))
-                       (append-run-event! run-id memory-event)
+                       (persist-event! run-id session-id memory-event)
                        (broadcast-ws-session! session-id "events" memory-event)))
                    (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level)
                      (.then (fn [session]
@@ -210,7 +219,7 @@
                                                                                        (update :resources merge resource-patch)))))
                                                     _ (when completed-run
                                                         (index-run-memory! config completed-run))]
-                                                (append-run-event! run-id completed-event)
+                                                (persist-event! run-id session-id completed-event)
                                                 (broadcast-ws-session! session-id "events" completed-event)
                                                 ;; Mark session as completed in Redis
                                                 (session-store/complete-session! (redis/get-client)
@@ -242,7 +251,7 @@
                                                                              (update :resources merge resource-patch)))))
                                              _ (when failed-run
                                                  (index-run-memory! config failed-run))]
-                                         (append-run-event! run-id error-event)
+                                         (persist-event! run-id session-id error-event)
                                          (broadcast-ws-session! session-id "events" error-event)
                                          ;; Mark session as failed in Redis
                                          (session-store/complete-session! (redis/get-client)

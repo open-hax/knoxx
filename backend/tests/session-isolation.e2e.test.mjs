@@ -12,11 +12,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 const BASE_URL = (process.env.KNOXX_E2E_BASE_URL || 'http://localhost:3001').replace(/\/$/, '');
 const WS_BASE = BASE_URL.replace(/^http/, 'ws');
 const DEFAULT_TIMEOUT_MS = Number(process.env.KNOXX_E2E_TIMEOUT_MS || 30_000);
+const REDIS_CONTAINER = process.env.KNOXX_E2E_REDIS_CONTAINER || 'openplanner-knoxx-redis-1';
 
 // ============================================================================
 // Helper Functions
@@ -74,6 +76,40 @@ async function waitForApi() {
     await sleep(1000);
   }
   throw new Error(`Knoxx e2e target ${BASE_URL} never became healthy: ${lastError}`);
+}
+
+function redisCli(...args) {
+  return execFileSync('docker', ['exec', REDIS_CONTAINER, 'redis-cli', '--raw', ...args], {
+    encoding: 'utf8',
+  }).trim();
+}
+
+function redisGet(key) {
+  const value = redisCli('GET', key);
+  return value === '' || value === '(nil)' ? null : value;
+}
+
+function redisLrange(key, start = 0, stop = -1) {
+  const value = redisCli('LRANGE', key, String(start), String(stop));
+  if (!value) return [];
+  return value.split('\n').filter(Boolean);
+}
+
+function redisSmembers(key) {
+  const value = redisCli('SMEMBERS', key);
+  if (!value) return [];
+  return value.split('\n').filter(Boolean);
+}
+
+async function waitForRedis(checkFn, timeoutMs = 10_000, label = 'redis condition') {
+  const startedAt = Date.now();
+  let lastValue = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    lastValue = checkFn();
+    if (lastValue) return lastValue;
+    await sleep(250);
+  }
+  throw new Error(`Timed out waiting for ${label}; last value: ${JSON.stringify(lastValue)}`);
 }
 
 /**
@@ -186,6 +222,65 @@ async function waitForSessionStatus(sessionId, conversationId, targetStatus, tim
   }
   throw new Error(`Session ${sessionId} did not reach status "${targetStatus}" within ${timeoutMs}ms`);
 }
+
+// ============================================================================
+// Test: Redis-backed Session Persistence
+// ============================================================================
+
+test('Redis persistence: active session state and events are written incrementally', async () => {
+  await waitForApi();
+
+  const session = await startSession('Persist me to redis while running');
+  const sessionKey = `knoxx:session:${session.sessionId}`;
+  const conversationKey = `knoxx:conversation_to_session:${session.conversationId}`;
+  const sessionEventsKey = `knoxx:session_events:${session.sessionId}`;
+
+  const storedSessionRaw = await waitForRedis(() => redisGet(sessionKey), 10_000, `session key ${sessionKey}`);
+  const storedConversationSessionId = await waitForRedis(() => redisGet(conversationKey), 10_000, `conversation mapping ${conversationKey}`);
+  const storedEvents = await waitForRedis(() => {
+    const events = redisLrange(sessionEventsKey);
+    return events.length > 0 ? events : null;
+  }, 10_000, `session events ${sessionEventsKey}`);
+  const activeSessions = redisSmembers('knoxx:active_sessions');
+
+  const storedSession = JSON.parse(storedSessionRaw);
+  const parsedEvents = storedEvents.map((event) => JSON.parse(event));
+  const eventTypes = parsedEvents.map((event) => event.type);
+
+  assert.equal(storedSession.session_id, session.sessionId);
+  assert.equal(storedSession.conversation_id, session.conversationId);
+  assert.equal(storedConversationSessionId, session.sessionId);
+  assert.ok(activeSessions.includes(session.sessionId), 'session should be present in knoxx:active_sessions');
+  assert.ok(eventTypes.includes('run_started'), 'redis event list should include run_started');
+});
+
+test('Redis persistence: terminal lifecycle events are persisted before cleanup', async () => {
+  await waitForApi();
+
+  const session = await startSession('Reply with exactly one word: ok');
+  const sessionKey = `knoxx:session:${session.sessionId}`;
+  const sessionEventsKey = `knoxx:session_events:${session.sessionId}`;
+
+  const parsedEvents = await waitForRedis(() => {
+    const events = redisLrange(sessionEventsKey).map((event) => JSON.parse(event));
+    return events.some((event) => event.type === 'run_completed') ? events : null;
+  }, 45_000, `terminal events in ${sessionEventsKey}`);
+
+  const storedSessionRaw = await waitForRedis(() => {
+    const raw = redisGet(sessionKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed.status === 'completed' ? raw : null;
+  }, 10_000, `completed session state ${sessionKey}`);
+
+  const parsedSession = JSON.parse(storedSessionRaw);
+  const eventTypes = parsedEvents.map((event) => event.type);
+
+  assert.equal(parsedSession.status, 'completed');
+  assert.equal(parsedSession.has_active_stream, false);
+  assert.ok(eventTypes.includes('run_started'), 'redis event list should include run_started');
+  assert.ok(eventTypes.includes('run_completed'), 'redis event list should include run_completed');
+});
 
 // ============================================================================
 // Test: Multiple Sessions Running Concurrently

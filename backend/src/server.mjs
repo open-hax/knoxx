@@ -9,9 +9,10 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { createPolicyDb } from './policy-db.mjs';
-import { config as readConfig, registerAppRoutes, registerWsRoutes } from '../dist/app.js';
+import { config as readConfig, registerAppRoutes, registerWsRoutes, initRedis } from '../dist/app.js';
 
 const policyDb = await createPolicyDb({
   connectionString: process.env.KNOXX_POLICY_DATABASE_URL || process.env.DATABASE_URL || '',
@@ -37,8 +38,17 @@ const runtime = {
   policyDb,
 };
 
+globalThis.require = globalThis.require || createRequire(import.meta.url);
+
 const config = readConfig();
 const app = Fastify({ logger: true });
+
+// Initialize Redis for session persistence and recovery
+try {
+  await initRedis(runtime);
+} catch (error) {
+  console.error('[server.mjs] initRedis failed', error);
+}
 
 await app.register(fastifyCors, { origin: true });
 await app.register(fastifyMultipart);

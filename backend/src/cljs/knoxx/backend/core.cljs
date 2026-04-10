@@ -25,6 +25,41 @@
     (app-routes/register-routes! runtime app config lounge-messages*)
     (clj->js config)))
 
+(defn init-redis-and-recover!
+  "Initialize Redis client and kick off background recovery work.
+   Call this from server.mjs before starting the HTTP server.
+   Recovery and session-title preload run asynchronously so backend startup
+   is not blocked on Redis/OpenPlanner availability or long resume work."
+  [runtime]
+  (let [config (cfg)]
+    (-> (redis/init-redis! (:redis-url config))
+        (.then (fn [redis-client]
+                 (if redis-client
+                   (do
+                     (js/console.log "[knoxx] Redis client initialized for session persistence")
+                     (-> (recover-active-agent-sessions! runtime config redis-client)
+                         (.then (fn [results]
+                                  (let [resumed (count (filter :resumed results))]
+                                    (when (seq results)
+                                      (js/console.log
+                                       (str "[knoxx] Recovered " (count results) " active sessions from Redis; resumed " resumed))))))
+                         (.catch (fn [err]
+                                   (js/console.error "[knoxx] Failed to recover active sessions:" err)
+                                   nil)))
+                     redis-client)
+                   (do
+                     (js/console.warn "[knoxx] Redis not available, session persistence disabled")
+                     nil))))
+        (.catch (fn [err]
+                  (js/console.error "[knoxx] Failed to initialize Redis:" err)
+                  nil))
+        (.then (fn [result]
+                 (-> (load-session-titles! runtime config)
+                     (.catch (fn [err]
+                               (.warn js/console "Failed to preload session titles during startup" err)
+                               nil)))
+                 result)))))
+
 (defn start!
   [runtime]
   (when-not @server*
