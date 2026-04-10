@@ -142,6 +142,10 @@ importers:
         specifier: ^1.6.1
         version: 1.6.1(@types/node@22.19.17)
 
+  packages/uxx: {}
+
+  packages/webgl-graph-view: {}
+
 packages:
 
   '@alloc/quick-lru@5.2.0':

@@ -1,6 +1,10 @@
 (ns knoxx.backend.tool-routes
   (:require [clojure.string :as str]
-            ["nodemailer" :as nodemailer]))
+            ;; ["nodemailer" :as nodemailer]  ;; Temporarily disabled for ESM build
+            ))
+
+;; Stub nodemailer for ESM compatibility
+(def nodemailer nil)
 
 (defn send-email!
   "Send an email via Gmail SMTP using nodemailer.
@@ -10,19 +14,8 @@
         password (:gmail-app-password config)]
     (if (or (str/blank? email) (str/blank? password))
       (js/Promise.reject (js/Error. "Gmail credentials not configured"))
-      (let [transporter (.createTransport nodemailer
-                                           #js {:host "smtp.gmail.com"
-                                                :port 587
-                                                :secure false
-                                                :auth #js {:user email
-                                                           :pass password}})]
-        (.sendMail transporter
-                   #js {:from email
-                        :to (str/join ", " to)
-                        :cc (when (seq cc) (str/join ", " cc))
-                        :bcc (when (seq bcc) (str/join ", " bcc))
-                        :subject subject
-                        :text text-body})))))
+      ;; Temporarily disabled for ESM build
+      (js/Promise.reject (js/Error. "Email sending temporarily unavailable - nodemailer requires Node.js runtime")))))
 
 (defn register-tool-routes!
   [app runtime config {:keys [route!

@@ -9,6 +9,7 @@
                              :config knoxx.backend.core/config-js
                              :registerAppRoutes knoxx.backend.core/register-app-routes!
                              :registerWsRoutes knoxx.backend.core/register-ws-routes!}}}
+   :js-options {:keep-as-require #{nodemailer}}
    :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true
