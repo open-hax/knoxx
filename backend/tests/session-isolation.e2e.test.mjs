@@ -148,6 +148,7 @@ async function startSession(message, overrides = {}) {
 
   const result = await requestJson('/api/knoxx/chat/start', {
     method: 'POST',
+    expectedStatus: overrides.expectedStatus || 202,
     body: {
       message: message || 'Hello, test session',
       session_id: sessionId,
