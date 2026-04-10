@@ -4,9 +4,10 @@ interface ChatComposerProps {
   onSend: (text: string) => void;
   isSending: boolean;
   disabled?: boolean;
+  onAbort?: () => void;
 }
 
-function ChatComposer({ onSend, isSending, disabled = false }: ChatComposerProps) {
+function ChatComposer({ onSend, isSending, disabled = false, onAbort }: ChatComposerProps) {
   const [value, setValue] = useState("");
 
   const handleSubmit = (event: FormEvent) => {
@@ -41,9 +42,16 @@ function ChatComposer({ onSend, isSending, disabled = false }: ChatComposerProps
         placeholder="Send a prompt, test edge cases, compare behavior..."
         disabled={disabled}
       />
-      <button type="submit" className="btn-primary h-fit" disabled={disabled}>
-        {isSending ? "Sending..." : "Send"}
-      </button>
+      <div className="flex flex-col gap-1">
+        <button type="submit" className="btn-primary h-fit" disabled={disabled || isSending}>
+          {isSending ? "Sending..." : "Send"}
+        </button>
+        {isSending && onAbort && (
+          <button type="button" className="btn-danger h-fit" onClick={onAbort}>
+            End Turn
+          </button>
+        )}
+      </div>
     </form>
   );
 }

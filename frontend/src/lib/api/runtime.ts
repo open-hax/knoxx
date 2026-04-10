@@ -245,3 +245,30 @@ export async function handoffToShibboleth(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+export async function knoxxAbort(payload: {
+  conversation_id?: string | null;
+  session_id?: string | null;
+}): Promise<{ ok: boolean; aborted: boolean; conversation_id?: string | null; session_id?: string | null; error?: string }> {
+  try {
+    const response = await request<Record<string, unknown>>("/api/knoxx/abort", {
+      method: "POST",
+      body: JSON.stringify({
+        conversation_id: payload.conversation_id,
+        session_id: payload.session_id,
+      }),
+    });
+    return {
+      ok: Boolean(response.ok),
+      aborted: Boolean(response.aborted ?? response.ok),
+      conversation_id: typeof response.conversation_id === "string" ? response.conversation_id : null,
+      session_id: typeof response.session_id === "string" ? response.session_id : null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      aborted: false,
+      error: (error as Error).message,
+    };
+  }
+}

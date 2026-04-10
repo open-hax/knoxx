@@ -143,6 +143,8 @@
                                           :openplanner-memory-search! openplanner-memory-search!
                                           :filter-authorized-memory-hits! filter-authorized-memory-hits!
                                           :ctx-permitted? ctx-permitted?
+                                          :ctx-user-email ctx-user-email
+                                          :ctx-org-slug ctx-org-slug
                                           :system-admin? system-admin?
                                           :http-error http-error
                                           :now-iso now-iso
@@ -332,6 +334,47 @@
                                (json-response! reply 200 resp)))
                       (.catch (fn [err]
                                 (error-response! reply err 409)))))))))
+
+  (route! app "POST" "/api/knoxx/abort"
+          (fn [request reply]
+            (let [body (or (aget request "body") #js {})
+                  conversation-id (or (aget body "conversation_id") (aget body "conversationId"))
+                  session-id (or (aget body "session_id") (aget body "sessionId"))]
+              (cond
+                (and (str/blank? conversation-id) (str/blank? session-id))
+                (json-response! reply 400 {:error "conversation_id or session_id is required"})
+
+                :else
+                (try
+                  ;; Find and abort active agent session
+                  (when-let [agent-session (and conversation-id (active-agent-session conversation-id))]
+                    ;; Set abort flag for streaming loop to check
+                    (aset agent-session "abortRequested" true)
+                    ;; Clear streaming state
+                    (aset agent-session "isStreaming" false)
+                    ;; Broadcast abort event via WebSocket
+                    (realtime/broadcast-ws-session!
+                     (or session-id "")
+                     "agent:turn_aborted"
+                     {:reason "User requested abort"
+                      :conversation_id conversation-id
+                      :session_id session-id}))
+                  ;; Update session in Redis if we have session-id
+                  (when-not (str/blank? session-id)
+                    (session-store/update-session!
+                     (redis/get-client)
+                     session-id
+                     {:status "aborted"
+                      :has_active_stream false
+                      :updated_at (now-iso)}))
+                  (json-response! reply 200
+                                  {:ok true
+                                   :aborted true
+                                   :conversation_id conversation-id
+                                   :session_id session-id})
+                  (catch js/Error err
+                    (js/console.error "Abort failed" err)
+                    (json-response! reply 500 {:error (str err)})))))))
 
   ;; Session status endpoint for frontend resume detection
   (route! app "GET" "/api/knoxx/session/status"
