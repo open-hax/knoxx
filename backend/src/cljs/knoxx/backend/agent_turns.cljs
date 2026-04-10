@@ -90,6 +90,8 @@
                                               :has_active_stream false
                                               :messages request-messages}
                                              auth-extra))
+        ;; Initialize loop detection for this turn
+        _ (loop-detection/start-turn! session-id)
         initial-event (tool-event-payload run-id conversation-id session-id "run_started"
                                           {:status "running"
                                            :mode mode
@@ -163,6 +165,15 @@
                                                                           ;; Mark session as actively streaming in Redis
                                                                           (session-store/mark-session-streaming! (redis/get-client) session-id true)))
                                                                       (swap! chunks conj delta)
+                                                                      ;; Record progress for loop detection
+                                                                      (loop-detection/record-progress! session-id)
+                                                                      ;; Check for message loop
+                                                                      (when (seq delta)
+                                                                        (let [loop-result (loop-detection/check-and-handle-loop session-id conversation-id {:message-chunk delta})]
+                                                                          (when (= (:status loop-result) :abort)
+                                                                            ;; TODO: inject loop breaker or abort streaming
+                                                                            (js/console.warn "[loop] Aborting due to message loop:" (pr-str (:reason loop-result)))
+                                                                          ))
                                                                       (when (seq delta)
                                                                         (broadcast-ws-session! session-id "tokens"
                                                                                                {:run_id run-id
