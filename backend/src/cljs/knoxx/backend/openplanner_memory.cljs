@@ -91,29 +91,50 @@
                    (js/Promise.resolve [])))))
       (.catch (fn [_] (js/Promise.resolve [])))))
 
+(defn with-timeout
+  [promise timeout-ms label]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [timer (js/setTimeout
+                  (fn []
+                    (reject (js/Error. (str label " timed out after " timeout-ms "ms"))))
+                  timeout-ms)]
+       (.then promise
+              (fn [value]
+                (js/clearTimeout timer)
+                (resolve value))
+              (fn [err]
+                (js/clearTimeout timer)
+                (reject err)))))))
+
 (defn openplanner-memory-search!
   [config {:keys [query k session-id]}]
   (let [query (str/trim (or query ""))
-        k (max 1 (min 8 (or k 5)))]
+        k (max 1 (min 8 (or k 5)))
+        vector-payload (cond-> {:q query
+                                :k k
+                                :source "knoxx"
+                                :project (:session-project-name config)}
+                         (not (str/blank? session-id)) (assoc :session session-id))
+        fts-payload (cond-> {:q query
+                             :limit k
+                             :source "knoxx"
+                             :project (:session-project-name config)}
+                      (not (str/blank? session-id)) (assoc :session session-id))]
     (if (str/blank? query)
       (js/Promise.resolve {:query "" :hits [] :mode :none})
-      (-> (backend-http/openplanner-request! config "POST" "/v1/search/vector"
-                                             (cond-> {:q query
-                                                      :k k
-                                                      :source "knoxx"
-                                                      :project (:session-project-name config)}
-                                               (not (str/blank? session-id)) (assoc :session session-id)))
+      (-> (with-timeout (backend-http/openplanner-request! config "POST" "/v1/search/vector" vector-payload)
+                        1500
+                        "OpenPlanner vector search")
           (.then (fn [body]
-                   {:query query
-                    :mode :vector
-                    :hits (vector-result-hits (:result body))}))
+                   (let [hits (vector-result-hits (:result body))]
+                     (if (seq hits)
+                       {:query query
+                        :mode :vector
+                        :hits hits}
+                       (js/Promise.reject (js/Error. "vector search returned no hits"))))))
           (.catch (fn [_]
-                    (-> (backend-http/openplanner-request! config "POST" "/v1/search/fts"
-                                                           (cond-> {:q query
-                                                                    :limit k
-                                                                    :source "knoxx"
-                                                                    :project (:session-project-name config)}
-                                                             (not (str/blank? session-id)) (assoc :session session-id)))
+                    (-> (backend-http/openplanner-request! config "POST" "/v1/search/fts" fts-payload)
                         (.then (fn [body]
                                  (let [hits (vec (or (:rows body) []))]
                                    (if (seq hits)
@@ -124,7 +145,13 @@
                                          (.then (fn [recent]
                                                   {:query query
                                                    :mode :recent
-                                                   :hits recent}))))))))))))))
+                                                   :hits recent})))))))
+                        (.catch (fn [_]
+                                  (-> (openplanner-recent-session-summaries! config)
+                                      (.then (fn [recent]
+                                               {:query query
+                                                :mode :recent
+                                                :hits recent}))))))))))))
 
 (defn openplanner-graph-query!
   [config {:keys [query lake node-type limit edge-limit]}]

@@ -19,7 +19,7 @@
              (http/json-response! reply status (js->clj result :keywordize-keys true)))
            (fn [err]
              (http/error-response! reply err)
-             reply))))
+             js/undefined))))
 
 (defn resolve-request-context!
   [runtime request]
@@ -36,12 +36,13 @@
 (defn with-request-context!
   [runtime request reply f]
   (if-not (policy-db-enabled? runtime)
-    (f nil)
-    (.then (resolve-request-context! runtime request)
-           f
-           (fn [err]
-             (http/error-response! reply err)
-             reply))))
+    (do (f nil) js/undefined)
+    (do (.then (resolve-request-context! runtime request)
+               f
+               (fn [err]
+                 (http/error-response! reply err)
+                 js/undefined))
+        js/undefined)))
 
 (defn ctx-org-id [ctx] (or (:orgId ctx) (get-in ctx [:org :id])))
 (defn ctx-org-slug [ctx] (or (:orgSlug ctx) (get-in ctx [:org :slug])))

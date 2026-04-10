@@ -14,11 +14,12 @@
             (let [configured (and (not (str/blank? (:proxx-base-url config)))
                                   (not (str/blank? (:proxx-auth-token config))))]
               (if-not configured
-                (json-response! reply 200 {:reachable false
+                (do (json-response! reply 200 {:reachable false
                                            :configured false
                                            :base_url (:proxx-base-url config)
                                            :status_code 503
                                            :default_model (:llmModel @settings-state*)})
+                    js/undefined)
                 (.then (fetch-json (str (:proxx-base-url config) "/health")
                                    #js {:headers (bearer-headers (:proxx-auth-token config))})
                        (fn [resp]
@@ -37,14 +38,14 @@
 
                                                                      :else nil)
                                                        :default_model (:llmModel @settings-state*)})
-                           reply))
+                           js/undefined))
                        (fn [_err]
                          (json-response! reply 200 {:reachable false
                                                     :configured true
                                                     :base_url (:proxx-base-url config)
                                                     :status_code 502
                                                     :default_model (:llmModel @settings-state*)})
-                          reply))))))
+                          js/undefined))))))
 
   (route! app "GET" "/api/proxx/models"
           (fn [_request reply]

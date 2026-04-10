@@ -37,46 +37,46 @@
             (if-not (openplanner-enabled? config)
               (do
                 (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-                reply)
-              (with-request-context! runtime request reply
-                (fn [ctx]
-                  (ensure-permission! ctx "agent.memory.cross_session")
-                  (let [limit-raw (aget request "query" "limit")
-                        limit (or (parse-positive-int limit-raw) 12)
-                        session-promise (openplanner-request! config "GET"
-                                                              (str "/v1/sessions?project="
-                                                                   (js/encodeURIComponent (:session-project-name config))))]
-                    (.then session-promise
-                           (fn [body]
-                             (.then (authorized-session-ids! config ctx (map :session (or (:rows body) [])))
-                                    (fn [allowed]
-                                      (let [rows (->> (or (:rows body) [])
-                                                      (filter #(contains? allowed (str (:session %))))
-                                                      (take (max 1 limit))
-                                                      vec)
-                                            redis-client (redis/get-client)
-                                            inactive-row (fn [row]
-                                                           (assoc row
-                                                                  :is_active false
-                                                                  :active_status "inactive"
-                                                                  :has_active_stream false))
-                                            warm-title-cache! (fn [session-id]
-                                                                (when-not (contains? @session-titles* session-id)
-                                                                  (.then (fetch-openplanner-session-rows! config session-id {:mode :resume :limit 120})
-                                                                         (fn [title-rows]
-                                                                           (let [seed-text (session-title-seed-text title-rows)
-                                                                                 fallback-title (heuristic-session-title seed-text)]
-                                                                             (.then (resolve-session-title! config seed-text)
-                                                                                    (fn [entry]
-                                                                                      (cache-session-title! runtime config session-id
-                                                                                                            (or (normalize-session-title (:title entry) fallback-title)
-                                                                                                                fallback-title)
-                                                                                                            (:title_model entry)))
-                                                                                    (fn [_]
-                                                                                      (cache-session-title! runtime config session-id fallback-title nil)))))
-                                                                         (fn [_]
-                                                                           (cache-session-title! runtime config session-id "Untitled session" nil)))))
-                                            enrich-row (fn [row]
+                js/undefined)
+              (do (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (ensure-permission! ctx "agent.memory.cross_session")
+                      (let [limit-raw (aget request "query" "limit")
+                            limit (or (parse-positive-int limit-raw) 12)
+                            session-promise (openplanner-request! config "GET"
+                                                                  (str "/v1/sessions?project="
+                                                                       (js/encodeURIComponent (:session-project-name config))))]
+                        (.then session-promise
+                               (fn [body]
+                                 (.then (authorized-session-ids! config ctx (map :session (or (:rows body) [])))
+                                        (fn [allowed]
+                                          (let [rows (->> (or (:rows body) [])
+                                                          (filter #(contains? allowed (str (:session %))))
+                                                          (take (max 1 limit))
+                                                          vec)
+                                                redis-client (redis/get-client)
+                                                inactive-row (fn [row]
+                                                               (assoc row
+                                                                      :is_active false
+                                                                      :active_status "inactive"
+                                                                      :has_active_stream false))
+                                                warm-title-cache! (fn [session-id]
+                                                                    (when-not (contains? @session-titles* session-id)
+                                                                      (.then (fetch-openplanner-session-rows! config session-id {:mode :resume :limit 120})
+                                                                             (fn [title-rows]
+                                                                               (let [seed-text (session-title-seed-text title-rows)
+                                                                                     fallback-title (heuristic-session-title seed-text)]
+                                                                                 (.then (resolve-session-title! config seed-text)
+                                                                                        (fn [entry]
+                                                                                          (cache-session-title! runtime config session-id
+                                                                                                                (or (normalize-session-title (:title entry) fallback-title)
+                                                                                                                    fallback-title)
+                                                                                                                (:title_model entry)))
+                                                                                        (fn [_]
+                                                                                          (cache-session-title! runtime config session-id fallback-title nil)))))
+                                                                             (fn [_]
+                                                                               (cache-session-title! runtime config session-id "Untitled session" nil)))))
+                                                enrich-row (fn [row]
                                                          (let [session-id (str (:session row))
                                                                titled-row (if-let [title-entry (get @session-titles* session-id)]
                                                                             (assoc row
@@ -115,115 +115,120 @@
                                       (error-response! reply err 502))))
                            (fn [err]
                              (error-response! reply err 502)))
-                    reply))))))
+                      js/undefined)))))))
 
   (route! app "GET" "/api/memory/session-titles/status"
           (fn [request reply]
             (if-not (openplanner-enabled? config)
               (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-              (with-request-context! runtime request reply
-                (fn [ctx]
-                  (ensure-permission! ctx "agent.memory.cross_session")
-                  (json-response! reply 200 {:ok true
-                                             :status @session-title-backfill*
-                                             :cached_count (count @session-titles*)}))))))
+              (do (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (ensure-permission! ctx "agent.memory.cross_session")
+                      (json-response! reply 200 {:ok true
+                                                 :status @session-title-backfill*
+                                                 :cached_count (count @session-titles*)})))
+                  js/undefined))))
 
   (route! app "POST" "/api/memory/sessions/backfill-titles"
           (fn [request reply]
             (if-not (openplanner-enabled? config)
               (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-              (with-request-context! runtime request reply
-                (fn [ctx]
-                  (ensure-permission! ctx "agent.memory.cross_session")
-                  (let [body (or (aget request "body") #js {})
-                        limit (or (parse-positive-int (aget body "limit"))
-                                  (parse-positive-int (aget request "query" "limit")))
-                        force? (or (truthy-param? (aget body "force"))
-                                   (truthy-param? (aget request "query" "force")))]
-                    (-> (start-session-title-backfill! runtime config {:force force?
-                                                                       :limit limit})
-                        (.then (fn [status]
-                                 (json-response! reply 202 {:ok true
-                                                            :status status
-                                                            :cached_count (count @session-titles*)})))
-                        (.catch (fn [err]
-                                  (error-response! reply err 502))))))))))
+              (do (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (ensure-permission! ctx "agent.memory.cross_session")
+                      (let [body (or (aget request "body") #js {})
+                            limit (or (parse-positive-int (aget body "limit"))
+                                      (parse-positive-int (aget request "query" "limit")))
+                            force? (or (truthy-param? (aget body "force"))
+                                       (truthy-param? (aget request "query" "force")))]
+                        (-> (start-session-title-backfill! runtime config {:force force?
+                                                                           :limit limit})
+                            (.then (fn [status]
+                                     (json-response! reply 202 {:ok true
+                                                                :status status
+                                                                :cached_count (count @session-titles*)})))
+                            (.catch (fn [err]
+                                      (error-response! reply err 502)))))))
+                  js/undefined))))
 
   (route! app "POST" "/api/memory/sessions/import-titles"
           (fn [request reply]
             (if-not (openplanner-enabled? config)
               (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-              (with-request-context! runtime request reply
-                (fn [ctx]
-                  (ensure-permission! ctx "agent.memory.cross_session")
-                  (let [body (js->clj (or (aget request "body") #js {}))
-                        titles (or (get body "titles") {})
-                        updated (reduce-kv (fn [total session-id entry]
-                                             (let [session-id (str session-id)
-                                                   raw-title (if (map? entry) (or (get entry "title") (get entry :title)) entry)
-                                                   title-model (when (map? entry)
-                                                                 (or (get entry "title_model")
-                                                                     (get entry "title-model")
-                                                                     (get entry "model")
-                                                                     (:title_model entry)
-                                                                     (:title-model entry)
-                                                                     (:model entry)))
-                                                   normalized (normalize-session-title raw-title)]
-                                               (if (or (str/blank? session-id) (nil? normalized))
-                                                 total
-                                                 (do
-                                                   (cache-session-title! runtime config session-id normalized (or title-model "retro:heuristic"))
-                                                   (inc total)))))
+              (do (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (ensure-permission! ctx "agent.memory.cross_session")
+                      (let [body (js->clj (or (aget request "body") #js {}))
+                            titles (or (get body "titles") {})
+                            updated (reduce-kv (fn [total session-id entry]
+                                                 (let [session-id (str session-id)
+                                                       raw-title (if (map? entry) (or (get entry "title") (get entry :title)) entry)
+                                                       title-model (when (map? entry)
+                                                                     (or (get entry "title_model")
+                                                                         (get entry "title-model")
+                                                                         (get entry "model")
+                                                                         (:title_model entry)
+                                                                         (:title-model entry)
+                                                                         (:model entry)))
+                                                       normalized (normalize-session-title raw-title)]
+                                                   (if (or (str/blank? session-id) (nil? normalized))
+                                                     total
+                                                     (do
+                                                       (cache-session-title! runtime config session-id normalized (or title-model "retro:heuristic"))
+                                                       (inc total)))))
                                            0
                                            titles)]
-                    (json-response! reply 200 {:ok true
-                                               :updated updated
-                                               :cached_count (count @session-titles*)})))))))
+                        (json-response! reply 200 {:ok true
+                                                   :updated updated
+                                                   :cached_count (count @session-titles*)}))))
+                  js/undefined))))
 
   (route! app "GET" "/api/memory/sessions/:sessionId"
           (fn [request reply]
             (if-not (openplanner-enabled? config)
               (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-              (with-request-context! runtime request reply
-                (fn [ctx]
-                  (ensure-permission! ctx "agent.memory.read")
-                  (let [session-id (or (aget request "params" "sessionId") "")]
-                    (if (str/blank? session-id)
-                      (json-response! reply 400 {:detail "sessionId is required"})
-                      (-> (fetch-openplanner-session-rows! config session-id {:mode :resume :limit 400})
-                          (.then (fn [rows]
-                                   (if (session-visible? ctx rows)
-                                     (json-response! reply 200 {:ok true
-                                                                :session session-id
-                                                                :rows rows})
-                                     (error-response! reply (http-error 403 "memory_scope_denied" "Session is outside the current Knoxx scope")))))
-                          (.catch (fn [err]
-                                    (error-response! reply err 502)))))))))))
+              (do (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (ensure-permission! ctx "agent.memory.read")
+                      (let [session-id (or (aget request "params" "sessionId") "")]
+                        (if (str/blank? session-id)
+                          (json-response! reply 400 {:detail "sessionId is required"})
+                          (-> (fetch-openplanner-session-rows! config session-id {:mode :resume :limit 400})
+                              (.then (fn [rows]
+                                       (if (session-visible? ctx rows)
+                                         (json-response! reply 200 {:ok true
+                                                                    :session session-id
+                                                                    :rows rows})
+                                         (error-response! reply (http-error 403 "memory_scope_denied" "Session is outside the current Knoxx scope")))))
+                              (.catch (fn [err]
+                                        (error-response! reply err 502))))))))
+                  js/undefined))))
 
   (route! app "POST" "/api/memory/search"
           (fn [request reply]
             (if-not (openplanner-enabled? config)
               (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-              (with-request-context! runtime request reply
-                (fn [ctx]
-                  (let [body (or (aget request "body") #js {})
-                        query (or (aget body "query") "")
-                        k (aget body "k")
-                        session-id (or (aget body "sessionId") (aget body "session_id") "")]
-                    (ensure-permission! ctx "agent.memory.read")
-                    (when (and (str/blank? (str session-id))
-                               (not (ctx-permitted? ctx "agent.memory.cross_session"))
-                               (not (system-admin? ctx)))
-                      (throw (http-error 403 "memory_scope_denied" "Cross-session memory search is outside the current Knoxx scope")))
-                    (-> (openplanner-memory-search! config {:query query
-                                                            :k k
-                                                            :session-id session-id})
-                        (.then (fn [result]
-                                 (-> (filter-authorized-memory-hits! config ctx (:hits result))
-                                     (.then (fn [hits]
-                                              (json-response! reply 200 (assoc result :ok true :hits hits)))))))
-                        (.catch (fn [err]
-                                  (error-response! reply err 502))))))))))
+              (do (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (let [body (or (aget request "body") #js {})
+                            query (or (aget body "query") "")
+                            k (aget body "k")
+                            session-id (or (aget body "sessionId") (aget body "session_id") "")]
+                        (ensure-permission! ctx "agent.memory.read")
+                        (when (and (str/blank? (str session-id))
+                                   (not (ctx-permitted? ctx "agent.memory.cross_session"))
+                                   (not (system-admin? ctx)))
+                          (throw (http-error 403 "memory_scope_denied" "Cross-session memory search is outside the current Knoxx scope")))
+                        (-> (openplanner-memory-search! config {:query query
+                                                                :k k
+                                                                :session-id session-id})
+                            (.then (fn [result]
+                                     (-> (filter-authorized-memory-hits! config ctx (:hits result))
+                                         (.then (fn [hits]
+                                                  (json-response! reply 200 (assoc result :ok true :hits hits)))))))
+                            (.catch (fn [err]
+                                      (error-response! reply err 502)))))))
+                  js/undefined))))
 
   (route! app "GET" "/api/lounge/messages"
           (fn [_request reply]

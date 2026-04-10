@@ -259,7 +259,7 @@ export function ChatMainPane({
         </div>
 
         <div style={{ padding: 12, borderTop: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
-          <ChatComposer onSend={onSend} isSending={composerDisabled} />
+          <ChatComposer onSend={onSend} isSending={isSending} disabled={composerDisabled} />
         </div>
 
         {showConsole ? (
