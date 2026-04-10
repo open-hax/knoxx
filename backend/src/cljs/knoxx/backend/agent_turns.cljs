@@ -4,6 +4,7 @@
             [knoxx.backend.agent-runtime :refer [ensure-agent-session! remove-agent-session!]]
             [knoxx.backend.authz :as authz :refer [auth-snapshot auth-snapshot-has-principal?]]
             [knoxx.backend.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
+            [knoxx.backend.loop-detection :as loop-detection]
             [knoxx.backend.openplanner-memory :as openplanner-memory]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
