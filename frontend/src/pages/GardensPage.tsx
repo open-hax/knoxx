@@ -32,7 +32,7 @@ export default function GardensPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/query/gardens")
+    fetch("/api/openplanner/v1/gardens")
       .then((resp) => {
         if (!resp.ok) throw new Error(`Failed to load gardens: ${resp.status}`);
         return resp.json() as Promise<GardensResponse>;
