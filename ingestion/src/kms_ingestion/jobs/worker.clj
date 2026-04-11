@@ -102,6 +102,10 @@
           driver-config (or (support/parse-jsonish (:config source)) {})
           driver (registry/create-driver driver-type driver-config)]
       (control/log! (str "[JOB " job-id "] Created " driver-type " driver"))
+      ;; Reset failed files so they get retried automatically
+      (let [reset-count (db/reset-failed-files! source-id)]
+        (when (pos? reset-count)
+          (control/log! (str "[JOB " job-id "] Reset " reset-count " failed files for retry"))))
       (when-let [state (support/parse-jsonish (:state source))]
         (.set-state driver state))
       (control/log! (str "[JOB " job-id "] Starting discovery..."

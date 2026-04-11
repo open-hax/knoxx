@@ -277,7 +277,8 @@
                source-id)))
 
 (defn get-existing-state
-  "Get existing file state rows for a source keyed by file-id."
+  "Get existing file state rows for a source keyed by file-id.
+   Excludes 'pending' status so failed files that were reset get re-discovered."
   [source-id]
   (into {}
         (map (fn [row]
@@ -296,7 +297,7 @@
                    :path (:path row)
                    :status (:status row)
                    :metadata metadata-map}])))
-        (query "SELECT file_id, path, content_hash, status, metadata FROM ingestion_file_state WHERE source_id = ?::uuid"
+        (query "SELECT file_id, path, content_hash, status, metadata FROM ingestion_file_state WHERE source_id = ?::uuid AND status != 'pending'"
                source-id)))
 
 (defn reset-orphaned-jobs!
@@ -308,6 +309,29 @@
           completed_at = COALESCE(completed_at, NOW()),
           error_message = COALESCE(error_message, 'cancelled on worker restart')
     WHERE status IN ('pending', 'running')"))
+
+(defn reset-failed-files!
+  "Reset failed files to pending status so they can be retried.
+   Clears metadata (size/mtime) so discovery treats them as new files.
+   Returns the count of files reset."
+  [source-id]
+  ;; First get the count
+  (let [count-result (query-one
+                      "SELECT COUNT(*) as count FROM ingestion_file_state
+                       WHERE source_id = ?::uuid AND status = 'failed'"
+                      source-id)
+        count (or (:count count-result) 0)]
+    ;; Then reset if there are any
+    (when (pos? count)
+      (execute!
+       "UPDATE ingestion_file_state
+          SET status = 'pending',
+              error_message = NULL,
+              metadata = '{}',
+              updated_at = NOW()
+        WHERE source_id = ?::uuid AND status = 'failed'"
+       source-id))
+    count))
 
 (defn upsert-file-state!
   "Insert or update file state."
