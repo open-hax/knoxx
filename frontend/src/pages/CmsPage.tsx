@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { Button, Card, Badge, Input } from "@open-hax/uxx";
+
+const PAGE_SIZE = 20;
 
 interface Document {
   doc_id: string;
@@ -55,6 +57,8 @@ function CmsPage() {
   const [documentTotal, setDocumentTotal] = useState(0);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [project, setProject] = useState("devel");
   const [visibilityFilter, setVisibilityFilter] = useState<string>("all");
   const [kindFilter, setKindFilter] = useState<string>("docs");
@@ -65,32 +69,84 @@ function CmsPage() {
   const [showDraftPanel, setShowDraftPanel] = useState(false);
   const [draftTopic, setDraftTopic] = useState("");
   const [drafting, setDrafting] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const offsetRef = useRef(0);
+  const isLoadingRef = useRef(false);
+  const hasMoreRef = useRef(true);
 
+  // Keep refs in sync with state
+  useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
+  useEffect(() => { isLoadingRef.current = loading || loadingMore; }, [loading, loadingMore]);
+
+  // Load initial documents and stats when filters change
   useEffect(() => {
-    loadDocuments();
+    offsetRef.current = 0;
+    setDocuments([]);
+    setHasMore(true);
+    hasMoreRef.current = true;
+    loadDocuments(true);
     loadStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, visibilityFilter, kindFilter, sourceFilter, domainFilter, pathPrefixFilter]);
 
-  const loadDocuments = async () => {
-    setLoading(true);
+  // Infinite scroll observer
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting && hasMoreRef.current && !isLoadingRef.current) {
+          loadDocuments(false);
+        }
+      },
+      { rootMargin: "200px" }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadDocuments = async (reset: boolean) => {
+    if (reset) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
+
     try {
       const params = new URLSearchParams();
       params.set("tenant_id", project);
       params.set("kind", kindFilter);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(reset ? 0 : offsetRef.current));
       if (visibilityFilter !== "all") params.set("visibility", visibilityFilter);
       if (sourceFilter.trim()) params.set("source", sourceFilter.trim());
       if (domainFilter.trim()) params.set("domain", domainFilter.trim());
       if (pathPrefixFilter.trim()) params.set("source_path_prefix", pathPrefixFilter.trim());
+
       const resp = await fetch(`/api/cms/documents?${params}`);
       if (resp.ok) {
         const data: DocumentListResponse = await resp.json();
-        setDocuments(data.documents);
+        if (reset) {
+          setDocuments(data.documents);
+          offsetRef.current = data.documents.length;
+        } else {
+          setDocuments((prev) => [...prev, ...data.documents]);
+          offsetRef.current += data.documents.length;
+        }
         setDocumentTotal(data.total);
+        const newHasMore = offsetRef.current < data.total;
+        setHasMore(newHasMore);
+        hasMoreRef.current = newHasMore;
       }
     } catch (err) {
       console.error("Failed to load documents:", err);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -117,7 +173,11 @@ function CmsPage() {
     try {
       const resp = await fetch(`/api/cms/publish/${docId}`, { method: "POST" });
       if (resp.ok) {
-        loadDocuments();
+        // Reload from beginning to reflect visibility change
+        offsetRef.current = 0;
+        setDocuments([]);
+        setHasMore(true);
+        loadDocuments(true);
         loadStats();
       } else {
         const err = await resp.text();
@@ -132,7 +192,11 @@ function CmsPage() {
     try {
       const resp = await fetch(`/api/cms/archive/${docId}`, { method: "POST" });
       if (resp.ok) {
-        loadDocuments();
+        // Reload from beginning to reflect visibility change
+        offsetRef.current = 0;
+        setDocuments([]);
+        setHasMore(true);
+        loadDocuments(true);
         loadStats();
       }
     } catch (err) {
@@ -160,7 +224,10 @@ function CmsPage() {
       
       if (resp.ok) {
         const doc: Document = await resp.json();
-        setDocuments([doc, ...documents]);
+        // Prepend new document and update offset
+        setDocuments((prev) => [doc, ...prev]);
+        offsetRef.current += 1;
+        setDocumentTotal((prev) => prev + 1);
         setShowDraftPanel(false);
         setDraftTopic("");
       } else {
@@ -190,7 +257,10 @@ function CmsPage() {
       
       if (resp.ok) {
         const doc: Document = await resp.json();
-        setDocuments([doc, ...documents]);
+        // Prepend new document and update offset
+        setDocuments((prev) => [doc, ...prev]);
+        offsetRef.current += 1;
+        setDocumentTotal((prev) => prev + 1);
         loadStats();
       }
     } catch (err) {
@@ -314,6 +384,23 @@ function CmsPage() {
                   </div>
                 </div>
               ))}
+
+              {/* Sentinel for infinite scroll */}
+              <div ref={sentinelRef} style={{ height: 1 }} />
+
+              {/* Loading more indicator */}
+              {loadingMore && (
+                <div style={{ padding: "16px", textAlign: "center", color: "var(--token-colors-text-muted)" }}>
+                  Loading more...
+                </div>
+              )}
+
+              {/* End of list indicator */}
+              {!hasMore && documents.length > 0 && (
+                <div style={{ padding: "16px", textAlign: "center", color: "var(--token-colors-text-muted)", fontSize: "14px" }}>
+                  {documentTotal} documents loaded
+                </div>
+              )}
 
               {documents.length === 0 && !loading && (
                 <div style={{ padding: "32px", textAlign: "center", color: "var(--token-colors-text-muted)" }}>
