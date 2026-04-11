@@ -38,6 +38,15 @@ interface StatsResponse {
   by_source: Record<string, number>;
 }
 
+interface Garden {
+  garden_id: string;
+  title: string;
+  description: string | null;
+  status: "draft" | "active" | "archived";
+  default_language: string;
+  target_languages: string[];
+}
+
 const VISIBILITY_VARIANTS: Record<string, "default" | "warning" | "success" | "error"> = {
   internal: "default",
   review: "warning",
@@ -69,6 +78,8 @@ function CmsPage() {
   const [showDraftPanel, setShowDraftPanel] = useState(false);
   const [draftTopic, setDraftTopic] = useState("");
   const [drafting, setDrafting] = useState(false);
+  const [gardens, setGardens] = useState<Garden[]>([]);
+  const [selectedGardenId, setSelectedGardenId] = useState<string>("");
   const sentinelRef = useRef<HTMLDivElement>(null);
   const offsetRef = useRef(0);
   const isLoadingRef = useRef(false);
@@ -77,6 +88,27 @@ function CmsPage() {
   // Keep refs in sync with state
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
   useEffect(() => { isLoadingRef.current = loading || loadingMore; }, [loading, loadingMore]);
+
+  // Load gardens list on mount
+  useEffect(() => {
+    const loadGardens = async () => {
+      try {
+        const resp = await fetch("/api/gardens?status=active");
+        if (resp.ok) {
+          const data = await resp.json();
+          setGardens(data.gardens ?? []);
+          // Auto-select first active garden if available
+          if (data.gardens?.length > 0 && !selectedGardenId) {
+            setSelectedGardenId(data.gardens[0].garden_id);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load gardens:", err);
+      }
+    };
+    loadGardens();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load initial documents and stats when filters change
   useEffect(() => {
@@ -170,8 +202,12 @@ function CmsPage() {
   };
 
   const handlePublish = async (docId: string) => {
+    if (!selectedGardenId) {
+      alert("Please select a garden to publish to");
+      return;
+    }
     try {
-      const resp = await fetch(`/api/cms/publish/${docId}`, { method: "POST" });
+      const resp = await fetch(`/api/cms/publish/${docId}/${selectedGardenId}`, { method: "POST" });
       if (resp.ok) {
         // Reload from beginning to reflect visibility change
         offsetRef.current = 0;
@@ -486,14 +522,36 @@ function CmsPage() {
               </div>
 
               <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {(selectedDoc.visibility === "internal" || selectedDoc.visibility === "review" || selectedDoc.visibility === "archived") && (
+                  <div>
+                    <label style={{ display: "block", fontSize: "14px", fontWeight: 500, marginBottom: "4px" }}>
+                      Publish to Garden
+                    </label>
+                    <select
+                      value={selectedGardenId}
+                      onChange={(e) => setSelectedGardenId(e.target.value)}
+                      style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-canvas)", color: "var(--token-colors-text-default)" }}
+                    >
+                      {gardens.length === 0 && (
+                        <option value="">No gardens available</option>
+                      )}
+                      {gardens.map((g) => (
+                        <option key={g.garden_id} value={g.garden_id}>
+                          {g.title} ({g.garden_id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                
                 {selectedDoc.visibility === "internal" && (
-                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)}>
+                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)} disabled={!selectedGardenId}>
                     🚀 Publish to Public
                   </Button>
                 )}
                 
                 {selectedDoc.visibility === "review" && (
-                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)}>
+                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)} disabled={!selectedGardenId}>
                     ✅ Approve & Publish
                   </Button>
                 )}
@@ -505,7 +563,7 @@ function CmsPage() {
                 )}
 
                 {selectedDoc.visibility === "archived" && (
-                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)}>
+                  <Button variant="primary" fullWidth onClick={() => handlePublish(selectedDoc.doc_id)} disabled={!selectedGardenId}>
                     🔄 Re-publish
                   </Button>
                 )}
