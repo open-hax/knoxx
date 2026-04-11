@@ -29,7 +29,7 @@
   "Get full configuration map."
   []
   {:port (Integer/parseInt (env "PORT" "3003"))
-   :database-url (env "DATABASE_URL" "jdbc:postgresql://localhost:5432/futuresight_kms?user=kms&password=kms")
+   :database-url (env "DATABASE_URL" "jdbc:postgresql://localhost:5432/knoxx?user=kms&password=kms")
    :redis-url (env "REDIS_URL" "redis://localhost:6379")
    :ragussy-url (env "RAGUSSY_BASE_URL" "http://localhost:8000")
    :proxx-url (env "PROXX_BASE_URL" "")

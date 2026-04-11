@@ -55,16 +55,9 @@
     (reset! datasource ds)
     (jdbc/execute! ds [(str
                         "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
-                        "CREATE TABLE IF NOT EXISTS tenants ("
-                        " tenant_id VARCHAR(64) PRIMARY KEY,"
-                        " name VARCHAR(256) NOT NULL,"
-                        " domains JSONB DEFAULT '[]',"
-                        " config JSONB DEFAULT '{}',"
-                        " created_at TIMESTAMP DEFAULT NOW()"
-                        ");"
                         "CREATE TABLE IF NOT EXISTS ingestion_sources ("
                         " source_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),"
-                        " tenant_id TEXT NOT NULL REFERENCES tenants(tenant_id),"
+                        " tenant_id TEXT NOT NULL,"
                         " driver_type TEXT NOT NULL,"
                         " name TEXT NOT NULL,"
                         " config JSONB NOT NULL DEFAULT '{}',"
@@ -142,14 +135,9 @@
                      {:builder-fn rs/as-unqualified-maps}))
 
 (defn ensure-tenant!
-  "Ensure a tenant row exists for ingestion bootstrap flows."
+  "No-op: tenants are now managed in MongoDB via OpenPlanner."
   [tenant-id name]
-  (query-one
-   "INSERT INTO tenants (tenant_id, name, domains, config)
-    VALUES (?, ?, '[]'::jsonb, '{}'::jsonb)
-    ON CONFLICT (tenant_id) DO UPDATE SET name = EXCLUDED.name
-    RETURNING tenant_id"
-   tenant-id name))
+  tenant-id)
 
 ;; ============================================================
 ;; Ingestion Sources

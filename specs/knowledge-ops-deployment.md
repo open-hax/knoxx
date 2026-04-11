@@ -83,7 +83,7 @@ km-labels:
   # ... existing config ...
   environment:
     # Existing:
-    DATABASE_URL: postgresql://kms:kms@postgres:5432/futuresight_kms
+    DATABASE_URL: postgresql://kms:kms@postgres:5432/knoxx
     REDIS_URL: redis://redis:6379
     KM_LABELS_API_KEY: ${KM_LABELS_API_KEY:-change-me-km-labels}
     # New for CMS:
@@ -127,7 +127,7 @@ PROXY_AUTH_TOKEN=${OPEN_HAX_OPENAI_PROXY_AUTH_TOKEN:-}
 # ── Database ──────────────────────────────────────────
 POSTGRES_USER=kms
 POSTGRES_PASSWORD=kms
-POSTGRES_DB=futuresight_kms
+POSTGRES_DB=knoxx
 
 # ── Embedding ─────────────────────────────────────────
 EMBED_MODE=local
@@ -230,7 +230,7 @@ uvicorn app.main:app --reload --port 8000
 # Terminal 3: km_labels (includes CMS + widget proxy)
 cd packages/futuresight-kms/python
 pip install -r requirements.txt
-DATABASE_URL=postgresql://kms:kms@localhost:5432/futuresight_kms \
+DATABASE_URL=postgresql://kms:kms@localhost:5432/knoxx \
   RAGUSSY_BASE_URL=http://localhost:8000 \
   QDRANT_URL=http://localhost:6333 \
   uvicorn km_labels.app:create_app --reload --port 3002

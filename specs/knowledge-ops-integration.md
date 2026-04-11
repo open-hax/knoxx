@@ -191,7 +191,7 @@ location /v1/ {
 
 ```env
 # Database
-DATABASE_URL=postgresql://kms:kms@postgres:5432/futuresight_kms
+DATABASE_URL=postgresql://kms:kms@postgres:5432/knoxx
 
 # Ragussy (for AI drafts + embedding)
 RAGUSSY_BASE_URL=http://ragussy:8000
