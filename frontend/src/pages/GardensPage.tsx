@@ -4,11 +4,12 @@ import { Button, Card } from '@open-hax/uxx';
 type Garden = {
   garden_id: string;
   title: string;
-  purpose: string;
-  lakes: string[];
-  views: string[];
-  actions: string[];
-  outputs: string[];
+  description: string;
+  domain: string;
+  status: string;
+  source_filter?: { projects?: string[] };
+  target_languages?: string[];
+  auto_translate?: boolean;
 };
 
 type GardensResponse = {
@@ -74,6 +75,7 @@ export default function GardensPage() {
       <div className="grid gap-4 md:grid-cols-2">
         {data?.gardens?.map((garden) => {
           const href = gardenLinks[garden.garden_id];
+          const projects = garden.source_filter?.projects || [];
           return (
             <Card
               key={garden.garden_id}
@@ -84,7 +86,7 @@ export default function GardensPage() {
                 <div>
                   <h2 className="text-lg font-semibold">{garden.title}</h2>
                   <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                    {garden.purpose}
+                    {garden.description}
                   </p>
                 </div>
                 <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200">
@@ -93,25 +95,29 @@ export default function GardensPage() {
               </div>
 
               <div className="mt-4 space-y-3 text-sm">
-                <div>
-                  <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">Lakes</div>
-                  <div className="flex flex-wrap gap-2">
-                    {garden.lakes.map((lake) => (
-                      <span key={lake} className="rounded bg-slate-100 px-2 py-0.5 text-xs dark:bg-slate-700">
-                        {lake}
-                      </span>
-                    ))}
+                {projects.length > 0 ? (
+                  <div>
+                    <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">Projects</div>
+                    <div className="flex flex-wrap gap-2">
+                      {projects.map((project) => (
+                        <span key={project} className="rounded bg-slate-100 px-2 py-0.5 text-xs dark:bg-slate-700">
+                          {project}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : null}
+
+                {garden.target_languages && garden.target_languages.length > 0 ? (
+                  <div>
+                    <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">Languages</div>
+                    <div className="text-slate-600 dark:text-slate-300">{garden.target_languages.join(", ")}</div>
+                  </div>
+                ) : null}
 
                 <div>
-                  <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">Views</div>
-                  <div className="text-slate-600 dark:text-slate-300">{garden.views.join(", ")}</div>
-                </div>
-
-                <div>
-                  <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">Actions</div>
-                  <div className="text-slate-600 dark:text-slate-300">{garden.actions.join(", ")}</div>
+                  <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">Domain</div>
+                  <div className="text-slate-600 dark:text-slate-300">{garden.domain}</div>
                 </div>
               </div>
 
