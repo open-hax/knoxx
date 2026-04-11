@@ -78,8 +78,7 @@
                                             vec)]
                             {:database {:id (:id profile)
                                         :name (:name profile)
-                                        :docsPath docs-path
-                                        :qdrantCollection (:qdrantCollection profile)}
+                                        :docsPath docs-path}
                              :query query
                              :tokens tokens
                              :results ranked})))))))))
@@ -100,8 +99,7 @@
           (.then (fn [content]
                    (let [[clipped truncated?] (clip-text content max-chars)]
                      {:database {:id (:id profile)
-                                 :name (:name profile)
-                                 :qdrantCollection (:qdrantCollection profile)}
+                                 :name (:name profile)}
                      :path rel-path
                      :truncated truncated?
                      :content clipped}))))))))
