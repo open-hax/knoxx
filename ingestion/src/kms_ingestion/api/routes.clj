@@ -8,6 +8,8 @@
    [kms-ingestion.api.workspace-support :as workspace]
    [kms-ingestion.config :as config]
    [kms-ingestion.db :as db]
+   [kms-ingestion.drivers.local :as local]
+   [kms-ingestion.drivers.protocol :as protocol]
    [kms-ingestion.drivers.registry :as registry]
    [kms-ingestion.jobs.worker :as worker]
    [muuntaja.core :as m]
@@ -40,6 +42,9 @@
             :name (:name source)
             :config (json->clj (:config source))
             :state (json->clj (:state source))
+            :file_types (json->clj (:file_types source))
+            :include_patterns (json->clj (:include_patterns source))
+            :exclude_patterns (json->clj (:exclude_patterns source))
             :enabled (:enabled source)
             :created_at (str (:created_at source))}
      include-collections?
@@ -131,6 +136,83 @@
        :body (source-response source)}
       {:status 404
        :body {:error "Source not found"}})))
+
+(defn- fetch-openplanner-document-stats
+  [tenant-id source-id]
+  (let [base-url (config/openplanner-url)
+        api-key (config/openplanner-api-key)]
+    (if (str/blank? base-url)
+      nil
+      (let [headers (cond-> {"Content-Type" "application/json"}
+                      (not (str/blank? api-key))
+                      (assoc "Authorization" (str "Bearer " api-key)))
+            resp (http/get
+                  (str base-url "/v1/documents/stats")
+                  {:headers headers
+                   :query-params {:project tenant-id
+                                  :source "kms-ingestion"
+                                  :metadata_source_id source-id}
+                   :accept :json
+                   :as :json
+                   :throw-exceptions false
+                   :socket-timeout 30000
+                   :connection-timeout 30000})]
+        (when (= 200 (:status resp))
+          (:body resp))))))
+
+(defn get-source-audit-handler
+  [request]
+  (let [tenant-id (get-tenant-id request)
+        source-id (-> request :path-params :source_id)
+        source (db/get-source source-id tenant-id)]
+    (if-not source
+      {:status 404
+       :body {:error "Source not found"}}
+      (let [driver-type (:driver_type source)
+            driver-config (or (json->clj (:config source)) {})
+            file-types (vec (or (json->clj (:file_types source)) []))
+            include-patterns (vec (or (json->clj (:include_patterns source)) []))
+            exclude-patterns (vec (or (json->clj (:exclude_patterns source)) []))
+            collections (vec (or (json->clj (:collections source)) [tenant-id]))
+            existing-state (db/get-existing-state source-id)
+            driver (registry/create-driver driver-type driver-config)
+            discover-opts {:existing-state existing-state
+                           :file-types file-types
+                           :include-patterns include-patterns
+                           :exclude-patterns exclude-patterns}
+            discovery (protocol/discover driver discover-opts)
+            snapshot (when (= driver-type "local")
+                       (local/snapshot-files (or (:root_path driver-config) (:root-path driver-config))
+                                             discover-opts))
+            matching-ids (if (map? snapshot)
+                           (set (map :id (vals snapshot)))
+                           (set (keys existing-state)))
+            matching-state (if (seq matching-ids)
+                             (select-keys existing-state matching-ids)
+                             {})
+            state-ingested (count (filter #(= "ingested" (:status %)) (vals matching-state)))
+            state-failed (count (filter #(= "failed" (:status %)) (vals matching-state)))
+            doc-stats (fetch-openplanner-document-stats tenant-id source-id)
+            openplanner-total (or (:total doc-stats) 0)]
+        {:status 200
+         :body {:source_id source-id
+                :tenant_id tenant-id
+                :driver_type driver-type
+                :root_path (or (:root_path driver-config) (:root-path driver-config))
+                :collections collections
+                :file_types file-types
+                :include_patterns include-patterns
+                :exclude_patterns exclude-patterns
+                :matching_files (:total-files discovery)
+                :new_files (:new-files discovery)
+                :changed_files (:changed-files discovery)
+                :unchanged_files (:unchanged-files discovery)
+                :skipped_files (:skipped-files discovery)
+                :state_ingested_files state-ingested
+                :state_failed_files state-failed
+                :openplanner_documents openplanner-total
+                :coverage_delta (- (:total-files discovery) openplanner-total)
+                :openplanner_stats doc-stats}}))))
 
 (defn delete-source-handler
   [request]
@@ -351,6 +433,9 @@
     ["/sources"
      {:get list-sources-handler
       :post create-source-handler}]
+
+    ["/sources/:source_id/audit"
+     {:get get-source-audit-handler}]
 
     ["/sources/:source_id"
      {:get get-source-handler

@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Button, Card, Badge, Input, Spinner } from "@open-hax/uxx";
 import type { BrowserCreateSourceForm, BrowserCreatedSource } from "../../components/WorkspaceBrowserCard";
-import type { CreateSourceForm, Job, ProgressEvent, Source } from "./types";
+import type { CreateSourceForm, Job, ProgressEvent, Source, SourceAudit } from "./types";
 
-export function SourceDetailView({ source, jobs, onStartJob, onDelete }: {
+export function SourceDetailView({ source, audit, jobs, onStartJob, onDelete }: {
   source: Source;
+  audit: SourceAudit | null;
   jobs: Job[];
   onStartJob: () => void;
   onDelete: () => void;
@@ -24,6 +25,31 @@ export function SourceDetailView({ source, jobs, onStartJob, onDelete }: {
             <Button variant="danger" onClick={onDelete}>Delete</Button>
           </div>
         </div>
+
+        <Card variant="default" padding="md" style={{ marginBottom: 24 }}>
+          <h3 style={{ fontWeight: 600, marginBottom: 12 }}>Coverage Audit</h3>
+          {audit ? (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 16 }}>
+                <StatCard label="Matching Files" value={audit.matching_files} />
+                <StatCard label="In Lake" value={audit.openplanner_documents} color="var(--token-colors-accent-green)" />
+                <StatCard label="Pending Sync" value={audit.new_files + audit.changed_files} color="var(--token-colors-accent-blue)" />
+                <StatCard label="Failed State" value={audit.state_failed_files} color="var(--token-colors-accent-red)" />
+              </div>
+              <div style={{ fontSize: 14, color: "var(--token-colors-text-muted)", display: "grid", gap: 6, marginBottom: 12 }}>
+                <div><strong>Root:</strong> {audit.root_path || "(none)"}</div>
+                <div><strong>Lakes:</strong> {audit.collections.join(", ") || "devel"}</div>
+                <div><strong>Include:</strong> {audit.include_patterns.join(", ") || "(all matching text-like files)"}</div>
+                <div><strong>Exclude:</strong> {audit.exclude_patterns.join(", ") || "(none)"}</div>
+                <div><strong>File types:</strong> {audit.file_types.join(", ") || "(driver default)"}</div>
+                <div><strong>State audit:</strong> {audit.state_ingested_files} tracked as ingested, {audit.unchanged_files} unchanged, {audit.changed_files} changed, {audit.new_files} new, {audit.skipped_files} skipped</div>
+                <div><strong>Lake delta:</strong> {audit.coverage_delta > 0 ? `${audit.coverage_delta} matching files not yet represented in OpenPlanner` : audit.coverage_delta < 0 ? `${Math.abs(audit.coverage_delta)} more OpenPlanner docs than current matching files` : "source scan and OpenPlanner doc counts are aligned"}</div>
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 14, color: "var(--token-colors-text-muted)" }}>Loading coverage audit…</div>
+          )}
+        </Card>
 
         <Card variant="default" padding="md" style={{ marginBottom: 24 }}>
           <h3 style={{ fontWeight: 600, marginBottom: 12 }}>Configuration</h3>

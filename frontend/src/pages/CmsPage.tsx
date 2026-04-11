@@ -7,7 +7,7 @@ interface Document {
   title: string;
   content: string;
   visibility: "internal" | "review" | "public" | "archived";
-  source: "manual" | "ai-drafted" | "ingested";
+  source: string;
   source_path: string | null;
   domain: string;
   language: string;
@@ -29,8 +29,11 @@ interface DocumentListResponse {
 
 interface StatsResponse {
   total: number;
+  project_total: number;
   by_visibility: Record<string, number>;
   by_domain: Record<string, number>;
+  by_kind: Record<string, number>;
+  by_source: Record<string, number>;
 }
 
 const VISIBILITY_VARIANTS: Record<string, "default" | "warning" | "success" | "error"> = {
@@ -52,7 +55,12 @@ function CmsPage() {
   const [documentTotal, setDocumentTotal] = useState(0);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<string>("all");
+  const [project, setProject] = useState("devel");
+  const [visibilityFilter, setVisibilityFilter] = useState<string>("all");
+  const [kindFilter, setKindFilter] = useState<string>("docs");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [domainFilter, setDomainFilter] = useState("");
+  const [pathPrefixFilter, setPathPrefixFilter] = useState("");
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
   const [showDraftPanel, setShowDraftPanel] = useState(false);
   const [draftTopic, setDraftTopic] = useState("");
@@ -61,15 +69,18 @@ function CmsPage() {
   useEffect(() => {
     loadDocuments();
     loadStats();
-  }, [filter]);
+  }, [project, visibilityFilter, kindFilter, sourceFilter, domainFilter, pathPrefixFilter]);
 
   const loadDocuments = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (filter !== "all") {
-        params.set("visibility", filter);
-      }
+      params.set("tenant_id", project);
+      params.set("kind", kindFilter);
+      if (visibilityFilter !== "all") params.set("visibility", visibilityFilter);
+      if (sourceFilter.trim()) params.set("source", sourceFilter.trim());
+      if (domainFilter.trim()) params.set("domain", domainFilter.trim());
+      if (pathPrefixFilter.trim()) params.set("source_path_prefix", pathPrefixFilter.trim());
       const resp = await fetch(`/api/cms/documents?${params}`);
       if (resp.ok) {
         const data: DocumentListResponse = await resp.json();
@@ -85,7 +96,14 @@ function CmsPage() {
 
   const loadStats = async () => {
     try {
-      const resp = await fetch("/api/cms/stats");
+      const params = new URLSearchParams();
+      params.set("tenant_id", project);
+      params.set("kind", kindFilter);
+      if (visibilityFilter !== "all") params.set("visibility", visibilityFilter);
+      if (sourceFilter.trim()) params.set("source", sourceFilter.trim());
+      if (domainFilter.trim()) params.set("domain", domainFilter.trim());
+      if (pathPrefixFilter.trim()) params.set("source_path_prefix", pathPrefixFilter.trim());
+      const resp = await fetch(`/api/cms/stats?${params}`);
       if (resp.ok) {
         const data: StatsResponse = await resp.json();
         setStats(data);
@@ -131,11 +149,11 @@ function CmsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tenant_id: "devel",
+          tenant_id: project,
           topic: draftTopic,
           tone: "professional",
           audience: "general",
-          source_collections: ["devel_docs"],
+          source_collections: [project],
           max_context_chunks: 5,
         }),
       });
@@ -164,7 +182,7 @@ function CmsPage() {
     if (!content) return;
     
     try {
-      const resp = await fetch("/api/cms/documents", {
+      const resp = await fetch(`/api/cms/documents?tenant_id=${encodeURIComponent(project)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, content, domain: "general" }),
@@ -184,16 +202,29 @@ function CmsPage() {
     <div style={{ display: "flex", height: "calc(100vh - 120px)", gap: "16px" }}>
       <Card variant="default" padding="md" style={{ width: "224px", flexShrink: 0 }}>
         <h2 style={{ marginBottom: "16px", fontSize: "14px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--token-colors-text-muted)" }}>
-          Navigation
+          Filters
         </h2>
+        <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
+          <Input value={project} onChange={(e) => setProject(e.target.value)} placeholder="devel" />
+          <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-canvas)", color: "var(--token-colors-text-default)" }}>
+            <option value="docs">docs</option>
+            <option value="code">code</option>
+            <option value="config">config</option>
+            <option value="data">data</option>
+            <option value="all">all kinds</option>
+          </select>
+          <Input value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} placeholder="source (optional)" />
+          <Input value={domainFilter} onChange={(e) => setDomainFilter(e.target.value)} placeholder="domain (optional)" />
+          <Input value={pathPrefixFilter} onChange={(e) => setPathPrefixFilter(e.target.value)} placeholder="path prefix (optional)" />
+        </div>
         <nav style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
           {["all", "internal", "review", "public", "archived"].map((v) => (
             <Button
               key={v}
-              variant={filter === v ? "primary" : "ghost"}
+              variant={visibilityFilter === v ? "primary" : "ghost"}
               size="sm"
               fullWidth
-              onClick={() => setFilter(v)}
+              onClick={() => setVisibilityFilter(v)}
             >
               {v === "all" ? "All Documents" : v.charAt(0).toUpperCase() + v.slice(1)}
               {stats?.by_visibility[v] !== undefined && (
@@ -220,7 +251,13 @@ function CmsPage() {
           <Card variant="outlined" padding="sm" style={{ marginTop: "24px" }}>
             <h3 style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase", color: "var(--token-colors-text-muted)" }}>Stats</h3>
             <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 700 }}>{stats.total}</p>
-            <p style={{ fontSize: "12px", color: "var(--token-colors-text-muted)" }}>total documents</p>
+            <p style={{ fontSize: "12px", color: "var(--token-colors-text-muted)" }}>matching current filters</p>
+            <p style={{ marginTop: "12px", fontSize: "18px", fontWeight: 600 }}>{stats.project_total}</p>
+            <p style={{ fontSize: "12px", color: "var(--token-colors-text-muted)" }}>total records in {project}</p>
+            <div style={{ marginTop: "12px", display: "grid", gap: "4px", fontSize: "12px", color: "var(--token-colors-text-muted)" }}>
+              <div><strong>Kinds:</strong> {Object.entries(stats.by_kind).map(([k, v]) => `${k}=${v}`).join(", ") || "none"}</div>
+              <div><strong>Sources:</strong> {Object.entries(stats.by_source).slice(0, 4).map(([k, v]) => `${k}=${v}`).join(", ") || "none"}</div>
+            </div>
           </Card>
         )}
       </Card>
@@ -235,7 +272,7 @@ function CmsPage() {
             <div style={{ position: "sticky", top: 0, zIndex: 10, borderBottom: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-surface)", backdropFilter: "blur(8px)", padding: "16px" }}>
               <h2 style={{ fontSize: "18px", fontWeight: 600 }}>Content Library</h2>
               <p style={{ fontSize: "14px", color: "var(--token-colors-text-muted)" }}>
-                {loading ? "Loading..." : `${documentTotal} documents`}
+                {loading ? "Loading..." : `${documentTotal} matching records in ${project}`}
               </p>
             </div>
 

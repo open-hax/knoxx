@@ -5,11 +5,35 @@ export interface Source {
   name: string;
   config: Record<string, unknown>;
   state: Record<string, unknown>;
+  collections?: string[];
+  file_types?: string[];
+  include_patterns?: string[];
+  exclude_patterns?: string[];
   last_scan_at: string | null;
   last_error: string | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface SourceAudit {
+  source_id: string;
+  tenant_id: string;
+  driver_type: string;
+  root_path: string | null;
+  collections: string[];
+  file_types: string[];
+  include_patterns: string[];
+  exclude_patterns: string[];
+  matching_files: number;
+  new_files: number;
+  changed_files: number;
+  unchanged_files: number;
+  skipped_files: number;
+  state_ingested_files: number;
+  state_failed_files: number;
+  openplanner_documents: number;
+  coverage_delta: number;
 }
 
 export interface Job {

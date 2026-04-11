@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Badge, Button, Card, Spinner } from '@open-hax/uxx';
 import WorkspaceBrowserCard, { type BrowserCreateSourceForm, type BrowserCreatedSource } from '../components/WorkspaceBrowserCard';
 import { CreateSourceModal, JobProgressView, SourceDetailView } from './ingestion-page/parts';
-import type { CreateSourceForm, Job, ProgressEvent, Source } from './ingestion-page/types';
+import type { CreateSourceForm, Job, ProgressEvent, Source, SourceAudit } from './ingestion-page/types';
 
 const API_BASE = '/api/ingestion';
 
@@ -10,6 +10,7 @@ export default function IngestionPage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedSource, setSelectedSource] = useState<Source | null>(null);
+  const [selectedSourceAudit, setSelectedSourceAudit] = useState<SourceAudit | null>(null);
   const [showCreateSource, setShowCreateSource] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
@@ -20,6 +21,26 @@ export default function IngestionPage() {
     loadSources();
     loadJobs();
   }, []);
+
+  useEffect(() => {
+    if (!selectedSource) {
+      setSelectedSourceAudit(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/sources/${selectedSource.source_id}/audit`);
+        if (resp.ok) {
+          setSelectedSourceAudit(await resp.json());
+        } else {
+          setSelectedSourceAudit(null);
+        }
+      } catch (err) {
+        console.error('Failed to load source audit:', err);
+        setSelectedSourceAudit(null);
+      }
+    })();
+  }, [selectedSource]);
 
   const loadSources = async () => {
     try {
@@ -192,6 +213,7 @@ export default function IngestionPage() {
         ) : selectedSource ? (
           <SourceDetailView
             source={selectedSource}
+            audit={selectedSourceAudit}
             jobs={jobs.filter((j) => j.source_id === selectedSource.source_id)}
             onStartJob={() => handleStartJob(selectedSource.source_id)}
             onDelete={async () => {
