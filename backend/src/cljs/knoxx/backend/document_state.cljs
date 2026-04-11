@@ -1,7 +1,8 @@
 (ns knoxx.backend.document-state
   (:require [clojure.string :as str]
             [knoxx.backend.authz :as authz]
-            [knoxx.backend.runtime-config :as rc]))
+            [knoxx.backend.runtime-config :as rc]
+            [knoxx.backend.openplanner-memory :as op-memory]))
 
 (defonce database-state* (atom nil))
 
@@ -237,101 +238,171 @@
          (get-in state [:profiles "default"])))))
 
 (defn start-document-ingestion!
+  "Ingest documents into OpenPlanner for embedding and vector storage.
+   Replaces previous metadata-only tracking with OpenPlanner /v1/documents indexing."
   [runtime config profile {:keys [full selected-files]}]
   (let [node-fs (aget runtime "fs")
         node-path (aget runtime "path")
         node-crypto (aget runtime "crypto")
         db-id (:id profile)
-        docs-path (:docsPath profile)]
+        docs-path (:docsPath profile)
+        project (or (:project-name config) "devel")]
     (-> (list-files-recursive! runtime docs-path)
-        (.then (fn [all-abs]
-                 (let [wanted (when-not full
-                                (into #{} (map normalize-relative-path) selected-files))
-                       queue (->> all-abs
-                                  (map (fn [abs]
-                                         (let [rel (normalize-relative-path (.relative node-path docs-path abs))]
-                                           {:abs abs :rel rel})))
-                                  (filter (fn [{:keys [rel]}]
-                                            (or full (contains? wanted rel))))
-                                  vec)
-                       started-at (rc/now-iso)
-                       total (count queue)
-                       mode (if full "full" "selected")]
-                   (swap! database-state* assoc-in [:records db-id :progress]
-                          {:active true
-                           :startedAt started-at
-                           :mode mode
-                           :currentFile (some-> queue first :rel)
-                           :processedChunks 0
-                           :totalChunks total
-                           :percent 0
-                           :percentPrecise 0
-                           :filesUpdated 0
-                           :errors 0
-                           :stale false})
-                   (swap! database-state* assoc-in [:records db-id :lastRequest]
-                          {:full (boolean full)
-                           :selectedFiles (vec (map :rel queue))})
-                   (.then (js/Promise.all
-                           (clj->js
-                            (map (fn [{:keys [abs rel]}]
-                                   (-> (.readFile node-fs abs "utf8")
-                                       (.then (fn [content]
-                                                {:rel rel
-                                                 :error false
-                                                 :chunkCount (file-chunk-count content)}))
-                                       (.catch (fn [err]
-                                                 {:rel rel
-                                                  :error true
-                                                  :detail (str err)
-                                                  :chunkCount 0}))))
-                                 queue)))
-                          (fn [results]
-                            (let [items (vec (js-array-seq results))
-                                  files-updated (count (remove :error items))
-                                  errors (count (filter :error items))
-                                  total-indexed (reduce + 0 (map :chunkCount items))
-                                  started-ms (.getTime (js/Date. started-at))
-                                  duration-seconds (max 0 (js/Math.round (/ (- (.now js/Date) started-ms) 1000)))
-                                  history-item {:id (.randomUUID node-crypto)
-                                                :completedAt (rc/now-iso)
-                                                :mode mode
-                                                :chunksUpserted total-indexed
-                                                :processedChunks total
-                                                :filesUpdated files-updated
-                                                :durationSeconds duration-seconds
-                                                :errors errors}]
-                              (swap! database-state*
-                                     (fn [state]
-                                       (let [state-with-index (reduce (fn [acc {:keys [rel error chunkCount]}]
-                                                                        (if error
-                                                                          acc
-                                                                          (assoc-in acc [:records db-id :indexed rel]
-                                                                                    {:chunkCount chunkCount
-                                                                                     :indexedAt (rc/now-iso)})))
-                                                                      state
-                                                                      items)]
-                                         (-> state-with-index
-                                             (assoc-in [:records db-id :progress]
-                                                       {:active false
-                                                        :startedAt started-at
-                                                        :mode mode
-                                                        :currentFile nil
-                                                        :processedChunks total
-                                                        :totalChunks total
-                                                        :percent 100
-                                                        :percentPrecise 100
-                                                        :filesUpdated files-updated
-                                                        :errors errors
-                                                        :stale false})
-                                             (update-in [:records db-id :history]
-                                                        (fn [history]
-                                                          (->> (conj (vec history) history-item)
-                                                               (take-last 50)
-                                                               vec)))))))
-                              {:ok true
-                               :started true
-                               :mode mode
-                               :selectedFiles (vec (map :rel queue))})))))))))
+        (.then
+         (fn [all-abs]
+           (let [wanted (when-not full
+                          (into #{} (map normalize-relative-path) selected-files))
+                 queue (->> all-abs
+                            (map (fn [abs]
+                                   (let [rel (normalize-relative-path (.relative node-path docs-path abs))]
+                                     {:abs abs :rel rel})))
+                            (filter (fn [{:keys [rel]}]
+                                      (or full (contains? wanted rel))))
+                            vec)
+                 started-at (rc/now-iso)
+                 total (count queue)
+                 mode (if full "full" "selected")]
+             (swap! database-state* assoc-in [:records db-id :progress]
+                    {:active true
+                     :startedAt started-at
+                     :mode mode
+                     :currentFile (some-> queue first :rel)
+                     :processedChunks 0
+                     :totalChunks total
+                     :percent 0
+                     :percentPrecise 0
+                     :filesUpdated 0
+                     :errors 0
+                     :stale false})
+             (swap! database-state* assoc-in [:records db-id :lastRequest]
+                    {:full (boolean full)
+                     :selectedFiles (vec (map :rel queue))})
+             (if (zero? total)
+               (do
+                 (swap! database-state*
+                        (fn [state]
+                          (-> state
+                              (assoc-in [:records db-id :progress]
+                                        {:active false
+                                         :startedAt started-at
+                                         :mode mode
+                                         :currentFile nil
+                                         :processedChunks 0
+                                         :totalChunks 0
+                                         :percent 100
+                                         :percentPrecise 100
+                                         :filesUpdated 0
+                                         :errors 0
+                                         :stale false})
+                              (update-in [:records db-id :history]
+                                         (fn [history]
+                                           (->> (conj (vec history)
+                                                      {:id (.randomUUID node-crypto)
+                                                       :completedAt (rc/now-iso)
+                                                       :mode mode
+                                                       :chunksUpserted 0
+                                                       :processedChunks 0
+                                                       :filesUpdated 0
+                                                       :durationSeconds 0
+                                                       :errors 0})
+                                                (take-last 50)
+                                                vec))))))
+                 (js/Promise.resolve {:ok true
+                                      :started true
+                                      :mode mode
+                                      :selectedFiles []
+                                      :indexedCount 0
+                                      :failedCount 0
+                                      :openplanner true}))
+               (-> (.all js/Promise
+                         (clj->js
+                          (map (fn [{:keys [abs rel]}]
+                                 (-> (.readFile node-fs abs "utf8")
+                                     (.then (fn [content]
+                                              {:rel rel
+                                               :content content
+                                               :error false}))
+                                     (.catch (fn [err]
+                                               {:rel rel
+                                                :content nil
+                                                :error true
+                                                :detail (str err)}))))
+                               queue)))
+                   (.then
+                    (fn [read-results]
+                      (let [items (vec (js-array-seq read-results))
+                            read-failed (vec (filter :error items))
+                            valid-items (vec (remove :error items))
+                            documents (mapv (fn [item]
+                                              {:id (str "knoxx:" db-id ":" (:rel item))
+                                               :rel-path (:rel item)
+                                               :content (:content item)
+                                               :source-path (:rel item)
+                                               :project project
+                                               :extra {:database-id db-id
+                                                       :org-id (:orgId profile)}})
+                                            valid-items)]
+                        (-> (op-memory/batch-upsert-openplanner-documents!
+                             config
+                             documents
+                             {:concurrency 3
+                              :project project
+                              :visibility "internal"
+                              :extra {:database-id db-id
+                                      :org-id (:orgId profile)}})
+                            (.then
+                             (fn [index-result]
+                               (let [successful-rels (set (keep :rel-path (:indexed index-result)))
+                                     indexed-items (vec (filter (fn [item]
+                                                                  (contains? successful-rels (:rel item)))
+                                                                valid-items))
+                                     indexed-count (count indexed-items)
+                                     failed-count (+ (count read-failed)
+                                                     (:failed-count index-result 0))
+                                     chunk-count (reduce + 0 (map (comp file-chunk-count :content) indexed-items))
+                                     started-ms (.getTime (js/Date. started-at))
+                                     duration-seconds (max 0 (js/Math.round (/ (- (.now js/Date) started-ms) 1000)))
+                                     history-item {:id (.randomUUID node-crypto)
+                                                   :completedAt (rc/now-iso)
+                                                   :mode mode
+                                                   :chunksUpserted chunk-count
+                                                   :processedChunks total
+                                                   :filesUpdated indexed-count
+                                                   :durationSeconds duration-seconds
+                                                   :errors failed-count}]
+                                 (swap! database-state*
+                                        (fn [state]
+                                          (let [state-with-index (reduce (fn [acc item]
+                                                                           (assoc-in acc [:records db-id :indexed (:rel item)]
+                                                                                     {:chunkCount (file-chunk-count (:content item))
+                                                                                      :indexedAt (rc/now-iso)
+                                                                                      :openplanner true}))
+                                                                         state
+                                                                         indexed-items)]
+                                            (-> state-with-index
+                                                (assoc-in [:records db-id :progress]
+                                                          {:active false
+                                                           :startedAt started-at
+                                                           :mode mode
+                                                           :currentFile nil
+                                                           :processedChunks total
+                                                           :totalChunks total
+                                                           :percent 100
+                                                           :percentPrecise 100
+                                                           :filesUpdated indexed-count
+                                                           :errors failed-count
+                                                           :stale false})
+                                                (update-in [:records db-id :history]
+                                                           (fn [history]
+                                                             (->> (conj (vec history) history-item)
+                                                                  (take-last 50)
+                                                                  vec)))))))
+                                 {:ok true
+                                  :started true
+                                  :mode mode
+                                  :selectedFiles (vec (map :rel queue))
+                                  :indexedCount indexed-count
+                                  :failedCount failed-count
+                                  :openplanner true})))))))))))))))
 
 ;; Route registration

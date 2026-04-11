@@ -3,6 +3,123 @@
             [knoxx.backend.http :as backend-http]
             [knoxx.backend.runtime-config :as runtime-config]))
 
+(defn js-array-seq
+  [arr]
+  (when (some? arr)
+    (for [i (range (.-length arr))]
+      (aget arr i))))
+
+;; ---------------------------------------------------------------------------
+;; Document Ingestion
+;; Sends documents to OpenPlanner's /v1/documents endpoint for embedding
+;; and vector storage. This replaces direct Qdrant calls.
+;; ---------------------------------------------------------------------------
+
+(defn guess-document-kind
+  "Infer document kind from file extension for OpenPlanner indexing."
+  [rel-path]
+  (let [ext (some-> (str/lower-case rel-path)
+                    (str/split #"\.")
+                    last)]
+    (cond
+      (contains? #{"ts" "tsx" "js" "jsx" "mjs" "cjs" "py" "clj" "cljs" "cljc" "rs" "go" "java" "rb" "php"} ext) "code"
+      (contains? #{"md" "mdx" "txt" "rst" "adoc"} ext) "docs"
+      (contains? #{"json" "yaml" "yml" "toml" "ini" "env" "conf"} ext) "config"
+      (contains? #{"csv" "tsv" "sql" "xml"} ext) "data"
+      :else "docs")))
+
+(defn upsert-openplanner-document!
+  "Send a document to OpenPlanner's /v1/documents endpoint for indexing.
+   Returns {:ok true, :document ...} on success, or {:ok false ...} on failure."
+  [config {:keys [id rel-path content project kind title source-path domain visibility extra]}]
+  (when-not (backend-http/openplanner-enabled? config)
+    (throw (js/Error. "OpenPlanner is not configured")))
+  (let [doc-id (or id (str "knoxx-doc:" (or rel-path (.randomUUID js/crypto))))
+        doc-kind (or kind (guess-document-kind rel-path))
+        doc-title (or title (some-> rel-path (str/split #"/") last) doc-id)
+        doc-content (str (or content ""))
+        doc-project (or project (:project-name config) "devel")
+        payload {:document {:id doc-id
+                            :title doc-title
+                            :content doc-content
+                            :project doc-project
+                            :kind doc-kind
+                            :visibility (or visibility "internal")
+                            :source "knoxx-ingestion"
+                            :sourcePath (or source-path rel-path)
+                            :domain (or domain "general")
+                            :language "en"
+                            :createdBy "knoxx-ingestion"
+                            :metadata (merge {:indexed_from "knoxx"}
+                                             extra)}}]
+    (-> (backend-http/openplanner-request! config "POST" "/v1/documents" payload)
+        (.then (fn [resp]
+                 {:ok true
+                  :document (:document resp)
+                  :indexed (:indexed resp)
+                  :rel-path rel-path}))
+        (.catch (fn [err]
+                  (.warn js/console "[knoxx] failed to index document into OpenPlanner:" rel-path err)
+                  {:ok false
+                   :error (str err)
+                   :rel-path rel-path})))))
+
+(defn batch-upsert-openplanner-documents!
+  "Ingest multiple documents into OpenPlanner with concurrency control.
+   Returns {:ok true, :indexed [...], :failed [...]} summary."
+  [config documents {:keys [concurrency project visibility extra]
+                     :or {concurrency 3
+                          visibility "internal"}}]
+  (cond
+    (empty? documents)
+    (js/Promise.resolve {:ok true
+                         :indexed []
+                         :failed []
+                         :total 0
+                         :indexed-count 0
+                         :failed-count 0})
+
+    (not (backend-http/openplanner-enabled? config))
+    (js/Promise.resolve {:ok false
+                         :indexed []
+                         :failed []
+                         :total (count documents)
+                         :indexed-count 0
+                         :failed-count (count documents)
+                         :error "OpenPlanner is not configured"})
+
+    :else
+    (let [chunks (vec (partition-all concurrency documents))
+          results (atom {:indexed []
+                         :failed []})
+          process-chunk! (fn [chunk]
+                           (-> (.all js/Promise
+                                     (clj->js
+                                      (map (fn [doc]
+                                             (upsert-openplanner-document! config
+                                                                           (merge {:project project
+                                                                                   :visibility visibility
+                                                                                   :extra extra}
+                                                                                  doc)))
+                                           chunk)))
+                               (.then (fn [chunk-results]
+                                        (doseq [result (js-array-seq chunk-results)]
+                                          (if (:ok result)
+                                            (swap! results update :indexed conj result)
+                                            (swap! results update :failed conj result)))
+                                        nil))))]
+      (-> (reduce (fn [promise chunk]
+                    (.then promise (fn [] (process-chunk! chunk))))
+                  (js/Promise.resolve nil)
+                  chunks)
+          (.then (fn []
+                   {:ok true
+                    :indexed (:indexed @results)
+                    :failed (:failed @results)
+                    :total (count documents)
+                    :indexed-count (count (:indexed @results))
+                    :failed-count (count (:failed @results))}))))))
+
 (defn planner-row-timestamp-ms
   [row]
   (let [ts (:ts row)]
