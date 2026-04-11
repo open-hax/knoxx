@@ -42,22 +42,22 @@ interface WorkspaceBrowserCardProps {
   onStartJob?: (sourceId: string) => Promise<void> | void;
 }
 
-function inferCollection(path: string): string {
+/** Infer a document kind (docs/code/config/data) from the current path. */
+function inferKind(path: string): string {
   const p = path.toLowerCase();
-  if (p === 'docs' || p.startsWith('docs/') || p === 'specs' || p.startsWith('specs/') || p === 'inbox' || p.startsWith('inbox/')) return 'devel-docs';
-  if (p === 'config' || p.startsWith('config/') || p === 'configs' || p.startsWith('configs/') || p.includes('docker-compose') || p.endsWith('.env')) return 'devel-config';
-  if (p === 'data' || p.startsWith('data/') || p === 'datasets' || p.startsWith('datasets/')) return 'devel-data';
-  return 'devel-code';
+  if (p === 'docs' || p.startsWith('docs/') || p === 'specs' || p.startsWith('specs/') || p === 'inbox' || p.startsWith('inbox/')) return 'docs';
+  if (p === 'config' || p.startsWith('config/') || p === 'configs' || p.startsWith('configs/') || p.includes('docker-compose') || p.endsWith('.env')) return 'config';
+  if (p === 'data' || p.startsWith('data/') || p === 'datasets' || p.startsWith('datasets/')) return 'data';
+  return 'code';
 }
 
-function inferFileTypes(path: string): string {
-  const collection = inferCollection(path);
-  switch (collection) {
-    case 'devel-docs':
+function inferFileTypesForKind(kind: string): string {
+  switch (kind) {
+    case 'docs':
       return '.md,.txt,.org,.rst,.adoc';
-    case 'devel-config':
+    case 'config':
       return '.json,.jsonc,.yaml,.yml,.toml,.ini,.cfg,.conf,.env,.properties';
-    case 'devel-data':
+    case 'data':
       return '.jsonl,.csv,.tsv,.parquet';
     default:
       return '.clj,.cljs,.cljc,.edn,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.kt,.sh,.sql';
@@ -78,7 +78,7 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [creating, setCreating] = useState(false);
   const [creatingAndStarting, setCreatingAndStarting] = useState(false);
-  const [collection, setCollection] = useState('devel-docs');
+  const [kind, setKind] = useState('docs');
   const [fileTypes, setFileTypes] = useState('.md,.txt,.org,.rst,.adoc');
   const [excludePatterns, setExcludePatterns] = useState('**/.git/**,**/node_modules/**,**/dist/**,**/coverage/**,**/*.png,**/*.jpg,**/*.jpeg,**/*.gif,**/*.pdf,**/*.zip,**/*.tar.gz');
   const [entryFilter, setEntryFilter] = useState('');
@@ -121,9 +121,9 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
       const data = (await resp.json()) as BrowseResponse;
       setBrowseData(data);
       setCurrentPath(data.current_path || '');
-      const guessedCollection = inferCollection(data.current_path || '');
-      setCollection(guessedCollection);
-      setFileTypes(inferFileTypes(data.current_path || ''));
+      const guessedKind = inferKind(data.current_path || '');
+      setKind(guessedKind);
+      setFileTypes(inferFileTypesForKind(guessedKind));
       setPreviewData(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -158,9 +158,9 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
     try {
       await onCreateSource({
         driver_type: 'local',
-        name: `${folderName(currentPath)} → ${collection}`,
+        name: `${folderName(currentPath)} → devel (${kind})`,
         config: { root_path: currentPath ? `/app/workspace/devel/${currentPath}` : '/app/workspace/devel' },
-        collections: [collection],
+        collections: ['devel'],
         file_types: fileTypes.split(',').map((v) => v.trim()).filter(Boolean),
         exclude_patterns: excludePatterns.split(',').map((v) => v.trim()).filter(Boolean),
       });
@@ -181,9 +181,9 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
     try {
       const created = await onCreateSource({
         driver_type: 'local',
-        name: `${folderName(currentPath)} → ${collection}`,
+        name: `${folderName(currentPath)} → devel (${kind})`,
         config: { root_path: currentPath ? `/app/workspace/devel/${currentPath}` : '/app/workspace/devel' },
-        collections: [collection],
+        collections: ['devel'],
         file_types: fileTypes.split(',').map((v) => v.trim()).filter(Boolean),
         exclude_patterns: excludePatterns.split(',').map((v) => v.trim()).filter(Boolean),
       });
@@ -242,7 +242,7 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
 
           <div className="grid gap-3">
             <Input value={entryFilter} onChange={(e: ChangeEvent<HTMLInputElement>) => setEntryFilter(e.target.value)} placeholder="Filter entries..." />
-            <Input value={collection} onChange={(e: ChangeEvent<HTMLInputElement>) => setCollection(e.target.value)} placeholder="Collection (e.g. devel-docs)" />
+            <Input value={kind} onChange={(e: ChangeEvent<HTMLInputElement>) => { setKind(e.target.value); setFileTypes(inferFileTypesForKind(e.target.value)); }} placeholder="Kind (docs/code/config/data)" />
             <Input value={fileTypes} onChange={(e: ChangeEvent<HTMLInputElement>) => setFileTypes(e.target.value)} placeholder=".md,.txt,.clj" />
             <Input value={excludePatterns} onChange={(e: ChangeEvent<HTMLInputElement>) => setExcludePatterns(e.target.value)} placeholder="Exclude globs" />
           </div>

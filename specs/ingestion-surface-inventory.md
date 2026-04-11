@@ -137,14 +137,16 @@ These do not write OpenPlanner docs/events directly, but they affect auditabilit
 
 ## Remaining split-brain / consolidation risks
 
-### Workspace browser still proposes old split-lake names
-- `packages/knoxx/frontend/src/components/WorkspaceBrowserCard.tsx:45-64`
-  - still infers `devel-docs`, `devel-code`, `devel-config`, `devel-data`
-- `packages/knoxx/frontend/src/components/WorkspaceBrowserCard.tsx:81-82`
-  - default UI state still starts at `devel-docs`
+### Workspace browser now uses unified devel lake
+- `packages/knoxx/frontend/src/components/WorkspaceBrowserCard.tsx:46-65`
+  - `inferKind()` now returns `docs/code/config/data` (not `devel-docs/devel-code/...`)
+  - `inferFileTypesForKind()` maps from kind to file type extensions
+- `packages/knoxx/frontend/src/components/WorkspaceBrowserCard.tsx:81`
+  - default kind state is `docs` (not `devel-docs`)
 - `packages/knoxx/frontend/src/components/WorkspaceBrowserCard.tsx:159-166`
 - `packages/knoxx/frontend/src/components/WorkspaceBrowserCard.tsx:182-189`
-  - source creation still uses that collection value
+  - source creation now uses `collections: ['devel']` always
+  - source name includes kind as a facet label: `folderName → devel (kind)`
 
 ### Default ingestion worker source is already unified
 - `packages/knoxx/ingestion/src/kms_ingestion/server.clj:287-307`
@@ -159,10 +161,11 @@ These do not write OpenPlanner docs/events directly, but they affect auditabilit
 
 ## Decision implications
 
-If the goal is exactly one representation of each devel file in one devel lake, the main remaining consolidation target is:
+With the WorkspaceBrowserCard unified, the canonical lake model is now:
 
-1. remove or rewrite `WorkspaceBrowserCard` old lake inference (`devel-docs` etc.)
-2. keep `project=devel` as canonical lake boundary
-3. treat `kind` as a filter/facet, not as a separate lake name
-4. keep graph-weaver in `openplanner-graph` mode for lake-backed graph views
-5. treat `ingestion_file_state` as audit state only, not a second source of truth for corpus contents
+1. `project=devel` is the single canonical lake boundary
+2. `kind` is a filter/facet (docs/code/config/data), not a separate lake name
+3. all source creation goes through `collections: ['devel']`
+4. graph-weaver runs in `openplanner-graph` mode for lake-backed graph views
+5. `ingestion_file_state` is audit state only, not a second source of truth for corpus contents
+6. the only remaining split-brain risk is any old source that was created with `devel-docs/devel-code/...` collections still existing in the ingestion DB — these should be migrated or deleted
