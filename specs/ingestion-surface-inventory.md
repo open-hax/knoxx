@@ -168,4 +168,31 @@ With the WorkspaceBrowserCard unified, the canonical lake model is now:
 3. all source creation goes through `collections: ['devel']`
 4. graph-weaver runs in `openplanner-graph` mode for lake-backed graph views
 5. `ingestion_file_state` is audit state only, not a second source of truth for corpus contents
-6. the only remaining split-brain risk is any old source that was created with `devel-docs/devel-code/...` collections still existing in the ingestion DB — these should be migrated or deleted
+
+## Verified clean state (2026-04-11)
+
+- **Ingestion sources**: 1 source, `collections: ["devel"]`
+- **MongoDB events**: 574,333 total events; documents by kind: code (7802), docs (4591), config (3817), data (67)
+- **Old collection metadata**: 0 documents with `devel-docs/devel-code/devel-config/devel-data` in `metadata.collection`
+- **Ingestion file state**: 89,423 records, all with `collections: ["devel"]`
+
+No migration was needed — the corpus was already unified. The WorkspaceBrowserCard change prevents future split-lake source creation.
+
+## Ingestion audit findings (2026-04-11)
+
+Running `GET /api/ingestion/sources/:source_id/audit` revealed:
+
+| Metric | Count |
+|--------|-------|
+| Matching files | 76,495 |
+| New files | 14 |
+| Changed files | 20 |
+| Unchanged files | 76,461 |
+| Skipped files | 28,768 |
+| State: ingested | 7,081 |
+| State: failed | 71,848 |
+| State: deleted | 10,494 |
+| OpenPlanner documents | 6,801 |
+| Coverage delta | 69,694 |
+
+**Issue**: 80% of tracked files are marked `failed` with no error message. Most are `worktrees/` paths — git worktrees that were removed from the filesystem but incorrectly marked as `failed` instead of `deleted`. This is a separate ingestion worker bug, not a lake unification issue.
