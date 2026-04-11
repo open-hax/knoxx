@@ -200,6 +200,10 @@ Running `GET /api/ingestion/sources/:source_id/audit` revealed:
 - `worker.clj`: Changed orphan detection to check file existence directly via `java.io.File.exists()` instead of relying on discovery results
 - This prevents unchanged files from being incorrectly marked as deleted
 
-**Remaining work:**
-- Retry the 71,270 failed files when OpenPlanner is stable
-- Consider adding a bulk retry endpoint for failed files
+**Automatic retry implemented (2026-04-11):**
+- `reset-failed-files!`: Resets failed files to pending status, clears metadata so discovery treats them as new
+- `get-existing-state`: Excludes pending files so they're discovered as new files
+- Worker automatically resets failed files at job start
+- Streaming discovery yields pending files lazily as it walks the filesystem
+
+**Result:** Jobs automatically retry failed files without manual intervention. Current run: 71,270 pending → processing at ~24 files/batch.
