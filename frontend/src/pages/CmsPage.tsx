@@ -49,6 +49,7 @@ const VISIBILITY_ICONS: Record<string, string> = {
 
 function CmsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [documentTotal, setDocumentTotal] = useState(0);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
@@ -73,6 +74,7 @@ function CmsPage() {
       if (resp.ok) {
         const data: DocumentListResponse = await resp.json();
         setDocuments(data.documents);
+        setDocumentTotal(data.total);
       }
     } catch (err) {
       console.error("Failed to load documents:", err);
@@ -233,7 +235,7 @@ function CmsPage() {
             <div style={{ position: "sticky", top: 0, zIndex: 10, borderBottom: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-surface)", backdropFilter: "blur(8px)", padding: "16px" }}>
               <h2 style={{ fontSize: "18px", fontWeight: 600 }}>Content Library</h2>
               <p style={{ fontSize: "14px", color: "var(--token-colors-text-muted)" }}>
-                {loading ? "Loading..." : `${documents.length} documents`}
+                {loading ? "Loading..." : `${documentTotal} documents`}
               </p>
             </div>
 
