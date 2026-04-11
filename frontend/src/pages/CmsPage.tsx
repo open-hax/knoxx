@@ -1,6 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, Card, Input } from "@open-hax/uxx";
 
+// Simple markdown renderer for preview
+function renderMarkdownPreview(content: string): string {
+  return content
+    // Headers
+    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+    // Bold and italic
+    .replace(/\*\*\*(.*?)\*\*\*/gim, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/gim, '<em>$1</em>')
+    // Code blocks
+    .replace(/```(\w*)\n([\s\S]*?)```/gim, '<pre class="preview-code"><code>$2</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/gim, '<code class="preview-inline-code">$1</code>')
+    // Links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2">$1</a>')
+    // Blockquotes
+    .replace(/^> (.*$)/gim, '<blockquote>$1</blockquote>')
+    // Lists
+    .replace(/^\- (.*$)/gim, '<li>$1</li>')
+    .replace(/^\d+\. (.*$)/gim, '<li>$1</li>')
+    // Paragraphs
+    .replace(/\n\n/gim, '</p><p>')
+    // Line breaks
+    .replace(/\n/gim, '<br>');
+}
+
 interface OpenPlannerDocument {
   id: string;
   title: string;
@@ -120,6 +148,7 @@ export default function CmsPage() {
   const [editorGardenId, setEditorGardenId] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
 
   const stats = useMemo(() => {
     const by_visibility = allDocuments.reduce<Record<string, number>>((acc, doc) => {
@@ -489,7 +518,17 @@ export default function CmsPage() {
                 <div style={{ flex: 1 }}>
                   <Input value={editorTitle} onChange={(event) => setEditorTitle(event.target.value)} placeholder="Document title" />
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => setSelectedDocId(null)}>✕</Button>
+                <div style={{ display: "flex", gap: "4px" }}>
+                  <Button
+                    variant={showPreview ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => setShowPreview((v) => !v)}
+                    title={showPreview ? "Show editor" : "Show preview"}
+                  >
+                    {showPreview ? "✎ Edit" : "👁 Preview"}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setSelectedDocId(null)}>✕</Button>
+                </div>
               </div>
 
               <div style={{ marginTop: "12px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
@@ -498,6 +537,9 @@ export default function CmsPage() {
                 </Badge>
                 <Badge variant="default" size="sm">{selectedDoc.source}</Badge>
                 <Badge variant="default" size="sm">{selectedDoc.language}</Badge>
+                {editorGardenId ? (
+                  <Badge variant="default" size="sm">🌿 {editorGardenId}</Badge>
+                ) : null}
               </div>
 
               <div style={{ marginTop: "16px" }}>
@@ -510,20 +552,75 @@ export default function CmsPage() {
                 </select>
               </div>
 
-              <div style={{ marginTop: "16px" }}>
-                <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600 }}>Markdown</label>
-                <textarea
-                  value={editorContent}
-                  onChange={(event) => setEditorContent(event.target.value)}
-                  rows={20}
-                  style={{ width: "100%", borderRadius: "8px", border: "1px solid var(--token-colors-border-subtle)", padding: "12px", fontSize: "14px", fontFamily: "monospace", resize: "vertical", background: "var(--token-colors-background-surface)" }}
-                />
-              </div>
+              {showPreview ? (
+                <div style={{ marginTop: "16px" }}>
+                  <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600 }}>Preview</label>
+                  <div
+                    style={{
+                      width: "100%",
+                      minHeight: "400px",
+                      borderRadius: "8px",
+                      border: "1px solid var(--token-colors-border-subtle)",
+                      padding: "16px",
+                      background: "var(--token-colors-background-surface)",
+                      overflow: "auto",
+                      fontSize: "14px",
+                      lineHeight: "1.6",
+                    }}
+                  >
+                    <style>{`
+                      .preview-code {
+                        background: var(--token-colors-background-subtle);
+                        padding: 12px;
+                        border-radius: 6px;
+                        overflow-x: auto;
+                        font-family: monospace;
+                        font-size: 13px;
+                      }
+                      .preview-code code {
+                        background: transparent;
+                      }
+                      .preview-inline-code {
+                        background: var(--token-colors-background-subtle);
+                        padding: 2px 6px;
+                        border-radius: 4px;
+                        font-family: monospace;
+                        font-size: 13px;
+                      }
+                    `}</style>
+                    <div
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdownPreview(editorContent),
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginTop: "16px" }}>
+                  <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600 }}>Markdown</label>
+                  <textarea
+                    value={editorContent}
+                    onChange={(event) => setEditorContent(event.target.value)}
+                    rows={20}
+                    style={{ width: "100%", borderRadius: "8px", border: "1px solid var(--token-colors-border-subtle)", padding: "12px", fontSize: "14px", fontFamily: "monospace", resize: "vertical", background: "var(--token-colors-background-surface)" }}
+                  />
+                </div>
+              )}
 
               <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
                 <Button variant="secondary" fullWidth disabled={saving || !selectedDoc} onClick={() => void handleSaveSelected()}>
                   {saving ? "Saving..." : "Save Markdown"}
                 </Button>
+
+                {selectedDoc.visibility === "public" && editorGardenId ? (
+                  <Button
+                    variant="ghost"
+                    fullWidth
+                    onClick={() => window.open(`/api/openplanner/v1/public/gardens/${editorGardenId}/html/${selectedDoc.doc_id}`, "_blank")}
+                  >
+                    Open in Garden →
+                  </Button>
+                ) : null}
 
                 {(selectedDoc.visibility === "internal" || selectedDoc.visibility === "review" || selectedDoc.visibility === "archived") ? (
                   <Button variant="primary" fullWidth disabled={publishing} onClick={() => void handlePublish(selectedDoc)}>
