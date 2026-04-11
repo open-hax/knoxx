@@ -93,7 +93,7 @@ function CmsPage() {
   useEffect(() => {
     const loadGardens = async () => {
       try {
-        const resp = await fetch("/api/gardens?status=active");
+        const resp = await fetch("/api/openplanner/v1/gardens?status=active");
         if (resp.ok) {
           const data = await resp.json();
           setGardens(data.gardens ?? []);
