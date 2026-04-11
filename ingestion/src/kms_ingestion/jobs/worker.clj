@@ -95,7 +95,8 @@
           full-scan? (true? (or (:full_scan job-config) (:full-scan job-config)))
           watch-paths (vec (or (:watch_paths job-config) (:watch-paths job-config) []))
           deleted-paths (vec (or (:deleted_paths job-config) (:deleted-paths job-config) []))
-          existing-state (if full-scan? {} (db/get-existing-state source-id))
+          existing-state (db/get-existing-state source-id)
+          ;; For full-scan, we still need existing-state to detect orphans
           existing-hashes (into {} (map (fn [[file-id row]] [file-id (:content_hash row)]) existing-state))
           driver-type (:driver_type source)
           driver-config (or (support/parse-jsonish (:config source)) {})
@@ -126,6 +127,28 @@
                              (:changed-files discovery) " changed, "
                              (:unchanged-files discovery) " unchanged")))
         (db/update-job! job-id {:total_files total-files})
+        ;; Detect orphaned files: files that exist in DB but not on filesystem
+        ;; Note: We check file existence directly, not just discovery, because
+        ;; discovery only returns new/changed files (unchanged files are skipped)
+        (when (seq existing-state)
+          (let [orphaned-ids (atom [])]
+            (doseq [[file-id _state] existing-state]
+              (let [f (java.io.File. (str file-id))]
+                (when-not (.exists f)
+                  (swap! orphaned-ids conj file-id))))
+            (when (seq @orphaned-ids)
+              (control/log! (str "[JOB " job-id "] Detected " (count @orphaned-ids) " orphaned files to mark as deleted"))
+              (doseq [file-id @orphaned-ids]
+                (db/upsert-file-state!
+                 {:file-id file-id
+                  :source-id source-id
+                  :tenant-id tenant-id
+                  :path (or (:path (get existing-state file-id)) file-id)
+                  :content-hash (:content_hash (get existing-state file-id))
+                  :status "deleted"
+                  :chunks 0
+                  :collections (or (support/parse-jsonish (:collections source)) [tenant-id])
+                  :metadata {:deleted true}})))))
         (when (seq deleted-paths)
           (support/apply-deleted-paths! source source-id existing-hashes
                                         (or (support/parse-jsonish (:collections source)) [tenant-id])

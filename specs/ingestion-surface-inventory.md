@@ -185,14 +185,21 @@ Running `GET /api/ingestion/sources/:source_id/audit` revealed:
 | Metric | Count |
 |--------|-------|
 | Matching files | 76,495 |
-| New files | 14 |
-| Changed files | 20 |
-| Unchanged files | 76,461 |
-| Skipped files | 28,768 |
-| State: ingested | 7,081 |
-| State: failed | 71,848 |
-| State: deleted | 10,494 |
+| State: ingested | 6,913 |
+| State: failed | 71,270 |
+| State: deleted | 11,268 |
 | OpenPlanner documents | 6,801 |
-| Coverage delta | 69,694 |
 
-**Issue**: 80% of tracked files are marked `failed` with no error message. Most are `worktrees/` paths — git worktrees that were removed from the filesystem but incorrectly marked as `failed` instead of `deleted`. This is a separate ingestion worker bug, not a lake unification issue.
+**Analysis of "failed" files:**
+- Files marked `failed` actually exist on disk — they are NOT orphaned
+- The `metadata.error` field shows the real cause: "Read timed out", "Connection refused"
+- These are legitimate ingestion failures from previous runs that should be retried
+- The orphan detection bug was: unchanged files were being incorrectly flagged as orphaned because discovery only returns new/changed files
+
+**Fix applied:**
+- `worker.clj`: Changed orphan detection to check file existence directly via `java.io.File.exists()` instead of relying on discovery results
+- This prevents unchanged files from being incorrectly marked as deleted
+
+**Remaining work:**
+- Retry the 71,270 failed files when OpenPlanner is stable
+- Consider adding a bulk retry endpoint for failed files
