@@ -147,7 +147,7 @@
 (defn semantic-search-result-text
   [{:keys [database query results]}]
   (if (seq results)
-    (str "Active corpus: " (:name database) " (" (:qdrantCollection database) ")\n"
+    (str "Active corpus: " (:name database) "\n"
          "Query: " query "\n\n"
          (str/join
           "\n\n"
@@ -158,12 +158,12 @@
                                 (str ", indexed chunks: " (:chunkCount result)))
                               "\n   snippet: " (:snippet result)))
                        results)))
-    (str "Active corpus: " (:name database) " (" (:qdrantCollection database) ")\n"
+    (str "Active corpus: " (:name database) "\n"
          "Query: " query "\n\nNo strong semantic matches found.")))
 
 (defn semantic-read-result-text
   [{:keys [database path content truncated]}]
-  (str "Active corpus: " (:name database) " (" (:qdrantCollection database) ")\n"
+  (str "Active corpus: " (:name database) "\n"
        "Path: " path
        (when truncated "\nNote: content truncated for tool safety.")
        "\n\n"
