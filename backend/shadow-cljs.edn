@@ -1,5 +1,9 @@
 {:source-paths ["src/cljs"]
 
+ :dependencies []
+
+ :js-options {:js-provider :import}
+
  :builds
  {:app
   {:target :esm

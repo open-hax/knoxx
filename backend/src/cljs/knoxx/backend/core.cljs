@@ -6,7 +6,8 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.run-state :refer [active-runs-count]]
             [knoxx.backend.runtime-config :refer [cfg]]
-            [knoxx.backend.session-titles :refer [load-session-titles!]]))
+            [knoxx.backend.session-titles :refer [load-session-titles!]]
+            [knoxx.backend.translation-agent :as translation-agent]))
 
 (defonce server* (atom nil))
 
@@ -66,7 +67,23 @@
                                        :port (:port config)})))
             (.then (fn [_]
                      (reset! server* app)
-                     (.log.info app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))))
+                     (.log.info app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))
+                     ;; Start translation agent if enabled
+                     (when (or (aget js/process.env "KNOXX_TRANSLATION_AGENT_ENABLED")
+                               (aget js/process.env "ENABLE_TRANSLATION_AGENT"))
+                       (.log.info app "Starting translation agent...")
+                       (translation-agent/start-translation-agent! runtime config)))
             (.catch (fn [err]
                       (.error js/console "Knoxx backend CLJS failed to start" err)
                       (js/process.exit 1))))))))
+
+;; Handle graceful shutdown
+(.on js/process "SIGINT" (fn []
+                           (println "\nShutting down...")
+                           (translation-agent/stop-translation-agent!)
+                           (js/process.exit 0)))
+
+(.on js/process "SIGTERM" (fn []
+                            (println "\nShutting down...")
+                            (translation-agent/stop-translation-agent!)
+                            (js/process.exit 0)))

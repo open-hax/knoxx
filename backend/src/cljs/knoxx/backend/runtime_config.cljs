@@ -38,7 +38,12 @@
                           ["canvas" "Canvas" "Open long-form markdown drafting canvas"]]
    "junior_dev" [["read" "Read" "Read files and retrieved context"]
                   ["write" "Write" "Create new markdown drafts and notes"]
-                  ["canvas" "Canvas" "Open long-form markdown drafting canvas"]]})
+                  ["canvas" "Canvas" "Open long-form markdown drafting canvas"]]
+   "translator" [["read" "Read" "Read source documents for translation"]
+                 ["memory_search" "Memory Search" "Search prior translation sessions"]
+                 ["memory_session" "Memory Session" "Load prior translation context"]
+                 ["graph_query" "Graph Query" "Query translation examples from knowledge graph"]
+                 ["save_translation" "Save Translation" "Save translated content to database"]]})
 
 (def role-aliases
   {"executive" "knowledge_worker"
