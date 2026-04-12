@@ -2,6 +2,7 @@ import { Card, Badge } from "@open-hax/uxx";
 import EmptyState from "../components/EmptyState";
 import { EventTable } from "../components/ops/EventTable";
 import { AttentionCard } from "../components/dashboard/AttentionCard";
+import { ContentEditorPage } from "./ContentEditorPage";
 import { useState, useEffect } from "react";
 import type { OpsEvent } from "../components/ops/ops-types";
 import type { AttentionMetric } from "../components/dashboard/dashboard-types";
@@ -23,7 +24,7 @@ const VIEW_CONFIG: Record<WorkbenchView, { title: string; description: string; s
   content: {
     title: "Content Editor",
     description: "Author and publish structured documents with AI assistance.",
-    status: "partial",
+    status: "active",
     icon: "📝",
   },
   review: {
@@ -144,6 +145,15 @@ export default function WorkbenchPage({ view }: WorkbenchPageProps) {
     return (
       <div className="workbench-page workbench-page--full-height">
         <EventTable events={opsEvents} />
+      </div>
+    );
+  }
+
+  // Content Editor view - render ContentEditorPage
+  if (view === "content") {
+    return (
+      <div className="workbench-page workbench-page--full-height">
+        <ContentEditorPage />
       </div>
     );
   }

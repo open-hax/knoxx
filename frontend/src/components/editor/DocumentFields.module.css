@@ -1,0 +1,57 @@
+.fieldsPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--token-spacing-200);
+  padding: var(--token-spacing-200);
+  background: var(--token-colors-surface-secondary);
+  border-radius: var(--token-radius-md);
+  border: 1px solid var(--token-colors-border-default);
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--token-spacing-100);
+}
+
+.fieldLabel {
+  font-size: var(--token-font-size-sm);
+  font-weight: var(--token-font-weight-semibold);
+  color: var(--token-colors-text-secondary);
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--token-spacing-100) var(--token-spacing-200);
+  font-size: var(--token-font-size-sm);
+  font-weight: var(--token-font-weight-medium);
+  background: var(--token-colors-surface-tertiary);
+  border-radius: var(--token-radius-full);
+}
+
+.select {
+  padding: var(--token-spacing-200);
+  font-size: var(--token-font-size-base);
+  color: var(--token-colors-text-primary);
+  background: var(--token-colors-surface-tertiary);
+  border: 1px solid var(--token-colors-border-default);
+  border-radius: var(--token-radius-md);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.select:hover {
+  border-color: var(--token-colors-border-hover);
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--token-colors-accent-cyan);
+  box-shadow: 0 0 0 2px rgba(0, 188, 212, 0.2);
+}
+
+.fieldHint {
+  font-size: var(--token-font-size-xs);
+  color: var(--token-colors-text-muted);
+}
