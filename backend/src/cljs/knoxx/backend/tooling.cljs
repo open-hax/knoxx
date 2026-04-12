@@ -72,6 +72,7 @@
                                                "graph_query" "Graph Query"
                                                "memory_search" "Memory Search"
                                                "memory_session" "Memory Session"
+                                               "save_translation" "Save Translation"
                                                tool-id)
                                       :description (case tool-id
                                                      "read" "Read files and retrieved context"
@@ -86,6 +87,7 @@
                                                      "graph_query" "Query the canonical knowledge graph across devel/web/bluesky/knoxx-session lakes"
                                                      "memory_search" "Search prior Knoxx sessions in OpenPlanner"
                                                      "memory_session" "Load a specific Knoxx session from OpenPlanner"
+                                                     "save_translation" "Save translated segments to the translation database"
                                                      tool-id)
                                       :enabled (if (= tool-id "email.send") email? true)}))
                               vec)
