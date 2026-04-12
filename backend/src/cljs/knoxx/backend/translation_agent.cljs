@@ -34,9 +34,9 @@
       (.then (fn [resp]
                (if (.-ok resp)
                  (.json resp)
-                 (.text resp)
-                 (.then (fn [text]
-                          (throw (js/Error. (str "HTTP " (.-status resp) ": " text))))))))))
+                 (-> (.text resp)
+                     (.then (fn [text]
+                              (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
 
 (defn- post-json
   [url headers body]
@@ -46,9 +46,9 @@
       (.then (fn [resp]
                (if (.-ok resp)
                  (.json resp)
-                 (.text resp)
-                 (.then (fn [text]
-                          (throw (js/Error. (str "HTTP " (.-status resp) ": " text))))))))))
+                 (-> (.text resp)
+                     (.then (fn [text]
+                              (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
 
 (defn- format-translation-job
   [job]
@@ -234,7 +234,7 @@
                (mark-job-complete config (:job-id job))))
       (.catch (fn [err]
                 (println "[translation-agent] Job failed:" (str err))
-                (mark-job-failed config (:job-id job) (str err))))))
+                (mark-job-failed config (:job-id job) (str err)))))))
 
 (defn poll-and-process
   "Poll for jobs and process them. Spawn new session if more jobs remain."

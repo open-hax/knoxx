@@ -335,9 +335,9 @@
                                           (.then (fn [resp]
                                                    (if (.-ok resp)
                                                      (.json resp)
-                                                     (.text resp)
-                                                     (.then (fn [text]
-                                                              (throw (js/Error. (str "HTTP " (.-status resp) ": " text))))))))
+                                                     (-> (.text resp)
+                                                         (.then (fn [text]
+                                                                  (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))
                                           (.then (fn [result]
                                                    (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
                                                                      result))))))

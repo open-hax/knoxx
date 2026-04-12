@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import nodemailer from 'nodemailer';
 import { createPolicyDb } from './policy-db.mjs';
 import { config as readConfig, registerAppRoutes, registerWsRoutes } from '../dist/app.js';
 
@@ -35,6 +36,7 @@ const runtime = {
   os,
   execFileAsync: promisify(execFile),
   policyDb,
+  nodemailer,
 };
 
 const config = readConfig();

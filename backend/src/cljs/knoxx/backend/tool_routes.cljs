@@ -1,13 +1,13 @@
 (ns knoxx.backend.tool-routes
-  (:require [clojure.string :as str]
-            ["nodemailer" :as nodemailer]))
+  (:require [clojure.string :as str]))
 
 (defn send-email!
   "Send an email via Gmail SMTP using nodemailer.
    Returns a promise that resolves with the result on success or rejects on failure."
-  [config to subject text-body cc bcc]
+  [runtime config to subject text-body cc bcc]
   (let [email (:gmail-app-email config)
-        password (:gmail-app-password config)]
+        password (:gmail-app-password config)
+        nodemailer (aget runtime "nodemailer")]
     (if (or (str/blank? email) (str/blank? password))
       (js/Promise.reject (js/Error. "Gmail credentials not configured"))
       (let [transporter (.createTransport nodemailer
@@ -59,7 +59,7 @@
                         markdown (str (or (aget body "markdown") ""))]
                     (if (empty? to)
                       (json-response! reply 400 {:detail "Missing required field: to array"})
-                      (-> (send-email! config to subject markdown cc bcc)
+                      (-> (send-email! runtime config to subject markdown cc bcc)
                           (.then (fn [result]
                                    (json-response! reply 200 {:ok true
                                                               :role role

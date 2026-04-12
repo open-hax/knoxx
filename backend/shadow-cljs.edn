@@ -2,15 +2,20 @@
 
  :dependencies []
 
+ ;; CRITICAL: For Node.js ESM targets, use :js-provider :import
+ ;; This tells shadow-cljs to NOT bundle npm dependencies
+ ;; Instead, it generates ES6 import statements and lets Node.js resolve them at runtime
+ ;; This is required because Node.js built-ins (fs, path, etc.) cannot be bundled
+ ;; 
+ ;; See: https://github.com/thheller/shadow-cljs/issues/1219
+ ;; "To bundle nothing set :js-options {:js-provider :import}"
  :js-options {:js-provider :import}
 
  :builds
  {:app
   {:target :esm
    :output-dir "dist"
-   :modules {:app {:entries [knoxx.backend.core]
-                   :exports {:start knoxx.backend.core/start!
-                             :config knoxx.backend.core/config-js
+   :modules {:app {:exports {:config knoxx.backend.core/config-js
                              :registerAppRoutes knoxx.backend.core/register-app-routes!
                              :registerWsRoutes knoxx.backend.core/register-ws-routes!}}}
    :compiler-options {:output-feature-set :es-next

@@ -75,7 +75,7 @@
                        (translation-agent/start-translation-agent! runtime config)))
             (.catch (fn [err]
                       (.error js/console "Knoxx backend CLJS failed to start" err)
-                      (js/process.exit 1))))))))
+                      (js/process.exit 1)))))))))
 
 ;; Handle graceful shutdown
 (.on js/process "SIGINT" (fn []
