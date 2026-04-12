@@ -2,7 +2,7 @@
 
 **Parent spec**: `knowledge-ops-workbench-ux-v1.md`
 **Date**: 2026-04-12
-**Status**: Phase 1 complete, Phase 2 unblocked
+**Status**: Phase 1 complete, Phase 2 complete, Epic 3.2 complete
 **Total estimated points**: 40 points across 25 sub-specs
 
 ---
@@ -15,7 +15,7 @@
 | P1B graph-memory coherence | Memory Inspector, Agent Workspace | Not ready |
 | P3 CMS/review boundary | Content Editor, Review Queue | Partial |
 
-**Recommendation**: Phase 2 is now unblocked. Continue with Context Bar Navigation (0.2) and Status Bar (0.3). Epic 3 (Memory Inspector) and Epic 5 (Agent Workspace) must wait for P1B.
+**Recommendation**: Continue with remaining unblocked tasks. Epic 3.2 now complete. Epic 3.3 (Correction Write-Back) requires P1B.
 
 ---
 
@@ -263,7 +263,7 @@
 
 ---
 
-### 3.2 Review Item Detail (2 pts)
+### 3.2 Review Item Detail (2 pts) ✅ COMPLETE
 
 **Scope**: Output display, source comparison, label form.
 
@@ -272,13 +272,15 @@
 - `src/components/review/LabelForm.tsx` — dimension labels
 
 **Exit criteria**:
-- [ ] Shows full output
-- [ ] Shows confidence score
-- [ ] Label dimensions vary by item type
-- [ ] Approve/Needs Edit/Reject/Skip buttons
-- [ ] Keyboard chords: SPC a (approve), SPC r (reject), SPC s (skip)
+- [x] Shows full output
+- [x] Shows confidence score
+- [x] Label dimensions vary by item type
+- [x] Approve/Needs Edit/Reject/Skip buttons
+- [x] Keyboard chords: SPC a (approve), SPC r (reject), SPC s (skip)
 
 **Dependencies**: 3.1
+
+**Commit**: `6f4ea43c` — feat(knoxx): add ItemDetail component with label dimensions (Epic 3.2)
 
 ---
 
