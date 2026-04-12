@@ -1,0 +1,104 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.tabBar {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--token-colors-border-subtle);
+  background: var(--token-colors-surface-secondary);
+}
+
+.tab {
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  color: var(--token-colors-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tab:hover {
+  background: var(--token-colors-surface-tertiary);
+  color: var(--token-colors-text-secondary);
+}
+
+.tabActive {
+  background: var(--token-colors-surface-primary);
+  color: var(--token-colors-text-primary);
+  box-shadow: 0 0 0 1px var(--token-colors-border-default);
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+}
+
+/* Garden placeholder styles */
+.gardenPlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  text-align: center;
+  min-height: 300px;
+}
+
+.gardenTitle {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--token-colors-text-primary);
+}
+
+.gardenDescription {
+  margin: 0 0 1.5rem 0;
+  font-size: 1rem;
+  color: var(--token-colors-text-secondary);
+}
+
+.gardenHint {
+  max-width: 28rem;
+  padding: 1rem 1.5rem;
+  background: var(--token-colors-surface-secondary);
+  border-radius: 0.5rem;
+  text-align: left;
+}
+
+.gardenHint p {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--token-colors-text-primary);
+}
+
+.gardenHint ul {
+  margin: 0 0 1rem 0;
+  padding-left: 1.25rem;
+}
+
+.gardenHint li {
+  margin-bottom: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--token-colors-text-secondary);
+}
+
+.gardenNote {
+  font-size: 0.75rem;
+  color: var(--token-colors-text-muted);
+}
+
+.gardenNote code {
+  background: var(--token-colors-surface-tertiary);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-family: var(--token-fonts-mono);
+  font-size: 0.75rem;
+}

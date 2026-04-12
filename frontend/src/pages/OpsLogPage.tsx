@@ -9,6 +9,12 @@ import { useState, useEffect } from "react";
 import { Shell } from "../shell/Shell";
 import { EventTable } from "../components/ops/EventTable";
 import { EventDetail } from "../components/ops/EventDetail";
+import {
+  GardensTab,
+  DependencyGardenPlaceholder,
+  TruthGardenPlaceholder,
+  type GardenTab,
+} from "../components/ops/GardensTab";
 import type { OpsEvent } from "../components/ops/ops-types";
 import { EmptyState } from "../components/EmptyState";
 import styles from "./OpsLogPage.module.css";
@@ -70,6 +76,7 @@ export function OpsLogPage() {
   const [events, setEvents] = useState<OpsEvent[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<OpsEvent | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<GardenTab>("events");
 
   useEffect(() => {
     // TODO: Fetch from API
@@ -90,41 +97,50 @@ export function OpsLogPage() {
     setSelectedEvent(null);
   };
 
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case "dependency":
+        return <DependencyGardenPlaceholder />;
+      case "truth":
+        return <TruthGardenPlaceholder />;
+      case "events":
+      default:
+        return isLoading ? (
+          <div className={styles.loading}>
+            <span className={styles.loadingSpinner}>Loading...</span>
+          </div>
+        ) : events.length === 0 ? (
+          <EmptyState
+            title="No ops events"
+            message="Events from ingestion, sync, embedding, and policy checks will appear here."
+            actionLabel="Run ingestion"
+            onAction={() => {
+              // TODO: Navigate to ingestion
+            }}
+          />
+        ) : (
+          <EventTable
+            events={events}
+            onSelectEvent={handleSelectEvent}
+            selectedEventId={selectedEvent?.id}
+          />
+        );
+    }
+  };
+
   return (
     <Shell>
       <div className={styles.page}>
         <header className={styles.header}>
-          <h1 className={styles.title}>Ops Log</h1>
-          <p className={styles.description}>
-            Inspect ingestion jobs, sync state, embeddings, policy violations, and errors.
-          </p>
+          <h1 className={styles.title}>Ops</h1>
         </header>
 
-        <div className={styles.content}>
-          {isLoading ? (
-            <div className={styles.loading}>
-              <span className={styles.loadingSpinner}>Loading...</span>
-            </div>
-          ) : events.length === 0 ? (
-            <EmptyState
-              title="No ops events"
-              message="Events from ingestion, sync, embedding, and policy checks will appear here."
-              actionLabel="Run ingestion"
-              onAction={() => {
-                // TODO: Navigate to ingestion
-              }}
-            />
-          ) : (
-            <EventTable
-              events={events}
-              onSelectEvent={handleSelectEvent}
-              selectedEventId={selectedEvent?.id}
-            />
-          )}
-        </div>
+        <GardensTab activeTab={activeTab} onTabChange={setActiveTab}>
+          {renderTabContent()}
+        </GardensTab>
 
         {/* Event Detail Slide-out */}
-        {selectedEvent && (
+        {selectedEvent && activeTab === "events" && (
           <div className={styles.detailOverlay} onClick={handleCloseDetail}>
             <div className={styles.detailPanel} onClick={(e) => e.stopPropagation()}>
               <EventDetail event={selectedEvent} onClose={handleCloseDetail} />
