@@ -7,9 +7,7 @@ import { ContextBar } from "../components/context-bar";
 import { listMemorySessions } from "../lib/api/common";
 import {
   type DocumentStatus,
-  type DocumentVisibility,
   STATUS_CONFIG,
-  VISIBILITY_CONFIG,
 } from "../components/editor/editor-types";
 import type {
   BrowseResponse,
@@ -31,7 +29,6 @@ function CmsPage() {
   const [editorBody, setEditorBody] = useState("");
   const [editorPath, setEditorPath] = useState<string | null>(null);
   const [editorStatus, setEditorStatus] = useState<DocumentStatus>("draft");
-  const [editorVisibility, setEditorVisibility] = useState<DocumentVisibility>("internal");
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaveMessage, setLastSaveMessage] = useState<string | null>(null);
@@ -150,7 +147,7 @@ function CmsPage() {
   }, [editorDirectory, editorTitle]);
 
   const persistEditorFile = useCallback(
-    async (next: { publish?: boolean } = {}) => {
+    async (next: { publishState?: "published" | "draft" } = {}) => {
       const nextPath = buildEditorPath();
       if (!nextPath) return null;
 
@@ -174,10 +171,12 @@ function CmsPage() {
         setEditorPath(savedPath);
         setEditorTitle(savedPath.split("/").pop() ?? savedPath);
         setIsDirty(false);
-        if (next.publish) {
+        if (next.publishState === "published") {
           setEditorStatus("published");
-          setEditorVisibility("public");
           setLastSaveMessage("Published");
+        } else if (next.publishState === "draft") {
+          setEditorStatus("draft");
+          setLastSaveMessage("Unpublished");
         } else {
           setLastSaveMessage("Saved");
         }
@@ -239,7 +238,6 @@ function CmsPage() {
         setEditorBody(data.content);
         setEditorPath(entry.path);
         setEditorStatus("draft");
-        setEditorVisibility((entry.visibility as DocumentVisibility) ?? "internal");
         setIsDirty(false);
         setLastSaveMessage(null);
 
@@ -270,13 +268,6 @@ function CmsPage() {
     setLastSaveMessage(null);
   }, []);
 
-  const handleVisibilityChange = useCallback((visibility: DocumentVisibility) => {
-    setEditorVisibility(visibility);
-    setEditorStatus((prev) => (prev === "published" ? "draft" : prev));
-    setIsDirty(true);
-    setLastSaveMessage(null);
-  }, []);
-
   const handleSave = useCallback(async () => {
     if (!editorTitle.trim()) return;
     try {
@@ -287,15 +278,16 @@ function CmsPage() {
     }
   }, [editorTitle, persistEditorFile]);
 
-  const handlePublish = useCallback(async () => {
+  const handlePublishToggle = useCallback(async () => {
     if (!editorTitle.trim()) return;
+    const nextState = editorStatus === "published" ? "draft" : "published";
     try {
-      await persistEditorFile({ publish: true });
+      await persistEditorFile({ publishState: nextState });
     } catch (err) {
-      console.error("Publish failed:", err);
-      setLastSaveMessage("Publish failed");
+      console.error("Publish toggle failed:", err);
+      setLastSaveMessage(nextState === "published" ? "Publish failed" : "Unpublish failed");
     }
-  }, [editorTitle, persistEditorFile]);
+  }, [editorStatus, editorTitle, persistEditorFile]);
 
   const handleRefreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
@@ -367,7 +359,6 @@ function CmsPage() {
             setEditorBody("");
             setEditorPath(currentPath ? `${currentPath}/untitled.md` : "untitled.md");
             setEditorStatus("draft");
-            setEditorVisibility("internal");
             setIsDirty(true);
             setLastSaveMessage(null);
           }}
@@ -443,8 +434,8 @@ function CmsPage() {
                 <button className={styles.saveButton} onClick={() => void handleSave()} disabled={isSaving || !isDirty}>
                   {isSaving ? "Saving…" : "Save"}
                 </button>
-                <button className={styles.publishButton} onClick={() => void handlePublish()} disabled={isSaving}>
-                  {isSaving ? "Publishing…" : "Publish"}
+                <button className={styles.publishButton} onClick={() => void handlePublishToggle()} disabled={isSaving}>
+                  {isSaving ? (editorStatus === "published" ? "Unpublishing…" : "Publishing…") : editorStatus === "published" ? "Unpublish" : "Publish"}
                 </button>
               </>
             ) : null}
@@ -456,21 +447,6 @@ function CmsPage() {
             <Badge variant={editorStatus === "published" ? "success" : editorStatus === "review" ? "warning" : "default"}>
               {STATUS_CONFIG[editorStatus].label}
             </Badge>
-          </div>
-          <div className={styles.metaItem}>
-            <select
-              value={editorVisibility}
-              onChange={(event) => handleVisibilityChange(event.target.value as DocumentVisibility)}
-              className={styles.metaSelect}
-              disabled={!editorPath}
-              aria-label="Visibility"
-            >
-              {Object.entries(VISIBILITY_CONFIG).map(([value, config]) => (
-                <option key={value} value={value}>
-                  {config.label}
-                </option>
-              ))}
-            </select>
           </div>
         </div>
 
