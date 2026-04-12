@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { Button, Badge } from "@open-hax/uxx";
 import { ContextBar } from "../components/context-bar";
 import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
+import { listMemorySessions } from "../lib/api/common";
 import {
   type EditorDocument,
   type DocumentStatus,
@@ -221,10 +222,8 @@ function CmsPage() {
       setLoadingBrowse(true);
       try {
         const params = new URLSearchParams();
-        params.set("path", browseData?.current_path ?? "");
-        params.set("visibility", visibilityFilter);
-        params.set("kind", kindFilter);
-        const resp = await fetch(`/api/workspace/browse?${params}`);
+        if (browseData?.current_path) params.set("path", browseData.current_path);
+        const resp = await fetch(`/api/ingestion/browse?${params}`);
         if (resp.ok) {
           setBrowseData(await resp.json());
         }
@@ -235,20 +234,17 @@ function CmsPage() {
       }
     };
     loadBrowseData();
-  }, [visibilityFilter, kindFilter]);
+  }, []);
 
   // Load recent sessions
   useEffect(() => {
     const loadRecentSessions = async () => {
       setLoadingRecentSessions(true);
       try {
-        const resp = await fetch("/api/memory/sessions?limit=10");
-        if (resp.ok) {
-          const data = await resp.json();
-          setRecentSessions(data.sessions ?? []);
-          setRecentSessionsTotal(data.total ?? 0);
-          setRecentSessionsHasMore((data.sessions?.length ?? 0) < (data.total ?? 0));
-        }
+        const data = await listMemorySessions({ limit: 10 });
+        setRecentSessions(data.rows ?? []);
+        setRecentSessionsTotal(data.total ?? 0);
+        setRecentSessionsHasMore(data.has_more ?? false);
       } catch (err) {
         console.error("Failed to load sessions:", err);
       } finally {
@@ -421,10 +417,8 @@ function CmsPage() {
     setLoadingBrowse(true);
     try {
       const params = new URLSearchParams();
-      params.set("path", path ?? "");
-      params.set("visibility", visibilityFilter);
-      params.set("kind", kindFilter);
-      const resp = await fetch(`/api/workspace/browse?${params}`);
+      if (path) params.set("path", path);
+      const resp = await fetch(`/api/ingestion/browse?${params}`);
       if (resp.ok) {
         setBrowseData(await resp.json());
       }
@@ -437,10 +431,11 @@ function CmsPage() {
     if (!semanticQuery.trim()) return;
     setSemanticSearching(true);
     try {
-      const params = new URLSearchParams();
-      params.set("q", semanticQuery);
-      params.set("limit", "20");
-      const resp = await fetch(`/api/search/semantic?${params}`);
+      const resp = await fetch("/api/ingestion/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ q: semanticQuery, role: "workspace", limit: 30 }),
+      });
       if (resp.ok) {
         const data = await resp.json();
         setSemanticResults(data.rows ?? []);
@@ -454,7 +449,8 @@ function CmsPage() {
   const handlePreviewFile = async (path: string) => {
     setLoadingPreview(true);
     try {
-      const resp = await fetch(`/api/workspace/preview?path=${encodeURIComponent(path)}`);
+      const params = new URLSearchParams({ path });
+      const resp = await fetch(`/api/ingestion/file?${params}`);
       if (resp.ok) {
         setPreviewData(await resp.json());
       }
@@ -466,13 +462,10 @@ function CmsPage() {
   const handleRefreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
     try {
-      const resp = await fetch("/api/memory/sessions?limit=10");
-      if (resp.ok) {
-        const data = await resp.json();
-        setRecentSessions(data.sessions ?? []);
-        setRecentSessionsTotal(data.total ?? 0);
-        setRecentSessionsHasMore((data.sessions?.length ?? 0) < (data.total ?? 0));
-      }
+      const data = await listMemorySessions({ limit: 10 });
+      setRecentSessions(data.rows ?? []);
+      setRecentSessionsTotal(data.total ?? 0);
+      setRecentSessionsHasMore(data.has_more ?? false);
     } finally {
       setLoadingRecentSessions(false);
     }
