@@ -13,7 +13,7 @@
    [clojure.string :as str]
    [kms-ingestion.config :as config])
   (:import
-   [java.net URL HttpURLConnection]
+   [java.net URL]
    [java.io OutputStreamWriter]))
 
 (defn- knoxx-url
@@ -28,7 +28,7 @@
 
 (defn- post-json
   [url body]
-  (let [conn (HttpURLConnection/openConnection (URL. url))
+  (let [conn (.openConnection (URL. url))
         body-str (json/generate-string body)]
     (doseq [[k v] (knoxx-headers)]
       (.setRequestProperty conn k v))
@@ -40,7 +40,7 @@
         (let [body (slurp (.getInputStream conn))]
           (json/parse-string body keyword))
         (let [error-body (try (slurp (.getErrorStream conn)) (catch Exception _ "unknown error"))]
-          (throw (ex-info (str "HTTP " code ": " error-body) {:url url :code code}))))))
+          (throw (ex-info (str "HTTP " code ": " error-body) {:url url :code code})))))))
 
 (defn- fetch-document
   "Fetch document content from OpenPlanner."
@@ -49,7 +49,7 @@
         headers (cond-> {"Content-Type" "application/json"}
                   (not (str/blank? (config/openplanner-api-key)))
                   (assoc "X-API-Key" (config/openplanner-api-key)))
-        conn (HttpURLConnection/openConnection (URL. url))]
+        conn (.openConnection (URL. url))]
     (doseq [[k v] headers]
       (.setRequestProperty conn k v))
     (.setRequestMethod conn "GET")
@@ -64,13 +64,13 @@
   "Fetch translation examples from OpenPlanner graph memory."
   [source-lang target-lang]
   (try
-    (let [url (str (config/openplanner-url) 
-                   "/v1/translations/examples?source_lang=" source-lang 
+    (let [url (str (config/openplanner-url)
+                   "/v1/translations/examples?source_lang=" source-lang
                    "&target_lang=" target-lang "&limit=3")
           headers (cond-> {"Content-Type" "application/json"}
                     (not (str/blank? (config/openplanner-api-key)))
                     (assoc "X-API-Key" (config/openplanner-api-key)))
-          conn (HttpURLConnection/openConnection (URL. url))]
+          conn (.openConnection (URL. url))]
       (doseq [[k v] headers]
         (.setRequestProperty conn k v))
       (.setRequestMethod conn "GET")
@@ -94,7 +94,7 @@
                                        (str "Source: " source_text "\n"
                                             "Target: " target_text)))
                                 (str/join "\n\n"))))]
-    (str "You are a professional translator. Translate the given document from " 
+    (str "You are a professional translator. Translate the given document from "
          source-lang " to " target-lang ".\n\n"
          "Document: " (or document-title "Untitled") "\n"
          "Source language: " source-lang "\n"
@@ -115,16 +115,16 @@
         headers (cond-> {"Content-Type" "application/json"}
                   (not (str/blank? (config/openplanner-api-key)))
                   (assoc "X-API-Key" (config/openplanner-api-key)))
-        conn (HttpURLConnection/openConnection (URL. url))]
+        conn (.openConnection (URL. url))]
     (doseq [[k v] headers]
       (.setRequestProperty conn k v))
     (.setRequestMethod conn "POST")
     (.setDoOutput conn true)
-    (.write (OutputStreamWriter. (.getOutputStream conn)) 
+    (.write (OutputStreamWriter. (.getOutputStream conn))
             (json/generate-string segment))
     (let [code (.getResponseCode conn)]
       (when-not (or (= 200 code) (= 201 code))
-        (throw (ex-info (str "Failed to save segment: HTTP " code) 
+        (throw (ex-info (str "Failed to save segment: HTTP " code)
                         {:segment segment :code code}))))))
 
 (defn run-translation-session!
@@ -135,49 +135,41 @@
   and saves each segment via the save_translation tool."
   [{:keys [job-id document-id garden-id source-lang target-lang] :as ctx}]
   (println "[translation-agent] Starting session for job" job-id)
-  
   ;; Fetch document
   (let [document (fetch-document document-id)
-        doc-text (or (:text document) 
-                     (get-in document [:extra :content]) 
+        doc-text (or (:text document)
+                     (get-in document [:extra :content])
                      "")
-        doc-title (or (get-in document [:extra :title]) 
+        doc-title (or (get-in document [:extra :title])
                       "Untitled")
         examples (fetch-examples source-lang target-lang)]
-    
     (if (str/blank? doc-text)
       (throw (ex-info "Document has no text content" {:document-id document-id}))
-      
-      ;; Build system prompt
-      (let [system-prompt (build-system-prompt 
+      (let [system-prompt (build-system-prompt
                            {:source-lang source-lang
                             :target-lang target-lang
                             :document-title doc-title
                             :examples examples})
-            user-message (str "Translate the document to " target-lang 
-                              ". Read the source content, then save each translated segment "
-                              "using save_translation with its segment_index.")]
-        
+            _user-message (str "Translate the document to " target-lang
+                               ". Read the source content, then save each translated segment "
+                               "using save_translation with its segment_index.")]
         ;; For now, use a simplified approach: directly translate via MT
         ;; TODO: Integrate with Knoxx agent runtime API for full agent session
         (println "[translation-agent] Document:" doc-title "length:" (count doc-text))
         (println "[translation-agent] Examples found:" (count examples))
-        
         ;; Split into segments
         (let [segments (->> (str/split doc-text #"(?<=[.!?])\s+")
                             (partition-all 3)
                             (map (fn [sents] (str/join " " sents)))
                             (filter (comp not str/blank?)))
               total-segments (count segments)]
-          
           (println "[translation-agent] Processing" total-segments "segments")
-          
           ;; Save each segment (placeholder - actual translation would go through agent)
           ;; For now, save original text as "translated" to test the pipeline
           (doseq [[idx source-text] (map-indexed vector segments)]
             (save-segment-via-api
              {:source_text source-text
-              :translated_text source-text ;; Placeholder - would be actual translation
+              :translated_text source-text
               :source_lang source-lang
               :target_lang target-lang
               :document_id document-id
@@ -186,14 +178,4 @@
               :status "pending"
               :mt_model "translation-agent"})
             (println "[translation-agent] Saved segment" (inc idx) "/" total-segments))
-          
           (println "[translation-agent] Session complete for job" job-id))))))
-
-(comment
-  ;; Test translation session
-  (run-translation-session!
-   {:job-id "test-job-123"
-    :document-id "test-doc-456"
-    :garden-id "test-garden"
-    :source-lang "en"
-    :target-lang "es"}))

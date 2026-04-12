@@ -14,6 +14,7 @@
 
 (defonce running? (atom false))
 (defonce worker-thread (atom nil))
+(defonce poll-interval-ms (atom 5000))
 
 (defn- openplanner-url
   [path]
@@ -27,7 +28,7 @@
 
 (defn- fetch-json
   [url]
-  (let [conn (java.net.HttpURLConnection/openConnection (java.net.URL. url))]
+  (let [conn (.openConnection (java.net.URL. url))]
     (doseq [[k v] (openplanner-headers)]
       (.setRequestProperty conn k v))
     (.setRequestMethod conn "GET")
@@ -40,7 +41,7 @@
 
 (defn- post-json
   [url body]
-  (let [conn (java.net.HttpURLConnection/openConnection (java.net.URL. url))
+  (let [conn (.openConnection (java.net.URL. url))
         body-str (json/generate-string body)]
     (doseq [[k v] (openplanner-headers)]
       (.setRequestProperty conn k v))
@@ -52,7 +53,7 @@
         (let [body (slurp (.getInputStream conn))]
           (json/parse-string body keyword))
         (let [error-body (try (slurp (.getErrorStream conn)) (catch Exception _ "unknown error"))]
-          (throw (ex-info (str "HTTP " code ": " error-body) {:url url :code code}))))))
+          (throw (ex-info (str "HTTP " code ": " error-body) {:url url :code code})))))))
 
 (defn- fetch-next-job
   []
@@ -99,10 +100,7 @@
   (while @running?
     (try
       (when-let [job (fetch-next-job)]
-        (process-job job)
-        ;; Immediately check for more jobs
-        (recur))
-      ;; No job found, wait before polling again
+        (process-job job))
       (Thread/sleep @poll-interval-ms)
       (catch Exception e
         (println "[translation-worker] Poll error:" (.getMessage e))
