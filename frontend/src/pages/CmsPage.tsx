@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Button, Card, Badge, Input } from "@open-hax/uxx";
+import { ContextBar } from "../components/context-bar";
+import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
 
 const PAGE_SIZE = 20;
 
@@ -77,6 +79,8 @@ const VISIBILITY_ICONS: Record<string, string> = {
   archived: "📦",
 };
 
+const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_chat_sidebar_width_px";
+
 function CmsPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [documentTotal, setDocumentTotal] = useState(0);
@@ -98,14 +102,31 @@ function CmsPage() {
   const [selectedGardenId, setSelectedGardenId] = useState<string>("");
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
+  const [showFiles, setShowFiles] = useState(true);
+  const [sidebarWidthPx, setSidebarWidthPx] = useState(() => {
+    const stored = localStorage.getItem(CHAT_SIDEBAR_WIDTH_KEY);
+    return stored ? parseInt(stored, 10) : 280;
+  });
+  const [sidebarPaneSplitPct, setSidebarPaneSplitPct] = useState(50);
+  const sidebarSplitContainerRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const offsetRef = useRef(0);
   const isLoadingRef = useRef(false);
   const hasMoreRef = useRef(true);
 
+  const { startSidebarPaneResize, startSidebarWidthResize } = createSidebarResizeHandlers({
+    sidebarSplitContainerRef,
+    sidebarWidthPx,
+    setSidebarPaneSplitPct,
+    setSidebarWidthPx,
+  });
+
   // Keep refs in sync with state
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
   useEffect(() => { isLoadingRef.current = loading || loadingMore; }, [loading, loadingMore]);
+  useEffect(() => {
+    localStorage.setItem(CHAT_SIDEBAR_WIDTH_KEY, String(sidebarWidthPx));
+  }, [sidebarWidthPx]);
 
   // Load gardens list on mount
   useEffect(() => {
@@ -333,68 +354,30 @@ function CmsPage() {
   };
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 120px)", gap: "16px" }}>
-      <Card variant="default" padding="md" style={{ width: "224px", flexShrink: 0 }}>
-        <h2 style={{ marginBottom: "16px", fontSize: "14px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--token-colors-text-muted)" }}>
-          Filters
-        </h2>
-        <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
-          <Input value={project} onChange={(e) => setProject(e.target.value)} placeholder="devel" />
-          <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-canvas)", color: "var(--token-colors-text-default)" }}>
-            <option value="docs">docs</option>
-            <option value="code">code</option>
-            <option value="config">config</option>
-            <option value="data">data</option>
-            <option value="all">all kinds</option>
-          </select>
-          <Input value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} placeholder="source (optional)" />
-          <Input value={domainFilter} onChange={(e) => setDomainFilter(e.target.value)} placeholder="domain (optional)" />
-          <Input value={pathPrefixFilter} onChange={(e) => setPathPrefixFilter(e.target.value)} placeholder="path prefix (optional)" />
-        </div>
-        <nav style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          {["all", "internal", "review", "public", "archived"].map((v) => (
-            <Button
-              key={v}
-              variant={visibilityFilter === v ? "primary" : "ghost"}
-              size="sm"
-              fullWidth
-              onClick={() => setVisibilityFilter(v)}
-            >
-              {v === "all" ? "All Documents" : v.charAt(0).toUpperCase() + v.slice(1)}
-              {stats?.by_visibility[v] !== undefined && (
-                <span style={{ marginLeft: "8px", fontSize: "12px", opacity: 0.7 }}>
-                  ({stats.by_visibility[v]})
-                </span>
-              )}
-            </Button>
-          ))}
-        </nav>
-
-        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--token-colors-border-default)" }} />
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <Button variant="primary" size="sm" fullWidth onClick={handleCreateDocument}>
-            + New Document
-          </Button>
-          <Button variant="primary" size="sm" fullWidth onClick={() => setShowDraftPanel(!showDraftPanel)}>
-            ✨ Draft with AI
-          </Button>
-        </div>
-
-        {stats && (
-          <Card variant="outlined" padding="sm" style={{ marginTop: "24px" }}>
-            <h3 style={{ fontSize: "12px", fontWeight: 600, textTransform: "uppercase", color: "var(--token-colors-text-muted)" }}>Stats</h3>
-            <p style={{ marginTop: "8px", fontSize: "24px", fontWeight: 700 }}>{stats.total}</p>
-            <p style={{ fontSize: "12px", color: "var(--token-colors-text-muted)" }}>matching current filters</p>
-            <p style={{ marginTop: "12px", fontSize: "18px", fontWeight: 600 }}>{stats.project_total}</p>
-            <p style={{ fontSize: "12px", color: "var(--token-colors-text-muted)" }}>total records in {project}</p>
-            <div style={{ marginTop: "12px", display: "grid", gap: "4px", fontSize: "12px", color: "var(--token-colors-text-muted)" }}>
-              <div><strong>Kinds:</strong> {Object.entries(stats.by_kind).map(([k, v]) => `${k}=${v}`).join(", ") || "none"}</div>
-              <div><strong>Sources:</strong> {Object.entries(stats.by_source).slice(0, 4).map(([k, v]) => `${k}=${v}`).join(", ") || "none"}</div>
-            </div>
-          </Card>
-        )}
-      </Card>
+    <div style={{ display: "flex", height: "calc(100vh - 120px)", gap: 0 }}>
+      {showFiles ? (
+        <ContextBar
+          sidebarWidthPx={sidebarWidthPx}
+          sidebarPaneSplitPct={sidebarPaneSplitPct}
+          sidebarSplitContainerRef={sidebarSplitContainerRef}
+          visibilityFilter={visibilityFilter}
+          kindFilter={kindFilter}
+          statsTotal={stats?.total ?? 0}
+          statsByVisibility={stats?.by_visibility ?? {}}
+          sourceFilter={sourceFilter}
+          domainFilter={domainFilter}
+          pathPrefixFilter={pathPrefixFilter}
+          onHide={() => setShowFiles(false)}
+          onVisibilityFilterChange={setVisibilityFilter}
+          onKindFilterChange={setKindFilter}
+          onSourceFilterChange={setSourceFilter}
+          onDomainFilterChange={setDomainFilter}
+          onPathPrefixFilterChange={setPathPrefixFilter}
+          onNewDocument={handleCreateDocument}
+          onStartSidebarPaneResize={startSidebarPaneResize}
+          onStartSidebarWidthResize={startSidebarWidthResize}
+        />
+      ) : null}
 
       <div style={{ flex: 1, overflow: "hidden" }}>
         <div style={{ display: "flex", height: "100%", gap: "16px" }}>
@@ -404,7 +387,10 @@ function CmsPage() {
             style={{ flex: 1, overflow: "auto", width: showDraftPanel ? "50%" : undefined }}
           >
             <div style={{ position: "sticky", top: 0, zIndex: 10, borderBottom: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-surface)", backdropFilter: "blur(8px)", padding: "16px" }}>
-              <h2 style={{ fontSize: "18px", fontWeight: 600 }}>Content Library</h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {!showFiles && <Button variant="ghost" size="sm" onClick={() => setShowFiles(true)}>Files</Button>}
+                <h2 style={{ fontSize: "18px", fontWeight: 600 }}>Content Library</h2>
+              </div>
               <p style={{ fontSize: "14px", color: "var(--token-colors-text-muted)" }}>
                 {loading ? "Loading..." : `${documentTotal} matching records in ${project}`}
               </p>
