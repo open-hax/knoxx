@@ -2,7 +2,7 @@
 
 **Parent spec**: `knowledge-ops-workbench-ux-v1.md`
 **Date**: 2026-04-12
-**Status**: Phase 1 complete, Phase 2 complete, Epic 2.4 complete, Epic 3.2 complete
+**Status**: Phase 1 complete, Phase 2 complete, Epic 2.4 complete, Epic 3.2 complete, Epic 6.3 complete
 **Total estimated points**: 40 points across 25 sub-specs
 
 ---
@@ -15,7 +15,7 @@
 | P1B graph-memory coherence | Memory Inspector, Agent Workspace | Not ready |
 | P3 CMS/review boundary | Content Editor, Review Queue | Partial |
 
-**Recommendation**: Continue with remaining unblocked tasks. Epic 3.2 now complete. Epic 3.3 (Correction Write-Back) requires P1B.
+**Recommendation**: Continue with remaining unblocked tasks. Epics 1.2, 1.3, 2.2, 2.3, 3.3, 4.x, 5.x require P1B (graph memory data). Consider fixing nginx issue for graph-weaver frontend or implementing against OpenPlanner graph API directly.
 
 ---
 
@@ -466,7 +466,7 @@
 
 ---
 
-### 6.3 Gardens Sub-Tabs (1 pt)
+### 6.3 Gardens Sub-Tabs (1 pt) ✅ COMPLETE
 
 **Scope**: Dependency Garden and Truth Garden as Ops sub-tabs.
 
@@ -474,11 +474,13 @@
 - `src/components/ops/GardensTab.tsx` — gardens wrapper
 
 **Exit criteria**:
-- [ ] Dependency Garden accessible from Ops
-- [ ] Truth Garden accessible from Ops
-- [ ] Share status bar and keyboard system
+- [x] Dependency Garden accessible from Ops
+- [x] Truth Garden accessible from Ops
+- [x] Share status bar and keyboard system
 
 **Dependencies**: 6.1
+
+**Commit**: `cd6b5aac` — feat(knoxx): add Ops Gardens Sub-Tabs (Epic 6.3)
 
 ---
 
