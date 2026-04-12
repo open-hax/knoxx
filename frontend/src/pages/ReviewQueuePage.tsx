@@ -8,6 +8,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { QueueList } from "../components/review/QueueList";
+import { ItemDetail } from "../components/review/ItemDetail";
 import { EmptyState } from "../components/EmptyState";
 import { useReviewQueue, getItemStatus } from "../components/review/useReviewQueue";
 import {
@@ -194,67 +195,13 @@ export function ReviewQueuePage() {
 
         <div className={styles.detailPanel}>
           {selectedItem ? (
-            <div className={styles.detail}>
-              <h2 className={styles.detailTitle}>{selectedItem.title}</h2>
-              <p className={styles.detailSummary}>{selectedItem.summary}</p>
-
-              <div className={styles.detailMeta}>
-                <div className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Type</span>
-                  <span
-                    className={styles.metaValue}
-                    style={{ color: ITEM_TYPE_CONFIG[selectedItem.type].color }}
-                  >
-                    {ITEM_TYPE_CONFIG[selectedItem.type].label}
-                  </span>
-                </div>
-                <div className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Confidence</span>
-                  <span className={styles.metaValue}>
-                    {(selectedItem.confidence * 100).toFixed(0)}%
-                  </span>
-                </div>
-                <div className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Sources</span>
-                  <span className={styles.metaValue}>{selectedItem.source_count}</span>
-                </div>
-                {selectedItem.agent_name && (
-                  <div className={styles.metaItem}>
-                    <span className={styles.metaLabel}>Agent</span>
-                    <span className={styles.metaValue}>{selectedItem.agent_name}</span>
-                  </div>
-                )}
-                <div className={styles.metaItem}>
-                  <span className={styles.metaLabel}>AI Drafted</span>
-                  <span className={styles.metaValue}>
-                    {selectedItem.ai_drafted ? "Yes" : "No"}
-                  </span>
-                </div>
-              </div>
-
-              <div className={styles.detailActions}>
-                <button
-                  className={styles.approveButton}
-                  onClick={handleApprove}
-                  disabled={selectedItem.status !== "pending"}
-                >
-                  Approve
-                </button>
-                <button
-                  className={styles.rejectButton}
-                  onClick={handleReject}
-                  disabled={selectedItem.status !== "pending"}
-                >
-                  Reject
-                </button>
-                <button
-                  className={styles.flagButton}
-                  onClick={handleFlag}
-                >
-                  Flag
-                </button>
-              </div>
-            </div>
+            <ItemDetail
+              item={selectedItem}
+              itemTypeConfig={ITEM_TYPE_CONFIG}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              onFlag={handleFlag}
+            />
           ) : (
             <EmptyState
               title="Select an item"

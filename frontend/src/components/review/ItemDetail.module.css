@@ -1,0 +1,195 @@
+.detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 1rem;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--token-colors-border-subtle);
+}
+
+.title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--token-colors-text-primary);
+}
+
+.typeBadge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.sectionTitle {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--token-colors-text-muted);
+  margin: 0 0 0.5rem 0;
+}
+
+.outputSection {
+  background: var(--token-colors-surface-secondary);
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.outputContent {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--token-colors-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.metaSection {
+  display: flex;
+  flex-direction: column;
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.metaRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.metaLabel {
+  font-size: 0.75rem;
+  color: var(--token-colors-text-muted);
+}
+
+.metaValue {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--token-colors-text-primary);
+  margin: 0;
+}
+
+.confidenceValue {
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.confidenceValue[data-confidence="high"] {
+  background: var(--token-colors-accent-green-alpha-10);
+  color: var(--token-colors-accent-green);
+}
+
+.confidenceValue[data-confidence="medium"] {
+  background: var(--token-colors-accent-amber-alpha-10);
+  color: var(--token-colors-accent-amber);
+}
+
+.confidenceValue[data-confidence="low"] {
+  background: var(--token-colors-accent-red-alpha-10);
+  color: var(--token-colors-accent-red);
+}
+
+.labelSection {
+  background: var(--token-colors-surface-secondary);
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--token-colors-border-subtle);
+}
+
+.approveButton,
+.needsEditButton,
+.rejectButton,
+.skipButton,
+.flagButton {
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.approveButton {
+  background: var(--token-colors-accent-green);
+  color: white;
+}
+
+.approveButton:hover:not(:disabled) {
+  background: var(--token-colors-accent-green-hover);
+}
+
+.needsEditButton {
+  background: var(--token-colors-accent-amber);
+  color: white;
+}
+
+.needsEditButton:hover:not(:disabled) {
+  background: var(--token-colors-accent-amber-hover);
+}
+
+.rejectButton {
+  background: var(--token-colors-accent-red);
+  color: white;
+}
+
+.rejectButton:hover:not(:disabled) {
+  background: var(--token-colors-accent-red-hover);
+}
+
+.skipButton {
+  background: var(--token-colors-surface-tertiary);
+  color: var(--token-colors-text-secondary);
+  border-color: var(--token-colors-border-default);
+}
+
+.skipButton:hover:not(:disabled) {
+  background: var(--token-colors-surface-secondary);
+}
+
+.flagButton {
+  background: transparent;
+  color: var(--token-colors-text-secondary);
+  border-color: var(--token-colors-border-default);
+}
+
+.flagButton:hover:not(:disabled) {
+  border-color: var(--token-colors-accent-purple);
+  color: var(--token-colors-accent-purple);
+}
+
+.approveButton:disabled,
+.needsEditButton:disabled,
+.rejectButton:disabled,
+.skipButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
