@@ -200,10 +200,13 @@ These don't need the full 3-pane layout. They may use the Context Bar for naviga
 
 ## Implementation Order
 
-1. **Extract ContextBar** from ChatWorkspaceSidebar
-   - Rename component
-   - Ensure it works for all content types (files, documents, translations)
-   - Context bar is always the same — no mode prop needed
+1. **Extract ContextBar** from ChatWorkspaceSidebar ✅ DONE
+   - Renamed component to ContextBar
+   - Removed workspace-specific coupling (sync devel button, quick root buttons)
+   - Added visibility and kind filters from CMS
+   - Made file explorer IDE-style and compact
+   - Added visibility indicators to files
+   - Consolidated stats/ingestion indicators
 
 2. **Extract CanvasPanel** from ChatMainPane
    - Make it usable as right panel in all workplaces
@@ -224,14 +227,19 @@ These don't need the full 3-pane layout. They may use the Context Bar for naviga
    - Uses same shared components
 
 6. **Refactor ChatPage**
-   - Use extracted ContextBar and CanvasPanel
+   - Use extracted ContextBar (DONE) and CanvasPanel
    - Minimal changes to behavior
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] ContextBar is identical across Chat, Editor, Translation Review
+- [x] ContextBar extracted from ChatWorkspaceSidebar
+- [x] ContextBar has IDE-style compact layout
+- [x] ContextBar has visibility and kind filters
+- [x] ContextBar shows visibility indicators on files
+- [x] Workspace-specific coupling removed (no sync devel button)
+- [ ] ContextBar is used across Chat, Editor, Translation Review
 - [ ] Editor has editor in center, chat on right
 - [ ] Editor chat auto-pins current document
 - [ ] Translation Review has comparison in center, chat on right
