@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Button, Badge } from "@open-hax/uxx";
-import { ContextBar } from "../components/context-bar";
+import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
+import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
+import { ContextBar } from "../components/context-bar";
 import { listMemorySessions } from "../lib/api/common";
 import {
   type DocumentVisibility,
@@ -10,27 +12,18 @@ import {
 import type {
   BrowseResponse,
   BrowseEntry,
-  PinnedContextItem,
   PreviewResponse,
   SemanticSearchMatch,
   WorkspaceJob,
 } from "../components/context-bar/types";
-import type { MemorySessionSummary } from "../lib/types";
+import type { AgentSource, MemorySessionSummary } from "../lib/types";
 import styles from "./CmsPage.module.css";
-
-interface Garden {
-  garden_id: string;
-  title: string;
-  description: string | null;
-  status: "draft" | "active" | "archived";
-  default_language: string;
-  target_languages: string[];
-  auto_translate: boolean;
-}
 
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_cms_sidebar_width_px";
 
 function CmsPage() {
+  const chat = useChatWorkspaceController({ initialShowCanvas: false });
+
   // Editor state
   const [editorTitle, setEditorTitle] = useState("");
   const [editorBody, setEditorBody] = useState("");
@@ -47,7 +40,7 @@ function CmsPage() {
   const [sidebarPaneSplitPct, setSidebarPaneSplitPct] = useState(50);
   const sidebarSplitContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // ContextBar data (file explorer, semantic search, sessions)
+  // ContextBar data (CMS-specific explorer/search/sessions)
   const [browseData, setBrowseData] = useState<BrowseResponse | null>(null);
   const [loadingBrowse, setLoadingBrowse] = useState(false);
   const [entryFilter, setEntryFilter] = useState("");
@@ -57,7 +50,6 @@ function CmsPage() {
   const [semanticSearching, setSemanticSearching] = useState(false);
   const [workspaceSourceId, setWorkspaceSourceId] = useState<string | null>(null);
   const [workspaceJob, setWorkspaceJob] = useState<WorkspaceJob | null>(null);
-  const [pinnedContext, setPinnedContext] = useState<PinnedContextItem[]>([]);
   const [recentSessions, setRecentSessions] = useState<MemorySessionSummary[]>([]);
   const [recentSessionsHasMore, setRecentSessionsHasMore] = useState(false);
   const [recentSessionsTotal, setRecentSessionsTotal] = useState(0);
@@ -72,14 +64,6 @@ function CmsPage() {
   const [domainFilter, setDomainFilter] = useState("");
   const [pathPrefixFilter, setPathPrefixFilter] = useState("");
 
-  // Gardens (for publishing)
-  const [gardens, setGardens] = useState<Garden[]>([]);
-  const [selectedGardenId, setSelectedGardenId] = useState<string>("");
-
-  // Chat panel - always visible in Editor workflow
-  const [showChat, setShowChat] = useState(true);
-  const [rightPanelWidthPx, setRightPanelWidthPx] = useState(360);
-
   const { startSidebarPaneResize, startSidebarWidthResize } = createSidebarResizeHandlers({
     sidebarSplitContainerRef,
     sidebarWidthPx,
@@ -87,30 +71,9 @@ function CmsPage() {
     setSidebarWidthPx,
   });
 
-  // Persist sidebar width
   useEffect(() => {
     localStorage.setItem(CHAT_SIDEBAR_WIDTH_KEY, String(sidebarWidthPx));
   }, [sidebarWidthPx]);
-
-  // Load gardens on mount
-  useEffect(() => {
-    const loadGardens = async () => {
-      try {
-        const resp = await fetch("/api/openplanner/v1/gardens?status=active");
-        if (resp.ok) {
-          const data = await resp.json();
-          setGardens(data.gardens ?? []);
-          if (data.gardens?.length > 0 && !selectedGardenId) {
-            setSelectedGardenId(data.gardens[0].garden_id);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to load gardens:", err);
-      }
-    };
-    loadGardens();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Load file browser data - default to docs/ folder for knowledge management
   useEffect(() => {
@@ -129,10 +92,9 @@ function CmsPage() {
         setLoadingBrowse(false);
       }
     };
-    loadBrowseData();
+    void loadBrowseData();
   }, []);
 
-  // Load recent sessions
   useEffect(() => {
     const loadRecentSessions = async () => {
       setLoadingRecentSessions(true);
@@ -147,10 +109,9 @@ function CmsPage() {
         setLoadingRecentSessions(false);
       }
     };
-    loadRecentSessions();
+    void loadRecentSessions();
   }, []);
 
-  // Load workspace status
   useEffect(() => {
     const loadWorkspaceStatus = async () => {
       try {
@@ -173,7 +134,7 @@ function CmsPage() {
         console.error("Failed to load workspace status:", err);
       }
     };
-    loadWorkspaceStatus();
+    void loadWorkspaceStatus();
   }, []);
 
   const handleLoadDirectory = async (path?: string) => {
@@ -209,14 +170,13 @@ function CmsPage() {
     }
   };
 
-  // KEY DIFFERENCE: Selecting a file opens it in editor AND pins to chat context
+  // CMS behavior: select file -> open in editor + pin into shared chat runtime
   const handleOpenFile = async (entry: BrowseEntry) => {
     if (entry.type === "dir") {
       await handleLoadDirectory(entry.path);
       return;
     }
 
-    // Load file content
     try {
       const params = new URLSearchParams({ path: entry.path });
       const resp = await fetch(`/api/ingestion/file?${params}`);
@@ -227,22 +187,18 @@ function CmsPage() {
         setEditorPath(entry.path);
         setEditorVisibility((entry.visibility as DocumentVisibility) ?? "internal");
         setIsDirty(false);
+
+        chat.pinContextItem({
+          id: entry.path,
+          title: entry.name,
+          path: entry.path,
+          snippet: data.content.slice(0, 240),
+          kind: "file",
+        });
       }
     } catch (err) {
       console.error("Failed to load file:", err);
     }
-
-    // Auto-pin to chat context (key CMS behavior)
-    const pinnedItem: PinnedContextItem = {
-      id: entry.path,
-      title: entry.name,
-      path: entry.path,
-      kind: "file",
-    };
-    setPinnedContext((prev) => {
-      if (prev.some((p) => p.path === entry.path)) return prev;
-      return [pinnedItem, ...prev.slice(0, 23)];
-    });
   };
 
   const handleTitleChange = useCallback((title: string) => {
@@ -264,7 +220,6 @@ function CmsPage() {
     if (!editorPath || !isDirty) return;
 
     try {
-      // Save back to ingestion/storage
       console.log("Save:", { path: editorPath, title: editorTitle });
       setIsDirty(false);
     } catch (err) {
@@ -287,24 +242,38 @@ function CmsPage() {
   const handleResumeMemorySession = async (sessionId: string) => {
     setLoadingMemorySessionId(sessionId);
     try {
-      setShowChat(true);
-      console.log("Resume session:", sessionId);
+      await chat.resumeMemorySession(sessionId);
     } finally {
       setLoadingMemorySessionId(null);
     }
   };
 
-  // Derived state
+  const handleOpenChatSource = async (source: AgentSource) => {
+    const path = source.url;
+    if (/^https?:\/\//i.test(path)) {
+      await chat.openSourceInPreview(source);
+      return;
+    }
+
+    await handleOpenFile({
+      name: source.title || path.split("/").pop() || path,
+      path,
+      type: "file",
+      previewable: true,
+    });
+  };
+
   const semanticMode = semanticQuery.trim().length > 0 && semanticResults.length > 0;
-  const filteredEntries = browseData?.entries?.filter((e) =>
-    entryFilter ? e.name.toLowerCase().includes(entryFilter.toLowerCase()) : true
-  ) ?? [];
+  const filteredEntries =
+    browseData?.entries?.filter((e) =>
+      entryFilter ? e.name.toLowerCase().includes(entryFilter.toLowerCase()) : true,
+    ) ?? [];
   const activeEntryCount = filteredEntries.filter((e) => e.type === "file").length;
   const currentPath = browseData?.current_path ?? "";
   const currentParentPath = currentPath.includes("/") ? currentPath.split("/").slice(0, -1).join("/") : "";
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 120px)", gap: 0 }}>
+    <div style={{ display: "flex", height: "calc(100vh - 120px)", gap: 0, minHeight: 0 }}>
       {showFiles ? (
         <ContextBar
           sidebarWidthPx={sidebarWidthPx}
@@ -331,11 +300,10 @@ function CmsPage() {
           }}
           onStartSidebarPaneResize={startSidebarPaneResize}
           onStartSidebarWidthResize={startSidebarWidthResize}
-          // File explorer
           currentPath={currentPath}
           currentParentPath={currentParentPath}
           browseData={browseData}
-          previewData={null} // CMS doesn't use preview panel
+          previewData={null}
           loadingBrowse={loadingBrowse}
           loadingPreview={false}
           entryFilter={entryFilter}
@@ -346,8 +314,7 @@ function CmsPage() {
           workspaceProgressPercent={workspaceJob ? Math.round((workspaceJob.processed_files / workspaceJob.total_files) * 100) : 0}
           onLoadDirectory={handleLoadDirectory}
           onEntryFilterChange={setEntryFilter}
-          onOpenFile={handleOpenFile} // CMS uses onOpenFile instead of onPreviewFile
-          // Semantic search
+          onOpenFile={handleOpenFile}
           semanticQuery={semanticQuery}
           semanticResults={semanticResults}
           semanticProjects={semanticProjects}
@@ -358,8 +325,8 @@ function CmsPage() {
           onClearSemanticSearch={() => {
             setSemanticQuery("");
             setSemanticResults([]);
+            setSemanticProjects([]);
           }}
-          // Sessions
           recentSessions={recentSessions}
           recentSessionsHasMore={recentSessionsHasMore}
           recentSessionsTotal={recentSessionsTotal}
@@ -369,22 +336,13 @@ function CmsPage() {
           onRefreshRecentSessions={handleRefreshRecentSessions}
           onLoadMoreRecentSessions={async () => {}}
           onResumeMemorySession={handleResumeMemorySession}
-          // Pinned context
-          pinnedContext={pinnedContext}
-          onUnpinContextItem={(path) => setPinnedContext((prev) => prev.filter((p) => p.path !== path))}
-          onPinSemanticResult={(entry) => setPinnedContext((prev) => [...prev, {
-            id: entry.id,
-            title: entry.path.split("/").pop() ?? entry.path,
-            path: entry.path,
-            snippet: entry.snippet,
-            kind: "semantic",
-          }])}
+          pinnedContext={chat.pinnedContext}
+          onUnpinContextItem={chat.unpinContextItem}
+          onPinSemanticResult={chat.pinSemanticResult}
         />
       ) : null}
 
-      {/* Main editor area - always visible */}
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {/* Editor header */}
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minWidth: 0 }}>
         <header className={styles.header}>
           <div className={styles.titleRow}>
             {!showFiles && (
@@ -396,58 +354,51 @@ function CmsPage() {
               type="text"
               className={styles.titleInput}
               value={editorTitle}
-              onChange={(e) => handleTitleChange(e.target.value)}
+              onChange={(event) => handleTitleChange(event.target.value)}
               placeholder="Select a file from the explorer..."
               disabled={!editorPath}
             />
-            {editorPath && (
-              <span style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>
-                {editorPath}
-              </span>
-            )}
-            {isDirty && <span className={styles.dirtyIndicator}>Unsaved changes</span>}
+            {editorPath ? (
+              <span style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>{editorPath}</span>
+            ) : null}
+            {isDirty ? <span className={styles.dirtyIndicator}>Unsaved changes</span> : null}
           </div>
           <div className={styles.actions}>
-            {editorPath && (
+            {editorPath ? (
               <>
-                <button
-                  className={styles.saveButton}
-                  onClick={handleSave}
-                  disabled={!isDirty}
-                >
+                <button className={styles.saveButton} onClick={() => void handleSave()} disabled={!isDirty}>
                   Save
                 </button>
-                <button className={styles.publishButton}>
-                  Publish
-                </button>
+                <button className={styles.publishButton}>Publish</button>
               </>
-            )}
+            ) : null}
           </div>
         </header>
 
-        {/* Editor layout */}
         <div className={styles.editorLayout}>
           <main className={styles.bodyEditor}>
             {editorPath ? (
               <textarea
                 className={styles.bodyTextarea}
                 value={editorBody}
-                onChange={(e) => handleBodyChange(e.target.value)}
+                onChange={(event) => handleBodyChange(event.target.value)}
                 placeholder="Start writing..."
               />
             ) : (
-              <div style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--token-colors-text-muted)",
-                fontSize: 14,
-              }}>
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "var(--token-colors-text-muted)",
+                  fontSize: 14,
+                }}
+              >
                 <div style={{ textAlign: "center" }}>
                   <p style={{ marginBottom: 8 }}>Select a file from the explorer to edit</p>
                   <p style={{ fontSize: 12, color: "var(--token-colors-text-subtle)" }}>
-                    Files in docs/ folder are available
+                    The file explorer is the content library.
                   </p>
                 </div>
               </div>
@@ -455,7 +406,6 @@ function CmsPage() {
           </main>
 
           <aside className={styles.fieldsSidebar}>
-            {/* Status */}
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>Status</label>
               <div className={styles.fieldValue}>
@@ -463,12 +413,11 @@ function CmsPage() {
               </div>
             </div>
 
-            {/* Visibility */}
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>Visibility</label>
               <select
                 value={editorVisibility}
-                onChange={(e) => handleVisibilityChange(e.target.value as DocumentVisibility)}
+                onChange={(event) => handleVisibilityChange(event.target.value as DocumentVisibility)}
                 className={styles.fieldSelect}
                 disabled={!editorPath}
               >
@@ -480,12 +429,11 @@ function CmsPage() {
               </select>
             </div>
 
-            {/* Pinned context */}
-            {pinnedContext.length > 0 && (
+            {chat.pinnedContext.length > 0 ? (
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>Pinned Context</label>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {pinnedContext.slice(0, 5).map((item) => (
+                  {chat.pinnedContext.slice(0, 5).map((item) => (
                     <div
                       key={item.id}
                       style={{
@@ -502,7 +450,7 @@ function CmsPage() {
                         {item.title}
                       </span>
                       <button
-                        onClick={() => setPinnedContext((prev) => prev.filter((p) => p.path !== item.path))}
+                        onClick={() => chat.unpinContextItem(item.path)}
                         style={{
                           border: "none",
                           background: "transparent",
@@ -517,86 +465,37 @@ function CmsPage() {
                   ))}
                 </div>
               </div>
-            )}
-
-            {/* Chat toggle */}
-            <div className={styles.fieldGroup}>
-              <Button
-                variant="ghost"
-                size="sm"
-                fullWidth
-                onClick={() => setShowChat(!showChat)}
-              >
-                {showChat ? "Hide Chat" : "Show Chat"}
-              </Button>
-            </div>
+            ) : null}
           </aside>
         </div>
       </div>
 
-      {/* Right panel: Chat (secondary) - always visible in Editor workflow */}
-      {showChat && (
-        <div
-          style={{
-            width: rightPanelWidthPx,
-            borderLeft: "1px solid var(--token-colors-border-default)",
-            display: "flex",
-            flexDirection: "column",
-            background: "var(--token-colors-background-surface)",
-          }}
-        >
-          <div
-            style={{
-              padding: "12px 16px",
-              borderBottom: "1px solid var(--token-colors-border-default)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <span style={{ fontWeight: 600, fontSize: 14 }}>Chat</span>
-            <Button variant="ghost" size="sm" onClick={() => setShowChat(false)}>
-              ✕
-            </Button>
-          </div>
-          <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-            {editorPath ? (
-              <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, background: "var(--token-colors-alpha-bg-_08)" }}>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Editing</div>
-                <div style={{ fontSize: 12, color: "var(--token-colors-text-muted)" }}>
-                  {editorTitle}
-                </div>
-                <div style={{ fontSize: 10, color: "var(--token-colors-text-subtle)", marginTop: 4 }}>
-                  {editorPath}
-                </div>
-              </div>
-            ) : (
-              <p style={{ fontSize: 14, color: "var(--token-colors-text-muted)" }}>
-                Select a file to start editing. The file will be pinned to this chat automatically.
-              </p>
-            )}
-            {pinnedContext.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Pinned Context</div>
-                {pinnedContext.slice(0, 5).map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      fontSize: 11,
-                      padding: "6px 8px",
-                      background: "var(--token-colors-alpha-blue-_08)",
-                      borderRadius: 4,
-                      marginBottom: 4,
-                    }}
-                  >
-                    {item.title}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <aside
+        style={{
+          width: 460,
+          minWidth: 380,
+          borderLeft: "1px solid var(--token-colors-border-default)",
+          display: "flex",
+          minHeight: 0,
+          overflow: "hidden",
+          background: "var(--token-colors-background-surface)",
+        }}
+      >
+        <ChatWorkspacePane
+          controller={chat}
+          showFiles={showFiles}
+          onShowFiles={() => setShowFiles(true)}
+          onOpenHydrationSource={(source) =>
+            handleOpenFile({
+              name: source.title || source.path.split("/").pop() || source.path,
+              path: source.path,
+              type: "file",
+              previewable: true,
+            })
+          }
+          onOpenSourceInPreview={handleOpenChatSource}
+        />
+      </aside>
     </div>
   );
 }
