@@ -108,20 +108,23 @@
 
 **Purpose**: Landing page showing attention items, agent runs, memory activity.
 
-### 1.1 Dashboard Attention Cards (2 pts)
+### 1.1 Dashboard Attention Cards (2 pts) ✅ COMPLETE
 
 **Scope**: Review queue count, approval count, policy violation count with CTAs.
 
 **Files**:
 - `src/pages/DashboardPage.tsx` — page component
 - `src/components/dashboard/AttentionCard.tsx` — reusable card
+- `src/components/dashboard/dashboard-types.ts` — types and config
 
 **Exit criteria**:
-- [ ] Shows count for each queue type
-- [ ] Each card has primary CTA button
-- [ ] Empty state shows warm message
+- [x] Shows count for each queue type
+- [x] Each card has primary CTA button
+- [x] Empty state shows warm message
 
-**Dependencies**: 0.1, P3 (for review queue data)
+**Dependencies**: 0.1, P3 (for review queue data — mocked for now)
+
+**Commit**: `7be69622` — feat(workbench): add Dashboard Attention Cards (Epic 1.1)
 
 ---
 
@@ -514,20 +517,20 @@
 | Epic | Sub-specs | Points | Status | Dependencies |
 |------|-----------|--------|--------|--------------|
 | 0. Shell Foundation | 4 | 8 | ✅ Complete | None (layout), P1A ✅ (status bar) |
-| 1. Dashboard | 3 | 5 | Not started | P3, P1B |
+| 1. Dashboard | 3 | 5 | 2/5 complete | P3, P1B |
 | 2. Content Editor | 4 | 6 | Not started | P3, P1B |
 | 3. Review Queue | 3 | 5 | Not started | P3, P1B |
 | 4. Memory Inspector | 3 | 5 | Blocked on P1B | P1B |
 | 5. Agent Workspace | 3 | 5 | Blocked on P1B | P1B |
 | 6. Ops Log | 3 | 4 | 2/3 complete (3 pts done) | None |
 | 7. Shared Components | 2 | 2 | ✅ Complete | None |
-| **Total** | **25** | **40** | **13 pts done, 4 pts unblocked** | |
+| **Total** | **25** | **40** | **15 pts done, 2 pts unblocked** | |
 
 **Progress**:
-- ✅ Complete: 13 points (Epic 0, Epic 6.1+6.2, Epic 7)
-- 🔓 Unblocked: 4 points (1.1, 2.1, 3.1)
-- 🔒 Blocked on P3: 8 points (1.2, 2.3, 2.4, 3.2)
-- 🔒 Blocked on P1B: 14 points (1.3, 2.2, 3.3, 4.x, 5.x)
+- ✅ Complete: 15 points (Epic 0, Epic 1.1, Epic 6.1+6.2, Epic 7)
+- 🔓 Unblocked: 2 points (2.1, 3.1)
+- 🔒 Blocked on P3: 6 points (1.2, 1.3, 2.3, 2.4, 3.2)
+- 🔒 Blocked on P1B: 14 points (2.2, 3.3, 4.x, 5.x)
 
 ---
 
@@ -541,8 +544,8 @@
 - [x] 0.3 Status Bar (2 pt) — `2ca86641`
 - [x] 0.4 ChordOverlay Integration (2 pt) — `19f3a8c9`
 
-**Phase 2 (IN PROGRESS — 4 pts)**:
-- [ ] 1.1 Dashboard Attention Cards (2 pt)
+**Phase 2 (IN PROGRESS — 2 pts)**:
+- [x] 1.1 Dashboard Attention Cards (2 pt) ✅
 - [ ] 2.1 Content Editor Shell (2 pt)
 - [ ] 3.1 Review Queue Shell (2 pt)
 
