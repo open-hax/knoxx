@@ -105,8 +105,10 @@ function CmsPage() {
         setRecentSessions(data.rows ?? []);
         setRecentSessionsTotal(data.total ?? 0);
         setRecentSessionsHasMore(data.has_more ?? false);
-      } catch (err) {
-        console.error("Failed to load sessions:", err);
+      } catch {
+        setRecentSessions([]);
+        setRecentSessionsTotal(0);
+        setRecentSessionsHasMore(false);
       } finally {
         setLoadingRecentSessions(false);
       }
@@ -296,6 +298,10 @@ function CmsPage() {
       setRecentSessions(data.rows ?? []);
       setRecentSessionsTotal(data.total ?? 0);
       setRecentSessionsHasMore(data.has_more ?? false);
+    } catch {
+      setRecentSessions([]);
+      setRecentSessionsTotal(0);
+      setRecentSessionsHasMore(false);
     } finally {
       setLoadingRecentSessions(false);
     }
