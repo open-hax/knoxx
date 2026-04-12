@@ -8,6 +8,7 @@ import {
   getNextNavIndex,
   getPrevNavIndex,
 } from "./nav-items";
+import { StatusBar } from "./StatusBar";
 import styles from "./Shell.module.css";
 
 interface ShellProps {
@@ -185,19 +186,7 @@ function ShellContent({ children }: ShellProps) {
       </aside>
 
       {/* Status Bar */}
-      <footer className={styles.statusBar}>
-        <div className={styles.statusBarLeft}>
-          <span className={styles.statusItem}>collection: <strong>devel</strong></span>
-          <span className={styles.statusItem}>model: <strong>glm-5</strong></span>
-        </div>
-        <div className={styles.statusBarRight}>
-          <span className={styles.statusItem}>tokens: <strong>—</strong></span>
-          <span className={styles.statusItem}>agents: <strong>0</strong></span>
-          <span className={styles.statusItem}>
-            mode: <strong>{isActive ? "chord" : "normal"}</strong>
-          </span>
-        </div>
-      </footer>
+      <StatusBar isChordActive={isActive} />
     </div>
   );
 }

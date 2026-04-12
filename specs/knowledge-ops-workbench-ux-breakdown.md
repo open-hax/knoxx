@@ -43,21 +43,23 @@
 
 ---
 
-### 0.2 Context Bar Navigation (2 pts)
+### 0.2 Context Bar Navigation (2 pts) ✅ COMPLETE
 
 **Scope**: Left rail nav with six named view entries.
 
 **Files**:
-- `src/shell/ContextBar.tsx` — nav component
+- `src/shell/ContextBar.tsx` — nav component (integrated into Shell.tsx)
 - `src/shell/nav-items.ts` — nav configuration
 
 **Exit criteria**:
-- [ ] All six views reachable from Context Bar
-- [ ] Active view highlighted
-- [ ] Keyboard navigation (arrow keys) works
-- [ ] Collapsed mode shows icons only with tooltips
+- [x] All six views reachable from Context Bar
+- [x] Active view highlighted
+- [x] Keyboard navigation (arrow keys) works
+- [x] Collapsed mode shows icons only with tooltips
 
 **Dependencies**: 0.1
+
+**Commit**: `277b8eba` — feat(workbench): add Context Bar Navigation with keyboard support (Epic 0.2)
 
 ---
 
@@ -504,7 +506,7 @@
 
 | Epic | Sub-specs | Points | Status | Dependencies |
 |------|-----------|--------|--------|--------------|
-| 0. Shell Foundation | 4 | 8 | 2/4 complete (4 pts done) | None (layout), P1A ✅ (status bar) |
+| 0. Shell Foundation | 4 | 8 | 3/4 complete (6 pts done) | None (layout), P1A ✅ (status bar) |
 | 1. Dashboard | 3 | 5 | Not started | P3, P1B |
 | 2. Content Editor | 4 | 6 | Not started | P3, P1B |
 | 3. Review Queue | 3 | 5 | Not started | P3, P1B |
@@ -512,11 +514,11 @@
 | 5. Agent Workspace | 3 | 5 | Blocked on P1B | P1B |
 | 6. Ops Log | 3 | 4 | Not started | None |
 | 7. Shared Components | 2 | 2 | ✅ Complete | None |
-| **Total** | **25** | **40** | **6 pts done, 12 pts unblocked** | |
+| **Total** | **25** | **40** | **8 pts done, 10 pts unblocked** | |
 
 **Progress**:
-- ✅ Complete: 6 points (0.1, 0.4, 7.1, 7.2)
-- 🔓 Unblocked (P1A cleared): 12 points (0.2, 0.3, 1.1, 2.1, 3.1, 6.1)
+- ✅ Complete: 8 points (0.1, 0.2, 0.4, 7.1, 7.2)
+- 🔓 Unblocked (P1A cleared): 10 points (0.3, 1.1, 2.1, 3.1, 6.1)
 - 🔒 Blocked on P3: 8 points (1.2, 2.3, 2.4, 3.2)
 - 🔒 Blocked on P1B: 14 points (1.3, 2.2, 3.3, 4.x, 5.x)
 
@@ -530,8 +532,8 @@
 - [x] 0.1 Shell Layout Component (2 pt) — `afc20331`
 - [x] 0.4 ChordOverlay Integration (2 pt) — `19f3a8c9`
 
-**Phase 2 (UNBLOCKED — P1A cleared)**:
-- [ ] 0.2 Context Bar Navigation (2 pt)
+**Phase 2 (IN PROGRESS — P1A cleared)**:
+- [x] 0.2 Context Bar Navigation (2 pt) — `277b8eba`
 - [ ] 0.3 Status Bar (2 pt)
 - [ ] 1.1 Dashboard Attention Cards (2 pt)
 - [ ] 2.1 Content Editor Shell (2 pt)

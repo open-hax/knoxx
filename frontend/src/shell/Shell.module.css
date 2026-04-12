@@ -223,6 +223,10 @@
   font-weight: 600;
 }
 
+.statusItemHighlight strong {
+  color: var(--token-colors-accent-cyan);
+}
+
 /* Responsive Breakpoints */
 
 /* Tablet: 768px - collapse right panel by default, show icon-only nav */
