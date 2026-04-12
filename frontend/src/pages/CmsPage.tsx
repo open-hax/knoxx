@@ -375,6 +375,28 @@ function CmsPage() {
           </div>
         </header>
 
+        <div className={styles.metaBar}>
+          <div className={styles.metaItem}>
+            <span className={styles.metaLabel}>Status</span>
+            <Badge variant="default">Draft</Badge>
+          </div>
+          <div className={styles.metaItem}>
+            <span className={styles.metaLabel}>Visibility</span>
+            <select
+              value={editorVisibility}
+              onChange={(event) => handleVisibilityChange(event.target.value as DocumentVisibility)}
+              className={styles.metaSelect}
+              disabled={!editorPath}
+            >
+              {Object.entries(VISIBILITY_CONFIG).map(([value, config]) => (
+                <option key={value} value={value}>
+                  {config.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div className={styles.editorLayout}>
           <main className={styles.bodyEditor}>
             {editorPath ? (
@@ -404,69 +426,6 @@ function CmsPage() {
               </div>
             )}
           </main>
-
-          <aside className={styles.fieldsSidebar}>
-            <div className={styles.fieldGroup}>
-              <label className={styles.fieldLabel}>Status</label>
-              <div className={styles.fieldValue}>
-                <Badge variant="default">Draft</Badge>
-              </div>
-            </div>
-
-            <div className={styles.fieldGroup}>
-              <label className={styles.fieldLabel}>Visibility</label>
-              <select
-                value={editorVisibility}
-                onChange={(event) => handleVisibilityChange(event.target.value as DocumentVisibility)}
-                className={styles.fieldSelect}
-                disabled={!editorPath}
-              >
-                {Object.entries(VISIBILITY_CONFIG).map(([value, config]) => (
-                  <option key={value} value={value}>
-                    {config.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {chat.pinnedContext.length > 0 ? (
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>Pinned Context</label>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {chat.pinnedContext.slice(0, 5).map((item) => (
-                    <div
-                      key={item.id}
-                      style={{
-                        fontSize: 11,
-                        padding: "4px 8px",
-                        background: "var(--token-colors-alpha-bg-_08)",
-                        borderRadius: 4,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {item.title}
-                      </span>
-                      <button
-                        onClick={() => chat.unpinContextItem(item.path)}
-                        style={{
-                          border: "none",
-                          background: "transparent",
-                          color: "var(--token-colors-text-muted)",
-                          cursor: "pointer",
-                          fontSize: 10,
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </aside>
         </div>
       </div>
 
