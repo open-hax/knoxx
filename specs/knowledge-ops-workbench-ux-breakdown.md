@@ -2,7 +2,7 @@
 
 **Parent spec**: `knowledge-ops-workbench-ux-v1.md`
 **Date**: 2026-04-12
-**Status**: Phase 1 complete, Phase 2 complete, Epic 3.2 complete
+**Status**: Phase 1 complete, Phase 2 complete, Epic 2.4 complete, Epic 3.2 complete
 **Total estimated points**: 40 points across 25 sub-specs
 
 ---
@@ -221,7 +221,7 @@
 
 ---
 
-### 2.4 Content Editor Staged Publish Flow (1 pt)
+### 2.4 Content Editor Staged Publish Flow (1 pt) ✅ COMPLETE
 
 **Scope**: Draft → Review → Published workflow with explicit steps.
 
@@ -229,12 +229,14 @@
 - `src/components/editor/PublishWorkflow.tsx` — workflow component
 
 **Exit criteria**:
-- [ ] Cannot publish directly from draft
-- [ ] Must pass through review state
-- [ ] Publish confirmation dialog
-- [ ] Keyboard chord: SPC p (publish menu)
+- [x] Cannot publish directly from draft
+- [x] Must pass through review state
+- [x] Publish confirmation dialog
+- [x] Keyboard chord: SPC p (publish menu)
 
 **Dependencies**: 2.1, P3 (for visibility state machine)
+
+**Commit**: `67dd953c` — feat(knoxx): add PublishWorkflow component (Epic 2.4)
 
 ---
 
