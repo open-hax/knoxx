@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { Button, Badge } from "@open-hax/uxx";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
@@ -21,6 +21,21 @@ import styles from "./CmsPage.module.css";
 
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_cms_sidebar_width_px";
 
+type GardenSummary = {
+  garden_id: string;
+  title: string;
+  status: string;
+};
+
+type CmsDocSummary = {
+  doc_id: string;
+  title: string;
+  source_path: string | null;
+  metadata?: {
+    garden_publications?: Array<{ garden_id?: string }>;
+  };
+};
+
 function CmsPage() {
   const chat = useChatWorkspaceController({ initialShowCanvas: false });
 
@@ -32,6 +47,10 @@ function CmsPage() {
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaveMessage, setLastSaveMessage] = useState<string | null>(null);
+  const [gardens, setGardens] = useState<GardenSummary[]>([]);
+  const [selectedGardenId, setSelectedGardenId] = useState("");
+  const [cmsDocId, setCmsDocId] = useState<string | null>(null);
+  const [publishedGardenIds, setPublishedGardenIds] = useState<string[]>([]);
 
   // ContextBar state
   const [showFiles, setShowFiles] = useState(true);
@@ -117,6 +136,24 @@ function CmsPage() {
   }, []);
 
   useEffect(() => {
+    const loadGardens = async () => {
+      try {
+        const resp = await fetch("/api/openplanner/v1/gardens");
+        if (!resp.ok) return;
+        const body = (await resp.json()) as { gardens?: GardenSummary[] };
+        const activeGardens = (body.gardens ?? []).filter((garden) => garden.status === "active");
+        setGardens(activeGardens);
+        if (!selectedGardenId && activeGardens.length > 0) {
+          setSelectedGardenId(activeGardens[0].garden_id);
+        }
+      } catch {
+        setGardens([]);
+      }
+    };
+    void loadGardens();
+  }, [selectedGardenId]);
+
+  useEffect(() => {
     const loadWorkspaceStatus = async () => {
       try {
         const sourcesResp = await fetch("/api/ingestion/sources");
@@ -142,6 +179,64 @@ function CmsPage() {
   }, []);
 
   const editorDirectory = editorPath?.includes("/") ? editorPath.slice(0, editorPath.lastIndexOf("/") + 1) : "";
+  const isPublishedToSelectedGarden = useMemo(
+    () => Boolean(selectedGardenId && publishedGardenIds.includes(selectedGardenId)),
+    [publishedGardenIds, selectedGardenId],
+  );
+
+  const syncCmsDocumentByPath = useCallback(async (path: string) => {
+    const params = new URLSearchParams({ path_prefix: path, limit: "20" });
+    const resp = await fetch(`/api/openplanner/v1/cms/documents?${params.toString()}`);
+    if (!resp.ok) {
+      setCmsDocId(null);
+      setPublishedGardenIds([]);
+      setEditorStatus("draft");
+      return null;
+    }
+
+    const body = (await resp.json()) as { documents?: CmsDocSummary[] };
+    const match = (body.documents ?? []).find((doc) => doc.source_path === path) ?? null;
+    if (!match) {
+      setCmsDocId(null);
+      setPublishedGardenIds([]);
+      setEditorStatus("draft");
+      return null;
+    }
+
+    const gardenIds = (match.metadata?.garden_publications ?? [])
+      .map((publication) => publication.garden_id)
+      .filter((gardenId): gardenId is string => typeof gardenId === "string" && gardenId.length > 0);
+    setCmsDocId(match.doc_id);
+    setPublishedGardenIds(gardenIds);
+    setEditorStatus(gardenIds.includes(selectedGardenId) ? "published" : "draft");
+    return match;
+  }, [selectedGardenId]);
+
+  const upsertCmsDocument = useCallback(async (path: string) => {
+    const existing = await syncCmsDocumentByPath(path);
+    const payload = {
+      title: editorTitle.trim() || path.split("/").pop() || "Untitled",
+      content: editorBody,
+      source_path: path,
+      visibility: existing && publishedGardenIds.length > 0 ? "public" : "internal",
+    };
+
+    const endpoint = existing
+      ? `/api/openplanner/v1/cms/documents/${encodeURIComponent(existing.doc_id)}`
+      : "/api/openplanner/v1/cms/documents";
+    const method = existing ? "PATCH" : "POST";
+    const resp = await fetch(endpoint, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      throw new Error(await resp.text());
+    }
+    const doc = (await resp.json()) as CmsDocSummary;
+    setCmsDocId(doc.doc_id);
+    return doc.doc_id;
+  }, [editorBody, editorTitle, publishedGardenIds.length, syncCmsDocumentByPath]);
 
   const buildEditorPath = useCallback(() => {
     const fileName = editorTitle.trim().replace(/[\\/]+/g, "-");
@@ -172,6 +267,7 @@ function CmsPage() {
         const savedPath = typeof data.path === "string" ? data.path : nextPath;
         setEditorPath(savedPath);
         setEditorTitle(savedPath.split("/").pop() ?? savedPath);
+        await upsertCmsDocument(savedPath);
         setIsDirty(false);
         if (next.publishState === "published") {
           setEditorStatus("published");
@@ -188,8 +284,12 @@ function CmsPage() {
         setIsSaving(false);
       }
     },
-    [buildEditorPath, editorBody, editorDirectory, editorPath],
+    [buildEditorPath, editorBody, editorDirectory, editorPath, upsertCmsDocument],
   );
+
+  useEffect(() => {
+    setEditorStatus(isPublishedToSelectedGarden ? "published" : "draft");
+  }, [isPublishedToSelectedGarden]);
 
   const handleLoadDirectory = async (path?: string) => {
     setLoadingBrowse(true);
@@ -250,6 +350,7 @@ function CmsPage() {
           snippet: data.content.slice(0, 240),
           kind: "file",
         });
+        await syncCmsDocumentByPath(entry.path);
       }
     } catch (err) {
       console.error("Failed to load file:", err);
@@ -281,15 +382,40 @@ function CmsPage() {
   }, [editorTitle, persistEditorFile]);
 
   const handlePublishToggle = useCallback(async () => {
-    if (!editorTitle.trim()) return;
-    const nextState = editorStatus === "published" ? "draft" : "published";
+    if (!editorTitle.trim() || !selectedGardenId) {
+      setLastSaveMessage("Select a garden");
+      return;
+    }
+
+    const nextState = isPublishedToSelectedGarden ? "draft" : "published";
     try {
-      await persistEditorFile({ publishState: nextState });
+      const savedPath = await persistEditorFile();
+      if (!savedPath) return;
+      const docId = cmsDocId ?? (await upsertCmsDocument(savedPath));
+      const endpoint = `/api/openplanner/v1/cms/publish/${encodeURIComponent(docId)}/${encodeURIComponent(selectedGardenId)}`;
+      const resp = await fetch(endpoint, { method: isPublishedToSelectedGarden ? "DELETE" : "POST" });
+      if (!resp.ok) {
+        throw new Error(await resp.text());
+      }
+      const nextGardenIds = isPublishedToSelectedGarden
+        ? publishedGardenIds.filter((gardenId) => gardenId !== selectedGardenId)
+        : [...new Set([...publishedGardenIds, selectedGardenId])];
+      setPublishedGardenIds(nextGardenIds);
+      setEditorStatus(nextGardenIds.includes(selectedGardenId) ? "published" : "draft");
+      setLastSaveMessage(nextState === "published" ? "Published" : "Unpublished");
     } catch (err) {
       console.error("Publish toggle failed:", err);
       setLastSaveMessage(nextState === "published" ? "Publish failed" : "Unpublish failed");
     }
-  }, [editorStatus, editorTitle, persistEditorFile]);
+  }, [
+    cmsDocId,
+    editorTitle,
+    isPublishedToSelectedGarden,
+    persistEditorFile,
+    publishedGardenIds,
+    selectedGardenId,
+    upsertCmsDocument,
+  ]);
 
   const handleRefreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
@@ -365,6 +491,8 @@ function CmsPage() {
             setEditorBody("");
             setEditorPath(currentPath ? `${currentPath}/untitled.md` : "untitled.md");
             setEditorStatus("draft");
+            setCmsDocId(null);
+            setPublishedGardenIds([]);
             setIsDirty(true);
             setLastSaveMessage(null);
           }}
@@ -440,8 +568,8 @@ function CmsPage() {
                 <button className={styles.saveButton} onClick={() => void handleSave()} disabled={isSaving || !isDirty}>
                   {isSaving ? "Saving…" : "Save"}
                 </button>
-                <button className={styles.publishButton} onClick={() => void handlePublishToggle()} disabled={isSaving}>
-                  {isSaving ? (editorStatus === "published" ? "Unpublishing…" : "Publishing…") : editorStatus === "published" ? "Unpublish" : "Publish"}
+                <button className={styles.publishButton} onClick={() => void handlePublishToggle()} disabled={isSaving || !selectedGardenId}>
+                  {isSaving ? (isPublishedToSelectedGarden ? "Unpublishing…" : "Publishing…") : isPublishedToSelectedGarden ? "Unpublish" : "Publish"}
                 </button>
               </>
             ) : null}
@@ -450,9 +578,24 @@ function CmsPage() {
 
         <div className={styles.metaBar}>
           <div className={styles.metaItem}>
-            <Badge variant={editorStatus === "published" ? "success" : editorStatus === "review" ? "warning" : "default"}>
-              {STATUS_CONFIG[editorStatus].label}
+            <Badge variant={isPublishedToSelectedGarden ? "success" : editorStatus === "review" ? "warning" : "default"}>
+              {isPublishedToSelectedGarden ? "Published" : STATUS_CONFIG[editorStatus].label}
             </Badge>
+          </div>
+          <div className={styles.metaItem}>
+            <select
+              value={selectedGardenId}
+              onChange={(event) => setSelectedGardenId(event.target.value)}
+              className={styles.metaSelect}
+              aria-label="Garden"
+            >
+              <option value="">Select garden…</option>
+              {gardens.map((garden) => (
+                <option key={garden.garden_id} value={garden.garden_id}>
+                  {garden.title || garden.garden_id}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
