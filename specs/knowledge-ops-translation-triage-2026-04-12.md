@@ -1,8 +1,21 @@
 # Knowledge Ops Translation Pipeline Triage
 
 Date: 2026-04-12
-Status: canonical triage snapshot
+Status: partially resolved
 Owner: Knoxx / OpenPlanner
+
+---
+
+## Resolution Summary (2026-04-12)
+
+Priority 0 items resolved in commits `openplanner ac79bb4` and `knoxx 99b3d367`:
+
+- Public garden translation lookup now uses `target_lang` with fallback for legacy segments
+- Worker now populates `garden_id` on segments and writes back to publication metadata
+- Frontend/backend contracts aligned: `label_count` in list, normalized `ts` field
+- Manifest aggregation now correctly counts corrections from `translation_labels` collection
+
+Priority 1 items 4 and 5 also resolved as part of Priority 0 fixes.
 
 ---
 
@@ -166,33 +179,33 @@ What is directionally correct but not yet trustworthy:
 
 ## Priority-Ordered Gaps
 
-### Priority 0 — correctness blockers
+### Priority 0 — correctness blockers ✅ RESOLVED
 
-1. Public garden translation lookup does not match live segment shape.
-   - `public.ts` queries by `target_language`
-   - segments use `target_lang`
-   - public lookup expects `garden_id`
-   - worker-generated segments do not include `garden_id`
+1. ~~Public garden translation lookup does not match live segment shape.~~
+   - **FIXED**: `public.ts` now queries `target_lang` with fallback for legacy segments
+   - **FIXED**: Worker now populates `garden_id` on segments
+   - Commit: `openplanner ac79bb4`
 
-2. Worker does not write completion state back to garden publication metadata.
-   - `translation_status` is initialized on publish
-   - `translated_languages` is initialized on publish
-   - worker never updates them
+2. ~~Worker does not write completion state back to garden publication metadata.~~
+   - **FIXED**: Worker calls `updateGardenPublicationMetadata()` after job completion
+   - **FIXED**: Updates `translated_languages`, `translation_status`, and `translation_updated_at`
+   - Commit: `openplanner ac79bb4`
 
-3. Frontend review list/detail contracts are inconsistent.
-   - list UI assumes `segment.labels`
-   - list endpoint does not supply labels
-   - label timestamp shape is mismatched
+3. ~~Frontend review list/detail contracts are inconsistent.~~
+   - **FIXED**: List endpoint returns `label_count` instead of empty `labels` array
+   - **FIXED**: Single segment endpoint normalizes `created_at` → `ts` for labels
+   - **FIXED**: Frontend uses `label_count` for display
+   - Commit: `openplanner ac79bb4`, `knoxx 99b3d367`
 
 ### Priority 1 — observability/trust blockers
 
-4. Garden translation counts are wrong or incomplete.
-   - current stats count translation segments by `garden_id`
-   - worker does not attach `garden_id`
+4. ~~Garden translation counts are wrong or incomplete.~~
+   - **FIXED**: Worker now attaches `garden_id` to segments
+   - Commit: `openplanner ac79bb4`
 
-5. Manifest aggregation logic is not aligned with separate labels collection.
-   - `with_corrections` currently assumes segment-local labels
-   - labeler aggregation does not fully align with actual stored fields
+5. ~~Manifest aggregation logic is not aligned with separate labels collection.~~
+   - **FIXED**: `with_corrections` now computed from `translation_labels` collection
+   - Commit: `openplanner ac79bb4`
 
 6. Job/segment outcome semantics are too loose.
    - segment-level MT failures become empty/rejected segments
