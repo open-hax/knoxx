@@ -230,6 +230,17 @@ select {
 .app-shell__main {
   padding: 1rem;
   width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* When Shell is inside app-shell__main, remove padding to let Shell fill the space */
+.app-shell__main > .shell {
+  margin: -1rem;
+  width: calc(100% + 2rem);
+  height: calc(100% + 2rem);
 }
 
 /* Workbench Page */

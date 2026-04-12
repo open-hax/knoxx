@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { getFrontendConfig } from "./lib/api";
 import { opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import { Shell } from "./shell/Shell";
@@ -43,95 +43,90 @@ function App() {
   }, []);
 
   return (
-    <Routes>
-      {/* Workbench routes - use new Shell layout (no header navbar, Shell provides nav) */}
-      <Route
-        path="/workbench/*"
-        element={
-          <Shell>
-            <Routes>
-              <Route index element={<Navigate to="/workbench/dashboard" replace />} />
-              <Route path="dashboard" element={<WorkbenchPage view="dashboard" />} />
-              <Route path="content" element={<WorkbenchPage view="content" />} />
-              <Route path="content/:docId" element={<WorkbenchPage view="content" />} />
-              <Route path="review" element={<WorkbenchPage view="review" />} />
-              <Route path="memory" element={<WorkbenchPage view="memory" />} />
-              <Route path="agents" element={<WorkbenchPage view="agents" />} />
-              <Route path="ops" element={<WorkbenchPage view="ops" />} />
-              <Route path="*" element={<Navigate to="/workbench/dashboard" replace />} />
-            </Routes>
-          </Shell>
-        }
-      />
+    <div className="app-shell">
+      {/* Main navbar - always visible across all workplaces */}
+      <header className="app-shell__header">
+        <div className="app-shell__header-inner">
+          <h1 className="app-shell__brand">Knoxx</h1>
+          <nav className="app-shell__nav">
+            <NavLink to="/" className={navLinkClass}>
+              Chat
+            </NavLink>
+            <NavLink to="/cms" className={navLinkClass}>
+              CMS
+            </NavLink>
+            <NavLink to="/ingestion" className={navLinkClass}>
+              Ingestion
+            </NavLink>
+            <NavLink to="/query" className={navLinkClass}>
+              Query
+            </NavLink>
+            <NavLink to="/gardens" className={navLinkClass}>
+              Gardens
+            </NavLink>
+            <NavLink to="/runs" className={navLinkClass}>
+              Runs
+            </NavLink>
+            <NavLink to="/translations" className={navLinkClass}>
+              Translations
+            </NavLink>
+            <NavLink to="/workbench/dashboard" className={navLinkClass}>
+              Workbench
+            </NavLink>
+            <NavLink to={opsRoutes.admin} className={navLinkClass}>
+              Admin
+            </NavLink>
+            {knoxxAdminUrl ? (
+              <a
+                href={knoxxAdminUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="app-shell__nav-link"
+              >
+                Legacy Admin
+              </a>
+            ) : null}
+          </nav>
+        </div>
+      </header>
 
-      {/* Existing routes - keep original layout with navbar */}
-      <Route
-        path="*"
-        element={
-          <div className="app-shell">
-            <header className="app-shell__header">
-              <div className="app-shell__header-inner">
-                <h1 className="app-shell__brand">Knoxx</h1>
-                <nav className="app-shell__nav">
-                  <NavLink to="/" className={navLinkClass}>
-                    Chat
-                  </NavLink>
-                  <NavLink to="/cms" className={navLinkClass}>
-                    CMS
-                  </NavLink>
-                  <NavLink to="/ingestion" className={navLinkClass}>
-                    Ingestion
-                  </NavLink>
-                  <NavLink to="/query" className={navLinkClass}>
-                    Query
-                  </NavLink>
-                  <NavLink to="/gardens" className={navLinkClass}>
-                    Gardens
-                  </NavLink>
-                  <NavLink to="/runs" className={navLinkClass}>
-                    Runs
-                  </NavLink>
-                  <NavLink to="/translations" className={navLinkClass}>
-                    Translations
-                  </NavLink>
-                  <NavLink to="/workbench/dashboard" className={navLinkClass}>
-                    Workbench
-                  </NavLink>
-                  <NavLink to={opsRoutes.admin} className={navLinkClass}>
-                    Admin
-                  </NavLink>
-                  {knoxxAdminUrl ? (
-                    <a
-                      href={knoxxAdminUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="app-shell__nav-link"
-                    >
-                      Legacy Admin
-                    </a>
-                  ) : null}
-                </nav>
-              </div>
-            </header>
+      {/* Main content area - switches between regular pages and workbench Shell */}
+      <main className="app-shell__main">
+        <Routes>
+          {/* Workbench routes - Shell provides left context bar, center canvas, right inspection panel, status bar */}
+          <Route
+            path="/workbench/*"
+            element={
+              <Shell>
+                <Routes>
+                  <Route index element={<Navigate to="/workbench/dashboard" replace />} />
+                  <Route path="dashboard" element={<WorkbenchPage view="dashboard" />} />
+                  <Route path="content" element={<WorkbenchPage view="content" />} />
+                  <Route path="content/:docId" element={<WorkbenchPage view="content" />} />
+                  <Route path="review" element={<WorkbenchPage view="review" />} />
+                  <Route path="memory" element={<WorkbenchPage view="memory" />} />
+                  <Route path="agents" element={<WorkbenchPage view="agents" />} />
+                  <Route path="ops" element={<WorkbenchPage view="ops" />} />
+                  <Route path="*" element={<Navigate to="/workbench/dashboard" replace />} />
+                </Routes>
+              </Shell>
+            }
+          />
 
-            <main className="app-shell__main">
-              <Routes>
-                <Route path="/" element={<ChatPage />} />
-                <Route path="/cms" element={<CmsPage />} />
-                <Route path="/ingestion" element={<IngestionPage />} />
-                <Route path="/query" element={<QueryPage />} />
-                <Route path="/gardens" element={<GardensPage />} />
-                <Route path="/runs" element={<RunsPage />} />
-                <Route path="/translations" element={<TranslationPage />} />
-                <Route path="/ops/*" element={<OpsRoot />} />
-                <Route path="/next/*" element={<LegacyOpsRedirect />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
-          </div>
-        }
-      />
-    </Routes>
+          {/* Regular pages */}
+          <Route path="/" element={<ChatPage />} />
+          <Route path="/cms" element={<CmsPage />} />
+          <Route path="/ingestion" element={<IngestionPage />} />
+          <Route path="/query" element={<QueryPage />} />
+          <Route path="/gardens" element={<GardensPage />} />
+          <Route path="/runs" element={<RunsPage />} />
+          <Route path="/translations" element={<TranslationPage />} />
+          <Route path="/ops/*" element={<OpsRoot />} />
+          <Route path="/next/*" element={<LegacyOpsRedirect />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+    </div>
   );
 }
 
