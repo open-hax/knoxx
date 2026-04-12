@@ -216,13 +216,13 @@ function CmsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load file browser data
+  // Load file browser data - default to docs/ folder for knowledge management
   useEffect(() => {
     const loadBrowseData = async () => {
       setLoadingBrowse(true);
       try {
         const params = new URLSearchParams();
-        if (browseData?.current_path) params.set("path", browseData.current_path);
+        params.set("path", "docs");
         const resp = await fetch(`/api/ingestion/browse?${params}`);
         if (resp.ok) {
           setBrowseData(await resp.json());
