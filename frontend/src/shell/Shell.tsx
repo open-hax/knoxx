@@ -1,33 +1,29 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ChordProvider, useChord } from "./ChordProvider";
 import { getDefaultChordActions } from "./chord-actions";
+import {
+  NAV_ITEMS,
+  getActiveNavIndex,
+  getNextNavIndex,
+  getPrevNavIndex,
+} from "./nav-items";
 import styles from "./Shell.module.css";
 
 interface ShellProps {
   children: ReactNode;
 }
 
-interface NavItem {
-  path: string;
-  label: string;
-  icon: string;
-}
-
-const NAV_ITEMS: NavItem[] = [
-  { path: "/workbench/dashboard", label: "Dashboard", icon: "📊" },
-  { path: "/workbench/content", label: "Content", icon: "📝" },
-  { path: "/workbench/review", label: "Review", icon: "✅" },
-  { path: "/workbench/memory", label: "Memory", icon: "🧠" },
-  { path: "/workbench/agents", label: "Agents", icon: "🤖" },
-  { path: "/workbench/ops", label: "Ops", icon: "⚙️" },
-];
-
 function ShellContent({ children }: ShellProps) {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [focusedNavIndex, setFocusedNavIndex] = useState<number | null>(null);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const navItemRefs = useRef<(HTMLAnchorElement | null)[]>([]);
   const { isActive, startChord, pressKey, cancelChord, registerAction } = useChord();
+
+  const activeIndex = getActiveNavIndex(location.pathname);
 
   // Register default chord actions on mount
   useEffect(() => {
@@ -37,7 +33,17 @@ function ShellContent({ children }: ShellProps) {
     }
   }, [navigate, registerAction]);
 
-  // Global key listener for chord mode
+  // Detect collapsed mode based on viewport
+  useEffect(() => {
+    const checkCollapsed = () => {
+      setIsCollapsed(window.innerWidth < 1024);
+    };
+    checkCollapsed();
+    window.addEventListener("resize", checkCollapsed);
+    return () => window.removeEventListener("resize", checkCollapsed);
+  }, []);
+
+  // Global key listener for chord mode and nav keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if focus is in an input/textarea
@@ -67,17 +73,44 @@ function ShellContent({ children }: ShellProps) {
         if (e.key.length === 1) {
           pressKey(e.key);
         }
+        return;
+      }
+
+      // Nav keyboard navigation (when not in chord mode)
+      if (focusedNavIndex !== null) {
+        if (e.key === "ArrowDown" || e.key === "j") {
+          e.preventDefault();
+          const nextIndex = getNextNavIndex(focusedNavIndex);
+          setFocusedNavIndex(nextIndex);
+          navItemRefs.current[nextIndex]?.focus();
+        } else if (e.key === "ArrowUp" || e.key === "k") {
+          e.preventDefault();
+          const prevIndex = getPrevNavIndex(focusedNavIndex);
+          setFocusedNavIndex(prevIndex);
+          navItemRefs.current[prevIndex]?.focus();
+        } else if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          navigate(NAV_ITEMS[focusedNavIndex].path);
+          setFocusedNavIndex(null);
+        } else if (e.key === "Escape") {
+          setFocusedNavIndex(null);
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isActive, startChord, pressKey, cancelChord]);
+  }, [isActive, startChord, pressKey, cancelChord, focusedNavIndex, navigate]);
 
-  const activeItem = NAV_ITEMS.find((item) =>
-    location.pathname === item.path ||
-    (item.path !== "/workbench/dashboard" && location.pathname.startsWith(item.path))
-  );
+  // Handle nav item focus
+  const handleNavFocus = (index: number) => {
+    setFocusedNavIndex(index);
+  };
+
+  const handleNavBlur = () => {
+    // Delay blur to allow clicking nav items
+    setTimeout(() => setFocusedNavIndex(null), 100);
+  };
 
   return (
     <div className={`${styles.shell} ${isActive ? styles.shellChordActive : ""}`}>
@@ -86,20 +119,34 @@ function ShellContent({ children }: ShellProps) {
         <div className={styles.contextBarHeader}>
           <span className={styles.brand}>Knoxx</span>
         </div>
-        <nav className={styles.contextBarNav}>
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={`${styles.navItem} ${
-                activeItem?.path === item.path ? styles.navItemActive : ""
-              }`}
-              title={item.label}
-            >
-              <span className={styles.navIcon}>{item.icon}</span>
-              <span className={styles.navLabel}>{item.label}</span>
-            </NavLink>
-          ))}
+        <nav className={styles.contextBarNav} role="navigation" aria-label="Main navigation">
+          {NAV_ITEMS.map((item, index) => {
+            const isActiveItem = activeIndex === index;
+            const isFocused = focusedNavIndex === index;
+            
+            return (
+              <NavLink
+                key={item.id}
+                ref={(el) => { navItemRefs.current[index] = el; }}
+                to={item.path}
+                className={`${styles.navItem} ${
+                  isActiveItem ? styles.navItemActive : ""
+                } ${isFocused ? styles.navItemFocused : ""}`}
+                title={isCollapsed ? `${item.label}: ${item.chordHint}` : item.chordHint}
+                onFocus={() => handleNavFocus(index)}
+                onBlur={handleNavBlur}
+                aria-current={isActiveItem ? "page" : undefined}
+              >
+                <span className={styles.navIcon} aria-hidden="true">{item.icon}</span>
+                <span className={styles.navLabel}>{item.label}</span>
+                {!isCollapsed && (
+                  <span className={styles.navChord} aria-label={`Keyboard shortcut: ${item.chordHint}`}>
+                    {item.chordHint.replace("SPC ", "␣ ")}
+                  </span>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
         <div className={styles.contextBarFooter}>
           <button
