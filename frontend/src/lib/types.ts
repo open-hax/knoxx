@@ -484,10 +484,12 @@ export interface TranslationSegment {
   document_id: string;
   segment_index: number;
   domain?: string | null;
-  tenant_id: string;
-  org_id: string;
-  labels: TranslationLabel[];
-  ts: string;
+  garden_id?: string | null;
+  tenant_id?: string | null;
+  org_id?: string | null;
+  labels?: TranslationLabel[];
+  label_count?: number;
+  ts?: string | null;
 }
 
 export interface TranslationSegmentListResponse {

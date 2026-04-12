@@ -104,7 +104,7 @@ export default function TranslationReviewCard({ segment, form, saving, onChange,
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/30">
             <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Existing labels</h3>
             <div className="space-y-2">
-              {segment.labels.length > 0 ? segment.labels.map((label) => (
+              {(segment.labels?.length ?? 0) > 0 ? segment.labels?.map((label) => (
                 <div key={label.id} className="rounded-md bg-white px-3 py-2 text-sm dark:bg-slate-800">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="font-medium text-slate-700 dark:text-slate-200">{label.labeler_email}</span>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { Button, Card, Input } from "@open-hax/uxx";
 import {
   getTranslationManifest,
+  getTranslationSegment,
   getTranslationSftExport,
   listTranslationSegments,
   submitTranslationLabel,
@@ -33,18 +34,37 @@ export default function TranslationPage() {
   const [targetLang, setTargetLang] = useState("es");
   const [segments, setSegments] = useState<TranslationSegment[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedSegment, setSelectedSegment] = useState<TranslationSegment | null>(null);
   const [manifest, setManifest] = useState<TranslationManifest | null>(null);
   const [form, setForm] = useState<TranslationLabelPayload>(defaultForm);
   const [loading, setLoading] = useState(true);
+  const [segmentLoading, setSegmentLoading] = useState(false);
   const [manifestLoading, setManifestLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedSegment = useMemo(
-    () => segments.find((segment) => segment.id === selectedId) ?? null,
-    [segments, selectedId],
-  );
+  // Load segment detail when selection changes
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedSegment(null);
+      return;
+    }
+
+    setSegmentLoading(true);
+    getTranslationSegment(selectedId)
+      .then((segment) => {
+        setSelectedSegment(segment);
+        setForm(defaultForm);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setSelectedSegment(null);
+      })
+      .finally(() => {
+        setSegmentLoading(false);
+      });
+  }, [selectedId]);
 
   async function loadSegments() {
     setLoading(true);
@@ -87,10 +107,6 @@ export default function TranslationPage() {
     void loadManifest();
   }, [project, status, targetLang]);
 
-  useEffect(() => {
-    setForm(defaultForm);
-  }, [selectedId]);
-
   async function handleSubmit(overall: TranslationOverall) {
     if (!selectedSegment) return;
     setSaving(true);
@@ -104,7 +120,13 @@ export default function TranslationPage() {
         editor_notes: form.editor_notes?.trim() || undefined,
       });
       setNotice(`Saved ${overall} for ${selectedSegment.document_id}#${selectedSegment.segment_index}.`);
+      // Reload segments list and selected segment detail
       await Promise.all([loadSegments(), loadManifest()]);
+      // Re-fetch selected segment to get updated labels
+      if (selectedId) {
+        const updatedSegment = await getTranslationSegment(selectedId);
+        setSelectedSegment(updatedSegment);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
