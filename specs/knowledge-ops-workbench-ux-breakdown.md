@@ -1,23 +1,21 @@
 # Knoxx Workbench UX — Epic and Sub-Spec Breakdown
 
 **Parent spec**: `knowledge-ops-workbench-ux-v1.md`
-**Date**: 2026-04-11
-**Status**: breakdown ready for estimation
-**Total estimated points**: 38 points across 15 sub-specs
+**Date**: 2026-04-12
+**Status**: Phase 1 complete, Phase 2 unblocked
+**Total estimated points**: 40 points across 25 sub-specs
 
 ---
 
 ## Dependency Gates
 
-Before any P5 work begins:
-
 | Gate | Required by | Status |
 |------|-------------|--------|
-| P1A tenant enforcement | All views that touch documents/collections | Not ready |
+| P1A tenant enforcement | Status bar (collection context), all views that touch documents/collections | ✅ **CLEARED** — `src/plugins/tenant.ts` implemented |
 | P1B graph-memory coherence | Memory Inspector, Agent Workspace | Not ready |
 | P3 CMS/review boundary | Content Editor, Review Queue | Partial |
 
-**Recommendation**: Start with Epic 0 (Shell Foundation) once P1A clears. Epic 3 (Memory Inspector) and Epic 5 (Agent Workspace) must wait for P1B.
+**Recommendation**: Phase 2 is now unblocked. Continue with Context Bar Navigation (0.2) and Status Bar (0.3). Epic 3 (Memory Inspector) and Epic 5 (Agent Workspace) must wait for P1B.
 
 ---
 
@@ -25,7 +23,7 @@ Before any P5 work begins:
 
 **Purpose**: Three-pane shell, navigation, status bar, keyboard system.
 
-### 0.1 Shell Layout Component (2 pts)
+### 0.1 Shell Layout Component (2 pts) ✅ COMPLETE
 
 **Scope**: Three-pane responsive shell with Context Bar, Main Canvas, Inspection Panel.
 
@@ -34,12 +32,14 @@ Before any P5 work begins:
 - `src/shell/Shell.module.css` — responsive grid styles
 
 **Exit criteria**:
-- [ ] Shell renders at 375px, 768px, 1024px, 1440px
-- [ ] Left rail collapses to icon strip below 768px
-- [ ] Right panel collapses to icon strip below 768px
-- [ ] No horizontal overflow at any breakpoint
+- [x] Shell renders at 375px, 768px, 1024px, 1440px
+- [x] Left rail collapses to icon strip below 768px
+- [x] Right panel collapses to icon strip below 768px
+- [x] No horizontal overflow at any breakpoint
 
 **Dependencies**: None (pure layout)
+
+**Commit**: `afc20331` — feat(workbench): add three-pane Shell layout component (Epic 0.1)
 
 ---
 
@@ -76,11 +76,11 @@ Before any P5 work begins:
 - [ ] Shows agent run count (if any active)
 - [ ] Shows current keyboard mode
 
-**Dependencies**: 0.1, P1A (for collection context)
+**Dependencies**: 0.1, P1A ✅ (for collection context)
 
 ---
 
-### 0.4 ChordOverlay Integration (2 pts)
+### 0.4 ChordOverlay Integration (2 pts) ✅ COMPLETE
 
 **Scope**: Spacemacs-style keyboard chord discovery.
 
@@ -89,12 +89,14 @@ Before any P5 work begins:
 - `src/shell/chord-actions.ts` — action registry
 
 **Exit criteria**:
-- [ ] Pressing SPC reveals ChordOverlay
-- [ ] All primary actions have chord hints
-- [ ] ChordOverlay dismisses on Escape or action completion
-- [ ] Works from any view
+- [x] Pressing SPC reveals ChordOverlay
+- [x] All primary actions have chord hints
+- [x] ChordOverlay dismisses on Escape or action completion
+- [x] Works from any view
 
 **Dependencies**: 0.1
+
+**Commit**: `19f3a8c9` — feat(workbench): add ChordProvider with WhichKeyPopup integration (Epic 0.4)
 
 ---
 
@@ -458,11 +460,11 @@ Before any P5 work begins:
 
 ---
 
-## Shared Components Epic (2 pts)
+## Shared Components Epic (2 pts) ✅ COMPLETE
 
 **Purpose**: Reusable components used across views.
 
-### 7.1 Memory Signal Chip (1 pt)
+### 7.1 Memory Signal Chip (1 pt) ✅ COMPLETE
 
 **Scope**: Fixed vocabulary badge component.
 
@@ -470,15 +472,17 @@ Before any P5 work begins:
 - `src/components/MemorySignalChip.tsx` — chip component
 
 **Exit criteria**:
-- [ ] Implements all 7 vocabulary terms
-- [ ] Color mapping matches spec
-- [ ] Used in Dashboard, Memory Inspector, Provenance
+- [x] Implements all 7 vocabulary terms
+- [x] Color mapping matches spec
+- [x] Used in Dashboard, Memory Inspector, Provenance
 
 **Dependencies**: None
 
+**Commit**: `e8245572` — feat(workbench): add shared components MemorySignalChip and EmptyState (Epic 7)
+
 ---
 
-### 7.2 Empty State Component (1 pt)
+### 7.2 Empty State Component (1 pt) ✅ COMPLETE
 
 **Scope**: Warm message + primary action for empty lists.
 
@@ -486,66 +490,74 @@ Before any P5 work begins:
 - `src/components/EmptyState.tsx` — empty state component
 
 **Exit criteria**:
-- [ ] Accepts title, message, action label, action handler
-- [ ] Consistent styling across all uses
-- [ ] Used in all views that have list/card content
+- [x] Accepts title, message, action label, action handler
+- [x] Consistent styling across all uses
+- [x] Used in all views that have list/card content
 
 **Dependencies**: None
+
+**Commit**: `e8245572` — feat(workbench): add shared components MemorySignalChip and EmptyState (Epic 7)
 
 ---
 
 ## Summary Table
 
-| Epic | Sub-specs | Points | Dependencies |
-|------|-----------|--------|--------------|
-| 0. Shell Foundation | 4 | 8 | None (layout), P1A (status bar) |
-| 1. Dashboard | 3 | 5 | P3, P1B |
-| 2. Content Editor | 4 | 6 | P3, P1B |
-| 3. Review Queue | 3 | 5 | P3, P1B |
-| 4. Memory Inspector | 3 | 5 | P1B |
-| 5. Agent Workspace | 3 | 5 | P1B |
-| 6. Ops Log | 3 | 4 | None |
-| 7. Shared Components | 2 | 2 | None |
-| **Total** | **25** | **40** | |
+| Epic | Sub-specs | Points | Status | Dependencies |
+|------|-----------|--------|--------|--------------|
+| 0. Shell Foundation | 4 | 8 | 2/4 complete (4 pts done) | None (layout), P1A ✅ (status bar) |
+| 1. Dashboard | 3 | 5 | Not started | P3, P1B |
+| 2. Content Editor | 4 | 6 | Not started | P3, P1B |
+| 3. Review Queue | 3 | 5 | Not started | P3, P1B |
+| 4. Memory Inspector | 3 | 5 | Blocked on P1B | P1B |
+| 5. Agent Workspace | 3 | 5 | Blocked on P1B | P1B |
+| 6. Ops Log | 3 | 4 | Not started | None |
+| 7. Shared Components | 2 | 2 | ✅ Complete | None |
+| **Total** | **25** | **40** | **6 pts done, 12 pts unblocked** | |
+
+**Progress**:
+- ✅ Complete: 6 points (0.1, 0.4, 7.1, 7.2)
+- 🔓 Unblocked (P1A cleared): 12 points (0.2, 0.3, 1.1, 2.1, 3.1, 6.1)
+- 🔒 Blocked on P3: 8 points (1.2, 2.3, 2.4, 3.2)
+- 🔒 Blocked on P1B: 14 points (1.3, 2.2, 3.3, 4.x, 5.x)
 
 ---
 
 ## Recommended Execution Order
 
-**Phase 1 (can start now)**:
-- 7.1 Memory Signal Chip (1 pt)
-- 7.2 Empty State Component (1 pt)
-- 0.1 Shell Layout Component (2 pt)
-- 0.4 ChordOverlay Integration (2 pt)
-- 6.1 Ops Event Table (2 pt)
+**Phase 1 (COMPLETE)**:
+- [x] 7.1 Memory Signal Chip (1 pt) — `e8245572`
+- [x] 7.2 Empty State Component (1 pt) — `e8245572`
+- [x] 0.1 Shell Layout Component (2 pt) — `afc20331`
+- [x] 0.4 ChordOverlay Integration (2 pt) — `19f3a8c9`
 
-**Phase 2 (after P1A clears)**:
-- 0.2 Context Bar Navigation (2 pt)
-- 0.3 Status Bar (2 pt)
-- 1.1 Dashboard Attention Cards (2 pt)
-- 2.1 Content Editor Shell (2 pt)
-- 3.1 Review Queue Shell (2 pt)
+**Phase 2 (UNBLOCKED — P1A cleared)**:
+- [ ] 0.2 Context Bar Navigation (2 pt)
+- [ ] 0.3 Status Bar (2 pt)
+- [ ] 1.1 Dashboard Attention Cards (2 pt)
+- [ ] 2.1 Content Editor Shell (2 pt)
+- [ ] 3.1 Review Queue Shell (2 pt)
+- [ ] 6.1 Ops Event Table (2 pt)
 
 **Phase 3 (after P3 clears)**:
-- 1.2 Dashboard Agent Run Summary (2 pt)
-- 2.3 Content Editor Provenance Panel (1 pt)
-- 2.4 Content Editor Staged Publish Flow (1 pt)
-- 3.2 Review Item Detail (2 pt)
+- [ ] 1.2 Dashboard Agent Run Summary (2 pt)
+- [ ] 2.3 Content Editor Provenance Panel (1 pt)
+- [ ] 2.4 Content Editor Staged Publish Flow (1 pt)
+- [ ] 3.2 Review Item Detail (2 pt)
 
 **Phase 4 (after P1B clears)**:
-- 1.3 Dashboard Memory Activity Feed (1 pt)
-- 2.2 Content Editor AI Suggestions (2 pt)
-- 3.3 Correction Write-Back (1 pt)
-- 4.1 Memory Search Interface (2 pt)
-- 4.2 Focal Node View (2 pt)
-- 4.3 Memory History Slider (1 pt)
-- 5.1 Agent Run List (2 pt)
-- 5.2 Agent Run Detail (2 pt)
-- 5.3 Scratchpad Surface (1 pt)
+- [ ] 1.3 Dashboard Memory Activity Feed (1 pt)
+- [ ] 2.2 Content Editor AI Suggestions (2 pt)
+- [ ] 3.3 Correction Write-Back (1 pt)
+- [ ] 4.1 Memory Search Interface (2 pt)
+- [ ] 4.2 Focal Node View (2 pt)
+- [ ] 4.3 Memory History Slider (1 pt)
+- [ ] 5.1 Agent Run List (2 pt)
+- [ ] 5.2 Agent Run Detail (2 pt)
+- [ ] 5.3 Scratchpad Surface (1 pt)
 
 **Phase 5 (polish)**:
-- 6.2 Ops Event Detail (1 pt)
-- 6.3 Gardens Sub-Tabs (1 pt)
+- [ ] 6.2 Ops Event Detail (1 pt)
+- [ ] 6.3 Gardens Sub-Tabs (1 pt)
 
 ---
 
