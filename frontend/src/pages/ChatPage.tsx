@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ChatMainPane } from "../components/chat-page/ChatMainPane";
-import { ChatWorkspaceSidebar } from "../components/chat-page/ChatWorkspaceSidebar";
+import { ContextBar } from "../components/context-bar";
 import { useChatPagePersistenceSuite } from "../components/chat-page/chat-page-persistence-suite";
 import { createChatRuntimeActions } from "../components/chat-page/chat-runtime-actions";
 import { useChatRuntimeEffects } from "../components/chat-page/chat-runtime-effects";
@@ -33,7 +33,7 @@ import type {
   PreviewResponse,
   SemanticSearchMatch,
   WorkspaceJob,
-} from "../components/chat-page/types";
+} from "../components/context-bar/types";
 
 const SESSION_ID_KEY = "knoxx_session_id";
 const SCRATCHPAD_STATE_KEY = "knoxx_scratchpad_state";
@@ -98,6 +98,11 @@ function ChatPage() {
   const [loadingMemorySessionId, setLoadingMemorySessionId] = useState<string | null>(null);
   const [sidebarPaneSplitPct, setSidebarPaneSplitPct] = useState(50);
   const [sidebarWidthPx, setSidebarWidthPx] = useState(320);
+  // Filter state (unified with CMS)
+  const [visibilityFilter, setVisibilityFilter] = useState("all");
+  const [kindFilter, setKindFilter] = useState("docs");
+  const [statsTotal, setStatsTotal] = useState(0);
+  const [statsByVisibility, setStatsByVisibility] = useState<Record<string, number>>({});
   const sendTimeoutRef = useRef<number | null>(null);
   const pendingAssistantIdRef = useRef<string | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
@@ -375,7 +380,7 @@ function ChatPage() {
       }}
     >
       {showFiles ? (
-        <ChatWorkspaceSidebar
+        <ContextBar
           sidebarWidthPx={sidebarWidthPx}
           sidebarPaneSplitPct={sidebarPaneSplitPct}
           sidebarSplitContainerRef={sidebarSplitContainerRef}
@@ -393,7 +398,6 @@ function ChatPage() {
           semanticMode={semanticMode}
           filteredEntries={filteredEntries}
           activeEntryCount={activeEntryCount}
-          syncingWorkspace={syncingWorkspace}
           workspaceSourceId={workspaceSourceId}
           workspaceJob={workspaceJob}
           workspaceProgressPercent={workspaceProgressPercent}
@@ -405,6 +409,10 @@ function ChatPage() {
           loadingMoreRecentSessions={loadingMoreRecentSessions}
           loadingMemorySessionId={loadingMemorySessionId}
           conversationId={conversationId}
+          visibilityFilter={visibilityFilter}
+          kindFilter={kindFilter}
+          statsTotal={statsTotal}
+          statsByVisibility={statsByVisibility}
           onHide={() => setShowFiles(false)}
           onLoadDirectory={loadDirectory}
           onEntryFilterChange={setEntryFilter}
@@ -415,7 +423,6 @@ function ChatPage() {
             setSemanticResults([]);
             setSemanticProjects([]);
           }}
-          onEnsureWorkspaceSync={ensureWorkspaceSync}
           onRefreshRecentSessions={refreshRecentSessions}
           onLoadMoreRecentSessions={loadMoreRecentSessions}
           onResumeMemorySession={resumeMemorySession}
@@ -429,6 +436,8 @@ function ChatPage() {
           onUnpinContextItem={unpinContextItem}
           onStartSidebarPaneResize={startSidebarPaneResize}
           onStartSidebarWidthResize={startSidebarWidthResize}
+          onVisibilityFilterChange={setVisibilityFilter}
+          onKindFilterChange={setKindFilter}
         />
       ) : null}
 
@@ -446,8 +455,6 @@ function ChatPage() {
         proxxModels={proxxModels}
         proxxReachable={proxxReachable}
         proxxConfigured={proxxConfigured}
-        syncingWorkspace={syncingWorkspace}
-        onEnsureWorkspaceSync={ensureWorkspaceSync}
         onNewChat={handleNewChat}
         systemPrompt={systemPrompt}
         onSystemPromptChange={setSystemPrompt}

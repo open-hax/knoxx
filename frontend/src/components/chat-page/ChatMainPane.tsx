@@ -28,8 +28,6 @@ type ChatMainPaneProps = {
   proxxModels: ProxxModelInfo[];
   proxxReachable: boolean;
   proxxConfigured: boolean;
-  syncingWorkspace: boolean;
-  onEnsureWorkspaceSync: () => void | Promise<void>;
   onNewChat: () => void;
   systemPrompt: string;
   onSystemPromptChange: (value: string) => void;
@@ -103,8 +101,6 @@ export function ChatMainPane({
   proxxModels,
   proxxReachable,
   proxxConfigured,
-  syncingWorkspace,
-  onEnsureWorkspaceSync,
   onNewChat,
   systemPrompt,
   onSystemPromptChange,
@@ -193,7 +189,6 @@ export function ChatMainPane({
           <Badge variant={proxxReachable ? 'success' : proxxConfigured ? 'warning' : 'error'} size="sm" dot>
             {proxxReachable ? 'online' : proxxConfigured ? 'offline' : 'not configured'}
           </Badge>
-          <Button variant="secondary" size="sm" loading={syncingWorkspace} onClick={() => void onEnsureWorkspaceSync()}>Sync Devel</Button>
           <Button variant="ghost" size="sm" onClick={onNewChat}>New Chat</Button>
         </div>
 
