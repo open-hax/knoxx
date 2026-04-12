@@ -122,8 +122,9 @@
       (.setRequestProperty conn k v))
     (.setRequestMethod conn "POST")
     (.setDoOutput conn true)
-    (.write (OutputStreamWriter. (.getOutputStream conn))
-            (json/generate-string segment))
+    (with-open [writer (OutputStreamWriter. (.getOutputStream conn))]
+      (.write writer (json/generate-string segment))
+      (.flush writer))
     (let [code (.getResponseCode conn)]
       (when-not (or (= 200 code) (= 201 code))
         (throw (ex-info (str "Failed to save segment: HTTP " code)

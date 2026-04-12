@@ -49,7 +49,9 @@
       (.setRequestProperty conn k v))
     (.setRequestMethod conn "POST")
     (.setDoOutput conn true)
-    (.write (java.io.OutputStreamWriter. (.getOutputStream conn)) body-str)
+    (with-open [writer (java.io.OutputStreamWriter. (.getOutputStream conn))]
+      (.write writer body-str)
+      (.flush writer))
     (let [code (.getResponseCode conn)]
       (if (or (= 200 code) (= 201 code))
         (let [body (slurp (.getInputStream conn))]
