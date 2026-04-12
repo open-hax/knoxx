@@ -19,7 +19,7 @@
 
 ---
 
-## Epic 0: Shell Foundation (8 pts)
+## Epic 0: Shell Foundation (8 pts) ✅ COMPLETE
 
 **Purpose**: Three-pane shell, navigation, status bar, keyboard system.
 
@@ -63,7 +63,7 @@
 
 ---
 
-### 0.3 Status Bar (2 pts)
+### 0.3 Status Bar (2 pts) ✅ COMPLETE
 
 **Scope**: Bottom status bar with collection, model, tokens, agent status, mode.
 
@@ -72,13 +72,15 @@
 - `src/shell/status-hooks.ts` — status subscription hooks
 
 **Exit criteria**:
-- [ ] Shows active collection name
-- [ ] Shows current LLM provider/model
-- [ ] Shows token budget (if available)
-- [ ] Shows agent run count (if any active)
-- [ ] Shows current keyboard mode
+- [x] Shows active collection name
+- [x] Shows current LLM provider/model
+- [x] Shows token budget (if available)
+- [x] Shows agent run count (if any active)
+- [x] Shows current keyboard mode
 
 **Dependencies**: 0.1, P1A ✅ (for collection context)
+
+**Commit**: `2ca86641` — feat(workbench): add Status Bar with hooks (Epic 0.3)
 
 ---
 
@@ -506,7 +508,7 @@
 
 | Epic | Sub-specs | Points | Status | Dependencies |
 |------|-----------|--------|--------|--------------|
-| 0. Shell Foundation | 4 | 8 | 3/4 complete (6 pts done) | None (layout), P1A ✅ (status bar) |
+| 0. Shell Foundation | 4 | 8 | ✅ Complete | None (layout), P1A ✅ (status bar) |
 | 1. Dashboard | 3 | 5 | Not started | P3, P1B |
 | 2. Content Editor | 4 | 6 | Not started | P3, P1B |
 | 3. Review Queue | 3 | 5 | Not started | P3, P1B |
@@ -514,11 +516,11 @@
 | 5. Agent Workspace | 3 | 5 | Blocked on P1B | P1B |
 | 6. Ops Log | 3 | 4 | Not started | None |
 | 7. Shared Components | 2 | 2 | ✅ Complete | None |
-| **Total** | **25** | **40** | **8 pts done, 10 pts unblocked** | |
+| **Total** | **25** | **40** | **10 pts done, 8 pts unblocked** | |
 
 **Progress**:
-- ✅ Complete: 8 points (0.1, 0.2, 0.4, 7.1, 7.2)
-- 🔓 Unblocked (P1A cleared): 10 points (0.3, 1.1, 2.1, 3.1, 6.1)
+- ✅ Complete: 10 points (Epic 0: Shell Foundation, Epic 7: Shared Components)
+- 🔓 Unblocked (P1A cleared): 8 points (1.1, 2.1, 3.1, 6.1)
 - 🔒 Blocked on P3: 8 points (1.2, 2.3, 2.4, 3.2)
 - 🔒 Blocked on P1B: 14 points (1.3, 2.2, 3.3, 4.x, 5.x)
 
@@ -526,15 +528,15 @@
 
 ## Recommended Execution Order
 
-**Phase 1 (COMPLETE)**:
+**Phase 1 (COMPLETE — 10 pts)**:
 - [x] 7.1 Memory Signal Chip (1 pt) — `e8245572`
 - [x] 7.2 Empty State Component (1 pt) — `e8245572`
 - [x] 0.1 Shell Layout Component (2 pt) — `afc20331`
+- [x] 0.2 Context Bar Navigation (2 pt) — `277b8eba`
+- [x] 0.3 Status Bar (2 pt) — `2ca86641`
 - [x] 0.4 ChordOverlay Integration (2 pt) — `19f3a8c9`
 
-**Phase 2 (IN PROGRESS — P1A cleared)**:
-- [x] 0.2 Context Bar Navigation (2 pt) — `277b8eba`
-- [ ] 0.3 Status Bar (2 pt)
+**Phase 2 (IN PROGRESS — 8 pts)**:
 - [ ] 1.1 Dashboard Attention Cards (2 pt)
 - [ ] 2.1 Content Editor Shell (2 pt)
 - [ ] 3.1 Review Queue Shell (2 pt)
