@@ -22,27 +22,31 @@ function statusClasses(status: TranslationSegment["status"]): string {
 export default function TranslationSegmentList({ segments, selectedId, onSelect }: TranslationSegmentListProps) {
   return (
     <div className="space-y-2">
-      {segments.map((segment) => (
-        <button
-          key={segment.id}
-          type="button"
-          onClick={() => onSelect(segment)}
-          className={`w-full rounded-lg border p-3 text-left transition ${selectedId === segment.id
-            ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-500/10"
-            : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900/50 dark:hover:border-slate-600"
-          }`}
-        >
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{segment.document_id}</span>
-            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClasses(segment.status)}`}>{segment.status}</span>
-          </div>
-          <p className="line-clamp-2 text-sm text-slate-600 dark:text-slate-300">{segment.source_text}</p>
-          <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>{segment.source_lang} → {segment.target_lang}</span>
-            <span>{segment.labels.length} review{segment.labels.length === 1 ? "" : "s"}</span>
-          </div>
-        </button>
-      ))}
+      {segments.map((segment) => {
+        // Use label_count from API response, fallback to labels.length for detail view
+        const labelCount = (segment as TranslationSegment & { label_count?: number }).label_count ?? segment.labels?.length ?? 0;
+        return (
+          <button
+            key={segment.id}
+            type="button"
+            onClick={() => onSelect(segment)}
+            className={`w-full rounded-lg border p-3 text-left transition ${selectedId === segment.id
+              ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-500/10"
+              : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900/50 dark:hover:border-slate-600"
+            }`}
+          >
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{segment.document_id}</span>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClasses(segment.status)}`}>{segment.status}</span>
+            </div>
+            <p className="line-clamp-2 text-sm text-slate-600 dark:text-slate-300">{segment.source_text}</p>
+            <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+              <span>{segment.source_lang} → {segment.target_lang}</span>
+              <span>{labelCount} review{labelCount === 1 ? "" : "s"}</span>
+            </div>
+          </button>
+        );
+      })}
       {segments.length === 0 ? <p className="text-sm text-slate-500 dark:text-slate-400">No segments match the current filter.</p> : null}
     </div>
   );
