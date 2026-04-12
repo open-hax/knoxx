@@ -15,6 +15,7 @@
    [kms-ingestion.db :as db]
    [kms-ingestion.drivers.local :as local]
    [kms-ingestion.jobs.worker :as worker]
+   [kms-ingestion.translation.worker :as translation-worker]
    [kms-ingestion.config :as config])
   (:import
    [java.nio.file FileSystems Path Paths StandardWatchEventKinds WatchEvent$Kind WatchKey WatchService]
