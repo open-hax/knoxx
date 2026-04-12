@@ -1,8 +1,11 @@
 import { Card, Badge } from "@open-hax/uxx";
 import EmptyState from "../components/EmptyState";
 import { EventTable } from "../components/ops/EventTable";
+import { AttentionCard } from "../components/dashboard/AttentionCard";
 import { useState, useEffect } from "react";
 import type { OpsEvent } from "../components/ops/ops-types";
+import type { AttentionMetric } from "../components/dashboard/dashboard-types";
+import { ATTENTION_CONFIG } from "../components/dashboard/dashboard-types";
 
 type WorkbenchView = "dashboard" | "content" | "review" | "memory" | "agents" | "ops";
 
@@ -14,7 +17,7 @@ const VIEW_CONFIG: Record<WorkbenchView, { title: string; description: string; s
   dashboard: {
     title: "Dashboard",
     description: "Attention items, agent runs, and memory activity at a glance.",
-    status: "planned",
+    status: "active",
     icon: "📊",
   },
   content: {
@@ -108,23 +111,32 @@ const MOCK_EVENTS: OpsEvent[] = [
   },
 ];
 
+const MOCK_ATTENTION_METRICS: AttentionMetric[] = [
+  { ...ATTENTION_CONFIG.review, count: 12 },
+  { ...ATTENTION_CONFIG.approval, count: 3 },
+  { ...ATTENTION_CONFIG.policy, count: 2 },
+];
+
 export default function WorkbenchPage({ view }: WorkbenchPageProps) {
   const config = VIEW_CONFIG[view];
   const [opsEvents, setOpsEvents] = useState<OpsEvent[]>([]);
+  const [attentionMetrics, setAttentionMetrics] = useState<AttentionMetric[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Load ops events when view is ops
+  // Load data based on view
   useEffect(() => {
-    if (view === "ops") {
-      setIsLoading(true);
-      // TODO: Fetch from API
-      // For now, use mock data
-      const timer = setTimeout(() => {
+    setIsLoading(true);
+
+    const timer = setTimeout(() => {
+      if (view === "ops") {
         setOpsEvents(MOCK_EVENTS);
-        setIsLoading(false);
-      }, 300);
-      return () => clearTimeout(timer);
-    }
+      } else if (view === "dashboard") {
+        setAttentionMetrics(MOCK_ATTENTION_METRICS);
+      }
+      setIsLoading(false);
+    }, 200);
+
+    return () => clearTimeout(timer);
   }, [view]);
 
   // Ops Log view - render EventTable directly
@@ -132,6 +144,66 @@ export default function WorkbenchPage({ view }: WorkbenchPageProps) {
     return (
       <div className="workbench-page workbench-page--full-height">
         <EventTable events={opsEvents} />
+      </div>
+    );
+  }
+
+  // Dashboard view - render attention cards
+  if (view === "dashboard") {
+    const totalAttentionItems = attentionMetrics.reduce((sum, m) => sum + m.count, 0);
+
+    return (
+      <div className="workbench-page workbench-page--dashboard">
+        <header className="workbench-page__header">
+          <h1 className="workbench-page__title">{config.title}</h1>
+          <Badge variant={STATUS_VARIANTS[config.status]}>
+            {config.status === "active" ? "Active" : "In Progress"}
+          </Badge>
+        </header>
+
+        <section className="workbench-page__section">
+          <h2 className="workbench-page__section-title">Attention Items</h2>
+
+          {isLoading ? (
+            <div className="workbench-page__loading">
+              <span>Loading...</span>
+            </div>
+          ) : totalAttentionItems === 0 ? (
+            <EmptyState
+              title="All caught up!"
+              message="No items need your attention right now. Great work!"
+              actionLabel="View Ops Log"
+              onAction={() => {
+                window.location.href = "/workbench/ops";
+              }}
+            />
+          ) : (
+            <div className="workbench-page__card-grid">
+              {attentionMetrics.map((metric) => (
+                <AttentionCard key={metric.type} metric={metric} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Placeholder sections for future epics */}
+        <section className="workbench-page__section">
+          <h2 className="workbench-page__section-title">Recent Agent Runs</h2>
+          <EmptyState
+            title="Coming Soon"
+            message="Agent run summaries will appear here once Epic 1.2 is implemented."
+            icon="🤖"
+          />
+        </section>
+
+        <section className="workbench-page__section">
+          <h2 className="workbench-page__section-title">Memory Activity</h2>
+          <EmptyState
+            title="Coming Soon"
+            message="Recent memory signals will appear here once Epic 1.3 is implemented."
+            icon="🧠"
+          />
+        </section>
       </div>
     );
   }
