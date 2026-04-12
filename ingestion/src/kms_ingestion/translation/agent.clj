@@ -42,13 +42,19 @@
         (let [error-body (try (slurp (.getErrorStream conn)) (catch Exception _ "unknown error"))]
           (throw (ex-info (str "HTTP " code ": " error-body) {:url url :code code})))))))
 
+(defn- openplanner-auth-header
+  "Build Authorization header for OpenPlanner API."
+  []
+  (let [api-key (config/openplanner-api-key)]
+    (cond-> {"Content-Type" "application/json"}
+      (not (str/blank? api-key))
+      (assoc "Authorization" (str "Bearer " api-key)))))
+
 (defn- fetch-document
   "Fetch document content from OpenPlanner."
   [document-id]
   (let [url (str (config/openplanner-url) "/v1/documents/" document-id)
-        headers (cond-> {"Content-Type" "application/json"}
-                  (not (str/blank? (config/openplanner-api-key)))
-                  (assoc "X-API-Key" (config/openplanner-api-key)))
+        headers (openplanner-auth-header)
         conn (.openConnection (URL. url))]
     (doseq [[k v] headers]
       (.setRequestProperty conn k v))
@@ -67,9 +73,7 @@
     (let [url (str (config/openplanner-url)
                    "/v1/translations/examples?source_lang=" source-lang
                    "&target_lang=" target-lang "&limit=3")
-          headers (cond-> {"Content-Type" "application/json"}
-                    (not (str/blank? (config/openplanner-api-key)))
-                    (assoc "X-API-Key" (config/openplanner-api-key)))
+          headers (openplanner-auth-header)
           conn (.openConnection (URL. url))]
       (doseq [[k v] headers]
         (.setRequestProperty conn k v))
@@ -112,9 +116,7 @@
   "Save a translation segment via OpenPlanner API."
   [segment]
   (let [url (str (config/openplanner-url) "/v1/translations/segments")
-        headers (cond-> {"Content-Type" "application/json"}
-                  (not (str/blank? (config/openplanner-api-key)))
-                  (assoc "X-API-Key" (config/openplanner-api-key)))
+        headers (openplanner-auth-header)
         conn (.openConnection (URL. url))]
     (doseq [[k v] headers]
       (.setRequestProperty conn k v))
