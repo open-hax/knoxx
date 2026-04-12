@@ -138,11 +138,14 @@
   [{:keys [job-id document-id garden-id source-lang target-lang] :as ctx}]
   (println "[translation-agent] Starting session for job" job-id)
   ;; Fetch document
-  (let [document (fetch-document document-id)
-        doc-text (or (:text document)
+  (let [response (fetch-document document-id)
+        document (or (:document response) response)
+        doc-text (or (:content document)
+                     (:text document)
                      (get-in document [:extra :content])
                      "")
-        doc-title (or (get-in document [:extra :title])
+        doc-title (or (:title document)
+                      (get-in document [:extra :title])
                       "Untitled")
         examples (fetch-examples source-lang target-lang)]
     (if (str/blank? doc-text)

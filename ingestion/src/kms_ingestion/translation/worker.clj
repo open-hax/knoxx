@@ -77,7 +77,7 @@
 
 (defn- process-job
   [job]
-  (let [job-id (str (:_id job))
+  (let [job-id (or (:id job) (str (:_id job)))
         document-id (:document_id job)
         garden-id (:garden_id job)
         source-lang (:source_lang job)
