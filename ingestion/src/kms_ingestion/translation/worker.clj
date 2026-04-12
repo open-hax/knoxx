@@ -22,9 +22,11 @@
 
 (defn- openplanner-headers
   []
-  (cond-> {"Content-Type" "application/json"}
-    (not (str/blank? (config/openplanner-api-key)))
-    (assoc "X-API-Key" (config/openplanner-api-key))))
+  (let [api-key (config/openplanner-api-key)]
+    (println "[translation-worker] API Key:" (if (str/blank? api-key) "<empty>" api-key))
+    (cond-> {"Content-Type" "application/json"}
+      (not (str/blank? api-key))
+      (assoc "Authorization" (str "Bearer " api-key)))))
 
 (defn- fetch-json
   [url]

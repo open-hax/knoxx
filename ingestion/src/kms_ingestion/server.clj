@@ -385,6 +385,13 @@
   (start-scheduler!)
   (start-watcher!)
   
+  ;; Start translation worker if enabled
+  (let [enabled? (config/translation-agent-enabled?)]
+    (println "[server] Translation agent enabled:" enabled?)
+    (when enabled?
+      (println "[server] Starting translation worker")
+      (translation-worker/start!)))
+  
   ;; Start server
   (let [port (config/port)]
     (println (str "Server running on http://0.0.0.0:" port))
