@@ -1,5 +1,8 @@
 import { Card, Badge } from "@open-hax/uxx";
 import EmptyState from "../components/EmptyState";
+import { EventTable } from "../components/ops/EventTable";
+import { useState, useEffect } from "react";
+import type { OpsEvent } from "../components/ops/ops-types";
 
 type WorkbenchView = "dashboard" | "content" | "review" | "memory" | "agents" | "ops";
 
@@ -41,7 +44,7 @@ const VIEW_CONFIG: Record<WorkbenchView, { title: string; description: string; s
   ops: {
     title: "Ops Log",
     description: "Inspect ingestion, sync, embeddings, policy violations.",
-    status: "partial",
+    status: "active",
     icon: "⚙️",
   },
 };
@@ -52,9 +55,88 @@ const STATUS_VARIANTS: Record<string, "default" | "warning" | "success"> = {
   active: "success",
 };
 
+// Mock data for development
+const MOCK_EVENTS: OpsEvent[] = [
+  {
+    id: "evt-1",
+    time: new Date(Date.now() - 5 * 60 * 1000),
+    type: "ingestion",
+    status: "done",
+    summary: "devel-docs: 14 files, 2.1MB",
+    duration: 12340,
+  },
+  {
+    id: "evt-2",
+    time: new Date(Date.now() - 9 * 60 * 1000),
+    type: "embedding",
+    status: "done",
+    summary: "14 chunks added",
+    duration: 3420,
+  },
+  {
+    id: "evt-3",
+    time: new Date(Date.now() - 16 * 60 * 1000),
+    type: "sync",
+    status: "done",
+    summary: "OpenPlanner → GraphWeaver",
+    duration: 890,
+  },
+  {
+    id: "evt-4",
+    time: new Date(Date.now() - 35 * 60 * 1000),
+    type: "policy",
+    status: "warn",
+    summary: "3 flagged segments (PII)",
+    duration: 120,
+  },
+  {
+    id: "evt-5",
+    time: new Date(Date.now() - 52 * 60 * 1000),
+    type: "MT",
+    status: "error",
+    summary: "batch7: timeout after 300s",
+    error: "TimeoutError: Request exceeded 300000ms limit",
+    duration: 300000,
+  },
+  {
+    id: "evt-6",
+    time: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    type: "ingestion",
+    status: "done",
+    summary: "devel-code: 89 files, 4.2MB",
+    duration: 45120,
+  },
+];
+
 export default function WorkbenchPage({ view }: WorkbenchPageProps) {
   const config = VIEW_CONFIG[view];
+  const [opsEvents, setOpsEvents] = useState<OpsEvent[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
+  // Load ops events when view is ops
+  useEffect(() => {
+    if (view === "ops") {
+      setIsLoading(true);
+      // TODO: Fetch from API
+      // For now, use mock data
+      const timer = setTimeout(() => {
+        setOpsEvents(MOCK_EVENTS);
+        setIsLoading(false);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [view]);
+
+  // Ops Log view - render EventTable directly
+  if (view === "ops") {
+    return (
+      <div className="workbench-page workbench-page--full-height">
+        <EventTable events={opsEvents} />
+      </div>
+    );
+  }
+
+  // Other views - render placeholder
   return (
     <div className="workbench-page">
       <header className="workbench-page__header">

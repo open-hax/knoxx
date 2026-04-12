@@ -240,6 +240,15 @@ select {
   gap: 1rem;
 }
 
+.workbench-page--full-height {
+  gap: 0;
+}
+
+.workbench-page--full-height > * {
+  flex: 1;
+  overflow: hidden;
+}
+
 .workbench-page__header {
   display: flex;
   align-items: center;
