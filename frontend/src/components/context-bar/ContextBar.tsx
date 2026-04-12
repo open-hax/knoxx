@@ -87,6 +87,7 @@ type ContextBarProps = {
   onLoadMoreRecentSessions?: () => void | Promise<void>;
   onResumeMemorySession?: (sessionId: string) => void | Promise<void>;
   onPreviewFile?: (path: string) => void | Promise<void>;
+  onOpenFile?: (entry: BrowseEntry) => void | Promise<void>;
   onPinSemanticResult?: (entry: SemanticSearchMatch) => void;
   onAppendToScratchpad?: (text: string, heading?: string) => void;
   onPinPreviewContext?: () => void;
@@ -154,6 +155,7 @@ export function ContextBar({
   onLoadMoreRecentSessions,
   onResumeMemorySession,
   onPreviewFile,
+  onOpenFile,
   onPinSemanticResult,
   onAppendToScratchpad,
   onPinPreviewContext,
@@ -493,7 +495,8 @@ export function ContextBar({
                 filteredEntries={filteredEntries ?? []}
                 previewData={previewData ?? null}
                 loadingPreview={loadingPreview ?? false}
-                onPreviewFile={onPreviewFile ?? (() => {})}
+                onPreviewFile={onPreviewFile}
+                onOpenFile={onOpenFile}
                 onLoadDirectory={onLoadDirectory ?? (() => {})}
                 onPinSemanticResult={onPinSemanticResult ?? (() => {})}
                 onAppendToScratchpad={onAppendToScratchpad ?? (() => {})}

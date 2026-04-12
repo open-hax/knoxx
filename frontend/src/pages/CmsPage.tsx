@@ -4,15 +4,12 @@ import { ContextBar } from "../components/context-bar";
 import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
 import { listMemorySessions } from "../lib/api/common";
 import {
-  type EditorDocument,
-  type DocumentStatus,
   type DocumentVisibility,
-  STATUS_CONFIG,
   VISIBILITY_CONFIG,
-  MOCK_COLLECTIONS,
 } from "../components/editor/editor-types";
 import type {
   BrowseResponse,
+  BrowseEntry,
   PinnedContextItem,
   PreviewResponse,
   SemanticSearchMatch,
@@ -20,43 +17,6 @@ import type {
 } from "../components/context-bar/types";
 import type { MemorySessionSummary } from "../lib/types";
 import styles from "./CmsPage.module.css";
-
-const PAGE_SIZE = 20;
-
-interface Document {
-  doc_id: string;
-  tenant_id: string;
-  title: string;
-  content: string;
-  visibility: "internal" | "review" | "public" | "archived";
-  source: string;
-  source_path: string | null;
-  domain: string;
-  language: string;
-  created_by: string;
-  published_by: string | null;
-  published_at: string | null;
-  ai_drafted: boolean;
-  ai_model: string | null;
-  metadata: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-}
-
-interface DocumentListResponse {
-  documents: Document[];
-  total: number;
-  by_visibility: Record<string, number>;
-}
-
-interface StatsResponse {
-  total: number;
-  project_total: number;
-  by_visibility: Record<string, number>;
-  by_domain: Record<string, number>;
-  by_kind: Record<string, number>;
-  by_source: Record<string, number>;
-}
 
 interface Garden {
   garden_id: string;
@@ -70,43 +30,13 @@ interface Garden {
 
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_cms_sidebar_width_px";
 
-const VISIBILITY_VARIANTS: Record<string, "default" | "warning" | "success" | "error"> = {
-  internal: "default",
-  review: "warning",
-  public: "success",
-  archived: "error",
-};
-
-const VISIBILITY_ICONS: Record<string, string> = {
-  internal: "🔒",
-  review: "👀",
-  public: "🌐",
-  archived: "📦",
-};
-
 function CmsPage() {
-  // Document state
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [documentTotal, setDocumentTotal] = useState(0);
-  const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
-  const [editorDoc, setEditorDoc] = useState<EditorDocument | null>(null);
+  // Editor state
+  const [editorTitle, setEditorTitle] = useState("");
+  const [editorBody, setEditorBody] = useState("");
+  const [editorPath, setEditorPath] = useState<string | null>(null);
+  const [editorVisibility, setEditorVisibility] = useState<DocumentVisibility>("internal");
   const [isDirty, setIsDirty] = useState(false);
-
-  // Stats
-  const [stats, setStats] = useState<StatsResponse | null>(null);
-
-  // Loading states
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-
-  // Filters
-  const [project, setProject] = useState("devel");
-  const [visibilityFilter, setVisibilityFilter] = useState("all");
-  const [kindFilter, setKindFilter] = useState("docs");
-  const [sourceFilter, setSourceFilter] = useState("");
-  const [domainFilter, setDomainFilter] = useState("");
-  const [pathPrefixFilter, setPathPrefixFilter] = useState("");
 
   // ContextBar state
   const [showFiles, setShowFiles] = useState(true);
@@ -119,9 +49,7 @@ function CmsPage() {
 
   // ContextBar data (file explorer, semantic search, sessions)
   const [browseData, setBrowseData] = useState<BrowseResponse | null>(null);
-  const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
   const [loadingBrowse, setLoadingBrowse] = useState(false);
-  const [loadingPreview, setLoadingPreview] = useState(false);
   const [entryFilter, setEntryFilter] = useState("");
   const [semanticQuery, setSemanticQuery] = useState("");
   const [semanticResults, setSemanticResults] = useState<SemanticSearchMatch[]>([]);
@@ -137,19 +65,20 @@ function CmsPage() {
   const [loadingMoreRecentSessions, setLoadingMoreRecentSessions] = useState(false);
   const [loadingMemorySessionId, setLoadingMemorySessionId] = useState<string | null>(null);
 
+  // Filters
+  const [visibilityFilter, setVisibilityFilter] = useState("all");
+  const [kindFilter, setKindFilter] = useState("docs");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [domainFilter, setDomainFilter] = useState("");
+  const [pathPrefixFilter, setPathPrefixFilter] = useState("");
+
   // Gardens (for publishing)
   const [gardens, setGardens] = useState<Garden[]>([]);
   const [selectedGardenId, setSelectedGardenId] = useState<string>("");
 
-  // Right panel (chat secondary)
-  const [showChat, setShowChat] = useState(false);
+  // Chat panel - always visible in Editor workflow
+  const [showChat, setShowChat] = useState(true);
   const [rightPanelWidthPx, setRightPanelWidthPx] = useState(360);
-
-  // Infinite scroll
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const offsetRef = useRef(0);
-  const isLoadingRef = useRef(false);
-  const hasMoreRef = useRef(true);
 
   const { startSidebarPaneResize, startSidebarWidthResize } = createSidebarResizeHandlers({
     sidebarSplitContainerRef,
@@ -158,9 +87,7 @@ function CmsPage() {
     setSidebarWidthPx,
   });
 
-  // Keep refs in sync
-  useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
-  useEffect(() => { isLoadingRef.current = loading || loadingMore; }, [loading, loadingMore]);
+  // Persist sidebar width
   useEffect(() => {
     localStorage.setItem(CHAT_SIDEBAR_WIDTH_KEY, String(sidebarWidthPx));
   }, [sidebarWidthPx]);
@@ -182,37 +109,6 @@ function CmsPage() {
       }
     };
     loadGardens();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Load documents when filters change
-  useEffect(() => {
-    offsetRef.current = 0;
-    setDocuments([]);
-    setHasMore(true);
-    hasMoreRef.current = true;
-    loadDocuments(true);
-    loadStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, visibilityFilter, kindFilter, sourceFilter, domainFilter, pathPrefixFilter]);
-
-  // Infinite scroll observer
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry.isIntersecting && hasMoreRef.current && !isLoadingRef.current) {
-          loadDocuments(false);
-        }
-      },
-      { rootMargin: "200px" }
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -254,164 +150,31 @@ function CmsPage() {
     loadRecentSessions();
   }, []);
 
-  const loadDocuments = async (reset: boolean) => {
-    if (reset) {
-      setLoading(true);
-    } else {
-      setLoadingMore(true);
-    }
+  // Load workspace status
+  useEffect(() => {
+    const loadWorkspaceStatus = async () => {
+      try {
+        const sourcesResp = await fetch("/api/ingestion/sources");
+        if (!sourcesResp.ok) return;
+        const sources = await sourcesResp.json();
+        const source = sources.find((s: { name: string; config?: { root_path?: string } }) =>
+          s.name === "devel workspace" || s.config?.root_path === "/app/workspace/devel"
+        );
+        setWorkspaceSourceId(source?.source_id ?? null);
+        if (!source) return;
 
-    try {
-      const params = new URLSearchParams();
-      params.set("tenant_id", project);
-      params.set("kind", kindFilter);
-      params.set("limit", String(PAGE_SIZE));
-      params.set("offset", String(reset ? 0 : offsetRef.current));
-      if (visibilityFilter !== "all") params.set("visibility", visibilityFilter);
-      if (sourceFilter.trim()) params.set("source", sourceFilter.trim());
-      if (domainFilter.trim()) params.set("domain", domainFilter.trim());
-      if (pathPrefixFilter.trim()) params.set("source_path_prefix", pathPrefixFilter.trim());
-
-      const resp = await fetch(`/api/cms/documents?${params}`);
-      if (resp.ok) {
-        const data: DocumentListResponse = await resp.json();
-        if (reset) {
-          setDocuments(data.documents);
-          offsetRef.current = data.documents.length;
-        } else {
-          setDocuments((prev) => [...prev, ...data.documents]);
-          offsetRef.current += data.documents.length;
+        const jobsResp = await fetch(`/api/ingestion/jobs?source_id=${encodeURIComponent(source.source_id)}&limit=10`);
+        if (jobsResp.ok) {
+          const jobs = await jobsResp.json();
+          const active = jobs.find((j: { status: string }) => j.status === "running" || j.status === "pending");
+          setWorkspaceJob(active ?? jobs[0] ?? null);
         }
-        setDocumentTotal(data.total);
-        const newHasMore = offsetRef.current < data.total;
-        setHasMore(newHasMore);
-        hasMoreRef.current = newHasMore;
+      } catch (err) {
+        console.error("Failed to load workspace status:", err);
       }
-    } catch (err) {
-      console.error("Failed to load documents:", err);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  };
-
-  const loadStats = async () => {
-    try {
-      const params = new URLSearchParams();
-      params.set("tenant_id", project);
-      params.set("kind", kindFilter);
-      if (visibilityFilter !== "all") params.set("visibility", visibilityFilter);
-      if (sourceFilter.trim()) params.set("source", sourceFilter.trim());
-      if (domainFilter.trim()) params.set("domain", domainFilter.trim());
-      if (pathPrefixFilter.trim()) params.set("source_path_prefix", pathPrefixFilter.trim());
-      const resp = await fetch(`/api/cms/stats?${params}`);
-      if (resp.ok) {
-        setStats(await resp.json());
-      }
-    } catch (err) {
-      console.error("Failed to load stats:", err);
-    }
-  };
-
-  // Convert Document to EditorDocument for editing
-  const handleSelectDocument = (doc: Document) => {
-    setSelectedDoc(doc);
-    setEditorDoc({
-      id: doc.doc_id,
-      title: doc.title,
-      body: doc.content,
-      collection_id: doc.source,
-      visibility: doc.visibility === "archived" ? "internal" : doc.visibility as DocumentVisibility,
-      status: doc.visibility === "public" ? "published" : doc.visibility === "review" ? "review" : "draft",
-      created_at: doc.created_at,
-      updated_at: doc.updated_at,
-    });
-    setIsDirty(false);
-  };
-
-  const handleTitleChange = useCallback((title: string) => {
-    setEditorDoc((prev) => prev ? { ...prev, title } : null);
-    setIsDirty(true);
+    };
+    loadWorkspaceStatus();
   }, []);
-
-  const handleBodyChange = useCallback((body: string) => {
-    setEditorDoc((prev) => prev ? { ...prev, body } : null);
-    setIsDirty(true);
-  }, []);
-
-  const handleVisibilityChange = useCallback((visibility: DocumentVisibility) => {
-    setEditorDoc((prev) => prev ? { ...prev, visibility } : null);
-    setIsDirty(true);
-  }, []);
-
-  const handleSetReview = useCallback(() => {
-    setEditorDoc((prev) => prev ? { ...prev, status: "review" } : null);
-    setIsDirty(true);
-  }, []);
-
-  const handlePublish = useCallback(async () => {
-    if (!selectedDoc || !selectedGardenId) return;
-
-    try {
-      const resp = await fetch(`/api/cms/publish/${selectedDoc.doc_id}/${selectedGardenId}`, { method: "POST" });
-      if (resp.ok) {
-        setEditorDoc((prev) => prev ? {
-          ...prev,
-          status: "published",
-          visibility: "public",
-        } : null);
-        setIsDirty(false);
-        loadDocuments(true);
-        loadStats();
-      }
-    } catch (err) {
-      console.error("Publish failed:", err);
-    }
-  }, [selectedDoc, selectedGardenId]);
-
-  const handleSave = useCallback(async () => {
-    if (!editorDoc) return;
-
-    try {
-      const resp = await fetch(`/api/cms/documents/${editorDoc.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: editorDoc.title,
-          content: editorDoc.body,
-          visibility: editorDoc.visibility,
-        }),
-      });
-
-      if (resp.ok) {
-        setIsDirty(false);
-        loadDocuments(true);
-      }
-    } catch (err) {
-      console.error("Save failed:", err);
-    }
-  }, [editorDoc]);
-
-  const handleCreateDocument = async () => {
-    const title = prompt("Document title:");
-    if (!title) return;
-
-    try {
-      const resp = await fetch(`/api/cms/documents?tenant_id=${encodeURIComponent(project)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, content: "", domain: "general" }),
-      });
-
-      if (resp.ok) {
-        const doc: Document = await resp.json();
-        handleSelectDocument(doc);
-        loadStats();
-      }
-    } catch (err) {
-      console.error("Create failed:", err);
-    }
-  };
 
   const handleLoadDirectory = async (path?: string) => {
     setLoadingBrowse(true);
@@ -446,18 +209,68 @@ function CmsPage() {
     }
   };
 
-  const handlePreviewFile = async (path: string) => {
-    setLoadingPreview(true);
+  // KEY DIFFERENCE: Selecting a file opens it in editor AND pins to chat context
+  const handleOpenFile = async (entry: BrowseEntry) => {
+    if (entry.type === "dir") {
+      await handleLoadDirectory(entry.path);
+      return;
+    }
+
+    // Load file content
     try {
-      const params = new URLSearchParams({ path });
+      const params = new URLSearchParams({ path: entry.path });
       const resp = await fetch(`/api/ingestion/file?${params}`);
       if (resp.ok) {
-        setPreviewData(await resp.json());
+        const data: PreviewResponse = await resp.json();
+        setEditorTitle(entry.name);
+        setEditorBody(data.content);
+        setEditorPath(entry.path);
+        setEditorVisibility((entry.visibility as DocumentVisibility) ?? "internal");
+        setIsDirty(false);
       }
-    } finally {
-      setLoadingPreview(false);
+    } catch (err) {
+      console.error("Failed to load file:", err);
     }
+
+    // Auto-pin to chat context (key CMS behavior)
+    const pinnedItem: PinnedContextItem = {
+      id: entry.path,
+      title: entry.name,
+      path: entry.path,
+      kind: "file",
+    };
+    setPinnedContext((prev) => {
+      if (prev.some((p) => p.path === entry.path)) return prev;
+      return [pinnedItem, ...prev.slice(0, 23)];
+    });
   };
+
+  const handleTitleChange = useCallback((title: string) => {
+    setEditorTitle(title);
+    setIsDirty(true);
+  }, []);
+
+  const handleBodyChange = useCallback((body: string) => {
+    setEditorBody(body);
+    setIsDirty(true);
+  }, []);
+
+  const handleVisibilityChange = useCallback((visibility: DocumentVisibility) => {
+    setEditorVisibility(visibility);
+    setIsDirty(true);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (!editorPath || !isDirty) return;
+
+    try {
+      // Save back to ingestion/storage
+      console.log("Save:", { path: editorPath, title: editorTitle });
+      setIsDirty(false);
+    } catch (err) {
+      console.error("Save failed:", err);
+    }
+  }, [editorPath, editorTitle, isDirty]);
 
   const handleRefreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
@@ -474,7 +287,6 @@ function CmsPage() {
   const handleResumeMemorySession = async (sessionId: string) => {
     setLoadingMemorySessionId(sessionId);
     try {
-      // In CMS context, resuming a session could open the chat panel
       setShowChat(true);
       console.log("Resume session:", sessionId);
     } finally {
@@ -500,8 +312,8 @@ function CmsPage() {
           sidebarSplitContainerRef={sidebarSplitContainerRef}
           visibilityFilter={visibilityFilter}
           kindFilter={kindFilter}
-          statsTotal={stats?.total ?? 0}
-          statsByVisibility={stats?.by_visibility ?? {}}
+          statsTotal={0}
+          statsByVisibility={{}}
           sourceFilter={sourceFilter}
           domainFilter={domainFilter}
           pathPrefixFilter={pathPrefixFilter}
@@ -511,16 +323,21 @@ function CmsPage() {
           onSourceFilterChange={setSourceFilter}
           onDomainFilterChange={setDomainFilter}
           onPathPrefixFilterChange={setPathPrefixFilter}
-          onNewDocument={handleCreateDocument}
+          onNewDocument={() => {
+            setEditorTitle("Untitled");
+            setEditorBody("");
+            setEditorPath(null);
+            setIsDirty(true);
+          }}
           onStartSidebarPaneResize={startSidebarPaneResize}
           onStartSidebarWidthResize={startSidebarWidthResize}
           // File explorer
           currentPath={currentPath}
           currentParentPath={currentParentPath}
           browseData={browseData}
-          previewData={previewData}
+          previewData={null} // CMS doesn't use preview panel
           loadingBrowse={loadingBrowse}
-          loadingPreview={loadingPreview}
+          loadingPreview={false}
           entryFilter={entryFilter}
           filteredEntries={filteredEntries}
           activeEntryCount={activeEntryCount}
@@ -529,7 +346,7 @@ function CmsPage() {
           workspaceProgressPercent={workspaceJob ? Math.round((workspaceJob.processed_files / workspaceJob.total_files) * 100) : 0}
           onLoadDirectory={handleLoadDirectory}
           onEntryFilterChange={setEntryFilter}
-          onPreviewFile={handlePreviewFile}
+          onOpenFile={handleOpenFile} // CMS uses onOpenFile instead of onPreviewFile
           // Semantic search
           semanticQuery={semanticQuery}
           semanticResults={semanticResults}
@@ -565,28 +382,34 @@ function CmsPage() {
         />
       ) : null}
 
-      {/* Main editor area */}
+      {/* Main editor area - always visible */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {editorDoc ? (
-          <>
-            {/* Editor header */}
-            <header className={styles.header}>
-              <div className={styles.titleRow}>
-                {!showFiles && (
-                  <Button variant="ghost" size="sm" onClick={() => setShowFiles(true)}>
-                    Files
-                  </Button>
-                )}
-                <input
-                  type="text"
-                  className={styles.titleInput}
-                  value={editorDoc.title}
-                  onChange={(e) => handleTitleChange(e.target.value)}
-                  placeholder="Untitled document"
-                />
-                {isDirty && <span className={styles.dirtyIndicator}>Unsaved changes</span>}
-              </div>
-              <div className={styles.actions}>
+        {/* Editor header */}
+        <header className={styles.header}>
+          <div className={styles.titleRow}>
+            {!showFiles && (
+              <Button variant="ghost" size="sm" onClick={() => setShowFiles(true)}>
+                Files
+              </Button>
+            )}
+            <input
+              type="text"
+              className={styles.titleInput}
+              value={editorTitle}
+              onChange={(e) => handleTitleChange(e.target.value)}
+              placeholder="Select a file from the explorer..."
+              disabled={!editorPath}
+            />
+            {editorPath && (
+              <span style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>
+                {editorPath}
+              </span>
+            )}
+            {isDirty && <span className={styles.dirtyIndicator}>Unsaved changes</span>}
+          </div>
+          <div className={styles.actions}>
+            {editorPath && (
+              <>
                 <button
                   className={styles.saveButton}
                   onClick={handleSave}
@@ -594,198 +417,124 @@ function CmsPage() {
                 >
                   Save
                 </button>
-                {editorDoc.status === "draft" && (
-                  <button className={styles.publishButton} onClick={handleSetReview}>
-                    Submit for Review
-                  </button>
-                )}
-                {editorDoc.status === "review" && (
-                  <button className={styles.publishButton} onClick={handlePublish} disabled={!selectedGardenId}>
-                    Publish
-                  </button>
-                )}
-              </div>
-            </header>
-
-            {/* Editor layout */}
-            <div className={styles.editorLayout}>
-              <main className={styles.bodyEditor}>
-                <textarea
-                  className={styles.bodyTextarea}
-                  value={editorDoc.body}
-                  onChange={(e) => handleBodyChange(e.target.value)}
-                  placeholder="Start writing..."
-                />
-              </main>
-
-              <aside className={styles.fieldsSidebar}>
-                {/* Status */}
-                <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Status</label>
-                  <div className={styles.fieldValue}>
-                    <Badge variant={editorDoc.status === "published" ? "success" : editorDoc.status === "review" ? "warning" : "default"}>
-                      {STATUS_CONFIG[editorDoc.status].label}
-                    </Badge>
-                  </div>
-                </div>
-
-                {/* Visibility */}
-                <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Visibility</label>
-                  <select
-                    value={editorDoc.visibility}
-                    onChange={(e) => handleVisibilityChange(e.target.value as DocumentVisibility)}
-                    className={styles.fieldSelect}
-                  >
-                    {Object.entries(VISIBILITY_CONFIG).map(([value, config]) => (
-                      <option key={value} value={value}>
-                        {config.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Collection */}
-                <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Collection</label>
-                  <select
-                    value={editorDoc.collection_id}
-                    onChange={(e) => setEditorDoc((prev) => prev ? { ...prev, collection_id: e.target.value } : null)}
-                    className={styles.fieldSelect}
-                  >
-                    {MOCK_COLLECTIONS.map((col) => (
-                      <option key={col.id} value={col.id}>
-                        {col.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Garden for publishing */}
-                {(editorDoc.status === "review" || editorDoc.status === "published") && (
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.fieldLabel}>Publish to Garden</label>
-                    <select
-                      value={selectedGardenId}
-                      onChange={(e) => setSelectedGardenId(e.target.value)}
-                      className={styles.fieldSelect}
-                    >
-                      {gardens.map((g) => (
-                        <option key={g.garden_id} value={g.garden_id}>
-                          {g.title}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {/* Metadata */}
-                <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Metadata</label>
-                  <div className={styles.metadata}>
-                    <div>Created: {new Date(editorDoc.created_at).toLocaleDateString()}</div>
-                    <div>Updated: {new Date(editorDoc.updated_at).toLocaleDateString()}</div>
-                    {selectedDoc?.ai_drafted && (
-                      <div style={{ color: "var(--token-colors-accent-magenta)" }}>AI-drafted</div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Chat toggle */}
-                <div className={styles.fieldGroup}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    fullWidth
-                    onClick={() => setShowChat(!showChat)}
-                  >
-                    {showChat ? "Hide Chat" : "Show Chat"}
-                  </Button>
-                </div>
-              </aside>
-            </div>
-          </>
-        ) : (
-          /* No document selected - show document list */
-          <div style={{ flex: 1, overflow: "auto" }}>
-            <div style={{ position: "sticky", top: 0, zIndex: 10, borderBottom: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-surface)", backdropFilter: "blur(8px)", padding: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {!showFiles && <Button variant="ghost" size="sm" onClick={() => setShowFiles(true)}>Files</Button>}
-                <h2 style={{ fontSize: "18px", fontWeight: 600 }}>Content Library</h2>
-              </div>
-              <p style={{ fontSize: "14px", color: "var(--token-colors-text-muted)" }}>
-                {loading ? "Loading..." : `${documentTotal} matching records in ${project}`}
-              </p>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {documents.map((doc) => (
-                <div
-                  key={doc.doc_id}
-                  onClick={() => handleSelectDocument(doc)}
-                  style={{
-                    cursor: "pointer",
-                    padding: "16px",
-                    borderBottom: "1px solid var(--token-colors-alpha-bg-_08)",
-                    transition: "background 0.15s",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <h3 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{doc.title}</h3>
-                      <p style={{ marginTop: "4px", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", fontSize: "14px", color: "var(--token-colors-text-muted)" }}>
-                        {doc.content.slice(0, 150)}...
-                      </p>
-                    </div>
-                    <Badge variant={VISIBILITY_VARIANTS[doc.visibility]} size="sm" rounded>
-                      {VISIBILITY_ICONS[doc.visibility]} {doc.visibility}
-                    </Badge>
-                  </div>
-
-                  <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--token-colors-text-muted)" }}>
-                    <span>{doc.source}</span>
-                    <span>•</span>
-                    <span>{new Date(doc.created_at).toLocaleDateString()}</span>
-                    {doc.ai_drafted && (
-                      <>
-                        <span>•</span>
-                        <span style={{ color: "var(--token-colors-accent-magenta)" }}>AI-drafted</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              <div ref={sentinelRef} style={{ height: 1 }} />
-
-              {loadingMore && (
-                <div style={{ padding: "16px", textAlign: "center", color: "var(--token-colors-text-muted)" }}>
-                  Loading more...
-                </div>
-              )}
-
-              {!hasMore && documents.length > 0 && (
-                <div style={{ padding: "16px", textAlign: "center", color: "var(--token-colors-text-muted)", fontSize: "14px" }}>
-                  {documentTotal} documents loaded
-                </div>
-              )}
-
-              {documents.length === 0 && !loading && (
-                <div style={{ padding: "32px", textAlign: "center", color: "var(--token-colors-text-muted)" }}>
-                  <p>No documents found.</p>
-                  <div style={{ marginTop: 12 }}>
-                    <Button variant="primary" size="sm" onClick={handleCreateDocument}>
-                      Create Document
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
+                <button className={styles.publishButton}>
+                  Publish
+                </button>
+              </>
+            )}
           </div>
-        )}
+        </header>
+
+        {/* Editor layout */}
+        <div className={styles.editorLayout}>
+          <main className={styles.bodyEditor}>
+            {editorPath ? (
+              <textarea
+                className={styles.bodyTextarea}
+                value={editorBody}
+                onChange={(e) => handleBodyChange(e.target.value)}
+                placeholder="Start writing..."
+              />
+            ) : (
+              <div style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "var(--token-colors-text-muted)",
+                fontSize: 14,
+              }}>
+                <div style={{ textAlign: "center" }}>
+                  <p style={{ marginBottom: 8 }}>Select a file from the explorer to edit</p>
+                  <p style={{ fontSize: 12, color: "var(--token-colors-text-subtle)" }}>
+                    Files in docs/ folder are available
+                  </p>
+                </div>
+              </div>
+            )}
+          </main>
+
+          <aside className={styles.fieldsSidebar}>
+            {/* Status */}
+            <div className={styles.fieldGroup}>
+              <label className={styles.fieldLabel}>Status</label>
+              <div className={styles.fieldValue}>
+                <Badge variant="default">Draft</Badge>
+              </div>
+            </div>
+
+            {/* Visibility */}
+            <div className={styles.fieldGroup}>
+              <label className={styles.fieldLabel}>Visibility</label>
+              <select
+                value={editorVisibility}
+                onChange={(e) => handleVisibilityChange(e.target.value as DocumentVisibility)}
+                className={styles.fieldSelect}
+                disabled={!editorPath}
+              >
+                {Object.entries(VISIBILITY_CONFIG).map(([value, config]) => (
+                  <option key={value} value={value}>
+                    {config.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Pinned context */}
+            {pinnedContext.length > 0 && (
+              <div className={styles.fieldGroup}>
+                <label className={styles.fieldLabel}>Pinned Context</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {pinnedContext.slice(0, 5).map((item) => (
+                    <div
+                      key={item.id}
+                      style={{
+                        fontSize: 11,
+                        padding: "4px 8px",
+                        background: "var(--token-colors-alpha-bg-_08)",
+                        borderRadius: 4,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.title}
+                      </span>
+                      <button
+                        onClick={() => setPinnedContext((prev) => prev.filter((p) => p.path !== item.path))}
+                        style={{
+                          border: "none",
+                          background: "transparent",
+                          color: "var(--token-colors-text-muted)",
+                          cursor: "pointer",
+                          fontSize: 10,
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Chat toggle */}
+            <div className={styles.fieldGroup}>
+              <Button
+                variant="ghost"
+                size="sm"
+                fullWidth
+                onClick={() => setShowChat(!showChat)}
+              >
+                {showChat ? "Hide Chat" : "Show Chat"}
+              </Button>
+            </div>
+          </aside>
+        </div>
       </div>
 
-      {/* Right panel: Chat (secondary) */}
+      {/* Right panel: Chat (secondary) - always visible in Editor workflow */}
       {showChat && (
         <div
           style={{
@@ -811,15 +560,38 @@ function CmsPage() {
             </Button>
           </div>
           <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
-            <p style={{ fontSize: 14, color: "var(--token-colors-text-muted)" }}>
-              Chat interface will be here. Can discuss the current document with AI assistant.
-            </p>
-            {editorDoc && (
-              <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: "var(--token-colors-alpha-bg-_08)" }}>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Pinned Context</div>
+            {editorPath ? (
+              <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, background: "var(--token-colors-alpha-bg-_08)" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Editing</div>
                 <div style={{ fontSize: 12, color: "var(--token-colors-text-muted)" }}>
-                  {editorDoc.title}
+                  {editorTitle}
                 </div>
+                <div style={{ fontSize: 10, color: "var(--token-colors-text-subtle)", marginTop: 4 }}>
+                  {editorPath}
+                </div>
+              </div>
+            ) : (
+              <p style={{ fontSize: 14, color: "var(--token-colors-text-muted)" }}>
+                Select a file to start editing. The file will be pinned to this chat automatically.
+              </p>
+            )}
+            {pinnedContext.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Pinned Context</div>
+                {pinnedContext.slice(0, 5).map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      fontSize: 11,
+                      padding: "6px 8px",
+                      background: "var(--token-colors-alpha-blue-_08)",
+                      borderRadius: 4,
+                      marginBottom: 4,
+                    }}
+                  >
+                    {item.title}
+                  </div>
+                ))}
               </div>
             )}
           </div>

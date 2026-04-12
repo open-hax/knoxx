@@ -25,7 +25,8 @@ type ContextBarExplorerProps = {
   filteredEntries: BrowseEntry[];
   previewData: PreviewResponse | null;
   loadingPreview: boolean;
-  onPreviewFile: (path: string) => void | Promise<void>;
+  onPreviewFile?: (path: string) => void | Promise<void>;
+  onOpenFile?: (entry: BrowseEntry) => void | Promise<void>;
   onLoadDirectory: (path?: string) => void | Promise<void>;
   onPinSemanticResult: (entry: SemanticSearchMatch) => void;
   onAppendToScratchpad: (text: string, heading?: string) => void;
@@ -44,6 +45,7 @@ export function ContextBarExplorer({
   previewData,
   loadingPreview,
   onPreviewFile,
+  onOpenFile,
   onLoadDirectory,
   onPinSemanticResult,
   onAppendToScratchpad,
@@ -82,7 +84,20 @@ export function ContextBarExplorer({
               <button
                 key={`semantic:${entry.id}`}
                 type="button"
-                onClick={() => void onPreviewFile(entry.path)}
+                onClick={() => {
+                  if (onOpenFile) {
+                    // CMS mode: open in editor
+                    void onOpenFile({
+                      name: entry.path.split("/").pop() ?? entry.path,
+                      path: entry.path,
+                      type: "file",
+                      previewable: true,
+                    });
+                  } else if (onPreviewFile) {
+                    // Chat mode: show preview
+                    void onPreviewFile(entry.path);
+                  }
+                }}
                 style={{
                   width: "100%",
                   textAlign: "left",
@@ -123,7 +138,11 @@ export function ContextBarExplorer({
                 onClick={() => {
                   if (entry.type === "dir") {
                     void onLoadDirectory(entry.path);
-                  } else if (entry.previewable) {
+                  } else if (onOpenFile) {
+                    // CMS mode: open in editor
+                    void onOpenFile(entry);
+                  } else if (entry.previewable && onPreviewFile) {
+                    // Chat mode: show preview
                     void onPreviewFile(entry.path);
                   }
                 }}
@@ -200,38 +219,40 @@ export function ContextBarExplorer({
         )}
       </div>
 
-      {/* Preview panel - compact */}
-      <div style={{ 
-        minHeight: 80, 
-        maxHeight: 120, 
-        overflowY: "auto", 
-        padding: 6, 
-        background: "var(--token-colors-alpha-bg-_08)", 
-        borderTop: "1px solid var(--token-colors-border-default)",
-        flexShrink: 0 
-      }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 600 }}>Preview</span>
-          {previewData && (
-            <div style={{ display: "flex", gap: 4 }}>
-              <Button variant="ghost" size="sm" onClick={onPinPreviewContext}>Pin</Button>
-              <Button variant="ghost" size="sm" onClick={() => void onOpenPreviewInCanvas()}>Open</Button>
-            </div>
+      {/* Preview panel - only for chat mode (when onOpenFile is not provided) */}
+      {!onOpenFile && (
+        <div style={{ 
+          minHeight: 80, 
+          maxHeight: 120, 
+          overflowY: "auto", 
+          padding: 6, 
+          background: "var(--token-colors-alpha-bg-_08)", 
+          borderTop: "1px solid var(--token-colors-border-default)",
+          flexShrink: 0 
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, fontWeight: 600 }}>Preview</span>
+            {previewData && (
+              <div style={{ display: "flex", gap: 4 }}>
+                <Button variant="ghost" size="sm" onClick={onPinPreviewContext}>Pin</Button>
+                <Button variant="ghost" size="sm" onClick={() => void onOpenPreviewInCanvas()}>Open</Button>
+              </div>
+            )}
+          </div>
+          {loadingPreview ? (
+            <Spinner size="sm" />
+          ) : previewData ? (
+            <>
+              <div style={{ fontSize: 9, color: "var(--token-colors-text-muted)", marginBottom: 4 }}>{previewData.path}</div>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 9, lineHeight: 1.4, color: "var(--token-colors-text-subtle)", maxHeight: 60, overflow: "hidden" }}>
+                {previewData.content.slice(0, 300)}{previewData.content.length > 300 ? "..." : ""}
+              </pre>
+            </>
+          ) : (
+            <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)" }}>Select a file to preview</div>
           )}
         </div>
-        {loadingPreview ? (
-          <Spinner size="sm" />
-        ) : previewData ? (
-          <>
-            <div style={{ fontSize: 9, color: "var(--token-colors-text-muted)", marginBottom: 4 }}>{previewData.path}</div>
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 9, lineHeight: 1.4, color: "var(--token-colors-text-subtle)", maxHeight: 60, overflow: "hidden" }}>
-              {previewData.content.slice(0, 300)}{previewData.content.length > 300 ? "..." : ""}
-            </pre>
-          </>
-        ) : (
-          <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)" }}>Select a file to preview</div>
-        )}
-      </div>
+      )}
     </div>
   );
 }
