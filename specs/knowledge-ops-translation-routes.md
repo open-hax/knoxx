@@ -1,10 +1,14 @@
 # Translation Routes + Permissions
 
 Date: 2026-04-06
-Status: child spec
+Status: needs revision
 Points: 5
 Epic: `knowledge-ops-translation-review-epic.md`
 Depends on: OpenPlanner MongoDB migration complete
+
+Canonical update: 2026-04-12
+See `knowledge-ops-translation-triage-2026-04-12.md`.
+The live implementation no longer stores translation segments and labels as OpenPlanner events. Canonical storage is now collection-backed: `translation_segments`, `translation_labels`, and `translation_jobs`. Keep the API/permission intent from this spec, but do not use the event-only data model below as the source of truth for new implementation work.
 
 ---
 

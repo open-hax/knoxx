@@ -1,10 +1,14 @@
 # Translation MT Pipeline
 
 Date: 2026-04-06
-Status: child spec
+Status: needs revision
 Points: 3
 Epic: `knowledge-ops-translation-review-epic.md`
 Depends on: `knowledge-ops-translation-routes.md`
+
+Canonical update: 2026-04-12
+See `knowledge-ops-translation-triage-2026-04-12.md`.
+The live MT pipeline is queue-driven, not metadata-scan-driven. Canonical trigger is `CMS publish to selected garden -> translation_jobs -> translation-worker -> translation_segments`. Treat the scanning flow and `needs_translation` sections below as stale unless they are explicitly rewritten to match the queue-based architecture.
 
 ---
 

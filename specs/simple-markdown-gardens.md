@@ -1,8 +1,12 @@
 # Simple Markdown Gardens
 
-**Status:** Draft
+**Status:** Needs revision
 **Created:** 2026-04-11
 **Owner:** CMS/Gardens
+
+Canonical update: 2026-04-12
+See `knowledge-ops-translation-triage-2026-04-12.md`.
+This spec currently conflicts with the live garden publication path. Translation is not removed from the garden model in practice. The canonical implementation actively uses `garden.target_languages`, garden-scoped publication metadata, and queued translation jobs during CMS publish.
 
 ## Overview
 
@@ -68,7 +72,7 @@ interface Garden {
 
 ### Key Changes from Previous Model
 
-1. **Removed translation complexity** - No auto_translate, translation_status, etc.
+1. Translation complexity is still present in the live system via garden-targeted publication metadata, `translation_jobs`, and public translation serving.
 2. **Removed domain routing** - Gardens live at `/gardens/:garden_id/*`
 3. **Added theme selection** - Simple string field for uxx theme
 4. **Simplified source_filter** - Just project/kind/domain/path_prefix

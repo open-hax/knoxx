@@ -1,10 +1,14 @@
 # Translation Review UI
 
 Date: 2026-04-06
-Status: child spec
+Status: partial / needs revision
 Points: 5
 Epic: `knowledge-ops-translation-review-epic.md`
 Depends on: `knowledge-ops-translation-routes.md`, `knowledge-ops-translation-export.md`
+
+Canonical update: 2026-04-12
+See `knowledge-ops-translation-triage-2026-04-12.md`.
+This spec is still directionally correct that Knoxx owns the review UI, but several payload and route-shape details no longer match the live implementation. Use it as UI intent, not as the exact current data contract.
 
 ---
 
