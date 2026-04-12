@@ -3,6 +3,7 @@ import EmptyState from "../components/EmptyState";
 import { EventTable } from "../components/ops/EventTable";
 import { AttentionCard } from "../components/dashboard/AttentionCard";
 import { ContentEditorPage } from "./ContentEditorPage";
+import { ReviewQueuePage } from "./ReviewQueuePage";
 import { useState, useEffect } from "react";
 import type { OpsEvent } from "../components/ops/ops-types";
 import type { AttentionMetric } from "../components/dashboard/dashboard-types";
@@ -30,7 +31,7 @@ const VIEW_CONFIG: Record<WorkbenchView, { title: string; description: string; s
   review: {
     title: "Review Queue",
     description: "Process pending items with correction capture that writes to memory.",
-    status: "partial",
+    status: "active",
     icon: "✅",
   },
   memory: {
@@ -154,6 +155,15 @@ export default function WorkbenchPage({ view }: WorkbenchPageProps) {
     return (
       <div className="workbench-page workbench-page--full-height">
         <ContentEditorPage />
+      </div>
+    );
+  }
+
+  // Review Queue view - render ReviewQueuePage
+  if (view === "review") {
+    return (
+      <div className="workbench-page workbench-page--full-height">
+        <ReviewQueuePage />
       </div>
     );
   }

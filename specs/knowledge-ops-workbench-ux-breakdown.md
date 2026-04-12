@@ -242,21 +242,24 @@
 
 **Purpose**: Process pending items with correction capture that writes to memory.
 
-### 3.1 Review Queue Shell (2 pts)
+### 3.1 Review Queue Shell (2 pts) ✅ COMPLETE
 
 **Scope**: Queue list, item detail, label form.
 
 **Files**:
 - `src/pages/ReviewQueuePage.tsx` — page component
 - `src/components/review/QueueList.tsx` — queue navigation
+- `src/components/review/review-types.ts` — types and config
 
 **Exit criteria**:
-- [ ] Shows all pending items
-- [ ] Queue ordered by confidence (lowest first)
-- [ ] Item type badge (synthesis/MT/ingestion)
-- [ ] Batch actions dropdown
+- [x] Shows all pending items
+- [x] Queue ordered by confidence (lowest first)
+- [x] Item type badge (synthesis/MT/ingestion)
+- [x] Batch actions dropdown
 
-**Dependencies**: 0.1, P3 (for review queue)
+**Dependencies**: 0.1, P3 (for review queue — mocked for now)
+
+**Commit**: `feat(workbench): add Review Queue Shell (Epic 3.1)`
 
 ---
 
@@ -522,18 +525,18 @@
 | 0. Shell Foundation | 4 | 8 | ✅ Complete | None (layout), P1A ✅ (status bar) |
 | 1. Dashboard | 3 | 5 | 2/5 complete | P3, P1B |
 | 2. Content Editor | 4 | 6 | 2/6 complete | P3, P1B |
-| 3. Review Queue | 3 | 5 | Not started | P3, P1B |
+| 3. Review Queue | 3 | 5 | 2/5 complete | P3, P1B |
 | 4. Memory Inspector | 3 | 5 | Blocked on P1B | P1B |
 | 5. Agent Workspace | 3 | 5 | Blocked on P1B | P1B |
 | 6. Ops Log | 3 | 4 | 2/3 complete (3 pts done) | None |
 | 7. Shared Components | 2 | 2 | ✅ Complete | None |
-| **Total** | **25** | **40** | **17 pts done, 2 pts unblocked** | |
+| **Total** | **25** | **40** | **19 pts done, 0 pts unblocked** | |
 
 **Progress**:
-- ✅ Complete: 17 points (Epic 0, Epic 1.1, Epic 2.1, Epic 6.1+6.2, Epic 7)
-- 🔓 Unblocked: 2 points (3.1)
-- 🔒 Blocked on P3: 6 points (1.2, 2.3, 2.4, 3.2)
-- 🔒 Blocked on P1B: 14 points (1.3, 2.2, 3.3, 4.x, 5.x)
+- ✅ Complete: 19 points (Epic 0, Epic 1.1, Epic 2.1, Epic 3.1, Epic 6.1+6.2, Epic 7)
+- 🔓 Unblocked: 0 points (all Phase 2 shells complete)
+- 🔒 Blocked on P3: 8 points (1.2, 2.3, 2.4, 3.2)
+- 🔒 Blocked on P1B: 12 points (1.3, 2.2, 3.3, 4.x, 5.x)
 
 ---
 
@@ -547,10 +550,10 @@
 - [x] 0.3 Status Bar (2 pt) — `2ca86641`
 - [x] 0.4 ChordOverlay Integration (2 pt) — `19f3a8c9`
 
-**Phase 2 (IN PROGRESS — 4 pts done)**:
+**Phase 2 (COMPLETE — 6 pts)**:
 - [x] 1.1 Dashboard Attention Cards (2 pt) ✅
 - [x] 2.1 Content Editor Shell (2 pt) ✅
-- [ ] 3.1 Review Queue Shell (2 pt)
+- [x] 3.1 Review Queue Shell (2 pt) ✅
 
 **Phase 3 (after P3 clears)**:
 - [ ] 1.2 Dashboard Agent Run Summary (2 pt)

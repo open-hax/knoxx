@@ -1,0 +1,89 @@
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--token-spacing-100);
+}
+
+.emptyState {
+  padding: var(--token-spacing-400);
+  text-align: center;
+  color: var(--token-colors-text-muted);
+}
+
+.item {
+  padding: var(--token-spacing-200) var(--token-spacing-300);
+  background: var(--token-colors-surface-secondary);
+  border: 1px solid var(--token-colors-border-default);
+  border-radius: var(--token-radius-md);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.item:hover {
+  background: var(--token-colors-surface-tertiary);
+  border-color: var(--token-colors-border-hover);
+}
+
+.item:focus {
+  outline: none;
+  border-color: var(--token-colors-accent-cyan);
+  box-shadow: 0 0 0 2px rgba(0, 188, 212, 0.2);
+}
+
+.itemSelected {
+  background: var(--token-colors-surface-tertiary);
+  border-color: var(--token-colors-accent-cyan);
+}
+
+.itemHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--token-spacing-100);
+}
+
+.typeBadge {
+  font-size: var(--token-font-size-xs);
+  font-weight: var(--token-font-weight-medium);
+  padding: var(--token-spacing-100) var(--token-spacing-200);
+  background: var(--token-colors-surface-primary);
+  border-radius: var(--token-radius-full);
+}
+
+.confidence {
+  font-size: var(--token-font-size-sm);
+  font-weight: var(--token-font-weight-semibold);
+  color: var(--token-colors-text-secondary);
+}
+
+.itemTitle {
+  font-size: var(--token-font-size-base);
+  font-weight: var(--token-font-weight-medium);
+  color: var(--token-colors-text-primary);
+  margin: 0 0 var(--token-spacing-100);
+}
+
+.itemSummary {
+  font-size: var(--token-font-size-sm);
+  color: var(--token-colors-text-secondary);
+  margin: 0 0 var(--token-spacing-100);
+  line-height: 1.4;
+}
+
+.itemMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--token-spacing-200);
+  font-size: var(--token-font-size-xs);
+  color: var(--token-colors-text-muted);
+}
+
+.sourceCount,
+.agentName {
+  display: flex;
+  align-items: center;
+  gap: var(--token-spacing-100);
+}
