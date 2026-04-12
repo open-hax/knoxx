@@ -185,6 +185,7 @@ function CmsPage() {
   );
 
   const syncCmsDocumentByPath = useCallback(async (path: string) => {
+    const normalizeSourcePath = (value: string | null | undefined) => (value ?? "").replace(/^\/+/, "");
     const params = new URLSearchParams({ path_prefix: path, limit: "20" });
     const resp = await fetch(`/api/openplanner/v1/cms/documents?${params.toString()}`);
     if (!resp.ok) {
@@ -195,7 +196,8 @@ function CmsPage() {
     }
 
     const body = (await resp.json()) as { documents?: CmsDocSummary[] };
-    const match = (body.documents ?? []).find((doc) => doc.source_path === path) ?? null;
+    const normalizedPath = normalizeSourcePath(path);
+    const match = (body.documents ?? []).find((doc) => normalizeSourcePath(doc.source_path) === normalizedPath) ?? null;
     if (!match) {
       setCmsDocId(null);
       setPublishedGardenIds([]);
@@ -355,6 +357,7 @@ function CmsPage() {
       const resp = await fetch(`/api/ingestion/file?${params}`);
       if (resp.ok) {
         const data: PreviewResponse = await resp.json();
+        const previousEditorPath = editorPath;
         setEditorTitle(entry.name);
         setEditorBody(data.content);
         setEditorPath(entry.path);
@@ -362,6 +365,9 @@ function CmsPage() {
         setIsDirty(false);
         setLastSaveMessage(null);
 
+        if (previousEditorPath && previousEditorPath !== entry.path) {
+          chat.unpinContextItem(previousEditorPath);
+        }
         chat.pinContextItem({
           id: entry.path,
           title: entry.name,
@@ -431,6 +437,7 @@ function CmsPage() {
           throw new Error(text);
         }
       }
+      await syncCmsDocumentByPath(savedPath);
       const nextGardenIds = isPublishedToSelectedGarden
         ? publishedGardenIds.filter((gardenId) => gardenId !== selectedGardenId)
         : [...new Set([...publishedGardenIds, selectedGardenId])];
@@ -448,6 +455,7 @@ function CmsPage() {
     persistEditorFile,
     publishedGardenIds,
     selectedGardenId,
+    syncCmsDocumentByPath,
     upsertCmsDocument,
   ]);
 
