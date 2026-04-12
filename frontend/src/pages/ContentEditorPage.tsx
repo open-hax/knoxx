@@ -7,6 +7,7 @@
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { DocumentFields } from "../components/editor/DocumentFields";
+import { PublishWorkflow } from "../components/editor/PublishWorkflow";
 import { EmptyState } from "../components/EmptyState";
 import {
   type EditorDocument,
@@ -44,20 +45,26 @@ export function ContentEditorPage() {
     setIsDirty(true);
   }, []);
 
+  const handleSetReview = useCallback(() => {
+    setDocument((prev) => ({ ...prev, status: "review" }));
+    setIsDirty(true);
+  }, []);
+
+  const handlePublish = useCallback(() => {
+    setDocument((prev) => ({
+      ...prev,
+      status: "published",
+      visibility: "public",
+      published_at: new Date().toISOString(),
+    }));
+    setIsDirty(false);
+  }, []);
+
   const handleSave = useCallback(() => {
     // TODO: Implement save to API
     setIsDirty(false);
     console.log("Saving document:", document);
   }, [document]);
-
-  const handlePublish = useCallback(() => {
-    // TODO: Implement publish workflow
-    if (document.status === "draft") {
-      setDocument((prev) => ({ ...prev, status: "review" }));
-    } else if (document.status === "review") {
-      setDocument((prev) => ({ ...prev, status: "published" }));
-    }
-  }, [document.status]);
 
   // Show empty state if no document loaded
   if (!document) {
@@ -96,17 +103,6 @@ export function ContentEditorPage() {
           >
             Save
           </button>
-          <button
-            className={styles.publishButton}
-            onClick={handlePublish}
-            disabled={document.status === "published"}
-          >
-            {document.status === "draft"
-              ? "Submit for Review"
-              : document.status === "review"
-                ? "Publish"
-                : "Published"}
-          </button>
         </div>
       </header>
 
@@ -121,6 +117,13 @@ export function ContentEditorPage() {
         </main>
 
         <aside className={styles.fieldsSidebar}>
+          <PublishWorkflow
+            status={document.status}
+            visibility={document.visibility}
+            canPublish={document.status === "review"}
+            onPublish={handlePublish}
+            onSetReview={handleSetReview}
+          />
           <DocumentFields
             collectionId={document.collection_id}
             collections={MOCK_COLLECTIONS}

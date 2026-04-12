@@ -117,6 +117,7 @@ describe("ContentEditorPage", () => {
       </RouterWrapper>
     );
 
+    // Button is now in the PublishWorkflow component in the sidebar
     expect(screen.getByRole("button", { name: "Submit for Review" })).toBeInTheDocument();
   });
 
@@ -132,13 +133,13 @@ describe("ContentEditorPage", () => {
     const submitButton = screen.getByRole("button", { name: "Submit for Review" });
     await user.click(submitButton);
 
-    // Status should now be "In Review"
-    expect(screen.getByText("In Review")).toBeInTheDocument();
+    // Workflow should now show "Review" as active step
+    expect(screen.getByText(/Ready for review/)).toBeInTheDocument();
     // Button should now say "Publish"
     expect(screen.getByRole("button", { name: "Publish" })).toBeInTheDocument();
   });
 
-  it("updates status to published when Publish is clicked", async () => {
+  it("shows confirmation dialog when Publish is clicked", async () => {
     const user = userEvent.setup();
 
     render(
@@ -148,19 +149,16 @@ describe("ContentEditorPage", () => {
     );
 
     // First submit for review
-    const submitButton = screen.getByRole("button", { name: "Submit for Review" });
-    await user.click(submitButton);
+    await user.click(screen.getByRole("button", { name: "Submit for Review" }));
 
-    // Then publish
-    const publishButton = screen.getByRole("button", { name: "Publish" });
-    await user.click(publishButton);
+    // Then click publish - this should show the confirmation dialog
+    await user.click(screen.getByRole("button", { name: "Publish" }));
 
-    // Status should now be "Published" - use getAllByText since it appears in multiple places
-    const publishedElements = screen.getAllByText("Published");
-    expect(publishedElements.length).toBeGreaterThan(0);
+    // Confirmation dialog should appear
+    expect(screen.getByText("Confirm Publication")).toBeInTheDocument();
   });
 
-  it("disables publish button when document is already published", async () => {
+  it("updates status to published when Publish is confirmed", async () => {
     const user = userEvent.setup();
 
     render(
@@ -169,15 +167,41 @@ describe("ContentEditorPage", () => {
       </RouterWrapper>
     );
 
-    // Submit for review
+    // First submit for review
     await user.click(screen.getByRole("button", { name: "Submit for Review" }));
 
-    // Publish
+    // Click publish button in workflow
     await user.click(screen.getByRole("button", { name: "Publish" }));
 
-    // Button should be disabled
-    const publishedButton = screen.getByRole("button", { name: "Published" });
-    expect(publishedButton).toBeDisabled();
+    // Confirm publication in dialog - there are two "Publish" buttons now
+    const publishButtons = screen.getAllByRole("button", { name: "Publish" });
+    await user.click(publishButtons[publishButtons.length - 1]); // Use the last one (dialog)
+
+    // Should show published status
+    expect(screen.getByText("✓ Published and visible")).toBeInTheDocument();
+  });
+
+  it("cancels publish when Cancel is clicked in dialog", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <RouterWrapper>
+        <ContentEditorPage />
+      </RouterWrapper>
+    );
+
+    // First submit for review
+    await user.click(screen.getByRole("button", { name: "Submit for Review" }));
+
+    // Click publish button
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+
+    // Cancel in dialog
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // Should still be in review state
+    expect(screen.getByRole("button", { name: "Publish" })).toBeInTheDocument();
+    expect(screen.queryByText("Confirm Publication")).not.toBeInTheDocument();
   });
 
   it("renders collection selector in sidebar", () => {
