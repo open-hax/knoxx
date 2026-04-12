@@ -1,5 +1,7 @@
-import { useState, type ReactNode } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { useState, useEffect, type ReactNode } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { ChordProvider, useChord } from "./ChordProvider";
+import { getDefaultChordActions } from "./chord-actions";
 import styles from "./Shell.module.css";
 
 interface ShellProps {
@@ -13,25 +15,72 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { path: "/", label: "Dashboard", icon: "📊" },
-  { path: "/cms", label: "Content", icon: "📝" },
-  { path: "/translations", label: "Review", icon: "✅" },
-  { path: "/query", label: "Memory", icon: "🧠" },
-  { path: "/runs", label: "Agents", icon: "🤖" },
-  { path: "/ops", label: "Ops", icon: "⚙️" },
+  { path: "/workbench/dashboard", label: "Dashboard", icon: "📊" },
+  { path: "/workbench/content", label: "Content", icon: "📝" },
+  { path: "/workbench/review", label: "Review", icon: "✅" },
+  { path: "/workbench/memory", label: "Memory", icon: "🧠" },
+  { path: "/workbench/agents", label: "Agents", icon: "🤖" },
+  { path: "/workbench/ops", label: "Ops", icon: "⚙️" },
 ];
 
-export function Shell({ children }: ShellProps) {
+function ShellContent({ children }: ShellProps) {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const location = useLocation();
+  const navigate = useNavigate();
+  const { isActive, startChord, pressKey, cancelChord, registerAction } = useChord();
 
-  const activeItem = NAV_ITEMS.find((item) => 
-    location.pathname === item.path || 
-    (item.path !== "/" && location.pathname.startsWith(item.path))
+  // Register default chord actions on mount
+  useEffect(() => {
+    const actions = getDefaultChordActions((path) => navigate(path));
+    for (const { sequence, action } of actions) {
+      registerAction(sequence, action);
+    }
+  }, [navigate, registerAction]);
+
+  // Global key listener for chord mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if focus is in an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
+
+      // SPC starts chord mode
+      if (e.key === " " && !isActive) {
+        e.preventDefault();
+        startChord();
+        return;
+      }
+
+      // Forward keys to chord system when active
+      if (isActive) {
+        e.preventDefault();
+        
+        // Escape cancels
+        if (e.key === "Escape") {
+          cancelChord();
+          return;
+        }
+
+        // Single character keys
+        if (e.key.length === 1) {
+          pressKey(e.key);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isActive, startChord, pressKey, cancelChord]);
+
+  const activeItem = NAV_ITEMS.find((item) =>
+    location.pathname === item.path ||
+    (item.path !== "/workbench/dashboard" && location.pathname.startsWith(item.path))
   );
 
   return (
-    <div className={styles.shell}>
+    <div className={`${styles.shell} ${isActive ? styles.shellChordActive : ""}`}>
       {/* Left Context Bar */}
       <aside className={styles.contextBar}>
         <div className={styles.contextBarHeader}>
@@ -97,10 +146,20 @@ export function Shell({ children }: ShellProps) {
         <div className={styles.statusBarRight}>
           <span className={styles.statusItem}>tokens: <strong>—</strong></span>
           <span className={styles.statusItem}>agents: <strong>0</strong></span>
-          <span className={styles.statusItem}>mode: <strong>normal</strong></span>
+          <span className={styles.statusItem}>
+            mode: <strong>{isActive ? "chord" : "normal"}</strong>
+          </span>
         </div>
       </footer>
     </div>
+  );
+}
+
+export function Shell({ children }: ShellProps) {
+  return (
+    <ChordProvider>
+      <ShellContent>{children}</ShellContent>
+    </ChordProvider>
   );
 }
 

@@ -314,3 +314,17 @@
     width: 320px;
   }
 }
+
+/* Chord mode active */
+.shellChordActive {
+  outline: 2px solid var(--token-colors-accent-cyan);
+  outline-offset: -2px;
+}
+
+.shellChordActive .statusBar {
+  background: var(--token-colors-alpha-cyan-_08);
+}
+
+.shellChordActive .statusBar strong:last-child {
+  color: var(--token-colors-accent-cyan);
+}
