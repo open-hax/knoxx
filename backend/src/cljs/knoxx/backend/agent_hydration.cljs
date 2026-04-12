@@ -256,6 +256,16 @@
                                     :edgeLimit (.Optional Type (.Number Type #js {:description "Maximum number of incident edges to include." :minimum 0 :maximum 60}))})
          session-params (.Object Type
                                  #js {:sessionId (.String Type #js {:description "Knoxx conversation/session id stored in OpenPlanner."})})
+         ;; save_translation params
+         translation-params (.Object Type
+                                     #js {:source_text (.String Type #js {:description "Original source text"})
+                                          :translated_text (.String Type #js {:description "Translated text"})
+                                          :source_lang (.String Type #js {:description "Source language code (e.g. 'en')"})
+                                          :target_lang (.String Type #js {:description "Target language code (e.g. 'es')"})
+                                          :document_id (.String Type #js {:description "Document ID being translated"})
+                                          :garden_id (.Optional Type (.String Type #js {:description "Garden ID"}))
+                                          :project (.Optional Type (.String Type #js {:description "Project name"}))
+                                          :segment_index (.Number Type #js {:description "0-based segment index"})})
          memory-search-execute (fn [_tool-call-id params a b c]
                                  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                        query (or (aget params "query") "")
@@ -295,6 +305,42 @@
                                                                        :edge-limit edge-limit})
                                      (.then (fn [result]
                                               (tool-text-result (graph-query-result-text result) result))))))
+         ;; save_translation execute
+         save-translation-execute (fn [_tool-call-id params a b c]
+                                    (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                          source-text (aget params "source_text")
+                                          translated-text (aget params "translated_text")
+                                          source-lang (aget params "source_lang")
+                                          target-lang (aget params "target_lang")
+                                          document-id (aget params "document_id")
+                                          garden-id (aget params "garden_id")
+                                          project (aget params "project")
+                                          segment-index (aget params "segment_index")
+                                          segment {:source_text source-text
+                                                   :translated_text translated-text
+                                                   :source_lang source-lang
+                                                   :target_lang target-lang
+                                                   :document_id document-id
+                                                   :garden_id garden-id
+                                                   :project project
+                                                   :segment_index segment-index
+                                                   :status "pending"
+                                                   :mt_model "agent"}
+                                          url (str (:openplanner-base-url config) "/v1/translations/segments")]
+                                      (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
+                                      (-> (js/fetch url #js {:method "POST"
+                                                             :headers #js {"Content-Type" "application/json"
+                                                                           "Authorization" (str "Bearer " (:openplanner-api-key config))}
+                                                             :body (.stringify js/JSON (clj->js segment))})
+                                          (.then (fn [resp]
+                                                   (if (.-ok resp)
+                                                     (.json resp)
+                                                     (.text resp)
+                                                     (.then (fn [text]
+                                                              (throw (js/Error. (str "HTTP " (.-status resp) ": " text))))))))
+                                          (.then (fn [result]
+                                                   (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
+                                                                     result))))))
          memory-search-tool (doto (js-obj)
                               (aset "name" "memory_search")
                               (aset "label" "Memory Search")
@@ -323,7 +369,16 @@
                                (aset "promptGuidelines" (clj->js ["Use memory_session after memory_search identifies a promising session id."
                                                                   "memory_session is the exact transcript/action drill-down companion to memory_search."]))
                                (aset "parameters" session-params)
-                               (aset "execute" memory-session-execute))]
+                               (aset "execute" memory-session-execute))
+         save-translation-tool (doto (js-obj)
+                                 (aset "name" "save_translation")
+                                 (aset "label" "Save Translation")
+                                 (aset "description" "Save a translated segment to the OpenPlanner translation database.")
+                                 (aset "promptSnippet" "Save each translated segment after translating.")
+                                 (aset "promptGuidelines" (clj->js ["Call save_translation for each segment you translate."
+                                                                    "Include the source_text, translated_text, language codes, document_id, and segment_index."]))
+                                 (aset "parameters" translation-params)
+                                 (aset "execute" save-translation-execute))]
      (clj->js
      (vec
        (remove nil?
@@ -336,7 +391,10 @@
                   memory-search-tool)
                 (when (or (nil? auth-context)
                           (ctx-tool-allowed? auth-context "memory_session"))
-                  memory-session-tool)]))))))
+                  memory-session-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "save_translation"))
+                  save-translation-tool)]))))))
 
 (defn create-knoxx-custom-tools
   ([runtime config] (create-knoxx-custom-tools runtime config nil))
