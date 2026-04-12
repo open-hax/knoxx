@@ -207,3 +207,40 @@
                 :size (.length ^File target)
                 :truncated truncated
                 :content (if truncated (subs content 0 limit) content)}}))))
+
+(defn write-file-handler
+  [request]
+  (let [body (common/request-body->map request)
+        requested (:path body)
+        old-requested (:old_path body)
+        content (str (or (:content body) ""))
+        target (resolve-workspace-file requested)
+        old-target (when (some? old-requested)
+                     (resolve-workspace-file old-requested))]
+    (cond
+      (str/blank? (str requested))
+      {:status 400 :body {:error "path is required"}}
+
+      (nil? target)
+      {:status 400 :body {:error "path must stay within workspace root"}}
+
+      (and (some? old-requested) (nil? old-target))
+      {:status 400 :body {:error "old_path must stay within workspace root"}}
+
+      (and (.exists ^File target) (.isDirectory ^File target))
+      {:status 400 :body {:error "path is a directory"}}
+
+      :else
+      (do
+        (some-> ^File (.getParentFile ^File target) .mkdirs)
+        (spit target content)
+        (when (and old-target
+                   (.exists ^File old-target)
+                   (.isFile ^File old-target)
+                   (not= (.getCanonicalPath ^File old-target)
+                         (.getCanonicalPath ^File target)))
+          (.delete ^File old-target))
+        {:status 200
+         :body {:ok true
+                :path (rel-workspace-path target)
+                :size (.length ^File target)}}))))

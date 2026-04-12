@@ -6,7 +6,9 @@ import { useChatWorkspaceController } from "../components/chat-page/useChatWorks
 import { ContextBar } from "../components/context-bar";
 import { listMemorySessions } from "../lib/api/common";
 import {
+  type DocumentStatus,
   type DocumentVisibility,
+  STATUS_CONFIG,
   VISIBILITY_CONFIG,
 } from "../components/editor/editor-types";
 import type {
@@ -28,8 +30,11 @@ function CmsPage() {
   const [editorTitle, setEditorTitle] = useState("");
   const [editorBody, setEditorBody] = useState("");
   const [editorPath, setEditorPath] = useState<string | null>(null);
+  const [editorStatus, setEditorStatus] = useState<DocumentStatus>("draft");
   const [editorVisibility, setEditorVisibility] = useState<DocumentVisibility>("internal");
   const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSaveMessage, setLastSaveMessage] = useState<string | null>(null);
 
   // ContextBar state
   const [showFiles, setShowFiles] = useState(true);
@@ -137,6 +142,54 @@ function CmsPage() {
     void loadWorkspaceStatus();
   }, []);
 
+  const editorDirectory = editorPath?.includes("/") ? editorPath.slice(0, editorPath.lastIndexOf("/") + 1) : "";
+
+  const buildEditorPath = useCallback(() => {
+    const fileName = editorTitle.trim().replace(/[\\/]+/g, "-");
+    return `${editorDirectory}${fileName}`;
+  }, [editorDirectory, editorTitle]);
+
+  const persistEditorFile = useCallback(
+    async (next: { publish?: boolean } = {}) => {
+      const nextPath = buildEditorPath();
+      if (!nextPath) return null;
+
+      setIsSaving(true);
+      setLastSaveMessage(null);
+      try {
+        const resp = await fetch("/api/ingestion/file", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            path: nextPath,
+            old_path: editorPath && editorPath !== nextPath ? editorPath : null,
+            content: editorBody,
+          }),
+        });
+        if (!resp.ok) {
+          throw new Error(await resp.text());
+        }
+        const data = await resp.json();
+        const savedPath = typeof data.path === "string" ? data.path : nextPath;
+        setEditorPath(savedPath);
+        setEditorTitle(savedPath.split("/").pop() ?? savedPath);
+        setIsDirty(false);
+        if (next.publish) {
+          setEditorStatus("published");
+          setEditorVisibility("public");
+          setLastSaveMessage("Published");
+        } else {
+          setLastSaveMessage("Saved");
+        }
+        await handleLoadDirectory(editorDirectory.slice(0, -1) || undefined);
+        return savedPath;
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [buildEditorPath, editorBody, editorDirectory, editorPath],
+  );
+
   const handleLoadDirectory = async (path?: string) => {
     setLoadingBrowse(true);
     try {
@@ -185,8 +238,10 @@ function CmsPage() {
         setEditorTitle(entry.name);
         setEditorBody(data.content);
         setEditorPath(entry.path);
+        setEditorStatus("draft");
         setEditorVisibility((entry.visibility as DocumentVisibility) ?? "internal");
         setIsDirty(false);
+        setLastSaveMessage(null);
 
         chat.pinContextItem({
           id: entry.path,
@@ -202,30 +257,45 @@ function CmsPage() {
   };
 
   const handleTitleChange = useCallback((title: string) => {
-    setEditorTitle(title);
+    setEditorTitle(title.replace(/[\\/]+/g, "-"));
+    setEditorStatus((prev) => (prev === "published" ? "draft" : prev));
     setIsDirty(true);
+    setLastSaveMessage(null);
   }, []);
 
   const handleBodyChange = useCallback((body: string) => {
     setEditorBody(body);
+    setEditorStatus((prev) => (prev === "published" ? "draft" : prev));
     setIsDirty(true);
+    setLastSaveMessage(null);
   }, []);
 
   const handleVisibilityChange = useCallback((visibility: DocumentVisibility) => {
     setEditorVisibility(visibility);
+    setEditorStatus((prev) => (prev === "published" ? "draft" : prev));
     setIsDirty(true);
+    setLastSaveMessage(null);
   }, []);
 
   const handleSave = useCallback(async () => {
-    if (!editorPath || !isDirty) return;
-
+    if (!editorTitle.trim()) return;
     try {
-      console.log("Save:", { path: editorPath, title: editorTitle });
-      setIsDirty(false);
+      await persistEditorFile();
     } catch (err) {
       console.error("Save failed:", err);
+      setLastSaveMessage("Save failed");
     }
-  }, [editorPath, editorTitle, isDirty]);
+  }, [editorTitle, persistEditorFile]);
+
+  const handlePublish = useCallback(async () => {
+    if (!editorTitle.trim()) return;
+    try {
+      await persistEditorFile({ publish: true });
+    } catch (err) {
+      console.error("Publish failed:", err);
+      setLastSaveMessage("Publish failed");
+    }
+  }, [editorTitle, persistEditorFile]);
 
   const handleRefreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
@@ -293,10 +363,13 @@ function CmsPage() {
           onDomainFilterChange={setDomainFilter}
           onPathPrefixFilterChange={setPathPrefixFilter}
           onNewDocument={() => {
-            setEditorTitle("Untitled");
+            setEditorTitle("untitled.md");
             setEditorBody("");
-            setEditorPath(null);
+            setEditorPath(currentPath ? `${currentPath}/untitled.md` : "untitled.md");
+            setEditorStatus("draft");
+            setEditorVisibility("internal");
             setIsDirty(true);
+            setLastSaveMessage(null);
           }}
           onStartSidebarPaneResize={startSidebarPaneResize}
           onStartSidebarWidthResize={startSidebarWidthResize}
@@ -350,26 +423,29 @@ function CmsPage() {
                 Files
               </Button>
             )}
-            <input
-              type="text"
-              className={styles.titleInput}
-              value={editorTitle}
-              onChange={(event) => handleTitleChange(event.target.value)}
-              placeholder="Select a file from the explorer..."
-              disabled={!editorPath}
-            />
-            {editorPath ? (
-              <span style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>{editorPath}</span>
-            ) : null}
+            <div className={styles.pathEditor}>
+              <span className={styles.pathPrefix}>{editorPath ? editorDirectory || "./" : ""}</span>
+              <input
+                type="text"
+                className={styles.fileNameInput}
+                value={editorTitle}
+                onChange={(event) => handleTitleChange(event.target.value)}
+                placeholder="Select a file from the explorer..."
+                disabled={!editorPath}
+              />
+            </div>
             {isDirty ? <span className={styles.dirtyIndicator}>Unsaved changes</span> : null}
+            {!isDirty && lastSaveMessage ? <span className={styles.savedIndicator}>{lastSaveMessage}</span> : null}
           </div>
           <div className={styles.actions}>
             {editorPath ? (
               <>
-                <button className={styles.saveButton} onClick={() => void handleSave()} disabled={!isDirty}>
-                  Save
+                <button className={styles.saveButton} onClick={() => void handleSave()} disabled={isSaving || !isDirty}>
+                  {isSaving ? "Saving…" : "Save"}
                 </button>
-                <button className={styles.publishButton}>Publish</button>
+                <button className={styles.publishButton} onClick={() => void handlePublish()} disabled={isSaving}>
+                  {isSaving ? "Publishing…" : "Publish"}
+                </button>
               </>
             ) : null}
           </div>
@@ -377,16 +453,17 @@ function CmsPage() {
 
         <div className={styles.metaBar}>
           <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>Status</span>
-            <Badge variant="default">Draft</Badge>
+            <Badge variant={editorStatus === "published" ? "success" : editorStatus === "review" ? "warning" : "default"}>
+              {STATUS_CONFIG[editorStatus].label}
+            </Badge>
           </div>
           <div className={styles.metaItem}>
-            <span className={styles.metaLabel}>Visibility</span>
             <select
               value={editorVisibility}
               onChange={(event) => handleVisibilityChange(event.target.value as DocumentVisibility)}
               className={styles.metaSelect}
               disabled={!editorPath}
+              aria-label="Visibility"
             >
               {Object.entries(VISIBILITY_CONFIG).map(([value, config]) => (
                 <option key={value} value={value}>
@@ -443,6 +520,7 @@ function CmsPage() {
         <ChatWorkspacePane
           controller={chat}
           showFiles={showFiles}
+          showCanvasToggle={false}
           onShowFiles={() => setShowFiles(true)}
           onOpenHydrationSource={(source) =>
             handleOpenFile({

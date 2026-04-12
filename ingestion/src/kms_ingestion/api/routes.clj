@@ -28,6 +28,7 @@
 (def browse-path-handler workspace/browse-path-handler)
 (def semantic-file-search-handler workspace/semantic-file-search-handler)
 (def preview-file-handler workspace/preview-file-handler)
+(def write-file-handler workspace/write-file-handler)
 
 (defn source-response
   ([source]
@@ -428,7 +429,8 @@
      {:post semantic-file-search-handler}]
 
     ["/file"
-     {:get preview-file-handler}]
+     {:get preview-file-handler
+      :put write-file-handler}]
 
     ["/sources"
      {:get list-sources-handler

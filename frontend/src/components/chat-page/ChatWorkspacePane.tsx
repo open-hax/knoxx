@@ -7,6 +7,7 @@ type ChatWorkspacePaneProps = {
   controller: ChatWorkspaceController;
   showFiles: boolean;
   onShowFiles: () => void;
+  showCanvasToggle?: boolean;
   onOpenHydrationSource?: (source: HydrationSource) => void | Promise<void>;
   onOpenSourceInPreview?: (source: NonNullable<ChatMessage["sources"]>[number]) => void | Promise<void>;
 };
@@ -15,6 +16,7 @@ export function ChatWorkspacePane({
   controller,
   showFiles,
   onShowFiles,
+  showCanvasToggle = true,
   onOpenHydrationSource,
   onOpenSourceInPreview,
 }: ChatWorkspacePaneProps) {
@@ -24,6 +26,7 @@ export function ChatWorkspacePane({
         showFiles={showFiles}
         showSettings={controller.showSettings}
         showCanvas={controller.showCanvas}
+        showCanvasToggle={showCanvasToggle}
         showConsole={controller.showConsole}
         onShowFiles={onShowFiles}
         onToggleSettings={controller.toggleSettings}

@@ -19,6 +19,7 @@ type ChatMainPaneProps = {
   showSettings: boolean;
   showCanvas: boolean;
   showConsole: boolean;
+  showCanvasToggle?: boolean;
   onShowFiles: () => void;
   onToggleSettings: () => void;
   onToggleCanvas: () => void;
@@ -93,6 +94,7 @@ export function ChatMainPane({
   showCanvas,
   showConsole,
   onShowFiles,
+  showCanvasToggle = true,
   onToggleSettings,
   onToggleCanvas,
   onToggleConsole,
@@ -165,7 +167,7 @@ export function ChatMainPane({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
           {!showFiles ? <Button variant="ghost" size="sm" onClick={onShowFiles}>Files</Button> : null}
           <Button variant="ghost" size="sm" onClick={onToggleSettings}>Settings</Button>
-          <Button variant="ghost" size="sm" onClick={onToggleCanvas}>Scratchpad</Button>
+          {showCanvasToggle ? <Button variant="ghost" size="sm" onClick={onToggleCanvas}>Scratchpad</Button> : null}
           <Button variant="ghost" size="sm" onClick={onToggleConsole}>Console</Button>
           <div style={{ flex: 1 }} />
           <select
@@ -267,7 +269,7 @@ export function ChatMainPane({
         ) : null}
       </div>
 
-      {showCanvas ? (
+      {showCanvasToggle && showCanvas ? (
         <ChatScratchpadPanel
           canvasTitle={canvasTitle}
           onCanvasTitleChange={onCanvasTitleChange}
