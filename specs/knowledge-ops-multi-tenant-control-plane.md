@@ -10,18 +10,38 @@ Define the tenant isolation architecture for a multi-tenant domain-aware knowled
 
 ---
 
+## Status Update (2026-04-12)
+
+**Current implementation state** after review of openplanner and knoxx codebases:
+
+| Component | Spec Status | Implementation Status | Notes |
+|-----------|-------------|----------------------|-------|
+| Tenant Catalog | Required | ✅ Implemented | `tenants` collection with CRUD at `/v1/tenants` |
+| Tenant Policy Store | Required | ❌ Missing | No `tenant_policies` table, policies embedded in `config` JSONB |
+| Model Profile Registry | Required | ❌ Missing | No `model_profiles` table, model selection is per-request |
+| Tenant Gateway Middleware | Required | ❌ Missing | Tenant resolved via URL param, not auth/host |
+| Tenant-scoped Labels | Required | ✅ Implemented | `km_labels.tenant_id` FK, filtered queries |
+| Tenant-scoped Documents | Required | ⚠️ Partial | Uses `project` field, not `tenant_id` |
+| Tenant-scoped Translations | Required | ✅ Implemented | `extra.tenant_id` and `extra.org_id` |
+| Review Workflow Config | Required | ❌ Missing | Single shared review queue |
+| Audit Logging | Required | ❌ Missing | No tenant-scoped audit trail |
+| Isolation Ladder | Recommended | ❌ Missing | Shared MongoDB only, no schema-per-tenant |
+| Database Profiles | — | ✅ Frontend-only | Knoxx has `qdrantCollection` selection in UI |
+
+---
+
 ## Conceptual Model
 
 ```
                         ┌───────────────────────────────┐
                         │         CONTROL PLANE         │
                         │                               │
-                        │  Tenant Catalog               │
-                        │  Tenant Policy Store          │
-                        │  Provisioning / Onboarding    │
-                        │  Model Profile Registry       │
-                        │  Review Workflow Config       │
-                        │  Audit + Billing Registry     │
+                        │  Tenant Catalog ✅            │
+                        │  Tenant Policy Store ❌       │
+                        │  Provisioning / Onboarding ⚠️ │
+                        │  Model Profile Registry ❌    │
+                        │  Review Workflow Config ❌    │
+                        │  Audit + Billing Registry ❌  │
                         └──────────────┬────────────────┘
                                        │
                             resolves tenant + policy
@@ -31,84 +51,139 @@ Define the tenant isolation architecture for a multi-tenant domain-aware knowled
                     │ auth, host mapping, tenant resolve, │
                     │ RBAC, rate limits, audit logging,   │
                     │ retrieval guardrails, tool policy   │
+                    │                                     │
+                    │ ❌ Not implemented — tenant_id via  │
+                    │    URL param, no middleware         │
                     └───────┬───────────────┬─────────────┘
                             │               │
                  ┌──────────▼──────┐   ┌────▼─────────────┐
                  │ ORCHESTRATION    │   │ REVIEW / LABEL   │
                  │ Openclawssy jobs │   │ queues per tenant│
                  │ ingest/eval/train│   │ + exports        │
+                 │                  │   │                  │
+                 │ ✅ Events/Docs   │   │ ⚠️ Single shared │
                  └──────────┬───────┘   └────┬─────────────┘
                             │                │
           ┌─────────────────▼────────────────▼─────────────────┐
           │                     DATA PLANE                     │
           │  Doc store | Vector store | Graph store | Logs    │
           │  namespace/schema/collection scoped per tenant     │
+          │                                                    │
+          │ ⚠️ Shared MongoDB with field filtering only        │
           └─────────────────┬──────────────────────────────────┘
                             │
                      ┌──────▼──────┐
                      │  LLM / MT    │
                      │ generate +   │
                      │ translate    │
+                     │              │
+                     │ ✅ Proxx/MT  │
                      └──────────────┘
 ```
 
 **Key principle**: The agent never "figures out" tenancy on its own. The gateway hands the agent a fully resolved, pre-scoped execution context.
 
+**Implementation gap**: Currently, the agent (or frontend) must pass `tenant_id` or `project` explicitly. No gateway middleware exists.
+
 ---
 
 ## Core Entities
 
-### Tenant
+### Tenant (Implemented ✅)
 
 ```ts
+// Actual implementation in openplanner/src/routes/v1/tenants.ts
 Tenant {
-  tenant_id: string
-  slug: string
-  status: "trial" | "active" | "suspended"
-  deployment_stamp: string
-  isolation_mode: "shared" | "dedicated"
-  kb_store_ref: string
-  vector_store_ref: string
-  graph_store_ref: string
-  review_queue_ref: string
-  model_profile_id: string
-  translation_profile_id: string
-  policy_pack_id: string
-  billing_account_id: string
+  tenant_id: string;      // PK
+  name: string;
+  domains: string[];      // For host-based resolution (not yet used)
+  config: Record<string, any> | null;  // Inline policy config
+  created_at?: string;
 }
 ```
 
+**Gap**: No `status` field (trial/active/suspended), no `isolation_mode`, no store refs, no model/profile IDs.
+
 ### Supporting Entities
 
-- `TenantPolicy` — retention, review thresholds, PII rules, translation config
-- `TenantKnowledgeStore` — vector/doc/graph store refs scoped to tenant
-- `TenantModelProfile` — base model, endpoint, sampling defaults, safety profile
-- `TenantReviewQueue` — pending review items, assignment rules, export paths
-- `TenantAuditLog` — append-only log of all tenant-scoped actions
+| Entity | Spec | Implementation | Gap |
+|--------|------|----------------|-----|
+| `TenantPolicy` | Separate table with retention, review thresholds, PII rules | Embedded in `config` JSONB | No schema validation, no versioning |
+| `TenantKnowledgeStore` | Vector/doc/graph store refs | ❌ None | All tenants share same MongoDB |
+| `TenantModelProfile` | Base model, endpoint, sampling defaults | ❌ None | Model passed per-request |
+| `TenantReviewQueue` | Per-tenant queues, assignment rules | ⚠️ `km_labels.tenant_id` filter | No assignment rules, no workflow config |
+| `TenantAuditLog` | Append-only log of tenant-scoped actions | ❌ None | No audit trail |
+
+### Document Scoping (Divergence ⚠️)
+
+**Spec**: Documents have `tenant_id`.
+
+**Implementation**: Documents use `project` field for scoping:
+
+```ts
+// Actual: openplanner/src/lib/types.ts
+DocumentRecord {
+  id: string;
+  title: string;
+  content: string;
+  project: string;        // ← Acts as tenant/collection scope
+  kind: DocumentKind;
+  visibility: DocumentVisibility;
+  source?: string;
+  sourcePath?: string;
+  domain?: string;
+  language?: string;
+  // ... no tenant_id
+}
+```
+
+**Resolution**: Gardens use `source_filter.project` to scope document queries. The `project` field effectively serves as a collection/tenant identifier.
+
+### Translation Segments (Implemented ✅)
+
+```ts
+// Actual: openplanner/src/lib/types.ts
+TranslationSegmentEvent {
+  extra: {
+    tenant_id: string;    // ✅ Properly scoped
+    org_id: string;       // ✅ Hierarchy support
+    domain?: string;
+    // ...
+  };
+}
+```
 
 ---
 
 ## Tenant Gateway
 
-### Responsibilities
+### Responsibilities vs Implementation
 
-1. Resolve `tenant_id` from auth, hostname, API key, or workspace context
-2. Resolve `user_id`, `roles`, and `entitlements`
-3. Attach `tenant_policy`
-4. Enforce rate limits and quotas per tenant
-5. Reject any retrieval call that lacks explicit tenant scope
-6. Write grounding/access logs for audits
+| Responsibility | Spec | Implementation |
+|----------------|------|----------------|
+| Resolve `tenant_id` from auth, hostname, API key | Required | ❌ URL param only |
+| Resolve `user_id`, `roles`, `entitlements` | Required | ❌ No RBAC |
+| Attach `tenant_policy` | Required | ❌ No middleware |
+| Enforce rate limits per tenant | Required | ❌ None |
+| Reject unscoped retrieval | Required | ⚠️ Frontend passes `project` |
+| Write grounding/access logs | Required | ❌ None |
 
 ### Resolution Sources
 
-- Subdomain: `tenant.example.com`
-- JWT/API key claim
-- Host header + lookup table
-- Session context
+| Source | Spec | Implementation |
+|--------|------|----------------|
+| Subdomain (`tenant.example.com`) | Planned | ❌ Not implemented |
+| JWT/API key claim | Planned | ❌ Not implemented |
+| Host header + lookup | Planned | ❌ Not implemented |
+| URL param (`/labels/:tenant_id`) | Fallback | ✅ Current approach |
+| Request body (`tenant_id` in payload) | Fallback | ✅ Current approach |
+| Session context | Planned | ⚠️ Frontend session ID, not tenant |
 
 ### Failure Mode
 
-Requests without valid tenant context **fail closed** — no fallback, no default tenant, no anonymous access.
+**Spec**: Requests without valid tenant context **fail closed** — no fallback, no default tenant, no anonymous access.
+
+**Implementation**: Labels require `tenant_id` param. Documents use `"devel"` as default project.
 
 ---
 
@@ -116,110 +191,147 @@ Requests without valid tenant context **fail closed** — no fallback, no defaul
 
 ### Isolation Ladder
 
-| Tier | Storage pattern | Best for |
-| :-- | :-- | :-- |
-| Shared | Shared app, tenant namespace/schema, strict API filtering | Low-risk and mid-market tenants |
-| Isolated data | Shared app, separate DB/index/account for tenant | Legal, healthcare, finance |
-| Dedicated stamp | Separate deployment stamp + dedicated data plane | Highest-risk or highest-revenue tenants |
+| Tier | Storage pattern | Spec Recommendation | Implementation |
+|------|----------------|---------------------|----------------|
+| Shared | Shared app, tenant namespace/schema, strict API filtering | Low-risk and mid-market tenants | ✅ Current state |
+| Isolated data | Shared app, separate DB/index/account for tenant | Legal, healthcare, finance | ❌ Not supported |
+| Dedicated stamp | Separate deployment stamp + dedicated data plane | Highest-risk or highest-revenue tenants | ❌ Not supported |
 
 ### Storage Mapping
 
-- **Postgres**: schema-per-tenant or row/partition-per-tenant
-- **Vector DB**: namespace-per-tenant, metadata filters for user/doc-level trimming
-- **Blob/doc store**: tenant-prefixed buckets or containers
-- **Graph store**: tenant-labeled subgraph or separate DB
+| Storage Type | Spec | Implementation |
+|--------------|------|----------------|
+| **Postgres/MongoDB** | Schema-per-tenant or partition-per-tenant | ❌ Shared `events` collection with `project` filter |
+| **Vector DB** | Namespace-per-tenant, metadata filters | ⚠️ `project` filter on queries |
+| **Blob/doc store** | Tenant-prefixed buckets | ❌ Single storage |
+| **Graph store** | Tenant-labeled subgraph | ⚠️ `project` filter on nodes |
 
 ### S3 Path Convention
 
-```
-kb/{tenant_id}/{domain}/{doc_id}/
-```
+**Spec**: `kb/{tenant_id}/{domain}/{doc_id}/`
 
-Bucket policies, KMS key policies, and lifecycle rules apply per-tenant with zero ambiguity.
+**Implementation**: Not implemented. Documents are stored as events in MongoDB.
 
 ---
 
-## Request Flow
+## API Surface (Current)
 
-1. User hits `tenant.example.com` or sends a tenant-bound API key
-2. Gateway resolves `tenant_id` and user claims, loads tenant config from catalog
-3. Gateway selects the tenant's retrieval targets: `index=X`, `namespace=tenant_123`, filter rules
-4. Orchestrator runs retrieval and generation only with that scoped config
-5. Translation layer applies tenant's glossary, target language rules, review thresholds
-6. Response is logged with grounding metadata, tenant ID, and any review triggers
-7. If confidence or policy checks fail, interaction is copied into tenant's review queue
-
----
-
-## API Surface (MVP)
-
-| Endpoint | Purpose | Tenant binding |
-| :-- | :-- | :-- |
-| `POST /chat` | Ask a question against tenant KB | Required |
-| `POST /ingest` | Upload a document | Required |
-| `POST /review` | Submit a review label | Required |
-| `GET /review/queue` | List pending review items | Required |
-| `POST /export` | Export labeled training data | Required |
-| `GET /audit` | Query audit events | Required + role check |
-| `POST /tenant` | Create a tenant | Platform admin only |
-| `PATCH /tenant/:id` | Update tenant config | Tenant admin only |
-
-Every endpoint requires `tenant_context` in the request, resolved from auth or host.
+| Endpoint | Purpose | Tenant binding | Implementation |
+|----------|---------|----------------|----------------|
+| `GET /v1/tenants` | List tenants | Admin only | ✅ No auth check |
+| `POST /v1/tenants` | Create tenant | Admin only | ✅ No auth check |
+| `GET /v1/tenants/:id` | Get tenant | Admin only | ✅ No auth check |
+| `DELETE /v1/tenants/:id` | Delete tenant | Admin only | ✅ No auth check |
+| `GET /v1/labels/:tenant_id` | List labels | Required | ✅ Filtered by tenant_id |
+| `POST /v1/labels` | Create label | Required in body | ✅ Validates tenant exists |
+| `GET /v1/documents` | List documents | `project` query param | ✅ Filtered by project |
+| `POST /v1/documents` | Upsert document | `project` in body | ✅ Uses project field |
+| `GET /v1/lakes` | List lakes (projects) | None | ✅ Aggregates by project |
+| `POST /v1/lakes/purge` | Delete by project | `projects[]` in body | ✅ Dangerous, no auth |
+| `GET /v1/translations` | List segments | `project` required | ✅ Scoped by project |
+| `POST /v1/translations` | Import segments | `tenant_id` in body | ✅ Scoped by tenant_id |
+| `GET /v1/gardens` | List gardens | None | ✅ All gardens visible |
+| `POST /v1/gardens` | Create garden | `source_filter.project` | ⚠️ Project filter optional |
+| `POST /chat` | Chat against KB | `rag_collection` param | ⚠️ Frontend passes collection |
 
 ---
 
 ## Isolation Invariants
 
-1. Every request resolves to exactly one tenant
-2. Every document, interaction, review, export, and model profile is tenant-scoped
-3. Cross-tenant access is impossible by default (not just "difficult")
-4. Retrieval never runs an unscoped query
-5. Audit logs are tenant-scoped and tamper-resistant
-6. Review queues, exports, and training data are per-tenant
-7. Model profiles are per-tenant even if endpoints are shared
-
----
-
-## MVP Recommendation
-
-- **Control plane**: one `tenants` table, one `tenant_policies` table, one `model_profiles` table
-- **Gateway**: one service that resolves tenant, loads policy, blocks unscoped retrieval
-- **Vector retrieval**: one shared index cluster, one namespace per tenant
-- **Relational metadata**: schema-per-tenant if tenant count is manageable; otherwise shared tables with mandatory `tenant_id` + row-level guards
-- **Review/training**: tenant-specific queues and export paths
-- **Upgrade path**: support `isolation_mode = dedicated` for customers who need their own data plane later
+| Invariant | Spec | Current |
+|-----------|------|---------|
+| Every request resolves to exactly one tenant | Required | ❌ URL param or body, no enforcement |
+| Every document, interaction, review, export is tenant-scoped | Required | ⚠️ Uses `project` instead of `tenant_id` |
+| Cross-tenant access is impossible by default | Required | ❌ Possible if filter omitted |
+| Retrieval never runs an unscoped query | Required | ❌ Unscoped queries return all |
+| Audit logs are tenant-scoped | Required | ❌ No audit logs |
+| Review queues are per-tenant | Required | ⚠️ Filtered by tenant_id |
+| Model profiles are per-tenant | Required | ❌ No model profiles |
 
 ---
 
 ## Existing Code References
 
-### futuresight-kms (tenant model exists, gateway missing)
+### OpenPlanner Backend
 
 | File | What it has | Gap |
 |------|-------------|-----|
-| `packages/futuresight-kms/python/km_labels/database.py` | `tenants` table (tenant_id PK, name, domains JSONB, config JSONB) + `km_labels` table with `tenant_id` FK | No `tenant_policies` or `model_profiles` tables. No row-level security. No isolation ladder |
-| `packages/futuresight-kms/python/km_labels/models.py` | `Tenant` (tenant_id, name, domains, config, created_at), `CreateTenantPayload` | Missing `TenantPolicy`, `TenantModelProfile`, `TenantKnowledgeStore` entities |
-| `packages/futuresight-kms/python/km_labels/routers/tenants.py` | CRUD: `GET /`, `GET /{id}`, `POST /`, `DELETE /{id}` | No tenant suspension. No policy config. No role checks on endpoints |
-| `packages/futuresight-kms/python/km_labels/routers/labels.py` | Labels filtered by `tenant_id` in queries (`WHERE tenant_id = $1`) | No middleware-level tenant resolution — tenant_id is a URL param, not an auth-derived context |
-| `packages/futuresight-kms/src/schema/index.ts` | `TenantSchema` (tenant_id, name, domains, config, created_at) — Zod | Missing policy, model profile, and isolation mode schemas |
-| `packages/futuresight-kms/src/bridge/index.ts` | `KmLabelsClient` with `tenantId` config, all calls pass tenant_id | No gateway — clients talk directly to backend |
-| `packages/futuresight-kms/src/types/index.ts` | `KmLabelsClientConfig { baseUrl, apiKey?, tenantId }` | No tenant policy or model profile types |
+| `src/routes/v1/tenants.ts` | CRUD for tenants collection | No status, no isolation_mode, no store refs |
+| `src/routes/v1/labels.ts` | `km_labels` with `tenant_id` FK, filtered queries | Tenant from URL param, not middleware |
+| `src/routes/v1/documents.ts` | Documents with `project` field for scoping | Uses `project` not `tenant_id` |
+| `src/routes/v1/lakes.ts` | Aggregates events by `project` | No tenant concept |
+| `src/routes/v1/translations.ts` | Segments with `extra.tenant_id` and `extra.org_id` | ✅ Properly scoped |
+| `src/routes/v1/gardens.ts` | Gardens with `source_filter.project` | Optional filter, not enforced |
+| `src/routes/v1/cms.ts` | CMS docs with `tenantProject()` helper | Defaults to "devel" |
 
-### Ragussy (no tenancy at all)
-
-| File | What it has | Gap |
-|------|-------------|-----|
-| `orgs/mojomast/ragussy/backend/app/api/rag.py` | Document ingest (`POST /ingest/text`, `POST /ingest/file`), search (`POST /search`), collection CRUD | All queries are **unscoped** — no tenant_id anywhere. Collections are not tenant-prefixed |
-| `orgs/mojomast/ragussy/backend/app/api/openai.py` | `/v1/chat/completions`, `/v1/embeddings` with Bearer auth | Auth is global, not tenant-bound. No per-tenant model profiles |
-| `orgs/mojomast/ragussy/backend/app/core/config.py` | `Settings` class with 30+ env vars | No tenant-related config at all |
-| `orgs/mojomast/ragussy/frontend/src/pages-next/DocumentsPage.tsx` | DB profile CRUD, multi-file upload, ingestion progress | No tenant selector. No per-tenant storage isolation |
-
-### Shibboleth (no tenancy concept)
+### Knoxx Frontend
 
 | File | What it has | Gap |
 |------|-------------|-----|
-| `orgs/octave-commons/shibboleth/src/promptbench/pipeline/core.clj` | `def-pipeline` macro — pipeline definition DSL | No tenant filter concept in pipeline definitions |
-| `orgs/octave-commons/shibboleth/src/promptbench/control_plane/chat_lab.clj` | Chat labeling lab sessions, labeling, export | Sessions are not tenant-scoped |
+| `lib/nextApi.ts` | `listDatabaseProfiles()` with `qdrantCollection` | Collection selection in UI, not tenant |
+| `lib/api/runtime.ts` | `rag_collection` param for chat | Per-request collection, not scoped |
+| `shell/Shell.tsx` | Status bar shows `collection: devel` | Hardcoded, not from tenant context |
+
+---
+
+## Migration Path
+
+### Phase 1: Tenant Enforcement Middleware (P1A)
+
+1. **Add tenant resolution middleware**
+   - Extract `tenant_id` from JWT, API key, or subdomain
+   - Attach to `request.tenantContext`
+   - Reject requests without valid tenant
+
+2. **Add `tenant_id` to documents**
+   - Migration: Add `tenant_id` field to all documents
+   - Backfill: `tenant_id = project` for existing docs
+   - Update: All document queries require `tenant_id` filter
+
+3. **Create `tenant_policies` collection**
+   - Move policy from `config` JSONB to structured schema
+   - Add retention_days, review_threshold, pii_rules fields
+
+### Phase 2: Isolation Ladder
+
+4. **Support isolated collections**
+   - Add `isolation_mode` to tenant
+   - Provision separate MongoDB collections for `isolation_mode: isolated`
+   - Route queries based on isolation mode
+
+5. **Add audit logging**
+   - Create `audit_log` collection
+   - Log all tenant-scoped actions with tenant_id, user_id, action, resource, timestamp
+
+### Phase 3: Model Profiles
+
+6. **Create `model_profiles` collection**
+   - Define base_model, endpoint, sampling_params, safety_profile
+   - Link tenants to profiles
+
+---
+
+## Summary
+
+**What's Working**:
+- Tenant catalog exists
+- Labels are tenant-scoped
+- Translations are tenant-scoped with org hierarchy
+- Lakes/projects provide collection-level aggregation
+
+**Critical Gaps**:
+- No tenant gateway middleware
+- Documents use `project` not `tenant_id`
+- No isolation ladder (shared only)
+- No audit logging
+- No model profiles
+- No RBAC
+
+**Recommended Priority**:
+1. Add tenant middleware (blocks P1A-dependent workbench features)
+2. Add `tenant_id` to documents with backfill
+3. Create `tenant_policies` collection
+4. Add audit logging
 
 ---
 
@@ -233,6 +345,7 @@ Every endpoint requires `tenant_context` in the request, resolved from auth or h
 
 ---
 
-## Status
+## Changelog
 
-Draft — derived from inbox conversation on 2026-04-01.
+- **2026-04-12**: Audited against openplanner and knoxx codebases. Updated to reflect actual implementation state. Added migration path.
+- **2026-04-01**: Initial draft from inbox conversation.
