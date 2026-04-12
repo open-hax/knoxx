@@ -3,6 +3,24 @@ import { Button, Card, Input } from '@open-hax/uxx';
 
 type GardenTheme = 'monokai' | 'night-owl' | 'proxy-console';
 
+const AVAILABLE_LANGUAGES = [
+  { code: 'es', name: 'Español' },
+  { code: 'fr', name: 'Français' },
+  { code: 'de', name: 'Deutsch' },
+  { code: 'ja', name: '日本語' },
+  { code: 'zh', name: '中文' },
+  { code: 'ko', name: '한국어' },
+  { code: 'pt', name: 'Português' },
+  { code: 'ru', name: 'Русский' },
+  { code: 'it', name: 'Italiano' },
+  { code: 'ar', name: 'العربية' },
+  { code: 'hi', name: 'हिन्दी' },
+  { code: 'nl', name: 'Nederlands' },
+  { code: 'pl', name: 'Polski' },
+  { code: 'tr', name: 'Türkçe' },
+  { code: 'vi', name: 'Tiếng Việt' },
+];
+
 type Garden = {
   garden_id: string;
   title: string;
@@ -112,6 +130,8 @@ export default function GardensPage() {
   const [formTheme, setFormTheme] = useState<GardenTheme>('monokai');
   const [formDomain, setFormDomain] = useState('general');
   const [formStatus, setFormStatus] = useState('active');
+  const [formTargetLanguages, setFormTargetLanguages] = useState<string[]>([]);
+  const [formAutoTranslate, setFormAutoTranslate] = useState(true);
 
   useEffect(() => {
     loadGardens();
@@ -139,6 +159,8 @@ export default function GardensPage() {
     setFormTheme('monokai');
     setFormDomain('general');
     setFormStatus('active');
+    setFormTargetLanguages([]);
+    setFormAutoTranslate(true);
     setEditingGarden(null);
     setShowCreateForm(false);
   }
@@ -151,6 +173,8 @@ export default function GardensPage() {
     setFormTheme(garden.theme || 'monokai');
     setFormDomain(garden.domain);
     setFormStatus(garden.status);
+    setFormTargetLanguages(garden.target_languages || []);
+    setFormAutoTranslate(garden.auto_translate ?? true);
     setShowCreateForm(true);
   }
 
@@ -171,6 +195,8 @@ export default function GardensPage() {
         theme: formTheme,
         domain: formDomain,
         status: formStatus,
+        target_languages: formTargetLanguages,
+        auto_translate: formAutoTranslate,
       };
 
       const resp = await fetch(`/api/openplanner/v1/gardens/${encodeURIComponent(formGardenId)}`, {
@@ -336,6 +362,53 @@ export default function GardensPage() {
             </div>
 
             <div className="md:col-span-2">
+              <label className="mb-1 block text-sm font-medium">Target Languages</label>
+              <p className="mb-2 text-xs text-slate-500">
+                Select languages for automatic translation. Published documents will be translated to these languages.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {AVAILABLE_LANGUAGES.map(lang => {
+                  const isSelected = formTargetLanguages.includes(lang.code);
+                  return (
+                    <button
+                      key={lang.code}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          setFormTargetLanguages(formTargetLanguages.filter(c => c !== lang.code));
+                        } else {
+                          setFormTargetLanguages([...formTargetLanguages, lang.code]);
+                        }
+                      }}
+                      className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                        isSelected
+                          ? 'border-cyan-500 bg-cyan-50 text-cyan-700 dark:border-cyan-400 dark:bg-cyan-950/30 dark:text-cyan-300'
+                          : 'border-slate-300 bg-white text-slate-600 hover:border-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                      }`}
+                    >
+                      {lang.name}
+                      {isSelected && <span className="ml-1.5 text-cyan-500">✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {formTargetLanguages.length > 0 && (
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="auto-translate"
+                    checked={formAutoTranslate}
+                    onChange={(e) => setFormAutoTranslate(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                  />
+                  <label htmlFor="auto-translate" className="text-sm text-slate-600 dark:text-slate-400">
+                    Automatically translate new publications
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <div className="md:col-span-2">
               <label className="mb-1 block text-sm font-medium">Theme Preview</label>
               <ThemePreview theme={formTheme} />
             </div>
@@ -388,6 +461,15 @@ export default function GardensPage() {
                 <span className="text-slate-600 dark:text-slate-400">
                   Domain: {garden.domain}
                 </span>
+                {garden.target_languages && garden.target_languages.length > 0 && (
+                  <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                    <span>🌐</span>
+                    {garden.target_languages.map(lang => {
+                      const langInfo = AVAILABLE_LANGUAGES.find(l => l.code === lang);
+                      return langInfo?.name || lang;
+                    }).join(', ')}
+                  </span>
+                )}
               </div>
 
               <div className="mt-5 flex gap-2">
