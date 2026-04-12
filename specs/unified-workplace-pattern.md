@@ -208,19 +208,20 @@ These don't need the full 3-pane layout. They may use the Context Bar for naviga
    - Added visibility indicators to files
    - Consolidated stats/ingestion indicators
 
-2. **Extract CanvasPanel** from ChatMainPane
+2. **Integrate ContextBar into CMSPage** ✅ DONE
+   - Replaced CMS sidebar with shared ContextBar
+   - Added optional source/domain/path prefix filters
+   - Made chat-specific features conditional
+   - Added sidebar resize support
+
+3. **Extract CanvasPanel** from ChatMainPane
    - Make it usable as right panel in all workplaces
    - Support both "toggle" (Chat) and "always visible" (Editor, Translation Review) modes
 
-3. **Create AgentChatPanel**
+4. **Create AgentChatPanel**
    - Condensed chat interface for secondary position
    - Auto-pins current context (document, translation, etc.)
    - Exposes canvas tool to agent
-
-4. **Refactor CMSPage → EditorPage**
-   - Replace current layout with ContextBar + Editor + AgentChatPanel
-   - Remove overlay-based detail panel
-   - Rename route from `/cms` to `/editor` (or keep `/cms` but think of it as Editor workflow)
 
 5. **Create TranslationReviewPage**
    - ContextBar + TranslationComparison + AgentChatPanel
@@ -239,7 +240,7 @@ These don't need the full 3-pane layout. They may use the Context Bar for naviga
 - [x] ContextBar has visibility and kind filters
 - [x] ContextBar shows visibility indicators on files
 - [x] Workspace-specific coupling removed (no sync devel button)
-- [ ] ContextBar is used across Chat, Editor, Translation Review
+- [x] ContextBar is used across Chat, Editor (CMS)
 - [ ] Editor has editor in center, chat on right
 - [ ] Editor chat auto-pins current document
 - [ ] Translation Review has comparison in center, chat on right
