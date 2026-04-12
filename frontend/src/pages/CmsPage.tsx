@@ -230,8 +230,27 @@ function CmsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+
     if (!resp.ok) {
-      throw new Error(await resp.text());
+      const text = await resp.text();
+      if (resp.status === 503) {
+        try {
+          const parsed = JSON.parse(text) as { persisted?: boolean };
+          if (parsed.persisted) {
+            if (existing?.doc_id) {
+              setCmsDocId(existing.doc_id);
+              return existing.doc_id;
+            }
+            const refetched = await syncCmsDocumentByPath(path);
+            if (refetched?.doc_id) {
+              return refetched.doc_id;
+            }
+          }
+        } catch {
+          // fall through to hard error
+        }
+      }
+      throw new Error(text);
     }
     const doc = (await resp.json()) as CmsDocSummary;
     setCmsDocId(doc.doc_id);
@@ -395,14 +414,29 @@ function CmsPage() {
       const endpoint = `/api/openplanner/v1/cms/publish/${encodeURIComponent(docId)}/${encodeURIComponent(selectedGardenId)}`;
       const resp = await fetch(endpoint, { method: isPublishedToSelectedGarden ? "DELETE" : "POST" });
       if (!resp.ok) {
-        throw new Error(await resp.text());
+        const text = await resp.text();
+        let softSuccess = false;
+        if (resp.status === 503) {
+          try {
+            const parsed = JSON.parse(text) as { persisted?: boolean; indexed?: boolean };
+            softSuccess = Boolean(parsed.persisted);
+            if (softSuccess) {
+              setLastSaveMessage(nextState === "published" ? "Published (index pending)" : "Unpublished (index pending)");
+            }
+          } catch {
+            softSuccess = false;
+          }
+        }
+        if (!softSuccess) {
+          throw new Error(text);
+        }
       }
       const nextGardenIds = isPublishedToSelectedGarden
         ? publishedGardenIds.filter((gardenId) => gardenId !== selectedGardenId)
         : [...new Set([...publishedGardenIds, selectedGardenId])];
       setPublishedGardenIds(nextGardenIds);
       setEditorStatus(nextGardenIds.includes(selectedGardenId) ? "published" : "draft");
-      setLastSaveMessage(nextState === "published" ? "Published" : "Unpublished");
+      setLastSaveMessage((current) => current ?? (nextState === "published" ? "Published" : "Unpublished"));
     } catch (err) {
       console.error("Publish toggle failed:", err);
       setLastSaveMessage(nextState === "published" ? "Publish failed" : "Unpublish failed");
