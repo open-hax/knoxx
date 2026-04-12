@@ -45,7 +45,23 @@ interface Garden {
   status: "draft" | "active" | "archived";
   default_language: string;
   target_languages: string[];
+  auto_translate: boolean;
 }
+
+const COMMON_LANGUAGES: Record<string, string> = {
+  en: "English",
+  es: "Spanish",
+  de: "German",
+  fr: "French",
+  ja: "Japanese",
+  ko: "Korean",
+  zh: "Chinese",
+  pt: "Portuguese",
+  it: "Italian",
+  ru: "Russian",
+  ar: "Arabic",
+  hi: "Hindi",
+};
 
 const VISIBILITY_VARIANTS: Record<string, "default" | "warning" | "success" | "error"> = {
   internal: "default",
@@ -80,6 +96,8 @@ function CmsPage() {
   const [drafting, setDrafting] = useState(false);
   const [gardens, setGardens] = useState<Garden[]>([]);
   const [selectedGardenId, setSelectedGardenId] = useState<string>("");
+  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
+  const [showLanguageDropdown, setShowLanguageDropdown] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const offsetRef = useRef(0);
   const isLoadingRef = useRef(false);
@@ -207,8 +225,18 @@ function CmsPage() {
       return;
     }
     try {
-      const resp = await fetch(`/api/cms/publish/${docId}/${selectedGardenId}`, { method: "POST" });
+      const params = new URLSearchParams();
+      if (selectedLanguages.length > 0) {
+        params.set("target_languages", selectedLanguages.join(","));
+      }
+      const resp = await fetch(`/api/cms/publish/${docId}/${selectedGardenId}?${params}`, { method: "POST" });
       if (resp.ok) {
+        const data = await resp.json();
+        // Show translation jobs if any
+        if (data.translation_jobs?.length > 0) {
+          const langs = data.translation_jobs.map((j: { target_lang: string }) => j.target_lang).join(", ");
+          console.log(`Translation jobs queued for: ${langs}`);
+        }
         // Reload from beginning to reflect visibility change
         offsetRef.current = 0;
         setDocuments([]);
@@ -529,7 +557,16 @@ function CmsPage() {
                     </label>
                     <select
                       value={selectedGardenId}
-                      onChange={(e) => setSelectedGardenId(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedGardenId(e.target.value);
+                        // Auto-select garden's default target languages
+                        const garden = gardens.find((g) => g.garden_id === e.target.value);
+                        if (garden?.target_languages?.length) {
+                          setSelectedLanguages(garden.target_languages);
+                        } else {
+                          setSelectedLanguages([]);
+                        }
+                      }}
                       style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-canvas)", color: "var(--token-colors-text-default)" }}
                     >
                       {gardens.length === 0 && (
@@ -541,6 +578,82 @@ function CmsPage() {
                         </option>
                       ))}
                     </select>
+                    
+                    {/* Language selection for translation */}
+                    {selectedGardenId && (
+                      <div style={{ marginTop: "12px" }}>
+                        <div
+                          onClick={() => setShowLanguageDropdown(!showLanguageDropdown)}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            padding: "8px 12px",
+                            borderRadius: 6,
+                            border: "1px solid var(--token-colors-border-default)",
+                            background: "var(--token-colors-background-canvas)",
+                            cursor: "pointer",
+                            fontSize: "14px",
+                          }}
+                        >
+                          <span>
+                            🌐 Translate to{" "}
+                            {selectedLanguages.length > 0
+                              ? selectedLanguages.map((l) => COMMON_LANGUAGES[l] || l).join(", ")
+                              : "No languages selected"}
+                          </span>
+                          <span style={{ opacity: 0.5 }}>{showLanguageDropdown ? "▲" : "▼"}</span>
+                        </div>
+                        
+                        {showLanguageDropdown && (
+                          <div
+                            style={{
+                              marginTop: "4px",
+                              padding: "8px",
+                              borderRadius: 6,
+                              border: "1px solid var(--token-colors-border-default)",
+                              background: "var(--token-colors-background-surface)",
+                              maxHeight: "200px",
+                              overflow: "auto",
+                            }}
+                          >
+                            {Object.entries(COMMON_LANGUAGES).map(([code, name]) => (
+                              <label
+                                key={code}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "8px",
+                                  padding: "4px 8px",
+                                  cursor: "pointer",
+                                  fontSize: "14px",
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedLanguages.includes(code)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedLanguages([...selectedLanguages, code]);
+                                    } else {
+                                      setSelectedLanguages(selectedLanguages.filter((l) => l !== code));
+                                    }
+                                  }}
+                                />
+                                <span>{name}</span>
+                                <span style={{ opacity: 0.5, fontSize: "12px" }}>({code})</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        
+                        <p style={{ marginTop: "4px", fontSize: "12px", color: "var(--token-colors-text-muted)" }}>
+                          {selectedLanguages.length > 0
+                            ? `Will create ${selectedLanguages.length} translation job${selectedLanguages.length > 1 ? "s" : ""}`
+                            : "Select languages to auto-translate after publishing"}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
                 
