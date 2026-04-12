@@ -2,60 +2,132 @@
  * Review Queue Page
  *
  * Process pending items with correction capture.
+ * Connected to /v1/reviews API.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { QueueList } from "../components/review/QueueList";
 import { EmptyState } from "../components/EmptyState";
+import { useReviewQueue, getItemStatus } from "../components/review/useReviewQueue";
 import {
   type ReviewItem,
+  type ReviewItemStatus,
   type BatchAction,
+  type ReviewItemType,
   ITEM_TYPE_CONFIG,
   ITEM_STATUS_CONFIG,
-  MOCK_REVIEW_ITEMS,
+  sourceToType,
 } from "../components/review/review-types";
 import styles from "./ReviewQueuePage.module.css";
 
+/** Extended item with computed display fields */
+interface DisplayItem extends ReviewItem {
+  id: string;
+  type: ReviewItemType;
+  status: ReviewItemStatus;
+  summary: string;
+}
+
+function toDisplayItem(item: ReviewItem): DisplayItem {
+  return {
+    ...item,
+    id: item.doc_id,
+    type: sourceToType(item.source, item.ai_drafted),
+    status: getItemStatus(item),
+    summary: item.content_preview,
+  };
+}
+
 export function ReviewQueuePage() {
   const navigate = useNavigate();
-  const [items, setItems] = useState<ReviewItem[]>(MOCK_REVIEW_ITEMS);
-  const [selectedItem, setSelectedItem] = useState<ReviewItem | null>(null);
-  const [batchAction, setBatchAction] = useState<BatchAction | null>(null);
+  const { items: apiItems, stats, loading, error, approve, reject, flag, batchAction, refresh } = useReviewQueue();
+  const [selectedItem, setSelectedItem] = useState<DisplayItem | null>(null);
 
-  const handleSelect = useCallback((item: ReviewItem) => {
+  // Convert API items to display items
+  const items = useMemo(() => apiItems.map(toDisplayItem), [apiItems]);
+
+  const handleSelect = useCallback((item: DisplayItem) => {
     setSelectedItem(item);
   }, []);
 
-  const handleBatchAction = useCallback((action: BatchAction) => {
-    setBatchAction(action);
+  const handleBatchAction = useCallback(async (action: BatchAction) => {
+    const pendingIds = items
+      .filter((i) => i.status === "pending")
+      .map((i) => i.doc_id);
 
-    if (action === "approve-all") {
-      setItems((prev) =>
-        prev.map((item) =>
-          item.status === "pending" ? { ...item, status: "approved" } : item
-        )
-      );
-    } else if (action === "reject-all") {
-      setItems((prev) =>
-        prev.map((item) =>
-          item.status === "pending" ? { ...item, status: "rejected" } : item
-        )
-      );
-    } else if (action === "flag-for-review") {
-      setItems((prev) =>
-        prev.map((item) =>
-          item.status === "pending" ? { ...item, status: "flagged" } : item
-        )
-      );
+    if (pendingIds.length === 0) return;
+
+    try {
+      if (action === "approve-all") {
+        await batchAction("approve", pendingIds);
+      } else if (action === "reject-all") {
+        await batchAction("reject", pendingIds);
+      } else if (action === "flag-for-review") {
+        await batchAction("flag", pendingIds);
+      }
+      setSelectedItem(null);
+    } catch (err) {
+      console.error("Batch action failed:", err);
     }
+  }, [items, batchAction]);
 
-    // Clear selection after batch action
-    setSelectedItem(null);
-    setBatchAction(null);
-  }, []);
+  const handleApprove = useCallback(async () => {
+    if (!selectedItem) return;
+    try {
+      await approve(selectedItem.doc_id);
+      setSelectedItem(null);
+    } catch (err) {
+      console.error("Approve failed:", err);
+    }
+  }, [selectedItem, approve]);
+
+  const handleReject = useCallback(async () => {
+    if (!selectedItem) return;
+    try {
+      await reject(selectedItem.doc_id);
+      setSelectedItem(null);
+    } catch (err) {
+      console.error("Reject failed:", err);
+    }
+  }, [selectedItem, reject]);
+
+  const handleFlag = useCallback(async () => {
+    if (!selectedItem) return;
+    try {
+      await flag(selectedItem.doc_id);
+      setSelectedItem(null);
+    } catch (err) {
+      console.error("Flag failed:", err);
+    }
+  }, [selectedItem, flag]);
 
   const pendingCount = items.filter((i) => i.status === "pending").length;
+
+  // Loading state
+  if (loading && items.length === 0) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.loading}>
+          <p>Loading review queue...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.error}>
+          <p>Failed to load review queue: {error}</p>
+          <button onClick={refresh} className={styles.retryButton}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Show empty state if no items
   if (items.length === 0) {
@@ -79,24 +151,32 @@ export function ReviewQueuePage() {
         <div className={styles.titleRow}>
           <h1 className={styles.title}>Review Queue</h1>
           <span className={styles.count}>{pendingCount} pending</span>
+          {stats && (
+            <span className={styles.stats}>
+              {stats.approved_today} approved today
+            </span>
+          )}
         </div>
 
         <div className={styles.actions}>
           <select
             className={styles.batchSelect}
-            value={batchAction || ""}
             onChange={(e) => {
               const value = e.target.value as BatchAction;
               if (value) {
                 handleBatchAction(value);
+                e.target.value = "";
               }
             }}
             disabled={pendingCount === 0}
+            defaultValue=""
           >
-            <option value="">Batch actions...</option>
-            <option value="approve-all">Approve all pending</option>
-            <option value="reject-all">Reject all pending</option>
-            <option value="flag-for-review">Flag for review</option>
+            <option value="" disabled>
+              Batch actions...
+            </option>
+            <option value="approve-all">Approve all pending ({pendingCount})</option>
+            <option value="reject-all">Reject all pending ({pendingCount})</option>
+            <option value="flag-for-review">Flag for review ({pendingCount})</option>
           </select>
         </div>
       </header>
@@ -144,45 +224,32 @@ export function ReviewQueuePage() {
                     <span className={styles.metaValue}>{selectedItem.agent_name}</span>
                   </div>
                 )}
+                <div className={styles.metaItem}>
+                  <span className={styles.metaLabel}>AI Drafted</span>
+                  <span className={styles.metaValue}>
+                    {selectedItem.ai_drafted ? "Yes" : "No"}
+                  </span>
+                </div>
               </div>
 
               <div className={styles.detailActions}>
                 <button
                   className={styles.approveButton}
-                  onClick={() => {
-                    setItems((prev) =>
-                      prev.map((i) =>
-                        i.id === selectedItem.id ? { ...i, status: "approved" } : i
-                      )
-                    );
-                    setSelectedItem(null);
-                  }}
+                  onClick={handleApprove}
+                  disabled={selectedItem.status !== "pending"}
                 >
                   Approve
                 </button>
                 <button
                   className={styles.rejectButton}
-                  onClick={() => {
-                    setItems((prev) =>
-                      prev.map((i) =>
-                        i.id === selectedItem.id ? { ...i, status: "rejected" } : i
-                      )
-                    );
-                    setSelectedItem(null);
-                  }}
+                  onClick={handleReject}
+                  disabled={selectedItem.status !== "pending"}
                 >
                   Reject
                 </button>
                 <button
                   className={styles.flagButton}
-                  onClick={() => {
-                    setItems((prev) =>
-                      prev.map((i) =>
-                        i.id === selectedItem.id ? { ...i, status: "flagged" } : i
-                      )
-                    );
-                    setSelectedItem(null);
-                  }}
+                  onClick={handleFlag}
                 >
                   Flag
                 </button>

@@ -7,6 +7,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
 import { ReviewQueuePage } from "./ReviewQueuePage";
+import type { ReviewItem, ReviewStats } from "../components/review/review-types";
 
 // Mock useNavigate
 const mockNavigate = vi.fn();
@@ -18,6 +19,112 @@ vi.mock("react-router-dom", async () => {
   };
 });
 
+// Mock useReviewQueue hook
+const mockApprove = vi.fn();
+const mockReject = vi.fn();
+const mockFlag = vi.fn();
+const mockBatchAction = vi.fn();
+const mockRefresh = vi.fn();
+
+const MOCK_STATS: ReviewStats = {
+  pending: 5,
+  flagged: 0,
+  approved_today: 0,
+  rejected_today: 0,
+};
+
+const MOCK_REVIEW_ITEMS: ReviewItem[] = [
+  {
+    doc_id: "rev-1",
+    tenant_id: "devel",
+    title: "API Documentation Summary",
+    content_preview: "Generated summary of REST API endpoints for v2 release.",
+    visibility: "review",
+    source: "ai-drafted",
+    ai_drafted: true,
+    confidence: 0.72,
+    created_at: "2024-01-15T14:00:00Z",
+    updated_at: "2024-01-15T14:00:00Z",
+    source_count: 12,
+    agent_name: "synthesizer-v3",
+  },
+  {
+    doc_id: "rev-2",
+    tenant_id: "devel",
+    title: "German Translation: Getting Started",
+    content_preview: "Machine translation of onboarding guide to German.",
+    visibility: "review",
+    source: "import",
+    ai_drafted: false,
+    confidence: 0.45,
+    created_at: "2024-01-15T13:30:00Z",
+    updated_at: "2024-01-15T13:30:00Z",
+    source_count: 1,
+    agent_name: "mt-de-v2",
+  },
+  {
+    doc_id: "rev-3",
+    tenant_id: "devel",
+    title: "Changelog Extraction",
+    content_preview: "Extracted changelog entries from commit history.",
+    visibility: "review",
+    source: "ingestion",
+    ai_drafted: false,
+    confidence: 0.89,
+    created_at: "2024-01-15T12:00:00Z",
+    updated_at: "2024-01-15T12:00:00Z",
+    source_count: 48,
+    agent_name: null,
+  },
+  {
+    doc_id: "rev-4",
+    tenant_id: "devel",
+    title: "Architecture Decision Record",
+    content_preview: "Generated ADR for database migration strategy.",
+    visibility: "review",
+    source: "ai-drafted",
+    ai_drafted: true,
+    confidence: 0.38,
+    created_at: "2024-01-15T11:00:00Z",
+    updated_at: "2024-01-15T11:00:00Z",
+    source_count: 8,
+    agent_name: "synthesizer-v3",
+  },
+  {
+    doc_id: "rev-5",
+    tenant_id: "devel",
+    title: "Japanese Translation: API Reference",
+    content_preview: "Machine translation of API reference to Japanese.",
+    visibility: "review",
+    source: "import",
+    ai_drafted: false,
+    confidence: 0.61,
+    created_at: "2024-01-15T10:00:00Z",
+    updated_at: "2024-01-15T10:00:00Z",
+    source_count: 1,
+    agent_name: "mt-ja-v2",
+  },
+];
+
+vi.mock("../components/review/useReviewQueue", () => ({
+  useReviewQueue: () => ({
+    items: MOCK_REVIEW_ITEMS,
+    stats: MOCK_STATS,
+    loading: false,
+    error: null,
+    approve: mockApprove,
+    reject: mockReject,
+    flag: mockFlag,
+    batchAction: mockBatchAction,
+    refresh: mockRefresh,
+  }),
+  getItemStatus: (item: ReviewItem) => {
+    if (item.visibility === "public") return "approved";
+    if (item.visibility === "internal") return "rejected";
+    return "pending";
+  },
+}));
+
 // Wrapper for router
 const RouterWrapper = ({ children }: { children: React.ReactNode }) => (
   <BrowserRouter>{children}</BrowserRouter>
@@ -26,6 +133,11 @@ const RouterWrapper = ({ children }: { children: React.ReactNode }) => (
 describe("ReviewQueuePage", () => {
   beforeEach(() => {
     mockNavigate.mockClear();
+    mockApprove.mockClear();
+    mockReject.mockClear();
+    mockFlag.mockClear();
+    mockBatchAction.mockClear();
+    mockRefresh.mockClear();
   });
 
   it("renders queue with pending items", () => {
@@ -49,9 +161,9 @@ describe("ReviewQueuePage", () => {
     const batchSelect = screen.getByRole("combobox");
     expect(batchSelect).toBeInTheDocument();
 
-    expect(screen.getByRole("option", { name: "Approve all pending" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Reject all pending" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Flag for review" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Approve all pending/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Reject all pending/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Flag for review/ })).toBeInTheDocument();
   });
 
   it("shows all pending items in the queue", () => {
@@ -104,7 +216,7 @@ describe("ReviewQueuePage", () => {
     expect(screen.getByRole("button", { name: "Flag" })).toBeInTheDocument();
   });
 
-  it("approves item when Approve button is clicked", async () => {
+  it("calls approve API when Approve button is clicked", async () => {
     const user = userEvent.setup();
 
     render(
@@ -119,11 +231,10 @@ describe("ReviewQueuePage", () => {
     // Click Approve
     await user.click(screen.getByRole("button", { name: "Approve" }));
 
-    // Pending count should decrease
-    expect(screen.getByText("4 pending")).toBeInTheDocument();
+    expect(mockApprove).toHaveBeenCalledWith("rev-3");
   });
 
-  it("rejects item when Reject button is clicked", async () => {
+  it("calls reject API when Reject button is clicked", async () => {
     const user = userEvent.setup();
 
     render(
@@ -138,11 +249,10 @@ describe("ReviewQueuePage", () => {
     // Click Reject
     await user.click(screen.getByRole("button", { name: "Reject" }));
 
-    // Pending count should decrease
-    expect(screen.getByText("4 pending")).toBeInTheDocument();
+    expect(mockReject).toHaveBeenCalledWith("rev-3");
   });
 
-  it("flags item when Flag button is clicked", async () => {
+  it("calls flag API when Flag button is clicked", async () => {
     const user = userEvent.setup();
 
     render(
@@ -157,11 +267,10 @@ describe("ReviewQueuePage", () => {
     // Click Flag
     await user.click(screen.getByRole("button", { name: "Flag" }));
 
-    // Pending count should decrease
-    expect(screen.getByText("4 pending")).toBeInTheDocument();
+    expect(mockFlag).toHaveBeenCalledWith("rev-3");
   });
 
-  it("approves all pending items with batch action", async () => {
+  it("calls batch approve API for approve all action", async () => {
     const user = userEvent.setup();
 
     render(
@@ -173,11 +282,15 @@ describe("ReviewQueuePage", () => {
     const batchSelect = screen.getByRole("combobox");
     await user.selectOptions(batchSelect, "approve-all");
 
-    // All items should be approved (0 pending)
-    expect(screen.getByText("0 pending")).toBeInTheDocument();
+    // Verify batchAction was called with approve action and all doc IDs
+    expect(mockBatchAction).toHaveBeenCalledTimes(1);
+    const callArgs = mockBatchAction.mock.calls[0];
+    expect(callArgs[0]).toBe("approve");
+    expect(callArgs[1]).toHaveLength(5);
+    expect(callArgs[1]).toEqual(expect.arrayContaining(["rev-1", "rev-2", "rev-3", "rev-4", "rev-5"]));
   });
 
-  it("rejects all pending items with batch action", async () => {
+  it("calls batch reject API for reject all action", async () => {
     const user = userEvent.setup();
 
     render(
@@ -189,7 +302,7 @@ describe("ReviewQueuePage", () => {
     const batchSelect = screen.getByRole("combobox");
     await user.selectOptions(batchSelect, "reject-all");
 
-    expect(screen.getByText("0 pending")).toBeInTheDocument();
+    expect(mockBatchAction).toHaveBeenCalled();
   });
 
   it("shows type badge with correct color in detail panel", async () => {

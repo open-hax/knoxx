@@ -15,11 +15,11 @@ import styles from "./QueueList.module.css";
 
 interface QueueListProps {
   /** Review items to display */
-  items: ReviewItem[];
+  items: Array<ReviewItem & { id: string; type: ReviewItemType; status: string; summary: string }>;
   /** Currently selected item ID */
   selectedId?: string;
   /** Callback when item is selected */
-  onSelect: (item: ReviewItem) => void;
+  onSelect: (item: ReviewItem & { id: string; type: ReviewItemType; status: string; summary: string }) => void;
   /** Item type config for display */
   itemTypeConfig: typeof ITEM_TYPE_CONFIG;
   /** Item status config for display */
