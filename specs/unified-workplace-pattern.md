@@ -209,11 +209,13 @@ These don't need the full 3-pane layout. They may use the Context Bar for naviga
    - Consolidated stats/ingestion indicators
 
 2. **Integrate ContextBar into CMSPage** ✅ DONE
-   - Full editor in center (title, body, metadata sidebar)
-   - Chat panel as secondary right panel (toggleable)
-   - Document list shows when no document selected
-   - Selecting document opens full editor
-   - All ContextBar features available (file explorer, semantic search, sessions)
+   - CMS page is now IDE-like (no document library list)
+   - File explorer IS the document source
+   - Selecting file in explorer opens it in editor (not preview)
+   - Auto-pins selected file to chat context (key CMS difference)
+   - Editor always visible with placeholder when nothing selected
+   - Chat panel visible by default (secondary, always on)
+   - No preview panel in CMS mode
 
 3. **Extract CanvasPanel** from ChatMainPane
    - Make it usable as right panel in all workplaces
@@ -242,9 +244,10 @@ These don't need the full 3-pane layout. They may use the Context Bar for naviga
 - [x] ContextBar shows visibility indicators on files
 - [x] Workspace-specific coupling removed (no sync devel button)
 - [x] ContextBar is used across Chat, Editor (CMS)
-- [x] CMS page has full editor in center with chat as secondary
+- [x] CMS page is IDE-like: file explorer → editor (no document library)
+- [x] CMS selecting file opens in editor AND auto-pins to chat context
+- [x] CMS chat panel visible by default (always on for editor workflow)
 - [x] Chat page has chat focused with editor/canvas secondary
-- [ ] Editor chat auto-pins current document
+- [ ] Editor chat fully integrated with agent backend
 - [ ] Translation Review has comparison in center, chat on right
 - [ ] Canvas tool works in all contexts
-- [ ] No loss of functionality from current implementations
