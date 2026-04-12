@@ -412,25 +412,28 @@
 
 **Purpose**: Inspect ingestion, sync, embeddings, policy violations.
 
-### 6.1 Ops Event Table (2 pts)
+### 6.1 Ops Event Table (2 pts) ✅ COMPLETE
 
 **Scope**: Time-ordered event log with filtering.
 
 **Files**:
 - `src/pages/OpsLogPage.tsx` — page component
 - `src/components/ops/EventTable.tsx` — table component
+- `src/components/ops/ops-types.ts` — event types
 
 **Exit criteria**:
-- [ ] Shows time, type, status, summary
-- [ ] Filter by type (ingestion/embedding/sync/policy/MT)
-- [ ] Filter by date range
-- [ ] Status icons: done/warn/error
+- [x] Shows time, type, status, summary
+- [x] Filter by type (ingestion/embedding/sync/policy/MT)
+- [x] Filter by date range
+- [x] Status icons: done/warn/error
 
 **Dependencies**: 0.1
 
+**Commit**: `3fc2502c` — feat(workbench): add Ops Event Table (Epic 6.1)
+
 ---
 
-### 6.2 Ops Event Detail (1 pt)
+### 6.2 Ops Event Detail (1 pt) ✅ COMPLETE
 
 **Scope**: Expandable row with full trace.
 
@@ -438,13 +441,15 @@
 - `src/components/ops/EventDetail.tsx` — expanded row
 
 **Exit criteria**:
-- [ ] Shows full inputs
-- [ ] Shows full outputs
-- [ ] Shows duration
-- [ ] Shows error trace if failed
+- [x] Shows full inputs
+- [x] Shows full outputs
+- [x] Shows duration
+- [x] Shows error trace if failed
 - [ ] Link to related review item (if any)
 
 **Dependencies**: 6.1
+
+**Commit**: `3fc2502c` — feat(workbench): add Ops Event Table (Epic 6.1)
 
 ---
 
@@ -514,13 +519,13 @@
 | 3. Review Queue | 3 | 5 | Not started | P3, P1B |
 | 4. Memory Inspector | 3 | 5 | Blocked on P1B | P1B |
 | 5. Agent Workspace | 3 | 5 | Blocked on P1B | P1B |
-| 6. Ops Log | 3 | 4 | Not started | None |
+| 6. Ops Log | 3 | 4 | 2/3 complete (3 pts done) | None |
 | 7. Shared Components | 2 | 2 | ✅ Complete | None |
-| **Total** | **25** | **40** | **10 pts done, 8 pts unblocked** | |
+| **Total** | **25** | **40** | **13 pts done, 4 pts unblocked** | |
 
 **Progress**:
-- ✅ Complete: 10 points (Epic 0: Shell Foundation, Epic 7: Shared Components)
-- 🔓 Unblocked (P1A cleared): 8 points (1.1, 2.1, 3.1, 6.1)
+- ✅ Complete: 13 points (Epic 0, Epic 6.1+6.2, Epic 7)
+- 🔓 Unblocked: 4 points (1.1, 2.1, 3.1)
 - 🔒 Blocked on P3: 8 points (1.2, 2.3, 2.4, 3.2)
 - 🔒 Blocked on P1B: 14 points (1.3, 2.2, 3.3, 4.x, 5.x)
 
@@ -536,11 +541,10 @@
 - [x] 0.3 Status Bar (2 pt) — `2ca86641`
 - [x] 0.4 ChordOverlay Integration (2 pt) — `19f3a8c9`
 
-**Phase 2 (IN PROGRESS — 8 pts)**:
+**Phase 2 (IN PROGRESS — 4 pts)**:
 - [ ] 1.1 Dashboard Attention Cards (2 pt)
 - [ ] 2.1 Content Editor Shell (2 pt)
 - [ ] 3.1 Review Queue Shell (2 pt)
-- [ ] 6.1 Ops Event Table (2 pt)
 
 **Phase 3 (after P3 clears)**:
 - [ ] 1.2 Dashboard Agent Run Summary (2 pt)
