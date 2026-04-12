@@ -209,10 +209,11 @@ These don't need the full 3-pane layout. They may use the Context Bar for naviga
    - Consolidated stats/ingestion indicators
 
 2. **Integrate ContextBar into CMSPage** ✅ DONE
-   - Replaced CMS sidebar with shared ContextBar
-   - Added optional source/domain/path prefix filters
-   - Made chat-specific features conditional
-   - Added sidebar resize support
+   - Full editor in center (title, body, metadata sidebar)
+   - Chat panel as secondary right panel (toggleable)
+   - Document list shows when no document selected
+   - Selecting document opens full editor
+   - All ContextBar features available (file explorer, semantic search, sessions)
 
 3. **Extract CanvasPanel** from ChatMainPane
    - Make it usable as right panel in all workplaces
@@ -241,7 +242,8 @@ These don't need the full 3-pane layout. They may use the Context Bar for naviga
 - [x] ContextBar shows visibility indicators on files
 - [x] Workspace-specific coupling removed (no sync devel button)
 - [x] ContextBar is used across Chat, Editor (CMS)
-- [ ] Editor has editor in center, chat on right
+- [x] CMS page has full editor in center with chat as secondary
+- [x] Chat page has chat focused with editor/canvas secondary
 - [ ] Editor chat auto-pins current document
 - [ ] Translation Review has comparison in center, chat on right
 - [ ] Canvas tool works in all contexts
