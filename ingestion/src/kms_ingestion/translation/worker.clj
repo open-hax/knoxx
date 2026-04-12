@@ -82,6 +82,7 @@
   (let [job-id (or (:id job) (str (:_id job)))
         document-id (:document_id job)
         garden-id (:garden_id job)
+        project (:project job)
         source-lang (:source_lang job)
         target-lang (:target_language job)]
     (println "[translation-worker] Processing job" job-id "document" document-id "->" target-lang)
@@ -91,6 +92,7 @@
        {:job-id job-id
         :document-id document-id
         :garden-id garden-id
+        :project project
         :source-lang source-lang
         :target-lang target-lang})
       (mark-job-status job-id "complete")

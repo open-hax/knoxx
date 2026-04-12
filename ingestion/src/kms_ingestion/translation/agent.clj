@@ -136,7 +136,7 @@
   Creates an agent session with translator role and restricted tools.
   The agent reads the source document, translates it segment by segment,
   and saves each segment via the save_translation tool."
-  [{:keys [job-id document-id garden-id source-lang target-lang] :as ctx}]
+  [{:keys [job-id document-id garden-id project source-lang target-lang] :as ctx}]
   (println "[translation-agent] Starting session for job" job-id)
   ;; Fetch document
   (let [response (fetch-document document-id)
@@ -180,6 +180,7 @@
               :target_lang target-lang
               :document_id document-id
               :garden_id garden-id
+              :project project
               :segment_index idx
               :status "pending"
               :mt_model "translation-agent"})
