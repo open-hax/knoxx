@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { opsRoutes } from '../lib/app-routes';
+import { opsRoutes, joinPath } from '../lib/app-routes';
 import DashboardPage from './DashboardPage';
 import SettingsPage from './SettingsPage';
 import DocumentsPage from './DocumentsPage';
