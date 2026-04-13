@@ -242,9 +242,11 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (let [body (assoc (normalize-chat-body (or (aget request "body") #js {}))
+                (let [parsed (normalize-chat-body (or (aget request "body") #js {}))
+                      agent-ctx (or ctx (:auth-context parsed))
+                      body (assoc parsed
                                   :mode "rag"
-                                  :auth-context ctx)]
+                                  :auth-context agent-ctx)]
                   (-> (send-agent-turn! runtime config body)
                       (.then (fn [resp]
                                (json-response! reply 200 resp)))
@@ -258,9 +260,10 @@
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [node-crypto (aget runtime "crypto")
                       parsed (normalize-chat-body (or (aget request "body") #js {}))
+                      agent-ctx (or ctx (:auth-context parsed))
                       conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
                       run-id (or (:run-id parsed) (.randomUUID node-crypto))
-                      body (assoc parsed :conversation-id conversation-id :run-id run-id :mode "rag" :auth-context ctx)]
+                      body (assoc parsed :conversation-id conversation-id :run-id run-id :mode "rag" :auth-context agent-ctx)]
                   (-> (send-agent-turn! runtime config body)
                       (.then (fn [_] nil))
                       (.catch (fn [err]
@@ -277,9 +280,11 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (let [body (assoc (normalize-chat-body (or (aget request "body") #js {}))
+                (let [parsed (normalize-chat-body (or (aget request "body") #js {}))
+                      agent-ctx (or ctx (:auth-context parsed))
+                      body (assoc parsed
                                   :mode "direct"
-                                  :auth-context ctx)]
+                                  :auth-context agent-ctx)]
                   (-> (send-agent-turn! runtime config body)
                       (.then (fn [resp]
                                (json-response! reply 200 resp)))
@@ -293,9 +298,10 @@
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [node-crypto (aget runtime "crypto")
                       parsed (normalize-chat-body (or (aget request "body") #js {}))
+                      agent-ctx (or ctx (:auth-context parsed))
                       conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
                       run-id (or (:run-id parsed) (.randomUUID node-crypto))
-                      body (assoc parsed :conversation-id conversation-id :run-id run-id :mode "direct" :auth-context ctx)]
+                      body (assoc parsed :conversation-id conversation-id :run-id run-id :mode "direct" :auth-context agent-ctx)]
                   (-> (send-agent-turn! runtime config body)
                       (.then (fn [_] nil))
                       (.catch (fn [err]

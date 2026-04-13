@@ -316,6 +316,17 @@
                                           garden-id (aget params "garden_id")
                                           project (aget params "project")
                                           segment-index (aget params "segment_index")
+                                          normalized-source (str/trim (str (or source-text "")))
+                                          normalized-translated (str/trim (str (or translated-text "")))
+                                          prose-like? (or (> (count normalized-source) 24)
+                                                          (str/includes? normalized-source " "))
+                                          _ (when (and (not (str/blank? source-lang))
+                                                       (not (str/blank? target-lang))
+                                                       (not= source-lang target-lang)
+                                                       prose-like?
+                                                       (= normalized-source normalized-translated))
+                                              (throw (js/Error. (str "translated_text matches source_text for segment " segment-index
+                                                                      "; provide an actual " target-lang " translation"))))
                                           segment {:source_text source-text
                                                    :translated_text translated-text
                                                    :source_lang source-lang
@@ -325,7 +336,7 @@
                                                    :project project
                                                    :segment_index segment-index
                                                    :status "pending"
-                                                   :mt_model "agent"}
+                                                   :mt_model "translation-agent"}
                                           url (str (:openplanner-base-url config) "/v1/translations/segments")]
                                       (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
                                       (-> (js/fetch url #js {:method "POST"

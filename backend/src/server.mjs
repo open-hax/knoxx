@@ -9,10 +9,18 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFile } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
 import { createPolicyDb } from './policy-db.mjs';
-import { config as readConfig, registerAppRoutes, registerWsRoutes } from '../dist/app.js';
+import {
+  config as readConfig,
+  registerAppRoutes,
+  registerWsRoutes,
+  maybeStartTranslationAgent,
+} from '../dist/app.js';
+
+globalThis.require = globalThis.require || createRequire(import.meta.url);
 
 const policyDb = await createPolicyDb({
   connectionString: process.env.KNOXX_POLICY_DATABASE_URL || process.env.DATABASE_URL || '',
@@ -55,6 +63,7 @@ registerAppRoutes(runtime, app);
 try {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(`Knoxx backend CLJS listening on ${config.host}:${config.port}`);
+  maybeStartTranslationAgent(runtime);
 } catch (error) {
   console.error('Knoxx backend CLJS failed to start', error);
   process.exit(1);

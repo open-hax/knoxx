@@ -1,21 +1,15 @@
 (ns knoxx.backend.translation-agent
-  "Translation Agent - processes translation jobs using the agent runtime.
-  
-  The translation agent is a specialized agent with restricted tools:
-  - read: Read source documents
-  - memory_search/memory_session: Access prior translation context
-  - graph_query: Query translation examples from knowledge graph
-  - save_translation: Save translated content to database
-  
-  When a translation job is queued, the agent processes it and saves results.
-  If more jobs remain, a new session is spawned to continue processing."
+  "Translation agent that processes queued OpenPlanner translation jobs through the
+   same Knoxx agent runtime used by chat/CMS, but with the restricted translator toolset."
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-runtime :refer [create-agent-session!]]
-            [knoxx.backend.runtime-config :refer [cfg]]))
+            [knoxx.backend.agent-turns :refer [send-agent-turn!]]))
 
 (defonce poll-interval* (atom 5000))
 (defonce running* (atom false))
-(defonce current-session* (atom nil))
+(defonce current-run* (atom nil))
+
+(def ^:private translator-tool-ids
+  ["read" "memory_search" "memory_session" "graph_query" "save_translation"])
 
 (defn- openplanner-url
   [config path]
@@ -25,7 +19,7 @@
   [config]
   (let [headers #js {"Content-Type" "application/json"}]
     (when-not (str/blank? (:openplanner-api-key config))
-      (aset headers "X-API-Key" (:openplanner-api-key config)))
+      (aset headers "Authorization" (str "Bearer " (:openplanner-api-key config))))
     headers))
 
 (defn- fetch-json
@@ -52,16 +46,11 @@
 
 (defn- format-translation-job
   [job]
-  (let [job-id (str (aget job "_id"))
-        document-id (str (aget job "document_id"))
-        garden-id (str (aget job "garden_id"))
-        source-lang (str (aget job "source_lang"))
-        target-lang (str (aget job "target_language"))]
-    {:job-id job-id
-     :document-id document-id
-     :garden-id garden-id
-     :source-lang source-lang
-     :target-lang target-lang}))
+  {:job-id (str (or (aget job "_id") (aget job "id")))
+   :document-id (str (aget job "document_id"))
+   :garden-id (some-> (aget job "garden_id") str)
+   :source-lang (str (or (aget job "source_lang") "en"))
+   :target-lang (str (or (aget job "target_language") (aget job "target_lang")))})
 
 (defn- fetch-next-job
   [config]
@@ -75,11 +64,20 @@
   [config document-id]
   (let [url (openplanner-url config (str "/documents/" document-id))]
     (-> (fetch-json url (openplanner-headers config))
-        (.then (fn [doc]
-                 (when doc
-                   {:text (or (aget doc "text") (aget doc "extra" "content") "")
-                    :title (or (aget doc "extra" "title") "Untitled")
-                    :domain (aget doc "extra" "domain")}))))))
+        (.then (fn [payload]
+                 (let [doc (or (aget payload "document") payload)
+                       extra (or (aget doc "extra") (js-obj))]
+                   (when doc
+                     {:text (or (aget doc "content")
+                                (aget doc "text")
+                                (aget extra "content")
+                                (aget payload "content")
+                                "")
+                      :title (or (aget extra "title")
+                                 (aget doc "title")
+                                 "Untitled")
+                      :domain (or (aget extra "domain")
+                                  (aget doc "domain"))})))))))
 
 (defn- fetch-translation-examples
   [config source-lang target-lang limit]
@@ -87,157 +85,166 @@
         params (str "?source_lang=" source-lang "&target_lang=" target-lang "&limit=" (or limit 3))]
     (-> (fetch-json (str url params) (openplanner-headers config))
         (.then (fn [result]
-                 (let [examples (aget result "examples")]
+                 (let [examples (or (aget result "examples") #js [])]
                    (mapv (fn [node]
                            {:source-text (aget node "source_text")
                             :target-text (aget node "target_text")})
-                         (js-array-seq examples))))))))
+                         (array-seq examples))))))))
+
+(defn- fetch-segments
+  [config {:keys [document-id source-lang target-lang]}]
+  (let [url (openplanner-url config "/translations/segments")
+        params (str "?project=" (:project-name config)
+                    "&document_id=" document-id
+                    "&source_lang=" source-lang
+                    "&target_lang=" target-lang
+                    "&limit=100")]
+    (-> (fetch-json (str url params) (openplanner-headers config))
+        (.then (fn [result]
+                 (mapv #(js->clj % :keywordize-keys true)
+                       (array-seq (or (aget result "segments") #js []))))))))
+
+(defn- fetch-segment-count
+  [config job]
+  (-> (fetch-segments config job)
+      (.then count)))
+
+(defn- identical-translation?
+  [{:keys [source_text translated_text]}]
+  (= (str/trim (or source_text ""))
+     (str/trim (or translated_text ""))))
+
+(defn- mark-job-status
+  [config job-id payload]
+  (let [url (openplanner-url config (str "/translations/jobs/" job-id "/status"))]
+    (post-json url (openplanner-headers config) payload)))
 
 (defn- mark-job-processing
   [config job-id]
-  (let [url (openplanner-url config (str "/translations/jobs/" job-id "/status"))]
-    (post-json url (openplanner-headers config) {:status "processing"})))
+  (mark-job-status config job-id {:status "processing"}))
 
 (defn- mark-job-complete
   [config job-id]
-  (let [url (openplanner-url config (str "/translations/jobs/" job-id "/status"))]
-    (post-json url (openplanner-headers config) {:status "complete"})))
+  (mark-job-status config job-id {:status "complete"}))
 
 (defn- mark-job-failed
   [config job-id error-message]
-  (let [url (openplanner-url config (str "/translations/jobs/" job-id "/status"))]
-    (post-json url (openplanner-headers config) {:status "failed" :error error-message})))
+  (mark-job-status config job-id {:status "failed" :error error-message}))
 
-(defn- save-translation-segment
-  [config segment]
-  (let [url (openplanner-url config "/translations/segments")]
-    (post-json url (openplanner-headers config) segment)))
-
-(defn create-translation-tools
-  "Create translation-specific tools for the agent runtime."
-  [runtime config job document examples]
-  (let [sdk (aget runtime "sdk")
-        cwd (:workspace-root config)
-        read-tool (aget sdk "createReadTool")]
-    (vec
-     (remove nil?
-             [(when read-tool (read-tool cwd))
-              ;; Custom tool: save_translation
-              #js {:name "save_translation"
-                   :description "Save a translated segment to the database. Use this after translating each segment."
-                   :parameters #js {:type "object"
-                                    :properties #js {:source_text #js {:type "string"
-                                                                       :description "Original source text"}
-                                                     :translated_text #js {:type "string"
-                                                                           :description "Translated text"}
-                                                     :segment_index #js {:type "number"
-                                                                         :description "0-based index of this segment"}}
-                                    :required #js ["source_text" "translated_text" "segment_index"]}
-                   :execute (fn [params]
-                              (let [source-text (aget params "source_text")
-                                    translated-text (aget params "translated_text")
-                                    segment-index (aget params "segment_index")
-                                    segment {:source_text source-text
-                                             :translated_text translated-text
-                                             :source_lang (:source-lang job)
-                                             :target_lang (:target-lang job)
-                                             :document_id (:document-id job)
-                                             :garden_id (:garden-id job)
-                                             :segment_index segment-index
-                                             :status "pending"
-                                             :mt_model "agent"}]
-                                (-> (save-translation-segment config segment)
-                                    (.then (fn [_]
-                                             #js {:success true
-                                                  :message (str "Saved segment " segment-index)}))
-                                    (.catch (fn [err]
-                                              #js {:success false
-                                                   :error (str err)})))))}
-              ;; Custom tool: get_translation_context
-              #js {:name "get_translation_context"
-                   :description "Get the source document and any translation examples for context."
-                   :parameters #js {:type "object"
-                                    :properties #js {}
-                                    :required #js []}
-                   :execute (fn [_params]
-                              (js/Promise.resolve
-                               (clj->js {:document document
-                                         :examples examples
-                                         :job job})))}]))))
+(defn- translator-auth-context
+  []
+  {:roleSlugs ["translator"]
+   :permissions []
+   :membershipToolPolicies []
+   :toolPolicies (mapv (fn [tool-id]
+                         {:toolId tool-id :effect "allow"})
+                       translator-tool-ids)
+   :isSystemAdmin false})
 
 (defn build-translation-prompt
-  "Build the system prompt for the translation agent."
-  [job document examples]
-  (let [source-lang (:source-lang job)
-        target-lang (:target-lang job)
-        title (:title document)
-        example-str (when (seq examples)
-                      (str "\n\nTranslation examples:\n"
+  [config job document examples]
+  (let [example-str (when (seq examples)
+                      (str "\n\nReference examples:\n"
                            (->> examples
                                 (map (fn [{:keys [source-text target-text]}]
-                                       (str "Source: " source-text "\n"
-                                            "Target: " target-text)))
-                                (str/join "\n\n"))))]
-    (str "You are a professional translator. Translate the given document from " source-lang " to " target-lang ".\n\n"
-         "Document: " title "\n"
-         "Source language: " source-lang "\n"
-         "Target language: " target-lang "\n\n"
-         "INSTRUCTIONS:\n"
-         "1. Read the source document using the read tool or get_translation_context\n"
-         "2. Split the document into logical segments (respecting sentence boundaries)\n"
-         "3. For each segment, translate naturally and accurately\n"
-         "4. Use save_translation to save each translated segment with its index\n"
-         "5. Output ONLY the translation - no explanations or alternatives\n\n"
-         "When you have translated all segments, confirm completion."
+                                       (str "- Source: " source-text "\n  Target: " target-text)))
+                                (str/join "\n"))))]
+    (str "You are the Knoxx translator agent. Translate the supplied source document from " (:source-lang job)
+         " to " (:target-lang job) ".\n\n"
+         "Rules:\n"
+         "1. Preserve meaning, tone, markdown structure, links, and list structure where possible.\n"
+         "2. Split the source into logical segments and call save_translation for every translated segment.\n"
+         "3. Every save_translation call must include source_text, translated_text, source_lang, target_lang, document_id, project, and segment_index.\n"
+         "4. Set project to '" (:project-name config) "'.\n"
+         "5. The translated_text MUST be written in " (:target-lang job) "; do not copy the English source text into translated_text unless the segment is only a URL, code fence, or invariant proper noun.\n"
+         "6. If target_lang differs from source_lang, normal prose segments should differ from source_text.\n"
+         "7. Use memory_search, memory_session, or graph_query only if they help consistency; do not invent facts.\n"
+         "8. Do not emit commentary, notes, or alternatives as the final answer. A short completion confirmation is enough after all segments are saved.\n\n"
+         "Document metadata:\n"
+         "- document_id: " (:document-id job) "\n"
+         "- garden_id: " (or (:garden-id job) "") "\n"
+         "- source_lang: " (:source-lang job) "\n"
+         "- target_lang: " (:target-lang job) "\n"
+         "- title: " (:title document) "\n"
+         "- domain: " (or (:domain document) "") "\n\n"
+         "Source document follows between the markers.\n"
+         "<<<SOURCE_DOCUMENT\n"
+         (:text document)
+         "\n>>>SOURCE_DOCUMENT"
          example-str)))
 
 (defn process-translation-job
-  "Process a single translation job using an agent session."
+  "Process one queued translation job through the Knoxx agent runtime."
   [runtime config job]
-  (println "[translation-agent] Processing job" (:job-id job) "for document" (:document-id job))
-  (-> (mark-job-processing config (:job-id job))
-      (.then (fn [] (fetch-document-content config (:document-id job))))
-      (.then (fn [document]
-               (if (nil? document)
-                 (throw (js/Error. (str "Document " (:document-id job) " not found")))
-                 document)))
-      (.then (fn [document]
-               (-> (fetch-translation-examples config (:source-lang job) (:target-lang job) 3)
-                   (.then (fn [examples]
-                            {:document document :examples examples}))))
-      (.then (fn [{:keys [document examples]}]
-               (let [conversation-id (str "translation-" (:job-id job))]
-                 ;; Create agent session with translator role
-                 (create-agent-session! runtime config conversation-id "glm-5"
-                                        #js {:role "translator"
-                                             :toolPolicies (clj->js
-                                                            (mapv (fn [tool-id]
-                                                                    {:toolId tool-id :effect "allow"})
-                                                                  ["read" "save_translation" "get_translation_context"
-                                                                   "memory_search" "memory_session" "graph_query"]))}
-                                        "off"))))
-      (.then (fn [session]
-               (reset! current-session* session)
-               ;; Send the translation request
-               (let [session-manager (aget session "sessionManager")
-                     user-message #js {:role "user"
-                                       :content #js [#js {:type "text"
-                                                          :text (str "Translate the document to " (:target-lang job)
-                                                                     ". Use get_translation_context to see the source, "
-                                                                     "then save each segment with save_translation.")}]
-                                       :timestamp (.now js/Date)}]
-                 (.appendMessage session-manager user-message)
-                 ;; TODO: Trigger agent turn execution via agent_turns namespace
-                 session)))
-      (.then (fn [_session]
-               ;; Mark job complete
-               (mark-job-complete config (:job-id job))))
-      (.catch (fn [err]
-                (println "[translation-agent] Job failed:" (str err))
-                (mark-job-failed config (:job-id job) (str err)))))))
+  (let [node-crypto (aget runtime "crypto")
+        conversation-id (str "translation-" (:job-id job))
+        session-id (.randomUUID node-crypto)
+        run-id (.randomUUID node-crypto)]
+    (println "[translation-agent] Processing job" (:job-id job) "document" (:document-id job) "target" (:target-lang job))
+    (-> (mark-job-processing config (:job-id job))
+        (.then (fn []
+                 (fetch-document-content config (:document-id job))))
+        (.then (fn [document]
+                 (if (or (nil? document)
+                         (str/blank? (:text document)))
+                   (throw (js/Error. (str "Document " (:document-id job) " is missing translation content")))
+                   document)))
+        (.then (fn [document]
+                 (-> (fetch-translation-examples config (:source-lang job) (:target-lang job) 3)
+                     (.then (fn [examples]
+                              {:document document
+                               :examples examples})))))
+        (.then (fn [{:keys [document examples]}]
+                 (-> (fetch-segment-count config job)
+                     (.then (fn [existing-count]
+                              {:document document
+                               :examples examples
+                               :existing-count existing-count})))))
+        (.then (fn [{:keys [document examples existing-count]}]
+                 (reset! current-run* {:conversation-id conversation-id
+                                       :session-id session-id
+                                       :run-id run-id
+                                       :job-id (:job-id job)})
+                 (-> (send-agent-turn! runtime config {:conversation-id conversation-id
+                                                       :session-id session-id
+                                                       :run-id run-id
+                                                       :message (build-translation-prompt config job document examples)
+                                                       :mode "direct"
+                                                       :thinking-level "off"
+                                                       :auth-context (translator-auth-context)})
+                     (.then (fn [_response]
+                              {:existing-count existing-count})))))
+        (.then (fn [{:keys [existing-count]}]
+                 (-> (fetch-segments config job)
+                     (.then (fn [segments]
+                              {:existing-count existing-count
+                               :segments segments})))))
+        (.then (fn [{:keys [existing-count segments]}]
+                 (let [saved-count (count segments)
+                       created-count (- saved-count existing-count)
+                       new-segments (if (pos? created-count)
+                                      (take-last created-count segments)
+                                      [])
+                       identical-count (count (filter identical-translation? new-segments))]
+                   (cond
+                     (not (pos? created-count))
+                     (throw (js/Error. (str "Translation run completed without saving new segments for job " (:job-id job))))
+
+                     (= identical-count created-count)
+                     (throw (js/Error. (str "Translation run saved only untranslated source text for job " (:job-id job))))
+
+                     :else
+                     (do
+                       (println "[translation-agent] Saved" created-count "segments for job" (:job-id job)
+                                "with" identical-count "unchanged segments")
+                       (mark-job-complete config (:job-id job)))))))
+        (.catch (fn [err]
+                  (println "[translation-agent] Job failed:" (str err))
+                  (mark-job-failed config (:job-id job) (str err))))
+        (.finally (fn []
+                    (reset! current-run* nil))))))
 
 (defn poll-and-process
-  "Poll for jobs and process them. Spawn new session if more jobs remain."
   [runtime config]
   (when @running*
     (-> (fetch-next-job config)
@@ -245,20 +252,14 @@
                  (if job
                    (-> (process-translation-job runtime config job)
                        (.then (fn []
-                                ;; Check for more jobs - if found, continue processing
-                                (fetch-next-job config)))
-                       (.then (fn [next-job]
-                                (when (and next-job @running*)
-                                  ;; Recursively spawn new session for next job
+                                (when @running*
                                   (js/setTimeout #(poll-and-process runtime config) 100)))))
-                   ;; No job found, wait and poll again
                    (js/setTimeout #(poll-and-process runtime config) @poll-interval*))))
         (.catch (fn [err]
                   (println "[translation-agent] Poll error:" (str err))
                   (js/setTimeout #(poll-and-process runtime config) @poll-interval*))))))
 
 (defn start-translation-agent!
-  "Start the translation agent loop."
   [runtime config]
   (reset! running* true)
   (println "[translation-agent] Starting translation agent")
@@ -266,9 +267,7 @@
   (poll-and-process runtime config))
 
 (defn stop-translation-agent!
-  "Stop the translation agent loop."
   []
   (reset! running* false)
-  (reset! current-session* nil)
+  (reset! current-run* nil)
   (println "[translation-agent] Stopped"))
-

@@ -1,5 +1,6 @@
 (ns knoxx.backend.core
-  (:require [knoxx.backend.agent-hydration :refer [ensure-settings!]]
+  (:require [clojure.string :as str]
+            [knoxx.backend.agent-hydration :refer [ensure-settings!]]
             [knoxx.backend.agent-turns :as agent-turns :refer [recover-active-agent-sessions! lounge-messages*]]
             [knoxx.backend.app-routes :as app-routes]
             [knoxx.backend.realtime :as realtime]
@@ -26,12 +27,26 @@
     (app-routes/register-routes! runtime app config lounge-messages*)
     (clj->js config)))
 
+(defn- env-truthy?
+  [value]
+  (let [normalized (some-> value str str/trim str/lower-case)]
+    (and (some? normalized)
+         (not (contains? #{"" "0" "false" "no" "off"} normalized)))))
+
+(defn maybe-start-translation-agent!
+  ([runtime] (maybe-start-translation-agent! runtime (cfg)))
+  ([runtime config]
+   (when (or (env-truthy? (aget js/process.env "KNOXX_TRANSLATION_AGENT_ENABLED"))
+             (env-truthy? (aget js/process.env "ENABLE_TRANSLATION_AGENT")))
+     (println "[translation-agent] Bootstrapping from server.mjs")
+     (translation-agent/start-translation-agent! runtime config))))
 (defn start!
   [runtime]
   (when-not @server*
     (let [config (cfg)
           Fastify (aget runtime "Fastify")
           fastify-cors (aget runtime "fastifyCors")
+          fastify-multipart (aget runtime "fastifyMultipart")
           app (Fastify #js {:logger true})]
       (ensure-settings! config)
       (let [redis-startup (-> (redis/init-redis! (:redis-url config))
@@ -55,6 +70,8 @@
             (.then (fn []
                      (.register app fastify-cors #js {:origin true})))
             (.then (fn []
+                     (.register app fastify-multipart)))
+            (.then (fn []
                      (.register app (aget runtime "fastifyWebsocket"))))
             (.then (fn []
                      (.register app
@@ -68,14 +85,13 @@
             (.then (fn [_]
                      (reset! server* app)
                      (.log.info app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))
-                     ;; Start translation agent if enabled
-                     (when (or (aget js/process.env "KNOXX_TRANSLATION_AGENT_ENABLED")
-                               (aget js/process.env "ENABLE_TRANSLATION_AGENT"))
+                     (when (or (env-truthy? (aget js/process.env "KNOXX_TRANSLATION_AGENT_ENABLED"))
+                               (env-truthy? (aget js/process.env "ENABLE_TRANSLATION_AGENT")))
                        (.log.info app "Starting translation agent...")
-                       (translation-agent/start-translation-agent! runtime config)))
+                       (translation-agent/start-translation-agent! runtime config))))
             (.catch (fn [err]
                       (.error js/console "Knoxx backend CLJS failed to start" err)
-                      (js/process.exit 1)))))))))
+                      (js/process.exit 1))))))))
 
 ;; Handle graceful shutdown
 (.on js/process "SIGINT" (fn []

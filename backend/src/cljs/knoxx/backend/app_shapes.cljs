@@ -14,7 +14,10 @@
                        (aget body "thinking_level")
                        (aget body "reasoningEffort")
                        (aget body "reasoning_effort"))
-   :mode (or (aget body "mode") "direct")})
+   :mode (or (aget body "mode") "direct")
+   :auth-context (some-> (or (aget body "authContext")
+                             (aget body "auth_context"))
+                         (js->clj :keywordize-keys true))})
 
 (defn normalize-control-body
   [body]

@@ -9,7 +9,7 @@
    [clojure.string :as str]
    [kms-ingestion.config :as config])
   (:import
-   [java.net URL]
+   [java.net URL URLEncoder]
    [java.io OutputStreamWriter]
    [java.util UUID]))
 
@@ -34,8 +34,10 @@
 
 (defn- knoxx-headers
   []
-  (let [api-key (config/knoxx-api-key)]
-    (cond-> {"Content-Type" "application/json"}
+  (let [api-key (config/knoxx-api-key)
+        user-email (config/knoxx-user-email)]
+    (cond-> {"Content-Type" "application/json"
+             "x-knoxx-user-email" user-email}
       (not (str/blank? api-key))
       (assoc "X-API-Key" api-key))))
 
@@ -89,10 +91,46 @@
     (catch Exception e
       (println "[translation-worker] Failed to mark job" job-id status ":" (.getMessage e)))))
 
+(defn- url-encode [s]
+  (URLEncoder/encode (str s) "UTF-8"))
+
 (defn- fetch-document
   [document-id]
   (let [result (fetch-json (openplanner-url (str "/documents/" document-id)) (openplanner-headers))]
     (:document result)))
+
+(defn- fetch-knoxx-segments
+  [project document-id source-lang target-lang]
+  (fetch-json (str (knoxx-url "/api/translations/segments")
+                   "?project=" (url-encode project)
+                   "&document_id=" (url-encode document-id)
+                   "&source_lang=" (url-encode source-lang)
+                   "&target_lang=" (url-encode target-lang)
+                   "&limit=100")
+              (knoxx-headers)))
+
+(defn- wait-for-new-segments
+  [project document-id source-lang target-lang initial-total timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (let [result (fetch-knoxx-segments project document-id source-lang target-lang)
+            total (long (or (:total result) 0))]
+        (cond
+          (> total initial-total)
+          total
+
+          (> (System/currentTimeMillis) deadline)
+          (throw (ex-info (str "Timed out waiting for translated segments for document " document-id
+                               " -> " target-lang)
+                          {:document-id document-id
+                           :target-lang target-lang
+                           :initial-total initial-total
+                           :timeout-ms timeout-ms}))
+
+          :else
+          (do
+            (Thread/sleep 2000)
+            (recur)))))))
 
 (defn- process-job
   [job]
@@ -106,38 +144,45 @@
     (try
       (mark-job-status job-id "processing")
       
-      ;; Fetch document to get title
+      ;; Fetch document to get title/content and baseline segment count
       (let [document (fetch-document document-id)
             doc-title (or (:title document) "Untitled")
+            doc-content (or (:content document) (:text document) "")
             conversation-id (str "translation-" job-id)
-            run-id (str (UUID/randomUUID))]
-        
+            session-id (str (UUID/randomUUID))
+            run-id (str (UUID/randomUUID))
+            initial-total (long (or (:total (fetch-knoxx-segments project document-id source-lang target-lang)) 0))]
+
         (println "[translation-worker] Document:" doc-title)
-        
+        (println "[translation-worker] Existing segments:" initial-total)
+
         ;; Call Knoxx agent with translator role
         (let [agent-request {:conversation_id conversation-id
+                             :session_id session-id
                              :run_id run-id
-                             :message (str "Translate the document " document-id 
-                                          " from " source-lang " to " target-lang ". "
+                             :message (str "Translate the following document from " source-lang " to " target-lang ". "
+                                          "Document id: " document-id ". "
                                           "Document title: " doc-title ". "
                                           "Garden: " garden-id ". Project: " project ". "
-                                          "Read the source content, translate it, and save each segment using save_translation.")
+                                          "Save each translated segment using save_translation. "
+                                          "Do not copy source text into translated_text for normal prose.\n\n"
+                                          "SOURCE DOCUMENT:\n"
+                                          doc-content)
                              :model "glm-5"
                              :auth_context {:role "translator"
-                                           :toolPolicies [{:toolId "read" :effect "allow"}
-                                                          {:toolId "memory_search" :effect "allow"}
-                                                          {:toolId "memory_session" :effect "allow"}
-                                                          {:toolId "graph_query" :effect "allow"}
-                                                          {:toolId "save_translation" :effect "allow"}]}}
+                                            :toolPolicies [{:toolId "read" :effect "allow"}
+                                                           {:toolId "memory_search" :effect "allow"}
+                                                           {:toolId "memory_session" :effect "allow"}
+                                                           {:toolId "graph_query" :effect "allow"}
+                                                           {:toolId "save_translation" :effect "allow"}]}}
               _ (println "[translation-worker] Calling Knoxx agent...")
               result (post-json (knoxx-url "/api/knoxx/chat/start")
-                               (knoxx-headers)
-                               agent-request)]
-          
-          (println "[translation-worker] Agent started:" (:conversation_id result) "run:" (:run_id result))
-          
-          ;; TODO: Wait for agent to complete via WebSocket or polling
-          ;; For now, mark complete after starting
+                                (knoxx-headers)
+                                agent-request)
+              _ (println "[translation-worker] Agent started:" (:conversation_id result) "run:" (:run_id result))
+              final-total (wait-for-new-segments project document-id source-lang target-lang initial-total 120000)]
+
+          (println "[translation-worker] New segment total:" final-total)
           (mark-job-status job-id "complete")
           (println "[translation-worker] Job" job-id "completed")))
       
