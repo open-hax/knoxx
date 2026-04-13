@@ -1,4 +1,15 @@
 (ns knoxx.backend.translation-routes
+  ;; NOTE: We import route! directly from app-shapes instead of receiving it as a parameter
+  ;; to avoid a shadow-cljs :simple optimization bug where local bindings ending with `!`
+  ;; get incorrectly compiled as namespace property references instead of closure captures.
+  ;;
+  ;; BUG: shadow-cljs :optimizations :simple generates buggy code for local bindings named
+  ;; with `!` suffix. When route! is passed as a destructured parameter, shadow-cljs generates
+  ;; calls OUTSIDE the function body that reference undefined namespace properties like
+  ;; `knoxx.backend.translation_routes.route_BANG_` instead of the local variable.
+  ;;
+  ;; WORKAROUND: Import `route!` directly via :refer instead of passing through parameter maps.
+  ;; See backend/README.md "Cannot read properties of undefined" section for full diagnosis.
   (:require [knoxx.backend.app-shapes :refer [route!]]))
 
 (defn register-translation-routes!
