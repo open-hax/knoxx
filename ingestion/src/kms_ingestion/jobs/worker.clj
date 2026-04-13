@@ -177,12 +177,14 @@
                              (if use-openplanner? "openplanner" "ragussy")
                              ", batch-size=" batch-size
                              ", batch-parallelism=" batch-parallelism
+                             ", semantic-edges=" (config/semantic-edge-build-enabled?)
                              (when streaming? ", mode=streaming")))
           (loop [remaining (seq files)
                  discovered 0
                  processed 0
                  failed 0
                  chunks-total 0
+                 doc-ids []
                  start-time (Instant/now)]
             (let [job-status (:status (db/get-job-by-id job-id))]
               (cond
@@ -191,6 +193,14 @@
 
                 (empty? remaining)
                 (let [elapsed (.getSeconds (Duration/between start-time (Instant/now)))]
+                  ;; Build semantic edges for all collected docs at job completion
+                  (when (and (config/semantic-edge-build-enabled?) (seq doc-ids) use-openplanner?)
+                    (control/log! (str "[JOB " job-id "] Building semantic edges for " (count doc-ids) " documents..."))
+                    (let [edge-result (support/build-semantic-edges-incremental!
+                                       openplanner-url openplanner-api-key doc-ids)]
+                      (if (= :success (:status edge-result))
+                        (control/log! (str "[JOB " job-id "] Semantic edges built: " (:edges edge-result)))
+                        (control/log! (str "[JOB " job-id "] Semantic edge build failed: " (:error edge-result))))))
                   (control/log! (str "[JOB " job-id "] Completed: "
                                      discovered " discovered, "
                                      processed " processed, "
@@ -217,7 +227,8 @@
                           (persist-result! source source-id collections result))
                       batch-processed (count (filter #(= :success (:status %)) results))
                       batch-failed (count (filter #(= :failed (:status %)) results))
-                      batch-chunks (reduce + 0 (map :chunks (filter #(= :success (:status %)) results)))]
+                      batch-chunks (reduce + 0 (map :chunks (filter #(= :success (:status %)) results)))
+                      batch-doc-ids (vec (keep :doc-id (filter #(= :success (:status %)) results)))]
                   (control/log! (str "[JOB " job-id "] Batch done: processed=" batch-processed
                                      " failed=" batch-failed
                                      " chunks=" batch-chunks
@@ -237,6 +248,7 @@
                          (+ processed batch-processed)
                          (+ failed batch-failed)
                          (+ chunks-total batch-chunks)
+                         (into doc-ids batch-doc-ids)
                          start-time))))))
       (let [driver-state (.get-state driver)]
         (control/log! (str "[JOB " job-id "] Driver state: " driver-state)))))

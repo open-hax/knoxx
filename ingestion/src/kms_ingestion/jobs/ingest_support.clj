@@ -136,13 +136,15 @@
                        :context graph-context
                        :ts (str (Instant/now))})]
     (if (= 200 (:status resp))
-      (let [graph-result (post-openplanner-events! openplanner-url openplanner-api-key graph-events)]
+      (let [graph-result (post-openplanner-events! openplanner-url openplanner-api-key graph-events)
+            chunk-id (-> resp :body :chunk_id)]
         (if (= :success (:status graph-result))
           {:status :success
            :chunks 1
            :target :openplanner
            :lake tenant-id
            :doc-id doc-id
+           :chunk-id chunk-id
            :graph_events (count graph-events)}
           {:status :failed
            :target :openplanner
@@ -154,3 +156,29 @@
        :error (:body resp)
        :target :openplanner
        :lake tenant-id})))
+
+(defn build-semantic-edges-incremental!
+  "Call OpenPlanner to build semantic edges for newly ingested documents.
+   OpenPlanner will find all chunks for these documents and build edges."
+  [openplanner-url openplanner-api-key doc-ids]
+  (when (and (seq doc-ids)
+             (not (str/blank? openplanner-url)))
+    (let [headers (cond-> {"Content-Type" "application/json"}
+                    (not (str/blank? openplanner-api-key))
+                    (assoc "Authorization" (str "Bearer " openplanner-api-key)))
+          resp (http/post
+                (str openplanner-url "/v1/jobs/build-semantic-edges/incremental")
+                {:headers headers
+                 :body (json/generate-string {:parentIds doc-ids
+                                              :k 8
+                                              :minSimilarity 0.5})
+                 :as :json
+                 :socket-timeout 120000
+                 :connection-timeout 30000
+                 :throw-exceptions false})]
+      (if (= 200 (:status resp))
+        {:status :success
+         :edges (-> resp :body :edges)
+         :chunks (-> resp :body :chunks)}
+        {:status :failed
+         :error (:body resp)}))))

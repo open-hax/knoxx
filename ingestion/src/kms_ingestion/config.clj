@@ -85,3 +85,6 @@
 (defn ingest-max-load-per-core [] (:ingest-max-load-per-core (config)))
 (defn ingest-throttle-sleep-ms [] (:ingest-throttle-sleep-ms (config)))
 (defn ingest-batch-delay-ms [] (:ingest-batch-delay-ms (config)))
+(defn semantic-edge-build-enabled? [] (env-bool "SEMANTIC_EDGE_BUILD_ENABLED" true))
+(defn semantic-edge-build-min-similarity [] (env-double "SEMANTIC_EDGE_BUILD_MIN_SIMILARITY" 0.5))
+(defn semantic-edge-build-k [] (env-int "SEMANTIC_EDGE_BUILD_K" 8))
