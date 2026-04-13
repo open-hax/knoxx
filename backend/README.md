@@ -128,3 +128,12 @@ If the container doesn't pick up changes:
 docker build --no-cache -t knoxx-knoxx-backend:latest .
 docker compose up -d knoxx-backend --force-recreate
 ```
+
+### "Cannot read properties of undefined (reading 'cljs$core$IFn$_invoke$arity$4')"
+
+This is a shadow-cljs `:optimizations :simple` bug where local bindings named with `!` suffix
+(like `route!`) get incorrectly compiled as namespace property references instead of closure captures.
+
+**Solution**: Import functions directly from their defining namespace instead of passing as parameters.
+See `translation_routes.cljs` for the pattern - it imports `route!` directly from `app-shapes`
+instead of receiving it via destructured parameter map.
