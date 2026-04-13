@@ -23,6 +23,61 @@
             [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled?]]
             [knoxx.backend.translation-routes :as translation-routes]))
 
+(defn- requested-role
+  [parsed]
+  (or (get-in parsed [:agent-spec :role])
+      (some-> (:auth-context parsed) :role str str/trim not-empty)
+      (some->> (get-in parsed [:auth-context :roleSlugs]) seq first str str/trim not-empty)))
+
+(defn- allow-policy?
+  [policy]
+  (= "allow" (some-> (:effect policy) str str/lower-case)))
+
+(defn- requested-tool-policies
+  [parsed]
+  (let [from-spec (vec (or (get-in parsed [:agent-spec :tool-policies]) []))
+        from-auth (vec (or (get-in parsed [:auth-context :toolPolicies]) []))]
+    (cond
+      (seq from-spec) from-spec
+      (seq from-auth) from-auth
+      :else [])))
+
+(defn- effective-tool-policies
+  [ctx parsed]
+  (let [requested (requested-tool-policies parsed)]
+    (cond
+      (and (nil? ctx) (seq requested)) requested
+      (and (nil? ctx) (:auth-context parsed)) (vec (or (get-in parsed [:auth-context :toolPolicies]) []))
+      (empty? requested) (vec (or (:toolPolicies ctx) []))
+      (system-admin? ctx) requested
+      :else (let [allowed (->> (:toolPolicies ctx)
+                               (filter allow-policy?)
+                               (map :toolId)
+                               set)]
+              (->> requested
+                   (filter #(contains? allowed (:toolId %)))
+                   vec)))))
+
+(defn- effective-auth-context
+  [ctx parsed]
+  (let [base (or ctx (:auth-context parsed))
+        requested-role-slug (requested-role parsed)
+        role-slugs (cond
+                     (and (nil? base) requested-role-slug) [requested-role-slug]
+                     (and requested-role-slug (or (system-admin? ctx)
+                                                 (contains? (into #{} (or (:roleSlugs base) [])) requested-role-slug)))
+                     [requested-role-slug]
+                     :else (vec (or (:roleSlugs base) [])))
+        tool-policies (effective-tool-policies ctx parsed)
+        resource-policies (or (get-in parsed [:agent-spec :resource-policies])
+                              (get-in parsed [:auth-context :resourcePolicies])
+                              (:resourcePolicies base))]
+    (when (or base requested-role-slug (seq tool-policies) resource-policies)
+      (cond-> (or base {})
+        (seq role-slugs) (assoc :roleSlugs role-slugs)
+        (or (seq tool-policies) (some? base)) (assoc :toolPolicies tool-policies)
+        resource-policies (assoc :resourcePolicies resource-policies)))))
+
 (defn register-routes!
   [runtime app config lounge-messages*]
   (ensure-settings! config)
@@ -243,7 +298,7 @@
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [parsed (normalize-chat-body (or (aget request "body") #js {}))
-                      agent-ctx (or ctx (:auth-context parsed))
+                      agent-ctx (effective-auth-context ctx parsed)
                       body (assoc parsed
                                   :mode "rag"
                                   :auth-context agent-ctx)]
@@ -260,7 +315,7 @@
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [node-crypto (aget runtime "crypto")
                       parsed (normalize-chat-body (or (aget request "body") #js {}))
-                      agent-ctx (or ctx (:auth-context parsed))
+                      agent-ctx (effective-auth-context ctx parsed)
                       conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
                       run-id (or (:run-id parsed) (.randomUUID node-crypto))
                       body (assoc parsed :conversation-id conversation-id :run-id run-id :mode "rag" :auth-context agent-ctx)]
@@ -273,7 +328,9 @@
                                              :run_id run-id
                                              :conversation_id conversation-id
                                              :session_id (:session-id body)
-                                             :model (or (:model body) (:llmModel @settings-state*))}))))))
+                                             :model (or (:model body)
+                                                        (get-in body [:agent-spec :model])
+                                                        (:llmModel @settings-state*))}))))))
 
   (route! app "POST" "/api/knoxx/direct"
           (fn [request reply]
@@ -281,7 +338,7 @@
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [parsed (normalize-chat-body (or (aget request "body") #js {}))
-                      agent-ctx (or ctx (:auth-context parsed))
+                      agent-ctx (effective-auth-context ctx parsed)
                       body (assoc parsed
                                   :mode "direct"
                                   :auth-context agent-ctx)]
@@ -298,7 +355,7 @@
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [node-crypto (aget runtime "crypto")
                       parsed (normalize-chat-body (or (aget request "body") #js {}))
-                      agent-ctx (or ctx (:auth-context parsed))
+                      agent-ctx (effective-auth-context ctx parsed)
                       conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
                       run-id (or (:run-id parsed) (.randomUUID node-crypto))
                       body (assoc parsed :conversation-id conversation-id :run-id run-id :mode "direct" :auth-context agent-ctx)]
@@ -311,7 +368,9 @@
                                              :run_id run-id
                                              :conversation_id conversation-id
                                              :session_id (:session-id body)
-                                             :model (or (:model body) (:llmModel @settings-state*))}))))))
+                                             :model (or (:model body)
+                                                        (get-in body [:agent-spec :model])
+                                                        (:llmModel @settings-state*))}))))))
 
   (route! app "POST" "/api/knoxx/steer"
           (fn [request reply]

@@ -148,35 +148,47 @@
       (let [document (fetch-document document-id)
             doc-title (or (:title document) "Untitled")
             doc-content (or (:content document) (:text document) "")
-            conversation-id (str "translation-" job-id)
-            session-id (str (UUID/randomUUID))
             run-id (str (UUID/randomUUID))
+            conversation-id (str "translation-" job-id "-" run-id)
+            session-id (str (UUID/randomUUID))
             initial-total (long (or (:total (fetch-knoxx-segments project document-id source-lang target-lang)) 0))]
 
         (println "[translation-worker] Document:" doc-title)
         (println "[translation-worker] Existing segments:" initial-total)
 
-        ;; Call Knoxx agent with translator role
-        (let [agent-request {:conversation_id conversation-id
+        ;; Call Knoxx agent with translator agent_spec on the general direct runtime
+        (let [system-prompt (str "You are the Knoxx translator agent. Translate the supplied document from " source-lang
+                                 " to " target-lang ".\n\n"
+                                 "Rules:\n"
+                                 "1. Preserve meaning, tone, markdown structure, links, and list structure where possible.\n"
+                                 "2. Split the source into logical segments and call save_translation for every translated segment.\n"
+                                 "3. Every save_translation call must include source_text, translated_text, source_lang, target_lang, document_id, garden_id, project, and segment_index.\n"
+                                 "4. Set project to '" project "' and garden_id to '" garden-id "'.\n"
+                                 "5. translated_text must be in " target-lang "; do not copy source text for normal prose.\n"
+                                 "6. Do not output commentary or alternatives; a brief completion acknowledgment is enough after all save_translation calls succeed.")
+              agent-request {:conversation_id conversation-id
                              :session_id session-id
                              :run_id run-id
-                             :message (str "Translate the following document from " source-lang " to " target-lang ". "
-                                          "Document id: " document-id ". "
-                                          "Document title: " doc-title ". "
-                                          "Garden: " garden-id ". Project: " project ". "
-                                          "Save each translated segment using save_translation. "
-                                          "Do not copy source text into translated_text for normal prose.\n\n"
+                             :message (str "Translate document " document-id " (title: " doc-title ") from " source-lang " to " target-lang ".\n\n"
                                           "SOURCE DOCUMENT:\n"
                                           doc-content)
-                             :model "glm-5"
-                             :auth_context {:role "translator"
-                                            :toolPolicies [{:toolId "read" :effect "allow"}
-                                                           {:toolId "memory_search" :effect "allow"}
-                                                           {:toolId "memory_session" :effect "allow"}
-                                                           {:toolId "graph_query" :effect "allow"}
-                                                           {:toolId "save_translation" :effect "allow"}]}}
+                             :agent_spec {:role "translator"
+                                          :system_prompt system-prompt
+                                          :model "glm-5"
+                                          :thinking_level "off"
+                                          :tool_policies [{:toolId "read" :effect "allow"}
+                                                          {:toolId "memory_search" :effect "allow"}
+                                                          {:toolId "memory_session" :effect "allow"}
+                                                          {:toolId "graph_query" :effect "allow"}
+                                                          {:toolId "save_translation" :effect "allow"}]
+                                          :resource_policies {:project project
+                                                              :garden_id garden-id
+                                                              :document_id document-id
+                                                              :source_lang source-lang
+                                                              :target_lang target-lang}}
+                             :model "glm-5"}
               _ (println "[translation-worker] Calling Knoxx agent...")
-              result (post-json (knoxx-url "/api/knoxx/chat/start")
+              result (post-json (knoxx-url "/api/knoxx/direct/start")
                                 (knoxx-headers)
                                 agent-request)
               _ (println "[translation-worker] Agent started:" (:conversation_id result) "run:" (:run_id result))

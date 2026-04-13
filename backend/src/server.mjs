@@ -17,7 +17,6 @@ import {
   config as readConfig,
   registerAppRoutes,
   registerWsRoutes,
-  maybeStartTranslationAgent,
 } from '../dist/app.js';
 
 globalThis.require = globalThis.require || createRequire(import.meta.url);
@@ -63,7 +62,6 @@ registerAppRoutes(runtime, app);
 try {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(`Knoxx backend CLJS listening on ${config.host}:${config.port}`);
-  maybeStartTranslationAgent(runtime);
 } catch (error) {
   console.error('Knoxx backend CLJS failed to start', error);
   process.exit(1);

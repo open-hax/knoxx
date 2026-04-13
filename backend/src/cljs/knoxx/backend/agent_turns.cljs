@@ -28,16 +28,39 @@
   [config run]
   (openplanner-memory/index-run-memory! config run extract-mentioned-devel-paths extract-mentioned-urls))
 
+(defn- requested-system-prompt
+  [agent-spec]
+  (some-> (:system-prompt agent-spec) str not-empty))
+
+(defn- ensure-system-message
+  [messages agent-spec]
+  (let [system-prompt (requested-system-prompt agent-spec)
+        has-system? (boolean (some #(= "system" (some-> (:role %) str str/lower-case)) messages))]
+    (if (or (str/blank? system-prompt) has-system?)
+      (vec messages)
+      (into [{:role "system" :content system-prompt}] messages))))
+
+(defn- agent-spec-summary
+  [agent-spec]
+  (when agent-spec
+    (cond-> {}
+      (:role agent-spec) (assoc :role (:role agent-spec))
+      (:model agent-spec) (assoc :model (:model agent-spec))
+      (:thinking-level agent-spec) (assoc :thinkingLevel (:thinking-level agent-spec))
+      (:system-prompt agent-spec) (assoc :hasSystemPrompt true)
+      (seq (:tool-policies agent-spec)) (assoc :toolPolicies (vec (:tool-policies agent-spec)))
+      (:resource-policies agent-spec) (assoc :resourcePolicies (:resource-policies agent-spec)))))
 
 (defn send-agent-turn!
-  [runtime config {:keys [conversation-id session-id message model mode run-id auth-context thinking-level]}]
+  [runtime config {:keys [conversation-id session-id message model mode run-id auth-context thinking-level agent-spec]}]
   (let [node-crypto (aget runtime "crypto")
         conversation-id (or conversation-id (.randomUUID node-crypto))
         _ (ensure-conversation-access! auth-context conversation-id)
         _ (remember-conversation-access! auth-context conversation-id)
         mode (or mode "direct")
-        model-id (or model (:llmModel (ensure-settings! config)) (:proxx-default-model config))
-        thinking-level-raw thinking-level
+        requested-model (or model (:model agent-spec))
+        model-id (or requested-model (:llmModel (ensure-settings! config)) (:proxx-default-model config))
+        thinking-level-raw (or thinking-level (:thinking-level agent-spec))
         parsed-thinking-level (when thinking-level-raw
                                 (normalize-thinking-level thinking-level-raw))
         thinking-level (or parsed-thinking-level
@@ -47,7 +70,8 @@
         started-at (now-iso)
         started-ms (.now js/Date)
         existing-messages (vec (or (:messages (session-store/get-session-sync session-id)) []))
-        request-messages (conj existing-messages {:role "user" :content message})
+        seeded-messages (ensure-system-message existing-messages agent-spec)
+        request-messages (conj seeded-messages {:role "user" :content message})
         _title-prime (maybe-prime-session-title! runtime config conversation-id message)
         auth-extra (auth-snapshot auth-context)
         base-run (merge {:run_id run-id
@@ -67,27 +91,30 @@
                          :events []
                          :tool_receipts []
                          :request_messages request-messages
-                         :settings {:sessionId session-id
-                                    :conversationId conversation-id
-                                    :mode mode
-                                    :thinkingLevel thinking-level
-                                    :workspaceRoot (:workspace-root config)}
-                         :resources {:provider "proxx"
-                                     :collection (:collection-name config)}}
+                         :settings (cond-> {:sessionId session-id
+                                            :conversationId conversation-id
+                                            :mode mode
+                                            :thinkingLevel thinking-level
+                                            :workspaceRoot (:workspace-root config)}
+                                     agent-spec (assoc :agentSpec (agent-spec-summary agent-spec)))
+                         :resources (cond-> {:provider "proxx"
+                                             :collection (:collection-name config)}
+                                      (get agent-spec :resource-policies) (assoc :agentResourcePolicies (get agent-spec :resource-policies))) }
                         auth-extra)
         _ (store-run! run-id base-run)
         _ (session-store/put-session! (redis/get-client)
-                                      (merge {:session_id session-id
-                                              :conversation_id conversation-id
-                                              :run_id run-id
-                                              :status "running"
-                                              :model model-id
-                                              :mode mode
-                                              :thinking_level thinking-level
-                                              :created_at started-at
-                                              :updated_at started-at
-                                              :has_active_stream false
-                                              :messages request-messages}
+                                      (merge (cond-> {:session_id session-id
+                                                      :conversation_id conversation-id
+                                                      :run_id run-id
+                                                      :status "running"
+                                                      :model model-id
+                                                      :mode mode
+                                                      :thinking_level thinking-level
+                                                      :created_at started-at
+                                                      :updated_at started-at
+                                                      :has_active_stream false
+                                                      :messages request-messages}
+                                               agent-spec (assoc :agent_spec (agent-spec-summary agent-spec)))
                                              auth-extra))
         initial-event (tool-event-payload run-id conversation-id session-id "run_started"
                                           {:status "running"
@@ -385,6 +412,10 @@
    :membershipToolPolicies (vec (or (:membership_tool_policies session) []))
    :isSystemAdmin (boolean (:is_system_admin session))})
 
+(defn recovered-agent-spec
+  [session]
+  (:agent_spec session))
+
 (defn restore-recovered-conversation-access!
   [session]
   (let [conversation-id (str (or (:conversation_id session) ""))
@@ -423,6 +454,7 @@
                            (:agent-thinking-level config)
                            "off")
         auth-context (recovered-auth-context session)
+        agent-spec (recovered-agent-spec session)
         message (last-session-user-message session)]
     (restore-recovered-conversation-access! session)
     (cond
@@ -459,7 +491,8 @@
                                                      :model model-id
                                                      :mode mode
                                                      :thinking-level thinking-level
-                                                     :auth-context auth-context})))
+                                                     :auth-context auth-context
+                                                     :agent-spec agent-spec})))
           (.then (fn [_]
                    {:session_id session-id
                     :conversation_id conversation-id
