@@ -59,6 +59,15 @@ export async function getMemorySession(sessionId: string): Promise<{ session: st
   return request<{ session: string; rows: MemorySessionRow[] }>(`/api/memory/sessions/${encodeURIComponent(sessionId)}`);
 }
 
+export async function listAgentHistorySessions(limit = 50): Promise<MemorySessionSummary[]> {
+  const data = await request<{ rows: MemorySessionSummary[] }>(`/api/openplanner/v1/sessions?project=knoxx-session&limit=${limit}`);
+  return data.rows ?? [];
+}
+
+export async function getAgentHistorySession(sessionId: string): Promise<{ session: string; rows: MemorySessionRow[] }> {
+  return request<{ session: string; rows: MemorySessionRow[] }>(`/api/openplanner/v1/sessions/${encodeURIComponent(sessionId)}?project=knoxx-session&mode=full`);
+}
+
 export async function searchMemory(payload: { query: string; k?: number; sessionId?: string }): Promise<{ query: string; mode: string; hits: MemorySearchHit[] }> {
   return request<{ query: string; mode: string; hits: MemorySearchHit[] }>("/api/memory/search", {
     method: "POST",

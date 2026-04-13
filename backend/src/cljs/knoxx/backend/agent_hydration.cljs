@@ -308,13 +308,14 @@
          ;; save_translation execute
          save-translation-execute (fn [_tool-call-id params a b c]
                                     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                          resource-policies (:resourcePolicies auth-context)
                                           source-text (aget params "source_text")
                                           translated-text (aget params "translated_text")
-                                          source-lang (aget params "source_lang")
-                                          target-lang (aget params "target_lang")
-                                          document-id (aget params "document_id")
-                                          garden-id (aget params "garden_id")
-                                          project (aget params "project")
+                                          source-lang (or (aget params "source_lang") (:source_lang resource-policies) (:source-lang resource-policies))
+                                          target-lang (or (aget params "target_lang") (:target_lang resource-policies) (:target-lang resource-policies))
+                                          document-id (or (aget params "document_id") (:document_id resource-policies) (:document-id resource-policies))
+                                          garden-id (or (aget params "garden_id") (:garden_id resource-policies) (:garden-id resource-policies))
+                                          project (or (aget params "project") (:project resource-policies) (:project-name config))
                                           segment-index (aget params "segment_index")
                                           normalized-source (str/trim (str (or source-text "")))
                                           normalized-translated (str/trim (str (or translated-text "")))
@@ -327,6 +328,8 @@
                                                        (= normalized-source normalized-translated))
                                               (throw (js/Error. (str "translated_text matches source_text for segment " segment-index
                                                                       "; provide an actual " target-lang " translation"))))
+                                          _ (when (str/blank? (str document-id))
+                                              (throw (js/Error. "document_id is required for save_translation")))
                                           segment {:source_text source-text
                                                    :translated_text translated-text
                                                    :source_lang source-lang
