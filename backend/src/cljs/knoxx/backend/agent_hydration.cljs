@@ -266,6 +266,18 @@
                                           :garden_id (.Optional Type (.String Type #js {:description "Garden ID"}))
                                           :project (.Optional Type (.String Type #js {:description "Project name"}))
                                           :segment_index (.Number Type #js {:description "0-based segment index"})})
+         create-file-params (.Object Type
+                                    #js {:title (.Optional Type (.String Type #js {:description "Human-readable title for the new artifact."}))
+                                         :path (.Optional Type (.String Type #js {:description "Relative path for the new file inside the active docs root."}))
+                                         :content (.Optional Type (.String Type #js {:description "Initial markdown content to write into the new file."}))})
+         node-fs (aget runtime "fs")
+         node-path (aget runtime "path")
+         slugify (fn [value]
+                   (let [raw (-> (str (or value "untitled-canvas"))
+                                 str/lower-case
+                                 (str/replace #"[^a-z0-9]+" "-")
+                                 (str/replace #"^-+|-+$" ""))]
+                     (if (str/blank? raw) "untitled-canvas" raw)))
          memory-search-execute (fn [_tool-call-id params a b c]
                                  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                        query (or (aget params "query") "")
@@ -305,6 +317,30 @@
                                                                        :edge-limit edge-limit})
                                      (.then (fn [result]
                                               (tool-text-result (graph-query-result-text result) result))))))
+         create-new-file-execute (fn [_tool-call-id params a b c]
+                                   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                         title (or (aget params "title") "Untitled Canvas")
+                                         requested-path (or (aget params "path") (str "notes/canvas/" (slugify title) ".md"))
+                                         content (or (aget params "content") (str "# " title "\n\n"))
+                                         profile (active-agent-profile runtime config auth-context)
+                                         docs-path (:docsPath profile)
+                                         rel-path (normalize-relative-path requested-path)
+                                         abs-path (.resolve node-path docs-path rel-path)
+                                         rel-to-root (.relative node-path docs-path abs-path)
+                                         parent (.dirname node-path abs-path)]
+                                     (when (str/blank? rel-path)
+                                       (throw (js/Error. "path is required for create_new_file")))
+                                     (when (or (str/starts-with? rel-to-root "..") (.isAbsolute node-path rel-to-root))
+                                       (throw (js/Error. "Path escapes active docs root")))
+                                     (maybe-tool-update! on-update (str "Creating canvas file " rel-path "…"))
+                                     (-> (.mkdir node-fs parent #js {:recursive true})
+                                         (.then (fn [] (.writeFile node-fs abs-path content "utf8")))
+                                         (.then (fn []
+                                                  (tool-text-result (str "Created canvas file at " rel-path)
+                                                                    {:path rel-path
+                                                                     :title title
+                                                                     :content content
+                                                                     :canvas true}))))))
          ;; save_translation execute
          save-translation-execute (fn [_tool-call-id params a b c]
                                     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
@@ -392,7 +428,16 @@
                                  (aset "promptGuidelines" (clj->js ["Call save_translation for each segment you translate."
                                                                     "Include the source_text, translated_text, language codes, document_id, and segment_index."]))
                                  (aset "parameters" translation-params)
-                                 (aset "execute" save-translation-execute))]
+                                 (aset "execute" save-translation-execute))
+         create-new-file-tool (doto (js-obj)
+                                 (aset "name" "create_new_file")
+                                 (aset "label" "Create New File")
+                                 (aset "description" "Create a new file-backed artifact for the Knoxx canvas editor.")
+                                 (aset "promptSnippet" "Create a new concrete artifact file when the user is ready to draft a real document instead of continuing in freeform chat.")
+                                 (aset "promptGuidelines" (clj->js ["Use create_new_file when the user wants to start an actual artifact or canvas-backed document."
+                                                                    "Return a file path and initial markdown content so the chat canvas can open it immediately."]))
+                                 (aset "parameters" create-file-params)
+                                 (aset "execute" create-new-file-execute))]
      (clj->js
      (vec
        (remove nil?
@@ -408,7 +453,10 @@
                   memory-session-tool)
                 (when (or (nil? auth-context)
                           (ctx-tool-allowed? auth-context "save_translation"))
-                  save-translation-tool)]))))))
+                  save-translation-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "create_new_file"))
+                  create-new-file-tool)]))))))
 
 (defn create-knoxx-custom-tools
   ([runtime config] (create-knoxx-custom-tools runtime config nil))
