@@ -74,6 +74,17 @@ export function createChatScratchpadActions({
     setShowCanvas(true);
   };
 
+  const openCanvasArtifact = (artifact: { title?: string; path?: string; content?: string; statusMessage?: string | null }) => {
+    const nextTitle = artifact.title?.trim() || canvasTitle || "Untitled canvas";
+    const nextPath = artifact.path?.trim() || canvasPath || `notes/canvas/${slugify(nextTitle)}.md`;
+    setCanvasTitle(nextTitle);
+    setCanvasSubject(nextTitle);
+    setCanvasPath(nextPath);
+    setCanvasContent(typeof artifact.content === "string" ? artifact.content : canvasContent);
+    setCanvasStatus(artifact.statusMessage ?? `Opened ${nextPath} in canvas.`);
+    setShowCanvas(true);
+  };
+
   const fetchPreviewData = async (path: string): Promise<PreviewResponse> => {
     const params = new URLSearchParams({ path });
     const response = await fetch(`/api/ingestion/file?${params.toString()}`);
@@ -272,6 +283,7 @@ export function createChatScratchpadActions({
     clearScratchpad,
     fetchPreviewData,
     insertPinnedIntoCanvas,
+    openCanvasArtifact,
     openMessageInCanvas,
     openPinnedInCanvas,
     openPreviewInCanvas,

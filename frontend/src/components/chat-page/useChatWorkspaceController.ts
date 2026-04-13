@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChatPagePersistenceSuite } from "./chat-page-persistence-suite";
 import { createChatRuntimeActions } from "./chat-runtime-actions";
 import { useChatRuntimeEffects } from "./chat-runtime-effects";
@@ -6,6 +6,7 @@ import { useChatPageConfig } from "./chat-page-config";
 import { useChatPageDerivedState } from "./chat-page-derived";
 import { makeId } from "./make-id";
 import { createChatScratchpadActions } from "./scratchpad-actions";
+import { canvasArtifactFromToolReceipt } from "./utils";
 import { createChatWorkspaceActions } from "./workspace-actions";
 import { createSidebarResizeHandlers } from "./sidebar-resize";
 import {
@@ -118,6 +119,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [loadingRecentSessions, setLoadingRecentSessions] = useState(false);
   const [loadingMoreRecentSessions, setLoadingMoreRecentSessions] = useState(false);
   const [loadingMemorySessionId, setLoadingMemorySessionId] = useState<string | null>(null);
+  const appliedCanvasReceiptIdsRef = useRef<Set<string>>(new Set());
   const [sidebarPaneSplitPct, setSidebarPaneSplitPct] = useState(50);
   const [sidebarWidthPx, setSidebarWidthPx] = useState(initialSidebarWidthPx);
   const [visibilityFilter, setVisibilityFilter] = useState("all");
@@ -226,6 +228,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     clearScratchpad,
     fetchPreviewData,
     insertPinnedIntoCanvas,
+    openCanvasArtifact,
     openMessageInCanvas,
     openPinnedInCanvas,
     openPreviewInCanvas,
@@ -392,6 +395,20 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     await previewFile(source.path);
   };
 
+  useEffect(() => {
+    const receipts = latestRun?.tool_receipts ?? [];
+    for (const receipt of receipts) {
+      if (!receipt?.id || appliedCanvasReceiptIdsRef.current.has(receipt.id)) continue;
+      const artifact = canvasArtifactFromToolReceipt(receipt);
+      if (!artifact) continue;
+      appliedCanvasReceiptIdsRef.current.add(receipt.id);
+      openCanvasArtifact({
+        ...artifact,
+        statusMessage: artifact.path ? `Opened ${artifact.path} in canvas.` : "Opened tool result in canvas.",
+      });
+    }
+  }, [latestRun?.tool_receipts, openCanvasArtifact]);
+
   return {
     // pane visibility
     showConsole,
@@ -522,6 +539,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     appendToScratchpad,
     clearScratchpad,
     insertPinnedIntoCanvas,
+    openCanvasArtifact,
     openMessageInCanvas,
     openPinnedInCanvas,
     openPreviewInCanvas,

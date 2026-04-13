@@ -5,6 +5,7 @@ import type {
   MemorySessionRow,
   RunDetail,
   RunEvent,
+  ToolReceipt,
 } from "../../lib/types";
 import type {
   HydrationSource,
@@ -108,6 +109,30 @@ export function asMarkdownPreview(value: string): string {
     return `\`\`\`text\n${value}\n\`\`\``;
   }
   return value;
+}
+
+export function parseToolReceiptDetails(receipt: ToolReceipt): Record<string, unknown> | null {
+  const raw = receipt.result_preview;
+  if (typeof raw !== "string" || raw.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const details = parsed?.details;
+    return details && typeof details === "object" && !Array.isArray(details)
+      ? details as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function canvasArtifactFromToolReceipt(receipt: ToolReceipt): { title?: string; path?: string; content?: string } | null {
+  const details = parseToolReceiptDetails(receipt);
+  if (!details || details.canvas !== true) return null;
+  return {
+    title: typeof details.title === "string" ? details.title : undefined,
+    path: typeof details.path === "string" ? details.path : undefined,
+    content: typeof details.content === "string" ? details.content : undefined,
+  };
 }
 
 export function isChatRole(value: unknown): value is ChatMessage["role"] {
