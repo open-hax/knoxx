@@ -4,6 +4,8 @@ import type { BrowseEntry, BrowseResponse, PreviewResponse, SemanticSearchMatch 
 type ChatWorkspaceSidebarExplorerProps = {
   semanticMode: boolean;
   activeEntryCount: number;
+  currentPath: string;
+  currentParentPath: string;
   semanticProjects: string[];
   loadingBrowse: boolean;
   browseData: BrowseResponse | null;
@@ -22,6 +24,8 @@ type ChatWorkspaceSidebarExplorerProps = {
 export function ChatWorkspaceSidebarExplorer({
   semanticMode,
   activeEntryCount,
+  currentPath,
+  currentParentPath,
   semanticProjects,
   loadingBrowse,
   browseData,
@@ -44,6 +48,37 @@ export function ChatWorkspaceSidebarExplorer({
           {semanticMode ? `${activeEntryCount} semantic match(es)` : `${activeEntryCount} visible entr${activeEntryCount === 1 ? "y" : "ies"}`}
           {semanticMode && semanticProjects.length ? ` across ${semanticProjects.join(", ")}` : ""}
         </div>
+
+        {!semanticMode ? (
+          <div
+            style={{
+              padding: "6px 8px",
+              borderBottom: "1px solid var(--token-colors-border-default)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              flexShrink: 0,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--token-colors-text-muted)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
+              title={`/${currentPath || ""}`}
+            >
+              /{currentPath || ""}
+            </div>
+            <Button variant="ghost" size="sm" disabled={!currentPath} onClick={() => void onLoadDirectory(currentParentPath)}>
+              Up
+            </Button>
+          </div>
+        ) : null}
 
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", borderBottom: "1px solid var(--token-colors-border-default)" }}>
           {loadingBrowse && !browseData ? (

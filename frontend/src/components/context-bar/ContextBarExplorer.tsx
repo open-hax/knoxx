@@ -18,6 +18,8 @@ const VISIBILITY_COLORS: Record<string, string> = {
 type ContextBarExplorerProps = {
   semanticMode: boolean;
   activeEntryCount: number;
+  currentPath: string;
+  currentParentPath: string;
   semanticProjects: string[];
   loadingBrowse: boolean;
   browseData: BrowseResponse | null;
@@ -37,6 +39,8 @@ type ContextBarExplorerProps = {
 export function ContextBarExplorer({
   semanticMode,
   activeEntryCount,
+  currentPath,
+  currentParentPath,
   semanticProjects,
   loadingBrowse,
   browseData,
@@ -70,6 +74,37 @@ export function ContextBarExplorer({
           {semanticMode && semanticProjects.length ? ` in ${semanticProjects.join(", ")}` : ""}
         </span>
       </div>
+
+      {!semanticMode && (
+        <div
+          style={{
+            padding: "4px 8px",
+            borderBottom: "1px solid var(--token-colors-border-default)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--token-colors-text-muted)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+            }}
+            title={`/${currentPath || ""}`}
+          >
+            /{currentPath || ""}
+          </div>
+          <Button variant="ghost" size="sm" disabled={!currentPath} onClick={() => void onLoadDirectory(currentParentPath)}>
+            Up
+          </Button>
+        </div>
+      )}
 
       {/* File list - IDE style */}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>

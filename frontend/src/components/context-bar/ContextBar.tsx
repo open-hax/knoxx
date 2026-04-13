@@ -222,11 +222,6 @@ export function ContextBar({
             )}
           </div>
           <div style={{ display: "flex", gap: 4 }}>
-            {onLoadDirectory && (
-              <Button variant="ghost" size="sm" disabled={!currentPath} onClick={() => void onLoadDirectory(currentParentPath)}>
-                ↑
-              </Button>
-            )}
             <Button variant="ghost" size="sm" onClick={onHide}>✕</Button>
           </div>
         </div>
@@ -488,6 +483,8 @@ export function ContextBar({
               <ContextBarExplorer
                 semanticMode={semanticMode ?? false}
                 activeEntryCount={activeEntryCount ?? 0}
+                currentPath={currentPath ?? ""}
+                currentParentPath={currentParentPath ?? ""}
                 semanticProjects={semanticProjects ?? []}
                 loadingBrowse={loadingBrowse ?? false}
                 browseData={browseData ?? null}

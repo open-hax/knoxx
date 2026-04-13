@@ -175,9 +175,6 @@ export function ChatWorkspaceSidebar({
             </div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <Button variant="ghost" size="sm" disabled={!currentPath} onClick={() => void onLoadDirectory(currentParentPath)}>
-              Up
-            </Button>
             <Button variant="ghost" size="sm" onClick={onHide}>Hide</Button>
           </div>
         </div>
@@ -442,11 +439,13 @@ export function ChatWorkspaceSidebar({
                 <div style={{ height: 6, width: 56, borderRadius: 999, border: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-alpha-bg-_16)" }} />
               </div>
 
-              <ChatWorkspaceSidebarExplorer
-                semanticMode={semanticMode}
-                activeEntryCount={activeEntryCount}
-                semanticProjects={semanticProjects}
-                loadingBrowse={loadingBrowse}
+                <ChatWorkspaceSidebarExplorer
+                  semanticMode={semanticMode}
+                  activeEntryCount={activeEntryCount}
+                  currentPath={currentPath}
+                  currentParentPath={currentParentPath}
+                  semanticProjects={semanticProjects}
+                  loadingBrowse={loadingBrowse}
                 browseData={browseData}
                 semanticResults={semanticResults}
                 filteredEntries={filteredEntries}
