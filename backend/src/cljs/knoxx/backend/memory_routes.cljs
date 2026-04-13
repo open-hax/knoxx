@@ -4,6 +4,10 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-store :as session-store]))
 
+(defn interactive-session-id?
+  [session-id]
+  (not (str/starts-with? (str session-id) "translation-")))
+
 (defn register-memory-routes!
   [app runtime config {:keys [json-response!
                               error-response!
@@ -61,6 +65,7 @@
                                              (.then (fn [allowed]
                                                       (let [authorized-rows (->> page-rows
                                                                                  (filter #(contains? allowed (str (:session %))))
+                                                                                 (filter #(interactive-session-id? (:session %)))
                                                                                  vec)
                                                             next-acc (into acc authorized-rows)]
                                                         (if (and upstream-has-more (pos? fetched-count))
