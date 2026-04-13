@@ -138,6 +138,10 @@ export function memoryRowRunId(row: MemorySessionRow): string | null {
   return typeof candidate === "string" ? candidate : null;
 }
 
+function normalizeTraceStatus(value: unknown): ChatTraceBlock["status"] {
+  return value === "streaming" || value === "done" || value === "error" ? value : undefined;
+}
+
 function parseMemoryRowTraceBlocks(row: MemorySessionRow): ChatMessage["traceBlocks"] {
   const extra = parseMemoryRowExtra(row);
   const raw = extra?.trace_blocks ?? extra?.traceBlocks;
@@ -150,7 +154,7 @@ function parseMemoryRowTraceBlocks(row: MemorySessionRow): ChatMessage["traceBlo
     return [{
       id: typeof block.id === "string" && block.id ? block.id : `${kind}:${index}`,
       kind,
-      status: typeof block.status === "string" ? block.status : undefined,
+      status: normalizeTraceStatus(block.status),
       at: typeof block.at === "string" ? block.at : undefined,
       content: typeof block.content === "string" ? block.content : undefined,
       toolName: typeof block.toolName === "string" ? block.toolName : undefined,
@@ -197,9 +201,11 @@ function fallbackTraceBlocksByRunId(rows: MemorySessionRow[]): Map<string, NonNu
       append(runId, {
         id: (typeof receiptRecord?.id === "string" && receiptRecord.id) || row.id || `tool:${index}`,
         kind: "tool_call",
-        status: typeof receiptRecord?.status === "string"
-          ? (receiptRecord.status === "completed" ? "done" : receiptRecord.status === "failed" ? "error" : "streaming")
-          : "done",
+        status: normalizeTraceStatus(
+          typeof receiptRecord?.status === "string"
+            ? (receiptRecord.status === "completed" ? "done" : receiptRecord.status === "failed" ? "error" : "streaming")
+            : "done",
+        ),
         at: typeof row.ts === "string" ? row.ts : undefined,
         toolName: typeof receiptRecord?.tool_name === "string" ? receiptRecord.tool_name : undefined,
         toolCallId: typeof receiptRecord?.id === "string" ? receiptRecord.id : undefined,

@@ -99,9 +99,9 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [syncingWorkspace, setSyncingWorkspace] = useState(false);
   const [workspaceSourceId, setWorkspaceSourceId] = useState<string | null>(null);
   const [workspaceJob, setWorkspaceJob] = useState<WorkspaceJob | null>(null);
-  const [canvasTitle, setCanvasTitle] = useState("Untitled scratchpad");
+  const [canvasTitle, setCanvasTitle] = useState("Untitled canvas");
   const [canvasSubject, setCanvasSubject] = useState("");
-  const [canvasPath, setCanvasPath] = useState("notes/scratchpads/untitled-scratchpad.md");
+  const [canvasPath, setCanvasPath] = useState("notes/canvas/untitled-canvas.md");
   const [canvasRecipients, setCanvasRecipients] = useState("");
   const [canvasCc, setCanvasCc] = useState("");
   const [canvasContent, setCanvasContent] = useState("");

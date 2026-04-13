@@ -61,9 +61,9 @@ export function ChatScratchpadPanel({
     >
       <div style={{ padding: 12, borderBottom: "1px solid var(--token-colors-border-default)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Scratchpad</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Canvas</div>
           <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>
-            Your active working surface. Draft, reshape, pin context, and save artifacts from here.
+            Your active editor surface. Draft artifacts, open files, revise content, and save publishable documents from here.
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
@@ -74,12 +74,12 @@ export function ChatScratchpadPanel({
 
       <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
         <div style={{ padding: 12, display: "grid", gap: 10, borderBottom: "1px solid var(--token-colors-border-default)", flexShrink: 0 }}>
-          <Input value={canvasTitle} onChange={(event: ChangeEvent<HTMLInputElement>) => onCanvasTitleChange(event.target.value)} placeholder="Scratchpad title" size="sm" />
-          <Input value={canvasPath} onChange={(event: ChangeEvent<HTMLInputElement>) => onCanvasPathChange(event.target.value)} placeholder="Workspace path for saving the scratchpad" size="sm" />
+          <Input value={canvasTitle} onChange={(event: ChangeEvent<HTMLInputElement>) => onCanvasTitleChange(event.target.value)} placeholder="Canvas title" size="sm" />
+          <Input value={canvasPath} onChange={(event: ChangeEvent<HTMLInputElement>) => onCanvasPathChange(event.target.value)} placeholder="Workspace path for the artifact file" size="sm" />
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Button variant="secondary" size="sm" loading={savingCanvas} onClick={() => void onSaveCanvasDraft()}>Save to CMS</Button>
-            <Button variant="secondary" size="sm" loading={savingCanvasFile} onClick={() => void onSaveCanvasFile()}>Save File</Button>
-            <Button variant="ghost" size="sm" onClick={onClearScratchpad}>Clear</Button>
+            <Button variant="secondary" size="sm" loading={savingCanvas} onClick={() => void onSaveCanvasDraft()}>Save document</Button>
+            <Button variant="secondary" size="sm" loading={savingCanvasFile} onClick={() => void onSaveCanvasFile()}>Write file</Button>
+            <Button variant="ghost" size="sm" onClick={onClearScratchpad}>New canvas</Button>
           </div>
           <details>
             <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)" }}>Optional delivery actions</summary>
@@ -100,7 +100,7 @@ export function ChatScratchpadPanel({
           <textarea
             value={canvasContent}
             onChange={(event) => onCanvasContentChange(event.target.value)}
-            placeholder="Work here like a ChatGPT canvas: specs, notes, plans, code sketches, prompts, drafts, implementation checklists, or excerpts from pinned context..."
+            placeholder="Work here like a canvas editor: specs, notes, drafts, document revisions, publishable markdown, implementation plans, or excerpts from pinned context..."
             style={{
               width: "100%",
               height: "100%",

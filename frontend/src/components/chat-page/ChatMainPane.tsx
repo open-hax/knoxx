@@ -11,7 +11,7 @@ import type { HydrationSource } from './types';
 const EMPTY_STATE = {
   title: 'Chat',
   body: 'Ask Knoxx anything about devel, your client work, or the artifact you are actively building.',
-  detail: 'Use the context bar like an IDE explorer, pin the context that matters, and use the scratchpad as your live working surface.',
+  detail: 'Use the context bar like an IDE explorer, pin the context that matters, and use the canvas as your live working surface.',
 } as const;
 
 type ChatMainPaneProps = {
@@ -167,7 +167,7 @@ export function ChatMainPane({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
           {!showFiles ? <Button variant="ghost" size="sm" onClick={onShowFiles}>Files</Button> : null}
           <Button variant="ghost" size="sm" onClick={onToggleSettings}>Settings</Button>
-          {showCanvasToggle ? <Button variant="ghost" size="sm" onClick={onToggleCanvas}>Scratchpad</Button> : null}
+          {showCanvasToggle ? <Button variant="ghost" size="sm" onClick={onToggleCanvas}>Canvas</Button> : null}
           <Button variant="ghost" size="sm" onClick={onToggleConsole}>Console</Button>
           <div style={{ flex: 1 }} />
           <select

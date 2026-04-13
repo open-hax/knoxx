@@ -68,7 +68,7 @@ export function createChatScratchpadActions({
     const seeded = seedCanvasFromMessage(message);
     setCanvasTitle(seeded.title);
     setCanvasSubject(seeded.subject);
-    setCanvasPath(`notes/scratchpads/${slugify(seeded.title)}.md`);
+    setCanvasPath(`notes/canvas/${slugify(seeded.title)}.md`);
     setCanvasContent(seeded.content);
     setCanvasStatus(null);
     setShowCanvas(true);
@@ -151,7 +151,7 @@ export function createChatScratchpadActions({
     setCanvasSubject(seeded.subject);
     setCanvasPath(seeded.path);
     setCanvasContent(seeded.content);
-    setCanvasStatus(`Loaded ${seeded.path} into scratchpad.`);
+    setCanvasStatus(`Loaded ${seeded.path} into canvas.`);
     setShowCanvas(true);
   };
 
@@ -169,12 +169,12 @@ export function createChatScratchpadActions({
       setCanvasSubject(seeded.subject);
       setCanvasPath(seeded.path);
       setCanvasContent(seeded.content);
-      setCanvasStatus(`Loaded ${item.path} into scratchpad.`);
+      setCanvasStatus(`Loaded ${item.path} into canvas.`);
       setShowCanvas(true);
     } catch (error) {
       appendToScratchpad(item.snippet || item.path, item.title);
       setCanvasStatus(`Loaded pinned context excerpt for ${item.title}.`);
-      appendConsoleLine(`[scratchpad] preview load failed for ${item.path}: ${(error as Error).message}`);
+      appendConsoleLine(`[canvas] preview load failed for ${item.path}: ${(error as Error).message}`);
     }
   };
 
@@ -184,11 +184,11 @@ export function createChatScratchpadActions({
   };
 
   const clearScratchpad = () => {
-    setCanvasTitle("Untitled scratchpad");
+    setCanvasTitle("Untitled canvas");
     setCanvasSubject("");
-    setCanvasPath(`notes/scratchpads/${slugify(`scratchpad-${Date.now()}`)}.md`);
+    setCanvasPath(`notes/canvas/${slugify(`canvas-${Date.now()}`)}.md`);
     setCanvasContent("");
-    setCanvasStatus("Cleared scratchpad.");
+    setCanvasStatus("Created a fresh canvas.");
   };
 
   const useLatestAssistantInCanvas = () => {
