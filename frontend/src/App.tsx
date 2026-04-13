@@ -10,7 +10,7 @@ import IngestionPage from "./pages/IngestionPage";
 import OpsRoot from "./pages/OpsRoot";
 import QueryPage from "./pages/QueryPage";
 import RunsPage from "./pages/RunsPage";
-import TranslationPage from "./pages/TranslationPage";
+import TranslationReviewPage from "./pages/TranslationReviewPage";
 import WorkbenchPage from "./pages/WorkbenchPage";
 
 function resolveExternalUrl(rawUrl: string): string {
@@ -120,7 +120,8 @@ function App() {
           <Route path="/query" element={<QueryPage />} />
           <Route path="/gardens" element={<GardensPage />} />
           <Route path="/runs" element={<RunsPage />} />
-          <Route path="/translations" element={<TranslationPage />} />
+          <Route path="/translations" element={<TranslationReviewPage />} />
+          <Route path="/translations/:documentId/:targetLang" element={<TranslationReviewPage />} />
           <Route path="/ops/*" element={<OpsRoot />} />
           <Route path="/next/*" element={<LegacyOpsRedirect />} />
           <Route path="*" element={<Navigate to="/" replace />} />

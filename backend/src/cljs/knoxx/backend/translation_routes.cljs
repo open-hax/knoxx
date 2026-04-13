@@ -138,4 +138,148 @@
                         (.then (fn [resp]
                                  (json-response! reply 200 resp)))
                         (.catch (fn [err]
-                                  (error-response! reply err)))))))))))
+                                  (error-response! reply err))))))))))
+
+  ;; ======================================================================
+  ;; Document-level translation routes
+  ;; ======================================================================
+
+  (route! app "GET" "/api/translations/documents"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (when ctx (ensure-permission! ctx "org.translations.read"))
+                  (let [query (or (aget request "query") #js {})
+                        project (or (aget query "project") (:session-project-name config))
+                        target-lang (aget query "target_lang")
+                        source-lang (aget query "source_lang")
+                        garden-id (aget query "garden_id")
+                        params (str "project=" (js/encodeURIComponent project)
+                                    (when target-lang (str "&target_lang=" (js/encodeURIComponent target-lang)))
+                                    (when source-lang (str "&source_lang=" (js/encodeURIComponent source-lang)))
+                                    (when garden-id (str "&garden_id=" (js/encodeURIComponent garden-id))))]
+                    (-> (openplanner-request! config "GET" (str "/v1/translations/documents?" params))
+                        (.then (fn [body]
+                                 (json-response! reply 200 body)))
+                        (.catch (fn [err]
+                                  (error-response! reply err))))))))))
+
+  (route! app "GET" "/api/translations/documents/:documentId/:targetLang"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (when ctx (ensure-permission! ctx "org.translations.read"))
+                  (let [doc-id (aget request "params" "documentId")
+                        target-lang (aget request "params" "targetLang")]
+                    (-> (openplanner-request! config "GET" (str "/v1/translations/documents/" doc-id "/" target-lang))
+                        (.then (fn [body]
+                                 (json-response! reply 200 body)))
+                        (.catch (fn [err]
+                                  (error-response! reply err))))))))))
+
+  (route! app "POST" "/api/translations/documents/:documentId/:targetLang/review"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (when ctx (ensure-permission! ctx "org.translations.review"))
+                  (let [doc-id (aget request "params" "documentId")
+                        target-lang (aget request "params" "targetLang")
+                        body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+                        body-with-auth (merge body
+                                              {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
+                                               :labeler_email (str (or (ctx-user-email ctx) "unknown"))})]
+                    (-> (openplanner-request! config
+                                              "POST"
+                                              (str "/v1/translations/documents/" doc-id "/" target-lang "/review")
+                                              (clj->js body-with-auth))
+                        (.then (fn [resp]
+                                 (json-response! reply 200 resp)))
+                        (.catch (fn [err]
+                                  (error-response! reply err))))))))))
+
+  ;; Batch routes
+
+  (route! app "POST" "/api/translations/batches"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (when ctx (ensure-permission! ctx "org.translations.manage"))
+                  (let [body (aget request "body")]
+                    (-> (openplanner-request! config "POST" "/v1/translations/batches" body)
+                        (.then (fn [resp]
+                                 (json-response! reply 200 resp)))
+                        (.catch (fn [err]
+                                  (error-response! reply err))))))))))
+
+  (route! app "GET" "/api/translations/batches"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (when ctx (ensure-permission! ctx "org.translations.read"))
+                  (let [query (or (aget request "query") #js {})
+                        status (aget query "status")
+                        garden-id (aget query "garden_id")
+                        target-lang (aget query "target_lang")
+                        params (str (when status (str "status=" (js/encodeURIComponent status)))
+                                    (when garden-id (str "&garden_id=" (js/encodeURIComponent garden-id)))
+                                    (when target-lang (str "&target_lang=" (js/encodeURIComponent target-lang))))]
+                    (-> (openplanner-request! config "GET" (str "/v1/translations/batches?" params))
+                        (.then (fn [body]
+                                 (json-response! reply 200 body)))
+                        (.catch (fn [err]
+                                  (error-response! reply err))))))))))
+
+  (route! app "GET" "/api/translations/batches/next"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (when ctx (ensure-permission! ctx "org.translations.manage"))
+                  (-> (openplanner-request! config "GET" "/v1/translations/batches/next")
+                      (.then (fn [body]
+                               (json-response! reply 200 body)))
+                      (.catch (fn [err]
+                                (error-response! reply err))))))))))
+
+  (route! app "GET" "/api/translations/batches/:id"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (when ctx (ensure-permission! ctx "org.translations.read"))
+                  (let [batch-id (aget request "params" "id")]
+                    (-> (openplanner-request! config "GET" (str "/v1/translations/batches/" batch-id))
+                        (.then (fn [body]
+                                 (json-response! reply 200 body)))
+                        (.catch (fn [err]
+                                  (error-response! reply err))))))))))
+
+  (route! app "POST" "/api/translations/batches/:id/status"
+          (fn [request reply]
+            (if-not (openplanner-enabled? config)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (when ctx (ensure-permission! ctx "org.translations.manage"))
+                  (let [batch-id (aget request "params" "id")
+                        body (aget request "body")]
+                    (-> (openplanner-request! config
+                                              "POST"
+                                              (str "/v1/translations/batches/" batch-id "/status")
+                                              body)
+                        (.then (fn [resp]
+                                 (json-response! reply 200 resp)))
+                        (.catch (fn [err]
+                                  (error-response! reply err))))))))))

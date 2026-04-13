@@ -520,6 +520,72 @@ export interface TranslationLabelPayload {
   editor_notes?: string;
 }
 
+export interface TranslationDocumentSummary {
+  document_id: string;
+  target_lang: string;
+  source_lang: string;
+  garden_id: string | null;
+  project: string | null;
+  title: string;
+  document_status: string;
+  total_segments: number;
+  approved: number;
+  pending: number;
+  rejected: number;
+  in_review: number;
+  overall_status: "fully_approved" | "fully_rejected" | "pending_review" | "partial_review" | "mixed";
+}
+
+export interface TranslationDocumentDetail {
+  document: {
+    id: string;
+    title: string;
+    content: string;
+    source_lang: string;
+    visibility: string;
+    source_path: string | null;
+  };
+  segments: TranslationSegment[];
+  summary: {
+    total_segments: number;
+    approved: number;
+    pending: number;
+    rejected: number;
+    in_review: number;
+    overall_status: string;
+  };
+}
+
+export interface TranslationBatchSummary {
+  id: string;
+  batch_id: string;
+  garden_id: string;
+  target_lang: string;
+  source_lang: string;
+  project: string;
+  status: "queued" | "processing" | "complete" | "partial" | "failed";
+  document_ids: string[];
+  completed_documents: string[];
+  failed_documents: { document_id: string; error: string }[];
+  agent_session_id?: string;
+  agent_conversation_id?: string;
+  agent_run_id?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  error?: string;
+}
+
+export interface TranslationDocumentReviewPayload {
+  overall: "approve" | "needs_edit" | "reject";
+  editor_notes?: string;
+  segment_overrides?: Record<string, {
+    overall: "approve" | "needs_edit" | "reject";
+    corrected_text?: string;
+    editor_notes?: string;
+  }>;
+}
+
 export interface TranslationManifestLanguageStats {
   total_segments: number;
   approved: number;

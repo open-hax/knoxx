@@ -17,6 +17,10 @@ import type {
   TranslationSegment,
   TranslationSegmentListResponse,
   TranslationStatus,
+  TranslationDocumentSummary,
+  TranslationDocumentDetail,
+  TranslationDocumentReviewPayload,
+  TranslationBatchSummary,
 } from "../types";
 import { buildKnoxxAuthHeaders, request } from "./core";
 
@@ -175,4 +179,58 @@ export async function getTranslationSftExport(params: {
     throw new Error(await res.text() || `Failed to export SFT: ${res.status}`);
   }
   return res.text();
+}
+
+export async function listTranslationDocuments(params: {
+  project: string;
+  target_lang?: string;
+  source_lang?: string;
+  garden_id?: string;
+}): Promise<{ documents: TranslationDocumentSummary[]; total: number }> {
+  const query = new URLSearchParams({ project: params.project });
+  if (params.target_lang) query.set("target_lang", params.target_lang);
+  if (params.source_lang) query.set("source_lang", params.source_lang);
+  if (params.garden_id) query.set("garden_id", params.garden_id);
+  return request<{ documents: TranslationDocumentSummary[]; total: number }>(`/api/translations/documents?${query.toString()}`);
+}
+
+export async function getTranslationDocument(documentId: string, targetLang: string): Promise<TranslationDocumentDetail> {
+  return request<TranslationDocumentDetail>(`/api/translations/documents/${encodeURIComponent(documentId)}/${encodeURIComponent(targetLang)}`);
+}
+
+export async function reviewTranslationDocument(
+  documentId: string,
+  targetLang: string,
+  payload: TranslationDocumentReviewPayload,
+): Promise<{ ok: boolean; segments_reviewed: number; overall: string; overrides_applied: number }> {
+  return request<{ ok: boolean; segments_reviewed: number; overall: string; overrides_applied: number }>(
+    `/api/translations/documents/${encodeURIComponent(documentId)}/${encodeURIComponent(targetLang)}/review`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
+export async function listTranslationBatches(params?: {
+  status?: string;
+  garden_id?: string;
+  target_lang?: string;
+}): Promise<{ batches: TranslationBatchSummary[] }> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.garden_id) query.set("garden_id", params.garden_id);
+  if (params?.target_lang) query.set("target_lang", params.target_lang);
+  const qs = query.toString();
+  return request<{ batches: TranslationBatchSummary[] }>(`/api/translations/batches${qs ? `?${qs}` : ""}`);
+}
+
+export async function createTranslationBatch(payload: {
+  garden_id: string;
+  target_lang: string;
+  document_ids: string[];
+  source_lang?: string;
+  project?: string;
+}): Promise<{ ok: boolean; batch_id: string; status: string; document_ids: string[] }> {
+  return request<{ ok: boolean; batch_id: string; status: string; document_ids: string[] }>("/api/translations/batches", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
