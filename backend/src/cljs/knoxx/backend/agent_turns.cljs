@@ -7,7 +7,7 @@
             [knoxx.backend.openplanner-memory :as openplanner-memory]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.run-state :refer [store-run! append-run-event! update-run! update-run-tool-receipt! append-limited latest-assistant-message record-retrieval-sample! tool-event-payload]]
+            [knoxx.backend.run-state :refer [store-run! append-run-event! update-run! update-run-tool-receipt! append-limited latest-assistant-message record-retrieval-sample! tool-event-payload append-run-trace-text! apply-run-tool-trace-event! finalize-run-trace-blocks!]]
             [knoxx.backend.runtime-config :refer [model-supports-reasoning? normalize-thinking-level now-iso]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
@@ -89,6 +89,7 @@
                          :error nil
                          :answer nil
                          :events []
+                         :trace_blocks []
                          :tool_receipts []
                          :request_messages request-messages
                          :settings (cond-> {:sessionId session-id
@@ -190,6 +191,7 @@
                                                                           (session-store/mark-session-streaming! (redis/get-client) session-id true)))
                                                                       (swap! chunks conj delta)
                                                                       (when (seq delta)
+                                                                        (append-run-trace-text! run-id :agent_message delta (now-iso))
                                                                         (broadcast-ws-session! session-id "tokens"
                                                                                                {:run_id run-id
                                                                                                 :conversation_id conversation-id
@@ -205,6 +207,7 @@
                                                                                     "")]
                                                                       (when (seq delta)
                                                                         (swap! reasoning-chunks conj delta)
+                                                                        (append-run-trace-text! run-id :reasoning delta (now-iso))
                                                                         (broadcast-ws-session! session-id "tokens"
                                                                                                {:run_id run-id
                                                                                                 :conversation_id conversation-id
@@ -231,6 +234,11 @@
                                                                                                                       :status "running"
                                                                                                                       :started_at (or (:started_at receipt) (now-iso))})
                                                                                                 input-preview (assoc :input_preview input-preview))))
+                                                                  (apply-run-tool-trace-event! run-id {:type "tool_start"
+                                                                                                       :tool_name tool-name
+                                                                                                       :tool_call_id tool-call-id
+                                                                                                       :preview input-preview
+                                                                                                       :at (now-iso)})
                                                                   (append-run-event! run-id tool-event)
                                                                   (broadcast-ws-session! session-id "events" tool-event))
 
@@ -246,6 +254,11 @@
                                                                                               (cond-> (merge receipt {:tool_name tool-name
                                                                                                                       :status "running"})
                                                                                                 preview (update :updates #(append-limited % preview 8)))))
+                                                                  (apply-run-tool-trace-event! run-id {:type "tool_update"
+                                                                                                       :tool_name tool-name
+                                                                                                       :tool_call_id tool-call-id
+                                                                                                       :preview preview
+                                                                                                       :at (now-iso)})
                                                                   (when preview
                                                                     (let [tool-event (tool-event-payload run-id conversation-id session-id "tool_update"
                                                                                                          {:status "running"
@@ -275,6 +288,12 @@
                                                                                                                       :ended_at (now-iso)
                                                                                                                       :is_error is-error})
                                                                                                 result-preview (assoc :result_preview result-preview))))
+                                                                  (apply-run-tool-trace-event! run-id {:type "tool_end"
+                                                                                                       :tool_name tool-name
+                                                                                                       :tool_call_id tool-call-id
+                                                                                                       :preview result-preview
+                                                                                                       :is_error is-error
+                                                                                                       :at (now-iso)})
                                                                   (append-run-event! run-id tool-event)
                                                                   (broadcast-ws-session! session-id "events" tool-event))
 
@@ -337,6 +356,7 @@
                                                                                        :sources_count (count sources)})]
                                               (when (= mode "rag")
                                                 (record-retrieval-sample! (:retrievalMode @settings-state*) elapsed))
+                                              (finalize-run-trace-blocks! run-id "done")
                                               (let [completed-run (update-run! run-id
                                                                                (fn [run]
                                                                                  (let [resource-patch (cond-> {:sources sources}
@@ -372,6 +392,7 @@
                                      (let [error-event (tool-event-payload run-id conversation-id session-id "run_failed"
                                                                            {:status "failed"
                                                                             :error (str err)})]
+                                       (finalize-run-trace-blocks! run-id "error")
                                        (let [failed-run (update-run! run-id
                                                                      (fn [run]
                                                                        (let [resource-patch (cond-> {}

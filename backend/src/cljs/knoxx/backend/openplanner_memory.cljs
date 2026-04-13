@@ -406,6 +406,7 @@
           request-text (or (some-> (:request_messages run) first :content) "")
           answer (:answer run)
           reasoning-text (or (:reasoning run) "")
+          trace-blocks (vec (or (:trace_blocks run) []))
           run-id (:run_id run)
           common-extra (merge {:run_id run-id
                                :conversation_id conversation-id
@@ -445,7 +446,9 @@
                                                          :role "assistant"
                                                          :model (:model run)
                                                          :text answer
-                                                         :extra (merge common-extra {:status (:status run)})}))
+                                                         :extra (merge common-extra
+                                                                       {:status (:status run)
+                                                                        :trace_blocks trace-blocks})}))
                         (not (str/blank? reasoning-text))
                         (conj (openplanner-event config {:id (str run-id ":reasoning")
                                                          :ts (:updated_at run)

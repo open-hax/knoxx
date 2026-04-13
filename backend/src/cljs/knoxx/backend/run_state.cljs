@@ -55,6 +55,108 @@
                      (assoc :updated_at (runtime-config/now-iso))
                      (update :events #(append-limited % event 200))))))
 
+(defn- trace-tool-block-id
+  [{:keys [tool_call_id tool_name at]}]
+  (cond
+    (and (string? tool_call_id) (seq tool_call_id)) (str "tool:" tool_call_id)
+    (and (string? tool_name) (seq tool_name)) (str "tool:" tool_name ":" (or at ""))
+    :else (str "tool:" (or at ""))))
+
+(defn append-run-trace-text!
+  [run-id kind delta at]
+  (when (seq (str delta))
+    (update-run! run-id
+                 (fn [run]
+                   (update run :trace_blocks
+                           (fn [blocks]
+                             (let [items (vec blocks)
+                                   last-block (peek items)]
+                               (if (and last-block
+                                        (= (:kind last-block) kind)
+                                        (= (:status last-block) "streaming"))
+                                 (assoc items (dec (count items))
+                                        (-> last-block
+                                            (update :content #(str (or % "") delta))
+                                            (assoc :at (or at (:at last-block)))))
+                                 (conj items {:id (str (name kind) ":" (count items))
+                                              :kind kind
+                                              :status "streaming"
+                                              :content (str delta)
+                                              :at at})))))))))
+
+(defn apply-run-tool-trace-event!
+  [run-id {:keys [type tool_name tool_call_id preview is_error at]}]
+  (update-run! run-id
+               (fn [run]
+                 (update run :trace_blocks
+                         (fn [blocks]
+                           (let [items (vec blocks)
+                                 block-id (trace-tool-block-id {:tool_call_id tool_call_id
+                                                                :tool_name tool_name
+                                                                :at at})
+                                 idx (first (keep-indexed (fn [i item]
+                                                            (when (= (:id item) block-id) i))
+                                                          items))
+                                 existing (when (number? idx) (nth items idx))]
+                             (cond
+                               (= type "tool_start")
+                               (let [block {:id block-id
+                                            :kind :tool_call
+                                            :toolName tool_name
+                                            :toolCallId tool_call_id
+                                            :inputPreview preview
+                                            :status "streaming"
+                                            :at at
+                                            :updates []}]
+                                 (if (number? idx)
+                                   (assoc items idx (merge existing block))
+                                   (conj items block)))
+
+                               (= type "tool_update")
+                               (if (number? idx)
+                                 (assoc items idx
+                                        (cond-> (assoc existing
+                                                       :status "streaming"
+                                                       :at (or at (:at existing)))
+                                          (seq preview) (update :updates #(append-limited % preview 8))))
+                                 (conj items {:id block-id
+                                              :kind :tool_call
+                                              :toolName tool_name
+                                              :toolCallId tool_call_id
+                                              :status "streaming"
+                                              :at at
+                                              :updates (cond-> [] (seq preview) (conj preview))}))
+
+                               (= type "tool_end")
+                               (let [block {:id block-id
+                                            :kind :tool_call
+                                            :toolName tool_name
+                                            :toolCallId tool_call_id
+                                            :status (if is_error "error" "done")
+                                            :outputPreview preview
+                                            :isError (boolean is_error)
+                                            :at at}]
+                                 (if (number? idx)
+                                   (assoc items idx (merge existing block {:updates (:updates existing)
+                                                                           :inputPreview (:inputPreview existing)}))
+                                   (conj items (assoc block :updates []))))
+
+                               :else items)))))))
+
+(defn finalize-run-trace-blocks!
+  [run-id status]
+  (update-run! run-id
+               (fn [run]
+                 (update run :trace_blocks
+                         (fn [blocks]
+                           (mapv (fn [block]
+                                   (if (= (:status block) "streaming")
+                                     (cond-> (assoc block :status status)
+                                       (= status "error") (assoc :isError (or (:isError block)
+                                                                               (= (:kind block) :tool_call))))
+                                     block))
+                                 (vec blocks)))))))
+
 (defn update-run-tool-receipt!
   [run-id receipt-id default-receipt f]
   (update-run! run-id

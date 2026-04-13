@@ -93,7 +93,8 @@
 (defn fetch-openplanner-session-rows!
   [config session-id]
   (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" (js/encodeURIComponent (str session-id))
-                                               "?project=" (js/encodeURIComponent (:session-project-name config))))
+                                               "?project=" (js/encodeURIComponent (:session-project-name config))
+                                               "&mode=full"))
       (.then (fn [body]
                (vec (or (:rows body) []))))))
 

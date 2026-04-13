@@ -138,20 +138,102 @@ export function memoryRowRunId(row: MemorySessionRow): string | null {
   return typeof candidate === "string" ? candidate : null;
 }
 
+function parseMemoryRowTraceBlocks(row: MemorySessionRow): ChatMessage["traceBlocks"] {
+  const extra = parseMemoryRowExtra(row);
+  const raw = extra?.trace_blocks ?? extra?.traceBlocks;
+  if (!Array.isArray(raw)) return undefined;
+  const blocks = raw.flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const block = item as Record<string, unknown>;
+    const kind = typeof block.kind === "string" ? block.kind : null;
+    if (kind !== "agent_message" && kind !== "reasoning" && kind !== "tool_call") return [];
+    return [{
+      id: typeof block.id === "string" && block.id ? block.id : `${kind}:${index}`,
+      kind,
+      status: typeof block.status === "string" ? block.status : undefined,
+      at: typeof block.at === "string" ? block.at : undefined,
+      content: typeof block.content === "string" ? block.content : undefined,
+      toolName: typeof block.toolName === "string" ? block.toolName : undefined,
+      toolCallId: typeof block.toolCallId === "string" ? block.toolCallId : undefined,
+      inputPreview: typeof block.inputPreview === "string" ? block.inputPreview : undefined,
+      outputPreview: typeof block.outputPreview === "string" ? block.outputPreview : undefined,
+      updates: Array.isArray(block.updates) ? block.updates.filter((value): value is string => typeof value === "string") : undefined,
+      isError: typeof block.isError === "boolean" ? block.isError : undefined,
+    } satisfies NonNullable<ChatMessage["traceBlocks"]>[number]];
+  });
+  return blocks.length > 0 ? blocks : undefined;
+}
+
+function fallbackTraceBlocksByRunId(rows: MemorySessionRow[]): Map<string, NonNullable<ChatMessage["traceBlocks"]>> {
+  const byRun = new Map<string, NonNullable<ChatMessage["traceBlocks"]>>();
+
+  const append = (runId: string, block: NonNullable<ChatMessage["traceBlocks"]>[number]) => {
+    const existing = byRun.get(runId) ?? [];
+    existing.push(block);
+    byRun.set(runId, existing);
+  };
+
+  rows.forEach((row, index) => {
+    const runId = memoryRowRunId(row);
+    if (!runId) return;
+
+    if (row.kind === "knoxx.reasoning" && typeof row.text === "string" && row.text.trim()) {
+      append(runId, {
+        id: row.id || `reasoning:${index}`,
+        kind: "reasoning",
+        status: "done",
+        at: typeof row.ts === "string" ? row.ts : undefined,
+        content: row.text,
+      });
+      return;
+    }
+
+    if (row.kind === "knoxx.tool_receipt") {
+      const extra = parseMemoryRowExtra(row);
+      const receipt = extra?.receipt;
+      const receiptRecord = receipt && typeof receipt === "object" && !Array.isArray(receipt)
+        ? receipt as Record<string, unknown>
+        : null;
+      append(runId, {
+        id: (typeof receiptRecord?.id === "string" && receiptRecord.id) || row.id || `tool:${index}`,
+        kind: "tool_call",
+        status: typeof receiptRecord?.status === "string"
+          ? (receiptRecord.status === "completed" ? "done" : receiptRecord.status === "failed" ? "error" : "streaming")
+          : "done",
+        at: typeof row.ts === "string" ? row.ts : undefined,
+        toolName: typeof receiptRecord?.tool_name === "string" ? receiptRecord.tool_name : undefined,
+        toolCallId: typeof receiptRecord?.id === "string" ? receiptRecord.id : undefined,
+        inputPreview: typeof receiptRecord?.input_preview === "string" ? receiptRecord.input_preview : undefined,
+        outputPreview: typeof receiptRecord?.result_preview === "string" ? receiptRecord.result_preview : typeof row.text === "string" ? row.text : undefined,
+        updates: Array.isArray(receiptRecord?.updates) ? receiptRecord.updates.filter((value): value is string => typeof value === "string") : undefined,
+        isError: typeof receiptRecord?.is_error === "boolean" ? receiptRecord.is_error : undefined,
+      });
+    }
+  });
+
+  return byRun;
+}
+
 export function memoryRowsToMessages(rows: MemorySessionRow[]): ChatMessage[] {
+  const derivedTraceBlocks = fallbackTraceBlocksByRunId(rows);
   return rows.flatMap((row, index) => {
     const text = typeof row.text === "string" ? row.text : "";
     if (row.kind !== "knoxx.message" || !isChatRole(row.role) || text.trim().length === 0) {
       return [];
     }
 
+    const runId = memoryRowRunId(row);
+
     return [{
       id: row.id || `${row.session ?? "memory"}:${index}`,
       role: row.role,
       content: text,
       model: typeof row.model === "string" ? row.model : null,
-      runId: memoryRowRunId(row),
+      runId,
       status: row.role === "assistant" || row.role === "system" ? "done" : undefined,
+      traceBlocks: row.role === "assistant"
+        ? (parseMemoryRowTraceBlocks(row) ?? (runId ? derivedTraceBlocks.get(runId) : undefined))
+        : undefined,
     } satisfies ChatMessage];
   });
 }

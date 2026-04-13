@@ -18,6 +18,71 @@ function asMarkdownPreview(value: string): string {
   return value;
 }
 
+function tryParseJson(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function summarizeStructuredValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.trim() ? value : null;
+  }
+  if (Array.isArray(value)) {
+    const lines = value
+      .map((item) => summarizeStructuredValue(item))
+      .filter((item): item is string => Boolean(item))
+      .slice(0, 8);
+    return lines.length > 0 ? lines.map((line) => `- ${line}`).join("\n") : null;
+  }
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const preferredKeys = [
+    "content",
+    "text",
+    "answer",
+    "message",
+    "result",
+    "output",
+    "preview",
+    "summary",
+    "translated_text",
+    "corrected_text",
+    "snippet",
+  ];
+  for (const key of preferredKeys) {
+    const summarized = summarizeStructuredValue(record[key]);
+    if (summarized) return summarized;
+  }
+  for (const key of ["rows", "hits", "results", "sources", "items", "documents"]) {
+    const summarized = summarizeStructuredValue(record[key]);
+    if (summarized) return summarized;
+  }
+  return null;
+}
+
+function toolResultMarkdown(value: string): string {
+  const parsed = tryParseJson(value);
+  const summarized = parsed ? summarizeStructuredValue(parsed) : null;
+  return asMarkdownPreview(summarized ?? value);
+}
+
+function toolInputSummary(value: string): string | null {
+  const parsed = tryParseJson(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return value.trim() && !value.trim().startsWith("{") ? value : null;
+  }
+  const record = parsed as Record<string, unknown>;
+  const parts = [record.query, record.q, record.path, record.url, record.document_id]
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .slice(0, 2);
+  return parts.length > 0 ? parts.join(" • ") : null;
+}
+
 export interface ToolReceiptBlockProps {
   receipt: ToolReceipt;
   isLive?: boolean;
@@ -29,6 +94,11 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
   const isRunning = status === "running";
   const isError = receipt.is_error || status === "failed";
   const toolName = receipt.tool_name ?? receipt.id ?? "tool";
+  const inputSummary = receipt.input_preview ? toolInputSummary(receipt.input_preview) : null;
+  const resultMarkdown = receipt.result_preview ? toolResultMarkdown(truncateText(receipt.result_preview, 2400)) : "";
+  const liveUpdateMarkdown = !resultMarkdown && receipt.updates && receipt.updates.length > 0
+    ? toolResultMarkdown(receipt.updates[receipt.updates.length - 1])
+    : "";
 
   const statusVariant = isRunning ? "warning" : isError ? "error" : "success";
   const statusLabel = isRunning ? "running" : isError ? "failed" : "completed";
@@ -57,7 +127,7 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--token-colors-text-default)" }}>
-          Tool: {toolName}
+          {toolName}
         </div>
         <Badge size="sm" variant={statusVariant}>
           {isLive && isRunning ? "streaming..." : statusLabel}
@@ -75,50 +145,35 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
         )}
       </div>
 
-      {receipt.input_preview && (
-        <details open={defaultExpanded || isRunning} style={{ marginBottom: 8 }}>
-          <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)", marginBottom: 6 }}>
-            Input
-          </summary>
-          <div style={{ fontSize: 11, color: "var(--token-colors-text-subtle)", maxHeight: 200, overflow: "auto" }}>
-            <Markdown
-              content={asMarkdownPreview(truncateText(receipt.input_preview, 500))}
-              theme="dark"
-              variant="compact"
-              lineNumbers={false}
-              copyButton={false}
-            />
-          </div>
-        </details>
-      )}
-
-      {receipt.result_preview && !isRunning && (
-        <details open={defaultExpanded} style={{ marginBottom: 8 }}>
-          <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)", marginBottom: 6 }}>
-            Output
-          </summary>
-          <div style={{ fontSize: 11, color: "var(--token-colors-text-subtle)", maxHeight: 300, overflow: "auto" }}>
-            <Markdown
-              content={asMarkdownPreview(truncateText(receipt.result_preview, 800))}
-              theme="dark"
-              variant="compact"
-              lineNumbers={false}
-              copyButton={false}
-            />
-          </div>
-        </details>
-      )}
-
-      {receipt.updates && receipt.updates.length > 0 && (
-        <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", marginTop: 8 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Live updates:</div>
-          {receipt.updates.slice(-3).map((update, idx) => (
-            <div key={idx} style={{ opacity: 0.7, marginBottom: 2 }}>
-              {truncateText(update, 120)}
-            </div>
-          ))}
+      {inputSummary ? (
+        <div style={{ marginBottom: 8, fontSize: 11, color: "var(--token-colors-text-muted)" }}>
+          {inputSummary}
         </div>
-      )}
+      ) : null}
+
+      {resultMarkdown ? (
+        <div style={{ fontSize: 12, color: "var(--token-colors-text-default)", maxHeight: 320, overflow: "auto" }}>
+          <Markdown
+            content={resultMarkdown}
+            theme="dark"
+            variant="compact"
+            lineNumbers={false}
+            copyButton={false}
+          />
+        </div>
+      ) : null}
+
+      {!resultMarkdown && liveUpdateMarkdown ? (
+        <div style={{ fontSize: 12, color: "var(--token-colors-text-default)", marginTop: 8, maxHeight: 220, overflow: "auto" }}>
+          <Markdown
+            content={liveUpdateMarkdown}
+            theme="dark"
+            variant="compact"
+            lineNumbers={false}
+            copyButton={false}
+          />
+        </div>
+      ) : null}
     </Card>
   );
 }

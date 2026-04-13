@@ -43,8 +43,21 @@ export function ChatMessageList({
 }: ChatMessageListProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
-      {messages.map((message) => (
-        <Card
+      {messages.map((message) => {
+        const rawTraceBlocks = message.traceBlocks ?? [];
+        const visibleTraceBlocks = message.role === "assistant"
+          && message.status === "done"
+          && rawTraceBlocks.length > 0
+          && rawTraceBlocks[rawTraceBlocks.length - 1]?.kind === "agent_message"
+          && (rawTraceBlocks[rawTraceBlocks.length - 1]?.content ?? "").trim() === (message.content ?? "").trim()
+          ? rawTraceBlocks.slice(0, -1)
+          : rawTraceBlocks;
+        const showAssistantFinalCard = message.role === "assistant"
+          && message.status === "done"
+          && rawTraceBlocks.length > 0
+          && Boolean(message.content?.trim());
+
+        return <Card
           key={message.id}
           variant="outlined"
           padding="sm"
@@ -85,13 +98,13 @@ export function ChatMessageList({
               <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
             ) : null}
           </div>
-          {message.role === "assistant" && (message.traceBlocks?.length ?? 0) > 0 ? (
-            <AgentTraceTimeline blocks={message.traceBlocks ?? []} />
+          {message.role === "assistant" && visibleTraceBlocks.length > 0 ? (
+            <AgentTraceTimeline blocks={visibleTraceBlocks} />
           ) : null}
-          {message.role === "assistant" && (message.traceBlocks?.length ?? 0) === 0 && message.status === "streaming" && liveToolReceipts.length > 0 && (
+          {message.role === "assistant" && visibleTraceBlocks.length === 0 && message.status === "streaming" && liveToolReceipts.length > 0 && (
             <ToolReceiptGroup receipts={liveToolReceipts} liveEvents={liveToolEvents} defaultExpanded={false} />
           )}
-          {message.role === "assistant" && (message.traceBlocks?.length ?? 0) === 0 && message.status === "done" && message.runId && latestRun?.run_id === message.runId && latestToolReceipts.length > 0 && (
+          {message.role === "assistant" && visibleTraceBlocks.length === 0 && message.status === "done" && message.runId && latestRun?.run_id === message.runId && latestToolReceipts.length > 0 && (
             <details style={{ marginTop: 8, marginBottom: 8 }} open={false}>
               <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)" }}>
                 Tool calls ({latestToolReceipts.length})
@@ -99,7 +112,19 @@ export function ChatMessageList({
               <ToolReceiptGroup receipts={latestToolReceipts} defaultExpanded={false} />
             </details>
           )}
-          {message.role === "assistant" && (message.traceBlocks?.length ?? 0) > 0 ? null : message.role === "assistant" || message.role === "system" ? (
+          {showAssistantFinalCard ? (
+            <div
+              style={{
+                border: "1px solid var(--token-colors-border-strong, var(--token-colors-border-default))",
+                background: "var(--token-colors-background-canvas)",
+                borderRadius: 10,
+                padding: 12,
+                marginTop: 4,
+              }}
+            >
+              <Markdown content={message.content || ""} theme="dark" variant="full" />
+            </div>
+          ) : message.role === "assistant" || message.role === "system" ? (
             <Markdown content={message.content || ""} theme="dark" variant="full" />
           ) : (
             <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{message.content}</div>
@@ -156,8 +181,8 @@ export function ChatMessageList({
               </div>
             </details>
           ) : null}
-        </Card>
-      ))}
+        </Card>;
+      })}
     </div>
   );
 }
