@@ -1,11 +1,11 @@
 (ns knoxx.backend.memory-routes
   (:require [clojure.string :as str]
+            [knoxx.backend.app-shapes :refer [route!]]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-store :as session-store]))
 
 (defn register-memory-routes!
-  [app runtime config {:keys [route!
-                              json-response!
+  [app runtime config {:keys [json-response!
                               error-response!
                               with-request-context!
                               ensure-permission!
@@ -35,9 +35,7 @@
   (route! app "GET" "/api/memory/sessions"
           (fn [request reply]
             (if-not (openplanner-enabled? config)
-              (do
-                (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-                reply)
+              (json-response! reply 503 {:detail "OpenPlanner is not configured"})
               (with-request-context! runtime request reply
                 (fn [ctx]
                   (ensure-permission! ctx "agent.memory.cross_session")
@@ -46,76 +44,83 @@
                         session-promise (openplanner-request! config "GET"
                                                               (str "/v1/sessions?project="
                                                                    (js/encodeURIComponent (:session-project-name config))))]
-                    (.then session-promise
-                           (fn [body]
-                             (.then (authorized-session-ids! config ctx (map :session (or (:rows body) [])))
-                                    (fn [allowed]
-                                      (let [rows (->> (or (:rows body) [])
-                                                      (filter #(contains? allowed (str (:session %))))
-                                                      (take (max 1 limit))
-                                                      vec)
-                                            redis-client (redis/get-client)
-                                            inactive-row (fn [row]
-                                                           (assoc row
-                                                                  :is_active false
-                                                                  :active_status "inactive"
-                                                                  :has_active_stream false))
-                                            warm-title-cache! (fn [session-id]
-                                                                (when-not (contains? @session-titles* session-id)
-                                                                  (.then (fetch-openplanner-session-rows! config session-id)
-                                                                         (fn [title-rows]
-                                                                           (let [seed-text (session-title-seed-text title-rows)
-                                                                                 fallback-title (heuristic-session-title seed-text)]
-                                                                             (.then (resolve-session-title! config seed-text)
-                                                                                    (fn [entry]
-                                                                                      (cache-session-title! runtime config session-id
-                                                                                                            (or (normalize-session-title (:title entry) fallback-title)
-                                                                                                                fallback-title)
-                                                                                                            (:title_model entry)))
-                                                                                    (fn [_]
-                                                                                      (cache-session-title! runtime config session-id fallback-title nil)))))
-                                                                         (fn [_]
-                                                                           (cache-session-title! runtime config session-id "Untitled session" nil)))))
-                                            enrich-row (fn [row]
-                                                         (let [session-id (str (:session row))
-                                                               titled-row (if-let [title-entry (get @session-titles* session-id)]
-                                                                            (assoc row
-                                                                                   :title (:title title-entry)
-                                                                                   :title_model (:title_model title-entry))
-                                                                            row)]
-                                                           (if-not redis-client
-                                                             (js/Promise.resolve (inactive-row titled-row))
-                                                             (.then (session-store/get-conversation-active-session redis-client session-id)
-                                                                    (fn [active-session-id]
-                                                                      (if (str/blank? (str active-session-id))
-                                                                        (inactive-row titled-row)
-                                                                        (.then (session-store/get-session redis-client active-session-id)
-                                                                               (fn [active-session]
-                                                                                 (let [status (or (:status active-session) "inactive")
-                                                                                       is-active (contains? #{"running" "waiting_input"} status)]
-                                                                                   (assoc titled-row
-                                                                                          :active_session_id active-session-id
-                                                                                          :is_active is-active
-                                                                                          :active_status status
-                                                                                          :has_active_stream (boolean (:has_active_stream active-session)))))
-                                                                               (fn [_]
-                                                                                 (inactive-row titled-row)))))
-                                                                    (fn [_]
-                                                                      (inactive-row titled-row))))))
-                                            enrich-promises (mapv enrich-row rows)]
-                                        (doseq [row rows]
-                                          (warm-title-cache! (str (:session row))))
-                                        (.then (.all js/Promise (clj->js enrich-promises))
-                                               (fn [enriched-rows]
-                                                 (json-response! reply 200 {:ok true
-                                                                            :rows (vec (js->clj enriched-rows :keywordize-keys true))}))
-                                               (fn [err]
-                                                 (error-response! reply err 502))))
-                                    (fn [err]
-                                      (error-response! reply err 502))))
-                           (fn [err]
-                             (error-response! reply err 502)))
-                    reply))))))
+                    (-> session-promise
+                        (.then (fn [body]
+                                 (-> (authorized-session-ids! config ctx (map :session (or (:rows body) [])))
+                                     (.then (fn [allowed]
+                                              (let [all-rows (->> (or (:rows body) [])
+                                                                  (filter #(contains? allowed (str (:session %))))
+                                                                  vec)
+                                                    rows (->> all-rows
+                                                              (take (max 1 limit))
+                                                              vec)
+                                                    redis-client (redis/get-client)
+                                                    inactive-row (fn [row]
+                                                                   (assoc row
+                                                                          :is_active false
+                                                                          :active_status "inactive"
+                                                                          :has_active_stream false))
+                                                    warm-title-cache! (fn [session-id]
+                                                                        (when-not (contains? @session-titles* session-id)
+                                                                          (-> (fetch-openplanner-session-rows! config session-id)
+                                                                              (.then (fn [title-rows]
+                                                                                       (let [seed-text (session-title-seed-text title-rows)
+                                                                                             fallback-title (heuristic-session-title seed-text)]
+                                                                                         (-> (resolve-session-title! config seed-text)
+                                                                                             (.then (fn [entry]
+                                                                                                      (cache-session-title! runtime config session-id
+                                                                                                                            (or (normalize-session-title (:title entry) fallback-title)
+                                                                                                                                fallback-title)
+                                                                                                                            (:title_model entry))))
+                                                                                             (.catch (fn [_]
+                                                                                                       (cache-session-title! runtime config session-id fallback-title nil)))))))
+                                                                              (.catch (fn [_]
+                                                                                        (cache-session-title! runtime config session-id "Untitled session" nil))))))
+                                                    enrich-row (fn [row]
+                                                                 (let [session-id (str (:session row))
+                                                                       titled-row (if-let [title-entry (get @session-titles* session-id)]
+                                                                                    (assoc row
+                                                                                           :title (:title title-entry)
+                                                                                           :title_model (:title_model title-entry))
+                                                                                    row)]
+                                                                   (if-not redis-client
+                                                                     (js/Promise.resolve (inactive-row titled-row))
+                                                                     (-> (session-store/get-conversation-active-session redis-client session-id)
+                                                                         (.then (fn [active-session-id]
+                                                                                  (if (str/blank? (str active-session-id))
+                                                                                    (inactive-row titled-row)
+                                                                                    (-> (session-store/get-session redis-client active-session-id)
+                                                                                        (.then (fn [active-session]
+                                                                                                 (let [status (or (:status active-session) "inactive")
+                                                                                                       is-active (contains? #{"running" "waiting_input"} status)]
+                                                                                                   (assoc titled-row
+                                                                                                          :active_session_id active-session-id
+                                                                                                          :is_active is-active
+                                                                                                          :active_status status
+                                                                                                          :has_active_stream (boolean (:has_active_stream active-session))))))
+                                                                                        (.catch (fn [_]
+                                                                                                  (inactive-row titled-row)))))))
+                                                                         (.catch (fn [_]
+                                                                                   (inactive-row titled-row)))))))
+                                                    enrich-promises (mapv enrich-row rows)]
+                                                (doseq [row rows]
+                                                  (warm-title-cache! (str (:session row))))
+                                                (-> (.all js/Promise (clj->js enrich-promises))
+                                                    (.then (fn [enriched-rows]
+                                                             (json-response! reply 200 {:ok true
+                                                                                        :rows (vec (js->clj enriched-rows :keywordize-keys true))
+                                                                                        :total (count all-rows)
+                                                                                        :has_more (> (count all-rows) (count rows))})
+                                                             nil))
+                                                    (.catch (fn [err]
+                                                              (error-response! reply err 502)
+                                                              nil))))))
+                                     (.catch (fn [err]
+                                               (error-response! reply err 502)
+                                               nil)))))
+                        (.catch (fn [err]
+                                  (error-response! reply err 502)
+                                  nil))))))))
 
   (route! app "GET" "/api/memory/session-titles/status"
           (fn [request reply]
