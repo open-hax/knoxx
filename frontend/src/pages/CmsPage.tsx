@@ -159,10 +159,10 @@ function CmsPage() {
         const resp = await fetch("/api/openplanner/v1/gardens");
         if (!resp.ok) return;
         const body = (await resp.json()) as { gardens?: GardenSummary[] };
-        const activeGardens = (body.gardens ?? []).filter((garden) => garden.status === "active");
-        setGardens(activeGardens);
-        if (!selectedGardenId && activeGardens.length > 0) {
-          setSelectedGardenId(activeGardens[0].garden_id);
+        const publishableGardens = (body.gardens ?? []).filter((garden) => garden.status !== "archived");
+        setGardens(publishableGardens);
+        if (!selectedGardenId && publishableGardens.length > 0) {
+          setSelectedGardenId(publishableGardens[0].garden_id);
         }
       } catch {
         setGardens([]);
@@ -677,7 +677,7 @@ function CmsPage() {
               <option value="">Select garden…</option>
               {gardens.map((garden) => (
                 <option key={garden.garden_id} value={garden.garden_id}>
-                  {garden.title || garden.garden_id}
+                  {garden.title || garden.garden_id}{garden.status !== "active" ? ` (${garden.status})` : ""}
                 </option>
               ))}
             </select>

@@ -161,6 +161,35 @@
     (str "Active corpus: " (:name database) "\n"
          "Query: " query "\n\nNo strong semantic matches found.")))
 
+(defn openplanner-semantic-search-text
+  [result]
+  (let [query (:query result)
+        mode (:mode result)
+        hits (seq (:hits result))]
+    (if hits
+      (str "OpenPlanner semantic search for: " query
+           "\nMode: " (name mode)
+           "\n\n"
+           (str/join
+            "\n\n"
+            (map-indexed
+             (fn [idx hit]
+               (let [metadata (or (:metadata hit) {})
+                     doc (or (:document hit) "")
+                     source-path (or (:sourcePath metadata) (:path metadata) "")
+                     distance (:distance hit)
+                     kind (or (:kind metadata) (:kind hit) "")]
+                 (str (inc idx) ". [" (or kind "doc") "]"
+                      (when (number? distance)
+                        (str " distance=" (.toFixed (js/Number. distance) 3)))
+                      (when-not (str/blank? source-path)
+                        (str "\n   path: " source-path))
+                      (when-let [title (:title metadata)]
+                        (str "\n   title: " title))
+                      "\n   " (or (value->preview-text doc 320) ""))))
+             hits)))
+      (str "OpenPlanner semantic search for: " query "\nNo indexed documents matched."))))
+
 (defn semantic-read-result-text
   [{:keys [database path content truncated]}]
   (str "Active corpus: " (:name database) "\n"

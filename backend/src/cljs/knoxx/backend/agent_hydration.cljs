@@ -4,9 +4,9 @@
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
             [knoxx.backend.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? http-error js-array-seq]]
-            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query!]]
+            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-semantic-search!]]
             [knoxx.backend.runtime-config :refer [default-settings]]
-            [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-session-text graph-query-result-text]]))
+            [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-semantic-search-text openplanner-session-text graph-query-result-text]]))
 
 (defonce settings-state* (atom nil))
 
@@ -208,12 +208,18 @@
                                                    query (or (aget params "query") "")
                                                    top-k (aget params "topK")
                                                    max-snippet-chars (aget params "maxSnippetChars")]
-                                               (maybe-tool-update! on-update "Searching active Knoxx corpus…")
-                                               (-> (semantic-search-documents! runtime config {:query query
-                                                                                              :top-k top-k
-                                                                                              :max-snippet-chars max-snippet-chars} auth-context)
-                                                   (.then (fn [result]
-                                                            (tool-text-result (semantic-search-result-text result) result))))))}
+                                               (maybe-tool-update! on-update "Searching corpus via OpenPlanner…")
+                                               (if (openplanner-enabled? config)
+                                                 (-> (openplanner-semantic-search! config {:query query
+                                                                                           :k (or top-k 5)})
+                                                     (.then (fn [result]
+                                                              (tool-text-result (openplanner-semantic-search-text result) result))))
+                                                 (-> (semantic-search-documents! runtime config {:query query
+                                                                                                :top-k top-k
+                                                                                                :max-snippet-chars max-snippet-chars} auth-context)
+                                                     (.then (fn [result]
+                                                              (tool-text-result (semantic-search-result-text result) result)))))))}
+
          semantic-read-tool #js {:name "semantic_read"
                                  :label "Semantic Read"
                                  :description "Read the full text of a specific document from the active Knoxx corpus by relative path."

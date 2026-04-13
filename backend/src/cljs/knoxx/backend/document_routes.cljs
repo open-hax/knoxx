@@ -1,7 +1,7 @@
 (ns knoxx.backend.document-routes
   (:require [clojure.string :as str]
             [knoxx.backend.authz :as authz]
-            [knoxx.backend.document-state :refer [database-state* js-array-seq request-session-id database-docs-dir database-owner-key default-database-id default-database-record ensure-database-state! ensure-dir! profile-can-access? effective-active-database-id active-database-profile normalize-relative-path sanitize-upload-name create-db-id list-documents! active-record start-document-ingestion!]]
+            [knoxx.backend.document-state :refer [database-state* js-array-seq request-session-id database-docs-dir database-owner-key default-database-id default-database-record ensure-database-state! ensure-dir! profile-can-access? effective-active-database-id active-database-profile normalize-relative-path sanitize-upload-name create-db-id list-documents! active-record start-document-ingestion! priority-ingest-workspace-files!]]
             [knoxx.backend.runtime-config :as rc]))
 
 (defn register-document-routes!
@@ -116,6 +116,22 @@
                                (json-response! reply 200 resp)))
                       (.catch (fn [err]
                                 (json-response! reply 500 {:detail (str "Ingestion failed to start: " err)})))))))))
+
+  (route! app "POST" "/api/documents/ingest/priority"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "datalake.ingest"))
+                (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+                      paths (vec (or (:paths body) (:files body) []))
+                      project (:project body)]
+                  (if (empty? paths)
+                    (json-response! reply 400 {:detail "paths (array of workspace-relative file paths) is required"})
+                    (-> (priority-ingest-workspace-files! runtime config {:paths paths :project project})
+                        (.then (fn [resp]
+                                 (json-response! reply 200 resp)))
+                        (.catch (fn [err]
+                                  (json-response! reply 500 {:detail (str "Priority ingestion failed: " err)}))))))))))
 
   (route! app "POST" "/api/documents/ingest/restart"
           (fn [request reply]

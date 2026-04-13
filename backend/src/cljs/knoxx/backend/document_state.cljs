@@ -405,4 +405,110 @@
                                   :failedCount failed-count
                                   :openplanner true})))))))))))))))
 
+(defn text-like-path?
+  "Check if a file extension is a text-like format suitable for ingestion."
+  [path-str]
+  (let [lower (str/lower-case (str path-str))
+        idx (.lastIndexOf lower ".")]
+    (if (= idx -1)
+      true
+      (contains? #{".md" ".mdx" ".txt" ".json" ".org" ".html" ".htm" ".csv" ".edn"
+                    ".clj" ".cljs" ".cljc" ".ts" ".tsx" ".js" ".jsx" ".mjs" ".cjs"
+                    ".yaml" ".yml" ".xml" ".log" ".sql" ".py" ".rs" ".go" ".java"
+                    ".rb" ".php" ".toml" ".ini" ".env" ".conf" ".sh" ".bash" ".zsh"
+                    ".css" ".scss" ".less" ".graphql" ".gql" ".proto" ".tf" ".hcl"}
+                  (.slice lower idx)))))
+
+(defn priority-ingest-workspace-files!
+  "Immediately ingest specific workspace files into OpenPlanner, bypassing queues.
+   Takes workspace-relative paths, reads them from disk, and sends to /v1/documents.
+   Returns {:ok true, :indexed N, :failed M, :files [...]} summary."
+  [runtime config {:keys [paths project source]}]
+  (let [node-fs (aget runtime "fs")
+        node-path (aget runtime "path")
+        workspace-root (:workspace-root config)
+        project (or project (:project-name config) "devel")
+        source (or source "knoxx-priority-ingest")]
+    (-> (js/Promise.all
+         (clj->js
+          (map (fn [rel-path]
+                 (let [abs-path (.resolve node-path workspace-root rel-path)]
+                   (-> (.stat node-fs abs-path)
+                       (.then (fn [stat]
+                                (if (and (.isFile stat) (text-like-path? abs-path))
+                                  (-> (.readFile node-fs abs-path "utf8")
+                                      (.then (fn [content]
+                                               {:rel rel-path
+                                                :abs abs-path
+                                                :content content
+                                                :size (or (.-size stat) 0)
+                                                :error false}))
+                                      (.catch (fn [err]
+                                                {:rel rel-path
+                                                 :abs abs-path
+                                                 :content nil
+                                                 :size 0
+                                                 :error true
+                                                 :detail (str err)})))
+                                  {:rel rel-path
+                                   :abs abs-path
+                                   :content nil
+                                   :size (or (.-size stat) 0)
+                                   :error true
+                                   :detail "binary or unsupported file type"})))
+                       (.catch (fn [err]
+                                 {:rel rel-path
+                                  :abs abs-path
+                                  :content nil
+                                  :size 0
+                                  :error true
+                                  :detail (str err)})))))
+               paths)))
+        (.then (fn [read-results]
+                 (let [items (vec (js-array-seq read-results))
+                       valid (vec (remove :error items))
+                       failed-reads (vec (filter :error items))
+                       docs (mapv (fn [item]
+                                    (let [ext (some-> (str/lower-case (:rel item))
+                                                       (str/split #"\.")
+                                                       last)
+                                          kind (cond
+                                                 (contains? #{"ts" "tsx" "js" "jsx" "mjs" "cjs" "py" "clj" "cljs" "cljc" "rs" "go" "java" "rb" "php"} ext) "code"
+                                                 (contains? #{"md" "mdx" "txt" "rst" "adoc" ".org"} ext) "docs"
+                                                 (contains? #{"json" "yaml" "yml" "toml" "ini" "env" "conf"} ext) "config"
+                                                 :else "docs")]
+                                      {:id (str "knoxx-priority:" (:rel item))
+                                       :rel-path (:rel item)
+                                       :content (:content item)
+                                       :project project
+                                       :kind kind
+                                       :visibility "internal"
+                                       :source source
+                                       :source-path (:rel item)
+                                       :extra {:priority-ingest true
+                                               :size (:size item)}}))
+                                  valid)]
+                   (if (seq docs)
+                     (-> (op-memory/batch-upsert-openplanner-documents!
+                          config docs {:concurrency 5
+                                      :project project
+                                      :visibility "internal"
+                                      :extra {:source source}})
+                         (.then (fn [index-result]
+                                  {:ok true
+                                   :indexed (count (:indexed index-result))
+                                   :failed (+ (count failed-reads) (:failed-count index-result 0))
+                                   :total (count paths)
+                                   :files (concat (map :rel (:indexed index-result))
+                                                   (map (fn [f] (str (:rel f) " (read error: " (:detail f) ")")) failed-reads)
+                                                   (map (fn [f] (str (:rel-path f) " (index error)")) (:failed index-result)))
+                                   :source source})))
+                     (js/Promise.resolve
+                      {:ok true
+                       :indexed 0
+                       :failed (count failed-reads)
+                       :total (count paths)
+                       :files (map (fn [f] (str (:rel f) " (" (:detail f) ")")) failed-reads)
+                       :source source}))))))))
+
 ;; Route registration

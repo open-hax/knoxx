@@ -259,6 +259,33 @@
        lakes (assoc :lakes lakes)
        edge-limit (assoc :maxCost (/ 1.0 (max 0.01 (or edge-limit 16))))))))
 
+(defn openplanner-semantic-search!
+  "Search OpenPlanner's indexed document corpus via vector similarity.
+   Returns {:query, :mode, :hits} where each hit has :id, :document, :metadata, :distance.
+   Falls back to FTS if vector search fails."
+  [config {:keys [query k project source kind visibility]}]
+  (let [query (str/trim (or query ""))
+        k (max 1 (min 20 (or k 10)))]
+    (if (str/blank? query)
+      (js/Promise.resolve {:query "" :hits [] :mode :none})
+      (-> (backend-http/openplanner-request! config "POST" "/v1/search/vector"
+                                             (cond-> {:q query :k k :project (or project (:project-name config) "devel")}
+                                               source (assoc :source source)
+                                               kind (assoc :kind kind)
+                                               visibility (assoc :visibility visibility)))
+          (.then (fn [body]
+                   {:query query
+                    :mode :vector
+                    :hits (vector-result-hits (:result body))}))
+          (.catch (fn [_]
+                    (-> (backend-http/openplanner-request! config "POST" "/v1/search/fts"
+                                                           (cond-> {:q query :limit k :project (or project (:project-name config) "devel")}
+                                                             source (assoc :source source)))
+                        (.then (fn [body]
+                                 {:query query
+                                  :mode :fts
+                                  :hits (vec (or (:rows body) []))})))))))))
+
 (defn openplanner-graph-export!
   [config request]
   (backend-http/openplanner-request! config "GET" (str "/v1/graph/export" (backend-http/request-query-string request))))

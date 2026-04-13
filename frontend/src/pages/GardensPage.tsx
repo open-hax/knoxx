@@ -189,28 +189,42 @@ export default function GardensPage() {
     setNotice(null);
 
     try {
-      const body = {
-        title: formTitle,
-        description: formDescription,
-        theme: formTheme,
-        domain: formDomain,
-        status: formStatus,
-        target_languages: formTargetLanguages,
-        auto_translate: formAutoTranslate,
-      };
+      const url = editingGarden
+        ? `/api/openplanner/v1/gardens/${encodeURIComponent(formGardenId)}`
+        : `/api/openplanner/v1/gardens`;
+      const method = editingGarden ? 'PATCH' : 'POST';
+      const body: Record<string, unknown> = editingGarden
+        ? {
+            title: formTitle,
+            description: formDescription,
+            theme: formTheme,
+            domain: formDomain,
+            status: formStatus,
+            target_languages: formTargetLanguages,
+            auto_translate: formAutoTranslate,
+          }
+        : {
+            garden_id: formGardenId.trim(),
+            title: formTitle,
+            description: formDescription,
+            theme: formTheme,
+            domain: formDomain,
+            target_languages: formTargetLanguages,
+            auto_translate: formAutoTranslate,
+          };
 
-      const resp = await fetch(`/api/openplanner/v1/gardens/${encodeURIComponent(formGardenId)}`, {
-        method: 'PATCH',
+      const resp = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
 
       if (!resp.ok) {
         const text = await resp.text();
-        throw new Error(text || `Failed to save garden: ${resp.status}`);
+        throw new Error(text || `Failed to ${editingGarden ? 'update' : 'create'} garden: ${resp.status}`);
       }
 
-      setNotice(`Garden "${formTitle}" saved successfully`);
+      setNotice(`Garden "${formTitle}" ${editingGarden ? 'updated' : 'created'} successfully`);
       resetForm();
       await loadGardens();
     } catch (err) {
@@ -348,7 +362,7 @@ export default function GardensPage() {
                 className="w-full rounded-lg border border-slate-300 p-2 text-sm dark:border-slate-600 dark:bg-slate-800"
               >
                 <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
+                <option value="draft">Draft</option>
               </select>
             </div>
 
