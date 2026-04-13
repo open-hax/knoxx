@@ -130,31 +130,88 @@ function SegmentAnnotation({
   const statusIcon: Record<string, string> = {
     approved: "✅", rejected: "❌", in_review: "📝", pending: "⏳",
   };
+
+  const borderColor = isSelected
+    ? "var(--token-colors-border-focus, #3b82f6)"
+    : segment.status === "approved"
+      ? "var(--token-colors-border-success, #10b981)"
+      : segment.status === "rejected"
+        ? "var(--token-colors-border-danger, #ef4444)"
+        : "var(--token-colors-border-warning, #f59e0b)";
+
+  const bgColor = isSelected
+    ? "var(--token-colors-alpha-blue-_10, rgba(59, 130, 246, 0.1))"
+    : segment.status === "approved"
+      ? "var(--token-colors-alpha-green-_05, rgba(16, 185, 129, 0.05))"
+      : segment.status === "rejected"
+        ? "var(--token-colors-alpha-red-_05, rgba(239, 68, 68, 0.05))"
+        : "var(--token-colors-alpha-orange-_05, rgba(245, 158, 11, 0.05))";
+
   return (
     <div
-      className={`group relative cursor-pointer rounded-md border-l-4 px-3 py-2 transition ${
-        isSelected
-          ? "border-l-blue-500 bg-blue-50/50 dark:border-l-blue-400 dark:bg-blue-500/10"
-          : segment.status === "approved"
-            ? "border-l-emerald-400 bg-emerald-50/30 hover:bg-emerald-50/60 dark:border-l-emerald-600 dark:bg-emerald-500/5 dark:hover:bg-emerald-500/10"
-            : segment.status === "rejected"
-              ? "border-l-rose-400 bg-rose-50/30 hover:bg-rose-50/60 dark:border-l-rose-600 dark:bg-rose-500/5 dark:hover:bg-rose-500/10"
-              : "border-l-amber-400 bg-amber-50/30 hover:bg-amber-50/60 dark:border-l-amber-600 dark:bg-amber-500/5 dark:hover:bg-amber-500/10"
-      }`}
+      style={{
+        cursor: "pointer",
+        borderRadius: 6,
+        borderLeft: `4px solid ${borderColor}`,
+        background: bgColor,
+        padding: "8px 12px",
+        transition: "background 0.15s",
+      }}
       onClick={onSelect}
     >
-      <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
-        <span className="shrink-0 text-xs">{statusIcon[segment.status] ?? "⏳"}</span>
-        <span className="line-clamp-3">{segment.source_text}</span>
-      </div>
-      <div className="mt-1 flex items-center gap-2">
-        <span className="text-xs text-slate-400 dark:text-slate-500">seg {segment.segment_index}</span>
-        <span className={`text-xs ${segment.status === "approved" ? "text-emerald-600 dark:text-emerald-400" : segment.status === "rejected" ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
+      {/* Header row: segment index, status, reviews */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>
+          seg {segment.segment_index}
+        </span>
+        <span style={{ fontSize: 12 }}>{statusIcon[segment.status] ?? "⏳"}</span>
+        <span style={{
+          fontSize: 11,
+          color: segment.status === "approved"
+            ? "var(--token-colors-text-success)"
+            : segment.status === "rejected"
+              ? "var(--token-colors-text-danger)"
+              : "var(--token-colors-text-warning)",
+        }}>
           {segment.status}
         </span>
         {segment.label_count != null && segment.label_count > 0 && (
-          <span className="text-xs text-slate-400">{segment.label_count} review{segment.label_count === 1 ? "" : "s"}</span>
+          <span style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>
+            {segment.label_count} review{segment.label_count === 1 ? "" : "s"}
+          </span>
         )}
+      </div>
+
+      {/* Two-column layout: source | translation */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 500, color: "var(--token-colors-text-muted)", marginBottom: 4 }}>
+            Source ({langName(segment.source_lang)})
+          </div>
+          <div style={{
+            fontSize: 13,
+            lineHeight: 1.5,
+            color: "var(--token-colors-text-primary)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}>
+            {segment.source_text}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 500, color: "var(--token-colors-text-muted)", marginBottom: 4 }}>
+            Translation ({langName(segment.target_lang)})
+          </div>
+          <div style={{
+            fontSize: 13,
+            lineHeight: 1.5,
+            color: "var(--token-colors-text-primary)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}>
+            {segment.translated_text}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -615,7 +672,7 @@ export default function TranslationReviewPage() {
 
               {/* Segment annotations - scrollable */}
               <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
-                <div className="mx-auto max-w-2xl space-y-2">
+                <div className="space-y-2">
                   {docDetail.segments.map((seg) => (
                     <SegmentAnnotation
                       key={seg.id}
@@ -633,7 +690,7 @@ export default function TranslationReviewPage() {
         {/* Right rail: segment editor - full height, scrollable */}
         <aside
           style={{
-            width: 384,
+            width: 440,
             minWidth: 0,
             display: "flex",
             flexDirection: "column",
