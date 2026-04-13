@@ -177,41 +177,39 @@ function SegmentDetailPanel({
 }) {
   if (!segment) {
     return (
-      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/40">
-        <p className="text-sm text-slate-500 dark:text-slate-400">Click a segment annotation to review it.</p>
-      </div>
+      <p className="text-sm text-slate-500 dark:text-slate-400">Click a segment annotation to review it.</p>
     );
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/40">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">
           Segment {segment.segment_index}
-        </h3>
+        </h4>
         <StatusBadge status={segment.status} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="space-y-3">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-          <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+          <h5 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
             Source ({langName(segment.source_lang)})
-          </h4>
+          </h5>
           <pre className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-200">
             {segment.source_text}
           </pre>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-          <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+          <h5 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
             Translation ({langName(segment.target_lang)})
-          </h4>
+          </h5>
           <pre className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-200">
             {segment.translated_text}
           </pre>
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3">
         {(["adequacy", "fluency", "terminology", "risk"] as const).map((field) => (
           <label key={field} className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700 dark:text-slate-200 capitalize">{field}</span>
@@ -263,7 +261,7 @@ function SegmentDetailPanel({
       {/* Existing labels */}
       {(segment.labels?.length ?? 0) > 0 && (
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900/30">
-          <h4 className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">Previous labels</h4>
+          <h5 className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">Previous labels</h5>
           <div className="space-y-1">
             {segment.labels!.map((label) => (
               <div key={label.id} className="text-xs text-slate-500 dark:text-slate-400">
@@ -446,7 +444,9 @@ export default function TranslationReviewPage() {
         <div className="mt-2 flex gap-3">
           <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Project</span>
-            <Input value={project} onChange={(e) => setProject(e.target.value)} placeholder="devel" className="w-28" />
+            <div className="w-28">
+              <Input value={project} onChange={(e) => setProject(e.target.value)} placeholder="devel" />
+            </div>
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Target Lang</span>
@@ -476,42 +476,44 @@ export default function TranslationReviewPage() {
 
       {/* Notices */}
       {notice && (
-        <div className="shrink-0 rounded-b border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+        <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
           {notice}
           <button className="ml-2 underline" onClick={() => setNotice(null)}>dismiss</button>
         </div>
       )}
       {error && (
-        <div className="shrink-0 rounded-b border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+        <div className="shrink-0 border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
           {error}
           <button className="ml-2 underline" onClick={() => setError(null)}>dismiss</button>
         </div>
       )}
 
-      {/* Main layout: document list | document annotation */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left rail: document list */}
-        <aside className="w-80 shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50/50 p-3 dark:border-slate-700 dark:bg-slate-900/50">
-          {loading ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400">Loading documents…</p>
-          ) : documents.length === 0 ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400">No translated documents found.</p>
-          ) : (
-            <div className="space-y-2">
-              {documents.map((doc) => (
-                <DocumentCard
-                  key={`${doc.document_id}-${doc.target_lang}`}
-                  doc={doc}
-                  isSelected={selectedDoc?.document_id === doc.document_id && selectedDoc?.target_lang === doc.target_lang}
-                  onSelect={() => setSelectedDoc(doc)}
-                />
-              ))}
-            </div>
-          )}
+      {/* Main layout: document list | document chunks | segment editor */}
+      <div className="flex min-h-0 flex-1">
+        {/* Left rail: document list - full height, scrollable */}
+        <aside className="flex h-full w-72 shrink-0 flex-col border-r border-slate-200 bg-slate-50/50 dark:border-slate-700 dark:bg-slate-900/50">
+          <div className="flex-1 overflow-y-auto p-3">
+            {loading ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400">Loading documents…</p>
+            ) : documents.length === 0 ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400">No translated documents found.</p>
+            ) : (
+              <div className="space-y-2">
+                {documents.map((doc) => (
+                  <DocumentCard
+                    key={`${doc.document_id}-${doc.target_lang}`}
+                    doc={doc}
+                    isSelected={selectedDoc?.document_id === doc.document_id && selectedDoc?.target_lang === doc.target_lang}
+                    onSelect={() => setSelectedDoc(doc)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </aside>
 
-        {/* Main content: document annotation view */}
-        <main className="flex flex-1 flex-col overflow-y-auto">
+        {/* Center: document chunks - scrollable */}
+        <main className="flex min-h-0 flex-1 flex-col border-r border-slate-200 dark:border-slate-700">
           {!selectedDoc ? (
             <div className="flex flex-1 items-center justify-center text-sm text-slate-400 dark:text-slate-500">
               Select a document to review
@@ -521,8 +523,8 @@ export default function TranslationReviewPage() {
           ) : !docDetail ? (
             <div className="flex flex-1 items-center justify-center text-sm text-rose-400">Failed to load document</div>
           ) : (
-            <div className="flex flex-1 flex-col">
-              {/* Document header + actions */}
+            <>
+              {/* Document header - fixed */}
               <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
                 <div className="flex items-center justify-between">
                   <div>
@@ -550,9 +552,9 @@ export default function TranslationReviewPage() {
                 <ProgressBar approved={docDetail.summary.approved} total={docDetail.summary.total_segments} />
               </div>
 
-              {/* Segment annotations */}
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="mx-auto max-w-3xl space-y-2">
+              {/* Segment annotations - scrollable */}
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <div className="mx-auto max-w-2xl space-y-2">
                   {docDetail.segments.map((seg) => (
                     <SegmentAnnotation
                       key={seg.id}
@@ -563,22 +565,29 @@ export default function TranslationReviewPage() {
                   ))}
                 </div>
               </div>
-
-              {/* Segment detail panel (sticky bottom) */}
-              {selectedSegment && (
-                <div className="shrink-0 border-t border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800 max-h-[50vh] overflow-y-auto">
-                  <SegmentDetailPanel
-                    segment={selectedSegment}
-                    form={form}
-                    saving={saving}
-                    onChange={setForm}
-                    onSubmit={(overall) => void handleSegmentSubmit(overall)}
-                  />
-                </div>
-              )}
-            </div>
+            </>
           )}
         </main>
+
+        {/* Right rail: segment editor - full height, scrollable */}
+        <aside className="flex h-full w-96 shrink-0 flex-col bg-white dark:bg-slate-800">
+          <div className="shrink-0 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Segment Review</h3>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            {selectedSegment ? (
+              <SegmentDetailPanel
+                segment={selectedSegment}
+                form={form}
+                saving={saving}
+                onChange={setForm}
+                onSubmit={(overall) => void handleSegmentSubmit(overall)}
+              />
+            ) : (
+              <p className="text-sm text-slate-500 dark:text-slate-400">Click a segment annotation to review it.</p>
+            )}
+          </div>
+        </aside>
       </div>
     </div>
   );
