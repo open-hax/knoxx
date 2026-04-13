@@ -434,7 +434,7 @@ export default function TranslationReviewPage() {
   }, [manifest]);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
       <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
         <div className="flex items-center justify-between">
@@ -491,8 +491,8 @@ export default function TranslationReviewPage() {
       {/* Main layout: document list | document chunks | segment editor */}
       <div className="flex min-h-0 flex-1">
         {/* Left rail: document list - full height, scrollable */}
-        <aside className="flex h-full w-72 shrink-0 flex-col border-r border-slate-200 bg-slate-50/50 dark:border-slate-700 dark:bg-slate-900/50">
-          <div className="flex-1 overflow-y-auto p-3">
+        <aside className="flex min-h-0 w-72 shrink-0 flex-col border-r border-slate-200 bg-slate-50/50 dark:border-slate-700 dark:bg-slate-900/50">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {loading ? (
               <p className="text-sm text-slate-500 dark:text-slate-400">Loading documents…</p>
             ) : documents.length === 0 ? (
@@ -570,7 +570,7 @@ export default function TranslationReviewPage() {
         </main>
 
         {/* Right rail: segment editor - full height, scrollable */}
-        <aside className="flex h-full w-96 shrink-0 flex-col bg-white dark:bg-slate-800">
+        <aside className="flex min-h-0 w-96 shrink-0 flex-col bg-white dark:bg-slate-800">
           <div className="shrink-0 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
             <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Segment Review</h3>
           </div>

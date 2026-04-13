@@ -153,6 +153,8 @@ select {
 
 .app-shell {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   color: var(--token-colors-text-default);
   background:
     radial-gradient(circle at top left, var(--token-colors-alpha-green-_14) 0%, transparent 28%),
