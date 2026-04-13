@@ -547,8 +547,7 @@
 
   ;; Translation routes
   (translation-routes/register-translation-routes! app runtime config
-                                                    {:route! route!
-                                                     :json-response! json-response!
+                                                    {:json-response! json-response!
                                                      :error-response! error-response!
                                                      :with-request-context! with-request-context!
                                                      :ensure-permission! ensure-permission!

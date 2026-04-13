@@ -1,6 +1,9 @@
 {:source-paths ["src/cljs"]
 
- :dependencies []
+ :dependencies [[cider/cider-nrepl "0.50.2"]
+                [refactor-nrepl "3.9.1"]]
+
+ :nrepl {:port 4500}
 
  ;; CRITICAL: For Node.js ESM targets, use :js-provider :import
  ;; This tells shadow-cljs to NOT bundle npm dependencies
