@@ -78,6 +78,33 @@
         (or (seq tool-policies) (some? base)) (assoc :toolPolicies tool-policies)
         resource-policies (assoc :resourcePolicies resource-policies)))))
 
+(defn- active-run-summary
+  [run session]
+  {:run_id (:run_id run)
+   :session_id (:session_id run)
+   :conversation_id (:conversation_id run)
+   :status (:status run)
+   :model (:model run)
+   :created_at (:created_at run)
+   :updated_at (:updated_at run)
+   :ttft_ms (:ttft_ms run)
+   :total_time_ms (:total_time_ms run)
+   :input_tokens (:input_tokens run)
+   :output_tokens (:output_tokens run)
+   :tokens_per_s (:tokens_per_s run)
+   :error (:error run)
+   :event_count (count (or (:events run) []))
+   :tool_receipt_count (count (or (:tool_receipts run) []))
+   :has_active_stream (boolean (:has_active_stream session))
+   :agent_spec (get-in run [:settings :agentSpec])
+   :resource_policies (get-in run [:resources :agentResourcePolicies])
+   :latest_user_message (some->> (:request_messages run)
+                                 reverse
+                                 (some (fn [message]
+                                         (when (= "user" (some-> (:role message) str str/lower-case))
+                                           (:content message)))))
+   :latest_event (some-> (:events run) last (select-keys [:type :status :tool_name :preview :at]))})
+
 (defn register-routes!
   [runtime app config lounge-messages*]
   (ensure-settings! config)
@@ -398,6 +425,31 @@
                       (.catch (fn [err]
                                 (error-response! reply err 409)))))))))
 
+  (route! app "GET" "/api/knoxx/agents/active"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "agent.chat.use"))
+                (let [limit-raw (aget request "query" "limit")
+                      limit (if (string? limit-raw)
+                              (max 1 (js/parseInt limit-raw 10))
+                              25)
+                      sessions-by-id (into {}
+                                           (map (fn [session]
+                                                  [(:session_id session) session]))
+                                           (session-store/active-session-snapshots))
+                      items (->> @run-order*
+                                 (map #(get @runs* %))
+                                 (filter some?)
+                                 (filter #(contains? #{"queued" "running" "waiting_input"} (:status %)))
+                                 (filter #(run-visible? ctx %))
+                                 (map (fn [run]
+                                        (active-run-summary run (get sessions-by-id (:session_id run)))))
+                                 (take limit)
+                                 vec)]
+                  (json-response! reply 200 {:runs items
+                                             :count (count items)})))))
+
   ;; Session status endpoint for frontend resume detection
   (route! app "GET" "/api/knoxx/session/status"
           (fn [request reply]
@@ -507,4 +559,4 @@
                                                      :ctx-user-id ctx-user-id
                                                      :ctx-user-email ctx-user-email
                                                      :ctx-org-id ctx-org-id})
-  )
+  ))

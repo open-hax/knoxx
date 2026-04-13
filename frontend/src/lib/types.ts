@@ -142,6 +142,18 @@ export interface ToolReceipt {
   [key: string]: unknown;
 }
 
+export interface ActiveAgentSummary extends RunSummary {
+  session_id?: string | null;
+  conversation_id?: string | null;
+  event_count?: number;
+  tool_receipt_count?: number;
+  has_active_stream?: boolean;
+  agent_spec?: Record<string, unknown> | null;
+  resource_policies?: Record<string, unknown> | null;
+  latest_user_message?: string | null;
+  latest_event?: Record<string, unknown> | null;
+}
+
 export interface RunDetail extends RunSummary {
   session_id?: string | null;
   conversation_id?: string | null;

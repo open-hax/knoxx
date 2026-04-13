@@ -220,5 +220,13 @@
     {:can-send true :reason nil}))
 
 ;; Export for REPL debugging
+(defn active-session-snapshots
+  []
+  (->> @session-cache*
+       vals
+       (filter #(contains? #{"running" "queued" "waiting_input"} (:status %)))
+       (sort-by :updated_at #(compare %2 %1))
+       vec))
+
 (defn debug-dump-cache []
   (js/console.log "Session cache:" (clj->js @session-cache*)))

@@ -8,6 +8,7 @@ import type {
   MemorySessionRow,
   MemorySessionSummary,
   ModelInfo,
+  ActiveAgentSummary,
   RunDetail,
   RunSummary,
   KnoxxAuthContext,
@@ -38,6 +39,11 @@ export async function listRuns(limit = 100): Promise<RunSummary[]> {
 
 export async function getRun(runId: string): Promise<RunDetail> {
   return request<RunDetail>(`/api/runs/${runId}`);
+}
+
+export async function listActiveAgents(limit = 25): Promise<ActiveAgentSummary[]> {
+  const data = await request<{ runs: ActiveAgentSummary[] }>(`/api/knoxx/agents/active?limit=${limit}`);
+  return data.runs;
 }
 
 export async function listMemorySessions(params: { limit?: number; offset?: number } = {}): Promise<MemorySessionListResponse> {
