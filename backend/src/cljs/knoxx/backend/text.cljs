@@ -192,6 +192,11 @@
          (str text "…")
          text)))))
 
+(defn float-format
+  [x]
+  (when (number? x)
+    (.toFixed (js/Number x) 3)))
+
 (defn openplanner-memory-search-text
   [{:keys [query mode hits]}]
   (if (seq hits)
@@ -232,35 +237,53 @@
 (defn graph-query-result-text
   [result]
   (let [nodes (vec (or (:nodes result) []))
-        edges (vec (or (:edges result) []))]
+        edges (vec (or (:edges result) []))
+        stats (:stats result)]
     (if (seq nodes)
       (let [node-text (str/join
                        "\n\n"
                        (map-indexed
                         (fn [idx node]
-                          (let [data (or (:data node) {})]
-                            (str (inc idx) ". [" (:lake node) "/" (:nodeType node) "] " (:label node)
+                          (let [data (or (:data node) {})
+                                label (or (:label node) (:id node))
+                                text (or (:text node) (:preview (:data node)))]
+                            (str (inc idx) ". [" (:lake node) "/" (:nodeType node) "] " label
+                                 (when-let [s (:score node)]
+                                   (str " (score=" (float-format s) ")"))
                                  "\n   id=" (:id node)
-                                 (when-let [path (:path data)]
+                                 (when-let [path (or (:path data) (some-> (:id node) (str/replace #"^[^:]+:" "")))]
                                    (str "\n   path=" path))
                                  (when-let [url (:url data)]
                                    (str "\n   url=" url))
-                                 (when-let [preview (:preview data)]
-                                   (str "\n   preview=" (or (value->preview-text preview 220) ""))))))
+                                 (when text
+                                   (str "\n   text=" (or (value->preview-text text 280) ""))))))
                         nodes))
             edge-text (when (seq edges)
                         (str/join
                          "\n"
                          (map (fn [edge]
-                                (str "- [" (:edgeType edge) "] " (:source edge) " -> " (:target edge)))
-                              edges)))]
+                                (let [etype (or (:edgeType edge) (when-let [sim (:similarity edge)]
+                                                                    (str "sim=" (float-format sim))))]
+                                  (str "- [" (or etype "link") "] " (:source edge) " -> " (:target edge))))
+                              edges)))
+            clusters-text (when-let [clusters (seq (:clusters result))]
+                            (str "\n\nClusters:\n"
+                                 (str/join "\n"
+                                           (map (fn [c]
+                                                  (str "  " (:lake c) ": " (:count c) " nodes"
+                                                       (when-let [top (seq (:topNodes c))]
+                                                         (str "\n    top: " (str/join ", " (map :id top))))))
+                                                clusters))))]
         (str "Knowledge graph query"
              (when-let [q (:query result)]
                (str "\nQuery: " q))
              (when-let [projects (seq (:projects result))]
                (str "\nProjects: " (str/join ", " projects)))
+             (when stats
+               (str "\nStats: " (pr-str stats)))
              "\n\nNodes:\n"
              node-text
-             (when edge-text
-               (str "\n\nEdges:\n" edge-text))))
-      "Knowledge graph query returned no matching nodes.")))
+             edge-text
+             clusters-text))
+      (str "Knowledge graph query returned no matching nodes."
+           (when stats (str " " (pr-str stats)))))))

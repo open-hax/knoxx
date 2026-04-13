@@ -245,16 +245,19 @@
 
 (defn openplanner-graph-query!
   [config {:keys [query lake node-type limit edge-limit]}]
-  (let [params (js/URLSearchParams.)]
-    (when-not (str/blank? (or query ""))
-      (.set params "q" query))
-    (when-not (str/blank? (or lake ""))
-      (.set params "projects" lake))
-    (when-not (str/blank? (or node-type ""))
-      (.set params "nodeTypes" node-type))
-    (.set params "limit" (str (max 1 (min 20 (or limit 8)))))
-    (.set params "edgeLimit" (str (max 0 (min 60 (or edge-limit 16)))))
-    (backend-http/openplanner-request! config "GET" (str "/v1/graph/query?" (.toString params)))))
+  (let [k (max 1 (min 60 (or limit 15)))
+        node-types (when-not (str/blank? (or node-type ""))
+                     (js/JSON.parse (js/JSON.stringify (clj->js (str/split node-type #",")))))
+        lakes (when-not (str/blank? (or lake ""))
+                (js/JSON.parse (js/JSON.stringify (clj->js (str/split lake #",")))))]
+    (backend-http/openplanner-request!
+     config "POST" "/v1/graph/memory"
+     (cond-> {:q (or query "")
+              :k k
+              :includeText true}
+       node-types (assoc :nodeTypes node-types)
+       lakes (assoc :lakes lakes)
+       edge-limit (assoc :maxCost (/ 1.0 (max 0.01 (or edge-limit 16))))))))
 
 (defn openplanner-graph-export!
   [config request]
