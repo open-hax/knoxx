@@ -294,7 +294,7 @@ function SegmentDetailPanel({
           onChange={(e) => onChange({ ...form, corrected_text: e.target.value })}
           rows={4}
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"
-          placeholder="Only if the approved text should differ from MT output."
+          placeholder="Optional. If you enter a correction and submit the review, this becomes the rendered translation."
         />
       </label>
 
@@ -310,9 +310,9 @@ function SegmentDetailPanel({
       </label>
 
       <div className="flex gap-2">
-        <Button disabled={saving} onClick={() => onSubmit("approve")}>Approve</Button>
-        <Button variant="secondary" disabled={saving} onClick={() => onSubmit("needs_edit")}>Needs Edit</Button>
-        <Button variant="ghost" disabled={saving} onClick={() => onSubmit("reject")}>Reject</Button>
+        <Button disabled={saving} onClick={() => onSubmit("approve")}>Submit review</Button>
+        <Button variant="secondary" disabled={saving} onClick={() => onSubmit("needs_edit")}>Submit as in review</Button>
+        <Button variant="ghost" disabled={saving} onClick={() => onSubmit("reject")}>Mark rejected</Button>
       </div>
 
       {/* Existing labels */}
