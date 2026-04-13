@@ -36,6 +36,19 @@ type CmsDocSummary = {
   };
 };
 
+const RECENT_SESSION_PAGE_SIZE = 10;
+
+function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
+  const seen = new Set<string>();
+  const merged: MemorySessionSummary[] = [];
+  for (const row of [...primary, ...secondary]) {
+    if (!row?.session || seen.has(row.session)) continue;
+    seen.add(row.session);
+    merged.push(row);
+  }
+  return merged;
+}
+
 function CmsPage() {
   const chat = useChatWorkspaceController({ initialShowCanvas: false });
 
@@ -77,6 +90,8 @@ function CmsPage() {
   const [loadingRecentSessions, setLoadingRecentSessions] = useState(false);
   const [loadingMoreRecentSessions, setLoadingMoreRecentSessions] = useState(false);
   const [loadingMemorySessionId, setLoadingMemorySessionId] = useState<string | null>(null);
+  const recentSessionsRef = useRef<MemorySessionSummary[]>([]);
+  recentSessionsRef.current = recentSessions;
 
   // Filters
   const [visibilityFilter, setVisibilityFilter] = useState("all");
@@ -120,11 +135,14 @@ function CmsPage() {
     const loadRecentSessions = async () => {
       setLoadingRecentSessions(true);
       try {
-        const data = await listMemorySessions({ limit: 10 });
-        setRecentSessions(data.rows ?? []);
-        setRecentSessionsTotal(data.total ?? 0);
+        const data = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: 0 });
+        const nextRows = data.rows ?? [];
+        recentSessionsRef.current = nextRows;
+        setRecentSessions(nextRows);
+        setRecentSessionsTotal(data.total ?? nextRows.length);
         setRecentSessionsHasMore(data.has_more ?? false);
       } catch {
+        recentSessionsRef.current = [];
         setRecentSessions([]);
         setRecentSessionsTotal(0);
         setRecentSessionsHasMore(false);
@@ -462,16 +480,41 @@ function CmsPage() {
   const handleRefreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
     try {
-      const data = await listMemorySessions({ limit: 10 });
-      setRecentSessions(data.rows ?? []);
-      setRecentSessionsTotal(data.total ?? 0);
+      const data = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: 0 });
+      const nextRows = data.rows ?? [];
+      const preservedTail = recentSessionsRef.current.filter((item) => !nextRows.some((row) => row.session === item.session));
+      const merged = mergeSessionPages(nextRows, preservedTail);
+      recentSessionsRef.current = merged;
+      setRecentSessions(merged);
+      setRecentSessionsTotal(data.total ?? merged.length);
       setRecentSessionsHasMore(data.has_more ?? false);
     } catch {
+      recentSessionsRef.current = [];
       setRecentSessions([]);
       setRecentSessionsTotal(0);
       setRecentSessionsHasMore(false);
     } finally {
       setLoadingRecentSessions(false);
+    }
+  };
+
+  const handleLoadMoreRecentSessions = async () => {
+    if (loadingRecentSessions || loadingMoreRecentSessions || !recentSessionsHasMore) return;
+    setLoadingMoreRecentSessions(true);
+    try {
+      const data = await listMemorySessions({
+        limit: RECENT_SESSION_PAGE_SIZE,
+        offset: recentSessionsRef.current.length,
+      });
+      const merged = mergeSessionPages(recentSessionsRef.current, data.rows ?? []);
+      recentSessionsRef.current = merged;
+      setRecentSessions(merged);
+      setRecentSessionsTotal(data.total ?? merged.length);
+      setRecentSessionsHasMore(data.has_more ?? false);
+    } catch {
+      // keep existing rows on incremental load failure
+    } finally {
+      setLoadingMoreRecentSessions(false);
     }
   };
 
@@ -574,7 +617,7 @@ function CmsPage() {
           loadingMoreRecentSessions={loadingMoreRecentSessions}
           loadingMemorySessionId={loadingMemorySessionId}
           onRefreshRecentSessions={handleRefreshRecentSessions}
-          onLoadMoreRecentSessions={async () => {}}
+          onLoadMoreRecentSessions={handleLoadMoreRecentSessions}
           onResumeMemorySession={handleResumeMemorySession}
           pinnedContext={chat.pinnedContext}
           onUnpinContextItem={chat.unpinContextItem}

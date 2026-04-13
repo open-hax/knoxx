@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import {
   getAgentHistorySession,
@@ -16,6 +16,18 @@ import type {
 import { ToolReceiptGroup } from "../components/ToolReceiptBlock";
 
 type InspectorMode = "active" | "history";
+const HISTORY_PAGE_SIZE = 40;
+
+function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
+  const seen = new Set<string>();
+  const merged: MemorySessionSummary[] = [];
+  for (const row of [...primary, ...secondary]) {
+    if (!row?.session || seen.has(row.session)) continue;
+    seen.add(row.session);
+    merged.push(row);
+  }
+  return merged;
+}
 
 function formatTimestamp(value?: string | number | null): string {
   if (value == null) return "—";
@@ -164,11 +176,16 @@ export default function AgentsPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [historySessions, setHistorySessions] = useState<MemorySessionSummary[]>([]);
+  const historySessionsRef = useRef<MemorySessionSummary[]>([]);
+  historySessionsRef.current = historySessions;
   const [selectedHistorySession, setSelectedHistorySession] = useState<string | null>(null);
   const [historyRows, setHistoryRows] = useState<MemorySessionRow[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingMoreHistory, setLoadingMoreHistory] = useState(false);
+  const [historySessionsHasMore, setHistorySessionsHasMore] = useState(false);
+  const [historySessionsTotal, setHistorySessionsTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
@@ -214,12 +231,18 @@ export default function AgentsPage() {
     const loadHistory = async () => {
       try {
         if (!cancelled) setLoadingHistory(true);
-        const sessions = await listAgentHistorySessions(80);
+        const page = await listAgentHistorySessions({ limit: HISTORY_PAGE_SIZE, offset: 0 });
         if (cancelled) return;
-        setHistorySessions(sessions);
+        const nextRows = page.rows ?? [];
+        const preservedTail = historySessionsRef.current.filter((item) => !nextRows.some((row) => row.session === item.session));
+        const merged = mergeSessionPages(nextRows, preservedTail);
+        historySessionsRef.current = merged;
+        setHistorySessions(merged);
+        setHistorySessionsTotal(page.total ?? merged.length);
+        setHistorySessionsHasMore(page.has_more ?? false);
         setSelectedHistorySession((current) => {
-          if (current && sessions.some((session) => session.session === current)) return current;
-          return sessions[0]?.session ?? null;
+          if (current && merged.some((session) => session.session === current)) return current;
+          return merged[0]?.session ?? null;
         });
         setError(null);
       } catch (err) {
@@ -243,6 +266,29 @@ export default function AgentsPage() {
       window.clearInterval(timer);
     };
   }, [autoRefresh]);
+
+  const handleHistoryScroll = async (event: UIEvent<HTMLDivElement>) => {
+    if (mode !== "history" || loadingHistory || loadingMoreHistory || !historySessionsHasMore) return;
+    const target = event.currentTarget;
+    const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (remaining > 120) return;
+    setLoadingMoreHistory(true);
+    try {
+      const page = await listAgentHistorySessions({
+        limit: HISTORY_PAGE_SIZE,
+        offset: historySessionsRef.current.length,
+      });
+      const merged = mergeSessionPages(historySessionsRef.current, page.rows ?? []);
+      historySessionsRef.current = merged;
+      setHistorySessions(merged);
+      setHistorySessionsTotal(page.total ?? merged.length);
+      setHistorySessionsHasMore(page.has_more ?? false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingMoreHistory(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -353,9 +399,11 @@ export default function AgentsPage() {
       <div className="grid min-h-0 flex-1 grid-cols-[360px_minmax(0,1fr)] gap-4 p-6">
         <div className="min-h-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
           <div className="border-b border-slate-800 px-4 py-3 text-sm font-semibold text-slate-200">
-            {mode === "active" ? `Live queue (${runs.length})` : `Archived sessions (${historySessions.length})`}
+            {mode === "active"
+              ? `Live queue (${runs.length})`
+              : `Archived sessions (${historySessionsTotal > 0 ? `${historySessions.length}/${historySessionsTotal}` : historySessions.length})`}
           </div>
-          <div className="max-h-full overflow-y-auto p-3">
+          <div className="max-h-full overflow-y-auto p-3" onScroll={handleHistoryScroll}>
             {mode === "active" ? (
               <>
                 {loadingList && runs.length === 0 ? <div className="text-sm text-slate-500">Loading active agents…</div> : null}
@@ -431,6 +479,7 @@ export default function AgentsPage() {
                       </button>
                     );
                   })}
+                  {loadingMoreHistory ? <div className="px-2 py-1 text-xs text-slate-500">Loading more history…</div> : null}
                 </div>
               </>
             )}
