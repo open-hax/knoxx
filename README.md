@@ -4,6 +4,9 @@ Secure knowledge vault and garden system. A local-first RAG + inference stack wi
 
 The name comes from Fort Knox - a secure vault for your knowledge. The garden concept draws from Quartz and the garden at the center of the Pentagon.
 
+
+> Built with [GLM-5](https://z.ai) — part of the [z.ai](https://z.ai) startup ecosystem and the [Ussyverse](https://ussy.cloud).
+
 ## Architecture
 
 ```
