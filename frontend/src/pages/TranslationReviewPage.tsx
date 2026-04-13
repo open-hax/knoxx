@@ -434,9 +434,24 @@ export default function TranslationReviewPage() {
   }, [manifest]);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div
+      style={{
+        display: "flex",
+        height: "calc(100vh - 96px)",
+        flexDirection: "column",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
+    >
       {/* Header */}
-      <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+      <div
+        style={{
+          flexShrink: 0,
+          borderBottom: "1px solid var(--token-colors-border-default)",
+          background: "var(--token-colors-background-surface)",
+          padding: "12px 16px",
+        }}
+      >
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-bold text-slate-800 dark:text-slate-100">Translation Review</h1>
           <Button variant="ghost" onClick={() => void handleExport()}>Export SFT</Button>
@@ -476,23 +491,52 @@ export default function TranslationReviewPage() {
 
       {/* Notices */}
       {notice && (
-        <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+        <div
+          style={{
+            flexShrink: 0,
+            borderBottom: "1px solid var(--token-colors-border-success, #10b981)",
+            background: "var(--token-colors-alpha-green-_10, rgba(16, 185, 129, 0.1))",
+            padding: "8px 16px",
+            fontSize: 14,
+            color: "var(--token-colors-text-success, #10b981)",
+          }}
+        >
           {notice}
-          <button className="ml-2 underline" onClick={() => setNotice(null)}>dismiss</button>
+          <button style={{ marginLeft: 8, textDecoration: "underline" }} onClick={() => setNotice(null)}>dismiss</button>
         </div>
       )}
       {error && (
-        <div className="shrink-0 border-b border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+        <div
+          style={{
+            flexShrink: 0,
+            borderBottom: "1px solid var(--token-colors-border-danger, #ef4444)",
+            background: "var(--token-colors-alpha-red-_10, rgba(239, 68, 68, 0.1))",
+            padding: "8px 16px",
+            fontSize: 14,
+            color: "var(--token-colors-text-danger, #ef4444)",
+          }}
+        >
           {error}
-          <button className="ml-2 underline" onClick={() => setError(null)}>dismiss</button>
+          <button style={{ marginLeft: 8, textDecoration: "underline" }} onClick={() => setError(null)}>dismiss</button>
         </div>
       )}
 
       {/* Main layout: document list | document chunks | segment editor */}
-      <div className="flex min-h-0 flex-1">
+      <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
         {/* Left rail: document list - full height, scrollable */}
-        <aside className="flex min-h-0 w-72 shrink-0 flex-col border-r border-slate-200 bg-slate-50/50 dark:border-slate-700 dark:bg-slate-900/50">
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <aside
+          style={{
+            width: 288,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            borderRight: "1px solid var(--token-colors-border-default)",
+            background: "var(--token-colors-surface-nav)",
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 12 }}>
             {loading ? (
               <p className="text-sm text-slate-500 dark:text-slate-400">Loading documents…</p>
             ) : documents.length === 0 ? (
@@ -513,7 +557,17 @@ export default function TranslationReviewPage() {
         </aside>
 
         {/* Center: document chunks - scrollable */}
-        <main className="flex min-h-0 flex-1 flex-col border-r border-slate-200 dark:border-slate-700">
+        <main
+          style={{
+            display: "flex",
+            flex: 1,
+            flexDirection: "column",
+            minWidth: 0,
+            borderRight: "1px solid var(--token-colors-border-default)",
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
           {!selectedDoc ? (
             <div className="flex flex-1 items-center justify-center text-sm text-slate-400 dark:text-slate-500">
               Select a document to review
@@ -525,7 +579,14 @@ export default function TranslationReviewPage() {
           ) : (
             <>
               {/* Document header - fixed */}
-              <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+              <div
+                style={{
+                  flexShrink: 0,
+                  borderBottom: "1px solid var(--token-colors-border-default)",
+                  background: "var(--token-colors-background-surface)",
+                  padding: "12px 16px",
+                }}
+              >
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">
@@ -553,7 +614,7 @@ export default function TranslationReviewPage() {
               </div>
 
               {/* Segment annotations - scrollable */}
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
                 <div className="mx-auto max-w-2xl space-y-2">
                   {docDetail.segments.map((seg) => (
                     <SegmentAnnotation
@@ -570,11 +631,27 @@ export default function TranslationReviewPage() {
         </main>
 
         {/* Right rail: segment editor - full height, scrollable */}
-        <aside className="flex min-h-0 w-96 shrink-0 flex-col bg-white dark:bg-slate-800">
-          <div className="shrink-0 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+        <aside
+          style={{
+            width: 384,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            background: "var(--token-colors-background-surface)",
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              flexShrink: 0,
+              borderBottom: "1px solid var(--token-colors-border-default)",
+              padding: "12px 16px",
+            }}
+          >
             <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Segment Review</h3>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
             {selectedSegment ? (
               <SegmentDetailPanel
                 segment={selectedSegment}
