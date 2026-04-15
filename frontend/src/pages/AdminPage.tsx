@@ -16,6 +16,7 @@ import { OrganizationsSection } from '../components/admin-page/OrganizationsSect
 import { RolesSection } from '../components/admin-page/RolesSection';
 import { SelectedOrgSection } from '../components/admin-page/SelectedOrgSection';
 import { SummarySection } from '../components/admin-page/SummarySection';
+import { TranslationModelSection } from '../components/admin-page/TranslationModelSection';
 import type { LakeFormState, Notice, OrgFormState, RoleFormState, ToolDraftEffect, UserFormState } from '../components/admin-page/types';
 import { UsersMembershipsSection } from '../components/admin-page/UsersMembershipsSection';
 import {
@@ -107,6 +108,7 @@ export default function AdminPage() {
   const canUpdateRolePolicies = hasPermission('org.tool_policy.update');
   const canReadDataLakes = hasPermission('org.datalakes.read');
   const canCreateDataLakes = hasPermission('org.datalakes.create');
+  const canManageTranslations = hasPermission('org.translations.manage');
   const looksLikeAdmin = Boolean(context?.isSystemAdmin || hasPermission('org.users.read') || hasPermission('org.roles.read'));
   const syncMembershipDrafts = useCallback((nextUsers: AdminUserSummary[], orgId: string) => {
     const drafts = hydrateMembershipDrafts(nextUsers, orgId);
@@ -470,6 +472,8 @@ export default function AdminPage() {
               onCreateLake={handleCreateLake}
             />
           </div>
+
+          <TranslationModelSection canManage={canManageTranslations} />
 
           <CatalogSection
             permissionGroups={permissionGroups}

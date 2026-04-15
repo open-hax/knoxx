@@ -21,6 +21,9 @@
 (defonce worker-thread (atom nil))
 (defonce poll-interval-ms (atom 10000))
 
+(def ^:private translation-config-ttl-ms 30000)
+(def translation-model-cache* (atom {:model nil :fetched-at 0}))
+
 (defn- openplanner-url
   [path]
   (str (config/openplanner-url) "/v1" path))
@@ -75,6 +78,37 @@
           (json/parse-string body keyword))
         (let [error-body (try (slurp (.getErrorStream conn)) (catch Exception _ "unknown error"))]
           (throw (ex-info (str "HTTP " code ": " error-body) {:url url :code code})))))))
+
+(defn- fetch-translation-config-model
+  "Fetch translation model from OpenPlanner /v1/translations/config. Returns string or nil."
+  []
+  (try
+    (let [result (fetch-json (openplanner-url "/translations/config") (openplanner-headers))
+          model (get-in result [:config :model])
+          normalized (str/trim (str (or model "")))]
+      (when-not (str/blank? normalized)
+        normalized))
+    (catch Exception e
+      (println "[translation-worker] Failed to fetch translation config:" (.getMessage e))
+      nil)))
+
+(defn- resolve-translation-model
+  "Resolve the model used by the translation agent.
+
+   Precedence:
+   1) OpenPlanner /v1/translations/config
+   2) TRANSLATION_MODEL env var (kms-ingestion.config/translation-model)
+   3) Fallback: glm-5"
+  []
+  (let [now (System/currentTimeMillis)
+        {:keys [model fetched-at]} @translation-model-cache*]
+    (if (and model (< (- now fetched-at) translation-config-ttl-ms))
+      model
+      (let [fresh (or (fetch-translation-config-model)
+                      (some-> (config/translation-model) str str/trim)
+                      "glm-5")]
+        (reset! translation-model-cache* {:model fresh :fetched-at now})
+        fresh))))
 
 (defn- url-encode [s]
   (URLEncoder/encode (str s) "UTF-8"))
@@ -221,13 +255,14 @@
                 session-id (str (UUID/randomUUID))
                 system-prompt (build-batch-prompt source-lang target-lang project garden-id)
                 batch-message (build-batch-message valid-docs source-lang target-lang)
+                translation-model (resolve-translation-model)
                 agent-request {:conversation_id conversation-id
                                :session_id session-id
                                :run_id run-id
                                :message batch-message
                                :agent_spec {:role "translator"
                                             :system_prompt system-prompt
-                                            :model "glm-5"
+                                            :model translation-model
                                             :thinking_level "off"
                                             :tool_policies [{:toolId "read" :effect "allow"}
                                                             {:toolId "memory_search" :effect "allow"}
@@ -238,7 +273,7 @@
                                                                 :garden_id garden-id
                                                                 :source_lang source-lang
                                                                 :target_lang target-lang}}
-                               :model "glm-5"}
+                               :model translation-model}
                 _ (println "[translation-worker] Calling Knoxx agent with" (count valid-docs) "documents...")
                 result (post-json (knoxx-url "/api/knoxx/direct/start")
                                   (knoxx-headers)
@@ -285,7 +320,7 @@
 
               (println "[translation-worker] Batch" batch-id "done:"
                        (count @completed) "completed,"
-                       (count @failed) "failed"))))))
+                       (count @failed) "failed")))))
 
       (catch Exception e
         (println "[translation-worker] Batch" batch-id "failed:" (.getMessage e))
@@ -325,7 +360,8 @@
     (println "[translation-worker] Processing job" job-id "document" document-id "->" target-lang)
     (try
       (mark-job-status job-id "processing")
-      (let [document (fetch-document document-id)
+      (let [translation-model (resolve-translation-model)
+            document (fetch-document document-id)
             doc-title (or (:title document) "Untitled")
             doc-content (or (:content document) (:text document) "")
             run-id (str (UUID/randomUUID))
@@ -349,7 +385,7 @@
                                         doc-content)
                            :agent_spec {:role "translator"
                                         :system_prompt system-prompt
-                                        :model "glm-5"
+                                        :model translation-model
                                         :thinking_level "off"
                                         :tool_policies [{:toolId "read" :effect "allow"}
                                                         {:toolId "memory_search" :effect "allow"}
@@ -361,7 +397,7 @@
                                                             :document_id document-id
                                                             :source_lang source-lang
                                                             :target_lang target-lang}}
-                           :model "glm-5"}
+                           :model translation-model}
             _ (println "[translation-worker] Calling Knoxx agent...")
             result (post-json (knoxx-url "/api/knoxx/direct/start")
                               (knoxx-headers)
