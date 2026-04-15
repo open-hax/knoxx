@@ -6,7 +6,7 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
-            [knoxx.backend.runtime-config :refer [normalize-thinking-level models-config]]
+            [knoxx.backend.runtime-config :refer [normalize-thinking-level models-config allowlisted-model-id?]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [create-runtime-tools]]))
 
@@ -50,6 +50,8 @@
                                            (when (and raw (not (str/blank? (str raw))))
                                              (str raw)))))
                                   (remove nil?)
+                                  (filter (fn [model-id]
+                                            (allowlisted-model-id? config model-id)))
                                   distinct
                                   vec)]
                      ids)))

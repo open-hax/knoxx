@@ -54,6 +54,32 @@
   [k default]
   (or (aget js/process.env k) default))
 
+(def ^:private default-model-prefix-allowlist
+  ["glm-5" "gpt-5" "qwen3" "gemma4:"])
+
+(defn- parse-prefix-allowlist
+  [raw]
+  (-> (str (or raw ""))
+      (str/split #",")
+      (->> (map (fn [v] (some-> v str str/trim not-empty)))
+           (remove nil?)
+           vec)))
+
+(defn allowlisted-model-id?
+  "Returns true if model-id should be visible/selectable in Knoxx.
+
+   Allowlist is configured via config key :model-prefix-allowlist, which defaults
+   to glm-5*, gpt-5*, qwen3*, gemma4:*.
+
+   Note: this is a simple prefix match, not a glob/regex engine."
+  [config model-id]
+  (let [prefixes (let [configured (seq (:model-prefix-allowlist config))]
+                   (or configured default-model-prefix-allowlist))
+        id (str (or model-id ""))]
+    (boolean (some (fn [prefix]
+                     (str/starts-with? id (str prefix)))
+                   prefixes))))
+
 (def ^:private thinking-levels
   #{"off" "minimal" "low" "medium" "high" "xhigh"})
 
@@ -74,6 +100,8 @@
    :proxx-base-url (env "PROXX_BASE_URL" "http://proxx:8789")
    :proxx-auth-token (env "PROXX_AUTH_TOKEN" "")
    :proxx-default-model (env "PROXX_DEFAULT_MODEL" "glm-5")
+   :model-prefix-allowlist (parse-prefix-allowlist
+                            (env "KNOXX_MODEL_PREFIX_ALLOWLIST" "glm-5,gpt-5,qwen3,gemma4:"))
    :agent-thinking-level (or (normalize-thinking-level (env "KNOXX_THINKING_LEVEL" "off")) "off")
    :reasoning-model-prefixes (env "KNOXX_REASONING_MODEL_PREFIXES" "glm-")
    :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")

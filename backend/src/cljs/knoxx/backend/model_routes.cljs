@@ -5,7 +5,7 @@
             [knoxx.backend.authz :refer [with-request-context! run-visible? ensure-permission!]]
             [knoxx.backend.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq request-query-string]]
             [knoxx.backend.run-state :refer [runs* run-order* summarize-run]]
-            [knoxx.backend.runtime-config :refer [now-iso]]))
+            [knoxx.backend.runtime-config :refer [now-iso allowlisted-model-id?]]))
 
 (defn- proxx-configured?
   [config]
@@ -123,7 +123,12 @@
                             #js {:headers (bearer-headers (:proxx-auth-token config))})
                 (.then (fn [resp]
                          (if (aget resp "ok")
-                           (json-response! reply 200 {:models (or (aget (aget resp "body") "data") #js [])})
+                           (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
+                                 filtered (into-array
+                                           (filter (fn [item]
+                                                     (allowlisted-model-id? config (aget item "id")))
+                                                   items))]
+                             (json-response! reply 200 {:models filtered}))
                            (json-response! reply 502 {:error "Proxx model list failed"
                                                       :details (js->clj (aget resp "body") :keywordize-keys true)}))))
                 (.catch (fn [err]
@@ -175,7 +180,9 @@
                                                  :modified_at (now-iso)
                                                  :hash16mb ""
                                                  :suggested_ctx 128000})
-                                              items)]
+                                              (filter (fn [item]
+                                                        (allowlisted-model-id? config (aget item "id")))
+                                                      items))]
                              (json-response! reply 200 {:models models}))
                            (json-response! reply 502 {:detail "Model list failed"}))))
                 (.catch (fn [err]
