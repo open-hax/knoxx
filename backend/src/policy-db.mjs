@@ -59,6 +59,7 @@ const PERMISSIONS = [
   ['org.translations.review', 'org_translations', 'review', 'Review and label translations'],
   ['org.translations.export', 'org_translations', 'export', 'Export translation training data'],
   ['org.translations.manage', 'org_translations', 'manage', 'Manage translation pipeline config'],
+  ['org.proxx.observability.read', 'org_proxx_observability', 'read', 'Read Proxx analytics and request logs'],
 ];
 
 const TOOL_DEFINITIONS = [
@@ -137,6 +138,7 @@ const ORG_ROLE_SEEDS = [
       'org.translations.review',
       'org.translations.export',
       'org.translations.manage',
+      'org.proxx.observability.read',
     ],
     toolPolicies: TOOL_DEFINITIONS.map(([toolId]) => ({ toolId, effect: 'allow' })),
   },

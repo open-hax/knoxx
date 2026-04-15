@@ -6,7 +6,7 @@
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? http-error js-array-seq]]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-semantic-search!]]
             [knoxx.backend.runtime-config :refer [default-settings]]
-            [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-semantic-search-text openplanner-session-text graph-query-result-text]]))
+            [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-semantic-search-text openplanner-session-text graph-query-result-text websearch-result-text]]))
 
 (defonce settings-state* (atom nil))
 
@@ -260,6 +260,12 @@
                                     :nodeType (.Optional Type (.String Type #js {:description "Optional node_type filter such as docs, code, visited, assistant_message, tool_result, or reasoning."}))
                                     :limit (.Optional Type (.Number Type #js {:description "Maximum number of graph nodes to return." :minimum 1 :maximum 20}))
                                     :edgeLimit (.Optional Type (.Number Type #js {:description "Maximum number of incident edges to include." :minimum 0 :maximum 60}))})
+         websearch-params (.Object Type
+                                   #js {:query (.String Type #js {:description "Live web search query routed through Proxx websearch."})
+                                        :numResults (.Optional Type (.Number Type #js {:description "Maximum number of results to return." :minimum 1 :maximum 20}))
+                                        :searchContextSize (.Optional Type (.String Type #js {:description "Search context size: low, medium, or high."}))
+                                        :allowedDomains (.Optional Type (.Array Type (.String Type) #js {:description "Optional domain allowlist."}))
+                                        :model (.Optional Type (.String Type #js {:description "Optional Proxx/OpenAI model override for search."}))})
          session-params (.Object Type
                                  #js {:sessionId (.String Type #js {:description "Knoxx conversation/session id stored in OpenPlanner."})})
          ;; save_translation params
@@ -323,6 +329,29 @@
                                                                        :edge-limit edge-limit})
                                      (.then (fn [result]
                                               (tool-text-result (graph-query-result-text result) result))))))
+         websearch-execute (fn [_tool-call-id params a b c]
+                             (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                   query (or (aget params "query") "")
+                                   num-results (or (aget params "numResults") 8)
+                                   search-context-size (aget params "searchContextSize")
+                                   allowed-domains (or (aget params "allowedDomains") #js [])
+                                   model (aget params "model")]
+                               (maybe-tool-update! on-update "Searching the live web through Proxx…")
+                               (-> (backend-http/fetch-json (str (:proxx-base-url config) "/api/tools/websearch")
+                                                            #js {:method "POST"
+                                                                 :headers (backend-http/bearer-headers (:proxx-auth-token config))
+                                                                 :body (.stringify js/JSON
+                                                                                   #js {:query query
+                                                                                        :numResults num-results
+                                                                                        :searchContextSize search-context-size
+                                                                                        :allowedDomains allowed-domains
+                                                                                        :model model})})
+                                   (.then (fn [resp]
+                                            (if (aget resp "ok")
+                                              (let [result (js->clj (aget resp "body") :keywordize-keys true)]
+                                                (tool-text-result (websearch-result-text result) result))
+                                              (throw (js/Error. (str "websearch failed: "
+                                                                     (pr-str (js->clj (aget resp "body") :keywordize-keys true)))))))))))
          create-new-file-execute (fn [_tool-call-id params a b c]
                                    (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                          title (or (aget params "title") "Untitled Canvas")
@@ -417,6 +446,16 @@
                                                                "Use the lake filter to focus on devel, web, bluesky, or knoxx-session when the search space is obvious."]))
                             (aset "parameters" graph-params)
                             (aset "execute" graph-query-execute))
+         websearch-tool (doto (js-obj)
+                          (aset "name" "websearch")
+                          (aset "label" "Web Search")
+                          (aset "description" "Search the live web through Proxx websearch and return cited results.")
+                          (aset "promptSnippet" "Search the live web when the user needs fresh external information or wants to expand the web frontier.")
+                          (aset "promptGuidelines" (clj->js ["Use websearch when freshness matters or when the answer probably lives outside the current graph corpus."
+                                                             "Prefer allowedDomains when you know the likely source surface."
+                                                             "Use websearch to seed follow-up graph or semantic exploration, not as a substitute for graph_query when graph structure already exists."]))
+                          (aset "parameters" websearch-params)
+                          (aset "execute" websearch-execute))
          memory-session-tool (doto (js-obj)
                                (aset "name" "memory_session")
                                (aset "label" "Memory Session")
@@ -451,6 +490,9 @@
                           (ctx-tool-allowed? auth-context "graph_query")
                           (ctx-tool-allowed? auth-context "semantic_query"))
                   graph-query-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "websearch"))
+                  websearch-tool)
                 (when (or (nil? auth-context)
                           (ctx-tool-allowed? auth-context "memory_search"))
                   memory-search-tool)

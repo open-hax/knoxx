@@ -1,5 +1,6 @@
 (ns knoxx.backend.tool-routes
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.http :as backend-http]))
 
 (defn send-email!
   "Send an email via Gmail SMTP using nodemailer.
@@ -66,6 +67,40 @@
                                                               :message_id (aget result "messageId")})))
                           (.catch (fn [err]
                                     (json-response! reply 502 {:detail (str "Failed to send email: " (or (aget err "message") (str err)))}))))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  (route! app "POST" "/api/tools/websearch"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (let [body (or (aget request "body") #js {})
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "websearch")
+                        query (str/trim (str (or (aget body "query") "")))
+                        num-results (or (aget body "numResults") 8)
+                        search-context-size (aget body "searchContextSize")
+                        allowed-domains (or (aget body "allowedDomains") #js [])
+                        model (aget body "model")]
+                    (if (str/blank? query)
+                      (json-response! reply 400 {:detail "query is required"})
+                      (let [req-promise (backend-http/fetch-json (str (:proxx-base-url config) "/api/tools/websearch")
+                                                                 #js {:method "POST"
+                                                                      :headers (backend-http/bearer-headers (:proxx-auth-token config))
+                                                                      :body (.stringify js/JSON
+                                                                                        #js {:query query
+                                                                                             :numResults num-results
+                                                                                             :searchContextSize search-context-size
+                                                                                             :allowedDomains allowed-domains
+                                                                                             :model model})})]
+                        (-> req-promise
+                            (.then (fn [resp]
+                                     (if (aget resp "ok")
+                                       (json-response! reply 200 (assoc (js->clj (aget resp "body") :keywordize-keys true) :role role))
+                                       (json-response! reply (or (aget resp "status") 502)
+                                                       {:detail (pr-str (js->clj (aget resp "body") :keywordize-keys true))}))))
+                            (.catch (fn [err]
+                                      (json-response! reply 502 {:detail (str err)}))))))
                   (catch :default err
                     (error-response! reply err)))))))
 
@@ -224,4 +259,4 @@
                                                                  :stderr stderr})))))))
                   (catch :default err
                     (error-response! reply err)))))))
-  nil)
+  nil))

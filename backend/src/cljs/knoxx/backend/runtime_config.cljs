@@ -161,22 +161,41 @@
       (str/ends-with? base "/") (str base "v1")
       :else (str base "/v1"))))
 
+(defn per-model-compat
+  "Compute per-model compat so reasoning/thinking settings aren't
+   incorrectly shared across models that don't support them."
+  [config model-id]
+  (cond-> {:supportsDeveloperRole false}
+    (model-supports-reasoning? config model-id)
+    (assoc :supportsReasoningEffort true)
+    (some? (model-thinking-format model-id))
+    (assoc :thinkingFormat (model-thinking-format model-id))))
+
 (defn models-config
-  [config]
-  (let [default-model (:proxx-default-model config)
-        compat (cond-> {:supportsDeveloperRole false}
-                 (model-supports-reasoning? config default-model)
-                 (assoc :supportsReasoningEffort true)
-                 (some? (model-thinking-format default-model))
-                 (assoc :thinkingFormat (model-thinking-format default-model)))]
-    {:providers
-     {:proxx
-      {:baseUrl (proxx-openai-base-url config)
-       :apiKey "PROXX_AUTH_TOKEN"
-       :authHeader true
-       :api "openai-completions"
-       :compat compat
-       :models [(provider-model-config config default-model)]}}}))
+  ([config]
+   (models-config config nil))
+  ([config model-ids]
+   (let [default-model (:proxx-default-model config)
+         normalized-models (->> (or model-ids [])
+                                (map (fn [m] (some-> m str str/trim not-empty)))
+                                (remove nil?)
+                                distinct
+                                vec)
+         models (if (seq normalized-models)
+                  normalized-models
+                  [default-model])
+         base-compat {:supportsDeveloperRole false}]
+     {:providers
+      {:proxx
+       {:baseUrl (proxx-openai-base-url config)
+        :apiKey "PROXX_AUTH_TOKEN"
+        :authHeader true
+        :api "openai-completions"
+        :compat base-compat
+        :models (mapv (fn [model-id]
+                        (merge (provider-model-config config model-id)
+                               {:compat (per-model-compat config model-id)}))
+                      models)}}})))
 
 (defn default-settings
   [config]

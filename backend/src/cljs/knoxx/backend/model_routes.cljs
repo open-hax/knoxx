@@ -2,17 +2,21 @@
   (:require [clojure.string :as str]
             [knoxx.backend.agent-hydration :refer [settings-state*]]
             [knoxx.backend.app-shapes :refer [route!]]
-            [knoxx.backend.authz :refer [with-request-context! run-visible?]]
-            [knoxx.backend.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq]]
+            [knoxx.backend.authz :refer [with-request-context! run-visible? ensure-permission!]]
+            [knoxx.backend.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq request-query-string]]
             [knoxx.backend.run-state :refer [runs* run-order* summarize-run]]
             [knoxx.backend.runtime-config :refer [now-iso]]))
+
+(defn- proxx-configured?
+  [config]
+  (and (not (str/blank? (:proxx-base-url config)))
+       (not (str/blank? (:proxx-auth-token config)))))
 
 (defn register-model-routes!
   [app runtime config]
   (route! app "GET" "/api/proxx/health"
           (fn [_request reply]
-            (let [configured (and (not (str/blank? (:proxx-base-url config)))
-                                  (not (str/blank? (:proxx-auth-token config))))]
+            (let [configured (proxx-configured? config)]
               (if-not configured
                 (json-response! reply 200 {:reachable false
                                            :configured false
@@ -45,6 +49,73 @@
                                                     :status_code 502
                                                     :default_model (:llmModel @settings-state*)})
                           reply))))))
+
+  ;; ============================================================
+  ;; Proxx observability (analytics + request logs)
+  ;;
+  ;; Knoxx backend proxies Proxx's /api/ui/* endpoints so the browser
+  ;; never needs the Proxx auth token.
+  ;; ============================================================
+
+  (route! app "GET" "/api/proxx/observability/request-logs"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "org.proxx.observability.read")
+                  (if-not (proxx-configured? config)
+                    (json-response! reply 503 {:error "Proxx is not configured"})
+                    (-> (fetch-json (str (:proxx-base-url config) "/api/ui/request-logs" (request-query-string request))
+                                    #js {:headers (bearer-headers (:proxx-auth-token config))})
+                        (.then (fn [resp]
+                                 (if (aget resp "ok")
+                                   (json-response! reply 200 (js->clj (aget resp "body") :keywordize-keys true))
+                                   (json-response! reply 502 {:error "Proxx request logs failed"
+                                                              :details (js->clj (aget resp "body") :keywordize-keys true)}))))
+                        (.catch (fn [err]
+                                  (json-response! reply 502 {:error (str err)})))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  (route! app "GET" "/api/proxx/observability/dashboard/overview"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "org.proxx.observability.read")
+                  (if-not (proxx-configured? config)
+                    (json-response! reply 503 {:error "Proxx is not configured"})
+                    (-> (fetch-json (str (:proxx-base-url config) "/api/ui/dashboard/overview" (request-query-string request))
+                                    #js {:headers (bearer-headers (:proxx-auth-token config))})
+                        (.then (fn [resp]
+                                 (if (aget resp "ok")
+                                   (json-response! reply 200 (js->clj (aget resp "body") :keywordize-keys true))
+                                   (json-response! reply 502 {:error "Proxx dashboard overview failed"
+                                                              :details (js->clj (aget resp "body") :keywordize-keys true)}))))
+                        (.catch (fn [err]
+                                  (json-response! reply 502 {:error (str err)})))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  (route! app "GET" "/api/proxx/observability/analytics/provider-model"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "org.proxx.observability.read")
+                  (if-not (proxx-configured? config)
+                    (json-response! reply 503 {:error "Proxx is not configured"})
+                    (-> (fetch-json (str (:proxx-base-url config) "/api/ui/analytics/provider-model" (request-query-string request))
+                                    #js {:headers (bearer-headers (:proxx-auth-token config))})
+                        (.then (fn [resp]
+                                 (if (aget resp "ok")
+                                   (json-response! reply 200 (js->clj (aget resp "body") :keywordize-keys true))
+                                   (json-response! reply 502 {:error "Proxx provider-model analytics failed"
+                                                              :details (js->clj (aget resp "body") :keywordize-keys true)}))))
+                        (.catch (fn [err]
+                                  (json-response! reply 502 {:error (str err)})))))
+                  (catch :default err
+                    (error-response! reply err)))))))
 
   (route! app "GET" "/api/proxx/models"
           (fn [_request reply]

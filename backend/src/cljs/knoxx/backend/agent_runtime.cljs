@@ -13,6 +13,50 @@
 (defonce sdk-runtime* (atom nil))
 (defonce agent-sessions* (atom {}))
 
+(defn- js-array-seq
+  [value]
+  (if (array? value) (array-seq value) []))
+
+(defn- proxx-models-url
+  [config]
+  (let [base (str (or (:proxx-base-url config) ""))]
+    (cond
+      (str/ends-with? base "/v1") (str base "/models")
+      (str/ends-with? base "/v1/") (str base "models")
+      (str/ends-with? base "/") (str base "v1/models")
+      :else (str base "/v1/models"))))
+
+(defn- fetch-proxx-model-ids!
+  "Fetch available model ids from Proxx /v1/models so Knoxx's pi model registry includes
+   local Ollama (gemma4, qwen, etc) as well as upstream hosted models.
+
+   Returns a Promise of vector of strings."
+  [config]
+  (let [token (str (or (:proxx-auth-token config) ""))
+        url (proxx-models-url config)]
+    (if (str/blank? token)
+      (js/Promise.resolve [])
+      (-> (js/fetch url #js {:headers #js {"Authorization" (str "Bearer " token)
+                                           "Accept" "application/json"}})
+          (.then (fn [resp]
+                   (if (aget resp "ok")
+                     (.json resp)
+                     (js/Promise.reject (js/Error. (str "Proxx /v1/models failed with status " (aget resp "status")))))))
+          (.then (fn [payload]
+                   (let [items (js-array-seq (or (aget payload "data") #js []))
+                         ids (->> items
+                                  (map (fn [item]
+                                         (let [raw (aget item "id")]
+                                           (when (and raw (not (str/blank? (str raw))))
+                                             (str raw)))))
+                                  (remove nil?)
+                                  distinct
+                                  vec)]
+                     ids)))
+          (.catch (fn [_err]
+                    ;; Keep Knoxx running even if Proxx is offline or auth fails.
+                    (js/Promise.resolve [])))))))
+
 (defn stored-session-message->agent-message
   [message]
   (let [role (some-> (:role message) str)
@@ -93,10 +137,13 @@
                                                                 :retry {:enabled true :maxRetries 1}}))
           p (-> (.mkdir node-fs runtime-dir #js {:recursive true})
                 (.then (fn []
-                         (.writeFile node-fs
-                                     models-file
-                                     (.stringify js/JSON (clj->js (models-config config)) nil 2)
-                                     "utf8")))
+                         (-> (fetch-proxx-model-ids! config)
+                             (.then (fn [model-ids]
+                                      (-> (.writeFile node-fs
+                                                      models-file
+                                                      (.stringify js/JSON (clj->js (models-config config model-ids)) nil 2)
+                                                      "utf8")
+                                          (.then (fn [] nil))))))))
                 (.then (fn []
                          (let [auth-storage (.create AuthStorage auth-file)
                                _ (when-not (str/blank? (:proxx-auth-token config))
@@ -175,18 +222,27 @@
   (let [thinking-level (or (normalize-thinking-level thinking-level)
                            (:agent-thinking-level config)
                            "off")]
-    (if-let [session (get @agent-sessions* conversation-id)]
-      (do
-        (.setThinkingLevel session thinking-level)
-        (js/Promise.resolve session))
+    (if-let [entry (get @agent-sessions* conversation-id)]
+      (let [session (:session entry)
+            active-model (:model-id entry)]
+        (if (and (some? session)
+                 (= (str active-model) (str model-id)))
+          (do
+            (.setThinkingLevel session thinking-level)
+            (js/Promise.resolve session))
+          ;; Model changed mid-conversation: rebuild session so the requested model is respected.
+          (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level)
+              (.then (fn [next-session]
+                       (swap! agent-sessions* assoc conversation-id {:session next-session :model-id model-id})
+                       next-session)))))
       (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level)
           (.then (fn [session]
-                   (swap! agent-sessions* assoc conversation-id session)
+                   (swap! agent-sessions* assoc conversation-id {:session session :model-id model-id})
                    session)))))))
 
 (defn active-agent-session
   [conversation-id]
-  (get @agent-sessions* conversation-id))
+  (:session (get @agent-sessions* conversation-id)))
 
 (defn remove-agent-session!
   "Keep completed conversation sessions warm in-process so follow-up turns retain live context.

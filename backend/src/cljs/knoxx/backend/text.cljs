@@ -249,6 +249,20 @@
            hits)))
     (str "OpenPlanner memory search for: " query "\nNo prior Knoxx memory hits found.")))
 
+(defn websearch-result-text
+  [{:keys [output sources model]}]
+  (str "Web search"
+       (when model (str " via " model))
+       "\n\n"
+       (or output "")
+       (when (seq sources)
+         (str "\n\nSources:\n"
+              (str/join "\n"
+                        (map (fn [source]
+                               (str "- " (or (:title source) (:url source))
+                                    " — " (:url source)))
+                             sources))))))
+
 (defn openplanner-session-text
   [session-id rows]
   (if (seq rows)
