@@ -346,7 +346,9 @@
                       (do
                         ;; Update in-memory config + env var so the running server picks it up
                         (aset js/process.env "DISCORD_BOT_TOKEN" new-token)
-                        (swap! runtime-config/config* (fn [current-cfg] (assoc current-cfg :discord-bot-token new-token)))
+                        (swap! runtime-config/config* (fn [current-cfg]
+                                                       (assoc (or current-cfg (runtime-config/cfg))
+                                                              :discord-bot-token new-token)))
                         (discord-cron/reload!)
                         (let [masked (masked-discord-token new-token)]
                           (json-response! reply 200 {:ok true
@@ -373,7 +375,8 @@
                         next-control (runtime-config/discord-agent-control-config
                                       (assoc live-config :discord-agent-control body))]
                     (swap! runtime-config/config* (fn [current-cfg]
-                                                   (assoc current-cfg :discord-agent-control next-control)))
+                                                   (assoc (or current-cfg (runtime-config/cfg))
+                                                          :discord-agent-control next-control)))
                     (discord-cron/reload!)
                     (json-response! reply 200 (assoc (discord-control-response config) :ok true)))
                   (catch :default err

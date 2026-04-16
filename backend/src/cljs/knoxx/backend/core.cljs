@@ -6,7 +6,7 @@
             [knoxx.backend.realtime :as realtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.run-state :refer [active-runs-count]]
-            [knoxx.backend.runtime-config :refer [cfg]]
+            [knoxx.backend.runtime-config :as runtime-config :refer [cfg]]
             [knoxx.backend.session-titles :refer [load-session-titles!]]))
 
 (defonce server* (atom nil))
@@ -34,6 +34,7 @@
           fastify-cors (aget runtime "fastifyCors")
           fastify-multipart (aget runtime "fastifyMultipart")
           app (Fastify #js {:logger true})]
+      (reset! runtime-config/config* config)
       (ensure-settings! config)
       (let [redis-startup (-> (redis/init-redis! (:redis-url config))
                               (.then (fn [redis-client]
