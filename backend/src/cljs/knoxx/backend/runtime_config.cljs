@@ -280,6 +280,190 @@
                        (if (seq saved-keywords) saved-keywords (default-discord-keywords)))
      :jobs merged-jobs}))
 
+(defn event-agent-role-options
+  []
+  (discord-agent-role-options))
+
+(defn event-agent-source-kind-options
+  []
+  ["discord" "github" "cron" "manual"])
+
+(defn event-agent-trigger-kind-options
+  []
+  ["cron" "event"])
+
+(defn- normalize-tool-policy-entry
+  [policy]
+  (let [tool-id (some-> (or (:toolId policy)
+                            (:tool-id policy)
+                            (:tool_id policy))
+                        str
+                        str/trim
+                        not-empty)
+        effect (some-> (or (:effect policy) "allow")
+                       str
+                       str/trim
+                       str/lower-case
+                       not-empty)]
+    (when tool-id
+      {:toolId tool-id
+       :effect (if (#{"allow" "deny"} effect)
+                 effect
+                 "allow")})))
+
+(defn- normalize-tool-policy-list
+  [policies]
+  (->> (or policies [])
+       (keep normalize-tool-policy-entry)
+       vec))
+
+(defn- default-discord-tool-policies
+  []
+  [{:toolId "discord.read" :effect "allow"}
+   {:toolId "discord.search" :effect "allow"}
+   {:toolId "discord.publish" :effect "allow"}
+   {:toolId "discord.guilds" :effect "allow"}
+   {:toolId "discord.channels" :effect "allow"}
+   {:toolId "memory_search" :effect "allow"}
+   {:toolId "graph_query" :effect "allow"}])
+
+(defn default-event-agent-control
+  [config]
+  (let [default-model (or (:proxx-default-model config) "glm-5")
+        default-role (if (contains? role-tools "system_admin") "system_admin" (:knoxx-default-role config))
+        default-discord-source {:botUserId (or (some-> (env "DISCORD_BOT_USER_ID" "") str str/trim not-empty) "")
+                                :defaultChannels (default-discord-channels)
+                                :targetKeywords (default-discord-keywords)}]
+    {:sources {:discord default-discord-source
+               :github {:webhookSecretConfigured (boolean (some-> (env "GITHUB_WEBHOOK_SECRET" "") str str/trim not-empty))}
+               :cron {}}
+     :jobs [{:id "discord-patrol"
+             :name "Discord patrol"
+             :enabled true
+             :trigger {:kind "cron"
+                       :cadenceMinutes 5
+                       :eventKinds []}
+             :source {:kind "discord"
+                      :mode "patrol"
+                      :config {:maxMessages 25}}
+             :filters {:channels (default-discord-channels)
+                       :keywords (default-discord-keywords)}
+             :agentSpec {:role default-role
+                         :model default-model
+                         :thinkingLevel "off"
+                         :systemPrompt "Observe configured Discord channels, detect fresh human signals, and queue structured events without speaking publicly."
+                         :taskPrompt "Read recent channel messages, update freshness state, and dispatch normalized Discord events for worthy human signals."
+                         :toolPolicies []}}
+            {:id "discord-mention-response"
+             :name "Discord mention response"
+             :enabled true
+             :trigger {:kind "event"
+                       :cadenceMinutes 1
+                       :eventKinds ["discord.message.mention" "discord.message.keyword"]}
+             :source {:kind "discord"
+                      :mode "respond"
+                      :config {:maxMessages 12}}
+             :filters {:channels (default-discord-channels)
+                       :keywords (default-discord-keywords)}
+             :agentSpec {:role default-role
+                         :model default-model
+                         :thinkingLevel "off"
+                         :systemPrompt "You are Knoxx's targeted event-driven Discord responder. Read the room, use tools when needed, and prefer silence over filler."
+                         :taskPrompt "A normalized Discord event matched this job. Read more context if needed, then decide whether to reply with discord.publish."
+                         :toolPolicies (default-discord-tool-policies)}}
+            {:id "discord-deep-synthesis"
+             :name "Discord deep synthesis"
+             :enabled true
+             :trigger {:kind "cron"
+                       :cadenceMinutes 120
+                       :eventKinds []}
+             :source {:kind "discord"
+                      :mode "synthesize"
+                      :config {:maxMessages 12}}
+             :filters {:channels (default-discord-channels)
+                       :keywords (default-discord-keywords)}
+             :agentSpec {:role default-role
+                         :model default-model
+                         :thinkingLevel "minimal"
+                         :systemPrompt "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans."
+                         :taskPrompt "Summarize recent cross-channel Discord activity, identify meaningful opportunities or risks, and decide whether to publish a concise proactive message."
+                         :toolPolicies (default-discord-tool-policies)}}]}))
+
+(defn- normalize-event-agent-job
+  [config default-job raw-job]
+  (let [allowed-roles (set (event-agent-role-options))
+        source (merge default-job (or raw-job {}))
+        trigger-source (merge (:trigger default-job) (or (:trigger source) {}))
+        source-config (merge (:source default-job) (or (:source source) {}))
+        agent-source (merge (:agentSpec default-job) (or (:agentSpec source) {}))
+        trigger-kind (let [candidate (some-> (:kind trigger-source) str str/trim str/lower-case not-empty)]
+                       (if (#{"cron" "event"} candidate) candidate (:kind (:trigger default-job))))
+        cadence (or (parse-positive-int (:cadenceMinutes trigger-source))
+                    (:cadenceMinutes (:trigger default-job))
+                    5)
+        event-kinds (->> (or (:eventKinds trigger-source) [])
+                         (map (fn [value] (some-> value str str/trim not-empty)))
+                         (remove nil?)
+                         distinct
+                         vec)
+        source-kind (let [candidate (some-> (:kind source-config) str str/trim str/lower-case not-empty)]
+                      (if (some #(= candidate %) (event-agent-source-kind-options))
+                        candidate
+                        (:kind (:source default-job))))
+        source-mode (or (some-> (:mode source-config) str str/trim not-empty)
+                        (:mode (:source default-job))
+                        "observe")
+        role (let [candidate (some-> (:role agent-source) str str/trim not-empty)]
+               (if (contains? allowed-roles candidate)
+                 candidate
+                 (:role (:agentSpec default-job))))
+        thinking-level (or (normalize-thinking-level (:thinkingLevel agent-source))
+                           (:thinkingLevel (:agentSpec default-job))
+                           (:agent-thinking-level config)
+                           "off")]
+    {:id (:id default-job)
+     :name (or (some-> (:name source) str str/trim not-empty) (:name default-job))
+     :enabled (not (false? (:enabled source)))
+     :trigger {:kind trigger-kind
+               :cadenceMinutes (max 1 (min 10080 cadence))
+               :eventKinds event-kinds}
+     :source {:kind source-kind
+              :mode source-mode
+              :config (or (:config source-config) {})}
+     :filters (or (:filters source) (:filters default-job) {})
+     :agentSpec {:role role
+                 :model (or (some-> (:model agent-source) str str/trim not-empty)
+                            (:model (:agentSpec default-job))
+                            (:proxx-default-model config))
+                 :thinkingLevel thinking-level
+                 :systemPrompt (or (some-> (:systemPrompt agent-source) str not-empty)
+                                   (:systemPrompt (:agentSpec default-job))
+                                   "")
+                 :taskPrompt (or (some-> (:taskPrompt agent-source) str not-empty)
+                                 (:taskPrompt (:agentSpec default-job))
+                                 "")
+                 :toolPolicies (let [normalized (normalize-tool-policy-list (:toolPolicies agent-source))]
+                                 (if (seq normalized)
+                                   normalized
+                                   (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job)))))}
+     :description (or (some-> (:description source) str str/trim not-empty)
+                      (:description default-job))}))
+
+(defn event-agent-control-config
+  [config]
+  (let [saved (or (:event-agent-control config) {})
+        defaults (default-event-agent-control config)
+        default-sources (:sources defaults)
+        saved-sources (or (:sources saved) {})
+        default-jobs (:jobs defaults)
+        saved-jobs-by-id (into {} (map (fn [job] [(:id job) job])) (or (:jobs saved) []))]
+    {:sources {:discord (merge (:discord default-sources) (or (:discord saved-sources) {}))
+               :github (merge (:github default-sources) (or (:github saved-sources) {}))
+               :cron (merge (:cron default-sources) (or (:cron saved-sources) {}))}
+     :jobs (mapv (fn [default-job]
+                   (normalize-event-agent-job config default-job (get saved-jobs-by-id (:id default-job))))
+                 default-jobs)}))
+
 (def ^:private default-model-prefix-allowlist
   ["glm-5" "gpt-5" "qwen3" "gemma4:" "gemma3:" "deepseek" "kimi-k2" "nemotron" "cogito" "devstral" "minimax" "ministral" "mistral-large"])
 

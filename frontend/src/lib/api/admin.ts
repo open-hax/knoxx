@@ -138,28 +138,51 @@ export interface DiscordConfigStatus {
   tokenPreview: string;
 }
 
-export interface DiscordAgentJobControl {
-  id: string;
-  name: string;
-  kind: string;
-  description: string;
-  enabled: boolean;
-  cadenceMinutes: number;
-  role: string;
-  model: string;
-  thinkingLevel: string;
-  channels: string[];
-  keywords: string[];
-  maxMessages: number;
-  systemPrompt: string;
-  taskPrompt: string;
+export interface EventAgentToolPolicy {
+  toolId: string;
+  effect: "allow" | "deny";
 }
 
-export interface DiscordAgentRuntimeJob {
+export interface EventAgentJobControl {
+  id: string;
+  name: string;
+  enabled: boolean;
+  description?: string;
+  trigger: {
+    kind: string;
+    cadenceMinutes: number;
+    eventKinds: string[];
+  };
+  source: {
+    kind: string;
+    mode: string;
+    config: Record<string, unknown>;
+  };
+  filters: Record<string, unknown>;
+  agentSpec: {
+    role: string;
+    model: string;
+    thinkingLevel: string;
+    systemPrompt: string;
+    taskPrompt: string;
+    toolPolicies: EventAgentToolPolicy[];
+  };
+}
+
+export interface EventAgentRuntimeJob {
   id: string;
   name: string;
   enabled: boolean;
   scheduleLabel: string;
+  trigger?: {
+    kind: string;
+    cadenceMinutes?: number;
+    eventKinds?: string[];
+  };
+  source?: {
+    kind: string;
+    mode?: string;
+  };
   running?: boolean;
   runCount?: number;
   lastStartedAt?: number;
@@ -170,22 +193,28 @@ export interface DiscordAgentRuntimeJob {
   nextRunAt?: number;
 }
 
-export interface DiscordAgentControlResponse extends DiscordConfigStatus {
+export interface EventAgentControlResponse extends DiscordConfigStatus {
   availableRoles: string[];
+  availableSourceKinds: string[];
+  availableTriggerKinds: string[];
   control: {
-    botUserId: string;
-    defaultChannels: string[];
-    targetKeywords: string[];
-    jobs: DiscordAgentJobControl[];
+    sources: {
+      discord?: {
+        botUserId?: string;
+        defaultChannels?: string[];
+        targetKeywords?: string[];
+      };
+      github?: Record<string, unknown>;
+      cron?: Record<string, unknown>;
+      [key: string]: unknown;
+    };
+    jobs: EventAgentJobControl[];
   };
   runtime: {
     running: boolean;
     configured: boolean;
-    channelCount: number;
-    channels: string[];
-    lastSeenChannels: string[];
-    mentionQueueCount: number;
-    jobs: DiscordAgentRuntimeJob[];
+    sources?: Record<string, unknown>;
+    jobs: EventAgentRuntimeJob[];
   };
 }
 
@@ -200,19 +229,30 @@ export async function updateDiscordConfig(discordBotToken: string): Promise<Disc
   });
 }
 
-export async function getDiscordAgentControl(): Promise<DiscordAgentControlResponse> {
-  return request<DiscordAgentControlResponse>("/api/admin/config/discord/control");
+export async function getEventAgentControl(): Promise<EventAgentControlResponse> {
+  return request<EventAgentControlResponse>("/api/admin/config/event-agents");
 }
 
-export async function updateDiscordAgentControl(control: DiscordAgentControlResponse["control"]): Promise<DiscordAgentControlResponse & { ok: boolean }> {
-  return request<DiscordAgentControlResponse & { ok: boolean }>("/api/admin/config/discord/control", {
+export async function updateEventAgentControl(control: EventAgentControlResponse["control"]): Promise<EventAgentControlResponse & { ok: boolean }> {
+  return request<EventAgentControlResponse & { ok: boolean }>("/api/admin/config/event-agents", {
     method: "PUT",
     body: JSON.stringify(control),
   });
 }
 
-export async function runDiscordAgentJob(jobId: string): Promise<{ ok: boolean; jobId: string }> {
-  return request<{ ok: boolean; jobId: string }>(`/api/admin/config/discord/control/jobs/${encodeURIComponent(jobId)}/run`, {
+export async function runEventAgentJob(jobId: string): Promise<{ ok: boolean; jobId: string }> {
+  return request<{ ok: boolean; jobId: string }>(`/api/admin/config/event-agents/jobs/${encodeURIComponent(jobId)}/run`, {
     method: "POST",
+  });
+}
+
+export async function dispatchEventAgentEvent(event: {
+  sourceKind: string;
+  eventKind: string;
+  payload?: Record<string, unknown>;
+}): Promise<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }> {
+  return request<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }>("/api/admin/config/event-agents/events/dispatch", {
+    method: "POST",
+    body: JSON.stringify(event),
   });
 }

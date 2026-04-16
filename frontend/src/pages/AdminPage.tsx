@@ -476,7 +476,7 @@ export default function AdminPage() {
             />
           </div>
 
-          <DiscordSection canManage={canCreateOrgs} />
+          <DiscordSection canManage={canCreateOrgs} tools={tools} />
 
           <ProxxObservabilitySection canView={canViewProxxObservability} />
 

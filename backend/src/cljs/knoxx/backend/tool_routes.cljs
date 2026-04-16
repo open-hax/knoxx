@@ -1,6 +1,6 @@
 (ns knoxx.backend.tool-routes
   (:require [clojure.string :as str]
-            [knoxx.backend.discord-cron :as discord-cron]
+            [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.http :as backend-http]
             [knoxx.backend.runtime-config :as runtime-config]))
 
@@ -33,16 +33,18 @@
     (str (subs token 0 4) "***" (subs token (- (count token) 4)))
     ""))
 
-(defn- discord-control-response
+(defn- event-agents-control-response
   [config]
   (let [live-config (or @runtime-config/config* config)
         token (:discord-bot-token live-config)
         configured (not (str/blank? token))
-        control (runtime-config/discord-agent-control-config live-config)
-        runtime (discord-cron/status-snapshot live-config)]
+        control (runtime-config/event-agent-control-config live-config)
+        runtime (event-agents/status-snapshot live-config)]
     {:configured configured
      :tokenPreview (if configured (masked-discord-token token) "")
-     :availableRoles (runtime-config/discord-agent-role-options)
+     :availableRoles (runtime-config/event-agent-role-options)
+     :availableSourceKinds (runtime-config/event-agent-source-kind-options)
+     :availableTriggerKinds (runtime-config/event-agent-trigger-kind-options)
      :control control
      :runtime runtime}))
 
@@ -349,7 +351,7 @@
                         (swap! runtime-config/config* (fn [current-cfg]
                                                        (assoc (or current-cfg (runtime-config/cfg))
                                                               :discord-bot-token new-token)))
-                        (discord-cron/reload!)
+                        (event-agents/reload!)
                         (let [masked (masked-discord-token new-token)]
                           (json-response! reply 200 {:ok true
                                                      :configured true
@@ -357,12 +359,73 @@
                   (catch :default err
                     (error-response! reply err)))))))
 
+  (route! app "GET" "/api/admin/config/event-agents"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (ensure-permission! ctx "platform.org.read")
+                (json-response! reply 200 (event-agents-control-response config))))))
+
+  (route! app "PUT" "/api/admin/config/event-agents"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "platform.org.create")
+                  (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+                        live-config (or @runtime-config/config* config)
+                        next-control (runtime-config/event-agent-control-config
+                                      (assoc live-config :event-agent-control body))]
+                    (swap! runtime-config/config* (fn [current-cfg]
+                                                   (assoc (or current-cfg (runtime-config/cfg))
+                                                          :event-agent-control next-control)))
+                    (event-agents/reload!)
+                    (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  (route! app "POST" "/api/admin/config/event-agents/jobs/:jobId/run"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "platform.org.create")
+                  (let [job-id (or (aget request "params" "jobId") "")]
+                    (if (str/blank? job-id)
+                      (json-response! reply 400 {:detail "jobId is required"})
+                      (-> (event-agents/run-job! job-id)
+                          (.then (fn [_]
+                                   (json-response! reply 202 {:ok true
+                                                              :jobId job-id})))
+                          (.catch (fn [err]
+                                    (error-response! reply err))))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  (route! app "POST" "/api/admin/config/event-agents/events/dispatch"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "platform.org.create")
+                  (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
+                    (-> (event-agents/dispatch-event! body)
+                        (.then (fn [result]
+                                 (json-response! reply 202 {:ok true
+                                                            :matchedJobs (:matchedJobs result)
+                                                            :event (:event result)})))
+                        (.catch (fn [err]
+                                  (error-response! reply err)))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  ;; Legacy aliases while the browser/proxy surface catches up.
   (route! app "GET" "/api/admin/config/discord/control"
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
                 (ensure-permission! ctx "platform.org.read")
-                (json-response! reply 200 (discord-control-response config))))))
+                (json-response! reply 200 (event-agents-control-response config))))))
 
   (route! app "PUT" "/api/admin/config/discord/control"
           (fn [request reply]
@@ -372,13 +435,13 @@
                   (ensure-permission! ctx "platform.org.create")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
                         live-config (or @runtime-config/config* config)
-                        next-control (runtime-config/discord-agent-control-config
-                                      (assoc live-config :discord-agent-control body))]
+                        next-control (runtime-config/event-agent-control-config
+                                      (assoc live-config :event-agent-control body))]
                     (swap! runtime-config/config* (fn [current-cfg]
                                                    (assoc (or current-cfg (runtime-config/cfg))
-                                                          :discord-agent-control next-control)))
-                    (discord-cron/reload!)
-                    (json-response! reply 200 (assoc (discord-control-response config) :ok true)))
+                                                          :event-agent-control next-control)))
+                    (event-agents/reload!)
+                    (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
                   (catch :default err
                     (error-response! reply err)))))))
 
@@ -391,7 +454,7 @@
                   (let [job-id (or (aget request "params" "jobId") "")]
                     (if (str/blank? job-id)
                       (json-response! reply 400 {:detail "jobId is required"})
-                      (-> (discord-cron/run-job! job-id)
+                      (-> (event-agents/run-job! job-id)
                           (.then (fn [_]
                                    (json-response! reply 202 {:ok true
                                                               :jobId job-id})))
@@ -406,5 +469,5 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (ensure-permission! ctx "platform.org.read")
-                (json-response! reply 200 (:runtime (discord-control-response config)))))))
+                (json-response! reply 200 (:runtime (event-agents-control-response config)))))))
   nil))
