@@ -138,6 +138,57 @@ export interface DiscordConfigStatus {
   tokenPreview: string;
 }
 
+export interface DiscordAgentJobControl {
+  id: string;
+  name: string;
+  kind: string;
+  description: string;
+  enabled: boolean;
+  cadenceMinutes: number;
+  role: string;
+  model: string;
+  thinkingLevel: string;
+  channels: string[];
+  keywords: string[];
+  maxMessages: number;
+  systemPrompt: string;
+  taskPrompt: string;
+}
+
+export interface DiscordAgentRuntimeJob {
+  id: string;
+  name: string;
+  enabled: boolean;
+  scheduleLabel: string;
+  running?: boolean;
+  runCount?: number;
+  lastStartedAt?: number;
+  lastFinishedAt?: number;
+  lastDurationMs?: number;
+  lastStatus?: string;
+  lastError?: string;
+  nextRunAt?: number;
+}
+
+export interface DiscordAgentControlResponse extends DiscordConfigStatus {
+  availableRoles: string[];
+  control: {
+    botUserId: string;
+    defaultChannels: string[];
+    targetKeywords: string[];
+    jobs: DiscordAgentJobControl[];
+  };
+  runtime: {
+    running: boolean;
+    configured: boolean;
+    channelCount: number;
+    channels: string[];
+    lastSeenChannels: string[];
+    mentionQueueCount: number;
+    jobs: DiscordAgentRuntimeJob[];
+  };
+}
+
 export async function getDiscordConfig(): Promise<DiscordConfigStatus> {
   return request<DiscordConfigStatus>("/api/admin/config/discord");
 }
@@ -146,5 +197,22 @@ export async function updateDiscordConfig(discordBotToken: string): Promise<Disc
   return request<DiscordConfigStatus & { ok: boolean }>("/api/admin/config/discord", {
     method: "PUT",
     body: JSON.stringify({ discordBotToken }),
+  });
+}
+
+export async function getDiscordAgentControl(): Promise<DiscordAgentControlResponse> {
+  return request<DiscordAgentControlResponse>("/api/admin/config/discord/control");
+}
+
+export async function updateDiscordAgentControl(control: DiscordAgentControlResponse["control"]): Promise<DiscordAgentControlResponse & { ok: boolean }> {
+  return request<DiscordAgentControlResponse & { ok: boolean }>("/api/admin/config/discord/control", {
+    method: "PUT",
+    body: JSON.stringify(control),
+  });
+}
+
+export async function runDiscordAgentJob(jobId: string): Promise<{ ok: boolean; jobId: string }> {
+  return request<{ ok: boolean; jobId: string }>(`/api/admin/config/discord/control/jobs/${encodeURIComponent(jobId)}/run`, {
+    method: "POST",
   });
 }

@@ -72,6 +72,13 @@
            (remove nil?)
            vec)))
 
+(defn parse-string-list
+  [raw]
+  (->> (str/split (str (or raw "")) #",")
+       (map (fn [value] (some-> value str str/trim not-empty)))
+       (remove nil?)
+       vec))
+
 (defn allowlisted-model-id?
   "Returns true if model-id should be visible/selectable in Knoxx.
 
@@ -134,6 +141,144 @@
     (if existing
       (merge fresh-config existing)
       fresh-config)))
+
+(defn discord-agent-role-options
+  []
+  (->> (keys role-tools)
+       sort
+       vec))
+
+(defn- default-discord-channels
+  []
+  (parse-string-list (env "DISCORD_CHANNEL_IDS" "")))
+
+(defn- default-discord-keywords
+  []
+  (let [keywords (parse-string-list (env "DISCORD_TARGET_KEYWORDS" "knoxx,cephalon"))]
+    (if (seq keywords)
+      (mapv str/lower-case keywords)
+      ["knoxx" "cephalon"])))
+
+(defn default-discord-agent-jobs
+  [config]
+  (let [default-model (or (:proxx-default-model config) "glm-5")
+        default-role (if (contains? role-tools "system_admin") "system_admin" (:knoxx-default-role config))]
+    [{:id "patrol"
+      :name "Channel patrol"
+      :kind "observer"
+      :description "Poll configured Discord channels, remember fresh messages, and queue signals for follow-up jobs."
+      :enabled true
+      :cadenceMinutes 5
+      :role default-role
+      :model default-model
+      :thinkingLevel "off"
+      :channels (default-discord-channels)
+      :keywords (default-discord-keywords)
+      :maxMessages 25
+      :systemPrompt "Observe configured channels, detect fresh human signals, and queue them without speaking publicly."
+      :taskPrompt "Read recent channel messages, update freshness state, and queue human messages that mention the bot or contain target keywords."}
+     {:id "mentions"
+      :name "Mention response"
+      :kind "response"
+      :description "Process queued mentions and keyword hits, then decide whether Knoxx should answer."
+      :enabled true
+      :cadenceMinutes 1
+      :role default-role
+      :model default-model
+      :thinkingLevel "off"
+      :channels (default-discord-channels)
+      :keywords (default-discord-keywords)
+      :maxMessages 12
+      :systemPrompt "You are Knoxx's targeted Discord responder. Read the room before replying, stay useful, and prefer silence over filler."
+      :taskPrompt "A queued Discord message needs triage. Use discord.read or discord.search if needed, then either stay silent or reply with discord.publish."}
+     {:id "deep-synthesis"
+      :name "Deep synthesis"
+      :kind "synthesis"
+      :description "Periodically synthesize cross-channel activity and decide whether a proactive intervention is warranted."
+      :enabled true
+      :cadenceMinutes 120
+      :role default-role
+      :model default-model
+      :thinkingLevel "minimal"
+      :channels (default-discord-channels)
+      :keywords (default-discord-keywords)
+      :maxMessages 12
+      :systemPrompt "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only speak when synthesis helps humans."
+      :taskPrompt "Summarize recent cross-channel activity, identify important opportunities or risks, and decide whether to publish a concise proactive message."}]))
+
+(defn- normalize-discord-job
+  [config default-job raw-job]
+  (let [allowed-roles (set (discord-agent-role-options))
+        source (merge default-job (or raw-job {}))
+        cadence (or (parse-positive-int (:cadenceMinutes source))
+                    (:cadenceMinutes default-job)
+                    5)
+        role (let [candidate (some-> (:role source) str str/trim not-empty)]
+               (if (contains? allowed-roles candidate)
+                 candidate
+                 (:role default-job)))
+        thinking-level (or (normalize-thinking-level (:thinkingLevel source))
+                           (:thinkingLevel default-job)
+                           (:agent-thinking-level config)
+                           "off")
+        channels (let [candidate (->> (or (:channels source) [])
+                                      (map (fn [value] (some-> value str str/trim not-empty)))
+                                      (remove nil?)
+                                      vec)]
+                   (if (seq candidate) candidate (:channels default-job)))
+        keywords (let [candidate (->> (or (:keywords source) [])
+                                      (map (fn [value] (some-> value str str/trim str/lower-case not-empty)))
+                                      (remove nil?)
+                                      distinct
+                                      vec)]
+                   (if (seq candidate) candidate (:keywords default-job)))
+        max-messages (or (parse-positive-int (:maxMessages source))
+                         (:maxMessages default-job)
+                         25)]
+    {:id (:id default-job)
+     :name (or (some-> (:name source) str str/trim not-empty) (:name default-job))
+     :kind (:kind default-job)
+     :description (or (some-> (:description source) str str/trim not-empty) (:description default-job))
+     :enabled (not (false? (:enabled source)))
+     :cadenceMinutes (max 1 (min 10080 cadence))
+     :role role
+     :model (or (some-> (:model source) str str/trim not-empty)
+                (:model default-job)
+                (:proxx-default-model config))
+     :thinkingLevel thinking-level
+     :channels channels
+     :keywords keywords
+     :maxMessages (max 1 (min 100 max-messages))
+     :systemPrompt (or (some-> (:systemPrompt source) str str/trim not-empty)
+                       (:systemPrompt default-job)
+                       "")
+     :taskPrompt (or (some-> (:taskPrompt source) str str/trim not-empty)
+                     (:taskPrompt default-job)
+                     "")}))
+
+(defn discord-agent-control-config
+  [config]
+  (let [saved (or (:discord-agent-control config) {})
+        defaults (default-discord-agent-jobs config)
+        saved-by-id (into {} (map (fn [job] [(:id job) job])) (or (:jobs saved) []))
+        merged-jobs (mapv (fn [default-job]
+                            (normalize-discord-job config default-job (get saved-by-id (:id default-job))))
+                          defaults)]
+    {:botUserId (or (some-> (:botUserId saved) str str/trim not-empty)
+                    (some-> (env "DISCORD_BOT_USER_ID" "") str str/trim not-empty)
+                    "")
+     :defaultChannels (let [saved-channels (->> (or (:defaultChannels saved) [])
+                                                (map (fn [value] (some-> value str str/trim not-empty)))
+                                                (remove nil?)
+                                                vec)]
+                        (if (seq saved-channels) saved-channels (default-discord-channels)))
+     :targetKeywords (let [saved-keywords (->> (or (:targetKeywords saved) [])
+                                               (map (fn [value] (some-> value str str/trim str/lower-case not-empty)))
+                                               (remove nil?)
+                                               distinct
+                                               vec)]
+                       (if (seq saved-keywords) saved-keywords (default-discord-keywords)))
+     :jobs merged-jobs}))
 
 (def ^:private default-model-prefix-allowlist
   ["glm-5" "gpt-5" "qwen3" "gemma4:" "gemma3:" "deepseek" "kimi-k2" "nemotron" "cogito" "devstral" "minimax" "ministral" "mistral-large"])

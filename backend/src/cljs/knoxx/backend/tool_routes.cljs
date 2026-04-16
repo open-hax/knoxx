@@ -27,6 +27,25 @@
                         :subject subject
                         :text text-body})))))
 
+(defn- masked-discord-token
+  [token]
+  (if (and (string? token) (> (count token) 8))
+    (str (subs token 0 4) "***" (subs token (- (count token) 4)))
+    ""))
+
+(defn- discord-control-response
+  [config]
+  (let [live-config (or @runtime-config/config* config)
+        token (:discord-bot-token live-config)
+        configured (not (str/blank? token))
+        control (runtime-config/discord-agent-control-config live-config)
+        runtime (discord-cron/status-snapshot live-config)]
+    {:configured configured
+     :tokenPreview (if configured (masked-discord-token token) "")
+     :availableRoles (runtime-config/discord-agent-role-options)
+     :control control
+     :runtime runtime}))
+
 (defn register-tool-routes!
   [app runtime config {:keys [route!
                               json-response!
@@ -310,9 +329,7 @@
                 (let [live-config (or @runtime-config/config* config)
                       token (:discord-bot-token live-config)
                       configured (not (str/blank? token))
-                      masked (if configured
-                              (str (subs token 0 4) "***" (subs token (- (count token) 4)))
-                              "")]
+                      masked (if configured (masked-discord-token token) "")]
                   (json-response! reply 200 {:configured configured
                                              :tokenPreview masked}))))))
 
@@ -330,10 +347,53 @@
                         ;; Update in-memory config + env var so the running server picks it up
                         (aset js/process.env "DISCORD_BOT_TOKEN" new-token)
                         (swap! runtime-config/config* (fn [current-cfg] (assoc current-cfg :discord-bot-token new-token)))
-                        (let [masked (str (subs new-token 0 4) "***" (subs new-token (- (count new-token) 4)))]
+                        (discord-cron/reload!)
+                        (let [masked (masked-discord-token new-token)]
                           (json-response! reply 200 {:ok true
                                                      :configured true
                                                      :tokenPreview masked})))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  (route! app "GET" "/api/admin/config/discord/control"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (ensure-permission! ctx "platform.org.read")
+                (json-response! reply 200 (discord-control-response config))))))
+
+  (route! app "PUT" "/api/admin/config/discord/control"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "platform.org.create")
+                  (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+                        live-config (or @runtime-config/config* config)
+                        next-control (runtime-config/discord-agent-control-config
+                                      (assoc live-config :discord-agent-control body))]
+                    (swap! runtime-config/config* (fn [current-cfg]
+                                                   (assoc current-cfg :discord-agent-control next-control)))
+                    (discord-cron/reload!)
+                    (json-response! reply 200 (assoc (discord-control-response config) :ok true)))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  (route! app "POST" "/api/admin/config/discord/control/jobs/:jobId/run"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "platform.org.create")
+                  (let [job-id (or (aget request "params" "jobId") "")]
+                    (if (str/blank? job-id)
+                      (json-response! reply 400 {:detail "jobId is required"})
+                      (-> (discord-cron/run-job! job-id)
+                          (.then (fn [_]
+                                   (json-response! reply 202 {:ok true
+                                                              :jobId job-id})))
+                          (.catch (fn [err]
+                                    (error-response! reply err))))))
                   (catch :default err
                     (error-response! reply err)))))))
 
@@ -343,16 +403,5 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (ensure-permission! ctx "platform.org.read")
-                (let [running @discord-cron/running?*
-                      channels (discord-cron/monitored-channels)
-                      last-seen @discord-cron/last-seen-messages*
-                      mention-queue-count (count @discord-cron/mention-queue*)]
-                  (json-response! reply 200 {:running running
-                                             :channelCount (count channels)
-                                             :channels channels
-                                             :lastSeenChannels (keys last-seen)
-                                             :mentionQueueCount mention-queue-count
-                                             :jobs [{:name "patrol-channels" :schedule "*/5 * * * *" :description "Read recent messages from monitored channels"}
-                                                    {:name "mention-check" :schedule "* * * * *" :description "Check for @mentions that need a response"}
-                                                    {:name "deep-synthesis" :schedule "0 */2 * * *" :description "Full agent turn with graph + memory synthesis"}]}))))))
+                (json-response! reply 200 (:runtime (discord-control-response config)))))))
   nil))

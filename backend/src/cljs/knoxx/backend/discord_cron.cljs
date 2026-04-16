@@ -1,12 +1,10 @@
 (ns knoxx.backend.discord-cron
-  "Cron-driven Discord worker for Knoxx.
+  "Discord worker control plane for Knoxx.
 
-   This follows the translation-worker pattern conceptually:
-   - poll on a named schedule
-   - detect concrete work
-   - start a Knoxx agent run only when there is signal
-
-   It deliberately avoids cephalon's old infinite setTimeout tick loop."
+   The worker runs named scheduled jobs on bounded intervals instead of using
+   cephalon's recursive tick loop. Job behavior is controlled by runtime config
+   so the admin dashboard can tune cadence, channels, roles, prompts, and model
+   selection per job."
   (:require [clojure.string :as str]
             [knoxx.backend.runtime-config :as runtime-config]))
 
@@ -14,23 +12,14 @@
 (defonce cron-tasks* (atom {}))
 (defonce last-seen-messages* (atom {}))
 (defonce mention-queue* (atom []))
+(defonce job-state* (atom {}))
 
 (defn- cfg []
   (runtime-config/cfg))
 
-(defn monitored-channels
-  []
-  (->> (str/split (or (runtime-config/env "DISCORD_CHANNEL_IDS" "") "") #",")
-       (map str/trim)
-       (remove str/blank?)
-       vec))
-
-(defn- target-keywords
-  []
-  (->> (str/split (or (runtime-config/env "DISCORD_TARGET_KEYWORDS" "knoxx,cephalon") "") #",")
-       (map (comp str/lower-case str/trim))
-       (remove str/blank?)
-       vec))
+(defn- control-config
+  [config]
+  (runtime-config/discord-agent-control-config config))
 
 (defn- discord-token
   []
@@ -70,9 +59,10 @@
   (let [token (discord-token)]
     (if (str/blank? token)
       (js/Promise.reject (js/Error. "Discord bot token not configured"))
-      (-> (fetch-json! (str "https://discord.com/api/v10/channels/" channel-id "/messages?limit=" (max 1 (min 100 (or limit 25))))
-                       #js {:method "GET"
-                            :headers (discord-headers token)})
+      (-> (fetch-json!
+           (str "https://discord.com/api/v10/channels/" channel-id "/messages?limit=" (max 1 (min 100 (or limit 25))))
+           #js {:method "GET"
+                :headers (discord-headers token)})
           (.then (fn [payload]
                    (->> (if (array? payload) (array-seq payload) [])
                         (map map-message)
@@ -122,6 +112,27 @@
                                  :name (or (aget channel "name") "")
                                  :type (aget channel "type")})))))))))
 
+(defn- find-job
+  [control job-id]
+  (some (fn [job]
+          (when (= (:id job) job-id)
+            job))
+        (:jobs control)))
+
+(defn- job-channels
+  [control job]
+  (let [channels (vec (or (:channels job) []))]
+    (if (seq channels)
+      channels
+      (vec (or (:defaultChannels control) [])))))
+
+(defn- job-keywords
+  [control job]
+  (let [keywords (vec (or (:keywords job) []))]
+    (if (seq keywords)
+      (mapv str/lower-case keywords)
+      (mapv str/lower-case (or (:targetKeywords control) [])))))
+
 (defn- seen-id
   [channel-id]
   (get @last-seen-messages* channel-id))
@@ -142,21 +153,21 @@
     (swap! last-seen-messages* assoc channel-id latest-id)))
 
 (defn- message-mentions-bot?
-  [message]
-  (let [bot-user-id (str/trim (or (runtime-config/env "DISCORD_BOT_USER_ID" "") ""))
+  [control job message]
+  (let [bot-user-id (some-> (:botUserId control) str str/trim)
         content (str/lower-case (:content message))]
     (or (and (not (str/blank? bot-user-id))
              (or (str/includes? content (str "<@" bot-user-id ">"))
                  (str/includes? content (str "<@!" bot-user-id ">"))))
         (some (fn [keyword]
                 (str/includes? content keyword))
-              (target-keywords)))))
+              (job-keywords control job)))))
 
 (defn- message-worthy?
-  [message]
+  [control job message]
   (and (not (:authorIsBot message))
        (not (str/blank? (:content message)))
-       (message-mentions-bot? message)))
+       (message-mentions-bot? control job message)))
 
 (defn- queue-message!
   [message]
@@ -175,75 +186,122 @@
       (aset "X-API-Key" api-key))))
 
 (defn- start-discord-agent-session!
-  [config {:keys [channelId channelName authorUsername content reason]}]
+  [config job {:keys [channelId channelName authorUsername content reason]}]
   (let [now (.now js/Date)
-        run-id (str "discord-cron-" now)
-        conversation-id (str "discord-cron-" channelId "-" now)
-        session-id (str "discord-cron-session-" now)
-        user-message (str "Discord signal detected.\n"
+        run-id (str "discord-" (:id job) "-" now)
+        conversation-id (str "discord-" (:id job) "-" channelId "-" now)
+        session-id (str "discord-session-" (:id job) "-" now)
+        task-prompt (or (:taskPrompt job) "")
+        user-message (str "Discord job: " (:name job) "\n"
                           "Reason: " reason "\n"
                           "Channel ID: " channelId "\n"
                           "Channel Name: " (or channelName channelId) "\n"
                           "Author: " authorUsername "\n"
                           "Message: " content "\n\n"
-                          "Read more context if needed using discord.read or discord.search. "
-                          "If a response is useful, send it with discord.publish to channelId=" channelId ". "
-                          "If no response is warranted, stay silent.")
+                          (when-not (str/blank? task-prompt)
+                            (str "Job task prompt:\n" task-prompt "\n\n"))
+                          "Use discord.read, discord.search, discord.channels, and discord.guilds when they improve confidence. "
+                          "If a response is warranted, send it with discord.publish to the target channel. "
+                          "If not, stay silent.")
         body #js {:conversation_id conversation-id
                   :session_id session-id
                   :run_id run-id
                   :message user-message
-                  :agent_spec #js {:role "system_admin"
-                                   :system_prompt (str "You are Knoxx's cron-driven Discord agent. "
-                                                       "Be targeted. Read context before replying when needed. "
-                                                       "Do not post internal status memos. "
-                                                       "Keep useful responses short, native to the room, and optional.")
-                                   :model (or (:proxx-default-model config) "glm-5")
-                                   :thinking_level "off"
+                  :agent_spec #js {:role (or (:role job) "system_admin")
+                                   :system_prompt (or (:systemPrompt job) "You are Knoxx's Discord agent.")
+                                   :model (or (:model job) (:proxx-default-model config) "glm-5")
+                                   :thinking_level (or (:thinkingLevel job) "off")
                                    :tool_policies #js [#js {:toolId "discord.read" :effect "allow"}
                                                        #js {:toolId "discord.search" :effect "allow"}
                                                        #js {:toolId "discord.publish" :effect "allow"}
+                                                       #js {:toolId "discord.guilds" :effect "allow"}
+                                                       #js {:toolId "discord.channels" :effect "allow"}
                                                        #js {:toolId "memory_search" :effect "allow"}
                                                        #js {:toolId "graph_query" :effect "allow"}]}
-                  :model (or (:proxx-default-model config) "glm-5")}]
+                  :model (or (:model job) (:proxx-default-model config) "glm-5")}]
     (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/direct/start")
                      #js {:method "POST"
                           :headers (direct-start-headers config)
                           :body (.stringify js/JSON body)})
         (.then (fn [result]
-                 (println "[discord-cron] queued agent run" run-id "for channel" channelId)
+                 (println "[discord-cron] queued agent run" run-id "for job" (:id job) "channel" channelId)
                  result))
         (.catch (fn [err]
-                  (println "[discord-cron] failed to queue agent run:" (.-message err))
+                  (println "[discord-cron] failed to queue agent run for job" (:id job) ":" (.-message err))
+                  nil)))))
+
+(defn- update-job-state!
+  [job-id f]
+  (swap! job-state* update job-id (fn [current]
+                                    (f (or current {})))))
+
+(defn- run-job-instrumented!
+  [config job job-fn]
+  (let [job-id (:id job)
+        started-ms (.now js/Date)
+        cadence-ms (* 60 1000 (max 1 (:cadenceMinutes job)))]
+    (update-job-state! job-id
+                       (fn [state]
+                         (assoc state
+                                :running true
+                                :lastStartedAt started-ms
+                                :lastStatus "running"
+                                :nextRunAt (+ started-ms cadence-ms))))
+    (-> (js/Promise.resolve (job-fn config job))
+        (.then (fn [result]
+                 (let [finished-ms (.now js/Date)]
+                   (update-job-state! job-id
+                                      (fn [state]
+                                        (-> state
+                                            (assoc :running false
+                                                   :lastFinishedAt finished-ms
+                                                   :lastDurationMs (- finished-ms started-ms)
+                                                   :lastStatus "ok")
+                                            (update :runCount (fnil inc 0)))))
+                   result)))
+        (.catch (fn [err]
+                  (let [finished-ms (.now js/Date)]
+                    (update-job-state! job-id
+                                       (fn [state]
+                                         (-> state
+                                             (assoc :running false
+                                                    :lastFinishedAt finished-ms
+                                                    :lastDurationMs (- finished-ms started-ms)
+                                                    :lastStatus "error"
+                                                    :lastError (.-message err))
+                                             (update :runCount (fnil inc 0))))))
+                  (println "[discord-cron] job failed" job-id ":" (.-message err))
                   nil)))))
 
 (defn- patrol-channel!
-  [config channel-id]
-  (-> (read-channel! config channel-id 25)
+  [config control job channel-id]
+  (-> (read-channel! config channel-id (:maxMessages job))
       (.then (fn [messages]
-               (let [fresh (unseen-messages channel-id messages)]
-                 (doseq [message fresh]
-                   (when (message-worthy? message)
-                     (queue-message! message)))
+               (let [fresh (unseen-messages channel-id messages)
+                     queued (filter #(message-worthy? control job %) fresh)]
+                 (doseq [message queued]
+                   (queue-message! message))
                  (remember-latest! channel-id messages)
                  {:channelId channel-id
                   :fetched (count messages)
                   :fresh (count fresh)
-                  :queued (count (filter message-worthy? fresh))})))
+                  :queued (count queued)})))
       (.catch (fn [err]
                 (println "[discord-cron] patrol failed for" channel-id ":" (.-message err))
                 {:channelId channel-id
                  :error true}))))
 
 (defn- patrol-job!
-  [config]
-  (let [channel-ids (monitored-channels)]
+  [config job]
+  (let [control (control-config config)
+        channel-ids (job-channels control job)]
     (when (seq channel-ids)
-      (println "[discord-cron] patrol-channels start" (count channel-ids) "channels")
+      (println "[discord-cron] patrol start" (count channel-ids) "channels")
       (js/Promise.all
-       (clj->js (mapv (fn [channel-id]
-                        (patrol-channel! config channel-id))
-                      channel-ids))))))
+       (clj->js
+        (mapv (fn [channel-id]
+                (patrol-channel! config control job channel-id))
+              channel-ids))))))
 
 (defn- drain-mention-queue!
   []
@@ -252,7 +310,7 @@
     queued))
 
 (defn- mention-check-job!
-  [config]
+  [config job]
   (let [queued (drain-mention-queue!)]
     (when (seq queued)
       (println "[discord-cron] mention-check processing" (count queued) "queued messages")
@@ -261,6 +319,7 @@
         (mapv (fn [message]
                 (start-discord-agent-session!
                  config
+                 job
                  {:channelId (:channelId message)
                   :channelName (:channelId message)
                   :authorUsername (:authorUsername message)
@@ -279,14 +338,15 @@
        (str/join "\n")))
 
 (defn- deep-synthesis-job!
-  [config]
-  (let [channel-ids (monitored-channels)]
+  [config job]
+  (let [control (control-config config)
+        channel-ids (job-channels control job)]
     (when (seq channel-ids)
       (println "[discord-cron] deep-synthesis start")
       (-> (js/Promise.all
            (clj->js
             (mapv (fn [channel-id]
-                    (-> (read-channel! config channel-id 12)
+                    (-> (read-channel! config channel-id (:maxMessages job))
                         (.then (fn [messages]
                                  {:channelId channel-id
                                   :messages messages}))
@@ -304,11 +364,22 @@
                      (when-not (str/blank? summary)
                        (start-discord-agent-session!
                         config
+                        job
                         {:channelId (first channel-ids)
                          :channelName (first channel-ids)
                          :authorUsername "synthesis"
                          :content (str "Cross-channel synthesis checkpoint:\n\n" summary)
                          :reason "scheduled-deep-synthesis"})))))))))
+
+(defn- execute-job!
+  [config job]
+  (case (:id job)
+    "patrol" (run-job-instrumented! config job patrol-job!)
+    "mentions" (run-job-instrumented! config job mention-check-job!)
+    "deep-synthesis" (run-job-instrumented! config job deep-synthesis-job!)
+    (do
+      (println "[discord-cron] unknown job id" (:id job))
+      (js/Promise.resolve nil))))
 
 (defn- clear-interval-task!
   [task]
@@ -317,24 +388,73 @@
 
 (defn stop!
   []
-  (when @running?*
-    (doseq [[_ task] @cron-tasks*]
-      (cond
-        (and task (fn? (aget task "stop"))) (.stop task)
-        (and task (map? task) (= :interval (:type task))) (clear-interval-task! task)
-        :else nil))
-    (reset! cron-tasks* {})
-    (reset! running?* false)
-    (println "[discord-cron] stopped")))
+  (doseq [[_ task] @cron-tasks*]
+    (when (and task (map? task) (= :interval (:type task)))
+      (clear-interval-task! task)))
+  (reset! cron-tasks* {})
+  (reset! running?* false)
+  (println "[discord-cron] stopped"))
+
+(defn reload!
+  []
+  (stop!)
+  (start! nil))
+
+(defn- cadence->schedule-label
+  [minutes]
+  (cond
+    (= minutes 1) "Every minute"
+    (< minutes 60) (str "Every " minutes " minutes")
+    (= (mod minutes 60) 0) (str "Every " (/ minutes 60) " hours")
+    :else (str "Every " minutes " minutes")))
+
+(defn status-snapshot
+  [config]
+  (let [control (control-config config)]
+    {:running @running?*
+     :configured (not (str/blank? (:discord-bot-token config)))
+     :channelCount (count (:defaultChannels control))
+     :channels (:defaultChannels control)
+     :lastSeenChannels (-> @last-seen-messages* keys vec)
+     :mentionQueueCount (count @mention-queue*)
+     :jobs (mapv (fn [job]
+                   (let [state (get @job-state* (:id job) {})]
+                     (merge {:id (:id job)
+                             :name (:name job)
+                             :enabled (:enabled job)
+                             :scheduleLabel (cadence->schedule-label (:cadenceMinutes job))}
+                            state)))
+                 (:jobs control))}))
+
+(defn run-job!
+  [job-id]
+  (let [config (cfg)
+        control (control-config config)
+        job (find-job control job-id)]
+    (if job
+      (execute-job! config job)
+      (js/Promise.reject (js/Error. (str "Unknown Discord job: " job-id))))))
 
 (defn- schedule-interval-task!
-  [name schedule-expr every-ms f]
-  (let [id (js/setInterval f every-ms)
+  [config job]
+  (let [every-ms (* 60 1000 (max 1 (:cadenceMinutes job)))
+        wrapped (fn []
+                  (when @running?*
+                    (execute-job! config job)
+                    nil))
+        id (js/setInterval wrapped every-ms)
         task {:type :interval
               :id id
-              :schedule schedule-expr
-              :every-ms every-ms}]
-    (swap! cron-tasks* assoc name task)
+              :everyMs every-ms
+              :scheduleLabel (cadence->schedule-label (:cadenceMinutes job))}]
+    (swap! cron-tasks* assoc (:id job) task)
+    (update-job-state! (:id job)
+                       (fn [state]
+                         (merge state
+                                {:configured true
+                                 :enabled (:enabled job)
+                                 :cadenceMinutes (:cadenceMinutes job)
+                                 :nextRunAt (+ (.now js/Date) every-ms)})))
     task))
 
 (defn start!
@@ -342,14 +462,14 @@
   (when-not @running?*
     (let [config (cfg)
           token (:discord-bot-token config)
-          channel-ids (monitored-channels)]
+          control (control-config config)]
       (when-not (str/blank? token)
         (reset! running?* true)
-        (println "[discord-cron] starting; channels=" (pr-str channel-ids))
-        ;; cron-like named schedules, but implemented with bounded intervals so we avoid
-        ;; cephalon's unstructured recursive tick loop.
-        (schedule-interval-task! :patrol "*/5 * * * *" (* 5 60 1000) #(patrol-job! config))
-        (schedule-interval-task! :mentions "* * * * *" (* 60 1000) #(mention-check-job! config))
-        (schedule-interval-task! :deep-synthesis "0 */2 * * *" (* 2 60 60 1000) #(deep-synthesis-job! config))
-        ;; warm initial patrol so the worker becomes useful immediately after boot
-        (patrol-job! config)))))
+        (println "[discord-cron] starting; channels=" (pr-str (:defaultChannels control)))
+        (doseq [job (:jobs control)]
+          (when (:enabled job)
+            (schedule-interval-task! config job)))
+        (when-let [patrol-job (find-job control "patrol")]
+          (when (:enabled patrol-job)
+            (execute-job! config patrol-job)
+            nil))))))
