@@ -113,6 +113,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [pinnedContext, setPinnedContext] = useState<PinnedContextItem[]>([]);
   const [recentSessions, setRecentSessions] = useState<MemorySessionSummary[]>([]);
   const recentSessionsRef = useRef<MemorySessionSummary[]>([]);
+  const remoteRecentSessionsRef = useRef<MemorySessionSummary[]>([]);
   recentSessionsRef.current = recentSessions;
   const [recentSessionsHasMore, setRecentSessionsHasMore] = useState(false);
   const [recentSessionsTotal, setRecentSessionsTotal] = useState(0);
@@ -323,6 +324,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setWorkspaceSourceId,
     setWorkspaceJob,
     recentSessionsRef,
+    remoteRecentSessionsRef,
     setRecentSessions,
     setRecentSessionsHasMore,
     setRecentSessionsTotal,
@@ -330,6 +332,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setLoadingMoreRecentSessions,
     setLoadingMemorySessionId,
     setMessages,
+    setSessionId,
     setConversationId,
     setLatestRun,
     setRuntimeEvents,
@@ -338,12 +341,21 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setConsoleLines,
     pendingAssistantIdRef,
     activeRunIdRef,
+    makeId,
+    sessionStateKey,
     fetchPreviewData,
     loadRunDetail,
     defaultSyncIntervalMinutes: DEFAULT_SYNC_INTERVAL_MINUTES,
     defaultFileTypes: DEFAULT_FILE_TYPES,
     defaultExcludePatterns: DEFAULT_EXCLUDE_PATTERNS,
   });
+
+  useEffect(() => {
+    if (!sessionId) return;
+    void refreshRecentSessions();
+    // refreshRecentSessions is recreated each render; sessionId is the intended trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   useChatPageConfig({
     defaultRole,

@@ -47,6 +47,7 @@ function ChatPage() {
           loadingRecentSessions={chat.loadingRecentSessions}
           loadingMoreRecentSessions={chat.loadingMoreRecentSessions}
           loadingMemorySessionId={chat.loadingMemorySessionId}
+          sessionId={chat.sessionId}
           conversationId={chat.conversationId}
           visibilityFilter={chat.visibilityFilter}
           kindFilter={chat.kindFilter}

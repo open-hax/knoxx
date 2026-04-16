@@ -1,11 +1,11 @@
 import { useEffect, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { getRun, getSessionStatus, listProxxModels, proxxHealth } from "../../lib/api";
-import type { ChatMessage, ProxxModelInfo, RunDetail, RunEvent } from "../../lib/types";
+import type { ChatMessage, MemorySessionSummary, ProxxModelInfo, RunDetail, RunEvent } from "../../lib/types";
 import type { PinnedContextItem } from "./types";
 
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
-type ChatSessionSnapshot = {
+export type ChatSessionSnapshot = {
   sessionId?: string;
   systemPrompt?: string;
   selectedModel?: string;
@@ -14,6 +14,13 @@ type ChatSessionSnapshot = {
   latestRun?: RunDetail | null;
   runtimeEvents?: RunEvent[];
   isSending?: boolean;
+};
+
+const SESSION_INDEX_VERSION = 1;
+
+type PersistedSessionIndex = {
+  version: number;
+  sessions: MemorySessionSummary[];
 };
 
 type ScratchpadSnapshot = {
@@ -45,6 +52,149 @@ function getLegacyLocalStorage(): Storage | null {
   } catch {
     return null;
   }
+}
+
+function sessionSnapshotStorageKey(sessionStateKey: string, sessionId: string): string {
+  return `${sessionStateKey}:${sessionId}`;
+}
+
+function sessionIndexStorageKey(sessionStateKey: string): string {
+  return `${sessionStateKey}:index`;
+}
+
+function safeTrim(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function deriveSessionTitle(messages: ChatMessage[] | undefined): string {
+  const firstUserMessage = messages?.find((message) => message.role === "user" && message.content.trim().length > 0)?.content?.trim();
+  if (!firstUserMessage) {
+    return "New chat";
+  }
+  return firstUserMessage.length > 72 ? `${firstUserMessage.slice(0, 72).trimEnd()}…` : firstUserMessage;
+}
+
+function normalizeSessionTimestamp(snapshot: ChatSessionSnapshot): string {
+  const latestRunTimestamp = typeof snapshot.latestRun?.updated_at === "string" ? snapshot.latestRun.updated_at : null;
+  if (latestRunTimestamp) {
+    return latestRunTimestamp;
+  }
+  return new Date().toISOString();
+}
+
+function buildSessionSummary(sessionId: string, snapshot: ChatSessionSnapshot): MemorySessionSummary {
+  const conversationId = safeTrim(snapshot.conversationId) ?? sessionId;
+  const runStatus = snapshot.latestRun?.status;
+  const activeStatus = snapshot.isSending
+    ? "running"
+    : runStatus === "completed" || runStatus === "failed"
+      ? runStatus
+      : (snapshot.messages?.length ?? 0) > 0
+        ? "waiting_input"
+        : "inactive";
+
+  return {
+    session: conversationId,
+    title: deriveSessionTitle(snapshot.messages),
+    title_model: null,
+    last_ts: normalizeSessionTimestamp(snapshot),
+    event_count: snapshot.messages?.length ?? 0,
+    is_active: snapshot.isSending || activeStatus === "waiting_input",
+    active_status: activeStatus,
+    has_active_stream: Boolean(snapshot.isSending),
+    active_session_id: sessionId,
+    local_only: true,
+  };
+}
+
+function readSessionIndex(store: Storage | null, sessionStateKey: string): PersistedSessionIndex {
+  if (!store) {
+    return { version: SESSION_INDEX_VERSION, sessions: [] };
+  }
+
+  try {
+    const raw = store.getItem(sessionIndexStorageKey(sessionStateKey));
+    if (!raw) {
+      return { version: SESSION_INDEX_VERSION, sessions: [] };
+    }
+    const parsed = JSON.parse(raw) as PersistedSessionIndex;
+    const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
+    return { version: SESSION_INDEX_VERSION, sessions };
+  } catch {
+    return { version: SESSION_INDEX_VERSION, sessions: [] };
+  }
+}
+
+function writeSessionIndex(store: Storage | null, sessionStateKey: string, index: PersistedSessionIndex) {
+  if (!store) return;
+  store.setItem(sessionIndexStorageKey(sessionStateKey), JSON.stringify(index));
+}
+
+export function readPersistedChatSessionSnapshot(sessionStateKey: string, sessionId: string): ChatSessionSnapshot | null {
+  const store = getChatStorage();
+  if (!store || !sessionId) {
+    return null;
+  }
+
+  try {
+    const raw = store.getItem(sessionSnapshotStorageKey(sessionStateKey, sessionId));
+    if (!raw) {
+      return null;
+    }
+    return JSON.parse(raw) as ChatSessionSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+export function persistChatSessionSnapshot(sessionStateKey: string, sessionId: string, snapshot: ChatSessionSnapshot): void {
+  const store = getChatStorage();
+  if (!store || !sessionId) {
+    return;
+  }
+
+  const normalizedSnapshot: ChatSessionSnapshot = {
+    ...snapshot,
+    sessionId,
+  };
+  store.setItem(sessionSnapshotStorageKey(sessionStateKey, sessionId), JSON.stringify(normalizedSnapshot));
+
+  const index = readSessionIndex(store, sessionStateKey);
+  const summary = buildSessionSummary(sessionId, normalizedSnapshot);
+  const sessions = [summary, ...index.sessions.filter((entry) => entry.active_session_id !== sessionId)];
+  writeSessionIndex(store, sessionStateKey, { version: SESSION_INDEX_VERSION, sessions });
+}
+
+export function initializePersistedChatSession(
+  sessionStateKey: string,
+  sessionId: string,
+  conversationId: string,
+  seed?: Partial<Pick<ChatSessionSnapshot, "selectedModel" | "systemPrompt">>,
+): void {
+  persistChatSessionSnapshot(sessionStateKey, sessionId, {
+    sessionId,
+    conversationId,
+    selectedModel: seed?.selectedModel,
+    systemPrompt: seed?.systemPrompt,
+    messages: [],
+    latestRun: null,
+    runtimeEvents: [],
+    isSending: false,
+  });
+}
+
+export function listPersistedChatSessions(sessionStateKey: string): MemorySessionSummary[] {
+  const store = getChatStorage();
+  const index = readSessionIndex(store, sessionStateKey);
+  return [...index.sessions].sort((left, right) => {
+    const leftTime = Date.parse(left.last_ts ?? "") || 0;
+    const rightTime = Date.parse(right.last_ts ?? "") || 0;
+    return rightTime - leftTime;
+  });
+}
+
+export function findPersistedChatSessionByConversation(sessionStateKey: string, conversationId: string): MemorySessionSummary | null {
+  return listPersistedChatSessions(sessionStateKey).find((entry) => entry.session === conversationId) ?? null;
 }
 
 function appendConsoleLine(setConsoleLines: SetState<string[]>, line: string) {
@@ -114,6 +264,7 @@ export function useChatSessionPersistence({
       }
       if (!sid) {
         sid = makeId();
+        initializePersistedChatSession(sessionStateKey, sid, makeId());
       }
       store?.setItem(sessionIdKey, sid);
       if (legacy && legacy !== store) {
@@ -123,7 +274,7 @@ export function useChatSessionPersistence({
     } catch {
       setSessionId(makeId());
     }
-  }, [makeId, sessionIdKey, setSessionId]);
+  }, [makeId, sessionIdKey, sessionStateKey, setSessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -161,20 +312,29 @@ export function useChatSessionPersistence({
   }, [sidebarWidthKey, sidebarWidthPx]);
 
   useEffect(() => {
+    if (!sessionId) return;
     try {
       const store = getChatStorage();
       const legacy = getLegacyLocalStorage();
-      let raw = store?.getItem(sessionStateKey) || "";
-      if (!raw && legacy && legacy !== store) {
-        raw = legacy.getItem(sessionStateKey) || "";
-        if (raw) {
-          store?.setItem(sessionStateKey, raw);
-          legacy.removeItem(sessionStateKey);
+      let parsed = readPersistedChatSessionSnapshot(sessionStateKey, sessionId);
+
+      if (!parsed) {
+        let legacyRaw = store?.getItem(sessionStateKey) || "";
+        if (!legacyRaw && legacy && legacy !== store) {
+          legacyRaw = legacy.getItem(sessionStateKey) || "";
+        }
+        if (legacyRaw) {
+          parsed = JSON.parse(legacyRaw) as ChatSessionSnapshot;
+          persistChatSessionSnapshot(sessionStateKey, sessionId, parsed);
+          store?.removeItem(sessionStateKey);
+          if (legacy && legacy !== store) {
+            legacy.removeItem(sessionStateKey);
+          }
         }
       }
-      if (!raw) return;
 
-      const parsed = JSON.parse(raw) as ChatSessionSnapshot;
+      if (!parsed) return;
+
       if (typeof parsed.systemPrompt === "string") setSystemPrompt(parsed.systemPrompt);
       if (typeof parsed.selectedModel === "string") setSelectedModel(parsed.selectedModel);
       if (typeof parsed.conversationId === "string" || parsed.conversationId === null) {
@@ -197,15 +357,14 @@ export function useChatSessionPersistence({
       if (Array.isArray(parsed.runtimeEvents)) {
         setRuntimeEvents(parsed.runtimeEvents.slice(-80));
       }
-      if (parsed.isSending) {
-        setIsSending(true);
-      }
+      setIsSending(Boolean(parsed.isSending));
     } catch {
       // ignore storage failures
     }
   }, [
     activeRunIdRef,
     pendingAssistantIdRef,
+    sessionId,
     sessionStateKey,
     setConversationId,
     setIsSending,
@@ -217,24 +376,23 @@ export function useChatSessionPersistence({
   ]);
 
   useEffect(() => {
+    if (!sessionId) return;
     try {
-      getChatStorage()?.setItem(
-        sessionStateKey,
-        JSON.stringify({
-          sessionId,
-          systemPrompt,
-          selectedModel,
-          conversationId,
-          messages: messages.slice(-80),
-          latestRun,
-          runtimeEvents: runtimeEvents.slice(-80),
-          isSending,
-        } satisfies ChatSessionSnapshot),
-      );
+      persistChatSessionSnapshot(sessionStateKey, sessionId, {
+        sessionId,
+        systemPrompt,
+        selectedModel,
+        conversationId,
+        messages: messages.slice(-80),
+        latestRun,
+        runtimeEvents: runtimeEvents.slice(-80),
+        isSending,
+      } satisfies ChatSessionSnapshot);
+      getChatStorage()?.removeItem(sessionStateKey);
     } catch {
       // ignore storage failures
     }
-  }, [sessionIdKey, sessionStateKey, sessionId, systemPrompt, selectedModel, conversationId, messages, latestRun, runtimeEvents, isSending]);
+  }, [sessionStateKey, sessionId, systemPrompt, selectedModel, conversationId, messages, latestRun, runtimeEvents, isSending]);
 }
 
 type UseChatSessionRecoveryParams = {
@@ -263,10 +421,8 @@ export function useChatSessionRecovery({
   useEffect(() => {
     if (!sessionId) return;
 
-    const savedState = getChatStorage()?.getItem(sessionStateKey);
-    if (!savedState) return;
-
-    const parsed = JSON.parse(savedState) as ChatSessionSnapshot;
+    const parsed = readPersistedChatSessionSnapshot(sessionStateKey, sessionId);
+    if (!parsed) return;
     if (!parsed.isSending || !parsed.conversationId) return;
 
     let cancelled = false;

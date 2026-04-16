@@ -1,7 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { getRun, knoxxChatStart, knoxxControl } from '../../lib/api';
 import type { ChatMessage, ChatTraceBlock, RunDetail, RunEvent } from '../../lib/types';
-import { getChatStorage } from './hooks';
+import { getChatStorage, initializePersistedChatSession } from './hooks';
 import { controlTimelineMessageFromEvent, truncateText } from './utils';
 
 type SetState<T> = Dispatch<SetStateAction<T>>;
@@ -215,16 +215,21 @@ export function createChatRuntimeActions({
 
   const handleNewChat = () => {
     const nextSessionId = makeId();
+    const nextConversationId = makeId();
     try {
       const store = getChatStorage();
       store?.setItem(sessionIdKey, nextSessionId);
       store?.removeItem(sessionStateKey);
+      initializePersistedChatSession(sessionStateKey, nextSessionId, nextConversationId, {
+        selectedModel,
+        systemPrompt,
+      });
     } catch {
       // ignore storage failures
     }
     setSessionId(nextSessionId);
     setMessages([]);
-    setConversationId(null);
+    setConversationId(nextConversationId);
     setLatestRun(null);
     setRuntimeEvents([]);
     setLiveControlText('');

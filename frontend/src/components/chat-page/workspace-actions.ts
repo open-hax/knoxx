@@ -1,6 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { getMemorySession, listMemorySessions } from "../../lib/api";
 import type { ChatMessage, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
+import { findPersistedChatSessionByConversation, listPersistedChatSessions } from "./hooks";
 import type {
   BrowseResponse,
   IngestionSource,
@@ -26,6 +27,20 @@ function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySes
   return merged;
 }
 
+function sortSessions(items: MemorySessionSummary[]): MemorySessionSummary[] {
+  return [...items].sort((left, right) => {
+    const leftTime = Date.parse(left.last_ts ?? "") || 0;
+    const rightTime = Date.parse(right.last_ts ?? "") || 0;
+    if (rightTime !== leftTime) {
+      return rightTime - leftTime;
+    }
+    if (left.is_active !== right.is_active) {
+      return left.is_active ? -1 : 1;
+    }
+    return (left.title ?? left.session).localeCompare(right.title ?? right.session);
+  });
+}
+
 type ChatWorkspaceActionParams = {
   currentPath: string;
   showFiles: boolean;
@@ -42,6 +57,7 @@ type ChatWorkspaceActionParams = {
   setWorkspaceSourceId: SetState<string | null>;
   setWorkspaceJob: SetState<WorkspaceJob | null>;
   recentSessionsRef: MutableRefObject<MemorySessionSummary[]>;
+  remoteRecentSessionsRef: MutableRefObject<MemorySessionSummary[]>;
   setRecentSessions: SetState<MemorySessionSummary[]>;
   setRecentSessionsHasMore: SetState<boolean>;
   setRecentSessionsTotal: SetState<number>;
@@ -49,6 +65,7 @@ type ChatWorkspaceActionParams = {
   setLoadingMoreRecentSessions: SetState<boolean>;
   setLoadingMemorySessionId: SetState<string | null>;
   setMessages: SetState<ChatMessage[]>;
+  setSessionId: SetState<string>;
   setConversationId: SetState<string | null>;
   setLatestRun: SetState<RunDetail | null>;
   setRuntimeEvents: SetState<RunEvent[]>;
@@ -57,6 +74,8 @@ type ChatWorkspaceActionParams = {
   setConsoleLines: SetState<string[]>;
   pendingAssistantIdRef: MutableRefObject<string | null>;
   activeRunIdRef: MutableRefObject<string | null>;
+  makeId: () => string;
+  sessionStateKey: string;
   fetchPreviewData: (path: string) => Promise<PreviewResponse>;
   loadRunDetail: (runId: string) => void | Promise<void>;
   defaultSyncIntervalMinutes: number;
@@ -80,6 +99,7 @@ export function createChatWorkspaceActions({
   setWorkspaceSourceId,
   setWorkspaceJob,
   recentSessionsRef,
+  remoteRecentSessionsRef,
   setRecentSessions,
   setRecentSessionsHasMore,
   setRecentSessionsTotal,
@@ -87,6 +107,7 @@ export function createChatWorkspaceActions({
   setLoadingMoreRecentSessions,
   setLoadingMemorySessionId,
   setMessages,
+  setSessionId,
   setConversationId,
   setLatestRun,
   setRuntimeEvents,
@@ -95,6 +116,8 @@ export function createChatWorkspaceActions({
   setConsoleLines,
   pendingAssistantIdRef,
   activeRunIdRef,
+  makeId,
+  sessionStateKey,
   fetchPreviewData,
   loadRunDetail,
   defaultSyncIntervalMinutes,
@@ -237,15 +260,17 @@ export function createChatWorkspaceActions({
     setLoadingRecentSessions(true);
     try {
       const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: 0 });
-      const preservedTail = recentSessionsRef.current.filter((item) => !page.rows.some((row) => row.session === item.session));
-      const merged = mergeSessionPages(page.rows, preservedTail);
+      const preservedTail = remoteRecentSessionsRef.current.filter((item) => !page.rows.some((row) => row.session === item.session));
+      const remoteMerged = mergeSessionPages(page.rows, preservedTail);
+      remoteRecentSessionsRef.current = remoteMerged;
+      const merged = sortSessions(mergeSessionPages(remoteMerged, listPersistedChatSessions(sessionStateKey)));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
-      const total = typeof page.total === "number" ? page.total : merged.length;
-      setRecentSessionsTotal(total);
+      const remoteTotal = typeof page.total === "number" ? page.total : remoteMerged.length;
+      setRecentSessionsTotal(Math.max(remoteTotal, merged.length));
       setRecentSessionsHasMore(
         typeof page.total === "number"
-          ? merged.length < page.total
+          ? remoteMerged.length < page.total
           : Boolean(page.has_more ?? page.rows.length >= RECENT_SESSION_PAGE_SIZE),
       );
     } catch (error) {
@@ -258,15 +283,17 @@ export function createChatWorkspaceActions({
   const loadMoreRecentSessions = async () => {
     setLoadingMoreRecentSessions(true);
     try {
-      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: recentSessionsRef.current.length });
-      const merged = mergeSessionPages(recentSessionsRef.current, page.rows);
+      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: remoteRecentSessionsRef.current.length });
+      const remoteMerged = mergeSessionPages(remoteRecentSessionsRef.current, page.rows);
+      remoteRecentSessionsRef.current = remoteMerged;
+      const merged = sortSessions(mergeSessionPages(remoteMerged, listPersistedChatSessions(sessionStateKey)));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
-      const total = typeof page.total === "number" ? page.total : merged.length;
-      setRecentSessionsTotal(total);
+      const remoteTotal = typeof page.total === "number" ? page.total : remoteMerged.length;
+      setRecentSessionsTotal(Math.max(remoteTotal, merged.length));
       setRecentSessionsHasMore(
         typeof page.total === "number"
-          ? merged.length < page.total
+          ? remoteMerged.length < page.total
           : Boolean(page.has_more ?? page.rows.length >= RECENT_SESSION_PAGE_SIZE),
       );
     } catch (error) {
@@ -279,6 +306,24 @@ export function createChatWorkspaceActions({
   const resumeMemorySession = async (sessionKey: string) => {
     setLoadingMemorySessionId(sessionKey);
     try {
+      const localSession = findPersistedChatSessionByConversation(sessionStateKey, sessionKey);
+      const resolvedSessionId = localSession?.active_session_id ?? makeId();
+
+      setMessages([]);
+      setConversationId(sessionKey);
+      setSessionId(resolvedSessionId);
+      setLatestRun(null);
+      setRuntimeEvents([]);
+      setLiveControlText("");
+      setIsSending(false);
+      pendingAssistantIdRef.current = null;
+      activeRunIdRef.current = null;
+
+      if (localSession?.local_only) {
+        appendConsoleLine(`[memory] resumed local draft ${sessionKey}`);
+        return;
+      }
+
       const detail = await getMemorySession(sessionKey);
       const transcript = memoryRowsToMessages(detail.rows).slice(-80);
       const lastRunId = [...detail.rows].reverse().map(memoryRowRunId).find((value): value is string => Boolean(value)) ?? null;

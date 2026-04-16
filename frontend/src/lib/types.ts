@@ -177,6 +177,7 @@ export interface MemorySessionSummary {
   active_status?: "running" | "waiting_input" | "completed" | "failed" | "inactive" | "unknown" | string;
   has_active_stream?: boolean;
   active_session_id?: string | null;
+  local_only?: boolean;
 }
 
 export interface MemorySessionListResponse {

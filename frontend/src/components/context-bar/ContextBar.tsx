@@ -77,6 +77,7 @@ type ContextBarProps = {
   loadingRecentSessions?: boolean;
   loadingMoreRecentSessions?: boolean;
   loadingMemorySessionId?: string | null;
+  sessionId?: string;
   conversationId?: string | null;
   onLoadDirectory?: (path?: string) => void | Promise<void>;
   onEntryFilterChange?: (value: string) => void;
@@ -145,6 +146,7 @@ export function ContextBar({
   loadingRecentSessions,
   loadingMoreRecentSessions,
   loadingMemorySessionId,
+  sessionId,
   conversationId,
   onLoadDirectory,
   onEntryFilterChange,
@@ -391,8 +393,25 @@ export function ContextBar({
                       }}
                     >
                       {recentSessions.map((item) => {
-                        const isSelected = conversationId === item.session;
+                        const isCurrent = (sessionId && item.active_session_id === sessionId)
+                          || (conversationId && conversationId === item.session);
                         const isLive = Boolean(item.is_active);
+                        const statusLabel = item.local_only && !item.event_count
+                          ? "Draft"
+                          : item.has_active_stream
+                            ? "Live"
+                            : item.active_status === "waiting_input"
+                              ? "Waiting"
+                              : isLive
+                                ? "Active"
+                                : "Idle";
+                        const statusVariant = item.has_active_stream
+                          ? "warning"
+                          : isLive
+                            ? "success"
+                            : item.local_only
+                              ? "default"
+                              : "default";
                         return (
                           <button
                             key={item.session}
@@ -404,7 +423,7 @@ export function ContextBar({
                               padding: "4px 6px",
                               border: "none",
                               borderRadius: 4,
-                              background: isSelected
+                              background: isCurrent
                                 ? "var(--token-colors-alpha-blue-_15)"
                                 : isLive
                                   ? "var(--token-colors-alpha-green-_14)"
@@ -422,8 +441,8 @@ export function ContextBar({
                               </div>
                             </div>
                             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                              {isSelected && <Badge size="sm" variant="info">Open</Badge>}
-                              {isLive && <Badge size="sm" variant="success">Live</Badge>}
+                              {isCurrent && <Badge size="sm" variant="info">Current</Badge>}
+                              <Badge size="sm" variant={statusVariant}>{statusLabel}</Badge>
                             </div>
                           </button>
                         );
