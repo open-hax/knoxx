@@ -41,4 +41,27 @@ describe("ToolReceiptBlock", () => {
     const limitNode = screen.getByText("limit");
     expect(limitNode.closest("li")?.textContent).toContain("3");
   });
+
+  it("renders truncated json tool output by extracting text fragments", () => {
+    const truncatedJson = `{
+  "content": [
+    { "type": "text", "text": "hello\\nworld" }
+  ]`;
+
+    render(
+      <ToolReceiptBlock
+        receipt={{
+          id: "tool-3",
+          tool_name: "read",
+          status: "completed",
+          input_preview: JSON.stringify({ path: "docs/guide.md" }),
+          result_preview: truncatedJson,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("hello")).toBeInTheDocument();
+    expect(screen.getByText("world")).toBeInTheDocument();
+    expect(screen.queryByText(/\"content\"/)).not.toBeInTheDocument();
+  });
 });

@@ -139,12 +139,27 @@
            nil)
 
        (sequential? value)
-       (let [items (->> value
-                        (map #(summarize-structured % (inc depth)))
-                        (remove #(or (nil? %) (str/blank? %)))
-                        (take 8))]
-         (when (seq items)
-           (str/join "\n" (map (fn [item] (str "- " item)) items))))
+       (let [items (vec (take 8 value))
+             looks-like-content-parts? (and (seq items)
+                                           (every? map? items)
+                                           (every? (fn [m]
+                                                     (let [t (or (safe-get m :text) (safe-get m "text"))
+                                                           ty (or (safe-get m :type) (safe-get m "type"))]
+                                                       (and (string? t)
+                                                            (or (nil? ty) (= ty "text") (= ty "output_text")))))
+                                                   items))]
+         (if looks-like-content-parts?
+           (let [joined (->> items
+                             (map (fn [m] (or (safe-get m :text) (safe-get m "text"))))
+                             (map #(str/trim (str %)))
+                             (remove str/blank?)
+                             (str/join "\n\n"))]
+             (when-not (str/blank? joined) joined))
+           (let [summaries (->> items
+                                (map #(summarize-structured % (inc depth)))
+                                (remove #(or (nil? %) (str/blank? %))))]
+             (when (seq summaries)
+               (str/join "\n" (map (fn [item] (str "- " item)) summaries))))))
 
        :else nil))))
 
@@ -192,6 +207,37 @@
        (take 16)
        vec))
 
+(defn- unescape-json-fragment
+  [text]
+  (-> (str text)
+      (str/replace #"\\\\n" "\n")
+      (str/replace #"\\\\t" "\t")
+      (str/replace #"\\\\r" "\r")
+      (str/replace #"\\\\\"" "\"")
+      (str/replace #"\\\\\\\\" "\\")))
+
+(defn- extract-json-string-field
+  "Best-effort extraction for truncated/invalid JSON: pulls the string value of a field like \"text\"."
+  [text field]
+  (let [s (str text)
+        needle (str "\"" field "\"")
+        idx (.indexOf s needle)]
+    (when (>= idx 0)
+      (let [colon (.indexOf s ":" (+ idx (count needle)))
+            quote (.indexOf s "\"" (if (>= colon 0) (inc colon) (+ idx (count needle))))]
+        (when (>= quote 0)
+          (loop [i (inc quote)
+                 escaped? false
+                 acc (transient [])]
+            (if (>= i (count s))
+              (unescape-json-fragment (apply str (persistent! acc)))
+              (let [ch (.charAt s i)]
+                (cond
+                  escaped? (recur (inc i) false (conj! acc (str "\\" ch)))
+                  (= ch "\\") (recur (inc i) true acc)
+                  (= ch "\"") (unescape-json-fragment (apply str (persistent! acc)))
+                  :else (recur (inc i) false (conj! acc ch)))))))))))
+
 (defn- summarize-json-string
   [text]
   (let [trimmed (str/trim (str text))]
@@ -199,14 +245,15 @@
                (or (str/starts-with? trimmed "{")
                    (str/starts-with? trimmed "[")))
       (try
-        (let [parsed (js->clj (.parse js/JSON trimmed) :keywordize-keys true)]
-          (or (summarize-structured parsed)
-              (markdown-bullets parsed)
-              nil))
+        (let [parsed (js->clj (.parse js/JSON trimmed) :keywordize-keys true)
+              summarized (or (summarize-structured parsed)
+                             (markdown-bullets parsed))]
+          (when-not (str/blank? (str summarized))
+            summarized))
         (catch :default _
-          (let [keys (extract-json-keys trimmed)]
-            (when (seq keys)
-              (str "- JSON (truncated/invalid preview) keys: " (str/join ", " keys)))))))))
+          (or (some-> (extract-json-string-field trimmed "text") str/trim not-empty)
+              (when-let [keys (seq (extract-json-keys trimmed))]
+                (str "- JSON (truncated/invalid preview) keys: " (str/join ", " keys)))))))))
 
 (defn clip-text
   ([text] (clip-text text 20000))

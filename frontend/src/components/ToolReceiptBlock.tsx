@@ -39,11 +39,70 @@ function tryParseJson(value: string): unknown | null {
   }
 }
 
+function isContentPartsArray(value: unknown): value is Array<Record<string, unknown>> {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.every((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const record = item as Record<string, unknown>;
+    return typeof record.text === "string" && (record.type === "text" || record.type === "output_text" || record.type === undefined);
+  });
+}
+
+function unescapeJsonStringFragment(value: string): string {
+  // Best-effort: handles common escapes we see in tool wrappers.
+  return value
+    .replaceAll("\\n", "\n")
+    .replaceAll("\\t", "\t")
+    .replaceAll("\\r", "\r")
+    .replaceAll('\\"', '"')
+    .replaceAll("\\\\", "\\");
+}
+
+function extractJsonLikeText(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  const hits: string[] = [];
+  const regex = /"text"\s*:\s*"/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(trimmed)) !== null && hits.length < 4) {
+    let i = match.index + match[0].length;
+    let out = "";
+    let escaped = false;
+    for (; i < trimmed.length; i += 1) {
+      const ch = trimmed[i];
+      if (escaped) {
+        out += `\\${ch}`;
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        break;
+      }
+      out += ch;
+    }
+    const unescaped = unescapeJsonStringFragment(out).trim();
+    if (unescaped) hits.push(unescaped);
+  }
+  return hits.length > 0 ? hits.join("\n\n") : null;
+}
+
 function summarizeStructuredValue(value: unknown): string | null {
   if (typeof value === "string") {
     return value.trim() ? value : null;
   }
   if (Array.isArray(value)) {
+    if (isContentPartsArray(value)) {
+      const joined = value
+        .map((part) => (typeof part.text === "string" ? part.text : ""))
+        .map((text) => text.trim())
+        .filter(Boolean)
+        .join("\n\n");
+      return joined.trim() ? joined : null;
+    }
     const lines = value
       .map((item) => summarizeStructuredValue(item))
       .filter((item): item is string => Boolean(item))
@@ -187,6 +246,12 @@ function toolPreviewMarkdown(value: string): string {
   if (parsed) {
     return structuredToMarkdown(parsed);
   }
+  const extracted = extractJsonLikeText(value);
+  if (extracted) {
+    const clipped = clipRawText(extracted);
+    const base = asMarkdownPreview(clipped.text);
+    return clipped.truncated ? `${base}\n\n_(truncated)_` : base;
+  }
   const clipped = clipRawText(value);
   const base = asMarkdownPreview(clipped.text);
   return clipped.truncated ? `${base}\n\n_(truncated)_` : base;
@@ -203,6 +268,12 @@ function toolOutputMarkdown(value: string): string {
       return clipped.truncated ? `${base}\n\n_(truncated)_` : base;
     }
     return structuredToMarkdown(parsed);
+  }
+  const extracted = extractJsonLikeText(value);
+  if (extracted) {
+    const clipped = clipRawText(extracted);
+    const base = asMarkdownPreview(clipped.text);
+    return clipped.truncated ? `${base}\n\n_(truncated)_` : base;
   }
   const clipped = clipRawText(value);
   const base = asMarkdownPreview(clipped.text);
