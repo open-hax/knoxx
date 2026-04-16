@@ -10,10 +10,21 @@
                     ["canvas" "Canvas" "Open long-form markdown drafting canvas"]
                     ["email.send" "Email" "Send drafts through configured email account"]
                     ["discord.publish" "Discord Publish" "Publish updates to Discord"]
+                    ["discord.send" "Discord Send" "Send Discord messages and replies"]
                     ["discord.read" "Discord Read" "Read messages from Discord channels"]
+                    ["discord.channel.messages" "Discord Channel Messages" "Fetch messages from a Discord channel"]
+                    ["discord.channel.scroll" "Discord Channel Scroll" "Scroll older messages in a Discord channel"]
+                    ["discord.dm.messages" "Discord DM Messages" "Fetch messages from a Discord DM channel"]
                     ["discord.search" "Discord Search" "Search messages in Discord channels"]
                     ["discord.guilds" "Discord Guilds" "List Discord servers the bot is in"]
                     ["discord.channels" "Discord Channels" "List channels in a Discord server"]
+                    ["discord.list.servers" "Discord List Servers" "List all Discord servers the bot can access"]
+                    ["discord.list.channels" "Discord List Channels" "List channels across one or all Discord servers"]
+                    ["event_agents.status" "Event Agent Status" "Inspect scheduled event-agent runtime state and configuration"]
+                    ["event_agents.dispatch" "Event Agent Dispatch" "Dispatch a structured event into the event-agent runtime"]
+                    ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately"]
+                    ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job"]
+                    ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"]
                     ["bluesky.publish" "Bluesky" "Publish updates to Bluesky"]]
    "org_admin" [["read" "Read" "Read files and retrieved context"]
                  ["write" "Write" "Create new markdown drafts and artifacts"]
@@ -23,10 +34,21 @@
                  ["canvas" "Canvas" "Open long-form markdown drafting canvas"]
                  ["email.send" "Email" "Send drafts through configured email account"]
                  ["discord.publish" "Discord Publish" "Publish updates to Discord"]
+                 ["discord.send" "Discord Send" "Send Discord messages and replies"]
                  ["discord.read" "Discord Read" "Read messages from Discord channels"]
+                 ["discord.channel.messages" "Discord Channel Messages" "Fetch messages from a Discord channel"]
+                 ["discord.channel.scroll" "Discord Channel Scroll" "Scroll older messages in a Discord channel"]
+                 ["discord.dm.messages" "Discord DM Messages" "Fetch messages from a Discord DM channel"]
                  ["discord.search" "Discord Search" "Search messages in Discord channels"]
                  ["discord.guilds" "Discord Guilds" "List Discord servers the bot is in"]
                  ["discord.channels" "Discord Channels" "List channels in a Discord server"]
+                 ["discord.list.servers" "Discord List Servers" "List all Discord servers the bot can access"]
+                 ["discord.list.channels" "Discord List Channels" "List channels across one or all Discord servers"]
+                 ["event_agents.status" "Event Agent Status" "Inspect scheduled event-agent runtime state and configuration"]
+                 ["event_agents.dispatch" "Event Agent Dispatch" "Dispatch a structured event into the event-agent runtime"]
+                 ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately"]
+                 ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job"]
+                 ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"]
                  ["bluesky.publish" "Bluesky" "Publish updates to Bluesky"]]
    "knowledge_worker" [["read" "Read" "Read files and retrieved context"]
                         ["canvas" "Canvas" "Open long-form markdown drafting canvas"]]
@@ -40,7 +62,18 @@
                  ["bash" "Shell" "Run controlled shell commands"]
                  ["canvas" "Canvas" "Open long-form markdown drafting canvas"]]
    "executive" [["read" "Read" "Read files and retrieved context"]
-                 ["canvas" "Canvas" "Open long-form markdown drafting canvas"]]
+                 ["websearch" "Web Search" "Search the live web through Proxx websearch"]
+                 ["canvas" "Canvas" "Open long-form markdown drafting canvas"]
+                 ["discord.read" "Discord Read" "Read messages from Discord channels"]
+                 ["discord.channel.messages" "Discord Channel Messages" "Fetch messages from a Discord channel"]
+                 ["discord.search" "Discord Search" "Search messages in Discord channels"]
+                 ["discord.list.servers" "Discord List Servers" "List all Discord servers the bot can access"]
+                 ["discord.list.channels" "Discord List Channels" "List channels across one or all Discord servers"]
+                 ["event_agents.status" "Event Agent Status" "Inspect scheduled event-agent runtime state and configuration"]
+                 ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job"]
+                 ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately"]
+                 ["event_agents.dispatch" "Event Agent Dispatch" "Dispatch a structured event into the event-agent runtime"]
+                 ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"]]
    "principal_architect" [["read" "Read" "Read files and retrieved context"]
                           ["write" "Write" "Create new markdown drafts and artifacts"]
                           ["edit" "Edit" "Revise existing documents and drafts"]
@@ -322,13 +355,41 @@
 (defn- default-discord-tool-policies
   []
   [{:toolId "discord.read" :effect "allow"}
+   {:toolId "discord.channel.messages" :effect "allow"}
+   {:toolId "discord.channel.scroll" :effect "allow"}
+   {:toolId "discord.dm.messages" :effect "allow"}
    {:toolId "discord.search" :effect "allow"}
    {:toolId "discord.publish" :effect "allow"}
+   {:toolId "discord.send" :effect "allow"}
    {:toolId "discord.guilds" :effect "allow"}
    {:toolId "discord.channels" :effect "allow"}
+   {:toolId "discord.list.servers" :effect "allow"}
+   {:toolId "discord.list.channels" :effect "allow"}
    {:toolId "websearch" :effect "allow"}
    {:toolId "memory_search" :effect "allow"}
    {:toolId "graph_query" :effect "allow"}])
+
+(defn- default-custom-event-agent-job
+  [config job-id]
+  (let [default-model (or (:proxx-default-model config) "glm-5")
+        default-role (if (contains? role-tools "system_admin") "system_admin" (:knoxx-default-role config))]
+    {:id job-id
+     :name (or job-id "custom-job")
+     :enabled true
+     :trigger {:kind "event"
+               :cadenceMinutes 5
+               :eventKinds []}
+     :source {:kind "manual"
+              :mode "respond"
+              :config {}}
+     :filters {}
+     :agentSpec {:role default-role
+                 :model default-model
+                 :thinkingLevel "off"
+                 :systemPrompt "You are Knoxx's scheduled event agent. Respond to dispatched events, use Discord tools when needed, and emit useful actions without filler."
+                 :taskPrompt "A structured event matched this job. Read context, decide what action is useful, and use available tools deliberately."
+                 :toolPolicies (default-discord-tool-policies)}
+     :description "Custom scheduled event-agent job"}))
 
 (defn default-event-agent-control
   [config]
@@ -342,7 +403,7 @@
                :cron {}}
      :jobs [{:id "discord-patrol"
              :name "Discord patrol"
-             :enabled true
+             :enabled false
              :trigger {:kind "cron"
                        :cadenceMinutes 5
                        :eventKinds []}
@@ -459,13 +520,25 @@
         default-sources (:sources defaults)
         saved-sources (or (:sources saved) {})
         default-jobs (:jobs defaults)
-        saved-jobs-by-id (into {} (map (fn [job] [(:id job) job])) (or (:jobs saved) []))]
+        saved-jobs (vec (or (:jobs saved) []))
+        default-job-ids (into #{} (map :id) default-jobs)
+        saved-jobs-by-id (into {} (map (fn [job] [(:id job) job])) saved-jobs)
+        custom-jobs (->> saved-jobs
+                         (keep (fn [job]
+                                 (let [job-id (some-> (:id job) str str/trim not-empty)]
+                                   (when (and job-id (not (contains? default-job-ids job-id)))
+                                     (normalize-event-agent-job config
+                                                                (default-custom-event-agent-job config job-id)
+                                                                job)))))
+                         vec)]
     {:sources {:discord (merge (:discord default-sources) (or (:discord saved-sources) {}))
                :github (merge (:github default-sources) (or (:github saved-sources) {}))
                :cron (merge (:cron default-sources) (or (:cron saved-sources) {}))}
-     :jobs (mapv (fn [default-job]
-                   (normalize-event-agent-job config default-job (get saved-jobs-by-id (:id default-job))))
-                 default-jobs)}))
+     :jobs (vec (concat
+                 (mapv (fn [default-job]
+                         (normalize-event-agent-job config default-job (get saved-jobs-by-id (:id default-job))))
+                       default-jobs)
+                 custom-jobs))}))
 
 (def ^:private default-model-prefix-allowlist
   ["glm-5" "gpt-5" "qwen3" "gemma4:" "gemma3:" "deepseek" "kimi-k2" "nemotron" "cogito" "devstral" "minimax" "ministral" "mistral-large"])

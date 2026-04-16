@@ -12,6 +12,7 @@
 (defonce job-state* (atom {}))
 (defonce source-state* (atom {:discord {:last-seen {}}}))
 (defonce recent-events* (atom []))
+(defonce discord-gateway-unsubscribe* (atom nil))
 
 (defn- cfg []
   (runtime-config/cfg))
@@ -23,6 +24,17 @@
 (defn- discord-token
   []
   (:discord-bot-token (cfg)))
+
+(defn- discord-gateway-manager
+  []
+  (aget js/globalThis "knoxxDiscordGateway"))
+
+(defn- discord-gateway-active?
+  []
+  (when-let [manager (discord-gateway-manager)]
+    (let [status (.status manager)]
+      (boolean (or (aget status "ready")
+                   (aget status "started"))))))
 
 (defn- discord-headers
   [token]
@@ -55,18 +67,24 @@
 
 (defn- read-discord-channel!
   [channel-id limit]
-  (let [token (discord-token)]
-    (if (str/blank? token)
-      (js/Promise.reject (js/Error. "Discord bot token not configured"))
-      (-> (fetch-json!
-           (str "https://discord.com/api/v10/channels/" channel-id "/messages?limit=" (max 1 (min 100 (or limit 25))))
-           #js {:method "GET"
-                :headers (discord-headers token)})
-          (.then (fn [payload]
-                   (->> (if (array? payload) (array-seq payload) [])
-                        (map map-discord-message)
-                        sort-newest-first
-                        vec)))))))
+  (if (discord-gateway-active?)
+    (-> (.fetchChannelMessages (discord-gateway-manager) channel-id (clj->js {:limit (max 1 (min 100 (or limit 25)))}))
+        (.then (fn [messages]
+                 (->> (js->clj messages :keywordize-keys true)
+                      sort-newest-first
+                      vec))))
+    (let [token (discord-token)]
+      (if (str/blank? token)
+        (js/Promise.reject (js/Error. "Discord bot token not configured"))
+        (-> (fetch-json!
+             (str "https://discord.com/api/v10/channels/" channel-id "/messages?limit=" (max 1 (min 100 (or limit 25))))
+             #js {:method "GET"
+                  :headers (discord-headers token)})
+            (.then (fn [payload]
+                     (->> (if (array? payload) (array-seq payload) [])
+                          (map map-discord-message)
+                          sort-newest-first
+                          vec))))))))
 
 (defn- discord-source-config
   [control]
@@ -311,6 +329,68 @@
   [control]
   (some-> (get-in control [:sources :discord :botUserId]) str str/trim not-empty))
 
+(defn- discord-event-jobs
+  [control]
+  (->> (:jobs control)
+       (filter (fn [job]
+                 (and (:enabled job)
+                      (= "event" (get-in job [:trigger :kind]))
+                      (= "discord" (get-in job [:source :kind])))))
+       vec))
+
+(defn- discord-union-keywords
+  [control]
+  (->> (discord-event-jobs control)
+       (mapcat #(job-keywords control %))
+       distinct
+       vec))
+
+(defn- dispatch-discord-gateway-message!
+  [message]
+  (let [config (cfg)
+        control (control-config config)
+        content (str/lower-case (str (:content message) ""))
+        bot-user-id (discord-bot-user-id control)
+        mention? (and bot-user-id
+                      (or (str/includes? content (str "<@" bot-user-id ">"))
+                          (str/includes? content (str "<@!" bot-user-id ">"))))
+        keyword? (some #(str/includes? content %) (discord-union-keywords control))
+        payload {:channelId (:channelId message)
+                 :authorId (:authorId message)
+                 :authorUsername (:authorUsername message)
+                 :authorIsBot (:authorIsBot message)
+                 :content (:content message)
+                 :messageId (:id message)}]
+    (when-not (:authorIsBot message)
+      (remember-discord-latest! (:channelId message) [message])
+      (dispatch-event! {:sourceKind "discord"
+                        :eventKind "discord.message.created"
+                        :payload payload})
+      (when mention?
+        (dispatch-event! {:sourceKind "discord"
+                          :eventKind "discord.message.mention"
+                          :payload payload}))
+      (when keyword?
+        (dispatch-event! {:sourceKind "discord"
+                          :eventKind "discord.message.keyword"
+                          :payload payload})))))
+
+(defn- bind-discord-gateway!
+  [config]
+  (when-let [manager (discord-gateway-manager)]
+    (let [token (some-> (:discord-bot-token config) str str/trim)]
+      (when-not (str/blank? token)
+        (-> (.start manager token)
+            (.catch (fn [err]
+                      (println "[event-agents] discord gateway start failed:" (.-message err))
+                      nil))))
+      (when-let [unsubscribe @discord-gateway-unsubscribe*]
+        (unsubscribe)
+        (reset! discord-gateway-unsubscribe* nil))
+      (reset! discord-gateway-unsubscribe*
+              (.onMessage manager (fn [mapped _raw]
+                                    (dispatch-discord-gateway-message! (js->clj mapped :keywordize-keys true))))))))
+
 (defn- dispatch-discord-message-event!
   [control job message match-kind]
   (dispatch-event! {:sourceKind "discord"
@@ -456,6 +536,9 @@
 
 (defn stop!
   []
+  (when-let [unsubscribe @discord-gateway-unsubscribe*]
+    (unsubscribe)
+    (reset! discord-gateway-unsubscribe* nil))
   (doseq [[_ task] @scheduled-tasks*]
     (when (and task (map? task) (= :interval (:type task)))
       (clear-interval-task! task)))
@@ -519,6 +602,7 @@
           control (control-config config)]
       (reset! running?* true)
       (println "[event-agents] starting with" (count (:jobs control)) "jobs")
+      (bind-discord-gateway! config)
       (doseq [job (:jobs control)]
         (when (and (:enabled job)
                    (= "cron" (get-in job [:trigger :kind])))

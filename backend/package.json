@@ -19,6 +19,7 @@
     "@fastify/websocket": "^11.2.0",
     "@mariozechner/pi-coding-agent": "^0.63.1",
     "@sinclair/typebox": "^0.34.41",
+    "discord.js": "^14.26.3",
     "events": "^3.3.0",
     "fastify": "^5.6.1",
     "nodemailer": "^6.9.16",

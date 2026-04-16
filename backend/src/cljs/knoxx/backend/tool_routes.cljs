@@ -48,6 +48,12 @@
      :control control
      :runtime runtime}))
 
+(defn- restart-discord-gateway!
+  [token]
+  (when-let [manager (aget js/globalThis "knoxxDiscordGateway")]
+    (-> (.restart manager token)
+        (.catch (fn [_] nil)))))
+
 (defn register-tool-routes!
   [app runtime config {:keys [route!
                               json-response!
@@ -351,6 +357,7 @@
                         (swap! runtime-config/config* (fn [current-cfg]
                                                        (assoc (or current-cfg (runtime-config/cfg))
                                                               :discord-bot-token new-token)))
+                        (restart-discord-gateway! new-token)
                         (event-agents/reload!)
                         (let [masked (masked-discord-token new-token)]
                           (json-response! reply 200 {:ok true
