@@ -53,8 +53,8 @@
   ;; ============================================================
   ;; Proxx observability (analytics + request logs)
   ;;
-  ;; Knoxx backend proxies Proxx's /api/ui/* endpoints so the browser
-  ;; never needs the Proxx auth token.
+  ;; Knoxx backend proxies Proxx's canonical /api/v1/* observability
+  ;; endpoints so the browser never needs the Proxx auth token.
   ;; ============================================================
 
   (route! app "GET" "/api/proxx/observability/request-logs"
@@ -65,7 +65,7 @@
                   (ensure-permission! ctx "org.proxx.observability.read")
                   (if-not (proxx-configured? config)
                     (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (fetch-json (str (:proxx-base-url config) "/api/ui/request-logs" (request-query-string request))
+                    (-> (fetch-json (str (:proxx-base-url config) "/api/v1/request-logs" (request-query-string request))
                                     #js {:headers (bearer-headers (:proxx-auth-token config))})
                         (.then (fn [resp]
                                  (if (aget resp "ok")
@@ -85,7 +85,7 @@
                   (ensure-permission! ctx "org.proxx.observability.read")
                   (if-not (proxx-configured? config)
                     (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (fetch-json (str (:proxx-base-url config) "/api/ui/dashboard/overview" (request-query-string request))
+                    (-> (fetch-json (str (:proxx-base-url config) "/api/v1/dashboard/overview" (request-query-string request))
                                     #js {:headers (bearer-headers (:proxx-auth-token config))})
                         (.then (fn [resp]
                                  (if (aget resp "ok")
@@ -105,7 +105,7 @@
                   (ensure-permission! ctx "org.proxx.observability.read")
                   (if-not (proxx-configured? config)
                     (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (fetch-json (str (:proxx-base-url config) "/api/ui/analytics/provider-model" (request-query-string request))
+                    (-> (fetch-json (str (:proxx-base-url config) "/api/v1/analytics/provider-model" (request-query-string request))
                                     #js {:headers (bearer-headers (:proxx-auth-token config))})
                         (.then (fn [resp]
                                  (if (aget resp "ok")
