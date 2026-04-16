@@ -83,6 +83,131 @@
   #js {:content #js [#js {:type "text" :text text}]
        :details (clj->js details)})
 
+(def preview-preferred-keys
+  [:content
+   :text
+   :answer
+   :message
+   :result
+   :output
+   :preview
+   :summary
+   :translated_text
+   :corrected_text
+   :snippet])
+
+(def preview-collection-keys
+  [:rows :hits :results :sources :items :documents])
+
+(defn- safe-get
+  [m k]
+  (when (map? m)
+    (or (get m k)
+        (when (keyword? k)
+          (get m (name k)))
+        (when (string? k)
+          (get m (keyword k))))))
+
+(defn- format-preview-scalar
+  [value]
+  (cond
+    (nil? value) "null"
+    (string? value) (let [trimmed (str/trim value)]
+                      (if (str/blank? trimmed) "" trimmed))
+    (number? value) (str value)
+    (boolean? value) (str value)
+    :else (str value)))
+
+(defn- summarize-structured
+  ([value] (summarize-structured value 0))
+  ([value depth]
+   (when (< depth 4)
+     (cond
+       (or (string? value) (number? value) (boolean? value) (nil? value))
+       (let [s (format-preview-scalar value)]
+         (when-not (str/blank? s) s))
+
+       (map? value)
+       (or (some (fn [k]
+                   (when-let [hit (summarize-structured (safe-get value k) (inc depth))]
+                     hit))
+                 preview-preferred-keys)
+           (some (fn [k]
+                   (when-let [hit (summarize-structured (safe-get value k) (inc depth))]
+                     hit))
+                 preview-collection-keys)
+           nil)
+
+       (sequential? value)
+       (let [items (->> value
+                        (map #(summarize-structured % (inc depth)))
+                        (remove #(or (nil? %) (str/blank? %)))
+                        (take 8))]
+         (when (seq items)
+           (str/join "\n" (map (fn [item] (str "- " item)) items))))
+
+       :else nil))))
+
+(defn- markdown-bullets
+  ([value] (markdown-bullets value 0))
+  ([value depth]
+   (when (< depth 4)
+     (cond
+       (or (string? value) (number? value) (boolean? value) (nil? value))
+       (let [s (format-preview-scalar value)]
+         (when-not (str/blank? s) (str "- " s)))
+
+       (map? value)
+       (let [keys (take 20 (keys value))]
+         (when (seq keys)
+           (str/join
+            "\n"
+            (map (fn [k]
+                   (let [child (get value k)
+                         label (cond
+                                 (keyword? k) (name k)
+                                 (string? k) k
+                                 :else (str k))
+                         nested (markdown-bullets child (inc depth))]
+                     (if (and nested (or (map? child) (sequential? child)))
+                       (str "- " label ":\n" (str/replace nested #"(?m)^-" "  -"))
+                       (str "- " label ": " (or (summarize-structured child (inc depth)) (format-preview-scalar child))))))
+                 keys))))
+
+       (sequential? value)
+       (let [items (take 20 value)
+             rendered (->> items
+                           (map #(markdown-bullets % (inc depth)))
+                           (remove #(or (nil? %) (str/blank? %))))]
+         (when (seq rendered)
+           (str/join "\n" rendered)))
+
+       :else nil))))
+
+(defn- extract-json-keys
+  [text]
+  (->> (re-seq #"\"([A-Za-z0-9_\-]+)\"\s*:" (str text))
+       (map second)
+       distinct
+       (take 16)
+       vec))
+
+(defn- summarize-json-string
+  [text]
+  (let [trimmed (str/trim (str text))]
+    (when (and (not (str/blank? trimmed))
+               (or (str/starts-with? trimmed "{")
+                   (str/starts-with? trimmed "[")))
+      (try
+        (let [parsed (js->clj (.parse js/JSON trimmed) :keywordize-keys true)]
+          (or (summarize-structured parsed)
+              (markdown-bullets parsed)
+              nil))
+        (catch :default _
+          (let [keys (extract-json-keys trimmed)]
+            (when (seq keys)
+              (str "- JSON (truncated/invalid preview) keys: " (str/join ", " keys)))))))))
+
 (defn clip-text
   ([text] (clip-text text 20000))
   ([text limit]
@@ -205,16 +330,22 @@
   ([value max-chars]
    (let [raw (cond
                (backend-http/no-content? value) ""
-               (string? value) value
+               (string? value)
+               (or (summarize-json-string value)
+                   value)
+
                (or (map? value) (vector? value) (seq? value))
-               (try
-                 (.stringify js/JSON (clj->js value) nil 2)
-                 (catch :default _
-                   (pr-str value)))
+               (or (summarize-structured value)
+                   (markdown-bullets value)
+                   (pr-str value))
+
                :else
                (try
-                 (let [json (.stringify js/JSON value nil 2)]
-                   (if (string? json) json (str value)))
+                 (let [clj-value (js->clj value :keywordize-keys true)]
+                   (or (summarize-structured clj-value)
+                       (markdown-bullets clj-value)
+                       (let [json (.stringify js/JSON value nil 2)]
+                         (if (string? json) json (str value)))))
                  (catch :default _
                    (str value))))
          [text truncated] (clip-text raw max-chars)]

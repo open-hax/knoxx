@@ -5,10 +5,16 @@ import type { ChatTraceBlock, ToolReceipt, RunEvent } from "../lib/types";
 const TOOL_STRUCTURED_MAX_DEPTH = 5;
 const TOOL_STRUCTURED_MAX_KEYS = 32;
 const TOOL_STRUCTURED_MAX_ITEMS = 24;
+const TOOL_RAW_TEXT_MAX_CHARS = 12000;
 
 function truncateText(value: string, max = 240): string {
   if (value.length <= max) return value;
   return `${value.slice(0, max).trimEnd()}…`;
+}
+
+function clipRawText(value: string, maxChars = TOOL_RAW_TEXT_MAX_CHARS): { text: string; truncated: boolean } {
+  if (value.length <= maxChars) return { text: value, truncated: false };
+  return { text: `${value.slice(0, maxChars).trimEnd()}…`, truncated: true };
 }
 
 function asMarkdownPreview(value: string): string {
@@ -181,7 +187,9 @@ function toolPreviewMarkdown(value: string): string {
   if (parsed) {
     return structuredToMarkdown(parsed);
   }
-  return asMarkdownPreview(value);
+  const clipped = clipRawText(value);
+  const base = asMarkdownPreview(clipped.text);
+  return clipped.truncated ? `${base}\n\n_(truncated)_` : base;
 }
 
 function toolOutputMarkdown(value: string): string {
@@ -190,11 +198,15 @@ function toolOutputMarkdown(value: string): string {
     const summarized = summarizeStructuredValue(parsed);
     // If we can extract human text, show that as the primary output.
     if (summarized && summarized.trim().length > 0) {
-      return asMarkdownPreview(summarized);
+      const clipped = clipRawText(summarized);
+      const base = asMarkdownPreview(clipped.text);
+      return clipped.truncated ? `${base}\n\n_(truncated)_` : base;
     }
     return structuredToMarkdown(parsed);
   }
-  return asMarkdownPreview(value);
+  const clipped = clipRawText(value);
+  const base = asMarkdownPreview(clipped.text);
+  return clipped.truncated ? `${base}\n\n_(truncated)_` : base;
 }
 
 export interface ToolReceiptBlockProps {
@@ -209,8 +221,10 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
   const isError = receipt.is_error || status === "failed";
   const toolName = receipt.tool_name ?? receipt.id ?? "tool";
   const inputSummary = receipt.input_preview ? toolInputSummary(receipt.input_preview) : null;
-  const inputMarkdown = receipt.input_preview ? toolPreviewMarkdown(truncateText(receipt.input_preview, 2400)) : "";
-  const resultMarkdown = receipt.result_preview ? toolOutputMarkdown(truncateText(receipt.result_preview, 3600)) : "";
+  // IMPORTANT: do not truncate before JSON parsing, or we end up with invalid JSON
+  // and fall back to raw JSON-like strings in the UI.
+  const inputMarkdown = receipt.input_preview ? toolPreviewMarkdown(receipt.input_preview) : "";
+  const resultMarkdown = receipt.result_preview ? toolOutputMarkdown(receipt.result_preview) : "";
   const liveUpdateMarkdown = !resultMarkdown && receipt.updates && receipt.updates.length > 0
     ? toolOutputMarkdown(receipt.updates[receipt.updates.length - 1])
     : "";
