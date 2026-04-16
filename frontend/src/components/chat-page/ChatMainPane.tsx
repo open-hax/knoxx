@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { Badge, Button } from '@open-hax/uxx';
 import ChatComposer from '../ChatComposer';
 import ConsolePanel from '../ConsolePanel';
@@ -161,6 +162,46 @@ export function ChatMainPane({
   onClearScratchpad,
   onSendCanvasEmailAction,
 }: ChatMainPaneProps) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollContentRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
+
+  const updateAutoScrollState = useCallback((container: HTMLDivElement) => {
+    const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldAutoScrollRef.current = remaining <= 96;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!shouldAutoScrollRef.current) return;
+    scrollToBottom();
+  }, [messages, latestToolReceipts, liveToolReceipts, liveToolEvents, isSending, scrollToBottom]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const content = scrollContentRef.current;
+    if (!container || !content || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (!shouldAutoScrollRef.current) return;
+      scrollToBottom();
+    });
+
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
+
   return (
     <>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--token-monokai-bg-default)' }}>
@@ -205,54 +246,61 @@ export function ChatMainPane({
           />
         ) : null}
 
-        <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
-          <ChatRuntimePanel
-            wsStatus={wsStatus}
-            isRecovering={isRecovering}
-            latestRun={latestRun}
-            isSending={isSending}
-            selectedModel={selectedModel}
-            liveControlEnabled={liveControlEnabled}
-            liveControlText={liveControlText}
-            onLiveControlTextChange={onLiveControlTextChange}
-            queueingControl={queueingControl}
-            onQueueLiveControl={onQueueLiveControl}
-            conversationId={conversationId}
-            activeRunId={activeRunId}
-            hydrationSources={hydrationSources}
-            runtimeEvents={runtimeEvents}
-            latestToolReceipts={latestToolReceipts}
-            assistantSurfaceBackground={assistantSurfaceBackground}
-            assistantSurfaceBorder={assistantSurfaceBorder}
-            assistantSurfaceText={assistantSurfaceText}
-            onOpenHydrationSource={onOpenHydrationSource}
-            onPinHydrationSource={onPinHydrationSource}
-            onAppendToScratchpad={onAppendToScratchpad}
-          />
-
-          {messages.length === 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--token-colors-text-muted)', gap: 8 }}>
-              <div style={{ fontSize: 20, fontWeight: 600 }}>{EMPTY_STATE.title}</div>
-              <div style={{ fontSize: 14 }}>{EMPTY_STATE.body}</div>
-              <div style={{ fontSize: 13 }}>{EMPTY_STATE.detail}</div>
-            </div>
-          ) : (
-            <ChatMessageList
-              messages={messages}
+        <div
+          ref={scrollContainerRef}
+          data-testid="chat-scroll-region"
+          onScroll={(event) => updateAutoScrollState(event.currentTarget)}
+          style={{ flex: 1, overflow: 'auto', padding: 16 }}
+        >
+          <div ref={scrollContentRef}>
+            <ChatRuntimePanel
+              wsStatus={wsStatus}
+              isRecovering={isRecovering}
               latestRun={latestRun}
+              isSending={isSending}
+              selectedModel={selectedModel}
+              liveControlEnabled={liveControlEnabled}
+              liveControlText={liveControlText}
+              onLiveControlTextChange={onLiveControlTextChange}
+              queueingControl={queueingControl}
+              onQueueLiveControl={onQueueLiveControl}
+              conversationId={conversationId}
+              activeRunId={activeRunId}
+              hydrationSources={hydrationSources}
+              runtimeEvents={runtimeEvents}
               latestToolReceipts={latestToolReceipts}
-              liveToolReceipts={liveToolReceipts}
-              liveToolEvents={liveToolEvents}
               assistantSurfaceBackground={assistantSurfaceBackground}
               assistantSurfaceBorder={assistantSurfaceBorder}
               assistantSurfaceText={assistantSurfaceText}
-              onOpenMessageInCanvas={onOpenMessageInCanvas}
-              onOpenSourceInPreview={onOpenSourceInPreview}
-              onPinAssistantSource={onPinAssistantSource}
+              onOpenHydrationSource={onOpenHydrationSource}
+              onPinHydrationSource={onPinHydrationSource}
               onAppendToScratchpad={onAppendToScratchpad}
-              onPinMessageContext={onPinMessageContext}
             />
-          )}
+
+            {messages.length === 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--token-colors-text-muted)', gap: 8 }}>
+                <div style={{ fontSize: 20, fontWeight: 600 }}>{EMPTY_STATE.title}</div>
+                <div style={{ fontSize: 14 }}>{EMPTY_STATE.body}</div>
+                <div style={{ fontSize: 13 }}>{EMPTY_STATE.detail}</div>
+              </div>
+            ) : (
+              <ChatMessageList
+                messages={messages}
+                latestRun={latestRun}
+                latestToolReceipts={latestToolReceipts}
+                liveToolReceipts={liveToolReceipts}
+                liveToolEvents={liveToolEvents}
+                assistantSurfaceBackground={assistantSurfaceBackground}
+                assistantSurfaceBorder={assistantSurfaceBorder}
+                assistantSurfaceText={assistantSurfaceText}
+                onOpenMessageInCanvas={onOpenMessageInCanvas}
+                onOpenSourceInPreview={onOpenSourceInPreview}
+                onPinAssistantSource={onPinAssistantSource}
+                onAppendToScratchpad={onAppendToScratchpad}
+                onPinMessageContext={onPinMessageContext}
+              />
+            )}
+          </div>
         </div>
 
         <div style={{ padding: 12, borderTop: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
