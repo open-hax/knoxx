@@ -17,8 +17,28 @@ describe("ToolReceiptBlock", () => {
     );
 
     expect(screen.getByText("read")).toBeInTheDocument();
-    expect(screen.getByText("docs/guide.md")).toBeInTheDocument();
+    expect(screen.getAllByText("docs/guide.md").length).toBeGreaterThan(0);
     expect(screen.getByText("Rendered markdown result")).toBeInTheDocument();
     expect(screen.queryByText(/"content"/)).not.toBeInTheDocument();
+  });
+
+  it("renders tool inputs even when the preview is json without a path/query/url", () => {
+    render(
+      <ToolReceiptBlock
+        receipt={{
+          id: "tool-2",
+          tool_name: "custom",
+          status: "completed",
+          input_preview: JSON.stringify({ foo: "bar", limit: 3 }),
+          result_preview: "ok",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Inputs")).toBeInTheDocument();
+    expect(screen.getByText("foo")).toBeInTheDocument();
+    expect(screen.getByText("bar")).toBeInTheDocument();
+    const limitNode = screen.getByText("limit");
+    expect(limitNode.closest("li")?.textContent).toContain("3");
   });
 });

@@ -85,9 +85,10 @@ function normalizeSessionTimestamp(snapshot: ChatSessionSnapshot): string {
 function buildSessionSummary(sessionId: string, snapshot: ChatSessionSnapshot): MemorySessionSummary {
   const conversationId = safeTrim(snapshot.conversationId) ?? sessionId;
   const runStatus = snapshot.latestRun?.status;
-  // Derive active status from run status rather than persisted isSending
-  // since we never persist isSending=true anymore
-  const isActivelySending = runStatus === "running" || runStatus === "queued";
+  const hasStreamingMessage = Boolean(snapshot.messages?.some((message) => message.role === "assistant" && message.status === "streaming"));
+  // Derive active status primarily from run status, but fall back to the persisted
+  // snapshot for brand-new turns (where latestRun may not be persisted yet).
+  const isActivelySending = runStatus === "running" || runStatus === "queued" || snapshot.isSending === true || hasStreamingMessage;
   const activeStatus = isActivelySending
     ? "running"
     : runStatus === "completed" || runStatus === "failed"
