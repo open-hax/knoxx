@@ -152,6 +152,63 @@
       (.catch (fn [err]
                 (js/console.error "Redis EXPIRE error:" err)))))
 
+(defn lpush
+  "Push a value to the head of a Redis list."
+  [client key value]
+  (-> client
+      (.lPush key value)
+      (.catch (fn [err]
+                (js/console.error "Redis LPUSH error:" err)))))
+
+(defn lpush-json
+  "Push a JSON-encoded value to the head of a Redis list."
+  [client key value]
+  (-> client
+      (.lPush key (js/JSON.stringify (clj->js value)))
+      (.catch (fn [err]
+                (js/console.error "Redis LPUSH JSON error:" err)))))
+
+(defn lrange
+  "Get a range of elements from a Redis list."
+  [client key start stop]
+  (-> client
+      (.lRange key start stop)
+      (.then (fn [items]
+               (if (array? items)
+                 (vec (array-seq items))
+                 [])))
+      (.catch (fn [err]
+                (js/console.error "Redis LRANGE error:" err)
+                []))))
+
+(defn lrange-json
+  "Get a range of elements from a Redis list, parsing each as JSON."
+  [client key start stop]
+  (-> client
+      (.lRange key start stop)
+      (.then (fn [items]
+               (if (array? items)
+                 (->> (array-seq items)
+                      (keep (fn [item]
+                              (try
+                                (js->clj (js/JSON.parse item) :keywordize-keys true)
+                                (catch :default _ nil))))
+                      vec)
+                 [])))
+      (.catch (fn [err]
+                (js/console.error "Redis LRANGE JSON error:" err)
+                []))))
+
+(defn llen
+  "Get the length of a Redis list."
+  [client key]
+  (-> client
+      (.lLen key)
+      (.then (fn [n] (or n 0)))
+      (.catch (fn [err]
+                (js/console.error "Redis LLEN error:" err)
+                0))))
+
 (defn ping
   "Ping Redis to check connection."
   [client]

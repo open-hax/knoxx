@@ -1,5 +1,14 @@
 (ns knoxx.backend.run-state
-  (:require [knoxx.backend.runtime-config :as runtime-config]))
+  (:require [knoxx.backend.runtime-config :as runtime-config]
+            [knoxx.backend.redis-client :as redis]))
+
+(def RUN_EVENTS_KEY_PREFIX "knoxx:run_events:")
+(def RUN_EVENTS_MAX 200)
+(def RUN_EVENTS_TTL 7200) ; 2 hours TTL for run event lists
+
+(defn run-events-key
+  [run-id]
+  (str RUN_EVENTS_KEY_PREFIX run-id))
 
 (defonce runs* (atom {}))
 (defonce run-order* (atom []))
@@ -53,7 +62,15 @@
                (fn [run]
                  (-> run
                      (assoc :updated_at (runtime-config/now-iso))
-                     (update :events #(append-limited % event 200))))))
+                     (update :events #(append-limited % event 200)))))
+  ;; Persist event to Redis for crash recovery / WS reconnect replay
+  (when-let [redis-client (redis/get-client)]
+    (redis/lpush-json redis-client (run-events-key run-id) event)
+    ;; Trim the list to prevent unbounded growth
+    (try
+      (.lTrim redis-client (run-events-key run-id) 0 (dec RUN_EVENTS_MAX))
+      (.expire redis-client (run-events-key run-id) RUN_EVENTS_TTL)
+      (catch :default _ nil))))
 
 (defn- trace-tool-block-id
   [{:keys [tool_call_id tool_name at]}]
@@ -214,3 +231,23 @@
        vals
        (filter #(contains? #{"queued" "running"} (:status %)))
        count))
+
+(defn get-run-events-since
+  "Get run events from Redis that occurred after the given timestamp.
+   Returns a promise resolving to a vector of events.
+   Events are stored newest-first in Redis (LPUSH), so we reverse for chronological order."
+  [run-id since-timestamp]
+  (let [redis-client (redis/get-client)]
+    (if (nil? redis-client)
+      (js/Promise.resolve [])
+      (-> (redis/lrange-json redis-client (run-events-key run-id) 0 -1)
+          (.then (fn [events]
+                   (if (str/blank? since-timestamp)
+                     (vec (reverse events))
+                     (->> (reverse events)
+                          (filter (fn [event]
+                                    (let [at (:at event)]
+                                      (and (string? at)
+                                           (> (compare at since-timestamp) 0)))))
+                          vec))))
+          (.catch (fn [_] []))))))

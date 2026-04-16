@@ -85,7 +85,10 @@ function normalizeSessionTimestamp(snapshot: ChatSessionSnapshot): string {
 function buildSessionSummary(sessionId: string, snapshot: ChatSessionSnapshot): MemorySessionSummary {
   const conversationId = safeTrim(snapshot.conversationId) ?? sessionId;
   const runStatus = snapshot.latestRun?.status;
-  const activeStatus = snapshot.isSending
+  // Derive active status from run status rather than persisted isSending
+  // since we never persist isSending=true anymore
+  const isActivelySending = runStatus === "running" || runStatus === "queued";
+  const activeStatus = isActivelySending
     ? "running"
     : runStatus === "completed" || runStatus === "failed"
       ? runStatus
@@ -99,9 +102,9 @@ function buildSessionSummary(sessionId: string, snapshot: ChatSessionSnapshot): 
     title_model: null,
     last_ts: normalizeSessionTimestamp(snapshot),
     event_count: snapshot.messages?.length ?? 0,
-    is_active: snapshot.isSending || activeStatus === "waiting_input",
+    is_active: isActivelySending || activeStatus === "waiting_input",
     active_status: activeStatus,
-    has_active_stream: Boolean(snapshot.isSending),
+    has_active_stream: isActivelySending,
     active_session_id: sessionId,
     local_only: true,
   };
@@ -357,7 +360,8 @@ export function useChatSessionPersistence({
       if (Array.isArray(parsed.runtimeEvents)) {
         setRuntimeEvents(parsed.runtimeEvents.slice(-80));
       }
-      setIsSending(Boolean(parsed.isSending));
+      // Never restore isSending from persisted state — always derive from runtime
+      setIsSending(false);
     } catch {
       // ignore storage failures
     }
@@ -386,7 +390,8 @@ export function useChatSessionPersistence({
         messages: messages.slice(-80),
         latestRun,
         runtimeEvents: runtimeEvents.slice(-80),
-        isSending,
+        // Never persist isSending as true — always derive from runtime state on load
+        isSending: false,
       } satisfies ChatSessionSnapshot);
       getChatStorage()?.removeItem(sessionStateKey);
     } catch {
@@ -462,6 +467,9 @@ export function useChatSessionRecovery({
         }
 
         if (status.status === "not_found" || status.status === "unknown") {
+          // Clear stale pending assistant immediately — no session exists on the backend
+          pendingAssistantIdRef.current = null;
+
           const lastRunId = parsed.messages
             ?.filter((message) => message.runId)
             .map((message) => message.runId)
@@ -469,19 +477,27 @@ export function useChatSessionRecovery({
 
           if (lastRunId) {
             appendConsoleLine(setConsoleLines, `[session] session not in Redis, checking run ${lastRunId.slice(0, 8)}...`);
-            const run = await getRun(lastRunId);
-            if (cancelled) return;
+            try {
+              const run = await getRun(lastRunId);
+              if (cancelled) return;
 
-            if (run.status === "running" || run.status === "queued") {
-              setLatestRun(run);
-              setConversationId(run.conversation_id ?? null);
-              setIsSending(true);
-              activeRunIdRef.current = lastRunId;
-              appendConsoleLine(setConsoleLines, "[session] run still active, polling...");
-            } else {
+              if (run.status === "running" || run.status === "queued") {
+                setLatestRun(run);
+                setConversationId(run.conversation_id ?? null);
+                setIsSending(true);
+                activeRunIdRef.current = lastRunId;
+                appendConsoleLine(setConsoleLines, "[session] run still active, polling...");
+              } else {
+                setIsSending(false);
+                pendingAssistantIdRef.current = null;
+                appendConsoleLine(setConsoleLines, `[session] run ${run.status}, ready for new message`);
+              }
+            } catch (runError) {
+              // getRun failed (404 after restart, or network error) — treat as stale
+              if (cancelled) return;
+              appendConsoleLine(setConsoleLines, `[session] run not found or fetch failed, starting fresh`);
               setIsSending(false);
               pendingAssistantIdRef.current = null;
-              appendConsoleLine(setConsoleLines, `[session] run ${run.status}, ready for new message`);
             }
           } else {
             setIsSending(false);

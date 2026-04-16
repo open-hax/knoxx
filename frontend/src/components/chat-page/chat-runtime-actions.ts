@@ -202,12 +202,17 @@ export function createChatRuntimeActions({
       );
     } catch (error) {
       const message = (error as Error).message;
+      const isAlreadyProcessing = message.includes('409') || message.includes('agent_already_processing') || message.includes('already processing');
       updateMessageById(assistantMessageId, (assistant) => ({
         ...assistant,
-        content: `Agent request failed.\n\n${message}`,
-        status: 'error',
+        content: isAlreadyProcessing
+          ? `Agent is already processing a turn. Use steer or follow-up to queue your message, or wait for the current turn to finish.\n\n${message}`
+          : `Agent request failed.\n\n${message}`,
+        status: isAlreadyProcessing ? 'streaming' : 'error',
       }));
-      pendingAssistantIdRef.current = null;
+      if (!isAlreadyProcessing) {
+        pendingAssistantIdRef.current = null;
+      }
       setIsSending(false);
       appendConsoleLine(`[chat] failed: ${message}`);
     }

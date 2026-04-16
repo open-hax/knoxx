@@ -1,5 +1,6 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import { connectStream, type StreamConnection } from '../../lib/ws';
+import { getRunEvents } from '../../lib/api';
 import type { ChatMessage, RunDetail, RunEvent } from '../../lib/types';
 import type { SemanticSearchMatch } from './types';
 import {
@@ -66,6 +67,7 @@ export function useChatRuntimeEffects({
   runSemanticSearch,
 }: UseChatRuntimeEffectsParams) {
   const streamRef = useRef<StreamConnection | null>(null);
+  const lastEventTimestampRef = useRef<string | null>(null);
   const conversationIdRef = useRef(conversationId);
   const callbacksRef = useRef({
     appendMessageIfMissing,
@@ -104,6 +106,30 @@ export function useChatRuntimeEffects({
         {
           onStatus: (status) => {
             setWsStatus(status);
+            if (status === 'connected') {
+              // WS reconnected: catch up on missed events for active run
+              const activeRunId = activeRunIdRef.current;
+              if (activeRunId && isSending) {
+                const since = lastEventTimestampRef.current;
+                void getRunEvents(activeRunId, since).then((result) => {
+                  if (result.count > 0) {
+                    setRuntimeEvents((previous) => {
+                      const existingIds = new Set(previous.map((e: RunEvent) => `${e.type}:${e.at}`));
+                      const newEvents = result.events.filter((e: RunEvent) => !existingIds.has(`${e.type}:${e.at}`));
+                      return [...previous.slice(-79), ...newEvents];
+                    });
+                    setConsoleLines((previous) => [...previous.slice(-400), `[ws] caught up ${result.count} events since reconnect`]);
+                    // Update last event timestamp
+                    const lastEvent = result.events[result.events.length - 1];
+                    if (lastEvent?.at) {
+                      lastEventTimestampRef.current = String(lastEvent.at);
+                    }
+                  }
+                }).catch(() => {
+                  // Catch-up failed silently — WS will still stream new events
+                });
+              }
+            }
             if (status !== 'connected') setIsSending(false);
           },
           onToken: (token, meta) => {
@@ -131,6 +157,10 @@ export function useChatRuntimeEffects({
               preview?: string;
               is_error?: boolean;
             };
+            // Track latest event timestamp for WS reconnect catch-up
+            if (typeof runtimeEvent.at === 'string') {
+              lastEventTimestampRef.current = runtimeEvent.at;
+            }
             setRuntimeEvents((previous) => [...previous.slice(-79), runtimeEvent]);
             const controlTimelineMessage = controlTimelineMessageFromEvent(runtimeEvent);
             if (controlTimelineMessage) {

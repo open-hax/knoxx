@@ -4,6 +4,7 @@ import type {
   ProxxChatResponse,
   ProxxHealth,
   ProxxModelInfo,
+  RunEvent,
   ShibbolethHandoffResponse,
   ToolBashResponse,
   ToolCatalogResponse,
@@ -230,6 +231,17 @@ export async function getSessionStatus(sessionId: string, conversationId?: strin
   const params = new URLSearchParams({ session_id: sessionId });
   if (conversationId) params.set("conversation_id", conversationId);
   return request(`/api/knoxx/session/status?${params.toString()}`);
+}
+
+export async function getRunEvents(runId: string, since?: string | null): Promise<{
+  run_id: string;
+  events: RunEvent[];
+  count: number;
+}> {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const qs = params.toString();
+  return request(`/api/knoxx/run/${encodeURIComponent(runId)}/events${qs ? `?${qs}` : ""}`);
 }
 
 export async function handoffToShibboleth(payload: {
