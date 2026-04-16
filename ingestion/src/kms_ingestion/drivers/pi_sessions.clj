@@ -162,87 +162,84 @@
       (if (string? content) content (json/generate-string content))
       {:role "system" :author "pi"}
       {:custom_type (:customType pi-event)
-       :pi_workspace_project (cwd-to-project cwd)})])
-
+       :pi_workspace_project (cwd-to-project cwd)})]))
 (defn- map-message-event
   [pi-event session-id cwd]
   (let [msg (:message pi-event)
         content (:content msg)
         role (:role msg)
-        events []]
-    (cond-> events
-      ;; User message
+        session-id-str session-id]
+    (cond
       (= "user" role)
-      (conj (make-event
-             (str "pi:" session-id ":msg:" (:id pi-event))
-             (:timestamp pi-event)
-             "pi.message"
-             session-id
-             (or (extract-text-content content) "")
-             {:role "user" :author "user"}
-             {:pi_message_id (:id pi-event)
-              :pi_parent_id (:parentId pi-event)
-              :pi_workspace_project (cwd-to-project cwd)}))
+      [(make-event
+        (str "pi:" session-id-str ":msg:" (:id pi-event))
+        (:timestamp pi-event)
+        "pi.message"
+        session-id-str
+        (or (extract-text-content content) "")
+        {:role "user" :author "user"}
+        {:pi_message_id (:id pi-event)
+         :pi_parent_id (:parentId pi-event)
+         :pi_workspace_project (cwd-to-project cwd)})]
 
-      ;; Assistant message
       (= "assistant" role)
-      (into
-       (let [text-content (extract-text-content content)
-             tool-calls (extract-tool-calls content)
-             thinking (extract-thinking content)
-             msg-events []]
-         (cond-> msg-events
-           text-content
-           (conj (make-event
-                  (str "pi:" session-id ":msg:" (:id pi-event))
-                  (:timestamp pi-event)
-                  "pi.message"
-                  session-id
-                  text-content
-                  {:role "assistant" :author "pi" :model (or (:model msg) (:provider msg) "unknown")}
-                  {:pi_message_id (:id pi-event)
-                   :pi_parent_id (:parentId pi-event)
-                   :provider (:provider msg)
-                   :model (:model msg)
-                   :usage (:usage msg)
-                   :stop_reason (:stopReason msg)
-                   :pi_workspace_project (cwd-to-project cwd)}))
+      (let [text-content (extract-text-content content)
+            tool-calls (extract-tool-calls content)
+            thinking (extract-thinking content)
+            model-name (or (:model msg) (:provider msg) "unknown")
+            base-meta {:role "assistant" :author "pi" :model model-name}
+            base-extra {:pi_message_id (:id pi-event)
+                        :pi_parent_id (:parentId pi-event)
+                        :provider (:provider msg)
+                        :model (:model msg)
+                        :usage (:usage msg)
+                        :stop_reason (:stopReason msg)
+                        :pi_workspace_project (cwd-to-project cwd)}
+            text-event (when text-content
+                         (make-event
+                          (str "pi:" session-id-str ":msg:" (:id pi-event))
+                          (:timestamp pi-event)
+                          "pi.message"
+                          session-id-str
+                          text-content
+                          base-meta
+                          base-extra))
+            thinking-event (when thinking
+                            (make-event
+                             (str "pi:" session-id-str ":thinking:" (:id pi-event))
+                             (:timestamp pi-event)
+                             "pi.reasoning"
+                             session-id-str
+                             thinking
+                             {:role "system" :author "pi" :model model-name}
+                             {:pi_message_id (:id pi-event)
+                              :pi_workspace_project (cwd-to-project cwd)}))
+            tool-events (when (seq tool-calls)
+                         (map-indexed
+                          (fn [idx tc]
+                            (let [tool-name (or (:name tc) "unknown")
+                                  args-preview (if (:arguments tc)
+                                                 (let [s (if (string? (:arguments tc))
+                                                           (:arguments tc)
+                                                           (json/generate-string (:arguments tc)))]
+                                                   (subs s 0 (min 500 (count s))))
+                                                 "")]
+                              (make-event
+                               (str "pi:" session-id-str ":tool:" (or (:id tc) (str (:id pi-event) "_" idx)))
+                               (:timestamp pi-event)
+                               "pi.tool_call"
+                               session-id-str
+                               (str "Tool: " tool-name "\n" args-preview)
+                               {:role "system" :author "pi" :model model-name}
+                               {:pi_message_id (:id pi-event)
+                                :tool_name tool-name
+                                :tool_call_id (:id tc)
+                                :tool_arguments_preview args-preview
+                                :pi_workspace_project (cwd-to-project cwd)})))
+                          tool-calls))]
+        (vec (keep identity (concat [text-event thinking-event] tool-events))))
 
-           thinking
-           (conj (make-event
-                  (str "pi:" session-id ":thinking:" (:id pi-event))
-                  (:timestamp pi-event)
-                  "pi.reasoning"
-                  session-id
-                  thinking
-                  {:role "system" :author "pi" :model (or (:model msg) (:provider msg) "unknown")}
-                  {:pi_message_id (:id pi-event)
-                   :pi_workspace_project (cwd-to-project cwd)}))
-
-           ;; Tool calls
-           true
-           (into (map-indexed
-                  (fn [idx tc]
-                    (let [tool-name (or (:name tc) "unknown")
-                          args-preview (if (:arguments tc)
-                                         (let [s (if (string? (:arguments tc))
-                                                   (:arguments tc)
-                                                   (json/generate-string (:arguments tc)))]
-                                           (subs s 0 (min 500 (count s))))
-                                         "")]
-                      (make-event
-                       (str "pi:" session-id ":tool:" (or (:id tc) (str (:id pi-event) "_" idx)))
-                       (:timestamp pi-event)
-                       "pi.tool_call"
-                       session-id
-                       (str "Tool: " tool-name "\n" args-preview)
-                       {:role "system" :author "pi" :model (or (:model msg) "unknown")}
-                       {:pi_message_id (:id pi-event)
-                        :tool_name tool-name
-                        :tool_call_id (:id tc)
-                        :tool_arguments_preview args-preview
-                        :pi_workspace_project (cwd-to-project cwd)})))
-                  tool-calls))))))))
+      :else [])))
 
 (defn- map-pi-event
   "Map a single pi event to OpenPlanner events. Returns a vector."
@@ -303,16 +300,24 @@
   protocol/Driver
 
   (discover [_ opts]
-    (let [existing-hashes (or (:existing-hashes opts) {})
-          since-ts (if (seq existing-hashes)
-                     (- (apply min (map :mtime (vals existing-hashes))) 60000) ; 60s overlap
+    (let [existing-state (or (:existing-state opts) {})
+          since-ts (if (seq existing-state)
+                     (- (apply min (map (fn [[_id row]]
+                                         (if-let [mt (:mtime row)]
+                                           (if (number? mt) mt
+                                             (try (.getTime (java.sql.Timestamp/valueOf (str mt)))
+                                                  (catch Exception _ 0)))
+                                           0))
+                                       existing-state))
+                                        60000) ; 60s overlap
                      0)
           files (discover-session-files root-path since-ts)
-          ;; Filter out already-ingested (same session-id + same mtime)
+          ;; Filter out already-ingested (same path + same mtime)
           new-files (filter (fn [f]
-                              (let [existing (get existing-hashes (:id f))]
+                              (let [existing (get existing-state (:id f))]
                                 (or (nil? existing)
-                                    (< (:mtime existing) (:mtime f)))))
+                                    (let [existing-meta (:metadata existing)]
+                                      (not= (:size existing-meta) (:size f))))))
                             files)]
       {:total-files (count files)
        :new-files (count new-files)
