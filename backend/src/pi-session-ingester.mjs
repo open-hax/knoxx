@@ -29,8 +29,11 @@ import { createHash } from "node:crypto";
 const PI_SESSIONS_ROOT = process.env.PI_SESSIONS_ROOT || "/home/err/.pi/agent/sessions";
 const INGEST_STATE_DIR = process.env.INGEST_STATE_DIR || "/home/err/.knoxx/pi-ingest-state";
 const INGEST_STATE_FILE = join(INGEST_STATE_DIR, "ingested-sessions.json");
-const MAX_EVENTS_PER_BATCH = 200;
+const MAX_EVENTS_PER_BATCH = 100; // Larger batches when embedding is deferred
 const MAX_TEXT_LENGTH = 12000; // Truncate long text to avoid oversized events
+const MAX_SESSION_SIZE = 20_000_000; // Skip sessions larger than 20MB
+const BATCH_TIMEOUT_MS = 60_000; // 60s timeout per batch POST (embedding is synchronous)
+const CONCURRENT_BATCHES = 2; // How many batches to POST concurrently
 // The OpenPlanner project name for pi sessions — must match Knoxx's session-project-name
 // so pi sessions appear in /api/memory/sessions
 const PI_SESSION_PROJECT = process.env.PI_SESSION_PROJECT || "knoxx-session";
@@ -451,7 +454,67 @@ async function parseSessionFile(filePath) {
  * Ingest a single pi session file into OpenPlanner.
  * Returns { sessionId, eventsIngested, batches }
  */
+/**
+ * POST a batch of events to OpenPlanner with timeout.
+ */
+async function postBatchWithTimeout(openplannerRequestFn, batch, timeoutMs = BATCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // openplannerRequestFn doesn't take signal, so we race it
+    const result = await Promise.race([
+      openplannerRequestFn("POST", "/v1/events", { events: batch, deferEmbedding: true }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Batch POST timed out after ${timeoutMs}ms`)), timeoutMs)
+      ),
+    ]);
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Send batches with limited concurrency.
+ */
+async function sendBatchesConcurrently(batches, openplannerRequestFn, concurrency = CONCURRENT_BATCHES) {
+  let eventsIngested = 0;
+  let batchCount = 0;
+  let errors = 0;
+
+  // Process in chunks of `concurrency`
+  for (let i = 0; i < batches.length; i += concurrency) {
+    const chunk = batches.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      chunk.map((batch) => postBatchWithTimeout(openplannerRequestFn, batch))
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        batchCount++;
+        // Count events from the batch that succeeded
+      } else {
+        errors++;
+        console.error(`[pi-ingester] Batch failed:`, r.reason?.message || r.reason);
+      }
+    }
+    // Count events from successful batches
+    for (let j = 0; j < chunk.length; j++) {
+      if (results[j].status === "fulfilled") {
+        eventsIngested += chunk[j].length;
+      }
+    }
+  }
+
+  return { eventsIngested, batches: batchCount, errors };
+}
+
 async function ingestSessionFile(filePath, sessionFileMeta, openplannerRequestFn) {
+  // Skip oversized sessions
+  if (sessionFileMeta.size > MAX_SESSION_SIZE) {
+    console.log(`[pi-ingester] Skipping oversized session ${sessionFileMeta.sessionId} (${Math.round(sessionFileMeta.size / 1_000_000)}MB)`);
+    return { sessionId: sessionFileMeta.sessionId, eventsIngested: 0, batches: 0, skipped: true, reason: "oversized" };
+  }
+
   const { events: piEvents, sessionMeta } = await parseSessionFile(filePath);
 
   // Map all pi events to OpenPlanner events
@@ -465,22 +528,18 @@ async function ingestSessionFile(filePath, sessionFileMeta, openplannerRequestFn
     return { sessionId: sessionMeta.sessionId, eventsIngested: 0, batches: 0 };
   }
 
-  // Batch and send
-  let eventsIngested = 0;
-  let batches = 0;
+  // Split into batches
+  const batches = [];
   for (let i = 0; i < allOpEvents.length; i += MAX_EVENTS_PER_BATCH) {
-    const batch = allOpEvents.slice(i, i + MAX_EVENTS_PER_BATCH);
-    try {
-      await openplannerRequestFn("POST", "/v1/events", { events: batch });
-      eventsIngested += batch.length;
-      batches++;
-    } catch (err) {
-      console.error(`[pi-ingester] Failed to ingest batch for session ${sessionMeta.sessionId}:`, err.message);
-      // Continue with next batch rather than failing entirely
-    }
+    batches.push(allOpEvents.slice(i, i + MAX_EVENTS_PER_BATCH));
   }
 
-  return { sessionId: sessionMeta.sessionId, eventsIngested, batches };
+  // Send batches concurrently
+  const { eventsIngested, batches: batchCount, errors } = await sendBatchesConcurrently(
+    batches, openplannerRequestFn
+  );
+
+  return { sessionId: sessionMeta.sessionId, eventsIngested, batches: batchCount, errors };
 }
 
 /**

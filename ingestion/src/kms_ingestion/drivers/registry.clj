@@ -2,10 +2,12 @@
   "Driver registry for creating driver instances."
   (:require
    [kms-ingestion.drivers.protocol :as protocol]
-   [kms-ingestion.drivers.local :as local]))
+   [kms-ingestion.drivers.local :as local]
+   [kms-ingestion.drivers.pi-sessions :as pi-sessions]))
 
 (def driver-constructors
   {"local" local/create-driver
+   "pi-sessions" pi-sessions/create-driver
    ;; Future drivers:
    ;; "github" github/create-driver
    ;; "google_drive" google-drive/create-driver

@@ -310,6 +310,22 @@
                           "**/*.png" "**/*.jpg" "**/*.jpeg" "**/*.gif" "**/*.pdf"
                           "**/*.zip" "**/*.tar.gz"]})))
 
+(defn- ensure-pi-sessions-source!
+  "Create a pi-sessions ingestion source if one doesn't exist."
+  []
+  (db/ensure-tenant! "knoxx-session" "Pi Session History")
+  (let [existing (filter #(= "pi-sessions" (:driver_type %)) (db/list-sources "knoxx-session"))]
+    (when-not (seq existing)
+      (println "[bootstrap] creating pi-sessions ingestion source")
+      (db/create-source!
+       {:tenant-id "knoxx-session"
+        :driver-type "pi-sessions"
+        :name "pi coding sessions"
+        :config {:root_path (or (System/getenv "PI_SESSIONS_ROOT") "/home/err/.pi/agent/sessions")
+                 :sync_interval_minutes 5}
+        :collections ["knoxx-session"]
+        :file-types [".jsonl"]}))))
+
 (defn- start-watcher!
   []
   (when (and (config/passive-watch-enabled?) (not @watcher-thread))
@@ -380,6 +396,7 @@
   (db/init!)
   (db/reset-orphaned-jobs!)
   (ensure-default-workspace-source!)
+  (ensure-pi-sessions-source!)
   (worker/init-executor!)
   (queue-initial-jobs!)
   (start-scheduler!)

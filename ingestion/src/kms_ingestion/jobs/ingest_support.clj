@@ -157,6 +157,45 @@
        :target :openplanner
        :lake tenant-id})))
 
+(defn ingest-pi-session-via-openplanner!
+  "Ingest a pi session's events via OpenPlanner /v1/events endpoint.
+   The :content of file-data is a JSON string with {:session-id, :cwd, :events [...]}.
+   Events are already mapped to OpenPlanner EventEnvelopeV1 format."
+  [_job-id tenant-id source-id openplanner-url openplanner-api-key file]
+  (let [parsed (some-> (:content file) (json/parse-string keyword))
+        events (:events parsed)
+        batch-size 20
+        headers (cond-> {"Content-Type" "application/json"}
+                  (not (str/blank? openplanner-api-key))
+                  (assoc "Authorization" (str "Bearer " openplanner-api-key)))
+        results (atom [])]
+    (if (empty? events)
+      {:status :success :chunks 0 :target :openplanner :lake tenant-id}
+      (do
+        (doseq [batch (partition-all batch-size events)]
+          (let [resp (http/post
+                      (str openplanner-url "/v1/events")
+                      {:headers headers
+                       :body (json/generate-string {:events batch})
+                       :as :json
+                       :socket-timeout 120000
+                       :connection-timeout 30000
+                       :throw-exceptions false})]
+            (swap! results conj {:status (:status resp)
+                                 :count (count batch)
+                                 :ok (get-in resp [:body :ok])})))
+        (let [total-ingested (reduce + 0 (map :count (filter #(= 200 (:status %)) @results)))
+              failed-batches (count (remove #(= 200 (:status %)) @results))]
+          (if (zero? failed-batches)
+            {:status :success
+             :chunks total-ingested
+             :target :openplanner
+             :lake tenant-id}
+            {:status :failed
+             :error (str failed-batches " batches failed")
+             :target :openplanner
+             :lake tenant-id}))))))
+
 (defn build-semantic-edges-incremental!
   "Call OpenPlanner to build semantic edges for newly ingested documents.
    OpenPlanner will find all chunks for these documents and build edges."

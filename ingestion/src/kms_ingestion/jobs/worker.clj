@@ -54,7 +54,7 @@
 (defn- ingest-file
   [job-id driver file-meta {:keys [tenant-id source-id ragussy-url collections
                                    use-openplanner? openplanner-url openplanner-api-key
-                                   graph-context]}]
+                                   graph-context driver-type]}]
   (when (config/ingest-throttle-enabled?)
     (let [cpu-cores (control/container-cpu-cores)
           target-cores (* (config/ingest-max-load-per-core) (control/available-cores))]
@@ -68,9 +68,15 @@
                          (local/sha256 (:id file-meta)))
           file-meta-with-hash (assoc file-meta :content-hash content-hash)
           payload-file (assoc file-data :content-hash content-hash)
+          ;; Pi-sessions driver produces structured events, not documents
+          pi-sessions? (= driver-type "pi-sessions")
           ingest-result (if (:content file-data)
-                          (if use-openplanner?
+                          (cond
+                            pi-sessions?
+                            (support/ingest-pi-session-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file)
+                            use-openplanner?
                             (support/ingest-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file graph-context)
+                            :else
                             (support/ingest-via-ragussy! ragussy-url collections payload-file))
                           {:status :failed :error "no content"})]
       (assoc ingest-result :file file-meta-with-hash))
@@ -172,7 +178,8 @@
                            :use-openplanner? use-openplanner?
                            :openplanner-url openplanner-url
                            :openplanner-api-key openplanner-api-key
-                           :graph-context graph-context}]
+                           :graph-context graph-context
+                           :driver-type driver-type}]
           (control/log! (str "[JOB " job-id "] Ingest target: "
                              (if use-openplanner? "openplanner" "ragussy")
                              ", batch-size=" batch-size

@@ -13,7 +13,7 @@ import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
 import { createDiscordGatewayManager } from './discord-gateway.mjs';
-import { runPiSessionIngest, getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
+import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
 import { createPolicyDb } from './policy-db.mjs';
 import {
   config as readConfig,
@@ -89,6 +89,7 @@ function openplannerRequestFromApp(appConfig) {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(120_000), // 2 min hard timeout
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
@@ -121,62 +122,29 @@ app.get('/api/admin/pi-sessions', async (req, reply) => {
   }
 });
 
-// POST /api/admin/pi-sessions/ingest — trigger ingestion
+// POST /api/admin/pi-sessions/ingest — proxy to ingestion service
 app.post('/api/admin/pi-sessions/ingest', async (req, reply) => {
+  // Ingestion is now handled by the kms-ingestion service (pi-sessions driver).
+  // This endpoint delegates to it.
   try {
-    const body = req.body || {};
-    const force = body.force || false;
-    const limit = Math.min(body.limit || 50, 200);
-    const sessionDirs = body.sessionDirs || null;
-    const openplannerRequestFn = openplannerRequestFromApp(config);
-    const result = await runPiSessionIngest({
-      openplannerRequestFn,
-      force,
-      limit,
-      sessionDirs,
-    });
-    return reply.send(result);
+    const ingestUrl = `${process.env.KMS_INGESTION_URL || 'http://localhost:3003'}/api/ingestion/jobs`;
+    const sources = await fetch(`${process.env.KMS_INGESTION_URL || 'http://localhost:3003'}/api/ingestion/sources?tenant_id=knoxx-session`, {
+      headers: { 'x-knoxx-user-email': 'system-admin@open-hax.local', 'x-knoxx-org-slug': 'open-hax' },
+    }).then(r => r.json()).catch(() => []);
+    const piSource = sources.find(s => s.driver_type === 'pi-sessions');
+    if (!piSource) {
+      return reply.code(404).send({ ok: false, error: 'pi-sessions source not found in ingestion service' });
+    }
+    const result = await fetch(ingestUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-knoxx-user-email': 'system-admin@open-hax.local', 'x-knoxx-org-slug': 'open-hax' },
+      body: JSON.stringify({ source_id: piSource.source_id, full_scan: req.body?.force || false }),
+    }).then(r => r.json());
+    return reply.send({ ok: true, job: result });
   } catch (err) {
     return reply.code(500).send({ ok: false, error: err.message });
   }
 });
-
-// ---------------------------------------------------------------------------
-// Pi Session Ingestion Cron Scheduler
-// ---------------------------------------------------------------------------
-
-const PI_INGEST_INTERVAL_MS = parseInt(process.env.PI_INGEST_INTERVAL_MS || '900000', 10); // Default: 15 min
-let piIngestTimerHandle = null;
-let piIngestRunning = false;
-
-async function scheduledPiSessionIngest() {
-  if (piIngestRunning) return;
-  piIngestRunning = true;
-  try {
-    const openplannerRequestFn = openplannerRequestFromApp(config);
-    const result = await runPiSessionIngest({ openplannerRequestFn, limit: 20 });
-    if (result.newSessions > 0) {
-      app.log.info({ piIngest: result }, 'Pi session cron ingest completed');
-    }
-  } catch (err) {
-    app.log.warn({ err }, 'Pi session cron ingest failed');
-  } finally {
-    piIngestRunning = false;
-  }
-}
-
-// Only start the cron if PI_SESSIONS_ROOT exists
-try {
-  const stat = await fs.stat(process.env.PI_SESSIONS_ROOT || '/home/err/.pi/agent/sessions');
-  if (stat.isDirectory()) {
-    piIngestTimerHandle = setInterval(scheduledPiSessionIngest, PI_INGEST_INTERVAL_MS);
-    // Run initial ingest after 30s (let server finish booting first)
-    setTimeout(scheduledPiSessionIngest, 30000);
-    app.log.info(`Pi session ingestion cron scheduled every ${PI_INGEST_INTERVAL_MS / 1000}s`);
-  }
-} catch {
-  app.log.info('Pi sessions root not found, cron ingestion disabled');
-}
 
 try {
   await app.listen({ host: config.host, port: config.port });
