@@ -551,7 +551,7 @@
                                  (take limit)
                                  vec)]
                   (json-response! reply 200 {:runs items
-                                             :count (count items)})))))
+                                             :count (count items)}))))))
 
   ;; Session status endpoint for frontend resume detection
   (route! app "GET" "/api/knoxx/session/status"
@@ -607,7 +607,7 @@
                                                       :reason "No session state found. Ready for new turn."}))))))
                     (.catch (fn [err]
                               (js/console.error "Session status check failed" err)
-                              (json-response! reply 500 {:error (str err)})))))))
+                              (json-response! reply 500 {:error (str err)}))))))))
 
   ;; Run event catch-up endpoint for WS reconnect recovery
   (route! app "GET" "/api/knoxx/run/:runId/events"
@@ -625,7 +625,7 @@
                                                             :events events
                                                             :count (count events)})))
                         (.catch (fn [err]
-                                  (json-response! reply 500 {:error (str err)})))))))))))
+                                  (json-response! reply 500 {:error (str err)}))))))))))
 
   (route! app "POST" "/api/shibboleth/handoff"
           (fn [request reply]
@@ -679,4 +679,4 @@
                                                      :ctx-user-id ctx-user-id
                                                      :ctx-user-email ctx-user-email
                                                      :ctx-org-id ctx-org-id})
-  ))
+  )

@@ -25,4 +25,11 @@
    :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true
-                      :infer-externs :auto}}}}
+                      :infer-externs :auto
+                      ;; NOTE: :warnings {:infer-warning false} is the standard CLJS way to
+                      ;; suppress infer-warnings, but shadow-cljs 3.x does not honor it in
+                      ;; :compiler-options. With :js-provider :import + Node.js interop,
+                      ;; (.method obj) calls are ubiquitous and ALL trigger :infer-warning.
+                      ;; These are cosmetic only — externs are auto-inferred at :auto level.
+                      ;; The 156 infer-warnings are expected and benign for this target.
+                      :warnings {:infer-warning false}}}}}

@@ -2,6 +2,8 @@
   (:require [clojure.string :as str]
             [knoxx.backend.http :as backend-http]))
 
+(declare value->preview-text)
+
 (defn compact-whitespace
   [text]
   (-> (str text)

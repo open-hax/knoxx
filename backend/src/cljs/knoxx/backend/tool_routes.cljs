@@ -113,23 +113,22 @@
                         model (aget body "model")]
                     (if (str/blank? query)
                       (json-response! reply 400 {:detail "query is required"})
-                      (let [req-promise (backend-http/fetch-json (str (:proxx-base-url config) "/api/tools/websearch")
-                                                                 #js {:method "POST"
-                                                                      :headers (backend-http/bearer-headers (:proxx-auth-token config))
-                                                                      :body (.stringify js/JSON
-                                                                                        #js {:query query
-                                                                                             :numResults num-results
-                                                                                             :searchContextSize search-context-size
-                                                                                             :allowedDomains allowed-domains
-                                                                                             :model model})})]
-                        (-> req-promise
-                            (.then (fn [resp]
-                                     (if (aget resp "ok")
-                                       (json-response! reply 200 (assoc (js->clj (aget resp "body") :keywordize-keys true) :role role))
-                                       (json-response! reply (or (aget resp "status") 502)
-                                                       {:detail (pr-str (js->clj (aget resp "body") :keywordize-keys true))}))))
-                            (.catch (fn [err]
-                                      (json-response! reply 502 {:detail (str err)}))))))
+                      (-> (backend-http/fetch-json (str (:proxx-base-url config) "/api/tools/websearch")
+                                                   #js {:method "POST"
+                                                        :headers (backend-http/bearer-headers (:proxx-auth-token config))
+                                                        :body (.stringify js/JSON
+                                                                          #js {:query query
+                                                                               :numResults num-results
+                                                                               :searchContextSize search-context-size
+                                                                               :allowedDomains allowed-domains
+                                                                               :model model})})
+                          (.then (fn [resp]
+                                   (if (aget resp "ok")
+                                     (json-response! reply 200 (assoc (js->clj (aget resp "body") :keywordize-keys true) :role role))
+                                     (json-response! reply (or (aget resp "status") 502)
+                                                     {:detail (pr-str (js->clj (aget resp "body") :keywordize-keys true))}))))
+                          (.catch (fn [err]
+                                    (json-response! reply 502 {:detail (str err)}))))))
                   (catch :default err
                     (error-response! reply err)))))))
 
@@ -477,4 +476,4 @@
               (fn [ctx]
                 (ensure-permission! ctx "platform.org.read")
                 (json-response! reply 200 (:runtime (event-agents-control-response config)))))))
-  nil))
+  nil)

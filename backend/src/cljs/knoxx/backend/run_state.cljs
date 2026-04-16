@@ -1,5 +1,6 @@
 (ns knoxx.backend.run-state
-  (:require [knoxx.backend.runtime-config :as runtime-config]
+  (:require [clojure.string :as str]
+            [knoxx.backend.runtime-config :as runtime-config]
             [knoxx.backend.redis-client :as redis]))
 
 (def RUN_EVENTS_KEY_PREFIX "knoxx:run_events:")

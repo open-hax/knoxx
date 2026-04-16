@@ -78,7 +78,7 @@
   "Get the active session ID for a conversation."
   [redis-client conversation-id]
   (if redis-client
-    (redis/get redis-client (conversation-session-key conversation-id))
+    (redis/get-key redis-client (conversation-session-key conversation-id))
     (resolved nil)))
 
 (defn put-session!
@@ -97,7 +97,7 @@
                           SESSION_TTL_SECONDS)
           (.then (fn []
                    (if conversation-id
-                     (redis/set redis-client
+                     (redis/set-key redis-client
                                 (conversation-session-key conversation-id)
                                 session-id
                                 SESSION_TTL_SECONDS)
@@ -200,7 +200,7 @@
   [session]
   (cond
     (nil? session)
-    {:can-send false :reason "No session found. Start a new conversation."}
+    {:can-send true :reason "No existing session. Ready for new conversation."}
 
     (= "running" (:status session))
     (if (:has_active_stream session)

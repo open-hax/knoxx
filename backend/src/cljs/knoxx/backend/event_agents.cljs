@@ -7,6 +7,8 @@
   (:require [clojure.string :as str]
             [knoxx.backend.runtime-config :as runtime-config]))
 
+(declare start!)
+
 (defonce running?* (atom false))
 (defonce scheduled-tasks* (atom {}))
 (defonce job-state* (atom {}))

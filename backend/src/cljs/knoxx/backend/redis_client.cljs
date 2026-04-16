@@ -62,7 +62,7 @@
 
 ;; Promise wrappers for Redis commands
 
-(defn get
+(defn get-key
   "Get a value from Redis."
   [client key]
   (-> client
@@ -71,10 +71,10 @@
                 (js/console.error "Redis GET error:" err)
                 nil))))
 
-(defn set
+(defn set-key
   "Set a value in Redis with optional TTL (seconds)."
   ([client key value]
-   (set client key value nil))
+   (set-key client key value nil))
   ([client key value ttl]
    (let [args (if ttl
                 #js {:EX ttl}

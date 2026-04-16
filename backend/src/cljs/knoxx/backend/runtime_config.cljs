@@ -1,6 +1,8 @@
 (ns knoxx.backend.runtime-config
   (:require [clojure.string :as str]))
 
+(declare default-model-prefix-allowlist parse-positive-int)
+
 (def role-tools
   {"system_admin" [["read" "Read" "Read files and retrieved context"]
                     ["write" "Write" "Create new markdown drafts and artifacts"]
@@ -25,7 +27,14 @@
                     ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately"]
                     ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job"]
                     ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"]
-                    ["bluesky.publish" "Bluesky" "Publish updates to Bluesky"]]
+                    ["bluesky.publish" "Bluesky" "Publish updates to Bluesky"]
+                    ["music.identify_file" "Music Identify" "Identify songs from audio files using AudD API"]
+                    ["music.acoustid_lookup" "AcoustID Lookup" "Look up audio fingerprints via AcoustID"]
+                    ["music.musicbrainz_recording" "MusicBrainz" "Look up recording metadata by MBID"]
+                    ["music.copyright_check" "Copyright Check" "Check copyright status of audio"]
+                    ["audio.spectrogram" "Audio Spectrogram" "Generate spectrogram from audio"]
+                    ["audio.waveform" "Audio Waveform" "Generate waveform from audio"]
+                    ["multimodal.upload" "Multimodal Upload" "Upload images, audio, video, and documents for multimodal AI"]]
    "org_admin" [["read" "Read" "Read files and retrieved context"]
                  ["write" "Write" "Create new markdown drafts and artifacts"]
                  ["edit" "Edit" "Revise existing documents and drafts"]
@@ -49,7 +58,14 @@
                  ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately"]
                  ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job"]
                  ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"]
-                 ["bluesky.publish" "Bluesky" "Publish updates to Bluesky"]]
+                 ["bluesky.publish" "Bluesky" "Publish updates to Bluesky"]
+                 ["music.identify_file" "Music Identify" "Identify songs from audio files using AudD API"]
+                 ["music.acoustid_lookup" "AcoustID Lookup" "Look up audio fingerprints via AcoustID"]
+                 ["music.musicbrainz_recording" "MusicBrainz" "Look up recording metadata by MBID"]
+                 ["music.copyright_check" "Copyright Check" "Check copyright status of audio"]
+                 ["audio.spectrogram" "Audio Spectrogram" "Generate spectrogram from audio"]
+                 ["audio.waveform" "Audio Waveform" "Generate waveform from audio"]
+                 ["multimodal.upload" "Multimodal Upload" "Upload images, audio, video, and documents for multimodal AI"]]
    "knowledge_worker" [["read" "Read" "Read files and retrieved context"]
                         ["canvas" "Canvas" "Open long-form markdown drafting canvas"]]
    "data_analyst" [["read" "Read" "Read files and retrieved context"]
