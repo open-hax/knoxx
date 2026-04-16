@@ -54,8 +54,7 @@
   [k default]
   (or (aget js/process.env k) default))
 
-(def ^:private default-model-prefix-allowlist
-  ["glm-5" "gpt-5" "qwen3" "gemma4:"])
+(defonce config* (atom nil))
 
 (defn- parse-prefix-allowlist
   [raw]
@@ -90,7 +89,7 @@
       normalized)))
 
 (defn cfg []
-  {:app-name (env "APP_NAME" "Knoxx Backend CLJS")
+  (let [fresh-config {:app-name (env "APP_NAME" "Knoxx Backend CLJS")
    :host (env "HOST" "0.0.0.0")
    :port (js/parseInt (env "PORT" "8000") 10)
    :workspace-root (env "WORKSPACE_ROOT" "/app/workspace/devel")
@@ -101,7 +100,7 @@
    :proxx-auth-token (env "PROXX_AUTH_TOKEN" "")
    :proxx-default-model (env "PROXX_DEFAULT_MODEL" "glm-5")
    :model-prefix-allowlist (parse-prefix-allowlist
-                            (env "KNOXX_MODEL_PREFIX_ALLOWLIST" "glm-5,gpt-5,qwen3,gemma4:"))
+                            (env "KNOXX_MODEL_PREFIX_ALLOWLIST" "glm-5,gpt-5,qwen3,gemma4:,gemma3:,deepseek,kimi-k2,nemotron,cogito,devstral,minimax,ministral,mistral-large"))
    :agent-thinking-level (or (normalize-thinking-level (env "KNOXX_THINKING_LEVEL" "off")) "off")
    :reasoning-model-prefixes (env "KNOXX_REASONING_MODEL_PREFIXES" "glm-")
    :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")
@@ -118,10 +117,18 @@
    :knoxx-default-role (env "KNOXX_DEFAULT_ROLE" "executive")
    :gmail-app-email (env "GMAIL_APP_EMAIL" "")
    :gmail-app-password (env "GMAIL_APP_PASSWORD" "")
+   :discord-bot-token (env "DISCORD_BOT_TOKEN" "")
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
    :redis-url (env "REDIS_URL" "")
    :agent-system-prompt (env "KNOXX_AGENT_SYSTEM_PROMPT"
-                             "You are Knoxx, the grounded workspace assistant for the devel corpus. Preserve multi-turn context within the active conversation, use workspace tools when needed, cite file paths when they matter, and prefer grounded synthesis over shallow enumeration. Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, use semantic_query, semantic_read, and graph_query instead of guessing. Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember.")})
+                             "You are Knoxx, the grounded workspace assistant for the devel corpus. Preserve multi-turn context within the active conversation, use workspace tools when needed, cite file paths when they matter, and prefer grounded synthesis over shallow enumeration. Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, use semantic_query, semantic_read, and graph_query instead of guessing. Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember.")}
+        existing @config*]
+    (if existing
+      (merge fresh-config existing)
+      fresh-config)))
+
+(def ^:private default-model-prefix-allowlist
+  ["glm-5" "gpt-5" "qwen3" "gemma4:" "gemma3:" "deepseek" "kimi-k2" "nemotron" "cogito" "devstral" "minimax" "ministral" "mistral-large"])
 
 (defn model-supports-reasoning?
   [config model-id]

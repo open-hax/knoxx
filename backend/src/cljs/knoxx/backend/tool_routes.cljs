@@ -1,6 +1,7 @@
 (ns knoxx.backend.tool-routes
   (:require [clojure.string :as str]
-            [knoxx.backend.http :as backend-http]))
+            [knoxx.backend.http :as backend-http]
+            [knoxx.backend.runtime-config :as runtime-config]))
 
 (defn send-email!
   "Send an email via Gmail SMTP using nodemailer.
@@ -257,6 +258,80 @@
                                                                  :exit_code (if (number? (aget err "code")) (aget err "code") 1)
                                                                  :stdout stdout
                                                                  :stderr stderr})))))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  ;; Discord publish route
+  (route! app "POST" "/api/tools/discord/publish"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (let [body (or (aget request "body") #js {})
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish")
+                        channel-id (str/trim (str (or (aget body "channelId") "")))
+                        content (str/trim (str (or (aget body "content") "")))
+                        token (:discord-bot-token config)
+                        validation-error (cond
+                                           (str/blank? token) "Discord bot token not configured. Set DISCORD_BOT_TOKEN env var or configure it in the admin panel."
+                                           (str/blank? channel-id) "Missing required field: channelId"
+                                           (str/blank? content) "Missing required field: content"
+                                           :else nil)]
+                    (if validation-error
+                      (json-response! reply 400 {:detail validation-error})
+                      (-> (js/fetch (str "https://discord.com/api/v10/channels/" channel-id "/messages")
+                                   #js {:method "POST"
+                                        :headers #js {"Authorization" (str "Bot " token)
+                                                      "Content-Type" "application/json"}
+                                        :body (.stringify js/JSON #js {:content content})})
+                          (.then (fn [resp]
+                                   (if (.-ok resp)
+                                     (-> (.json resp)
+                                         (.then (fn [result]
+                                                  (json-response! reply 200 {:ok true
+                                                                             :role role
+                                                                             :channelId channel-id
+                                                                             :messageId (aget result "id")}))))
+                                     (-> (.text resp)
+                                         (.then (fn [text]
+                                                  (json-response! reply 502 {:detail (str "Discord API error: " text)})))))))
+                          (.catch (fn [err]
+                                    (json-response! reply 502 {:detail (str "Discord request failed: " (or (aget err "message") (str err)))}))))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
+  ;; Discord bot token admin route
+  (route! app "GET" "/api/admin/config/discord"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (ensure-permission! ctx "platform.org.read")
+                (let [token (:discord-bot-token config)
+                      configured (not (str/blank? token))
+                      masked (if configured
+                              (str (subs token 0 4) "***" (subs token (- (count token) 4)))
+                              "")]
+                  (json-response! reply 200 {:configured configured
+                                             :tokenPreview masked}))))))
+
+  (route! app "PUT" "/api/admin/config/discord"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (ensure-permission! ctx "platform.org.create")
+                  (let [body (or (aget request "body") #js {})
+                        new-token (str/trim (str (or (aget body "discordBotToken") "")))]
+                    (if (str/blank? new-token)
+                      (json-response! reply 400 {:detail "discordBotToken must not be blank"})
+                      (do
+                        ;; Update in-memory config + env var so the running server picks it up
+                        (aset js/process.env "DISCORD_BOT_TOKEN" new-token)
+                        (swap! runtime-config/config* (fn [current-cfg] (assoc current-cfg :discord-bot-token new-token)))
+                        (let [masked (str (subs new-token 0 4) "***" (subs new-token (- (count new-token) 4)))]
+                          (json-response! reply 200 {:ok true
+                                                     :configured true
+                                                     :tokenPreview masked})))))
                   (catch :default err
                     (error-response! reply err)))))))
   nil))

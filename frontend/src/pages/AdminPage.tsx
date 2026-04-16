@@ -16,6 +16,7 @@ import { OrganizationsSection } from '../components/admin-page/OrganizationsSect
 import { RolesSection } from '../components/admin-page/RolesSection';
 import { SelectedOrgSection } from '../components/admin-page/SelectedOrgSection';
 import { SummarySection } from '../components/admin-page/SummarySection';
+import { DiscordSection } from '../components/admin-page/DiscordSection';
 import { ProxxObservabilitySection } from '../components/admin-page/ProxxObservabilitySection';
 import { TranslationModelSection } from '../components/admin-page/TranslationModelSection';
 import type { LakeFormState, Notice, OrgFormState, RoleFormState, ToolDraftEffect, UserFormState } from '../components/admin-page/types';
@@ -474,6 +475,8 @@ export default function AdminPage() {
               onCreateLake={handleCreateLake}
             />
           </div>
+
+          <DiscordSection canManage={canCreateOrgs} />
 
           <ProxxObservabilitySection canView={canViewProxxObservability} />
 

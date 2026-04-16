@@ -15,6 +15,10 @@
   (and (not (str/blank? (:gmail-app-email config)))
        (not (str/blank? (:gmail-app-password config)))))
 
+(defn discord-enabled?
+  [config]
+  (not (str/blank? (:discord-bot-token config))))
+
 (defn auth-tool-ids
   [auth-context]
   (into #{}
@@ -40,18 +44,23 @@
 (defn tool-catalog
   ([config role]
    (let [normalized (normalize-role role)
-         email? (email-enabled? config)]
+         email? (email-enabled? config)
+         discord? (discord-enabled? config)]
      {:role normalized
       :email_enabled email?
       :tools (mapv (fn [[tool-id label description]]
                      {:id tool-id
                       :label label
                       :description description
-                      :enabled (if (= tool-id "email.send") email? true)})
+                      :enabled (cond
+                                 (= tool-id "email.send") email?
+                                 (= tool-id "discord.publish") discord?
+                                 :else true)})
                    (get runtime-config/role-tools normalized))}))
   ([config role auth-context]
    (if auth-context
      (let [email? (email-enabled? config)
+           discord? (discord-enabled? config)
            allowed-tool-ids (->> (:toolPolicies auth-context)
                                  (filter #(= "allow" (:effect %)))
                                  (map :toolId)
@@ -91,7 +100,10 @@
                                                      "memory_session" "Load a specific Knoxx session from OpenPlanner"
                                                      "save_translation" "Save translated segments to the translation database"
                                                      tool-id)
-                                      :enabled (if (= tool-id "email.send") email? true)}))
+                                      :enabled (cond
+                                                 (= tool-id "email.send") email?
+                                                 (= tool-id "discord.publish") discord?
+                                                 :else true)}))
                               vec)
                    (contains? allowed-tool-ids "semantic_query")
                    (conj {:id "graph_query"

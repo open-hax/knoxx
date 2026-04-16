@@ -246,6 +246,61 @@
                           (ctx-tool-allowed? auth-context "semantic_query"))
                   semantic-read-tool)]))))))
 
+(defn create-discord-custom-tools
+  ([runtime config] (create-discord-custom-tools runtime config nil))
+  ([runtime config auth-context]
+   (let [Type (aget runtime "Type")
+         discord-params (.Object Type
+                                 #js {:channelId (.String Type #js {:description "Discord channel ID to post the message to."})
+                                      :content (.String Type #js {:description "Message content to post to the Discord channel."})})
+         discord-publish-execute (fn [_tool-call-id params a b c]
+                                  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                        channel-id (or (aget params "channelId") "")
+                                        content (or (aget params "content") "")
+                                        token (:discord-bot-token config)]
+                                    (when (str/blank? token)
+                                      (throw (js/Error. "Discord bot token not configured. Set DISCORD_BOT_TOKEN in the admin panel.")))
+                                    (when (str/blank? channel-id)
+                                      (throw (js/Error. "channelId is required for discord.publish")))
+                                    (when (str/blank? content)
+                                      (throw (js/Error. "content is required for discord.publish")))
+                                    (maybe-tool-update! on-update (str "Posting to Discord channel " channel-id "…"))
+                                    (-> (js/fetch (str "https://discord.com/api/v10/channels/" channel-id "/messages")
+                                                 #js {:method "POST"
+                                                      :headers #js {"Authorization" (str "Bot " token)
+                                                                    "Content-Type" "application/json"}
+                                                      :body (.stringify js/JSON #js {:content content})})
+                                        (.then (fn [resp]
+                                                 (if (.-ok resp)
+                                                   (-> (.json resp)
+                                                       (.then (fn [result]
+                                                                (let [msg-id (aget result "id")]
+                                                                  (tool-text-result (str "Posted message " msg-id " to Discord channel " channel-id)
+                                                                                    {:channelId channel-id
+                                                                                     :messageId msg-id
+                                                                                     :ok true})))))
+                                                   (-> (.text resp)
+                                                       (.then (fn [text]
+                                                                (throw (js/Error. (str "Discord API error " (.-status resp) ": " text)))))))))
+                                        (.catch (fn [err]
+                                                  (throw err))))))
+         discord-publish-tool (doto (js-obj)
+                                (aset "name" "discord.publish")
+                                (aset "label" "Discord")
+                                (aset "description" "Post a message to a Discord channel using the configured Knoxx Discord bot.")
+                                (aset "promptSnippet" "Post updates, summaries, or notifications to Discord channels.")
+                                (aset "promptGuidelines" (clj->js ["Use discord.publish to share results, summaries, or notifications in a Discord channel."
+                                                                   "Requires a Discord bot token configured in the admin panel."
+                                                                   "Provide the channelId and the message content."]))
+                                (aset "parameters" discord-params)
+                                (aset "execute" discord-publish-execute))]
+     (clj->js
+      (vec
+       (remove nil?
+               [(when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "discord.publish"))
+                  discord-publish-tool)]))))))
+
 (defn create-openplanner-custom-tools
   ([runtime config] (create-openplanner-custom-tools runtime config nil))
   ([runtime config auth-context]
@@ -509,5 +564,6 @@
 (defn create-knoxx-custom-tools
   ([runtime config] (create-knoxx-custom-tools runtime config nil))
   ([runtime config auth-context]
-   (.concat (create-semantic-custom-tools runtime config auth-context)
+   (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
+                     (create-discord-custom-tools runtime config auth-context))
             (create-openplanner-custom-tools runtime config auth-context))))

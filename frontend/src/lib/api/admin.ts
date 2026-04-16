@@ -132,3 +132,19 @@ export async function getGraphMonitoring(): Promise<GraphMonitoringStats> {
   }
   return res.json();
 }
+
+export interface DiscordConfigStatus {
+  configured: boolean;
+  tokenPreview: string;
+}
+
+export async function getDiscordConfig(): Promise<DiscordConfigStatus> {
+  return request<DiscordConfigStatus>("/api/admin/config/discord");
+}
+
+export async function updateDiscordConfig(discordBotToken: string): Promise<DiscordConfigStatus & { ok: boolean }> {
+  return request<DiscordConfigStatus & { ok: boolean }>("/api/admin/config/discord", {
+    method: "PUT",
+    body: JSON.stringify({ discordBotToken }),
+  });
+}
