@@ -5,7 +5,10 @@
    Jobs describe triggers + source filters + arbitrary agent specs.
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
-            [knoxx.backend.runtime-config :as runtime-config]))
+            [knoxx.backend.runtime-config :as runtime-config]
+            [knoxx.backend.redis-client :as redis]))
+
+(declare start!)
 
 (declare start!)
 
@@ -126,7 +129,10 @@
 (defn- remember-discord-latest!
   [channel-id messages]
   (when-let [latest-id (:id (first messages))]
-    (swap! source-state* assoc-in [:discord :last-seen channel-id] latest-id)))
+    (swap! source-state* assoc-in [:discord :last-seen channel-id] latest-id)
+    ;; Persistence: Mirror to Redis
+    (when-let [client (redis/get-client)]
+      (redis/set-key client (str "event-agent:discord-last-seen:" channel-id) latest-id))))
 
 (defn- unseen-discord-messages
   [channel-id messages]
@@ -148,7 +154,11 @@
 
 (defn- update-job-state!
   [job-id f]
-  (swap! job-state* update job-id (fn [current] (f (or current {})))))
+  (let [new-state (swap! job-state* update job-id (fn [current] (f (or current {}))))]
+    ;; Persistence: Mirror to Redis
+    (when-let [client (redis/get-client)]
+      (redis/set-json client (str "event-agent:job-state:" job-id) new-state))
+    new-state))
 
 (defn- record-job-run-start!
   [job]
@@ -185,7 +195,14 @@
                              ((fn [next-state]
                                 (if error-message
                                   (assoc next-state :lastError error-message)
-                                  (dissoc next-state :lastError)))))))))
+                                  (dissoc next-state :lastError)))))))
+    ;; Telemetry: write result to stdout (captured by PM2/container logs).
+    (let [log-line (str "ts=" (.toISOString (js/Date.))
+                        " | kind=:agent-job-result | job=" job-id
+                        " | status=" status
+                        (when error-message (str " | error=" error-message)))]
+      (println "[event-agents-telemetry]" log-line)
+      nil)))
 
 (defn- direct-start-headers
   [config]
@@ -570,7 +587,7 @@
                            :trigger (:trigger job)
                            :source (:source job)
                            :scheduleLabel (cadence-label (get-in job [:trigger :cadenceMinutes]))}
-                          (get @job-state* (:id job) {})))
+                          (get @job-state* (:id job) {:runCount 0 :lastStatus "none"})))
                  (:jobs control))}))
 
 (defn- schedule-job!
@@ -604,11 +621,31 @@
           control (control-config config)]
       (reset! running?* true)
       (println "[event-agents] starting with" (count (:jobs control)) "jobs")
+
+      ;; Persistence: recover states from Redis
+      (when-let [client (redis/get-client)]
+        (println "[event-agents] recovering state from Redis...")
+        (let [job-ids (map :id (:jobs control))]
+          (doseq [id job-ids]
+            (-> (redis/get-json client (str "event-agent:job-state:" id))
+                (.then (fn [state]
+                         (when state
+                           (swap! job-state* assoc id state))))))
+          (doseq [channel-id (or (:defaultChannels (discord-source-config control)) [])]
+            (-> (redis/get-key client (str "event-agent:discord-last-seen:" channel-id))
+                (.then (fn [last-id]
+                         (when last-id
+                           (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id))))))))
+
       (bind-discord-gateway! config)
+
+      ;; Schedule cron jobs
       (doseq [job (:jobs control)]
         (when (and (:enabled job)
                    (= "cron" (get-in job [:trigger :kind])))
           (schedule-job! config job)))
+
+      ;; Kick one job immediately so boot doesn't wait for the first cron tick.
       (when-let [first-cron-job (some (fn [job]
                                         (when (and (:enabled job)
                                                    (= "cron" (get-in job [:trigger :kind])))

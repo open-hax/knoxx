@@ -100,13 +100,37 @@ function openplannerRequestFromApp(appConfig) {
 }
 
 // GET /api/admin/pi-sessions/status — ingestion state overview
+//
+// NOTE: There are *two* ingestion mechanisms:
+// - legacy JS ingester state: ~/.knoxx/pi-ingest-state/ingested-sessions.json
+// - current kms-ingestion service (pi-sessions driver)
+//
+// This endpoint reports both so the admin UI can show accurate progress.
 app.get('/api/admin/pi-sessions/status', async (req, reply) => {
+  const kmsBase = process.env.KMS_INGESTION_URL || 'http://localhost:3003';
+  const kmsHeaders = { 'x-knoxx-user-email': 'system-admin@open-hax.local', 'x-knoxx-org-slug': 'open-hax' };
+
+  const legacy = await getPiIngestStatus().catch((err) => ({ ok: false, error: err.message }));
+
+  let kms = { ok: false, error: 'kms-ingestion unavailable' };
   try {
-    const status = await getPiIngestStatus();
-    return reply.send(status);
+    const sources = await fetch(`${kmsBase}/api/ingestion/sources?tenant_id=knoxx-session`, { headers: kmsHeaders })
+      .then((r) => r.json())
+      .catch(() => []);
+    const piSource = sources.find((s) => s.driver_type === 'pi-sessions');
+    if (!piSource) {
+      kms = { ok: false, error: 'pi-sessions source not found', sources: Array.isArray(sources) ? sources : [] };
+    } else {
+      const jobs = await fetch(`${kmsBase}/api/ingestion/jobs?tenant_id=knoxx-session&source_id=${piSource.source_id}`, { headers: kmsHeaders })
+        .then((r) => r.json())
+        .catch(() => []);
+      kms = { ok: true, source: piSource, jobs };
+    }
   } catch (err) {
-    return reply.code(500).send({ ok: false, error: err.message });
+    kms = { ok: false, error: err.message };
   }
+
+  return reply.send({ ok: true, legacy, kms_ingestion: kms });
 });
 
 // GET /api/admin/pi-sessions — list available pi sessions

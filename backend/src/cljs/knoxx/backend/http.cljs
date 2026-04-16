@@ -1,11 +1,23 @@
 (ns knoxx.backend.http
   (:require [clojure.string :as str]))
 
+(defn reply-already-sent?
+  [reply]
+  (let [raw (aget reply "raw")]
+    (boolean
+      (or (aget reply "sent")
+          (and raw (aget raw "writableEnded"))))))
+
 (defn json-response!
   [reply status body]
-  (-> (.code reply status)
-      (.type "application/json")
-      (.send (clj->js body))))
+  ;; Fastify throws if we attempt to send twice. Under load, upstream promises
+  ;; can race (e.g. a timeout path sends an error while a success path resolves).
+  ;; Prefer a safe no-op when the reply is already closed.
+  (if (reply-already-sent? reply)
+    reply
+    (-> (.code reply status)
+        (.type "application/json")
+        (.send (clj->js body)))))
 
 (defn request-hostname
   [request]
