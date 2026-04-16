@@ -54,7 +54,7 @@
                       :description description
                       :enabled (cond
                                  (= tool-id "email.send") email?
-                                 (= tool-id "discord.publish") discord?
+                                 (str/starts-with? tool-id "discord.") discord?
                                  :else true)})
                    (get runtime-config/role-tools normalized))}))
   ([config role auth-context]
@@ -76,7 +76,11 @@
                                                "websearch" "Web Search"
                                                "canvas" "Canvas"
                                                "email.send" "Email"
-                                               "discord.publish" "Discord"
+                                               "discord.publish" "Discord Publish"
+                                               "discord.read" "Discord Read"
+                                               "discord.search" "Discord Search"
+                                               "discord.guilds" "Discord Guilds"
+                                               "discord.channels" "Discord Channels"
                                                "bluesky.publish" "Bluesky"
                                                "semantic_query" "Semantic Query"
                                                "graph_query" "Graph Query"
@@ -93,6 +97,10 @@
                                                      "canvas" "Open long-form markdown drafting canvas"
                                                      "email.send" "Send drafts through configured email account"
                                                      "discord.publish" "Publish updates to Discord"
+                                                     "discord.read" "Read messages from Discord channels"
+                                                     "discord.search" "Search messages in Discord channels"
+                                                     "discord.guilds" "List Discord servers the bot is in"
+                                                     "discord.channels" "List channels in a Discord server"
                                                      "bluesky.publish" "Publish updates to Bluesky"
                                                      "semantic_query" "Query semantic context in the active corpus"
                                                      "graph_query" "Query the canonical knowledge graph across devel/web/bluesky/knoxx-session lakes"
@@ -102,7 +110,7 @@
                                                      tool-id)
                                       :enabled (cond
                                                  (= tool-id "email.send") email?
-                                                 (= tool-id "discord.publish") discord?
+                                                 (str/starts-with? tool-id "discord.") discord?
                                                  :else true)}))
                               vec)
                    (contains? allowed-tool-ids "semantic_query")

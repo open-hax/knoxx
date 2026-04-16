@@ -1,5 +1,6 @@
 (ns knoxx.backend.tool-routes
   (:require [clojure.string :as str]
+            [knoxx.backend.discord-cron :as discord-cron]
             [knoxx.backend.http :as backend-http]
             [knoxx.backend.runtime-config :as runtime-config]))
 
@@ -335,4 +336,23 @@
                                                      :tokenPreview masked})))))
                   (catch :default err
                     (error-response! reply err)))))))
+
+  ;; Discord cron status route
+  (route! app "GET" "/api/admin/config/discord/cron"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (ensure-permission! ctx "platform.org.read")
+                (let [running @discord-cron/running?*
+                      channels (discord-cron/monitored-channels)
+                      last-seen @discord-cron/last-seen-messages*
+                      mention-queue-count (count @discord-cron/mention-queue*)]
+                  (json-response! reply 200 {:running running
+                                             :channelCount (count channels)
+                                             :channels channels
+                                             :lastSeenChannels (keys last-seen)
+                                             :mentionQueueCount mention-queue-count
+                                             :jobs [{:name "patrol-channels" :schedule "*/5 * * * *" :description "Read recent messages from monitored channels"}
+                                                    {:name "mention-check" :schedule "* * * * *" :description "Check for @mentions that need a response"}
+                                                    {:name "deep-synthesis" :schedule "0 */2 * * *" :description "Full agent turn with graph + memory synthesis"}]}))))))
   nil))

@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
+            [knoxx.backend.discord-cron :as discord-cron]
             [knoxx.backend.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? http-error js-array-seq]]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-semantic-search!]]
@@ -250,7 +251,8 @@
   ([runtime config] (create-discord-custom-tools runtime config nil))
   ([runtime config auth-context]
    (let [Type (aget runtime "Type")
-         discord-params (.Object Type
+         ;; discord.publish
+         discord-publish-params (.Object Type
                                  #js {:channelId (.String Type #js {:description "Discord channel ID to post the message to."})
                                       :content (.String Type #js {:description "Message content to post to the Discord channel."})})
          discord-publish-execute (fn [_tool-call-id params a b c]
@@ -286,20 +288,156 @@
                                                   (throw err))))))
          discord-publish-tool (doto (js-obj)
                                 (aset "name" "discord.publish")
-                                (aset "label" "Discord")
+                                (aset "label" "Discord Publish")
                                 (aset "description" "Post a message to a Discord channel using the configured Knoxx Discord bot.")
                                 (aset "promptSnippet" "Post updates, summaries, or notifications to Discord channels.")
                                 (aset "promptGuidelines" (clj->js ["Use discord.publish to share results, summaries, or notifications in a Discord channel."
                                                                    "Requires a Discord bot token configured in the admin panel."
                                                                    "Provide the channelId and the message content."]))
-                                (aset "parameters" discord-params)
-                                (aset "execute" discord-publish-execute))]
+                                (aset "parameters" discord-publish-params)
+                                (aset "execute" discord-publish-execute))
+         ;; discord.read
+         discord-read-params (.Object Type
+                              #js {:channelId (.String Type #js {:description "Discord channel ID to read messages from."})
+                                   :limit (.Optional Type (.Number Type #js {:description "Maximum number of messages to return." :minimum 1 :maximum 100}))})
+         discord-read-execute (fn [_tool-call-id params a b c]
+                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                     channel-id (or (aget params "channelId") "")
+                                     limit (aget params "limit")]
+                                 (when (str/blank? channel-id)
+                                   (throw (js/Error. "channelId is required for discord.read")))
+                                 (maybe-tool-update! on-update (str "Reading messages from Discord channel " channel-id "…"))
+                                 (-> (discord-cron/read-channel! config channel-id limit)
+                                     (.then (fn [messages]
+                                              (let [formatted (->> messages
+                                                                   (map (fn [msg]
+                                                                          (str "<" (:authorUsername msg) "> " (:content msg))))
+                                                                   (str/join "\n"))
+                                                    count (count messages)]
+                                                (tool-text-result (str "Read " count " messages from channel " channel-id ":\n" formatted)
+                                                                  {:channelId channel-id
+                                                                   :messageCount count
+                                                                   :messages messages}))))
+                                     (.catch (fn [err]
+                                               (throw err))))))
+         discord-read-tool (doto (js-obj)
+                             (aset "name" "discord.read")
+                             (aset "label" "Discord Read")
+                             (aset "description" "Read recent messages from a Discord channel.")
+                             (aset "promptSnippet" "Read recent messages from a Discord channel to understand current conversation context.")
+                             (aset "promptGuidelines" (clj->js ["Use discord.read to gather context from a Discord channel before responding."
+                                                                "Follow up with discord.publish if you want to send a message back."]))
+                             (aset "parameters" discord-read-params)
+                             (aset "execute" discord-read-execute))
+         ;; discord.search
+         discord-search-params (.Object Type
+                                #js {:channelId (.String Type #js {:description "Discord channel ID to search in."})
+                                     :query (.String Type #js {:description "Search query to filter messages by."})
+                                     :limit (.Optional Type (.Number Type #js {:description "Maximum number of matching messages to return." :minimum 1 :maximum 50}))})
+         discord-search-execute (fn [_tool-call-id params a b c]
+                                 (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                       channel-id (or (aget params "channelId") "")
+                                       query (or (aget params "query") "")
+                                       limit (aget params "limit")]
+                                   (when (str/blank? channel-id)
+                                     (throw (js/Error. "channelId is required for discord.search")))
+                                   (when (str/blank? query)
+                                     (throw (js/Error. "query is required for discord.search")))
+                                   (maybe-tool-update! on-update (str "Searching Discord channel " channel-id " for '" query "'…"))
+                                   (-> (discord-cron/search-channel! config channel-id query limit)
+                                       (.then (fn [messages]
+                                                (let [formatted (->> messages
+                                                                     (map (fn [msg]
+                                                                            (str "<" (:authorUsername msg) "> " (:content msg))))
+                                                                     (str/join "\n"))
+                                                      count (count messages)]
+                                                  (tool-text-result (str "Found " count " matching messages in channel " channel-id ":\n" formatted)
+                                                                    {:channelId channel-id
+                                                                     :query query
+                                                                     :messageCount count
+                                                                     :messages messages}))))
+                                       (.catch (fn [err]
+                                                 (throw err))))))
+         discord-search-tool (doto (js-obj)
+                               (aset "name" "discord.search")
+                               (aset "label" "Discord Search")
+                               (aset "description" "Search messages in a Discord channel by keyword.")
+                               (aset "promptSnippet" "Search Discord channel messages by keyword to find specific discussions.")
+                               (aset "promptGuidelines" (clj->js ["Use discord.search when you need to find specific messages or topics in a channel."
+                                                                  "Provide the channelId and a search query."]))
+                               (aset "parameters" discord-search-params)
+                               (aset "execute" discord-search-execute))
+         ;; discord.guilds
+         discord-guilds-params (.Object Type #js {})
+         discord-guilds-execute (fn [_tool-call-id _params a b c]
+                                 (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))]
+                                   (maybe-tool-update! on-update "Listing Discord guilds…")
+                                   (-> (discord-cron/list-guilds! config)
+                                       (.then (fn [guilds]
+                                                (let [formatted (->> guilds
+                                                                     (map (fn [g] (str (:name g) " (" (:id g) ")")))
+                                                                     (str/join "\n"))]
+                                                  (tool-text-result (str "Discord guilds:\n" formatted)
+                                                                    {:guilds guilds
+                                                                     :count (count guilds)}))))
+                                       (.catch (fn [err]
+                                                 (throw err))))))
+         discord-guilds-tool (doto (js-obj)
+                               (aset "name" "discord.guilds")
+                               (aset "label" "Discord Guilds")
+                               (aset "description" "List Discord guilds (servers) the bot is in.")
+                               (aset "promptSnippet" "List Discord guilds to discover available servers.")
+                               (aset "promptGuidelines" (clj->js ["Use discord.guilds to discover which servers the bot has access to."
+                                                                  "Follow with discord.channels to list channels in a specific guild."]))
+                               (aset "parameters" discord-guilds-params)
+                               (aset "execute" discord-guilds-execute))
+         ;; discord.channels
+         discord-channels-params (.Object Type
+                                  #js {:guildId (.String Type #js {:description "Discord guild ID to list channels for."})})
+         discord-channels-execute (fn [_tool-call-id params a b c]
+                                   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                         guild-id (or (aget params "guildId") "")]
+                                     (when (str/blank? guild-id)
+                                       (throw (js/Error. "guildId is required for discord.channels")))
+                                     (maybe-tool-update! on-update (str "Listing channels in guild " guild-id "…"))
+                                     (-> (discord-cron/list-channels! config guild-id)
+                                         (.then (fn [channels]
+                                                  (let [formatted (->> channels
+                                                                       (map (fn [ch] (str "#" (:name ch) " (" (:id ch) ")")))
+                                                                       (str/join "\n"))]
+                                                    (tool-text-result (str "Channels in guild " guild-id ":\n" formatted)
+                                                                      {:guildId guild-id
+                                                                       :channels channels
+                                                                       :count (count channels)}))))
+                                         (.catch (fn [err]
+                                                   (throw err))))))
+         discord-channels-tool (doto (js-obj)
+                                 (aset "name" "discord.channels")
+                                 (aset "label" "Discord Channels")
+                                 (aset "description" "List channels in a Discord guild.")
+                                 (aset "promptSnippet" "List channels in a Discord guild to find the right channel for reading or posting.")
+                                 (aset "promptGuidelines" (clj->js ["Use discord.channels after discord.guilds to discover available channels."
+                                                                    "Use the channel ID with discord.read or discord.publish."]))
+                                 (aset "parameters" discord-channels-params)
+                                 (aset "execute" discord-channels-execute))]
      (clj->js
       (vec
        (remove nil?
                [(when (or (nil? auth-context)
                           (ctx-tool-allowed? auth-context "discord.publish"))
-                  discord-publish-tool)]))))))
+                  discord-publish-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "discord.read"))
+                  discord-read-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "discord.search"))
+                  discord-search-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "discord.guilds"))
+                  discord-guilds-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "discord.channels"))
+                  discord-channels-tool)]))))))
 
 (defn create-openplanner-custom-tools
   ([runtime config] (create-openplanner-custom-tools runtime config nil))

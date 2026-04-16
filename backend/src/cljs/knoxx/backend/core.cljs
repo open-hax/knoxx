@@ -2,6 +2,7 @@
   (:require [knoxx.backend.agent-hydration :refer [ensure-settings!]]
             [knoxx.backend.agent-turns :as agent-turns :refer [recover-active-agent-sessions! lounge-messages*]]
             [knoxx.backend.app-routes :as app-routes]
+            [knoxx.backend.discord-cron :as discord-cron]
             [knoxx.backend.realtime :as realtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.run-state :refer [active-runs-count]]
@@ -65,6 +66,8 @@
                                   (done)))))
             (.then (fn []
                      (app-routes/register-routes! runtime app config lounge-messages*)
+                     ;; Start Discord cron worker if token is configured
+                     (discord-cron/start! config)
                      (.listen app #js {:host (:host config)
                                        :port (:port config)})))
             (.then (fn [_]
@@ -77,8 +80,10 @@
 ;; Handle graceful shutdown
 (.on js/process "SIGINT" (fn []
                            (println "\nShutting down...")
+                           (discord-cron/stop!)
                            (js/process.exit 0)))
 
 (.on js/process "SIGTERM" (fn []
                             (println "\nShutting down...")
+                            (discord-cron/stop!)
                             (js/process.exit 0)))
