@@ -144,7 +144,7 @@
                                                          nil))))))
                         (.catch (fn [err]
                                   (error-response! reply err 502)
-                                  nil))))))))
+                                  nil)))))))))
 
   (route! app "GET" "/api/memory/session-titles/status"
           (fn [request reply]
@@ -274,4 +274,4 @@
                                  :text text}]
                         (swap! lounge-messages* #(->> (conj (vec %) msg) (take-last 100) vec))
                         (broadcast-ws! "lounge" msg)
-                        (json-response! reply 200 {:ok true :message msg}))))))))
+                        (json-response! reply 200 {:ok true :message msg})))))))
