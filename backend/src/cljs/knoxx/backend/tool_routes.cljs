@@ -271,7 +271,7 @@
                         role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish")
                         channel-id (str/trim (str (or (aget body "channelId") "")))
                         content (str/trim (str (or (aget body "content") "")))
-                        token (:discord-bot-token config)
+                        token (:discord-bot-token (or @runtime-config/config* config))
                         validation-error (cond
                                            (str/blank? token) "Discord bot token not configured. Set DISCORD_BOT_TOKEN env var or configure it in the admin panel."
                                            (str/blank? channel-id) "Missing required field: channelId"
@@ -306,7 +306,8 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (ensure-permission! ctx "platform.org.read")
-                (let [token (:discord-bot-token config)
+                (let [live-config (or @runtime-config/config* config)
+                      token (:discord-bot-token live-config)
                       configured (not (str/blank? token))
                       masked (if configured
                               (str (subs token 0 4) "***" (subs token (- (count token) 4)))
