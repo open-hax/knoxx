@@ -6,6 +6,7 @@
                     ["write" "Write" "Create new markdown drafts and artifacts"]
                     ["edit" "Edit" "Revise existing documents and drafts"]
                     ["bash" "Shell" "Run controlled shell commands"]
+                    ["websearch" "Web Search" "Search the live web through Proxx websearch"]
                     ["canvas" "Canvas" "Open long-form markdown drafting canvas"]
                     ["email.send" "Email" "Send drafts through configured email account"]
                     ["discord.publish" "Discord Publish" "Publish updates to Discord"]
@@ -18,6 +19,7 @@
                  ["write" "Write" "Create new markdown drafts and artifacts"]
                  ["edit" "Edit" "Revise existing documents and drafts"]
                  ["bash" "Shell" "Run controlled shell commands"]
+                 ["websearch" "Web Search" "Search the live web through Proxx websearch"]
                  ["canvas" "Canvas" "Open long-form markdown drafting canvas"]
                  ["email.send" "Email" "Send drafts through configured email account"]
                  ["discord.publish" "Discord Publish" "Publish updates to Discord"]
@@ -324,6 +326,7 @@
    {:toolId "discord.publish" :effect "allow"}
    {:toolId "discord.guilds" :effect "allow"}
    {:toolId "discord.channels" :effect "allow"}
+   {:toolId "websearch" :effect "allow"}
    {:toolId "memory_search" :effect "allow"}
    {:toolId "graph_query" :effect "allow"}])
 
