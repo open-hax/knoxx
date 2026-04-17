@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
+import { opsRoutes } from '../lib/app-routes';
 import { errorMessage, groupPermissions, hydrateMembershipDrafts, hydrateRoleDrafts } from '../components/admin-page/helpers';
 import type { Notice, OrgFormState, RoleFormState, ToolDraftEffect, UserFormState, LakeFormState } from '../components/admin-page/types';
 import {
@@ -431,7 +432,7 @@ export default function AdminLayout() {
             <Route path="lakes" element={<AdminLakesPage ctx={ctx} />} />
             <Route path="integrations" element={<AdminIntegrationsPage ctx={ctx} />} />
             <Route path="catalog" element={<AdminCatalogPage ctx={ctx} />} />
-            <Route path="*" element={<Navigate to="overview" replace />} />
+            <Route path="*" element={<Navigate to={opsRoutes.admin} replace />} />
           </Routes>
         )}
       </main>
