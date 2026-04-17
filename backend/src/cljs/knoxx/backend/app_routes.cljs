@@ -22,6 +22,7 @@
             [knoxx.backend.text :refer [count-occurrences replace-first clip-text]]
             [knoxx.backend.tool-routes :as tool-routes]
             [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled?]]
+            [knoxx.backend.voice-routes :as voice-routes]
             [knoxx.backend.translation-routes :as translation-routes]))
 
 (defn- requested-role
@@ -160,6 +161,10 @@
              {:knoxx_admin_url (rewrite-localhost-url (:knoxx-admin-url config) request)
               :knoxx_base_url (rewrite-localhost-url (:knoxx-base-url config) request)
               :knoxx_enabled true
+              :stt_enabled (not (str/blank? (:stt-base-url config)))
+              :stt_base_url (if (str/blank? (:stt-base-url config))
+                              ""
+                              (rewrite-localhost-url (:stt-base-url config) request))
               :proxx_enabled (and (not (str/blank? (:proxx-base-url config)))
                                   (not (str/blank? (:proxx-auth-token config))))
               :proxx_default_model (:llmModel @settings-state*)
@@ -247,6 +252,12 @@
                                       :clip-text clip-text})
 
   (model-routes/register-model-routes! app runtime config)
+
+  (voice-routes/register-voice-routes! app runtime config
+                                       {:route! route!
+                                        :json-response! json-response!
+                                        :with-request-context! with-request-context!
+                                        :ensure-permission! ensure-permission!})
 
   (document-routes/register-document-routes! app runtime config
                                                {:route! route!

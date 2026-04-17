@@ -184,6 +184,8 @@
    :gmail-app-email (env "GMAIL_APP_EMAIL" "")
    :gmail-app-password (env "GMAIL_APP_PASSWORD" "")
    :discord-bot-token (env "DISCORD_BOT_TOKEN" "")
+   ;; Voice / speech
+   :stt-base-url (env "KNOXX_STT_BASE_URL" "")
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
    :redis-url (env "REDIS_URL" "")
    :agent-system-prompt (env "KNOXX_AGENT_SYSTEM_PROMPT"
