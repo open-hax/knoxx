@@ -1,179 +1,8 @@
-import { useEffect, useState, useCallback, createContext, useContext, type ReactNode } from "react";
-import { request, API_BASE } from "../lib/api/core";
+import { useEffect, useState } from "react";
+import { API_BASE } from "../lib/api/core";
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface AuthContext {
-  user: {
-    id: string;
-    email: string;
-    displayName: string;
-    status: string;
-  } | null;
-  org: {
-    id: string;
-    slug: string;
-    name: string;
-    isPrimary: boolean;
-  } | null;
-  membership: {
-    id: string;
-    status: string;
-    isDefault: boolean;
-  } | null;
-  roleSlugs: string[];
-  permissions: string[];
-  isSystemAdmin: boolean;
-  authProvider: string;
-  loading: boolean;
-  error: string | null;
-  /** Force-refresh the auth context from the server */
-  refresh: () => Promise<void>;
-  /** Logout and clear session */
-  logout: () => Promise<void>;
-}
-
-const AuthContextInstance = createContext<AuthContext | null>(null);
-
-export function useAuth(): AuthContext {
-  const ctx = useContext(AuthContextInstance);
-  if (!ctx) throw new Error("useAuth must be used within AuthBoundary");
-  return ctx;
-}
-
-// ---------------------------------------------------------------------------
-// Auth state fetcher
-// ---------------------------------------------------------------------------
-
-async function fetchAuthContext(): Promise<AuthContext["user"] extends null ? never : Record<string, unknown>> {
-  try {
-    const resp = await fetch(`${API_BASE}/api/auth/context`, {
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-    });
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(body.error || body.code || `${resp.status}`);
-    }
-    return await resp.json();
-  } catch (err) {
-    throw err;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// AuthBoundary — wraps the entire app, shows login if not authenticated
-// ---------------------------------------------------------------------------
-
-export function AuthBoundary({ children }: { children: ReactNode }) {
-  const [auth, setAuth] = useState<AuthContext>({
-    user: null,
-    org: null,
-    membership: null,
-    roleSlugs: [],
-    permissions: [],
-    isSystemAdmin: false,
-    authProvider: "",
-    loading: true,
-    error: null,
-    refresh: async () => {},
-    logout: async () => {},
-  });
-
-  const refresh = useCallback(async () => {
-    setAuth((prev) => ({ ...prev, loading: true, error: null }));
-    try {
-      const data = (await fetchAuthContext()) as Record<string, unknown>;
-      const user = data.user as AuthContext["user"];
-      const org = data.org as AuthContext["org"];
-      const membership = data.membership as AuthContext["membership"];
-      const roleSlugs = (data.roleSlugs as string[]) ?? [];
-      const permissions = (data.permissions as string[]) ?? [];
-      const isSystemAdmin = (data.isSystemAdmin as boolean) ?? false;
-      setAuth({
-        user,
-        org,
-        membership,
-        roleSlugs,
-        permissions,
-        isSystemAdmin,
-        authProvider: (data as Record<string, unknown>).authProvider as string ?? "",
-        loading: false,
-        error: null,
-        refresh,
-        logout,
-      });
-    } catch (err) {
-      setAuth((prev) => ({
-        ...prev,
-        loading: false,
-        error: err instanceof Error ? err.message : "Not authenticated",
-      }));
-    }
-  }, []);
-
-  const logout = useCallback(async () => {
-    try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch {
-      // ignore
-    }
-    setAuth({
-      user: null,
-      org: null,
-      membership: null,
-      roleSlugs: [],
-      permissions: [],
-      isSystemAdmin: false,
-      authProvider: "",
-      loading: false,
-      error: "Logged out",
-      refresh,
-      logout,
-    });
-  }, [refresh]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  // Loading state
-  if (auth.loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-slate-950 text-slate-400">
-        <div className="text-center">
-          <div className="mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-600 border-t-blue-500 mx-auto" />
-          <p>Loading Knoxx…</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Not authenticated — show login
-  if (!auth.user) {
-    return (
-      <AuthContextInstance.Provider value={{ ...auth, refresh, logout }}>
-        <LoginPage error={auth.error} onLoginSuccess={refresh} />
-      </AuthContextInstance.Provider>
-    );
-  }
-
-  // Authenticated
-  return (
-    <AuthContextInstance.Provider value={{ ...auth, refresh, logout }}>
-      {children}
-    </AuthContextInstance.Provider>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// LoginPage
+// LoginPage component
 // ---------------------------------------------------------------------------
 
 interface LoginPageProps {
@@ -181,7 +10,7 @@ interface LoginPageProps {
   onLoginSuccess: () => void;
 }
 
-function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
+export default function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
   const [githubEnabled, setGithubEnabled] = useState(false);
   const [loginUrl, setLoginUrl] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState("");
@@ -189,7 +18,6 @@ function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
   const [redeemStatus, setRedeemStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [redeemError, setRedeemError] = useState("");
 
-  // Parse URL params for invite/error
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const inviteParam = params.get("invite");
@@ -202,7 +30,6 @@ function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
     }
   }, []);
 
-  // Fetch auth config
   useEffect(() => {
     fetch(`${API_BASE}/api/auth/config`)
       .then((r) => r.json())
@@ -235,7 +62,6 @@ function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
         throw new Error(body.error || body.code || `${resp.status}`);
       }
       setRedeemStatus("success");
-      // Try to authenticate again
       setTimeout(() => onLoginSuccess(), 500);
     } catch (err) {
       setRedeemStatus("error");
@@ -246,20 +72,17 @@ function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950">
       <div className="w-full max-w-md space-y-8 rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-xl">
-        {/* Brand */}
         <div className="text-center">
           <h1 className="text-3xl font-bold text-white">Knoxx</h1>
           <p className="mt-2 text-sm text-slate-400">Knowledge operations platform</p>
         </div>
 
-        {/* Error banner */}
         {error && error !== "Logged out" && (
           <div className="rounded-lg bg-red-900/30 border border-red-800 p-3 text-sm text-red-300">
             {error}
           </div>
         )}
 
-        {/* GitHub login */}
         {githubEnabled && (
           <button
             onClick={handleGithubLogin}
@@ -278,7 +101,6 @@ function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
           </div>
         )}
 
-        {/* Divider */}
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
             <div className="w-full border-t border-slate-700" />
@@ -288,7 +110,6 @@ function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
           </div>
         </div>
 
-        {/* Invite code redemption */}
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
@@ -332,7 +153,6 @@ function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
           </button>
         </div>
 
-        {/* Footer */}
         <p className="text-center text-xs text-slate-600">
           By signing in, you agree to the Knoxx terms of service.
         </p>

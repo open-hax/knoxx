@@ -28,6 +28,7 @@ export default function SidebarOpsStatus() {
   const [ingestion, setIngestion] = useState<any>(null);
 
   useEffect(() => {
+    console.log('[SidebarOpsStatus] mount — creating WS');
     const disconnect = connectStream({
       onStats: (payload) => {
         const p = payload as any;

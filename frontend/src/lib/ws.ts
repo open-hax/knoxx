@@ -45,23 +45,32 @@ export function connectStream(
   let reconnectDelay = 1000;
   const MAX_RECONNECT_DELAY = 30000;
 
+  let connectCount = 0;
+
   const connectSocket = () => {
     if (disposed) return;
-    socket = new WebSocket(wsUrl(API_BASE, sessionId, currentConversationId));
+    const id = ++connectCount;
+    const url = wsUrl(API_BASE, sessionId, currentConversationId);
+    console.log(`[ws] connecting #${id} to ${url}`);
+    socket = new WebSocket(url);
 
     socket.addEventListener("open", () => {
+      console.log(`[ws] #${id} open`);
       reconnectDelay = 1000; // reset on successful connect
       handlers.onStatus?.("connected");
     });
-    socket.addEventListener("close", () => {
+    socket.addEventListener("close", (ev) => {
+      console.log(`[ws] #${id} close code=${ev.code} reason=${ev.reason}`);
       handlers.onStatus?.("closed");
       // Auto-reconnect unless explicitly disconnected
       if (!disposed) {
+        console.log(`[ws] #${id} reconnecting in ${reconnectDelay}ms`);
         reconnectTimer = setTimeout(connectSocket, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
       }
     });
-    socket.addEventListener("error", () => {
+    socket.addEventListener("error", (ev) => {
+      console.log(`[ws] #${id} error`, ev);
       handlers.onStatus?.("error");
     });
 
@@ -93,6 +102,7 @@ export function connectStream(
   connectSocket();
 
   const disconnect = () => {
+    console.log(`[ws] dispose (was #${connectCount})`);
     disposed = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     socket?.close();

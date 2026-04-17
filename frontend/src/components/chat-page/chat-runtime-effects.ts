@@ -96,6 +96,7 @@ export function useChatRuntimeEffects({
     if (!sessionId) {
       return;
     }
+    console.log('[chat-runtime-effects] WS effect — sessionId:', sessionId);
     let cancelled = false;
     let stream: StreamConnection | null = null;
     const connectTimer = window.setTimeout(() => {
