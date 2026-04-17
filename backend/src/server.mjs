@@ -198,6 +198,38 @@ app.all('/api/ingestion/*', async (req, reply) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// OpenPlanner Proxy
+// ---------------------------------------------------------------------------
+// Frontend calls /api/openplanner/v1/* but OpenPlanner serves /v1/*.
+// Proxy: strip /api/openplanner prefix, add Authorization header.
+const OPENPLANNER_BASE = process.env.OPENPLANNER_BASE_URL || 'http://localhost:7777';
+const OPENPLANNER_KEY = process.env.OPENPLANNER_API_KEY || 'change-me';
+
+app.all('/api/openplanner/*', async (req, reply) => {
+  const subPath = req.params['*']; // e.g. "v1/gardens"
+  const targetUrl = `${OPENPLANNER_BASE}/${subPath}`;
+  const fwdHeaders = {
+    'content-type': 'application/json',
+    'authorization': `Bearer ${OPENPLANNER_KEY}`,
+    'x-knoxx-user-email': req.headers['x-knoxx-user-email'] || '',
+    'x-knoxx-org-slug': req.headers['x-knoxx-org-slug'] || '',
+  };
+  try {
+    const resp = await fetch(targetUrl, {
+      method: req.method,
+      headers: fwdHeaders,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const contentType = resp.headers.get('content-type') || 'application/json';
+    const body = contentType.includes('application/json') ? await resp.json() : await resp.text();
+    return reply.code(resp.status).header('content-type', contentType).send(body);
+  } catch (err) {
+    return reply.code(502).send({ ok: false, error: `OpenPlanner proxy error: ${err.message}` });
+  }
+});
+
 try {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(`Knoxx backend CLJS listening on ${config.host}:${config.port}`);
