@@ -4,33 +4,16 @@ import { getFrontendConfig } from "./lib/api";
 import { opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import AuthBoundary from "./pages/AuthContext";
 import { useAuth } from "./pages/useAuth";
-import { Shell } from "./shell/Shell";
 import ChatPage from "./pages/ChatPage";
 import CmsPage from "./pages/CmsPage";
 import ContractsPage from "./pages/ContractsPage";
 import GardensPage from "./pages/GardensPage";
 import OpsRoot from "./pages/OpsRoot";
 import TranslationReviewPage from "./pages/TranslationReviewPage";
-import WorkbenchPage from "./pages/WorkbenchPage";
 
-function resolveExternalUrl(rawUrl: string): string {
-  try {
-    const parsed = new URL(rawUrl);
-    const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
-    if (!localHosts.has(parsed.hostname)) {
-      return rawUrl;
-    }
-    const next = new URL(rawUrl);
-    next.hostname = window.location.hostname;
-    next.protocol = window.location.protocol;
-    return next.toString();
-  } catch {
-    return rawUrl;
-  }
-}
 
 function App() {
-  const [knoxxAdminUrl, setKnoxxAdminUrl] = useState<string>("");
+  const [knoxxAdminUrl] = useState<string>("");
   let auth: ReturnType<typeof useAuth> | null = null;
   try { auth = useAuth(); } catch { /* not inside AuthBoundary yet */ }
 
@@ -39,9 +22,6 @@ function App() {
 
   useEffect(() => {
     document.documentElement.classList.add("dark");
-    getFrontendConfig()
-      .then((cfg) => setKnoxxAdminUrl(resolveExternalUrl(cfg.knoxx_admin_url)))
-      .catch(() => setKnoxxAdminUrl(""));
   }, []);
 
   return (
@@ -67,22 +47,9 @@ function App() {
             <NavLink to="/translations" className={navLinkClass}>
               Translations
             </NavLink>
-            <NavLink to="/workbench/dashboard" className={navLinkClass}>
-              Workbench
-            </NavLink>
             <NavLink to={opsRoutes.admin} className={navLinkClass}>
               Admin
             </NavLink>
-            {knoxxAdminUrl ? (
-              <a
-                href={knoxxAdminUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="app-shell__nav-link"
-              >
-                Legacy Admin
-              </a>
-            ) : null}
           </nav>
           {/* User menu */}
           <UserMenu />
@@ -92,26 +59,6 @@ function App() {
       {/* Main content area - switches between regular pages and workbench Shell */}
       <main className="app-shell__main">
         <Routes>
-          {/* Workbench routes - Shell provides left context bar, center canvas, right inspection panel, status bar */}
-          <Route
-            path="/workbench/*"
-            element={
-              <Shell>
-                <Routes>
-                  <Route index element={<Navigate to="/workbench/dashboard" replace />} />
-                  <Route path="dashboard" element={<WorkbenchPage view="dashboard" />} />
-                  <Route path="content" element={<WorkbenchPage view="content" />} />
-                  <Route path="content/:docId" element={<WorkbenchPage view="content" />} />
-                  <Route path="review" element={<WorkbenchPage view="review" />} />
-                  <Route path="memory" element={<WorkbenchPage view="memory" />} />
-                  <Route path="agents" element={<WorkbenchPage view="agents" />} />
-                  <Route path="ops" element={<WorkbenchPage view="ops" />} />
-                  <Route path="*" element={<Navigate to="/workbench/dashboard" replace />} />
-                </Routes>
-              </Shell>
-            }
-          />
-
           {/* Regular pages */}
           <Route path="/" element={<ChatPage />} />
           <Route path="/cms" element={<CmsPage />} />

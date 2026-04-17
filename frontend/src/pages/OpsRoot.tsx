@@ -1,18 +1,16 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { opsRoutes, joinPath, OPS_BASE_PATH } from '../lib/app-routes';
-import DashboardPage from './DashboardPage';
 import SettingsPage from './SettingsPage';
 import DocumentsPage from './DocumentsPage';
 import VectorsPage from './VectorsPage';
 import RawGraphExportPage from './RawGraphExportPage';
 import SourceDocPage from './SourceDocPage';
 import AgentsPage from './AgentsPage';
-import AdminPage from './AdminPage';
+import AdminLayout from './AdminLayout';
 import SidebarOpsStatus from '../components/SidebarOpsStatus';
 
 const navItems = [
-  { label: 'Dashboard', path: opsRoutes.dashboard },
   { label: 'Lakes', path: opsRoutes.documents },
   { label: 'Agents', path: opsRoutes.agents },
   { label: 'Graph', path: opsRoutes.vectors },
@@ -71,15 +69,14 @@ export default function OpsRoot() {
         {/* Main Content Area */}
         <main className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-900/50 relative overflow-y-auto p-0 transition-colors duration-200">
           <Routes>
-            <Route path="/" element={<Navigate to="dashboard" replace />} />
-            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="/" element={<Navigate to="documents" replace />} />
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="docs/view" element={<SourceDocPage />} />
             <Route path="vectors" element={<VectorsPage />} />
             <Route path="agents" element={<AgentsPage />} />
             <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="admin" element={<AdminPage />} />
+            <Route path="admin/*" element={<AdminLayout />} />
             <Route path="*" element={<Navigate to={opsRoutes.dashboard} replace />} />
           </Routes>
         </main>
