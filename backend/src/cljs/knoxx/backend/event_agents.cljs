@@ -701,66 +701,89 @@
 (defn start!
   [_config]
   (when-not @running?*
-    (let [config (cfg)
-          control (control-config config)]
-      (reset! running?* true)
-      (println "[event-agents] starting with" (count (:jobs control)) "jobs")
+    (reset! running?* true)
+    ;; =======================================================================
+    ;; Persistence: Recover event-agent-control overrides from Redis FIRST.
+    ;; This is the primary fix for "changes not sticking" — the admin panel
+    ;; writes control overrides via PUT, but they were only in memory.
+    ;; We must recover before scheduling so jobs use persisted settings.
+    ;; =======================================================================
+    (let [recovery-promise
+          (if-let [client (redis/get-client)]
+            (-> (runtime-config/load-event-agent-control)
+                (.then (fn [saved-control]
+                         (when saved-control
+                           (swap! runtime-config/config*
+                                  (fn [current-cfg]
+                                    (assoc (or current-cfg (runtime-config/cfg))
+                                           :event-agent-control saved-control)))))))
+            (js/Promise.resolve nil))]
+      (-> recovery-promise
+          (.then (fn [_]
+                   (let [config (cfg)
+                         control (control-config config)]
+                     (println "[event-agents] starting with" (count (:jobs control)) "jobs")
 
-      ;; =======================================================================
-      ;; Persistence: Recover state from Redis (hot store)
-      ;; =======================================================================
-      ;; Redis is the source of truth for:
-      ;; 1. Job specs (prevents "reasoning reset" bug)
-      ;; 2. Operational state (run counts, last status)
-      ;; 3. Discord last-seen markers (prevents duplicate processing)
-      (when-let [client (redis/get-client)]
-        (println "[event-agents] recovering state from Redis...")
-        
-        ;; Recover operational state and specs for all configured jobs
-        (let [job-ids (map :id (:jobs control))]
-          (doseq [id job-ids]
-            ;; Recover Operational State (Counts/Status)
-            (-> (redis/get-json client (str "event-agent:job-state:" id))
-                (.then (fn [state]
-                         (when state
-                           (swap! job-state* assoc id state)
-                           (println "[event-agents] recovered state for" id)))))
-            
-            ;; Recover Job Spec Overrides from Redis
-            ;; This is critical: Redis spec overrides config file specs
-            (-> (redis/get-json client (str "event-agent:job-spec:" id))
-                (.then (fn [redis-spec]
-                         (when redis-spec
-                           (println "[event-agents] loaded Redis spec override for" id)))))))
-        
-        ;; Recover Discord last-seen markers
-        (let [channels (or (:defaultChannels (discord-source-config control)) [])]
-          (doseq [channel-id channels]
-            (-> (redis/get-key client (str "event-agent:discord-last-seen:" channel-id))
-                (.then (fn [last-id]
-                         (when last-id
-                           (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id)
-                           (println "[event-agents] recovered last-seen for channel" channel-id))))))))
-      
-      ;; Schedule background SQL flush task
-      (schedule-flush-task!)
+                     ;; Recover remaining state from Redis (job state, specs, last-seen)
+                     (when-let [client (redis/get-client)]
+                       (println "[event-agents] recovering state from Redis...")
 
-      ;; Bind Discord gateway for real-time message handling
-      (bind-discord-gateway! config)
+                       ;; Recover operational state and specs for all configured jobs
+                       (let [job-ids (map :id (:jobs control))]
+                         (doseq [id job-ids]
+                           ;; Recover Operational State (Counts/Status)
+                           (-> (redis/get-json client (str "event-agent:job-state:" id))
+                               (.then (fn [state]
+                                        (when state
+                                          (swap! job-state* assoc id state)
+                                          (println "[event-agents] recovered state for" id)))))
 
-      ;; Schedule cron jobs from control config
-      (doseq [job (:jobs control)]
-        (when (and (:enabled job)
-                   (= "cron" (get-in job [:trigger :kind])))
-          (schedule-job! config job)))
+                           ;; Recover Job Spec Overrides from Redis
+                           (-> (redis/get-json client (str "event-agent:job-spec:" id))
+                               (.then (fn [redis-spec]
+                                        (when redis-spec
+                                          (println "[event-agents] loaded Redis spec override for" id)))))))
 
-      ;; Kick one job immediately so boot doesn't wait for the first cron tick.
-      (when-let [first-cron-job (some (fn [job]
-                                        (when (and (:enabled job)
-                                                   (= "cron" (get-in job [:trigger :kind])))
-                                          job))
-                                      (:jobs control))]
-        (run-job! (:id first-cron-job))))))
+                       ;; Recover Discord last-seen markers
+                       (let [channels (or (:defaultChannels (discord-source-config control)) [])]
+                         (doseq [channel-id channels]
+                           (-> (redis/get-key client (str "event-agent:discord-last-seen:" channel-id))
+                               (.then (fn [last-id]
+                                        (when last-id
+                                          (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id)
+                                          (println "[event-agents] recovered last-seen for channel" channel-id))))))))
+
+                     ;; Schedule background SQL flush task
+                     (schedule-flush-task!)
+
+                     ;; Bind Discord gateway for real-time message handling
+                     (bind-discord-gateway! config)
+
+                     ;; Schedule cron jobs from control config
+                     (doseq [job (:jobs control)]
+                       (when (and (:enabled job)
+                                  (= "cron" (get-in job [:trigger :kind])))
+                         (schedule-job! config job)))
+
+                     ;; Kick one job immediately so boot doesn't wait for the first cron tick.
+                     (when-let [first-cron-job (some (fn [job]
+                                                       (when (and (:enabled job)
+                                                                  (= "cron" (get-in job [:trigger :kind])))
+                                                         job))
+                                                     (:jobs control))]
+                       (run-job! (:id first-cron-job))))))
+          (.catch (fn [err]
+                    (println "[event-agents] failed to recover control config from Redis:" (.-message err))
+                    ;; Fall through — start with defaults
+                    (let [config (cfg)
+                          control (control-config config)]
+                      (println "[event-agents] starting with" (count (:jobs control)) "jobs (defaults)")
+                      (schedule-flush-task!)
+                      (bind-discord-gateway! config)
+                      (doseq [job (:jobs control)]
+                        (when (and (:enabled job)
+                                   (= "cron" (get-in job [:trigger :kind])))
+                          (schedule-job! config job))))))))))
 
 ;; =============================================================================
 ;; Public API: Job Management with Template Support

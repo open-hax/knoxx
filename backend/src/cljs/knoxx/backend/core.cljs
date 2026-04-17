@@ -28,17 +28,21 @@
     (ensure-settings! resolved-config)
     (reset! runtime-config/config* resolved-config)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
-    (event-agents/start! resolved-config)
-    ;; Initialize MCP gateway if enabled
-    (when (:mcp-enabled resolved-config)
-      (-> (mcp/initialize!)
-          (.then (fn [_]
-                   (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
-          (.catch (fn [err]
-                    (.log.error app "MCP gateway initialization failed" err)))))
-    ;; Async bootstrap: connect Redis (session persistence) and start recovery loop.
+    ;; Defer event-agent startup until Redis is connected so control config
+    ;; overrides can be recovered. session-recovery/start! connects Redis.
     (-> (session-recovery/start! runtime app resolved-config)
         (.then (fn [_]
+                 ;; Redis is now connected — safe to start event agents
+                 ;; with persisted control config recovery.
+                 (event-agents/start! resolved-config)))
+        (.then (fn [_]
+                 ;; Initialize MCP gateway if enabled
+                 (when (:mcp-enabled resolved-config)
+                   (-> (mcp/initialize!)
+                       (.then (fn [_]
+                                (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
+                       (.catch (fn [err]
+                                 (.log.error app "MCP gateway initialization failed" err)))))
                  (clj->js resolved-config))))))
 
 (defn start!

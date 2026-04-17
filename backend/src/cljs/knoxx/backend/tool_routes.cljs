@@ -387,6 +387,7 @@
                     (swap! runtime-config/config* (fn [current-cfg]
                                                    (assoc (or current-cfg (runtime-config/cfg))
                                                           :event-agent-control next-control)))
+                    (runtime-config/persist-event-agent-control! next-control)
                     (event-agents/reload!)
                     (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
                   (catch :default err
@@ -448,6 +449,7 @@
                     (swap! runtime-config/config* (fn [current-cfg]
                                                    (assoc (or current-cfg (runtime-config/cfg))
                                                           :event-agent-control next-control)))
+                    (runtime-config/persist-event-agent-control! next-control)
                     (event-agents/reload!)
                     (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
                   (catch :default err

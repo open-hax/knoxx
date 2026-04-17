@@ -1,5 +1,6 @@
 (ns knoxx.backend.runtime-config
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.redis-client :as redis]))
 
 (declare default-model-prefix-allowlist parse-positive-int)
 
@@ -114,6 +115,28 @@
   (or (aget js/process.env k) default))
 
 (defonce config* (atom nil))
+
+(def ^:private event-agent-control-redis-key "event-agent:control-config")
+
+(defn persist-event-agent-control!
+  "Persist the event-agent-control overrides to Redis so they survive restarts."
+  [control]
+  (when-let [client (redis/get-client)]
+    (redis/set-json client event-agent-control-redis-key control)
+    (println "[runtime-config] persisted event-agent-control to Redis")))
+
+(defn load-event-agent-control
+  "Load event-agent-control overrides from Redis. Returns nil if not found."
+  []
+  (when-let [client (redis/get-client)]
+    (-> (redis/get-json client event-agent-control-redis-key)
+        (.then (fn [saved]
+                 (when saved
+                   (println "[runtime-config] loaded event-agent-control from Redis"))
+                 saved))
+        (.catch (fn [err]
+                  (println "[runtime-config] failed to load event-agent-control from Redis:" (.-message err))
+                  nil)))))
 
 (defn- parse-prefix-allowlist
   [raw]
