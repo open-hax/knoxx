@@ -17,11 +17,11 @@ import {
   config as readConfig,
   registerAppRoutes,
   registerWsRoutes,
-  createPolicyDb,
   createDiscordGatewayManager,
 } from '../dist/app.js';
-import { registerAuthRoutes, createSessionHook } from './auth/knoxx-session.mjs';
+import { createPolicyDb } from './policy-db.mjs';
 import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
+import { registerAuthRoutes, createSessionHook } from './auth/knoxx-session.mjs';
 
 globalThis.require = globalThis.require || createRequire(import.meta.url);
 

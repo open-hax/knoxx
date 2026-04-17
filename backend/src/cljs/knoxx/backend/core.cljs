@@ -4,6 +4,7 @@
             [knoxx.backend.app-routes :as app-routes]
             [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.mcp-bridge :as mcp]
+            [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.realtime :as realtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-recovery :as session-recovery]
