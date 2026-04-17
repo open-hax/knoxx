@@ -81,6 +81,11 @@ module.exports = {
         WORKSPACE_ROOT: '/home/err/devel',
         KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
         KNOXX_COLLECTION_NAME: 'devel_docs',
+        // Public base URL used for OAuth redirect_uri + cookie scope
+        KNOXX_PUBLIC_BASE_URL: hostEnv.KNOXX_PUBLIC_BASE_URL || 'http://localhost',
+        // GitHub OAuth
+        KNOXX_GITHUB_OAUTH_CLIENT_ID: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_ID || '',
+        KNOXX_GITHUB_OAUTH_CLIENT_SECRET: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_SECRET || '',
         // Proxx (on host via compose port-forward)
         PROXX_BASE_URL: 'http://127.0.0.1:8790',
         PROXX_DEFAULT_MODEL: 'glm-5',
