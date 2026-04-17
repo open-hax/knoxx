@@ -8,7 +8,7 @@ WORKDIR /app
 
 # ffmpeg is used to decode browser-recorded formats (e.g. audio/webm) into 16k mono float32 PCM.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg \
+  && apt-get install -y --no-install-recommends ffmpeg curl \
   && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./requirements.txt
