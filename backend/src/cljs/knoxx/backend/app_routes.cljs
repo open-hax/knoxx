@@ -22,6 +22,7 @@
             [knoxx.backend.text :refer [count-occurrences replace-first clip-text]]
             [knoxx.backend.tool-routes :as tool-routes]
             [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled?]]
+            [knoxx.backend.turn-control :as turn-control]
             [knoxx.backend.voice-routes :as voice-routes]
             [knoxx.backend.translation-routes :as translation-routes]))
 
@@ -538,6 +539,26 @@
                                (json-response! reply 200 resp)))
                       (.catch (fn [err]
                                 (error-response! reply err 409)))))))))
+
+  ;; Abort / interrupt the current running turn for a conversation.
+  ;; This is stronger than steer(): it cancels the current operation immediately.
+  (route! app "POST" "/api/knoxx/abort"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "agent.controls.steer"))
+                (let [raw (or (aget request "body") #js {})
+                      conversation-id (or (aget raw "conversation_id") (aget raw "conversationId") "")
+                      reason (or (aget raw "reason") "aborted_by_user")]
+                  (if (str/blank? (str conversation-id))
+                    (json-response! reply 400 {:ok false :error "conversation_id is required"})
+                    (do
+                      (ensure-conversation-access! ctx conversation-id)
+                      (-> (turn-control/abort-active-turn! conversation-id reason)
+                          (.then (fn [resp]
+                                   (json-response! reply (if (:ok resp) 200 409) resp)))
+                          (.catch (fn [err]
+                                    (error-response! reply err 409)))))))))))
 
   (route! app "GET" "/api/knoxx/agents/active"
           (fn [request reply]

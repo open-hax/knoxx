@@ -84,6 +84,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [runtimeEvents, setRuntimeEvents] = useState<RunEvent[]>([]);
   const [liveControlText, setLiveControlText] = useState("");
   const [queueingControl, setQueueingControl] = useState<"steer" | "follow_up" | null>(null);
+  const [abortingTurn, setAbortingTurn] = useState(false);
   const [proxxModels, setProxxModels] = useState<ProxxModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [proxxReachable, setProxxReachable] = useState(false);
@@ -274,6 +275,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     handleSend,
     loadRunDetail,
     queueLiveControl,
+    abortTurn,
     updateMessageById,
     updateTraceBlocksByMessageId,
   } = createChatRuntimeActions({
@@ -293,6 +295,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setIsSending,
     setConsoleLines,
     setQueueingControl,
+    setAbortingTurn,
     pendingAssistantIdRef,
     activeRunIdRef,
     sessionIdKey,
@@ -448,6 +451,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     liveControlText,
     setLiveControlText,
     queueingControl,
+    abortingTurn,
     proxxModels,
     selectedModel,
     setSelectedModel,
@@ -536,6 +540,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     handleNewChat,
     handleSend,
     queueLiveControl,
+    abortTurn,
     openHydrationSource,
     pinHydrationSource,
 

@@ -46,6 +46,8 @@ type ChatMainPaneProps = {
   onLiveControlTextChange: (value: string) => void;
   queueingControl: 'steer' | 'follow_up' | null;
   onQueueLiveControl: (kind: 'steer' | 'follow_up') => void | Promise<void>;
+  abortingTurn: boolean;
+  onAbortTurn: () => void | Promise<void>;
   activeRunId: string | null;
   hydrationSources: HydrationSource[];
   runtimeEvents: RunEvent[];
@@ -120,6 +122,8 @@ export function ChatMainPane({
   onLiveControlTextChange,
   queueingControl,
   onQueueLiveControl,
+  abortingTurn,
+  onAbortTurn,
   activeRunId,
   hydrationSources,
   runtimeEvents,
@@ -264,6 +268,8 @@ export function ChatMainPane({
               onLiveControlTextChange={onLiveControlTextChange}
               queueingControl={queueingControl}
               onQueueLiveControl={onQueueLiveControl}
+              abortingTurn={abortingTurn}
+              onAbortTurn={onAbortTurn}
               conversationId={conversationId}
               activeRunId={activeRunId}
               hydrationSources={hydrationSources}

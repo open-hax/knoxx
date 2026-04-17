@@ -215,6 +215,29 @@ export async function knoxxControl(payload: {
   }));
 }
 
+export async function knoxxAbort(payload: {
+  conversation_id: string;
+  session_id?: string | null;
+  run_id?: string | null;
+  reason?: string;
+}): Promise<{ ok: boolean; conversation_id?: string | null; session_id?: string | null; run_id?: string | null; error?: string | null }> {
+  return request<Record<string, unknown>>("/api/knoxx/abort", {
+    method: "POST",
+    body: JSON.stringify({
+      conversation_id: payload.conversation_id,
+      session_id: payload.session_id,
+      run_id: payload.run_id,
+      reason: payload.reason,
+    }),
+  }).then((response) => ({
+    ok: Boolean(response.ok),
+    conversation_id: typeof response.conversation_id === "string" ? response.conversation_id : null,
+    session_id: typeof response.session_id === "string" ? response.session_id : null,
+    run_id: typeof response.run_id === "string" ? response.run_id : null,
+    error: typeof response.error === "string" ? response.error : null,
+  }));
+}
+
 export async function knoxxChatStart(payload: {
   message: string;
   conversation_id?: string | null;

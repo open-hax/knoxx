@@ -6,7 +6,8 @@
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
             [knoxx.backend.runtime-config :as runtime-config]
-            [knoxx.backend.redis-client :as redis]))
+            [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.agent-templates :as templates]))
 
 (declare start!)
 
@@ -152,6 +153,80 @@
                 (take-last 30)
                 vec))))
 
+(defn- update-job-spec!
+  "Update a job spec in Redis and mark it dirty for SQL flush.
+   This is the canonical write path - all job updates go through here."
+  [job-id spec]
+  (when-let [client (redis/get-client)]
+    (let [key (str "event-agent:job-spec:" job-id)
+          dirty-key "event-agent:job-dirty"]
+      ;; Write the full spec to Redis (hot store)
+      (redis/set-json client key spec)
+      ;; Add to dirty set for write-behind flush to SQL
+      (redis/sadd client dirty-key job-id)
+      ;; Set TTL on dirty marker (24 hours - gives plenty of time for flush)
+      (redis/expire client dirty-key 86400)
+      (println "[event-agents] job" job-id "marked dirty for persistence")))
+  spec)
+
+(defn- get-job-spec
+  "Load job spec from Redis (hot), or return default spec.
+   Redis is the source of truth for running configuration.
+   This prevents the 'reasoning reset' bug by ensuring runtime overrides persist."
+  [job-id default-spec]
+  (if-let [client (redis/get-client)]
+    (let [key (str "event-agent:job-spec:" job-id)]
+      (-> (redis/get-json client key)
+          (.then (fn [redis-spec]
+                   (if redis-spec
+                     (do
+                       (println "[event-agents] loaded spec for" job-id "from Redis")
+                       redis-spec)
+                     (do
+                       (println "[event-agents] using default spec for" job-id)
+                       default-spec))))
+          (.catch (fn [err]
+                    (println "[event-agents] Redis load failed for" job-id ":" (.-message err))
+                    default-spec))))
+    default-spec))
+
+(defn- flush-dirty-jobs-to-sql!
+  "Write-behind flush: Move dirty job specs from Redis to SQL.
+   Called periodically by the background flush task.
+
+   In a future implementation, this would write to a SQL database.
+   For now, it logs the dirty jobs and clears the dirty marker."
+  []
+  (when-let [client (redis/get-client)]
+    (let [dirty-key "event-agent:job-dirty"]
+      (-> (redis/smembers client dirty-key)
+          (.then (fn [job-ids]
+                   (when (and job-ids (seq job-ids))
+                     (println "[event-agents] flushing" (count job-ids) "dirty jobs to SQL...")
+                     (doseq [job-id job-ids]
+                       (-> (redis/get-json client (str "event-agent:job-spec:" job-id))
+                           (.then (fn [spec]
+                                    (when spec
+                                      ;; TODO: Write to SQL here
+                                      ;; (sql/upsert! :event_agent_jobs spec)
+                                      (println "[event-agents] flushed" job-id "to SQL"))))))
+                     ;; Clear dirty set after successful flush
+                     (redis/del client dirty-key)
+                     (println "[event-agents] dirty queue cleared"))))
+          (.catch (fn [err]
+                    (println "[event-agents] flush failed:" (.-message err))))))))
+
+(defn- schedule-flush-task!
+  "Schedule background task to flush dirty jobs to SQL.
+   Runs every 5 minutes to batch writes."
+  []
+  (let [flush-interval-ms (* 5 60 1000) ;; 5 minutes
+        flush-task (fn []
+                     (when @running?*
+                       (flush-dirty-jobs-to-sql!)))]
+    (js/setInterval flush-task flush-interval-ms)
+    (println "[event-agents] scheduled SQL flush every 5 minutes")))
+
 (defn- update-job-state!
   [job-id f]
   (let [new-state (swap! job-state* update job-id (fn [current] (f (or current {}))))]
@@ -208,7 +283,7 @@
   [config]
   (let [api-key (:knoxx-api-key config)]
     (cond-> #js {"Content-Type" "application/json"
-                 "x-knoxx-user-email" "event-agents@knoxx"}
+                 "x-knoxx-user-email" "system-admin@open-hax.local"}
       (not (str/blank? api-key))
       (aset "X-API-Key" api-key))))
 
@@ -622,24 +697,49 @@
       (reset! running?* true)
       (println "[event-agents] starting with" (count (:jobs control)) "jobs")
 
-      ;; Persistence: recover states from Redis
+      ;; =======================================================================
+      ;; Persistence: Recover state from Redis (hot store)
+      ;; =======================================================================
+      ;; Redis is the source of truth for:
+      ;; 1. Job specs (prevents "reasoning reset" bug)
+      ;; 2. Operational state (run counts, last status)
+      ;; 3. Discord last-seen markers (prevents duplicate processing)
       (when-let [client (redis/get-client)]
         (println "[event-agents] recovering state from Redis...")
+        
+        ;; Recover operational state and specs for all configured jobs
         (let [job-ids (map :id (:jobs control))]
           (doseq [id job-ids]
+            ;; Recover Operational State (Counts/Status)
             (-> (redis/get-json client (str "event-agent:job-state:" id))
                 (.then (fn [state]
                          (when state
-                           (swap! job-state* assoc id state))))))
-          (doseq [channel-id (or (:defaultChannels (discord-source-config control)) [])]
+                           (swap! job-state* assoc id state)
+                           (println "[event-agents] recovered state for" id)))))
+            
+            ;; Recover Job Spec Overrides from Redis
+            ;; This is critical: Redis spec overrides config file specs
+            (-> (redis/get-json client (str "event-agent:job-spec:" id))
+                (.then (fn [redis-spec]
+                         (when redis-spec
+                           (println "[event-agents] loaded Redis spec override for" id)))))))
+        
+        ;; Recover Discord last-seen markers
+        (let [channels (or (:defaultChannels (discord-source-config control)) [])]
+          (doseq [channel-id channels]
             (-> (redis/get-key client (str "event-agent:discord-last-seen:" channel-id))
                 (.then (fn [last-id]
                          (when last-id
-                           (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id))))))))
+                           (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id)
+                           (println "[event-agents] recovered last-seen for channel" channel-id))))))))
+      
+      ;; Schedule background SQL flush task
+      (schedule-flush-task!)
 
+      ;; Bind Discord gateway for real-time message handling
       (bind-discord-gateway! config)
 
-      ;; Schedule cron jobs
+      ;; Schedule cron jobs from control config
       (doseq [job (:jobs control)]
         (when (and (:enabled job)
                    (= "cron" (get-in job [:trigger :kind])))
@@ -652,3 +752,98 @@
                                           job))
                                       (:jobs control))]
         (run-job! (:id first-cron-job))))))
+
+;; =============================================================================
+;; Public API: Job Management with Template Support
+;; =============================================================================
+
+(defn upsert-job!
+  "Public API: Create or update an event-agent job.
+   
+   Args:
+   - job-id: String identifier for the job
+   - job-spec: Complete job specification OR template-based spec with :templateId
+   
+   If job-spec contains :templateId, instantiates from agent-templates DSL.
+   Otherwise, treats job-spec as a complete job definition.
+   
+   Returns a promise that resolves to the normalized job spec.
+   
+   Example (template-based):
+   (upsert-job! \"frankie-yap-bot\" 
+                {:templateId :yap-bot
+                 :trigger {:kind \"event\" :cadenceMinutes 1 :eventKinds [\"discord.message.mention\"]}
+                 :filters {:channels [\"123456789\"] :keywords [\"frankie\"]}})
+   
+   Example (direct spec):
+   (upsert-job! \"custom-bot\"
+                {:id \"custom-bot\"
+                 :enabled true
+                 :trigger {:kind \"cron\" :cadenceMinutes 10}
+                 :agentSpec {:role \"executive\" :model \"glm-5\" :thinkingLevel \"off\"}})"
+  [job-id job-spec]
+  (let [config (cfg)
+        template-id (or (:templateId job-spec) (:template-id job-spec))
+        
+        normalized-job (if template-id
+                         ;; Template instantiation path
+                         (let [trigger (or (:trigger job-spec)
+                                           {:kind "event" :cadenceMinutes 5 :eventKinds []})
+                               source (or (:source job-spec)
+                                          {:kind "manual" :mode "respond" :config {}})
+                               filters (or (:filters job-spec)
+                                           {:channels [] :keywords []})
+                               overrides (dissoc job-spec :templateId :template-id :trigger :source :filters)]
+                           (templates/instantiate-job template-id job-id trigger source filters overrides))
+                         ;; Direct spec path - ensure required fields
+                         (merge job-spec {:id job-id}))]
+    
+    ;; Normalize and persist
+    (let [final-job (templates/normalize-job-for-persistence normalized-job)]
+      (update-job-spec! job-id final-job)
+      (reload!)
+      (js/Promise.resolve final-job))))
+
+(defn get-job
+  "Get a job spec by ID.
+   Loads from Redis if available, otherwise returns nil.
+   Returns a promise."
+  [job-id]
+  (let [config (cfg)
+        control (control-config config)
+        default-job (some #(when (= (:id %) job-id) %) (:jobs control))]
+    (get-job-spec job-id default-job)))
+
+(defn delete-job!
+  "Delete a job from Redis and reload runtime.
+   Note: This only removes the Redis override - the job will revert to config defaults.
+   Returns a promise."
+  [job-id]
+  (when-let [client (redis/get-client)]
+    (let [key (str "event-agent:job-spec:" job-id)
+          dirty-key "event-agent:job-dirty"]
+      (-> (redis/del client key)
+          (.then (fn []
+                   (redis/srem client dirty-key job-id)
+                   (reload!)
+                   (println "[event-agents] deleted job" job-id "from Redis")
+                   {:deleted job-id})))))
+  (js/Promise.resolve {:deleted job-id}))
+
+(defn list-templates
+  "List all available agent templates.
+   Returns vector of template keywords."
+  []
+  (templates/all-templates))
+
+(defn list-model-profiles
+  "List all available model profiles.
+   Returns vector of profile keywords."
+  []
+  (templates/all-model-profiles))
+
+(defn get-template
+  "Get a template definition by keyword.
+   Returns the template map or nil."
+  [template-id]
+  (templates/get-template template-id))

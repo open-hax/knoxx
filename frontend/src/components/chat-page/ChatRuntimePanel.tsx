@@ -14,6 +14,8 @@ type ChatRuntimePanelProps = {
   onLiveControlTextChange: (value: string) => void;
   queueingControl: "steer" | "follow_up" | null;
   onQueueLiveControl: (kind: "steer" | "follow_up") => void | Promise<void>;
+  abortingTurn: boolean;
+  onAbortTurn: () => void | Promise<void>;
   conversationId: string | null;
   activeRunId: string | null;
   hydrationSources: HydrationSource[];
@@ -38,6 +40,8 @@ export function ChatRuntimePanel({
   onLiveControlTextChange,
   queueingControl,
   onQueueLiveControl,
+  abortingTurn,
+  onAbortTurn,
   conversationId,
   activeRunId,
   hydrationSources,
@@ -104,6 +108,15 @@ export function ChatRuntimePanel({
           </Button>
           <Button variant="ghost" size="sm" loading={queueingControl === "follow_up"} disabled={!liveControlEnabled || !liveControlText.trim() || queueingControl !== null} onClick={() => void onQueueLiveControl("follow_up")}>
             Queue follow-up
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            loading={abortingTurn}
+            disabled={!isSending || !conversationId || abortingTurn || queueingControl !== null}
+            onClick={() => void onAbortTurn()}
+          >
+            Abort turn
           </Button>
         </div>
       </div>

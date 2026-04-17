@@ -5,6 +5,7 @@
             [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.realtime :as realtime]
             [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.session-recovery :as session-recovery]
             [knoxx.backend.run-state :refer [active-runs-count]]
             [knoxx.backend.runtime-config :as runtime-config :refer [cfg]]
             [knoxx.backend.session-titles :refer [load-session-titles!]]))
@@ -26,7 +27,10 @@
     (ensure-settings! config)
     (app-routes/register-routes! runtime app config lounge-messages*)
     (event-agents/start! config)
-    (clj->js config)))
+    ;; Async bootstrap: connect Redis (session persistence) and start recovery loop.
+    (-> (session-recovery/start! runtime app config)
+        (.then (fn [_]
+                 (clj->js config))))))
 
 (defn start!
   [runtime]

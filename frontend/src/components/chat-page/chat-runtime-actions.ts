@@ -1,6 +1,6 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import { getRun, knoxxChatStart, knoxxControl } from '../../lib/api';
-import type { ChatMessage, ChatTraceBlock, RunDetail, RunEvent } from '../../lib/types';
+import { getRun, knoxxAbort, knoxxChatStart, knoxxControl } from '../../lib/api';
+import type { ChatMessage, ChatTraceBlock, ContentPart, RunDetail, RunEvent } from '../../lib/types';
 import { getChatStorage, initializePersistedChatSession } from './hooks';
 import { controlTimelineMessageFromEvent, truncateText } from './utils';
 
@@ -23,6 +23,7 @@ type CreateChatRuntimeActionsParams = {
   setIsSending: SetState<boolean>;
   setConsoleLines: SetState<string[]>;
   setQueueingControl: SetState<'steer' | 'follow_up' | null>;
+  setAbortingTurn: SetState<boolean>;
   pendingAssistantIdRef: MutableRefObject<string | null>;
   activeRunIdRef: MutableRefObject<string | null>;
   sessionIdKey: string;
@@ -46,6 +47,7 @@ export function createChatRuntimeActions({
   setIsSending,
   setConsoleLines,
   setQueueingControl,
+  setAbortingTurn,
   pendingAssistantIdRef,
   activeRunIdRef,
   sessionIdKey,
@@ -146,7 +148,29 @@ export function createChatRuntimeActions({
     }
   };
 
-  const handleSend = async (text: string) => {
+  const abortTurn = async () => {
+    if (!conversationId) {
+      appendConsoleLine('[abort] missing conversation id');
+      return;
+    }
+
+    setAbortingTurn(true);
+    try {
+      const response = await knoxxAbort({
+        conversation_id: conversationId,
+        session_id: sessionId,
+        run_id: activeRunIdRef.current,
+        reason: 'aborted_by_user',
+      });
+      appendConsoleLine(`[abort] ${response.ok ? 'requested' : 'failed'}${response.error ? `: ${response.error}` : ''}`);
+    } catch (error) {
+      appendConsoleLine(`[abort] failed: ${(error as Error).message}`);
+    } finally {
+      setAbortingTurn(false);
+    }
+  };
+
+  const handleSend = async (text: string, contentParts?: ContentPart[]) => {
     if (!sessionId) {
       appendConsoleLine('[chat] session not ready, retry in a second');
       return;
@@ -156,7 +180,12 @@ export function createChatRuntimeActions({
       return;
     }
 
-    const userMessage: ChatMessage = { id: makeId(), role: 'user', content: text };
+    const userMessage: ChatMessage = { 
+      id: makeId(), 
+      role: 'user', 
+      content: text,
+      contentParts,
+    };
     const assistantMessageId = makeId();
     const pendingAssistantMessage: ChatMessage = {
       id: assistantMessageId,
@@ -184,6 +213,7 @@ export function createChatRuntimeActions({
         session_id: sessionId,
         run_id: activeRunIdRef.current,
         model: selectedModel,
+        contentParts,
       });
       const runId = response.run_id ?? activeRunIdRef.current;
       if (runId) {
@@ -249,6 +279,7 @@ export function createChatRuntimeActions({
     handleSend,
     loadRunDetail,
     queueLiveControl,
+    abortTurn,
     updateMessageById,
     updateTraceBlocksByMessageId,
   };

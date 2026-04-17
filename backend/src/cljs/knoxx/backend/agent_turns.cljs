@@ -1,6 +1,6 @@
 (ns knoxx.backend.agent-turns
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-hydration :refer [settings-state* ensure-settings! passive-hydration! passive-memory-hydration! build-agent-user-message hydration-sources]]
+            [knoxx.backend.agent-hydration :refer [settings-state* ensure-settings! passive-hydration! passive-memory-hydration! build-agent-user-message build-agent-multimodal-message hydration-sources]]
             [knoxx.backend.agent-runtime :refer [ensure-agent-session! remove-agent-session!]]
             [knoxx.backend.authz :as authz :refer [auth-snapshot auth-snapshot-has-principal?]]
             [knoxx.backend.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
@@ -11,7 +11,13 @@
             [knoxx.backend.runtime-config :refer [model-supports-reasoning? normalize-thinking-level now-iso]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
+            [knoxx.backend.turn-control :as turn-control]
             [knoxx.backend.text :refer [value->preview-text assistant-message-text assistant-message-reasoning-text]]))
+
+;; Death-spiral guardrails: if the agent repeatedly calls the same tool with the same
+;; input signature, abort the turn to prevent infinite loops.
+(def ^:private DEATH_SPIRAL_STREAK_LIMIT 6)
+(def ^:private DEATH_SPIRAL_TOTAL_LIMIT 12)
 
 (defonce conversation-access* (atom {}))
 (defonce lounge-messages* (atom []))
@@ -52,7 +58,7 @@
       (:resource-policies agent-spec) (assoc :resourcePolicies (:resource-policies agent-spec)))))
 
 (defn send-agent-turn!
-  [runtime config {:keys [conversation-id session-id message model mode run-id auth-context thinking-level agent-spec]}]
+  [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
   (let [node-crypto (aget runtime "crypto")
         conversation-id (or conversation-id (.randomUUID node-crypto))
         _ (ensure-conversation-access! auth-context conversation-id)
@@ -71,7 +77,11 @@
         started-ms (.now js/Date)
         existing-messages (vec (or (:messages (session-store/get-session-sync session-id)) []))
         seeded-messages (ensure-system-message existing-messages agent-spec)
-        request-messages (conj seeded-messages {:role "user" :content message})
+        ;; Build user message - support both text and multimodal content
+        user-message (if (seq content-parts)
+                       {:role "user" :content message :content-parts content-parts}
+                       {:role "user" :content message})
+        request-messages (conj seeded-messages user-message)
         _title-prime (maybe-prime-session-title! runtime config conversation-id message)
         auth-extra (auth-snapshot auth-context)
         base-run (merge {:run_id run-id
@@ -168,6 +178,30 @@
                    (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level)
                      (.then (fn [session]
                               (let [ttft-recorded? (atom false)
+                                    aborting? (atom false)
+                                    abort-reason* (atom nil)
+                                    tool-loop* (atom {:last nil :streak 0 :counts {}})
+                                    request-abort! (fn [reason]
+                                                     (let [reason (str (or reason "aborted"))]
+                                                       (if @aborting?
+                                                         (js/Promise.resolve nil)
+                                                         (do
+                                                           (reset! aborting? true)
+                                                           (reset! abort-reason* reason)
+                                                           ;; Drop streaming flag immediately so the UI can re-enable the composer.
+                                                           (session-store/mark-session-streaming! (redis/get-client) session-id false)
+                                                           (let [abort-event (tool-event-payload run-id conversation-id session-id "abort_requested"
+                                                                                                 {:status "aborting"
+                                                                                                  :reason reason})]
+                                                             (append-run-event! run-id abort-event)
+                                                             (broadcast-ws-session! session-id "events" abort-event))
+                                                           (.abort session)))))
+                                    _registered (turn-control/register-active-turn!
+                                                 conversation-id
+                                                 {:run_id run-id
+                                                  :session_id session-id
+                                                  :started_at started-at
+                                                  :abort! request-abort!})
                                     unsubscribe (.subscribe session
                                                           (fn [event]
                                                             (let [event-type (aget event "type")]
@@ -223,6 +257,28 @@
                                                                       input-preview (or (value->preview-text (aget event "params") 600)
                                                                                         (value->preview-text (aget event "toolArgs") 600)
                                                                                         (value->preview-text (aget event "args") 600))
+                                                                      signature (str tool-name "::" (or input-preview ""))
+                                                                      _death-spiral
+                                                                      (let [{:keys [last streak counts]} @tool-loop*
+                                                                            next-total (inc (get counts signature 0))
+                                                                            next-counts (assoc counts signature next-total)
+                                                                            next-streak (if (= signature last) (inc streak) 1)]
+                                                                        (reset! tool-loop* {:last signature
+                                                                                            :streak next-streak
+                                                                                            :counts next-counts})
+                                                                        (when (and (not @aborting?)
+                                                                                   (or (>= next-streak DEATH_SPIRAL_STREAK_LIMIT)
+                                                                                       (>= next-total DEATH_SPIRAL_TOTAL_LIMIT)))
+                                                                          (let [reason (str "death_spiral_detected: tool '" tool-name "' repeated " next-total "x (streak " next-streak ")")
+                                                                                spiral-event (tool-event-payload run-id conversation-id session-id "death_spiral_detected"
+                                                                                                                 {:status "failed"
+                                                                                                                  :tool_name tool-name
+                                                                                                                  :tool_call_id tool-call-id
+                                                                                                                  :count next-total
+                                                                                                                  :streak next-streak})]
+                                                                            (append-run-event! run-id spiral-event)
+                                                                            (broadcast-ws-session! session-id "events" spiral-event)
+                                                                            (request-abort! reason))))
                                                                       tool-event (tool-event-payload run-id conversation-id session-id "tool_start"
                                                                                                      {:status "running"
                                                                                                       :tool_name tool-name
@@ -309,11 +365,16 @@
                                                                 (broadcast-ws-session! session-id "events"
                                                                                        (tool-event-payload run-id conversation-id session-id "agent_end"
                                                                                                            {:status "completed"}))))))]
-                                (let [prompt-promise (.prompt session (build-agent-user-message message hydration memory-hydration))]
+                                ;; Use multimodal message builder if content-parts are present
+                                (let [prompt-args (if (seq content-parts)
+                                                    (build-agent-multimodal-message message content-parts hydration memory-hydration)
+                                                    (build-agent-user-message message hydration memory-hydration))
+                                      prompt-promise (.prompt session prompt-args)]
                                   (.catch
                                    (.then prompt-promise
                                           (fn []
                                             (unsubscribe)
+                                            (turn-control/unregister-active-turn! conversation-id run-id)
                                             (let [assistant-message (latest-assistant-message session)
                                                   answer (let [chunked (apply str @chunks)]
                                                            (if (str/blank? chunked)
@@ -389,9 +450,11 @@
                                                 response)))
                                    (fn [err]
                                      (unsubscribe)
-                                     (let [error-event (tool-event-payload run-id conversation-id session-id "run_failed"
+                                     (turn-control/unregister-active-turn! conversation-id run-id)
+                                     (let [err-text (or @abort-reason* (str err))
+                                           error-event (tool-event-payload run-id conversation-id session-id "run_failed"
                                                                            {:status "failed"
-                                                                            :error (str err)})]
+                                                                            :error err-text})]
                                        (finalize-run-trace-blocks! run-id "error")
                                        (let [failed-run (update-run! run-id
                                                                      (fn [run]
@@ -403,7 +466,7 @@
                                                                                     :status "failed"
                                                                                     :total_time_ms (- (.now js/Date) started-ms)
                                                                                     :reasoning (apply str @reasoning-chunks)
-                                                                                    :error (str err))
+                                                                                    :error err-text)
                                                                              (update :resources merge resource-patch)))))
                                              _ (when failed-run
                                                  (index-run-memory! config failed-run))]
@@ -414,7 +477,7 @@
                                                                            session-id
                                                                            conversation-id
                                                                            {:status "failed"
-                                                                            :error (str err)
+                                                                            :error err-text
                                                                             :messages request-messages})
                                          ;; Remove from in-memory cache to prevent stale isStreaming
                                          (remove-agent-session! conversation-id))

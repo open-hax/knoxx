@@ -72,7 +72,8 @@ await app.register((instance, _opts, done) => {
   registerWsRoutes(runtime, instance);
   done();
 });
-registerAppRoutes(runtime, app);
+// registerAppRoutes may perform async bootstrap (Redis init, session recovery, etc.).
+await registerAppRoutes(runtime, app);
 
 // ---------------------------------------------------------------------------
 // Pi Session Ingestion Routes
