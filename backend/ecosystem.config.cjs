@@ -1,10 +1,12 @@
+const path = require('path');
+
 module.exports = {
   apps: [
     {
       name: 'knoxx',
       script: 'npx',
       args: 'shadow-cljs watch app',
-      cwd: '/home/err/devel/orgs/open-hax/openplanner/packages/knoxx/backend',
+      cwd: __dirname,
       watch: false,
       autorestart: true,
       max_restarts: 10,

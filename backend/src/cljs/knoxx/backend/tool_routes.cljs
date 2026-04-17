@@ -502,8 +502,9 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (when ctx
-                    (ensure-permission! ctx "agent.chat.use"))
+                  (if ctx
+                    (ensure-permission! ctx "agent.chat.use")
+                    (json-response! reply 401 {:detail "Authentication required"}))
                   (let [body (or (aget request "body") #js {})
                         tool-id (str (or (aget body "toolId") ""))
                         args (js->clj (or (aget body "arguments") #js {}) :keywordize-keys true)]

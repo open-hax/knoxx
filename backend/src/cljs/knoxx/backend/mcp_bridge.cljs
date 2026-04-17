@@ -148,10 +148,10 @@
     (= (:transport config) "stdio")
     (do
       (js/console.log "[mcp-gateway] stdio transport not yet implemented")
-      (swap! servers* assoc id {:id id :config config :tools [] :connected true :client nil}))
+      (swap! servers* assoc id {:id id :config config :tools [] :connected false :client nil}))
 
     :else
-    (throw (js/Error. (str "Unknown transport: " (:transport config))))))
+    (js/Promise.reject (js/Error. (str "Unknown transport: " (:transport config))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API
@@ -172,7 +172,7 @@
      (-> (.all js/Promise
                (into-array
                 (for [[id server-config] server-configs]
-                  (-> (connect-server! id server-config)
+                  (-> (js/Promise.resolve (connect-server! id server-config))
                       (.catch (fn [err]
                                 (js/console.error "[mcp-gateway] Failed to connect to" id ":"
                                                   (aget err "message"))))))))
@@ -286,6 +286,6 @@
                   :promptGuidelines [(str "Use " tool-id
                                           " when the task requires capabilities from the "
                                           (:serverId tool) " MCP server.")]
-                  :parameters (aget js/Object "entries" (clj->js (or (:properties input-schema) {})))
+                  :parameters (clj->js (or input-schema {}))
                   :execute execute-fn}))
              tools)))))

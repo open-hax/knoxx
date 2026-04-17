@@ -30,9 +30,8 @@
   "Returns true if the gateway client is connected and ready."
   []
   (when-let [manager (gw)]
-    (let [status (.status manager)]
-      (boolean (or (aget status "ready")
-                   (aget status "started"))))))
+    (let [s (.status manager)]
+      (boolean (aget s "ready")))))
 
 (defn status
   "Get gateway status as a JS object."
