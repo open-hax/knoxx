@@ -12,7 +12,7 @@
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.turn-control :as turn-control]
-            [knoxx.backend.text :refer [value->preview-text assistant-message-text assistant-message-reasoning-text]]))
+            [knoxx.backend.text :refer [value->preview-text assistant-message-text assistant-message-reasoning-text clip-text]]))
 
 ;; Death-spiral guardrails: if the agent repeatedly calls the same tool with the same
 ;; input signature, abort the turn to prevent infinite loops.
@@ -254,9 +254,29 @@
                                                                 (= event-type "tool_execution_start")
                                                                 (let [tool-name (or (aget event "toolName") "tool")
                                                                       tool-call-id (or (aget event "toolCallId") (.randomUUID node-crypto))
+                                                                      raw-args (or (aget event "params")
+                                                                                   (aget event "toolArgs")
+                                                                                   (aget event "args")
+                                                                                   (aget event "arguments")
+                                                                                   (aget event "input")
+                                                                                   (aget event "parameters"))
                                                                       input-preview (or (value->preview-text (aget event "params") 600)
                                                                                         (value->preview-text (aget event "toolArgs") 600)
-                                                                                        (value->preview-text (aget event "args") 600))
+                                                                                        (value->preview-text (aget event "args") 600)
+                                                                                        (value->preview-text (aget event "arguments") 600)
+                                                                                        (value->preview-text (aget event "input") 600)
+                                                                                        (value->preview-text (aget event "parameters") 600)
+                                                                                        ;; Direct JSON fallback: when all structured preview
+                                                                                        ;; extraction fails, stringify the raw args object.
+                                                                                        (when (and raw-args (not= raw-args js/undefined))
+                                                                                          (try
+                                                                                            (let [json (.stringify js/JSON raw-args)]
+                                                                                              (when (and (string? json)
+                                                                                                         (not (str/blank? json))
+                                                                                                         (not= json "{}"))
+                                                                                                (let [[jt jtrunc] (clip-text json 600)]
+                                                                                                  (if jtrunc (str jt "…") jt))))
+                                                                                            (catch :default _ nil))))
                                                                       signature (str tool-name "::" (or input-preview ""))
                                                                       _death-spiral
                                                                       (let [{:keys [last streak counts]} @tool-loop*

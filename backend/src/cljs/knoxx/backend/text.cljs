@@ -378,8 +378,12 @@
    (let [raw (cond
                (backend-http/no-content? value) ""
                (string? value)
-               (or (summarize-json-string value)
-                   value)
+               (let [trimmed (str/trim (str value))
+                     lowered (str/lower-case trimmed)]
+                 (cond
+                   (or (= lowered "null") (= lowered "undefined")) ""
+                   :else (or (summarize-json-string value)
+                             value)))
 
                (or (map? value) (vector? value) (seq? value))
                (or (summarize-structured value)
@@ -396,7 +400,21 @@
                  (catch :default _
                    (str value))))
          [text truncated] (clip-text raw max-chars)]
-     (when-not (str/blank? text)
+     (if (str/blank? text)
+       ;; Guaranteed fallback: for non-nil, non-scalar objects, always produce
+       ;; a JSON preview so callers (e.g. tool input_preview) never get nil
+       ;; for a real value that simply didn't match preferred keys.
+       (when (and (not (nil? value))
+                  (not= value js/undefined)
+                  (not (string? value))
+                  (not (number? value))
+                  (not (boolean? value)))
+         (try
+           (let [json (.stringify js/JSON value)]
+             (when (and (string? json) (not (str/blank? json)))
+               (let [[jt jtrunc] (clip-text json max-chars)]
+                 (if jtrunc (str jt "…") jt))))
+           (catch :default _ nil)))
        (if truncated
          (str text "…")
          text)))))
