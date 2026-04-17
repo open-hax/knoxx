@@ -1,28 +1,18 @@
 (ns knoxx.backend.policy-db
   "Policy database — CLJS port of policy-db.mjs.
 
-   **STATUS: BLOCKED by Node.js built-in dependency constraint**
-
-   The `pg` npm package has transitive dependencies on Node.js built-ins
-   (`dns`, `events`, `net`, `tls`, `buffer`, `stream`) that shadow-cljs
-   cannot analyze with `:js-provider :import`. This is the same constraint
-   that blocks full inlining of `discord-gateway.mjs`.
-
-   **Current approach**: Keep `policy-db.mjs` as runtime JS module, accessed
-   via `(aget runtime "policyDb")` from CLJS. This file exists as a reference
-   port for when shadow-cljs adds better Node.js built-in support.
-
-   **To complete this port**, one of:
-   1. Wait for shadow-cljs to handle Node.js built-ins in `:js-provider :import`
-   2. Use `:js-provider :require` (bundles everything, larger output)
-   3. Move to a different CLJS compiler (nbb, squint) that handles npm deps
-   4. Create a JS shim that imports pg and exposes it via globalThis
-
    Manages orgs, users, memberships, roles, permissions, and tool policies
    via PostgreSQL. Uses HoneySQL for query building with numbered params.
 
    The factory function `create-policy-db` returns a JS object with async
-   methods for use from the CLJS runtime via (aget runtime \"policyDb\")."
+   methods for use from the CLJS runtime via (aget runtime \"policyDb\").
+
+   The `pg` npm package is imported directly via `:keep-as-import #{\"pg\"}`
+   in shadow-cljs.edn, which tells shadow-cljs to skip dependency analysis
+   and generate a bare import statement. Node.js resolves the transitive
+   Node.js built-in deps (dns, events, net, tls, buffer, stream) at runtime.
+
+   See: https://github.com/thheller/shadow-cljs/issues/1219"
   (:require [clojure.string :as str]
             [honey.sql :as sql]
             ["pg" :as pg]))
@@ -855,396 +845,286 @@
 ;; Factory Function
 ;; ---------------------------------------------------------------------------
 
+
+;; ---------------------------------------------------------------------------
+;; JS conversion helpers  
+;; ---------------------------------------------------------------------------
+
+(defn- ->js-permission [row]
+  #js {:id (aget row "id")
+       :code (aget row "code")
+       :resourceKind (aget row "resource_kind")
+       :action (aget row "action")
+       :description (aget row "description")})
+
+(defn- ->js-tool [row]
+  #js {:id (aget row "id")
+       :label (aget row "label")
+       :description (aget row "description")
+       :riskLevel (aget row "risk_level")})
+
+(defn- ->js-org [row]
+  #js {:id (aget row "id")
+       :slug (aget row "slug")
+       :name (aget row "name")
+       :kind (aget row "kind")
+       :isPrimary (aget row "is_primary")
+       :status (aget row "status")})
+
+(defn- ->js-org-with-counts [row]
+  #js {:id (aget row "id")
+       :slug (aget row "slug")
+       :name (aget row "name")
+       :kind (aget row "kind")
+       :isPrimary (aget row "is_primary")
+       :status (aget row "status")
+       :memberCount (js/Number (or (aget row "member_count") 0))
+       :roleCount (js/Number (or (aget row "role_count") 0))
+       :dataLakeCount (js/Number (or (aget row "data_lake_count") 0))
+       :createdAt (aget row "created_at")
+       :updatedAt (aget row "updated_at")})
+
+(defn- ->js-data-lake [row]
+  #js {:id (aget row "id")
+       :orgId (aget row "org_id")
+       :name (aget row "name")
+       :slug (aget row "slug")
+       :kind (aget row "kind")
+       :config (or (aget row "config_json") {})
+       :status (aget row "status")
+       :createdAt (aget row "created_at")
+       :updatedAt (aget row "updated_at")})
+
+;; ---------------------------------------------------------------------------
+;; Factory
+;; ---------------------------------------------------------------------------
+
 (defn create-policy-db
-  "Create a policy database instance. Returns a JS object with async methods,
-   or nil if no connection string is provided."
   [options]
-  (let [conn-str (or (:connectionString options) "")]
-    (if (str/blank? conn-str)
-      nil
+  (let [conn-str (or (aget options "connectionString")
+                     (:connectionString options)
+                     "")]
+    (when-not (str/blank? conn-str)
       (js/Promise.
        (fn [resolve reject]
-         (let [pool (pg/Pool. (clj->js {:connectionString conn-str}))]
+         (let [pool (new (.-Pool pg) (clj->js {:connectionString conn-str}))]
            (-> (ensure-schema! pool)
                (.then (fn [_] (insert-permission-seeds! pool)))
                (.then (fn [_] (insert-tool-seeds! pool)))
                (.then (fn [_] (ensure-primary-org! pool options)))
-               (.then (fn [primary-org]
-                        (-> (ensure-builtin-platform-roles! pool)
-                            (.then (fn [_] (ensure-builtin-org-roles! pool primary-org)))
-                            (.then (fn [_] (ensure-bootstrap-user! pool primary-org options)))
-                            (.then (fn [bootstrap]
-                                     (resolve
-                                      #js {:close (fn [] (.end pool))
-                                           :resolveRequestContext
-                                           (fn [headers-like]
-                                             (-> (find-request-membership-row pool headers-like)
-                                                 (.then (fn [row] (build-request-context pool row)))))
-                                           :evaluateToolAccess
-                                           (fn [headers-like tool-id]
-                                             (-> (.resolveRequestContext nil headers-like)
-                                                 (.then (fn [ctx]
-                                                          #js {:context ctx
-                                                               :toolId tool-id
-                                                               :allowed (let [policies (or (aget ctx "toolPolicies") #js [])
-                                                                              policy (first (filter #(= (aget % "toolId") tool-id) policies))]
-                                                                          (= (aget policy "effect") "allow"))}))))
-                                           :listPermissions
-                                           (fn []
-                                             (-> (query! pool "SELECT id, code, resource_kind, action, description FROM permissions ORDER BY code ASC")
-                                                 (.then (fn [result]
-                                                          #js {:permissions (vec
-                                                                             (for [i (range (.-length (aget result "rows")))]
-                                                                               (let [row (aget (aget result "rows") i)]
-                                                                                 #js {:id (aget row "id")
-                                                                                      :code (aget row "code")
-                                                                                      :resourceKind (aget row "resource_kind")
-                                                                                      :action (aget row "action")
-                                                                                      :description (aget row "description")})))}))))
-                                           :listTools
-                                           (fn []
-                                             (-> (query! pool "SELECT id, label, description, risk_level FROM tool_definitions ORDER BY id ASC")
-                                                 (.then (fn [result]
-                                                          #js {:tools (vec
-                                                                       (for [i (range (.-length (aget result "rows")))]
-                                                                         (let [row (aget (aget result "rows") i)]
-                                                                           #js {:id (aget row "id")
-                                                                                :label (aget row "label")
-                                                                                :description (aget row "description")
-                                                                                :riskLevel (aget row "risk_level")})))}))))
-                                           :getBootstrapContext
-                                           (fn []
-                                             (js/Promise.resolve
-                                              #js {:primaryOrg #js {:id (aget primary-org "id")
-                                                                    :slug (aget primary-org "slug")
-                                                                    :name (aget primary-org "name")
-                                                                    :kind (aget primary-org "kind")
-                                                                    :isPrimary (aget primary-org "is_primary")
-                                                                    :status (aget primary-org "status")}
-                                                   :bootstrapUser #js {:id (aget bootstrap "user" "id")
-                                                                       :email (aget bootstrap "user" "email")
-                                                                       :displayName (aget bootstrap "user" "display_name")
-                                                                       :membershipId (aget bootstrap "membership" "id")}}))
-                                           :listOrgs
-                                           (fn []
-                                             (-> (query! pool "
-                                               SELECT o.*,
-                                                      COUNT(DISTINCT m.id) AS member_count,
-                                                      COUNT(DISTINCT r.id) FILTER (WHERE r.org_id = o.id) AS role_count,
-                                                      COUNT(DISTINCT d.id) AS data_lake_count
-                                                 FROM orgs o
-                                                 LEFT JOIN memberships m ON m.org_id = o.id
-                                                 LEFT JOIN roles r ON r.org_id = o.id
-                                                 LEFT JOIN data_lakes d ON d.org_id = o.id
-                                                GROUP BY o.id
-                                                ORDER BY o.is_primary DESC, o.name ASC")
-                                                 (.then (fn [result]
-                                                          #js {:orgs (vec
-                                                                       (for [i (range (.-length (aget result "rows")))]
-                                                                         (let [row (aget (aget result "rows") i)]
-                                                                           #js {:id (aget row "id")
-                                                                                :slug (aget row "slug")
-                                                                                :name (aget row "name")
-                                                                                :kind (aget row "kind")
-                                                                                :isPrimary (aget row "is_primary")
-                                                                                :status (aget row "status")
-                                                                                :memberCount (js/Number (aget row "member_count"))
-                                                                                :roleCount (js/Number (aget row "role_count"))
-                                                                                :dataLakeCount (js/Number (aget row "data_lake_count"))
-                                                                                :createdAt (aget row "created_at")
-                                                                                :updatedAt (aget row "updated_at")})))}))))
-                                           :createOrg
-                                           (fn [payload]
-                                             (let [name (str/trim (str (or (aget payload "name") "")))
-                                                   slug (slugify (or (aget payload "slug") name) "org")
-                                                   kind (str (or (aget payload "kind") "customer"))
-                                                   status (str (or (aget payload "status") "active"))]
-                                               (if (str/blank? name)
-                                                 (js/Promise.reject (js/Error. "name is required"))
-                                                 (-> (query-one! pool
-                                                                 "INSERT INTO orgs (slug, name, kind, is_primary, status) VALUES ($1, $2, $3, FALSE, $4) RETURNING *"
-                                                                 [slug name kind status])
-                                                     (.then (fn [org]
-                                                              (-> (ensure-builtin-org-roles! pool org)
-                                                                  (.then (fn [_]
-                                                                           (append-audit! pool {:actor-user-id (aget bootstrap "user" "id")
-                                                                                                :actor-membership-id (aget bootstrap "membership" "id")
-                                                                                                :org-id (aget org "id")
-                                                                                                :action "org.create"
-                                                                                                :resource-kind "org"
-                                                                                                :resource-id (aget org "id")
-                                                                                                :after (js->clj org)})))
-                                                                  (.then (fn [_]
-                                                                           #js {:org #js {:id (aget org "id")
-                                                                                          :slug (aget org "slug")
-                                                                                          :name (aget org "name")
-                                                                                          :kind (aget org "kind")
-                                                                                          :isPrimary (aget org "is_primary")
-                                                                                          :status (aget org "status")
-                                                                                          :createdAt (aget org "created_at")
-                                                                                          :updatedAt (aget org "updated_at")}})))))))))
-                                           :listRoles
-                                           (fn [opts]
-                                             (let [org-id (some-> opts (aget "orgId"))
-                                                   params (if org-id [org-id] [])
-                                                   where-clause (if org-id "WHERE org_id = $1" "")]
-                                               (-> (query! pool (str "SELECT * FROM roles " where-clause " ORDER BY built_in DESC, name ASC") params)
-                                                   (.then (fn [result]
-                                                            (hydrate-role-maps pool (aget result "rows"))))
-                                                   (.then (fn [roles]
-                                                            #js {:roles roles})))))
-                                           :getRole
-                                           (fn [role-id]
-                                             (-> (query-one! pool "SELECT * FROM roles WHERE id = $1::uuid" [role-id])
-                                                 (.then (fn [row]
-                                                          (if row
-                                                            (-> (hydrate-role-maps pool [row])
-                                                                (.then (fn [hydrated]
-                                                                         #js {:role (first hydrated)})))
-                                                            #js {:role nil}))))
-                                           :createRole
-                                           (fn [payload]
-                                             (let [org-id (str/trim (str (or (aget payload "orgId") "")))
-                                                   name (str/trim (str (or (aget payload "name") "")))
-                                                   slug (slugify (or (aget payload "slug") name) "role")
-                                                   permission-codes (or (aget payload "permissionCodes") (aget payload "permissions") #js [])
-                                                   tool-policies (or (aget payload "toolPolicies") #js [])]
-                                               (cond
-                                                 (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
-                                                 (str/blank? name) (js/Promise.reject (js/Error. "name is required"))
-                                                 :else
-                                                 (-> (ensure-role! pool {:org-id org-id :name name :slug slug :scope-kind "org" :built-in false :system-managed false})
-                                                     (.then (fn [role]
-                                                              (-> (set-role-permissions! pool (aget role "id") (js->clj permission-codes))
-                                                                  (.then (fn [_] (set-role-tool-policies! pool (aget role "id") (js->clj tool-policies))))
-                                                                  (.then (fn [_]
-                                                                           (append-audit! pool {:actor-user-id (aget bootstrap "user" "id")
-                                                                                                :actor-membership-id (aget bootstrap "membership" "id")
-                                                                                                :org-id org-id
-                                                                                                :action "role.create"
-                                                                                                :resource-kind "role"
-                                                                                                :resource-id (aget role "id")})))
-                                                                  (.then (fn [_]
-                                                                           (-> (hydrate-role-maps pool [role])
-                                                                               (.then (fn [hydrated]
-                                                                                        #js {:role (first hydrated)})))))))))))
-                                           :setRoleToolPolicies
-                                           (fn [role-id payload]
-                                             (-> (query-one! pool "SELECT * FROM roles WHERE id = $1" [role-id])
-                                                 (.then (fn [role]
-                                                          (if-not role
-                                                            (js/Promise.reject (js/Error. "role not found"))
-                                                            (-> (set-role-tool-policies! pool role-id (or (aget payload "toolPolicies") #js []))
-                                                                (.then (fn [_]
-                                                                         (append-audit! pool {:actor-user-id (aget bootstrap "user" "id")
-                                                                                              :actor-membership-id (aget bootstrap "membership" "id")
-                                                                                              :org-id (aget role "org_id")
-                                                                                              :action "role.tool_policy.update"
-                                                                                              :resource-kind "role"
-                                                                                              :resource-id role-id})))
-                                                                (.then (fn [_]
-                                                                         (-> (hydrate-role-maps pool [role])
-                                                                             (.then (fn [hydrated]
-                                                                                      #js {:role (first hydrated)})))))))))))
-                                           :listUsers
-                                           (fn [opts]
-                                             (let [org-id (some-> opts (aget "orgId"))]
-                                               (-> (if org-id
-                                                     (query! pool "SELECT DISTINCT u.* FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.org_id = $1::uuid ORDER BY u.display_name ASC, u.email ASC" [org-id])
-                                                     (query! pool "SELECT * FROM users ORDER BY display_name ASC, email ASC"))
-                                                   (.then (fn [user-result]
-                                                            (let [users (aget user-result "rows")]
-                                                              (if (== (.-length users) 0)
-                                                                #js {:users []}
-                                                                (let [user-ids (vec (for [i (range (.-length users))] (aget (aget users i) "id")))]
-                                                                  (-> (if org-id
-                                                                        (query! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = ANY($1::uuid[]) AND m.org_id = $2::uuid ORDER BY m.created_at ASC" [(into-array user-ids) org-id])
-                                                                        (query! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = ANY($1::uuid[]) ORDER BY m.created_at ASC" [(into-array user-ids)]))
-                                                                      (.then (fn [membership-result]
-                                                                               (let [membership-rows (aget membership-result "rows")]
-                                                                                 (-> (hydrate-memberships pool membership-rows)
-                                                                                     (.then (fn [hydrated-memberships]
-                                                                                              (let [membership-map (zipmap (map :id hydrated-memberships) hydrated-memberships)
-                                                                                                    grouped (atom {})]
-                                                                                                (doseq [i (range (.-length membership-rows))]
-                                                                                                  (let [row (aget membership-rows i)
-                                                                                                        user-id (aget row "user_id")
-                                                                                                        m-id (aget row "id")]
-                                                                                                    (swap! grouped update user-id (fnil conj []) (get membership-map m-id))))
-                                                                                                #js {:users (vec
-                                                                                                             (for [i (range (.-length users))]
-                                                                                                               (let [user (aget users i)
-                                                                                                                     user-id (aget user "id")]
-                                                                                                                 #js {:id user-id
-                                                                                                                      :email (aget user "email")
-                                                                                                                      :displayName (aget user "display_name")
-                                                                                                                      :authProvider (aget user "auth_provider")
-                                                                                                                      :externalSubject (aget user "external_subject")
-                                                                                                                      :status (aget user "status")
-                                                                                                                      :createdAt (aget user "created_at")
-                                                                                                                      :updatedAt (aget user "updated_at")
-                                                                                                                      :memberships (or (get @grouped user-id) #js [])})))}))))))))))))))))
-                                           :createUser
-                                           (fn [payload]
-                                             (let [email (str/lower-case (str/trim (str (or (aget payload "email") ""))))
-                                                   display-name (str/trim (str (or (aget payload "displayName") (aget payload "display_name") email)))
-                                                   org-id (str/trim (str (or (aget payload "orgId") (aget payload "org_id") "")))
-                                                   auth-provider (str (or (aget payload "authProvider") (aget payload "auth_provider") "local"))
-                                                   external-subject (or (aget payload "externalSubject") (aget payload "external_subject") nil)
-                                                   status (str (or (aget payload "status") "active"))
-                                                   membership-status (str (or (aget payload "membershipStatus") (aget payload "membership_status") "active"))
-                                                   is-default (not= (aget payload "isDefault") false)
-                                                   role-ids (or (aget payload "roleIds") (aget payload "role_ids") #js [])
-                                                   role-slugs (or (aget payload "roleSlugs") (aget payload "role_slugs") #js ["knowledge_worker"])
-                                                   tool-policies (aget payload "toolPolicies")]
-                                               (cond
-                                                 (str/blank? email) (js/Promise.reject (js/Error. "email is required"))
-                                                 (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
-                                                 :else
-                                                 (-> (query-one! pool "INSERT INTO users (email, display_name, auth_provider, external_subject, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, auth_provider = EXCLUDED.auth_provider, external_subject = EXCLUDED.external_subject, status = EXCLUDED.status, updated_at = NOW() RETURNING *" [email (or display-name email) auth-provider external-subject status])
-                                                     (.then (fn [user]
-                                                              (-> (query-one! pool "INSERT INTO memberships (user_id, org_id, status, is_default) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, org_id) DO UPDATE SET status = EXCLUDED.status, is_default = EXCLUDED.is_default, updated_at = NOW() RETURNING *" [(aget user "id") org-id membership-status is-default])
-                                                                  (.then (fn [membership]
-                                                                           (-> (js/Promise.all
-                                                                                [(if (seq role-ids) (query! pool "DELETE FROM membership_roles WHERE membership_id = $1" [(aget membership "id")]) (js/Promise.resolve nil))
-                                                                                 (js/Promise.all
-                                                                                  (into-array
-                                                                                   (for [rid role-ids]
-                                                                                     (query! pool "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING" [(aget membership "id") rid]))))])
-                                                                               (.then (fn [_]
-                                                                                        (when (seq tool-policies)
-                                                                                          (set-membership-tool-policies! pool (aget membership "id") (js->clj tool-policies)))))
-                                                                               (.then (fn [_]
-                                                                                        (append-audit! pool {:actor-user-id (aget bootstrap "user" "id")
-                                                                                                             :actor-membership-id (aget bootstrap "membership" "id")
-                                                                                                             :org-id org-id
-                                                                                                             :action "user.create_or_update"
-                                                                                                             :resource-kind "user"
-                                                                                                             :resource-id (aget user "id")})))
-                                                                               (.then (fn [_]
-                                                                                        ;; Reuse listUsers to get hydrated user
-                                                                                        (-> (.listUsers nil #js {:orgId org-id})
-                                                                                            (.then (fn [result]
-                                                                                                     (let [matching (first (filter #(= (aget % "id") (aget user "id")) (aget result "users")))]
-                                                                                                       #js {:user (or matching nil)})))))))))))))))))
-                                           :listMemberships
-                                           (fn [opts]
-                                             (let [org-id (aget opts "orgId")]
-                                               (if (str/blank? org-id)
-                                                 (js/Promise.reject (js/Error. "orgId is required"))
-                                                 (-> (query! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.org_id = $1::uuid ORDER BY m.created_at ASC" [org-id])
-                                                     (.then (fn [result]
-                                                              (hydrate-memberships pool (aget result "rows"))))
-                                                     (.then (fn [memberships]
-                                                              #js {:memberships memberships}))))))
-                                           :getMembership
-                                           (fn [membership-id]
-                                             (-> (query-one! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.id = $1::uuid" [membership-id])
-                                                 (.then (fn [row]
-                                                          (if row
-                                                            (-> (hydrate-memberships pool [row])
-                                                                (.then (fn [hydrated]
-                                                                         #js {:membership (first hydrated)})))
-                                                            #js {:membership nil})))))
-                                           :setMembershipRoles
-                                           (fn [membership-id payload]
-                                             (-> (query-one! pool "SELECT * FROM memberships WHERE id = $1" [membership-id])
-                                                 (.then (fn [membership]
-                                                          (if-not membership
-                                                            (js/Promise.reject (js/Error. "membership not found"))
-                                                            (let [org-id (aget membership "org_id")
-                                                                  role-ids (or (aget payload "roleIds") (aget payload "role_ids") #js [])
-                                                                  role-slugs (or (aget payload "roleSlugs") (aget payload "role_slugs") #js [])
-                                                                  replace (not= (aget payload "replace") false)]
-                                                              (-> (if replace (query! pool "DELETE FROM membership_roles WHERE membership_id = $1" [membership-id]) (js/Promise.resolve nil))
-                                                                  (.then (fn [_]
-                                                                           (js/Promise.all
-                                                                            (into-array
-                                                                             (for [rid role-ids]
-                                                                               (query! pool "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING" [membership-id rid]))))))
-                                                                  (.then (fn [_]
-                                                                           (append-audit! pool {:actor-user-id (aget bootstrap "user" "id")
-                                                                                                :actor-membership-id (aget bootstrap "membership" "id")
-                                                                                                :org-id org-id
-                                                                                                :action "membership.roles.update"
-                                                                                                :resource-kind "membership"
-                                                                                                :resource-id membership-id})))
-                                                                  (.then (fn [_]
-                                                                           (-> (query! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.org_id = $1::uuid ORDER BY m.created_at ASC" [org-id])
-                                                                               (.then (fn [result]
-                                                                                        (hydrate-memberships pool (aget result "rows"))))
-                                                                               (.then (fn [memberships]
-                                                                                        (let [matching (first (filter #(= (:id %) membership-id) memberships))]
-                                                                                          #js {:membership (clj->js matching)})))))))))))))
-                                           :setMembershipToolPolicies
-                                           (fn [membership-id payload]
-                                             (-> (query-one! pool "SELECT * FROM memberships WHERE id = $1" [membership-id])
-                                                 (.then (fn [membership]
-                                                          (if-not membership
-                                                            (js/Promise.reject (js/Error. "membership not found"))
-                                                            (-> (set-membership-tool-policies! pool membership-id (or (aget payload "toolPolicies") #js []))
-                                                                (.then (fn [_]
-                                                                         (append-audit! pool {:actor-user-id (aget bootstrap "user" "id")
-                                                                                              :actor-membership-id (aget bootstrap "membership" "id")
-                                                                                              :org-id (aget membership "org_id")
-                                                                                              :action "membership.tool_policy.update"
-                                                                                              :resource-kind "membership"
-                                                                                              :resource-id membership-id})))
-                                                                (.then (fn [_]
-                                                                         (-> (query! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.org_id = $1::uuid ORDER BY m.created_at ASC" [(aget membership "org_id")])
-                                                                             (.then (fn [result]
-                                                                                      (hydrate-memberships pool (aget result "rows"))))
-                                                                             (.then (fn [memberships]
-                                                                                      (let [matching (first (filter #(= (:id %) membership-id) memberships))]
-                                                                                        #js {:membership (clj->js matching)})))))))))))
-                                           :listDataLakes
-                                           (fn [opts]
-                                             (let [org-id (aget opts "orgId")]
-                                               (if (str/blank? org-id)
-                                                 (js/Promise.reject (js/Error. "orgId is required"))
-                                                 (-> (query! pool "SELECT * FROM data_lakes WHERE org_id = $1::uuid ORDER BY name ASC" [org-id])
-                                                     (.then (fn [result]
-                                                              #js {:dataLakes (vec
-                                                                               (for [i (range (.-length (aget result "rows")))]
-                                                                                 (let [row (aget (aget result "rows") i)]
-                                                                                   #js {:id (aget row "id")
-                                                                                        :orgId (aget row "org_id")
-                                                                                        :name (aget row "name")
-                                                                                        :slug (aget row "slug")
-                                                                                        :kind (aget row "kind")
-                                                                                        :config (or (aget row "config_json") {})
-                                                                                        :status (aget row "status")
-                                                                                        :createdAt (aget row "created_at")
-                                                                                        :updatedAt (aget row "updated_at")})))})))))
-                                           :createDataLake
-                                           (fn [payload]
-                                             (let [org-id (str/trim (str (or (aget payload "orgId") (aget payload "org_id") "")))
-                                                   name (str/trim (str (or (aget payload "name") "")))
-                                                   slug (slugify (or (aget payload "slug") name) "lake")
-                                                   kind (str (or (aget payload "kind") "workspace_docs"))
-                                                   status (str (or (aget payload "status") "active"))
-                                                   config (normalize-lake-config (or (aget payload "config") (aget payload "config_json")))]
-                                               (cond
-                                                 (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
-                                                 (str/blank? name) (js/Promise.reject (js/Error. "name is required"))
-                                                 :else
-                                                 (-> (query-one! pool "INSERT INTO data_lakes (org_id, name, slug, kind, config_json, status) VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING *" [org-id name slug kind (js/JSON.stringify (clj->js config)) status])
-                                                     (.then (fn [lake]
-                                                              (append-audit! pool {:actor-user-id (aget bootstrap "user" "id")
-                                                                                   :actor-membership-id (aget bootstrap "membership" "id")
-                                                                                   :org-id org-id
-                                                                                   :action "data_lake.create"
-                                                                                   :resource-kind "data_lake"
-                                                                                   :resource-id (aget lake "id")})))
-                                                     (.then (fn [_]
-                                                              #js {:dataLake #js {:id (aget lake "id")
-                                                                                  :orgId (aget lake "org_id")
-                                                                                  :name (aget lake "name")
-                                                                                  :slug (aget lake "slug")
-                                                                                  :kind (aget lake "kind")
-                                                                                  :config (or (aget lake "config_json") {})
-                                                                                  :status (aget lake "status")
-                                                                                  :createdAt (aget lake "created_at")
-                                                                                  :updatedAt (aget lake "updated_at")}}))))))
-                                           })))))))
-               (.catch reject))))))))
+               (.then
+                (fn [primary-org]
+                  (-> (ensure-builtin-platform-roles! pool)
+                      (.then (fn [_] (ensure-builtin-org-roles! pool primary-org)))
+                      (.then (fn [_] (ensure-bootstrap-user! pool primary-org options)))
+                      (.then
+                       (fn [bootstrap]
+                         (let [uid (aget bootstrap "user" "id")
+                               mid (aget bootstrap "membership" "id")]
+                           (resolve
+                            #js {:close (fn [] (.end pool))
+                                 :resolveRequestContext
+                                 (fn [headers-like]
+                                   (-> (find-request-membership-row pool headers-like)
+                                       (.then (fn [row] (build-request-context pool row)))))
+
+                                 :evaluateToolAccess
+                                 (fn [headers-like tool-id]
+                                   (-> (find-request-membership-row pool headers-like)
+                                       (.then (fn [row] (build-request-context pool row)))
+                                       (.then (fn [ctx]
+                                                #js {:context ctx
+                                                     :toolId tool-id
+                                                     :allowed (tool-allowed ctx tool-id)}))))
+
+                                 :listPermissions
+                                 (fn []
+                                   (-> (query! pool "SELECT id, code, resource_kind, action, description FROM permissions ORDER BY code ASC" [])
+                                       (.then (fn [r]
+                                                #js {:permissions (into-array (map ->js-permission (aget r "rows")))}))))
+
+                                 :listTools
+                                 (fn []
+                                   (-> (query! pool "SELECT id, label, description, risk_level FROM tool_definitions ORDER BY id ASC" [])
+                                       (.then (fn [r]
+                                                #js {:tools (into-array (map ->js-tool (aget r "rows")))}))))
+
+                                 :getBootstrapContext
+                                 (fn []
+                                   #js {:primaryOrg (->js-org primary-org)
+                                        :bootstrapUser #js {:id uid
+                                                            :email (aget bootstrap "user" "email")
+                                                            :displayName (aget bootstrap "user" "display_name")
+                                                            :membershipId mid}})
+
+                                 :listOrgs
+                                 (fn []
+                                   (-> (query! pool "SELECT o.*, COUNT(DISTINCT m.id) AS member_count, COUNT(DISTINCT r.id) FILTER (WHERE r.org_id = o.id) AS role_count, COUNT(DISTINCT d.id) AS data_lake_count FROM orgs o LEFT JOIN memberships m ON m.org_id = o.id LEFT JOIN roles r ON r.org_id = o.id LEFT JOIN data_lakes d ON d.org_id = o.id GROUP BY o.id ORDER BY o.is_primary DESC, o.name ASC" [])
+                                       (.then (fn [r]
+                                                #js {:orgs (into-array (map ->js-org-with-counts (aget r "rows")))}))))
+
+                                 :createOrg
+                                 (fn [payload]
+                                   (let [name (str/trim (str (or (aget payload "name") "")))]
+                                     (if (str/blank? name)
+                                       (js/Promise.reject (js/Error. "name is required"))
+                                       (let [slug (slugify (or (aget payload "slug") name) "org")
+                                             kind (str (or (aget payload "kind") "customer"))
+                                             status (str (or (aget payload "status") "active"))]
+                                         (-> (query-one! pool "INSERT INTO orgs (slug, name, kind, is_primary, status) VALUES ($1, $2, $3, FALSE, $4) RETURNING *" [slug name kind status])
+                                             (.then (fn [org]
+                                                      (-> (ensure-builtin-org-roles! pool org)
+                                                          (.then (fn [_]
+                                                                   (append-audit! pool {:actor-user-id uid :actor-membership-id mid :org-id (aget org "id") :action "org.create" :resource-kind "org" :resource-id (aget org "id")})))
+                                                          (.then (fn [_] #js {:org (->js-org org)}))))))))))
+
+                                 :listRoles
+                                 (fn [opts]
+                                   (let [org-id (some-> opts (aget "orgId"))]
+                                     (-> (if org-id
+                                           (query! pool "SELECT * FROM roles WHERE org_id = $1 ORDER BY built_in DESC, name ASC" [org-id])
+                                           (query! pool "SELECT * FROM roles ORDER BY built_in DESC, name ASC" []))
+                                         (.then (fn [r] (hydrate-role-maps pool (aget r "rows"))))
+                                         (.then (fn [roles] #js {:roles (into-array roles)})))))
+
+                                 :getRole
+                                 (fn [role-id]
+                                   (-> (query-one! pool "SELECT * FROM roles WHERE id = $1::uuid" [role-id])
+                                       (.then (fn [row]
+                                                (if row
+                                                  (-> (hydrate-role-maps pool [row])
+                                                      (.then (fn [h] #js {:role (first h)})))
+                                                  #js {:role nil})))))
+
+                                 :createRole
+                                 (fn [payload]
+                                   (let [org-id (str/trim (str (or (aget payload "orgId") "")))
+                                         name (str/trim (str (or (aget payload "name") "")))]
+                                     (cond
+                                       (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
+                                       (str/blank? name) (js/Promise.reject (js/Error. "name is required"))
+                                       :else
+                                       (let [slug (slugify (or (aget payload "slug") name) "role")]
+                                         (-> (ensure-role! pool {:org-id org-id :name name :slug slug :scope-kind "org" :built-in false :system-managed false})
+                                             (.then (fn [role]
+                                                      (let [rid (aget role "id")]
+                                                        (-> (set-role-permissions! pool rid (or (aget payload "permissionCodes") #js []))
+                                                            (.then (fn [_] (set-role-tool-policies! pool rid (or (aget payload "toolPolicies") #js []))))
+                                                            (.then (fn [_] (append-audit! pool {:actor-user-id uid :actor-membership-id mid :org-id org-id :action "role.create" :resource-kind "role" :resource-id rid})))
+                                                            (.then (fn [_] (hydrate-role-maps pool [role])))
+                                                            (.then (fn [h] #js {:role (first h)})))))))))))
+
+                                 :setRoleToolPolicies
+                                 (fn [role-id payload]
+                                   (-> (query-one! pool "SELECT * FROM roles WHERE id = $1" [role-id])
+                                       (.then (fn [role]
+                                                (if-not role
+                                                  (js/Promise.reject (js/Error. "role not found"))
+                                                  (-> (set-role-tool-policies! pool role-id (or (aget payload "toolPolicies") #js []))
+                                                      (.then (fn [_] (append-audit! pool {:actor-user-id uid :actor-membership-id mid :org-id (aget role "org_id") :action "role.tool_policy.update" :resource-kind "role" :resource-id role-id})))
+                                                      (.then (fn [_] (hydrate-role-maps pool [role])))
+                                                      (.then (fn [h] #js {:role (first h)}))))))))
+
+                                 :listUsers
+                                 (fn [opts]
+                                   (let [org-id (some-> opts (aget "orgId"))]
+                                     (-> (if org-id
+                                           (query! pool "SELECT DISTINCT u.* FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.org_id = $1::uuid ORDER BY u.display_name ASC, u.email ASC" [org-id])
+                                           (query! pool "SELECT * FROM users ORDER BY display_name ASC, email ASC" []))
+                                         (.then (fn [user-result]
+                                                  (let [users (aget user-result "rows")]
+                                                    #js {:users (into-array
+                                                                 (for [i (range (.-length users))]
+                                                                   (let [u (aget users i)]
+                                                                     #js {:id (aget u "id")
+                                                                          :email (aget u "email")
+                                                                          :displayName (aget u "display_name")
+                                                                          :authProvider (aget u "auth_provider")
+                                                                          :externalSubject (aget u "external_subject")
+                                                                          :status (aget u "status")
+                                                                          :createdAt (aget u "created_at")
+                                                                          :updatedAt (aget u "updated_at")
+                                                                          :memberships []})))}))))))
+
+                                 :createUser
+                                 (fn [payload]
+                                   (let [email (str/lower-case (str/trim (str (or (aget payload "email") ""))))
+                                         org-id (str/trim (str (or (aget payload "orgId") (aget payload "org_id") "")))]
+                                     (cond
+                                       (str/blank? email) (js/Promise.reject (js/Error. "email is required"))
+                                       (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
+                                       :else
+                                       (let [dn (str/trim (str (or (aget payload "displayName") (aget payload "display_name") email)))]
+                                         (-> (query-one! pool "INSERT INTO users (email, display_name, auth_provider, external_subject, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, auth_provider = EXCLUDED.auth_provider, external_subject = EXCLUDED.external_subject, status = EXCLUDED.status, updated_at = NOW() RETURNING *"
+                                                          [email (or dn email) (str (or (aget payload "authProvider") "local")) (or (aget payload "externalSubject") nil) (str (or (aget payload "status") "active"))])
+                                             (.then (fn [user]
+                                                      (-> (query-one! pool "INSERT INTO memberships (user_id, org_id, status, is_default) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, org_id) DO UPDATE SET status = EXCLUDED.status, is_default = EXCLUDED.is_default, updated_at = NOW() RETURNING *"
+                                                                       [(aget user "id") org-id (str (or (aget payload "membershipStatus") "active")) (not= (aget payload "isDefault") false)])
+                                                          (.then (fn [ms] (set-membership-roles! pool (aget ms "id") {:org-id org-id :role-ids (or (aget payload "roleIds") #js []) :role-slugs (or (aget payload "roleSlugs") #js ["knowledge_worker"]) :replace true})))
+                                                          (.then (fn [_] (append-audit! pool {:actor-user-id uid :actor-membership-id mid :org-id org-id :action "user.create_or_update" :resource-kind "user" :resource-id (aget user "id")})))
+                                                          (.then (fn [_] #js {:user nil}))))))))))
+
+                                 :listMemberships
+                                 (fn [opts]
+                                   (let [org-id (aget opts "orgId")]
+                                     (if (str/blank? org-id)
+                                       (js/Promise.reject (js/Error. "orgId is required"))
+                                       (-> (query! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.org_id = $1::uuid ORDER BY m.created_at ASC" [org-id])
+                                           (.then (fn [r] (hydrate-memberships pool (aget r "rows"))))
+                                           (.then (fn [ms] #js {:memberships (into-array ms)}))))))
+
+                                 :getMembership
+                                 (fn [membership-id]
+                                   (-> (query-one! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.id = $1::uuid" [membership-id])
+                                       (.then (fn [row]
+                                                (if row
+                                                  (-> (hydrate-memberships pool [row])
+                                                      (.then (fn [h] #js {:membership (first h)})))
+                                                  #js {:membership nil})))))
+
+                                 :setMembershipRoles
+                                 (fn [membership-id payload]
+                                   (-> (query-one! pool "SELECT * FROM memberships WHERE id = $1" [membership-id])
+                                       (.then (fn [ms]
+                                                (if-not ms
+                                                  (js/Promise.reject (js/Error. "membership not found"))
+                                                  (-> (set-membership-roles! pool membership-id {:org-id (aget ms "org_id") :role-ids (or (aget payload "roleIds") #js []) :role-slugs (or (aget payload "roleSlugs") #js []) :replace (not= (aget payload "replace") false)})
+                                                      (.then (fn [_] (append-audit! pool {:actor-user-id uid :actor-membership-id mid :org-id (aget ms "org_id") :action "membership.roles.update" :resource-kind "membership" :resource-id membership-id})))
+                                                      (.then (fn [_] #js {:membership nil}))))))))
+
+                                 :setMembershipToolPolicies
+                                 (fn [membership-id payload]
+                                   (-> (query-one! pool "SELECT * FROM memberships WHERE id = $1" [membership-id])
+                                       (.then (fn [ms]
+                                                (if-not ms
+                                                  (js/Promise.reject (js/Error. "membership not found"))
+                                                  (-> (set-membership-tool-policies! pool membership-id (or (aget payload "toolPolicies") #js []))
+                                                      (.then (fn [_] (append-audit! pool {:actor-user-id uid :actor-membership-id mid :org-id (aget ms "org_id") :action "membership.tool_policy.update" :resource-kind "membership" :resource-id membership-id})))
+                                                      (.then (fn [_] #js {:membership nil}))))))))
+
+                                 :listDataLakes
+                                 (fn [opts]
+                                   (let [org-id (aget opts "orgId")]
+                                     (if (str/blank? org-id)
+                                       (js/Promise.reject (js/Error. "orgId is required"))
+                                       (-> (query! pool "SELECT * FROM data_lakes WHERE org_id = $1::uuid ORDER BY name ASC" [org-id])
+                                           (.then (fn [r] #js {:dataLakes (into-array (map ->js-data-lake (aget r "rows")))}))))))
+
+                                 :createDataLake
+                                 (fn [payload]
+                                   (let [org-id (str/trim (str (or (aget payload "orgId") (aget payload "org_id") "")))
+                                         name (str/trim (str (or (aget payload "name") "")))]
+                                     (cond
+                                       (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
+                                       (str/blank? name) (js/Promise.reject (js/Error. "name is required"))
+                                       :else
+                                       (let [slug (slugify (or (aget payload "slug") name) "lake")
+                                             kind (str (or (aget payload "kind") "workspace_docs"))
+                                             status (str (or (aget payload "status") "active"))
+                                             config (normalize-lake-config (or (aget payload "config") (aget payload "config_json")))]
+                                         (-> (query-one! pool "INSERT INTO data_lakes (org_id, name, slug, kind, config_json, status) VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING *"
+                                                          [org-id name slug kind (js/JSON.stringify (clj->js config)) status])
+                                             (.then (fn [lake]
+                                                      (-> (append-audit! pool {:actor-user-id uid :actor-membership-id mid :org-id org-id :action "data_lake.create" :resource-kind "data_lake" :resource-id (aget lake "id")})
+                                                          (.then (fn [_] #js {:dataLake (->js-data-lake lake)}))))))))))}))))
+               (.catch reject))))))))))))))
