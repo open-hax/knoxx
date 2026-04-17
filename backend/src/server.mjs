@@ -55,6 +55,18 @@ const runtime = {
 const config = readConfig();
 const app = Fastify({ logger: true });
 
+// Allow POST/PUT/PATCH with Content-Type: application/json but empty body.
+// Fastify's default JSON parser throws FST_ERR_CTP_EMPTY_JSON_BODY in this case,
+// but some routes (e.g. /api/admin/config/event-agents/jobs/:jobId/run) are
+// POST-without-body by design, and the browser may still send the header.
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+  try {
+    done(null, body === '' ? {} : JSON.parse(body));
+  } catch (err) {
+    done(err);
+  }
+});
+
 await app.register(fastifyCors, { origin: true });
 await app.register(fastifyCookie);
 await app.register(fastifyMultipart);

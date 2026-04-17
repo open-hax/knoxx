@@ -84,11 +84,12 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
 
   try {
+    const hasBody = init?.body != null;
     response = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
       headers: {
         ...Object.fromEntries(buildKnoxxAuthHeaders({
-          "Content-Type": "application/json",
+          ...(hasBody ? { "Content-Type": "application/json" } : {}),
           ...(init?.headers ?? {}),
         }).entries()),
       },
