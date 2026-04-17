@@ -56,7 +56,7 @@ function App() {
         </div>
       </header>
 
-      {/* Main content area - switches between regular pages and workbench Shell */}
+      {/* Main content area */}
       <main className="app-shell__main">
         <Routes>
           {/* Regular pages */}

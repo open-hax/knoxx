@@ -230,12 +230,18 @@ select {
 }
 
 .app-shell__main {
-  padding: 1rem;
   width: 100%;
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Pages that need padding can add their own wrapper */
+.app-shell__main > .ops-root,
+.app-shell__main > .admin-layout,
+.app-shell__main > [data-page="settings"] {
+  padding: 1rem;
 }
 
 /* When Shell is inside app-shell__main, remove padding to let Shell fill the space */

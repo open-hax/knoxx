@@ -11,7 +11,7 @@ function ChatPage() {
     <div
       style={{
         display: "flex",
-        height: "calc(100vh - 96px)",
+        flex: "1 1 0%",
         gap: 0,
         minHeight: 0,
         background:

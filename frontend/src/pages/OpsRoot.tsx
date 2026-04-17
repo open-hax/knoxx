@@ -24,7 +24,7 @@ export default function OpsRoot() {
   }, []);
 
   return (
-    <div className="flex h-[calc(100vh-80px)] w-full flex-col bg-slate-50 dark:bg-slate-900 overflow-hidden text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg transition-colors duration-200">
+    <div className="ops-root flex flex-1 w-full flex-col bg-slate-50 dark:bg-slate-900 overflow-hidden text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg transition-colors duration-200">
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar Nav */}
         <aside className="w-64 min-h-0 overflow-hidden flex flex-col bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 transition-colors duration-200 h-full">
@@ -77,7 +77,7 @@ export default function OpsRoot() {
             <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="admin/*" element={<AdminLayout />} />
-            <Route path="*" element={<Navigate to={opsRoutes.dashboard} replace />} />
+            <Route path="*" element={<Navigate to={opsRoutes.documents} replace />} />
           </Routes>
         </main>
       </div>

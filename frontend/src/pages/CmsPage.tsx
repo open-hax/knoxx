@@ -552,7 +552,7 @@ function CmsPage() {
   const currentParentPath = currentPath.includes("/") ? currentPath.split("/").slice(0, -1).join("/") : "";
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 120px)", gap: 0, minHeight: 0 }}>
+    <div style={{ display: "flex", flex: "1 1 0%", gap: 0, minHeight: 0 }}>
       {showFiles ? (
         <ContextBar
           sidebarWidthPx={sidebarWidthPx}

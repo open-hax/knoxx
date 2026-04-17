@@ -363,7 +363,7 @@ export default function AdminLayout() {
   const looksLikeAdmin = Boolean(ctx.context?.isSystemAdmin || ctx.hasPermission('org.users.read') || ctx.hasPermission('org.roles.read'));
 
   return (
-    <div className="flex h-[calc(100vh-80px)] flex-col overflow-hidden">
+    <div className="admin-layout flex flex-1 flex-col overflow-hidden">
       {/* Compact header */}
       <div className="shrink-0 border-b border-slate-700/50 bg-slate-900/80 px-4 py-2">
         <div className="flex items-center justify-between">

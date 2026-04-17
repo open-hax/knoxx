@@ -5,7 +5,7 @@ describe('app routes', () => {
   it('builds canonical ops routes without duplicate slashes', () => {
     expect(joinPath('/ops/', '/admin/')).toBe('/ops/admin');
     expect(joinPath('/ops', '')).toBe('/ops');
-    expect(opsRoutes.dashboard).toBe('/ops/dashboard');
+    expect(opsRoutes.documents).toBe('/ops/documents');
     expect(opsRoutes.docsView).toBe('/ops/docs/view');
   });
 

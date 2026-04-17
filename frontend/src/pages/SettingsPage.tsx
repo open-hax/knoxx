@@ -14,7 +14,7 @@ export default function SettingsPage() {
   if (!loaded) return <div className="p-6 text-sm text-slate-400">Loading…</div>;
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-6">
+    <div data-page="settings" className="p-6 max-w-3xl mx-auto space-y-6">
       <div>
         <h1 className="text-xl font-bold text-slate-100">Settings</h1>
         <p className="mt-1 text-sm text-slate-400">Knoxx runtime configuration.</p>

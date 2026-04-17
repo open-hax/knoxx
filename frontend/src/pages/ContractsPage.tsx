@@ -502,7 +502,7 @@ export default function ContractsPage() {
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 48px)", minHeight: 0, background: palette.bg.default, color: palette.fg.default }}>
+    <div style={{ display: "flex", flex: "1 1 0%", minHeight: 0, background: palette.bg.default, color: palette.fg.default }}>
       {/* ── Left sidebar: Agent browser ──────────────────────────────── */}
       <div style={{
         width: 320, minWidth: 280, borderRight: `1px solid ${palette.fg.subtle}`,
