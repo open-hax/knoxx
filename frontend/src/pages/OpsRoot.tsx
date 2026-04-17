@@ -8,17 +8,13 @@ import VectorsPage from './VectorsPage';
 import RawGraphExportPage from './RawGraphExportPage';
 import SourceDocPage from './SourceDocPage';
 import AgentsPage from './AgentsPage';
-import ContractsPage from './ContractsPage';
 import AdminPage from './AdminPage';
 import SidebarOpsStatus from '../components/SidebarOpsStatus';
-import TranslationReviewPage from './TranslationReviewPage';
 
 const navItems = [
   { label: 'Dashboard', path: opsRoutes.dashboard },
   { label: 'Lakes', path: opsRoutes.documents },
   { label: 'Agents', path: opsRoutes.agents },
-  { label: 'Contracts', path: opsRoutes.contracts },
-  { label: 'Translations', path: joinPath(OPS_BASE_PATH, 'translations') },
   { label: 'Graph', path: opsRoutes.vectors },
   { label: 'Settings', path: opsRoutes.settings },
   { label: 'Admin', path: opsRoutes.admin },
@@ -81,9 +77,6 @@ export default function OpsRoot() {
             <Route path="docs/view" element={<SourceDocPage />} />
             <Route path="vectors" element={<VectorsPage />} />
             <Route path="agents" element={<AgentsPage />} />
-            <Route path="contracts" element={<ContractsPage />} />
-            <Route path="translations" element={<TranslationReviewPage />} />
-            <Route path="translations/:documentId/:targetLang" element={<TranslationReviewPage />} />
             <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="admin" element={<AdminPage />} />

@@ -7,11 +7,9 @@ import { useAuth } from "./pages/useAuth";
 import { Shell } from "./shell/Shell";
 import ChatPage from "./pages/ChatPage";
 import CmsPage from "./pages/CmsPage";
+import ContractsPage from "./pages/ContractsPage";
 import GardensPage from "./pages/GardensPage";
-import IngestionPage from "./pages/IngestionPage";
 import OpsRoot from "./pages/OpsRoot";
-import QueryPage from "./pages/QueryPage";
-import RunsPage from "./pages/RunsPage";
 import TranslationReviewPage from "./pages/TranslationReviewPage";
 import WorkbenchPage from "./pages/WorkbenchPage";
 
@@ -60,17 +58,11 @@ function App() {
             <NavLink to="/cms" className={navLinkClass}>
               CMS
             </NavLink>
-            <NavLink to="/ingestion" className={navLinkClass}>
-              Ingestion
-            </NavLink>
-            <NavLink to="/query" className={navLinkClass}>
-              Query
+            <NavLink to="/contracts" className={navLinkClass}>
+              Contracts
             </NavLink>
             <NavLink to="/gardens" className={navLinkClass}>
               Gardens
-            </NavLink>
-            <NavLink to="/runs" className={navLinkClass}>
-              Runs
             </NavLink>
             <NavLink to="/translations" className={navLinkClass}>
               Translations
@@ -123,10 +115,8 @@ function App() {
           {/* Regular pages */}
           <Route path="/" element={<ChatPage />} />
           <Route path="/cms" element={<CmsPage />} />
-          <Route path="/ingestion" element={<IngestionPage />} />
-          <Route path="/query" element={<QueryPage />} />
+          <Route path="/contracts" element={<ContractsPage />} />
           <Route path="/gardens" element={<GardensPage />} />
-          <Route path="/runs" element={<RunsPage />} />
           <Route path="/translations" element={<TranslationReviewPage />} />
           <Route path="/translations/:documentId/:targetLang" element={<TranslationReviewPage />} />
           <Route path="/ops/*" element={<OpsRoot />} />

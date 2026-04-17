@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Card, Input } from "@open-hax/uxx";
+import { TranslationModelSection } from "../components/admin-page/TranslationModelSection";
 import {
   getTranslationDocument,
   listTranslationDocuments,
@@ -350,6 +351,7 @@ export default function TranslationReviewPage() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showPipelineConfig, setShowPipelineConfig] = useState(false);
 
   // Load document list
   const loadDocuments = useCallback(async () => {
@@ -511,7 +513,12 @@ export default function TranslationReviewPage() {
       >
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-bold text-slate-800 dark:text-slate-100">Translation Review</h1>
-          <Button variant="ghost" onClick={() => void handleExport()}>Export SFT</Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => setShowPipelineConfig((v) => !v)}>
+              {showPipelineConfig ? "Hide Config" : "⚙ Pipeline"}
+            </Button>
+            <Button variant="ghost" onClick={() => void handleExport()}>Export SFT</Button>
+          </div>
         </div>
         <div className="mt-2 flex gap-3">
           <label className="block text-sm">
@@ -544,6 +551,11 @@ export default function TranslationReviewPage() {
             </div>
           )}
         </div>
+        {showPipelineConfig ? (
+          <div className="mt-3">
+            <TranslationModelSection canManage={true} />
+          </div>
+        ) : null}
       </div>
 
       {/* Notices */}
