@@ -376,15 +376,23 @@
     (or (empty? keywords)
         (some #(str/includes? lowered %) keywords))))
 
+(defn- mention-event?
+  [event-kind]
+  (some #(= (str event-kind) %) ["discord.message.mention"]))
+
 (defn- job-matches-event?
   [control job event]
-  (let [payload (or (:payload event) {})]
+  (let [payload (or (:payload event) {})
+        event-kind (:eventKind event)]
     (and (:enabled job)
          (= "event" (get-in job [:trigger :kind]))
          (= (str (get-in job [:source :kind])) (str (:sourceKind event)))
-         (matches-event-kind? job (:eventKind event))
+         (matches-event-kind? job event-kind)
          (matches-channel? control job (:channelId payload))
-         (matches-keywords? control job (:content payload))
+         ;; Keyword filter does not apply to mention events — the mention
+         ;; itself is the trigger signal, regardless of content words.
+         (or (mention-event? event-kind)
+             (matches-keywords? control job (:content payload)))
          (matches-repository? job (:repository payload)))))
 
 (defn dispatch-event!
