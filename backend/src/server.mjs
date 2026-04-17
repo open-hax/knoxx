@@ -26,15 +26,6 @@ globalThis.require = globalThis.require || createRequire(import.meta.url);
 const discordGateway = createDiscordGatewayManager({ log: console });
 globalThis.knoxxDiscordGateway = discordGateway;
 
-const bootDiscordToken = (process.env.DISCORD_BOT_TOKEN || '').trim();
-if (bootDiscordToken) {
-  try {
-    await discordGateway.start(bootDiscordToken);
-  } catch (error) {
-    console.error('[discord-gateway] failed to start at boot', error);
-  }
-}
-
 const policyDb = await createPolicyDb({
   connectionString: process.env.KNOXX_POLICY_DATABASE_URL || process.env.DATABASE_URL || '',
   primaryOrgSlug: process.env.KNOXX_PRIMARY_ORG_SLUG || 'open-hax',
@@ -58,7 +49,6 @@ const runtime = {
   execFileAsync: promisify(execFile),
   policyDb,
   nodemailer,
-  discordGateway,
 };
 
 const config = readConfig();

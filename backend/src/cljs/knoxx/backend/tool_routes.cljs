@@ -1,7 +1,9 @@
 (ns knoxx.backend.tool-routes
   (:require [clojure.string :as str]
+            [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.http :as backend-http]
+            [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.runtime-config :as runtime-config]))
 
 (defn send-email!
@@ -50,8 +52,8 @@
 
 (defn- restart-discord-gateway!
   [token]
-  (when-let [manager (aget js/globalThis "knoxxDiscordGateway")]
-    (-> (.restart manager token)
+  (when (dg/started?)
+    (-> (dg/restart! token)
         (.catch (fn [_] nil)))))
 
 (defn register-tool-routes!
@@ -476,4 +478,43 @@
               (fn [ctx]
                 (ensure-permission! ctx "platform.org.read")
                 (json-response! reply 200 (:runtime (event-agents-control-response config)))))))
+
+  ;; MCP (Model Context Protocol) routes
+  (route! app "GET" "/api/mcp/status"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx
+                  (ensure-permission! ctx "agent.chat.use"))
+                (json-response! reply 200 (mcp/status))))))
+
+  (route! app "GET" "/api/mcp/catalog"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx
+                  (ensure-permission! ctx "agent.chat.use"))
+                (json-response! reply 200 {:tools (mcp/catalog)
+                                           :enabled (mcp/enabled?)})))))
+
+  (route! app "POST" "/api/mcp/call"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (try
+                  (when ctx
+                    (ensure-permission! ctx "agent.chat.use"))
+                  (let [body (or (aget request "body") #js {})
+                        tool-id (str (or (aget body "toolId") ""))
+                        args (js->clj (or (aget body "arguments") #js {}) :keywordize-keys true)]
+                    (if (str/blank? tool-id)
+                      (json-response! reply 400 {:detail "toolId is required"})
+                      (-> (mcp/call-tool! tool-id args)
+                          (.then (fn [result]
+                                   (json-response! reply 200 result)))
+                          (.catch (fn [err]
+                                    (json-response! reply 502 {:detail (str "MCP tool call failed: " (or (aget err "message") (str err)))}))))))
+                  (catch :default err
+                    (error-response! reply err)))))))
+
   nil)

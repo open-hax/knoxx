@@ -5,6 +5,7 @@
    Jobs describe triggers + source filters + arbitrary agent specs.
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
+            [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.runtime-config :as runtime-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]))
@@ -33,7 +34,7 @@
 
 (defn- discord-gateway-manager
   []
-  (aget js/globalThis "knoxxDiscordGateway"))
+  (dg/gateway-manager))
 
 (defn- discord-gateway-active?
   []

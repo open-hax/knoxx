@@ -2,9 +2,11 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
+            [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
             [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? http-error js-array-seq]]
+            [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-semantic-search!]]
             [knoxx.backend.runtime-config :as runtime-config :refer [default-settings]]
             [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-semantic-search-text openplanner-session-text graph-query-result-text websearch-result-text]]))
@@ -175,6 +177,32 @@
                 (passive-memory-hydration-text memory) (conj (passive-memory-hydration-text memory)))]
     (str/join "\n\n" parts)))
 
+(defn build-agent-multimodal-message
+  "Build a multimodal message for models that support images, audio, video, and documents.
+   Returns a JavaScript array of content parts suitable for the agent SDK."
+  [message content-parts hydration memory]
+  (let [text-content (str/join "\n\n"
+                               (cond-> [(str "User request:\n" message)]
+                                 (passive-hydration-text hydration) (conj (passive-hydration-text hydration))
+                                 (passive-memory-hydration-text memory) (conj (passive-memory-hydration-text memory))))
+        ;; Start with text part
+        base-parts [{:type "text" :text text-content}]]
+    ;; Append multimodal content parts
+    (if (seq content-parts)
+      (let [multimodal-parts (mapv (fn [part]
+                                     (let [type (:type part)
+                                           data (or (:data part) (:url part))
+                                           mime-type (:mimeType part)]
+                                       (case type
+                                         :image {:type "image" :data data :mimeType mime-type}
+                                         :audio {:type "audio" :data data :mimeType mime-type}
+                                         :video {:type "video" :data data :mimeType mime-type}
+                                         :document {:type "document" :data data :mimeType mime-type :filename (:filename part)}
+                                         {:type "text" :text (str "[Unknown content type: " type "]")})))
+                                   content-parts)]
+        (clj->js (into base-parts multimodal-parts)))
+      (clj->js base-parts))))
+
 (defn hydration-sources
   [hydration]
   (if (seq (:results hydration))
@@ -253,7 +281,7 @@
 
 (defn- discord-gateway-manager
   []
-  (aget js/globalThis "knoxxDiscordGateway"))
+  (dg/gateway-manager))
 
 (defn- discord-gateway-started?
   []
@@ -560,23 +588,292 @@
                                  :payload payload}))
 
 (defn- event-agent-upsert-job!
+  "Create or update an event-agent job with Redis-first persistence.
+   
+   Supports two modes:
+   1. Template-based: job-patch contains :templateId keyword
+   2. Direct spec: job-patch contains full job definition
+   
+   Writes to Redis (hot store) and marks dirty for SQL flush.
+   Does NOT mutate in-memory config* - Redis is source of truth."
   [config job-id job-patch]
-  (let [live (live-config config)
-        current-control (runtime-config/event-agent-control-config live)
-        existing (some #(when (= (:id %) job-id) %) (:jobs current-control))
-        next-job (merge existing job-patch {:id job-id})
-        next-jobs (->> (:jobs current-control)
-                       (remove #(= (:id %) job-id))
-                       (cons next-job)
-                       vec)
-        next-control (runtime-config/event-agent-control-config (assoc live :event-agent-control (assoc current-control :jobs next-jobs)))]
-    (swap! runtime-config/config*
-           (fn [current]
-             (assoc (or current (runtime-config/cfg))
-                    :event-agent-control next-control)))
+  (let [;; Check if this is a template-based instantiation
+        template-id (or (:templateId job-patch)
+                        (:template-id job-patch))
+        
+        ;; Build the complete job spec
+        next-job (if template-id
+                   ;; Template mode: instantiate from template DSL
+                   (let [trigger (or (:trigger job-patch)
+                                     {:kind "event" :cadenceMinutes 5 :eventKinds []})
+                         source (or (:source job-patch)
+                                    {:kind "manual" :mode "respond" :config {}})
+                         filters (or (:filters job-patch)
+                                     {:channels [] :keywords []})
+                         overrides (dissoc job-patch :templateId :template-id :trigger :source :filters)]
+                     (templates/instantiate-job template-id job-id trigger source filters overrides))
+                   ;; Direct mode: merge with existing or use patch as-is
+                   (let [live (live-config config)
+                         current-control (runtime-config/event-agent-control-config live)
+                         existing (some #(when (= (:id %) job-id) %) (:jobs current-control))]
+                     (merge existing job-patch {:id job-id})))
+        
+        ;; Normalize for persistence (ensures thinking-level, timestamps, etc.)
+        normalized-job (templates/normalize-job-for-persistence next-job)]
+    
+    ;; Write to Redis (hot store) - this is the canonical persistence path
+    (event-agents/update-job-spec! job-id normalized-job)
+    
+    ;; Reload runtime to pick up the change
     (event-agents/reload!)
-    {:job (some #(when (= (:id %) job-id) %) (:jobs next-control))
-     :control next-control}))
+    
+    {:job normalized-job
+     :message (str "Upserted job " job-id " to Redis (dirty queue for SQL flush)")
+     :templateId template-id
+     :thinkingLevel (get-in normalized-job [:agentSpec :thinkingLevel])}))
+
+;;; ========================================================================
+;;; Music/Audio Tools
+;;; ========================================================================
+
+(defn- music-audd-lookup!
+  "Identify a song from an audio file using AudD API."
+  [config file-path]
+  (let [node-fs (aget (.-env js/process) "fs" js/runtime)
+        audd-token (:audd-api-token config)]
+    (if (str/blank? audd-token)
+      (js/Promise.resolve {:error "AUDD_API_TOKEN not configured"
+                          :hint "Set audd-api-token in Knoxx config to enable music identification"})
+      (-> (js/Promise.resolve file-path)
+          (.then (fn [_]
+                   ;; For now, return a placeholder until we wire up actual file upload
+                   {:status "ready"
+                    :message "AudD integration ready - requires file upload implementation"
+                    :token-configured (not (str/blank? audd-token))}))))))
+
+(defn- music-acoustid-lookup!
+  "Look up audio fingerprint via AcoustID API."
+  [config fingerprint duration]
+  (let [acoustid-key (:acoustid-api-key config)]
+    (if (str/blank? acoustid-key)
+      (js/Promise.resolve {:error "ACOUSTID_API_KEY not configured"
+                          :hint "Set acoustid-api-key in Knoxx config to enable AcoustID lookups"})
+      (let [url (str "https://api.acoustid.org/v2/lookup?client=" acoustid-key
+                    "&duration=" (or duration 25)
+                    "&fingerprint=" fingerprint
+                    "&meta=recordings+recordingids+releasegroups")]
+        (-> (js/fetch url)
+            (.then (fn [resp]
+                     (if (.-ok resp)
+                       (.json resp)
+                       (-> (.text resp)
+                           (.then (fn [text]
+                                    (throw (js/Error. (str "AcoustID HTTP " (.-status resp) ": " text))))))))
+            (.then (fn [result]
+                     {:status "ok"
+                      :result (js->clj result :keywordize-keys true)}))))))))
+
+(defn- music-musicbrainz-recording!
+  "Look up MusicBrainz recording by MBID."
+  [mbid]
+  (let [url (str "https://musicbrainz.org/ws/2/recording/" mbid
+                "?inc=isrcs+releases+release-groups&fmt=json")]
+    (-> (js/Promise.resolve nil)
+        (.then (fn [_]
+                 ;; Rate limiting: wait 1.1s before MusicBrainz requests
+                 (js/Promise. (fn [resolve]
+                                (js/setTimeout resolve 1100)))))
+        (.then (fn [_]
+                 (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0 (discord bot)"}})))
+        (.then (fn [resp]
+                 (if (.-ok resp)
+                   (.json resp)
+                   {:error (str "MusicBrainz HTTP " (.-status resp))})))
+        (.then (fn [result]
+                 {:status "ok"
+                  :mbid mbid
+                  :result (js->clj result :keywordize-keys true)})))))
+
+(defn- music-copyright-check!
+  "Check if audio is likely copyrighted based on ISRC presence."
+  [config audio-data]
+  (let [isrc (get audio-data :isrc)
+        apple-music-isrc (get-in audio-data [:apple_music :isrc])
+        spotify-isrc (get-in audio-data [:spotify :external_ids :isrc])
+        has-isrc (or (not (str/blank? isrc))
+                     (not (str/blank? apple-music-isrc))
+                     (not (str/blank? spotify-isrc)))]
+    {:decision (if has-isrc "BLOCK" "UNKNOWN")
+     :reason (if has-isrc
+               "ISRC found - recording is commercially released"
+               "No ISRC found - copyright status unclear")
+     :isrcs {:primary isrc
+             :apple_music apple-music-isrc
+             :spotify spotify-isrc}}))
+
+(defn create-music-custom-tools
+  "Create music/audio identification and analysis tools."
+  ([runtime config] (create-music-custom-tools runtime config nil))
+  ([runtime config auth-context]
+   (let [Type (aget runtime "Type")
+         allowed? (fn [tool-id]
+                    (or (nil? auth-context)
+                        (ctx-tool-allowed? auth-context tool-id)))
+
+         ;; Tool parameter schemas
+         identify-file-params (.Object Type
+                                       #js {:file_path (.String Type #js {:description "Path to the audio file to identify."})})
+         acoustid-params (.Object Type
+                                  #js {:fingerprint (.String Type #js {:description "AcoustID fingerprint string."})
+                                       :duration (.Optional Type (.Number Type #js {:description "Duration in seconds (default 25)."}))})
+         musicbrainz-params (.Object Type
+                                     #js {:mbid (.String Type #js {:description "MusicBrainz recording ID (MBID)."})})
+         copyright-params (.Object Type
+                                   #js {:audio_data_json (.String Type #js {:description "JSON object containing audio metadata with ISRC fields from AudD or similar."})})
+
+         ;; Execute functions
+         identify-file-execute (fn [_tool-call-id params a b c]
+                                 (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                       file-path (aget params "file_path")]
+                                   (maybe-tool-update! on-update (str "Identifying song from file: " file-path "…"))
+                                   (-> (music-audd-lookup! config file-path)
+                                       (.then (fn [result]
+                                                (tool-text-result
+                                                 (str "Music identification result: " (:status result)
+                                                      (when-let [song (get-in result [:result :title])]
+                                                        (str " - " song " by " (get-in result [:result :artist]))))
+                                                 result))))))
+
+         acoustid-execute (fn [_tool-call-id params a b c]
+                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                  fingerprint (aget params "fingerprint")
+                                  duration (aget params "duration")]
+                              (maybe-tool-update! on-update "Looking up AcoustID fingerprint…")
+                              (-> (music-acoustid-lookup! config fingerprint duration)
+                                  (.then (fn [result]
+                                           (tool-text-result
+                                            (str "AcoustID lookup: " (:status result)
+                                                 (when-let [results (get-in result [:result :results])]
+                                                   (str " - found " (count results) " matches")))
+                                            result))))))
+
+         musicbrainz-execute (fn [_tool-call-id params a b c]
+                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                     mbid (aget params "mbid")]
+                                 (maybe-tool-update! on-update (str "Looking up MusicBrainz recording " mbid "…"))
+                                 (-> (music-musicbrainz-recording! mbid)
+                                     (.then (fn [result]
+                                              (tool-text-result
+                                               (str "MusicBrainz recording: " mbid
+                                                    (when-let [title (get-in result [:result :title])]
+                                                      (str " - " title)))
+                                               result))))))
+
+         copyright-check-execute (fn [_tool-call-id params a b c]
+                                   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                         audio-data-json (aget params "audio_data_json")
+                                         audio-data (try
+                                                      (js->clj (.parse js/JSON audio-data-json) :keywordize-keys true)
+                                                      (catch :default _ nil))]
+                                     (if (nil? audio-data)
+                                       (tool-text-result "Invalid audio_data_json" {:error "Invalid JSON"})
+                                       (let [result (music-copyright-check! config audio-data)]
+                                         (maybe-tool-update! on-update "Checking copyright status…")
+                                         (tool-text-result
+                                          (str "Copyright decision: " (:decision result) " - " (:reason result))
+                                          result)))))
+
+         ;; Placeholder tools for audio processing (require ffmpeg)
+         spectrogram-execute (fn [_tool-call-id params a b c]
+                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                     source (aget params "source")]
+                                 (maybe-tool-update! on-update "Audio spectrogram generation…")
+                                 (tool-text-result
+                                  (str "Audio spectrogram placeholder for: " source
+                                       " - requires ffmpeg and execa package")
+                                  {:status "placeholder"
+                                   :hint "Install with: apt install ffmpeg && pnpm add execa"})))
+
+         waveform-execute (fn [_tool-call-id params a b c]
+                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                  source (aget params "source")]
+                              (maybe-tool-update! on-update "Audio waveform generation…")
+                              (tool-text-result
+                               (str "Audio waveform placeholder for: " source
+                                    " - requires ffmpeg and execa package")
+                               {:status "placeholder"
+                                :hint "Install with: apt install ffmpeg && pnpm add execa"})))
+
+         audio-params (.Object Type
+                               #js {:source (.String Type #js {:description "Path or URL to the audio file."})
+                                    :width (.Optional Type (.Number Type #js {:description "Output width in pixels."}))
+                                    :height (.Optional Type (.Number Type #js {:description "Output height in pixels."}))})]
+
+     (clj->js
+      (vec
+       (remove nil?
+                [(when (allowed? "music.identify_file")
+                   (doto (js-obj)
+                     (aset "name" "music.identify_file")
+                     (aset "label" "Music Identify File")
+                     (aset "description" "Identify a song from an audio file using AudD API.")
+                     (aset "promptSnippet" "Identify songs from audio files when you need to know what music is playing.")
+                     (aset "promptGuidelines" (clj->js ["Use music.identify_file when you have an audio file and need to identify the song."
+                                                        "Returns song title, artist, album, and ISRC when found."]))
+                     (aset "parameters" identify-file-params)
+                     (aset "execute" identify-file-execute)))
+                 (when (allowed? "music.acoustid_lookup")
+                   (doto (js-obj)
+                     (aset "name" "music.acoustid_lookup")
+                     (aset "label" "AcoustID Lookup")
+                     (aset "description" "Look up audio fingerprint via AcoustID API to identify recordings.")
+                     (aset "promptSnippet" "Look up AcoustID fingerprints to identify music by its acoustic signature.")
+                     (aset "promptGuidelines" (clj->js ["Use music.acoustid_lookup when you have a fingerprint from chromaprint or similar."
+                                                        "Requires AcoustID API key in config."]))
+                     (aset "parameters" acoustid-params)
+                     (aset "execute" acoustid-execute)))
+                 (when (allowed? "music.musicbrainz_recording")
+                   (doto (js-obj)
+                     (aset "name" "music.musicbrainz_recording")
+                     (aset "label" "MusicBrainz Recording")
+                     (aset "description" "Look up MusicBrainz recording metadata by MBID.")
+                     (aset "promptSnippet" "Fetch detailed recording metadata from MusicBrainz.")
+                     (aset "promptGuidelines" (clj->js ["Use music.musicbrainz_recording when you have a MusicBrainz ID (MBID)."
+                                                        "Returns ISRCs, releases, release groups, and other metadata."
+                                                        "Rate-limited to 1 request per second."]))
+                     (aset "parameters" musicbrainz-params)
+                     (aset "execute" musicbrainz-execute)))
+                 (when (allowed? "music.copyright_check")
+                   (doto (js-obj)
+                     (aset "name" "music.copyright_check")
+                     (aset "label" "Music Copyright Check")
+                     (aset "description" "Check if audio is likely copyrighted based on ISRC presence.")
+                     (aset "promptSnippet" "Check copyright status of identified music before using it.")
+                     (aset "promptGuidelines" (clj->js ["Use music.copyright_check after music identification to assess copyright risk."
+                                                        "Returns BLOCK if ISRC found (commercially released), UNKNOWN otherwise."
+                                                        "Pass audio_data_json from AudD or similar identification result."]))
+                     (aset "parameters" copyright-params)
+                     (aset "execute" copyright-check-execute)))
+                 (when (allowed? "audio.spectrogram")
+                   (doto (js-obj)
+                     (aset "name" "audio.spectrogram")
+                     (aset "label" "Audio Spectrogram")
+                     (aset "description" "Generate a spectrogram image from an audio file. (Placeholder - requires ffmpeg)")
+                     (aset "promptSnippet" "Visualize audio as a spectrogram to see frequencies over time.")
+                     (aset "promptGuidelines" (clj->js ["Use audio.spectrogram to visualize audio frequency content."
+                                                        "Currently a placeholder until ffmpeg is integrated."]))
+                     (aset "parameters" audio-params)
+                     (aset "execute" spectrogram-execute)))
+                 (when (allowed? "audio.waveform")
+                   (doto (js-obj)
+                     (aset "name" "audio.waveform")
+                     (aset "label" "Audio Waveform")
+                     (aset "description" "Generate a waveform image from an audio file. (Placeholder - requires ffmpeg)")
+                     (aset "promptSnippet" "Visualize audio as a waveform to see amplitude over time.")
+                     (aset "promptGuidelines" (clj->js ["Use audio.waveform to visualize audio amplitude."
+                                                        "Currently a placeholder until ffmpeg is integrated."]))
+                     (aset "parameters" audio-params)
+                     (aset "execute" waveform-execute)))]))))))
 
 (defn create-discord-custom-tools
   ([runtime config] (create-discord-custom-tools runtime config nil))
@@ -1224,9 +1521,20 @@
                           (ctx-tool-allowed? auth-context "create_new_file"))
                   create-new-file-tool)]))))))
 
+(defn create-mcp-custom-tools
+  "Create agent SDK custom tools for all connected MCP servers.
+   Returns a JS array of tool objects, or an empty array if MCP is disabled."
+  ([runtime config] (create-mcp-custom-tools runtime config nil))
+  ([runtime config auth-context]
+   (if (and (:mcp-enabled config) (mcp/available?) (mcp/enabled?))
+     (or (mcp/mcp-tools-for-agent) #js [])
+     #js [])))
+
 (defn create-knoxx-custom-tools
   ([runtime config] (create-knoxx-custom-tools runtime config nil))
   ([runtime config auth-context]
-   (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
-                     (create-discord-custom-tools runtime config auth-context))
-            (create-openplanner-custom-tools runtime config auth-context))))
+   (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
+                                       (create-discord-custom-tools runtime config auth-context))
+                              (create-openplanner-custom-tools runtime config auth-context))
+                     (create-music-custom-tools runtime config auth-context))
+            (create-mcp-custom-tools runtime config auth-context))))

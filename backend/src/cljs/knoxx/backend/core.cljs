@@ -3,6 +3,7 @@
             [knoxx.backend.agent-turns :as agent-turns :refer [recover-active-agent-sessions! lounge-messages*]]
             [knoxx.backend.app-routes :as app-routes]
             [knoxx.backend.event-agents :as event-agents]
+            [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.realtime :as realtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-recovery :as session-recovery]
@@ -21,16 +22,22 @@
   (clj->js (cfg)))
 
 (defn register-app-routes!
-  [runtime app]
-  (let [config (cfg)]
-    (reset! runtime-config/config* config)
-    (ensure-settings! config)
-    (app-routes/register-routes! runtime app config lounge-messages*)
-    (event-agents/start! config)
-    ;; Async bootstrap: connect Redis (session persistence) and start recovery loop.
-    (-> (session-recovery/start! runtime app config)
+  [runtime app config lounge-messages*]
+  (ensure-settings! config)
+  (reset! runtime-config/config* config)
+  (app-routes/register-routes! runtime app config lounge-messages*)
+  (event-agents/start! config)
+  ;; Initialize MCP gateway if enabled
+  (when (:mcp-enabled config)
+    (-> (mcp/initialize!)
         (.then (fn [_]
-                 (clj->js config))))))
+                 (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
+        (.catch (fn [err]
+                  (.log.error app "MCP gateway initialization failed" err)))))
+  ;; Async bootstrap: connect Redis (session persistence) and start recovery loop.
+  (-> (session-recovery/start! runtime app config)
+      (.then (fn [_]
+               (clj->js config)))))
 
 (defn start!
   [runtime]
