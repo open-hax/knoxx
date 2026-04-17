@@ -17,14 +17,59 @@ type SetState<T> = Dispatch<SetStateAction<T>>;
 const RECENT_SESSION_PAGE_SIZE = 20;
 
 function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
-  const merged = [...primary];
-  const seen = new Set(primary.map((item) => item.session));
-  for (const item of secondary) {
-    if (seen.has(item.session)) continue;
-    seen.add(item.session);
-    merged.push(item);
+  const statusScore = (item: MemorySessionSummary): number => {
+    if (item.has_active_stream) return 50;
+    const status = typeof item.active_status === "string" ? item.active_status : "";
+    if (status === "running") return 40;
+    if (status === "queued") return 35;
+    if (status === "waiting_input") return 30;
+    if (status === "failed") return 20;
+    if (status === "completed") return 10;
+    if (item.is_active) return 5;
+    return 0;
+  };
+
+  const parseTs = (value?: string | null): number => {
+    if (!value) return 0;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const mergeEntry = (left: MemorySessionSummary, right: MemorySessionSummary): MemorySessionSummary => {
+    const leftScore = statusScore(left);
+    const rightScore = statusScore(right);
+    const live = leftScore >= rightScore ? left : right;
+    const lastTs = parseTs(left.last_ts ?? null) >= parseTs(right.last_ts ?? null) ? left.last_ts : right.last_ts;
+
+    return {
+      session: left.session,
+      title: left.title || right.title,
+      title_model: left.title_model ?? right.title_model ?? null,
+      last_ts: lastTs,
+      event_count: Math.max(left.event_count ?? 0, right.event_count ?? 0),
+
+      // Liveness should always prefer the most-active view (local snapshot or Redis-enriched remote row).
+      is_active: Boolean(live.is_active),
+      active_status: live.active_status ?? left.active_status ?? right.active_status,
+      has_active_stream: Boolean(live.has_active_stream),
+
+      // Prefer the active session id from whichever side is live; otherwise keep any known id.
+      active_session_id: live.active_session_id ?? left.active_session_id ?? right.active_session_id ?? null,
+
+      // Only truly local-only if both sides are local-only.
+      local_only: Boolean(left.local_only) && Boolean(right.local_only),
+    };
+  };
+
+  const byId = new Map<string, MemorySessionSummary>();
+  for (const item of primary) {
+    byId.set(item.session, item);
   }
-  return merged;
+  for (const item of secondary) {
+    const existing = byId.get(item.session);
+    byId.set(item.session, existing ? mergeEntry(existing, item) : item);
+  }
+  return [...byId.values()];
 }
 
 function sortSessions(items: MemorySessionSummary[]): MemorySessionSummary[] {
@@ -307,7 +352,8 @@ export function createChatWorkspaceActions({
     setLoadingMemorySessionId(sessionKey);
     try {
       const localSession = findPersistedChatSessionByConversation(sessionStateKey, sessionKey);
-      const resolvedSessionId = localSession?.active_session_id ?? makeId();
+      const remoteSession = recentSessionsRef.current.find((entry) => entry.session === sessionKey) ?? null;
+      const resolvedSessionId = localSession?.active_session_id ?? remoteSession?.active_session_id ?? makeId();
 
       setMessages([]);
       setConversationId(sessionKey);
