@@ -1018,11 +1018,12 @@
   [pool primary-org bootstrap]
   (let [uid (aget ^js bootstrap "user" "id")
         mid (aget ^js bootstrap "membership" "id")]
-    #js {:primaryOrg (->js-org primary-org)
-         :bootstrapUser #js {:id uid
-                             :email (aget ^js bootstrap "user" "email")
-                             :displayName (aget ^js bootstrap "user" "display_name")
-                             :membershipId mid}}))
+    (js/Promise.resolve
+      #js {:primaryOrg (->js-org primary-org)
+           :bootstrapUser #js {:id uid
+                               :email (aget ^js bootstrap "user" "email")
+                               :displayName (aget ^js bootstrap "user" "display_name")
+                               :membershipId mid}})))
 
 (defn- factory-list-orgs
   [pool]

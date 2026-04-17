@@ -423,7 +423,7 @@ export default function AdminLayout() {
           </div>
         ) : (
           <Routes>
-            <Route index element={<Navigate to="overview" replace />} />
+            <Route index element={<AdminOverviewPage ctx={ctx} />} />
             <Route path="overview" element={<AdminOverviewPage ctx={ctx} />} />
             <Route path="orgs" element={<AdminOrgsPage ctx={ctx} />} />
             <Route path="users" element={<AdminUsersPage ctx={ctx} />} />
