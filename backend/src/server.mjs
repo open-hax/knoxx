@@ -78,8 +78,13 @@ await app.register((instance, _opts, done) => {
   registerWsRoutes(runtime, instance);
   done();
 });
-// Session cookie hook: injects x-knoxx-* headers from cookie session before CLJS routes
-app.addHook('onRequest', createSessionHook(policyDb));
+// Session cookie hook: injects x-knoxx-* headers from cookie session before CLJS routes.
+// Default is OFF because cookie-backed auth context resolution now lives in CLJS
+// (see knoxx.backend.authz/resolve-request-context!). Enable only if you need
+// legacy header-injection behavior for non-authz code paths.
+if (process.env.KNOXX_ENABLE_SESSION_HOOK === '1') {
+  app.addHook('onRequest', createSessionHook(policyDb));
+}
 
 // GitHub OAuth + cookie session auth routes
 registerAuthRoutes(app, { policyDb, runtime });

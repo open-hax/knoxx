@@ -662,7 +662,7 @@
          (into-array
           (for [slug (filter some? (or role-slugs #js []))]
             (let [raw-slug (str/trim (str slug))
-                  normalized (slugify raw-slug)]
+                  normalized (slugify raw-slug raw-slug)]
               (-> (query-one! pool
                               "SELECT id FROM roles WHERE (slug = $1 OR slug = $2) AND (org_id = $3::uuid OR org_id IS NULL) ORDER BY CASE WHEN org_id IS NULL THEN 1 ELSE 0 END, created_at ASC LIMIT 1"
                               [raw-slug normalized org-id])
@@ -863,7 +863,7 @@
                   (fn [detailed-roles]
                     (let [permissions (sort (unique (mapcat :permissions detailed-roles)))
                           effective-tool-policies
-                          (mergeToolPolicies
+                          (merge-toolPolicies
                            (mapcat :toolPolicies detailed-roles)
                            (:toolPolicies membership))
                           role-slugs (sort-by #(- (rolePriority %))

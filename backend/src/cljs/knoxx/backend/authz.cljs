@@ -1,5 +1,6 @@
 (ns knoxx.backend.authz
   (:require [clojure.string :as str]
+            [knoxx.backend.auth-session :as auth-session]
             [knoxx.backend.http :as http]))
 
 (defn policy-db
@@ -27,11 +28,19 @@
     (js/Promise.resolve nil)
     (if-let [cached (aget request "__knoxxRequestContext")]
       (js/Promise.resolve cached)
-      (-> (.resolveRequestContext (policy-db runtime) (or (aget request "headers") #js {}))
-          (.then (fn [ctx]
-                   (let [clj-ctx (js->clj ctx :keywordize-keys true)]
-                     (aset request "__knoxxRequestContext" clj-ctx)
-                     clj-ctx)))))))
+      (let [headers (or (aget request "headers") #js {})
+            header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
+            header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
+            ctx-promise (if (or (not (str/blank? header-email))
+                                (not (str/blank? header-mid)))
+                          (.resolveRequestContext (policy-db runtime) headers)
+                          ;; Fall back to cookie-backed auth context resolution.
+                          (auth-session/resolve-auth-context request (policy-db runtime)))]
+        (-> ctx-promise
+            (.then (fn [ctx]
+                     (let [clj-ctx (js->clj ctx :keywordize-keys true)]
+                       (aset request "__knoxxRequestContext" clj-ctx)
+                       clj-ctx))))))))
 
 (defn with-request-context!
   [runtime request reply f]
