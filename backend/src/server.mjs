@@ -18,8 +18,8 @@ import {
   registerAppRoutes,
   registerWsRoutes,
   createDiscordGatewayManager,
+  createPolicyDb,
 } from '../dist/app.js';
-import { createPolicyDb } from './policy-db.mjs';
 import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
 import { registerAuthRoutes, createSessionHook } from './auth/knoxx-session.mjs';
 

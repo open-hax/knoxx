@@ -6,17 +6,6 @@
 
  :nrepl {:port 4500}
 
- ;; CRITICAL: For Node.js ESM targets, use :js-provider :import
- ;; This tells shadow-cljs to NOT bundle npm dependencies
- ;; Instead, it generates ES6 import statements and lets Node.js resolve them at runtime
- ;; This is required because Node.js built-ins (fs, path, etc.) cannot be bundled
- ;; 
- ;; See: https://github.com/thheller/shadow-cljs/issues/1219
- ;; "To bundle nothing set :js-options {:js-provider :import}"
- ;; "To bundle everything except a few packages set :keep-as-import #{...}}"
- ;; Adding pg and discord.js to :keep-as-import skips their dependency analysis,
- ;; so shadow-cljs won't choke on Node.js built-ins (dns, events, net, tls, etc.)
- ;; that these packages transitively require. Node.js resolves them at runtime.
  :js-options {:js-provider :import}
 
  :builds
@@ -27,10 +16,12 @@
                              :registerAppRoutes knoxx.backend.core/register-app-routes!
                              :registerWsRoutes knoxx.backend.core/register-ws-routes!
                              :start knoxx.backend.core/start!
-                             :createDiscordGatewayManager knoxx.backend.discord-gateway/createDiscordGatewayManager}}}
+                             :createDiscordGatewayManager knoxx.backend.discord-gateway/createDiscordGatewayManager
+                             :createPolicyDb knoxx.backend.policy-db/create-policy-db}}}
    :js-options {:js-provider :import
-                 :keep-as-import #{"discord.js" "redis" "node:fs/promises" "node:path" "node:crypto"}}
+                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs/promises" "node:path" "node:crypto"}}
    :compiler-options {:output-feature-set :es-next
+                      :optimizations :simple
                       :source-map true
                       :infer-externs :auto
                       :warnings {:infer-warning false}}}}}
