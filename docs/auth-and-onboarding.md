@@ -12,13 +12,39 @@ Knoxx supports **GitHub OAuth** login with **cookie-backed sessions** stored in 
 ## Architecture
 
 ```
-Browser → nginx (HTTPS :443) → Fastify (:8000)
-                                  ├── onRequest hook: cookie → x-knoxx-* headers
-                                  ├── /api/auth/* routes (JS module)
-                                  └── /api/* routes (CLJS, uses x-knoxx-* headers)
+Browser → Caddy (ussy.promethean.rest, HTTPS :443, auto-TLS)
+              ├── /api/* → SSH tunnel :8443 → laptop:8000 (Fastify backend)
+              └── /*     → SSH tunnel :8444 → laptop:5173 (Vite dev server)
+
+Laptop (dev machine):
+  Fastify (:8000)
+    ├── onRequest hook: cookie → x-knoxx-* headers
+    ├── /api/auth/* routes (JS module)
+    └── /api/* routes (CLJS, uses x-knoxx-* headers)
+  Vite (:5173)
+    └── React SPA
+  nginx (:80, localhost only)
+    └── Dev access fallback
 ```
 
 The key design: the CLJS backend uses `x-knoxx-user-email` and `x-knoxx-org-slug` headers for auth. The `onRequest` hook reads the session cookie from Redis and injects these headers before the CLJS routes execute. This means all existing CLJS auth logic works unchanged.
+
+## Infrastructure: SSH Tunnel
+
+The dev laptop connects to `ussy.promethean.rest` via an autossh tunnel that persists across disconnects:
+
+- **Local systemd service**: `~/.config/systemd/user/knoxx-tunnel.service`
+- **ussy:8443** → laptop:8000 (backend API)
+- **ussy:8444** → laptop:5173 (Vite frontend)
+- **Caddy on ussy** routes `knoxx.promethean.rest` to these tunnel ports
+- **ussy sshd** has `GatewayPorts clientspecified` to allow 0.0.0.0 binding
+
+Tunnel management:
+```bash
+systemctl --user status knoxx-tunnel    # Check status
+systemctl --user restart knoxx-tunnel   # Restart
+journalctl --user -u knoxx-tunnel -f    # Follow logs
+```
 
 ## Environment Variables
 
@@ -83,10 +109,11 @@ If none match, the GitHub callback redirects to `/login?error=not_whitelisted` w
 
 ## Production URL
 
-- **DNS**: `knoxx.promethean.rest` → A record `100.77.244.9` (Tailscale IP)
-- **TLS**: Let's Encrypt via certbot + Cloudflare DNS challenge
-- **nginx**: `/etc/nginx/sites-available/knoxx-https` (HTTPS :443 → backend:8000 + Vite:5173)
-- **Cert renewal**: Automatic via `certbot renew` systemd timer
+- **DNS**: `knoxx.promethean.rest` → A record `104.130.31.129` (ussy.promethean.rest public IP)
+- **TLS**: Caddy on ussy auto-provisions Let's Encrypt certificates via ACME HTTP-01 challenge
+- **Caddy config**: `/home/error/devel/services/proxx/Caddyfile` on ussy (knoxx.promethean.rest block)
+- **Tunnel**: `~/.config/systemd/user/knoxx-tunnel.service` (autossh, restarts automatically)
+- **Local dev**: `http://localhost` via nginx (:80) for direct laptop access
 
 ## Frontend
 
@@ -95,3 +122,45 @@ The `AuthBoundary` component wraps the entire app:
 - If 401 → shows `LoginPage` with "Continue with GitHub" and invite code input
 - If authenticated → renders children with `useAuth()` hook available
 - `UserMenu` component in the header shows user info + sign out button
+
+## Caddyfile on ussy
+
+The knoxx block in `/home/error/devel/services/proxx/Caddyfile`:
+
+```
+knoxx.promethean.rest {
+  encode gzip zstd
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+  }
+
+  # API and WebSocket routes → backend (port 8000 via tunnel)
+  handle /api/ingestion/ws/* {
+    reverse_proxy 172.18.0.1:8443
+  }
+  handle /api/ingestion/* {
+    reverse_proxy 172.18.0.1:8443
+  }
+  handle /api/* {
+    reverse_proxy 172.18.0.1:8443
+  }
+  handle /ws/* {
+    reverse_proxy 172.18.0.1:8443
+  }
+  handle /health {
+    reverse_proxy 172.18.0.1:8443
+  }
+
+  # Everything else → Vite frontend (port 5173 via tunnel)
+  handle {
+    reverse_proxy 172.18.0.1:8444
+  }
+}
+```
+
+After editing, copy into container and reload:
+```bash
+docker cp /home/error/devel/services/proxx/Caddyfile <container>:/etc/caddy/Caddyfile.new
+docker exec <container> caddy reload --config /etc/caddy/Caddyfile.new --adapter caddyfile
+```
