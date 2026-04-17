@@ -64,4 +64,22 @@ describe("ToolReceiptBlock", () => {
     expect(screen.getByText("world")).toBeInTheDocument();
     expect(screen.queryByText(/\"content\"/)).not.toBeInTheDocument();
   });
+
+  it("treats string null tool inputs as missing (renders a placeholder)", () => {
+    render(
+      <ToolReceiptBlock
+        receipt={{
+          id: "tool-4",
+          tool_name: "bash",
+          status: "completed",
+          input_preview: "null",
+          result_preview: "ok",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Inputs")).toBeInTheDocument();
+    expect(screen.getByText(/inputs unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/^null$/)).not.toBeInTheDocument();
+  });
 });

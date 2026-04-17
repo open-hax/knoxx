@@ -14,6 +14,62 @@
             [knoxx.backend.turn-control :as turn-control]
             [knoxx.backend.text :refer [value->preview-text assistant-message-text assistant-message-reasoning-text clip-text]]))
 
+(defn- nonblank
+  "Return s when it is a non-blank string (after trim)."
+  [s]
+  (when (string? s)
+    (let [trimmed (str/trim s)]
+      (when-not (str/blank? trimmed)
+        trimmed))))
+
+(defn- preview-text-nonblank
+  "Like value->preview-text, but returns nil for blank previews so OR chains keep searching." 
+  [value max-chars]
+  (some-> (value->preview-text value max-chars) nonblank))
+
+(defn- fenced
+  [lang text]
+  (str "```" lang "\n" (or text "") "\n```"))
+
+(defn- tool-args->markdown-preview
+  "Tool-specific input previews that are always human readable (no raw JSON).
+
+   This is intentionally conservative: we only special-case tools where we know
+   the user expectation is strict (bash/read). Everything else falls back to
+   value->preview-text rendering (which the frontend formats into bullets)."
+  [tool-name raw-args]
+  (let [tool-name (-> (str (or tool-name ""))
+                      (str/split #"[./:]")
+                      last
+                      str/lower-case)
+        args (when (and raw-args (not= raw-args js/undefined))
+               (try
+                 (js->clj raw-args :keywordize-keys true)
+                 (catch :default _ nil)))]
+    (cond
+      (and (= tool-name "bash") (map? args))
+      (let [cmd (or (get args :command) (get args :cmd))
+            timeout (or (get args :timeout) (get args :timeoutSeconds) (get args :timeoutMs))]
+        (when (and (string? cmd) (not (str/blank? cmd)))
+          (let [[cmd clipped?] (clip-text cmd 20000)]
+            (str
+             (fenced "bash" (if clipped? (str cmd "…") cmd))
+             (when clipped? "\n\n_(truncated)_")
+           (when (some? timeout)
+             (str "\n\n- timeout: " timeout)))))
+
+      (and (= tool-name "read") (map? args))
+      (let [path (or (get args :path) (get args "path"))
+            offset (or (get args :offset) (get args "offset"))
+            limit (or (get args :limit) (get args "limit"))]
+        (when (and (string? path) (not (str/blank? path)))
+          (fenced "yaml"
+                  (str "path: " path
+                       "\noffset: " (if (some? offset) offset "(default)")
+                       "\nlimit: " (if (some? limit) limit "(default)"))))))
+
+      :else nil)))
+
 ;; Death-spiral guardrails: if the agent repeatedly calls the same tool with the same
 ;; input signature, abort the turn to prevent infinite loops.
 (def ^:private DEATH_SPIRAL_STREAK_LIMIT 6)
@@ -260,23 +316,14 @@
                                                                                    (aget event "arguments")
                                                                                    (aget event "input")
                                                                                    (aget event "parameters"))
-                                                                      input-preview (or (value->preview-text (aget event "params") 600)
-                                                                                        (value->preview-text (aget event "toolArgs") 600)
-                                                                                        (value->preview-text (aget event "args") 600)
-                                                                                        (value->preview-text (aget event "arguments") 600)
-                                                                                        (value->preview-text (aget event "input") 600)
-                                                                                        (value->preview-text (aget event "parameters") 600)
-                                                                                        ;; Direct JSON fallback: when all structured preview
-                                                                                        ;; extraction fails, stringify the raw args object.
-                                                                                        (when (and raw-args (not= raw-args js/undefined))
-                                                                                          (try
-                                                                                            (let [json (.stringify js/JSON raw-args)]
-                                                                                              (when (and (string? json)
-                                                                                                         (not (str/blank? json))
-                                                                                                         (not= json "{}"))
-                                                                                                (let [[jt jtrunc] (clip-text json 600)]
-                                                                                                  (if jtrunc (str jt "…") jt))))
-                                                                                            (catch :default _ nil))))
+                                                                      input-preview (or (tool-args->markdown-preview tool-name raw-args)
+                                                                                        (preview-text-nonblank (aget event "params") 20000)
+                                                                                        (preview-text-nonblank (aget event "toolArgs") 20000)
+                                                                                        (preview-text-nonblank (aget event "args") 20000)
+                                                                                        (preview-text-nonblank (aget event "arguments") 20000)
+                                                                                        (preview-text-nonblank (aget event "input") 20000)
+                                                                                        (preview-text-nonblank (aget event "parameters") 20000)
+                                                                                        (preview-text-nonblank raw-args 20000))
                                                                       signature (str tool-name "::" (or input-preview ""))
                                                                       _death-spiral
                                                                       (let [{:keys [last streak counts]} @tool-loop*
@@ -348,9 +395,9 @@
                                                                 (let [tool-name (or (aget event "toolName") "tool")
                                                                       tool-call-id (or (aget event "toolCallId") (.randomUUID node-crypto))
                                                                       is-error (boolean (aget event "isError"))
-                                                                      result-preview (or (value->preview-text (aget event "result") 800)
-                                                                                         (value->preview-text (aget event "toolResult") 800)
-                                                                                         (value->preview-text (aget event "output") 800))
+                                                                      result-preview (or (preview-text-nonblank (aget event "result") 20000)
+                                                                                         (preview-text-nonblank (aget event "toolResult") 20000)
+                                                                                         (preview-text-nonblank (aget event "output") 20000))
                                                                       tool-event (tool-event-payload run-id conversation-id session-id "tool_end"
                                                                                                      {:status (if is-error "failed" "completed")
                                                                                                       :tool_name tool-name

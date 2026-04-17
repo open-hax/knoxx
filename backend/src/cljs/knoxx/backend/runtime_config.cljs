@@ -189,10 +189,13 @@
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
    :redis-url (env "REDIS_URL" "")
    :agent-system-prompt (env "KNOXX_AGENT_SYSTEM_PROMPT"
-                             "You are Knoxx, the grounded workspace assistant for the devel corpus. Preserve multi-turn context within the active conversation, use workspace tools when needed, cite file paths when they matter, and prefer grounded synthesis over shallow enumeration. Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, use semantic_query, semantic_read, and graph_query instead of guessing. Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember.")}
+                             "You are Knoxx, the grounded workspace assistant for the devel corpus. Preserve multi-turn context within the active conversation, use workspace tools when needed, cite file paths when they matter, and prefer grounded synthesis over shallow enumeration. Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, use semantic_query, semantic_read, and graph_query instead of guessing. Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember.")
+   ;; MCP (Model Context Protocol) integration
+   :mcp-enabled (not= (env "MCP_ENABLED" "false") "false")
+   :mcp-servers (env "MCP_SERVERS" "")}
         existing @config*]
     (if existing
-      (merge fresh-config existing)
+      (merge fresh-config (into {} (remove (fn [[_k v]] (nil? v))) existing))
       fresh-config)))
 
 (defn discord-agent-role-options
@@ -621,8 +624,9 @@
 
 (defn proxx-openai-base-url
   [config]
-  (let [base (:proxx-base-url config)]
+  (let [base (or (:proxx-base-url config) "")]
     (cond
+      (str/blank? base) "http://localhost:8790/v1"
       (str/ends-with? base "/v1") base
       (str/ends-with? base "/") (str base "v1")
       :else (str base "/v1"))))

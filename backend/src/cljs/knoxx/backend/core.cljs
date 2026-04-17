@@ -23,21 +23,22 @@
 
 (defn register-app-routes!
   [runtime app config lounge-messages*]
-  (ensure-settings! config)
-  (reset! runtime-config/config* config)
-  (app-routes/register-routes! runtime app config lounge-messages*)
-  (event-agents/start! config)
-  ;; Initialize MCP gateway if enabled
-  (when (:mcp-enabled config)
-    (-> (mcp/initialize!)
+  (let [resolved-config (if (map? config) config (cfg))]
+    (ensure-settings! resolved-config)
+    (reset! runtime-config/config* resolved-config)
+    (app-routes/register-routes! runtime app resolved-config lounge-messages*)
+    (event-agents/start! resolved-config)
+    ;; Initialize MCP gateway if enabled
+    (when (:mcp-enabled resolved-config)
+      (-> (mcp/initialize!)
+          (.then (fn [_]
+                   (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
+          (.catch (fn [err]
+                    (.log.error app "MCP gateway initialization failed" err)))))
+    ;; Async bootstrap: connect Redis (session persistence) and start recovery loop.
+    (-> (session-recovery/start! runtime app resolved-config)
         (.then (fn [_]
-                 (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
-        (.catch (fn [err]
-                  (.log.error app "MCP gateway initialization failed" err)))))
-  ;; Async bootstrap: connect Redis (session persistence) and start recovery loop.
-  (-> (session-recovery/start! runtime app config)
-      (.then (fn [_]
-               (clj->js config)))))
+                 (clj->js resolved-config))))))
 
 (defn start!
   [runtime]

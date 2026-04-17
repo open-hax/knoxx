@@ -7,6 +7,18 @@ const TOOL_STRUCTURED_MAX_KEYS = 32;
 const TOOL_STRUCTURED_MAX_ITEMS = 24;
 const TOOL_RAW_TEXT_MAX_CHARS = 12000;
 
+function normalizeToolPreview(value?: string | null): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const lowered = trimmed.toLowerCase();
+  // Treat explicit "null" / "undefined" sentinel strings as missing.
+  // NOTE: we still want inputs to be visible when captured; tool-specific
+  // renderers upstream should avoid producing these sentinels.
+  if (lowered === "null" || lowered === "undefined") return null;
+  return trimmed;
+}
+
 function truncateText(value: string, max = 240): string {
   if (value.length <= max) return value;
   return `${value.slice(0, max).trimEnd()}…`;
@@ -291,11 +303,13 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
   const isRunning = status === "running";
   const isError = receipt.is_error || status === "failed";
   const toolName = receipt.tool_name ?? receipt.id ?? "tool";
-  const inputSummary = receipt.input_preview ? toolInputSummary(receipt.input_preview) : null;
+  const inputPreview = normalizeToolPreview(receipt.input_preview);
+  const resultPreview = normalizeToolPreview(receipt.result_preview);
+  const inputSummary = inputPreview ? toolInputSummary(inputPreview) : null;
   // IMPORTANT: do not truncate before JSON parsing, or we end up with invalid JSON
   // and fall back to raw JSON-like strings in the UI.
-  const inputMarkdown = receipt.input_preview ? toolPreviewMarkdown(receipt.input_preview) : "";
-  const resultMarkdown = receipt.result_preview ? toolOutputMarkdown(receipt.result_preview) : "";
+  const inputMarkdown = inputPreview ? toolPreviewMarkdown(inputPreview) : "_(inputs unavailable)_";
+  const resultMarkdown = resultPreview ? toolOutputMarkdown(resultPreview) : "";
   const liveUpdateMarkdown = !resultMarkdown && receipt.updates && receipt.updates.length > 0
     ? toolOutputMarkdown(receipt.updates[receipt.updates.length - 1])
     : "";
@@ -358,22 +372,20 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
         </div>
       ) : null}
 
-      {inputMarkdown ? (
-        <div style={{ ...sectionStyle, marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)", marginBottom: 6 }}>
-            Inputs
-          </div>
-          <div style={{ fontSize: 12, color: "var(--token-colors-text-default)", maxHeight: defaultExpanded ? 420 : 160, overflow: "auto" }}>
-            <Markdown
-              content={inputMarkdown}
-              theme="dark"
-              variant="compact"
-              lineNumbers={false}
-              copyButton={false}
-            />
-          </div>
+      <div style={{ ...sectionStyle, marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)", marginBottom: 6 }}>
+          Inputs
         </div>
-      ) : null}
+        <div style={{ fontSize: 12, color: "var(--token-colors-text-default)", maxHeight: defaultExpanded ? 420 : 160, overflow: "auto" }}>
+          <Markdown
+            content={inputMarkdown}
+            theme="dark"
+            variant="compact"
+            lineNumbers={false}
+            copyButton={false}
+          />
+        </div>
+      </div>
 
       {resultMarkdown ? (
         <div style={{ ...sectionStyle, marginBottom: 8 }}>

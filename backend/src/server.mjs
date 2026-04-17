@@ -63,7 +63,7 @@ await app.register((instance, _opts, done) => {
   done();
 });
 // registerAppRoutes may perform async bootstrap (Redis init, session recovery, etc.).
-await registerAppRoutes(runtime, app);
+await registerAppRoutes(runtime, app, config);
 
 // ---------------------------------------------------------------------------
 // Pi Session Ingestion Routes
