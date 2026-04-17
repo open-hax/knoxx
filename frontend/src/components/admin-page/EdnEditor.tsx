@@ -8,10 +8,14 @@ import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { linter, Diagnostic } from "@codemirror/lint";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { tags as t } from "@lezer/highlight";
-import { monokai, type ThemePalette, tokens, fontFamily, fontSize, spacing } from "@open-hax/uxx/tokens";
-
-// Radius values matching the Monokai theme pack
-const radius = { xs: "2px", sm: "4px", md: "6px", lg: "8px" } as const;
+import { tokens, radius, fontFamily, fontSize, withAlpha, type ThemePalette } from "@open-hax/uxx/tokens";
+import {
+  EditorToolbar,
+  type EditorToolbarItem,
+  EditorStatusBar,
+  type EditorStatusBarItem,
+  useResolvedTheme,
+} from "@open-hax/uxx";
 
 // ── EDN parse validation for CodeMirror ──────────────────────────────────────
 
@@ -159,7 +163,7 @@ function uxxEditorTheme(palette: ThemePalette) {
       borderLeftWidth: "2px",
     },
     ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-      backgroundColor: `rgba(${hexToRgb(palette.accent.cyan)}, 0.18)`,
+      backgroundColor: withAlpha(palette.accent.cyan, 0.18),
     },
     ".cm-gutters": {
       backgroundColor: palette.bg.darker,
@@ -168,20 +172,20 @@ function uxxEditorTheme(palette: ThemePalette) {
       paddingRight: "4px",
     },
     ".cm-activeLineGutter": {
-      backgroundColor: `rgba(${hexToRgb(palette.accent.cyan)}, 0.06)`,
+      backgroundColor: withAlpha(palette.accent.cyan, 0.06),
       color: palette.fg.soft,
     },
     ".cm-activeLine": {
-      backgroundColor: `rgba(${hexToRgb(palette.accent.cyan)}, 0.04)`,
+      backgroundColor: withAlpha(palette.accent.cyan, 0.04),
     },
     ".cm-matchingBracket": {
-      backgroundColor: `rgba(${hexToRgb(palette.accent.cyan)}, 0.25)`,
-      outline: `1px solid rgba(${hexToRgb(palette.accent.cyan)}, 0.5)`,
+      backgroundColor: withAlpha(palette.accent.cyan, 0.25),
+      outline: `1px solid ${withAlpha(palette.accent.cyan, 0.5)}`,
       color: palette.fg.bright,
     },
     ".cm-nonmatchingBracket": {
-      backgroundColor: `rgba(${hexToRgb(palette.accent.red)}, 0.25)`,
-      outline: `1px solid rgba(${hexToRgb(palette.accent.red)}, 0.5)`,
+      backgroundColor: withAlpha(palette.accent.red, 0.25),
+      outline: `1px solid ${withAlpha(palette.accent.red, 0.5)}`,
     },
     ".cm-lintRange-error": {
       backgroundImage: "none",
@@ -206,7 +210,7 @@ function uxxEditorTheme(palette: ThemePalette) {
         padding: "4px 8px",
       },
       "& > ul > li[aria-selected]": {
-        backgroundColor: `rgba(${hexToRgb(palette.accent.cyan)}, 0.15)`,
+        backgroundColor: withAlpha(palette.accent.cyan, 0.15),
         color: palette.fg.bright,
       },
     },
@@ -224,11 +228,11 @@ function uxxEditorTheme(palette: ThemePalette) {
       overflow: "auto",
     },
     ".cm-searchMatch": {
-      backgroundColor: `rgba(${hexToRgb(palette.accent.yellow)}, 0.25)`,
-      outline: `1px solid rgba(${hexToRgb(palette.accent.yellow)}, 0.4)`,
+      backgroundColor: withAlpha(palette.accent.yellow, 0.25),
+      outline: `1px solid ${withAlpha(palette.accent.yellow, 0.4)}`,
     },
     ".cm-searchMatch.cm-searchMatch-selected": {
-      backgroundColor: `rgba(${hexToRgb(palette.accent.orange)}, 0.35)`,
+      backgroundColor: withAlpha(palette.accent.orange, 0.35),
     },
     ".cm-panels": {
       backgroundColor: palette.bg.darker,
@@ -240,149 +244,6 @@ function uxxEditorTheme(palette: ThemePalette) {
       fontSize: fontSize.xs,
     },
   }, { dark: true });
-}
-
-// ── Hex to RGB helper ────────────────────────────────────────────────────────
-
-function hexToRgb(hex: string): string {
-  const raw = hex.replace("#", "");
-  const r = parseInt(raw.slice(0, 2), 16);
-  const g = parseInt(raw.slice(2, 4), 16);
-  const b = parseInt(raw.slice(4, 6), 16);
-  return `${r}, ${g}, ${b}`;
-}
-
-// ── Inline IDE chrome (toolbar + status bar) ─────────────────────────────────
-// These use uxx tokens directly. When EditorToolbar/EditorStatusBar are
-// available from @open-hax/uxx/primitives, replace these.
-
-interface ToolbarAction {
-  key: string;
-  label: string;
-  title?: string;
-  icon?: string;
-  disabled?: boolean;
-  onClick?: () => void;
-}
-
-function EditorToolbarInline({ actions, onValidate }: {
-  actions: ToolbarAction[];
-  onValidate?: () => void;
-}) {
-  const palette = monokai;
-  return (
-    <div
-      data-component="edn-editor-toolbar"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 2,
-        padding: "4px 8px",
-        background: palette.bg.darker,
-        borderBottom: `1px solid ${palette.fg.subtle}`,
-        fontSize: fontSize.xs,
-      }}
-    >
-      <span style={{ color: palette.accent.cyan, fontWeight: 600, marginRight: 8, fontFamily: fontFamily.mono }}>
-        EDN
-      </span>
-      {actions.map((action) => (
-        <button
-          key={action.key}
-          type="button"
-          title={action.title}
-          disabled={action.disabled}
-          onClick={action.onClick}
-          style={{
-            background: "none",
-            border: "none",
-            padding: "3px 6px",
-            borderRadius: radius.xs,
-            color: palette.fg.soft,
-            cursor: action.disabled ? "not-allowed" : "pointer",
-            fontFamily: fontFamily.mono,
-            fontSize: fontSize.xs,
-            opacity: action.disabled ? 0.4 : 0.8,
-            transition: "opacity 0.15s, color 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            if (!action.disabled) {
-              (e.target as HTMLElement).style.opacity = "1";
-              (e.target as HTMLElement).style.color = palette.accent.cyan;
-            }
-          }}
-          onMouseLeave={(e) => {
-            (e.target as HTMLElement).style.opacity = action.disabled ? "0.4" : "0.8";
-            (e.target as HTMLElement).style.color = palette.fg.soft;
-          }}
-        >
-          {action.icon ? `${action.icon} ` : ""}{action.label}
-        </button>
-      ))}
-      {onValidate && (
-        <button
-          type="button"
-          title="Validate EDN (Ctrl+Shift+V)"
-          onClick={onValidate}
-          style={{
-            background: "none",
-            border: `1px solid ${palette.fg.subtle}`,
-            padding: "2px 8px",
-            borderRadius: radius.xs,
-            color: palette.accent.green,
-            cursor: "pointer",
-            fontFamily: fontFamily.mono,
-            fontSize: fontSize.xs,
-            marginLeft: "auto",
-          }}
-        >
-          ✓ Validate
-        </button>
-      )}
-    </div>
-  );
-}
-
-interface StatusItem {
-  key: string;
-  label: string;
-  color?: string;
-  align?: "start" | "end";
-}
-
-function EditorStatusBarInline({ items }: { items: StatusItem[] }) {
-  const palette = monokai;
-  return (
-    <div
-      data-component="edn-editor-statusbar"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        padding: "3px 12px",
-        background: palette.bg.darker,
-        borderTop: `1px solid ${palette.fg.subtle}`,
-        fontSize: fontSize.xs,
-        color: palette.fg.muted,
-        fontFamily: fontFamily.mono,
-      }}
-    >
-      {items.map((item, index) => {
-        const isFirstEnd = item.align === "end" && items.slice(0, index).every((i) => i.align !== "end");
-        return (
-          <span
-            key={item.key}
-            style={{
-              color: item.color ?? palette.fg.muted,
-              marginLeft: isFirstEnd ? "auto" : undefined,
-            }}
-          >
-            {item.label}
-          </span>
-        );
-      })}
-    </div>
-  );
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -415,7 +276,9 @@ export function EdnEditor({
   const onChangeRef = useRef(onChange);
   const readOnlyCompartment = useRef(new Compartment());
 
-  const palette = monokai;
+  const resolvedTheme = useResolvedTheme();
+  const palette = resolvedTheme.palette as ThemePalette;
+  const themeColors = resolvedTheme.colors;
 
   // Keep onChange ref current
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
@@ -528,7 +391,7 @@ export function EdnEditor({
   }, [readOnly]);
 
   // Status bar info
-  const [statusItems, setStatusItems] = useState<StatusItem[]>([]);
+  const [statusItems, setStatusItems] = useState<EditorStatusBarItem[]>([]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -545,37 +408,109 @@ export function EdnEditor({
     const lintResult = tryParseEdn(doc.toString());
     const parseOk = lintResult.ok;
 
-    const items: StatusItem[] = [
-      { key: "cursor", label: `Ln ${cursorLine}, Col ${cursorCol}`, align: "end" as const },
-      { key: "lines", label: `${lines} lines` },
-      { key: "chars", label: `${chars} chars` },
-    ];
-
-    if (errCount > 0) {
-      items.unshift({ key: "errors", label: `✕ ${errCount} error${errCount > 1 ? "s" : ""}`, color: palette.accent.red });
-    } else if (parseOk) {
-      items.unshift({ key: "valid", label: "✓ valid", color: palette.accent.green });
-    }
+    const items: EditorStatusBarItem[] = [];
 
     if (fileName) {
-      items.unshift({ key: "file", label: fileName });
+      items.push({ key: "file", label: fileName });
     }
 
-    setStatusItems(items);
-  }, [value, externalErrors, fileName, palette]);
+    if (errCount > 0) {
+      items.push({ key: "errors", label: `✕ ${errCount} error${errCount > 1 ? "s" : ""}` });
+    } else if (parseOk) {
+      items.push({ key: "valid", label: "✓ valid" });
+    }
 
-  // Toolbar actions
-  const toolbarActions: ToolbarAction[] = useMemo(() => [
-    { key: "undo", label: "↶", title: "Undo (Ctrl+Z)", onClick: () => viewRef.current?.dispatch({ effects: [] }) },
-    { key: "redo", label: "↷", title: "Redo (Ctrl+Shift+Z)", onClick: () => viewRef.current?.dispatch({ effects: [] }) },
-    { key: "fold", label: "◃", title: "Fold all", onClick: () => {
-      // Fold all top-level forms
-      const view = viewRef.current;
-      if (!view) return;
-      const cmd = keymap.of([{ key: "Ctrl-Alt-[", run: () => true }]); // placeholder
-    }},
-    { key: "format", label: "{}", title: "Reformat (coming soon)", disabled: true },
-  ], []);
+    items.push({ key: "cursor", label: `Ln ${cursorLine}, Col ${cursorCol}`, align: "end" });
+    items.push({ key: "lines", label: `${lines} lines` });
+    items.push({ key: "chars", label: `${chars} chars` });
+
+    setStatusItems(items);
+  }, [value, externalErrors, fileName]);
+
+  // Toolbar actions using uxx EditorToolbar items
+  const toolbarItems = useMemo<EditorToolbarItem[]>(() => [
+    {
+      key: "lang-badge",
+      label: "EDN",
+      title: "Clojure/EDN mode",
+      buttonStyle: {
+        fontFamily: fontFamily.mono,
+        fontWeight: 600,
+        color: themeColors.accent.cyan,
+      },
+    },
+    { type: "divider", key: "div-lang" },
+    {
+      key: "undo",
+      label: "↶",
+      title: "Undo (Ctrl+Z)",
+      onClick: () => {
+        const view = viewRef.current;
+        if (!view) return;
+        // Dispatch undo via keymap
+        view.dispatch({ effects: [] });
+      },
+    },
+    {
+      key: "redo",
+      label: "↷",
+      title: "Redo (Ctrl+Shift+Z)",
+      onClick: () => {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch({ effects: [] });
+      },
+    },
+    { type: "divider", key: "div-undo" },
+    {
+      key: "fold",
+      label: "◃",
+      title: "Fold all",
+      onClick: () => {
+        // Fold all top-level forms — future: use CodeMirror foldAll command
+      },
+    },
+    {
+      key: "format",
+      label: "{}",
+      title: "Reformat (coming soon)",
+      disabled: true,
+    },
+  ], [themeColors.accent.cyan]);
+
+  // Add validate button as last toolbar item
+  const allToolbarItems = useMemo<EditorToolbarItem[]>(() => {
+    if (!onValidate) return toolbarItems;
+    return [
+      ...toolbarItems,
+      { type: "divider", key: "div-validate" },
+      {
+        key: "validate",
+        label: "✓ Validate",
+        title: "Validate EDN (Ctrl+Shift+V)",
+        onClick: onValidate,
+        buttonStyle: {
+          border: `1px solid ${themeColors.accent.green}`,
+          borderRadius: radius.xs,
+          color: themeColors.accent.green,
+          padding: "2px 8px",
+        },
+      },
+    ];
+  }, [toolbarItems, onValidate, themeColors.accent.green]);
+
+  // Determine status bar item colors based on state
+  const styledStatusItems = useMemo<EditorStatusBarItem[]>(() => {
+    return statusItems.map((item) => {
+      if (item.key === "errors") {
+        return { ...item, label: <span style={{ color: themeColors.accent.red }}>{item.label}</span> };
+      }
+      if (item.key === "valid") {
+        return { ...item, label: <span style={{ color: themeColors.accent.green }}>{item.label}</span> };
+      }
+      return item;
+    });
+  }, [statusItems, themeColors.accent.red, themeColors.accent.green]);
 
   return (
     <div
@@ -585,17 +520,32 @@ export function EdnEditor({
         flexDirection: "column",
         height,
         background: palette.bg.default,
-        border: `1px solid ${palette.fg.subtle}`,
+        border: `1px solid ${themeColors.border.subtle}`,
         borderRadius: radius.md,
         overflow: "hidden",
       }}
     >
-      <EditorToolbarInline actions={toolbarActions} onValidate={onValidate} />
+      <EditorToolbar
+        items={allToolbarItems}
+        background={themeColors.background.surface}
+        borderColor={themeColors.border.subtle}
+        textColor={themeColors.text.default}
+        padding="4px 8px"
+        gap={2}
+        wrap={false}
+      />
       <div
         ref={containerRef}
         style={{ flex: 1, overflow: "hidden" }}
       />
-      <EditorStatusBarInline items={statusItems} />
+      <EditorStatusBar
+        items={styledStatusItems}
+        background={themeColors.background.surface}
+        borderColor={themeColors.border.subtle}
+        textColor={themeColors.text.muted}
+        padding="3px 12px"
+        gap={16}
+      />
     </div>
   );
 }

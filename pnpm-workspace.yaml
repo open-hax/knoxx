@@ -4,3 +4,6 @@ packages:
   - discord-bot
   - packages/uxx
   - packages/webgl-graph-view
+
+overrides:
+  '@open-hax/uxx': link:../../../../uxx
