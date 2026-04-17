@@ -17,6 +17,9 @@ import {
   useResolvedTheme,
 } from "@open-hax/uxx";
 
+// Suppress unused-import warnings for tokens used in CodeMirror theme DSL
+void tokens;
+
 // ── EDN parse validation for CodeMirror ──────────────────────────────────────
 
 function tryParseEdn(text: string): { ok: true } | { ok: false; error: string; line?: number } {
