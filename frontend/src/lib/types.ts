@@ -6,10 +6,38 @@ export interface AgentSource {
   section?: string;
 }
 
+// Multimodal content parts for rich messages
+export interface ContentPart {
+  type: "text" | "image" | "audio" | "video" | "document";
+  text?: string;
+  url?: string;
+  data?: string; // Base64 data URL
+  mimeType?: string;
+  filename?: string;
+  size?: number;
+}
+
+// Attachment metadata for upload tracking
+export interface MessageAttachment {
+  id: string;
+  type: "image" | "audio" | "video" | "document";
+  filename: string;
+  url?: string;
+  data?: string;
+  mimeType: string;
+  size: number;
+  uploading?: boolean;
+  error?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
   content: string;
+  // Multimodal content parts - supports rich messages with images, audio, video, documents
+  contentParts?: ContentPart[];
+  // Legacy attachments field for backward compatibility
+  attachments?: MessageAttachment[];
   model?: string | null;
   contextRows?: GroundedContextRow[];
   sources?: AgentSource[];
@@ -261,6 +289,18 @@ export interface FrontendConfig {
   shibboleth_enabled: boolean;
   default_role: string;
   email_enabled: boolean;
+
+  // Voice / STT (optional)
+  stt_enabled?: boolean;
+  stt_base_url?: string;
+}
+
+export interface SttTranscribeResponse {
+  text: string;
+  device?: string | null;
+  model_id?: string | null;
+  duration_s?: number | null;
+  rtf?: number | null;
 }
 
 export interface ToolDefinition {

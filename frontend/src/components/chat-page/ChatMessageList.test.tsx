@@ -37,6 +37,7 @@ describe("ChatMessageList", () => {
         assistantSurfaceBackground="black"
         assistantSurfaceBorder="gray"
         assistantSurfaceText="white"
+        onSend={vi.fn()}
         onOpenMessageInCanvas={vi.fn()}
         onOpenSourceInPreview={vi.fn()}
         onPinAssistantSource={vi.fn()}
@@ -47,5 +48,34 @@ describe("ChatMessageList", () => {
 
     expect(screen.getByText("Reasoning summary")).toBeInTheDocument();
     expect(screen.getAllByText("Final answer")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Reply by voice" })).toBeInTheDocument();
+  });
+
+  it("only shows voice reply on the latest assistant message", () => {
+    const messages: ChatMessage[] = [
+      { id: "assistant-1", role: "assistant", content: "First", status: "done" },
+      { id: "assistant-2", role: "assistant", content: "Second", status: "done" },
+    ];
+
+    render(
+      <ChatMessageList
+        messages={messages}
+        latestRun={null}
+        latestToolReceipts={[]}
+        liveToolReceipts={[]}
+        liveToolEvents={[]}
+        assistantSurfaceBackground="black"
+        assistantSurfaceBorder="gray"
+        assistantSurfaceText="white"
+        onSend={vi.fn()}
+        onOpenMessageInCanvas={vi.fn()}
+        onOpenSourceInPreview={vi.fn()}
+        onPinAssistantSource={vi.fn()}
+        onAppendToScratchpad={vi.fn()}
+        onPinMessageContext={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Reply by voice" })).toHaveLength(1);
   });
 });

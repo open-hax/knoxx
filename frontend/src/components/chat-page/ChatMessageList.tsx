@@ -1,8 +1,11 @@
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import { AgentTraceTimeline, ToolReceiptGroup } from "../ToolReceiptBlock";
+import { MultimodalContent } from "./MultimodalContent";
+import { VoiceReplyButton } from "./VoiceReplyButton";
 import type {
   AgentSource,
   ChatMessage,
+  ContentPart,
   GroundedContextRow,
   RunDetail,
   RunEvent,
@@ -19,6 +22,8 @@ type ChatMessageListProps = {
   assistantSurfaceBackground: string;
   assistantSurfaceBorder: string;
   assistantSurfaceText: string;
+  onSend: (text: string) => void;
+  voiceReplyDisabled?: boolean;
   onOpenMessageInCanvas: (message: ChatMessage) => void;
   onOpenSourceInPreview: (source: AgentSource) => void | Promise<void>;
   onPinAssistantSource: (source: AgentSource) => void;
@@ -35,12 +40,18 @@ export function ChatMessageList({
   assistantSurfaceBackground,
   assistantSurfaceBorder,
   assistantSurfaceText,
+  onSend,
+  voiceReplyDisabled,
   onOpenMessageInCanvas,
   onOpenSourceInPreview,
   onPinAssistantSource,
   onAppendToScratchpad,
   onPinMessageContext,
 }: ChatMessageListProps) {
+  const latestAssistantMessageId = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.status === "done" && Boolean(message.content?.trim()))?.id;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
       {messages.map((message) => {
@@ -56,6 +67,8 @@ export function ChatMessageList({
           && message.status === "done"
           && rawTraceBlocks.length > 0
           && Boolean(message.content?.trim());
+
+        const showVoiceReply = message.id === latestAssistantMessageId;
 
         return <Card
           key={message.id}
@@ -95,7 +108,15 @@ export function ChatMessageList({
               ) : null}
             </div>
             {message.role === "assistant" ? (
-              <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                {showVoiceReply ? (
+                  <VoiceReplyButton
+                    disabled={voiceReplyDisabled}
+                    onTranscript={(text) => onSend(text)}
+                  />
+                ) : null}
+                <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
+              </div>
             ) : null}
           </div>
           {message.role === "assistant" && visibleTraceBlocks.length > 0 ? (
@@ -123,11 +144,40 @@ export function ChatMessageList({
               }}
             >
               <Markdown content={message.content || ""} theme="dark" variant="full" />
+              {/* Multimodal content for assistant messages */}
+              {message.contentParts && message.contentParts.length > 0 && (
+                <MultimodalContent parts={message.contentParts} />
+              )}
             </div>
           ) : message.role === "assistant" || message.role === "system" ? (
-            <Markdown content={message.content || ""} theme="dark" variant="full" />
+            <>
+              <Markdown content={message.content || ""} theme="dark" variant="full" />
+              {/* Multimodal content for assistant/system messages */}
+              {message.contentParts && message.contentParts.length > 0 && (
+                <MultimodalContent parts={message.contentParts} />
+              )}
+            </>
           ) : (
-            <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{message.content}</div>
+            <>
+              <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{message.content}</div>
+              {/* Multimodal content for user messages */}
+              {message.contentParts && message.contentParts.length > 0 && (
+                <MultimodalContent parts={message.contentParts} />
+              )}
+              {/* Legacy attachments support */}
+              {message.attachments && message.attachments.length > 0 && (
+                <MultimodalContent
+                  parts={message.attachments.map((a) => ({
+                    type: a.type,
+                    url: a.url,
+                    data: a.data,
+                    mimeType: a.mimeType,
+                    filename: a.filename,
+                    size: a.size,
+                  }))}
+                />
+              )}
+            </>
           )}
           {message.sources?.length ? (
             <details style={{ marginTop: 12 }} open>

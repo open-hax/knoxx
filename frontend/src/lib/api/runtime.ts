@@ -1,18 +1,20 @@
 import type {
   AgentSource,
+  ContentPart,
   EmailSendResponse,
   ProxxChatResponse,
   ProxxHealth,
   ProxxModelInfo,
   RunEvent,
   ShibbolethHandoffResponse,
+  SttTranscribeResponse,
   ToolBashResponse,
   ToolCatalogResponse,
   ToolEditResponse,
   ToolReadResponse,
   ToolWriteResponse,
 } from "../types";
-import { request } from "./core";
+import { API_BASE, buildKnoxxAuthHeaders, request } from "./core";
 
 function normalizeConversationResponse(response: Record<string, unknown>) {
   return {
@@ -70,6 +72,24 @@ export async function proxxChat(payload: {
 export async function getToolCatalog(role?: string): Promise<ToolCatalogResponse> {
   const suffix = role ? `?role=${encodeURIComponent(role)}` : "";
   return request<ToolCatalogResponse>(`/api/tools/catalog${suffix}`);
+}
+
+export async function voiceSttTranscribe(blob: Blob, filename = "audio.webm"): Promise<SttTranscribeResponse> {
+  const formData = new FormData();
+  formData.append("file", blob, filename);
+
+  const response = await fetch(`${API_BASE}/api/voice/stt`, {
+    method: "POST",
+    headers: buildKnoxxAuthHeaders(),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`${response.status} ${response.statusText}${detail ? ` - ${detail}` : ""}`);
+  }
+
+  return (await response.json()) as SttTranscribeResponse;
 }
 
 export async function sendEmailDraft(payload: {
@@ -151,6 +171,7 @@ export async function knoxxChat(payload: {
   session_id?: string | null;
   model?: string;
   direct?: boolean;
+  contentParts?: ContentPart[];
 }): Promise<{ answer: string; run_id?: string | null; conversation_id?: string | null; session_id?: string | null; model?: string | null; sources?: AgentSource[]; compare?: unknown }> {
   const endpoint = payload.direct ? "/api/knoxx/direct" : "/api/knoxx/chat";
   return request<Record<string, unknown>>(endpoint, {
@@ -160,6 +181,7 @@ export async function knoxxChat(payload: {
       conversation_id: payload.conversation_id,
       session_id: payload.session_id,
       model: payload.model,
+      contentParts: payload.contentParts,
     }),
   }).then((response) => ({
     ...normalizeConversationResponse(response),
@@ -200,6 +222,7 @@ export async function knoxxChatStart(payload: {
   run_id?: string | null;
   model?: string;
   direct?: boolean;
+  contentParts?: ContentPart[];
 }): Promise<{ ok: boolean; queued: boolean; run_id?: string | null; conversation_id?: string | null; session_id?: string | null; model?: string | null }> {
   const endpoint = payload.direct ? "/api/knoxx/direct/start" : "/api/knoxx/chat/start";
   return request<Record<string, unknown>>(endpoint, {
@@ -210,6 +233,7 @@ export async function knoxxChatStart(payload: {
       session_id: payload.session_id,
       run_id: payload.run_id,
       model: payload.model,
+      contentParts: payload.contentParts,
     }),
   }).then((response) => ({
     ok: Boolean(response.ok),

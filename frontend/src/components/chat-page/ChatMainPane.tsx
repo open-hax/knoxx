@@ -293,6 +293,8 @@ export function ChatMainPane({
                 assistantSurfaceBackground={assistantSurfaceBackground}
                 assistantSurfaceBorder={assistantSurfaceBorder}
                 assistantSurfaceText={assistantSurfaceText}
+                onSend={onSend}
+                voiceReplyDisabled={composerDisabled}
                 onOpenMessageInCanvas={onOpenMessageInCanvas}
                 onOpenSourceInPreview={onOpenSourceInPreview}
                 onPinAssistantSource={onPinAssistantSource}
