@@ -35,6 +35,8 @@ export interface ContractValidationResult {
   ok: boolean;
   errors: Array<{ path: string[]; message: string }>;
   warnings: Array<{ path: string[]; message: string }>;
+  // Present for validate/save/get responses when the backend can parse EDN.
+  contract?: AgentContract | null;
 }
 
 export interface ContractCompileResult {
@@ -149,13 +151,13 @@ export const DEFAULT_CONTRACT_EDN = `{:contract/id "new-agent"
  :cadence-min 5
 
  :agent
- {:role "system_admin"
+ {:role :system_admin
   :model "glm-5"
   :thinking :off}
 
  :prompts
- {:system "Observe configured channels and detect fresh signals."
-  :task   "Read recent messages and dispatch events for worthy signals."}
+ {:system "Observe configured Discord channels, detect fresh human signals, and queue structured events without speaking publicly."
+  :task   "Read recent channel messages, update freshness state, and dispatch normalized Discord events for worthy human signals."}
 
  :events
  {:always [:discord.mention]
@@ -165,11 +167,12 @@ export const DEFAULT_CONTRACT_EDN = `{:contract/id "new-agent"
  {:source  {:max-messages 25}
   :filters {:channels []
             :keywords []}
-  :tools   []}}
+  :tools   []}
 
  :hooks
  {:before {}
-  :after  {}}}`;
+  :after  {}}}
+`;
 
 // ── Event kind catalog ─────────────────────────────────────────────────────
 

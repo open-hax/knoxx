@@ -920,7 +920,7 @@
                            (query! pool
                                    "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
                                    [(aget membership "id") (aget system-admin "id")]))
-                         {:user user :membership membership})))))))))))
+                         #js {:user user :membership membership})))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Audit

@@ -7,6 +7,7 @@
             [knoxx.backend.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
             [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? filter-authorized-memory-hits! authorized-session-ids!]]
+            [knoxx.backend.contracts-routes :as contracts-routes]
             [knoxx.backend.document-routes :as document-routes]
             [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers require-openai-key! fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
             [knoxx.backend.memory-routes :as memory-routes]
@@ -251,6 +252,13 @@
                                       :count-occurrences count-occurrences
                                       :replace-first replace-first
                                       :clip-text clip-text})
+
+  (contracts-routes/register-contracts-routes! app runtime
+                                              {:route! route!
+                                               :json-response! json-response!
+                                               :error-response! error-response!
+                                               :with-request-context! with-request-context!
+                                               :ensure-permission! ensure-permission!})
 
   (model-routes/register-model-routes! app runtime config)
 

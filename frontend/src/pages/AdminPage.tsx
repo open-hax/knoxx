@@ -19,7 +19,6 @@ import { SummarySection } from '../components/admin-page/SummarySection';
 import { DiscordSection } from '../components/admin-page/DiscordSection';
 import { ProxxObservabilitySection } from '../components/admin-page/ProxxObservabilitySection';
 import { TranslationModelSection } from '../components/admin-page/TranslationModelSection';
-import { ContractsSection } from '../components/admin-page/ContractsSection';
 import type { LakeFormState, Notice, OrgFormState, RoleFormState, ToolDraftEffect, UserFormState } from '../components/admin-page/types';
 import { UsersMembershipsSection } from '../components/admin-page/UsersMembershipsSection';
 import {
@@ -476,8 +475,6 @@ export default function AdminPage() {
               onCreateLake={handleCreateLake}
             />
           </div>
-
-          <ContractsSection canManage={canCreateOrgs} />
 
           <DiscordSection canManage={canCreateOrgs} tools={tools} />
 
