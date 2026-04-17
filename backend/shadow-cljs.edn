@@ -1,7 +1,8 @@
 {:source-paths ["src/cljs"]
 
  :dependencies [[cider/cider-nrepl "0.50.2"]
-                [refactor-nrepl "3.9.1"]]
+                [refactor-nrepl "3.9.1"]
+                [com.github.seancorfield/honeysql "2.7.1368"]]
 
  :nrepl {:port 4500}
 
