@@ -443,8 +443,9 @@ export function registerAuthRoutes(app, { policyDb, runtime }) {
 
 export function createSessionHook(policyDb) {
   return async function sessionHook(req, reply) {
-    // Skip auth routes (they handle their own auth)
-    if (req.url.startsWith('/api/auth/')) return;
+    // Skip auth routes that handle their own auth (login, callback, logout, config, invite)
+    // but NOT /api/auth/context — it depends on injected x-knoxx-* headers
+    if (req.url.startsWith('/api/auth/') && !req.url.startsWith('/api/auth/context')) return;
 
     // If headers already provide identity, skip cookie session
     const headerEmail = (req.headers['x-knoxx-user-email'] || '').trim();
