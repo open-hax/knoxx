@@ -17,9 +17,11 @@
                              :registerWsRoutes knoxx.backend.core/register-ws-routes!
                              :start knoxx.backend.core/start!
                              :createDiscordGatewayManager knoxx.backend.discord-gateway/createDiscordGatewayManager
-                             :createPolicyDb knoxx.backend.policy-db/create-policy-db}}}
+                             :createPolicyDb knoxx.backend.policy-db/create-policy-db
+                             :registerAuthRoutes knoxx.backend.auth-session/register-auth-routes
+                             :createSessionHook knoxx.backend.auth-session/create-session-hook}}}
    :js-options {:js-provider :import
-                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs/promises" "node:path" "node:crypto"}}
+                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs/promises" "node:path" "node:crypto" "node:url"}}
    :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true

@@ -19,9 +19,10 @@ import {
   registerWsRoutes,
   createDiscordGatewayManager,
   createPolicyDb,
+  registerAuthRoutes,
+  createSessionHook,
 } from '../dist/app.js';
 import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
-import { registerAuthRoutes, createSessionHook } from './auth/knoxx-session.mjs';
 
 globalThis.require = globalThis.require || createRequire(import.meta.url);
 
