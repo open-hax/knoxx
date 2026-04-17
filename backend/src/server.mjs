@@ -169,6 +169,35 @@ app.post('/api/admin/pi-sessions/ingest', async (req, reply) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Ingestion Service Proxy
+// ---------------------------------------------------------------------------
+// The kms-ingestion service runs on port 3003. Caddy routes /api/ingestion/*
+// to this backend (port 8000), so we proxy those requests through.
+const INGESTION_BASE = process.env.KMS_INGESTION_URL || 'http://localhost:3003';
+
+app.all('/api/ingestion/*', async (req, reply) => {
+  const subPath = req.params['*'];
+  const targetUrl = `${INGESTION_BASE}/api/ingestion/${subPath}`;
+  const headers = { ...req.headers };
+  delete headers['host'];
+  delete headers['connection'];
+  delete headers['content-length'];
+  try {
+    const resp = await fetch(targetUrl, {
+      method: req.method,
+      headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const contentType = resp.headers.get('content-type') || 'application/json';
+    const body = contentType.includes('application/json') ? await resp.json() : await resp.text();
+    return reply.code(resp.status).header('content-type', contentType).send(body);
+  } catch (err) {
+    return reply.code(502).send({ ok: false, error: `Ingestion proxy error: ${err.message}` });
+  }
+});
+
 try {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(`Knoxx backend CLJS listening on ${config.host}:${config.port}`);
