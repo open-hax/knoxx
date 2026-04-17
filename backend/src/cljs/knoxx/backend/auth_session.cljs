@@ -212,85 +212,166 @@
     err))
 
 
+;; --- Extracted helpers for handle-github-callback (paren hygiene) ----------
+
+(defn- ensure-user-membership!
+  "Resolve context for email; if no membership, bootstrap+create user, then re-resolve."
+  [policyDb gh-user email]
+  (let [headers-like #js {"x-knoxx-user-email" email}]
+    (-> (.resolveRequestContext policyDb headers-like)
+        (.then
+          (fn [ctx]
+            (let [mid (some-> ctx (aget "membership") (aget "id"))]
+              (if mid
+                (js/Promise.resolve ctx)
+                (-> (.getBootstrapContext policyDb)
+                    (.then
+                      (fn [bc]
+                        (.createUser
+                          policyDb
+                          #js {:email           email
+                               :displayName     (or (aget gh-user "name") (aget gh-user "login") email)
+                               :orgId           (some-> bc (aget "primaryOrg") (aget "id"))
+                               :authProvider    "github"
+                               :externalSubject (str "github:" (aget gh-user "id"))
+                               :roleSlugs       #js ["knowledge_worker"]})))
+                    (.then (fn [_] (.resolveRequestContext policyDb headers-like)))))))))))
+
+(defn- create-session-and-redirect!
+  "Create session from resolved context, set cookie, and redirect."
+  [policyDb reply gh-user email state-entry public-base-url]
+  (-> (ensure-user-membership! policyDb gh-user email)
+      (.then
+        (fn [fresh-ctx]
+          (let [session-id   (.randomUUID crypto)
+                session-data #js {:membershipId (some-> fresh-ctx (aget "membership") (aget "id"))
+                                  :userId       (some-> fresh-ctx (aget "user") (aget "id"))
+                                  :email        email
+                                  :orgSlug      (some-> fresh-ctx (aget "org") (aget "slug"))
+                                  :orgId        (some-> fresh-ctx (aget "org") (aget "id"))
+                                  :displayName  (or (aget gh-user "name") (aget gh-user "login") email)
+                                  :githubLogin  (aget gh-user "login")
+                                  :githubId     (aget gh-user "id")
+                                  :authProvider "github"
+                                  :createdAt    (.toISOString (js/Date.))}]
+            (-> (store-session session-id session-data)
+                (.then (fn [_] (sign-token #js {:sid session-id})))
+                (.then
+                  (fn [token]
+                    (set-session-cookie reply token public-base-url)
+                    (.log js/console (str "[knoxx-session] GitHub login: " email))
+                    (.redirect reply
+                      (.toString (js/URL. (:redirect state-entry) public-base-url)))))))))))
+
+(defn- check-whitelist-and-session!
+  "Check if email is whitelisted; if so, create session and redirect, otherwise redirect to invite page."
+  [policyDb reply gh-user email state-entry public-base-url]
+  (let [headers-like #js {"x-knoxx-user-email" email}]
+    (-> (.resolveRequestContext policyDb headers-like)
+        (.then (fn [_] true))
+        (.catch (fn [_] false))
+        (.then
+          (fn [whitelisted]
+            (if (not whitelisted)
+              ;; Not whitelisted — redirect to invite page
+              (let [invite-url (js/URL. "/login" public-base-url)]
+                (.set (.-searchParams invite-url) "error" "not_whitelisted")
+                (.set (.-searchParams invite-url) "email" email)
+                (.set (.-searchParams invite-url) "github_login" (or (aget gh-user "login") ""))
+                (.redirect reply (.toString invite-url)))
+              ;; Whitelisted — upsert and create session
+              (create-session-and-redirect!
+                policyDb reply gh-user email state-entry public-base-url)))))))
+
+;; --- Main callback handler -------------------------------------------------
+
 (defn- handle-github-callback
   [policyDb reply client-id client-secret state-entry code state-val public-base-url]
   (-> (exchange-github-code client-id client-secret code)
       (.then
-       (fn [access-token]
-         (-> (gh-json "https://api.github.com/user" access-token)
-             (.then
-              (fn [gh-user]
-                (if-not (aget gh-user "id")
-                  (throw (js/Error. "GitHub user lookup failed"))
-                  (-> (get-github-user-emails access-token)
-                      (.then
-                       (fn [email]
-                         (if-not email
-                           (throw (js/Error. "Could not retrieve GitHub email"))
-                           ;; Check whitelist
-                           (let [headers-like #js {"x-knoxx-user-email" email}]
-                             (-> (.resolveRequestContext policyDb headers-like)
-                                 (.then (fn [_] true))
-                                 (.catch (fn [_] false))
-                                 (.then
-                                  (fn [whitelisted]
-                                    (if (not whitelisted)
-                                      ;; Not whitelisted — redirect to invite page
-                                      (let [invite-url (js/URL. "/login" public-base-url)]
-                                        (.set (.-searchParams invite-url) "error" "not_whitelisted")
-                                        (.set (.-searchParams invite-url) "email" email)
-                                        (.set (.-searchParams invite-url) "github_login" (or (aget gh-user "login") ""))
-                                        (.redirect reply (.toString invite-url)))
-                                      ;; Whitelisted — upsert and create session
-                                      (-> (.resolveRequestContext policyDb headers-like)
-                                          (.then
-                                           (fn [ctx]
-                                             (let [mid (some-> ctx (aget "membership") (aget "id"))]
-                                               (if mid
-                                                 (js/Promise.resolve ctx)
-                                                 (-> (.getBootstrapContext policyDb)
-                                                     (.then
-                                                      (fn [bc]
-                                                        (.createUser policyDb
-                                                                     #js {:email email
-                                                                          :displayName (or (aget gh-user "name") (aget gh-user "login") email)
-                                                                          :orgId (some-> bc (aget "primaryOrg") (aget "id"))
-                                                                          :authProvider "github"
-                                                                          :externalSubject (str "github:" (aget gh-user "id"))
-                                                                          :roleSlugs #js ["knowledge_worker"]})
-                                                     (.then (fn [_] (.resolveRequestContext policyDb headers-like)))))))))
-                                          (.then
-                                           (fn [fresh-ctx]
-                                             (let [session-id (.randomUUID crypto)
-                                                   session-data #js {:membershipId (some-> fresh-ctx (aget "membership") (aget "id"))
-                                                                     :userId (some-> fresh-ctx (aget "user") (aget "id"))
-                                                                     :email email
-                                                                     :orgSlug (some-> fresh-ctx (aget "org") (aget "slug"))
-                                                                     :orgId (some-> fresh-ctx (aget "org") (aget "id"))
-                                                                     :displayName (or (aget gh-user "name") (aget gh-user "login") email)
-                                                                     :githubLogin (aget gh-user "login")
-                                                                     :githubId (aget gh-user "id")
-                                                                     :authProvider "github"
-                                                                     :createdAt (.toISOString (js/Date.))}]
-                                               (-> (store-session session-id session-data)
-                                                   (.then (fn [_] (sign-token #js {:sid session-id})))
-                                                   (.then
-                                                    (fn [token]
-                                                      (set-session-cookie reply token public-base-url)
-                                                      (.log js/console (str "[knoxx-session] GitHub login: " email))
-                                                      (.redirect reply (.toString (js/URL. (:redirect state-entry) public-base-url)))))))))))))))))))))))))))
+        (fn [access-token]
+          (-> (gh-json "https://api.github.com/user" access-token)
+              (.then
+                (fn [gh-user]
+                  (if-not (aget gh-user "id")
+                    (throw (js/Error. "GitHub user lookup failed"))
+                    (-> (get-github-user-emails access-token)
+                        (.then
+                          (fn [email]
+                            (if-not email
+                              (throw (js/Error. "Could not retrieve GitHub email"))
+                              (check-whitelist-and-session!
+                                policyDb reply gh-user email
+                                state-entry public-base-url)))))))))))
       (.catch
-       (fn [err]
-         (.error js/console "[knoxx-session] GitHub OAuth callback error:" (.-message err))
-         (let [error-url (js/URL. "/login" public-base-url)]
-           (.set (.-searchParams error-url) "error" "oauth_failed")
-           (.set (.-searchParams error-url) "message" (.-message err))
-           (.redirect reply (.toString error-url))))))
+        (fn [err]
+          (.error js/console
+            "[knoxx-session] GitHub OAuth callback error:" (.-message err))
+          (let [error-url (js/URL. "/login" public-base-url)]
+            (.set (.-searchParams error-url) "error" "oauth_failed")
+            (.set (.-searchParams error-url) "message" (.-message err))
+            (.redirect reply (.toString error-url)))))))
+
+
+;; ---------------------------------------------------------------------------
+;; Invite email (optional)
+;; ---------------------------------------------------------------------------
+
+(defn- send-invite-email
+  "Best-effort invite email sender.
+
+   IMPORTANT: This function MUST always return a Promise, so callers can safely
+   attach .catch even when email sending is disabled/unconfigured."
+  [runtime invite email public-base-url]
+  (try
+    (let [nodemailer (aget runtime "nodemailer")
+          smtp-host (str (or (aget (.-env js/process) "KNOXX_SMTP_HOST") ""))
+          smtp-port (js/parseInt (or (aget (.-env js/process) "KNOXX_SMTP_PORT") "587") 10)
+          smtp-user (str (or (aget (.-env js/process) "KNOXX_SMTP_USER") ""))
+          smtp-pass (str (or (aget (.-env js/process) "KNOXX_SMTP_PASS") ""))
+          from (str (or (aget (.-env js/process) "KNOXX_EMAIL_FROM") smtp-user ""))
+          invite-code (str (or (aget invite "code") ""))
+          invite-url (try
+                       (let [u (js/URL. "/login" public-base-url)]
+                         (.set (.-searchParams u) "invite" invite-code)
+                         (.set (.-searchParams u) "email" (str email))
+                         (.toString u))
+                       (catch :default _ ""))]
+      (if (or (not nodemailer)
+              (str/blank? smtp-host)
+              (str/blank? from)
+              (str/blank? smtp-user)
+              (str/blank? smtp-pass)
+              (str/blank? (str email))
+              (str/blank? invite-code)
+              (str/blank? invite-url))
+        (js/Promise.resolve nil)
+        (let [transporter (.createTransport nodemailer
+                                            #js {:host smtp-host
+                                                 :port smtp-port
+                                                 :secure false
+                                                 :auth #js {:user smtp-user
+                                                            :pass smtp-pass}})
+              subject "Knoxx invite"
+              text (str "You have been invited to Knoxx.\n\n"
+                        "Invite link: " invite-url "\n")]
+          (.sendMail transporter
+                     #js {:from from
+                          :to (str email)
+                          :subject subject
+                          :text text}))))
+    (catch :default err
+      ;; Never block invite creation on email failure.
+      (.warn js/console "[knoxx-session] send-invite-email error:" (.-message err))
+      (js/Promise.resolve nil))))
 
 
 (defn register-auth-routes
-  [app {:keys [policyDb runtime]}]
+  ;; NOTE: Called from JS (server.mjs). `opts` may be a plain JS object.
+  [app opts]
   (let [public-base-url (or (aget (.-env js/process) "KNOXX_PUBLIC_BASE_URL") "http://localhost")
+        policyDb (or (when (map? opts) (:policyDb opts)) (aget opts "policyDb"))
+        runtime (or (when (map? opts) (:runtime opts)) (aget opts "runtime"))
         client-id (or (aget (.-env js/process) "KNOXX_GITHUB_OAUTH_CLIENT_ID") "")
         client-secret (or (aget (.-env js/process) "KNOXX_GITHUB_OAUTH_CLIENT_SECRET") "")
         github-enabled (and (not (str/blank? client-id)) (not (str/blank? client-secret)))]
@@ -461,4 +542,3 @@
                          (when (aget session-data "membershipId")
                            (aset headers "x-knoxx-membership-id" (aget session-data "membershipId")))
                          (.resolveRequestContext policyDb headers)))))))))))))
-
