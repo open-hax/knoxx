@@ -490,6 +490,10 @@
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    -- Backfill for installations that created `sessions` before `token_prefix` existed.
+    ALTER TABLE sessions
+      ADD COLUMN IF NOT EXISTS token_prefix TEXT NOT NULL DEFAULT '';
+
     CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
     CREATE INDEX IF NOT EXISTS sessions_membership_idx ON sessions (membership_id);
     CREATE INDEX IF NOT EXISTS sessions_token_prefix_idx ON sessions (token_prefix);
@@ -1522,7 +1526,7 @@
                                         :redeemedAt (aget updated "redeemed_at")
                                         :createdAt (aget updated "created_at")}
                            ;; For now we don't auto-provision a user here.
-                           :user nil})))))))))
+                           :user nil}))))))))))
 
 (defn- factory-list-invites
   [pool opts]
@@ -1697,4 +1701,4 @@
                                  :query
                                  (fn [sql params]
                                    (query! pool sql params))})))))))
-               (.catch reject)))))))))
+               (.catch reject))))))))
