@@ -24,6 +24,17 @@ import {
 import { getEventAgentControl } from "../lib/api/admin";
 import type { EventAgentControlResponse, EventAgentJobControl, EventAgentRuntimeJob } from "../lib/api/admin";
 import { EdnEditor } from "../components/admin-page/EdnEditor";
+import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
+import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
+import type { AgentSource } from "../lib/types";
+
+// ── Chat sidebar persistence keys (namespaced to avoid CMS collisions) ───────
+
+const CHAT_SESSION_ID_KEY = "knoxx_contracts_session_id";
+const CHAT_SCRATCHPAD_KEY = "knoxx_contracts_scratchpad_state";
+const CHAT_PINNED_KEY = "knoxx_contracts_pinned_context";
+const CHAT_SESSION_STATE_KEY = "knoxx_contracts_chat_session_state";
+const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_contracts_sidebar_width_px";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -272,6 +283,20 @@ export default function ContractsPage() {
   const [showSql, setShowSql] = useState(false);
   const [compiledSql, setCompiledSql] = useState<ContractCompileResult["sql"] | null>(null);
 
+  const [showChat, setShowChat] = useState(true);
+
+  // ── Chat workspace controller ──────────────────────────────────────────
+  const chat = useChatWorkspaceController({
+    initialShowCanvas: false,
+    initialSidebarWidthPx: 420,
+    defaultRole: "system_admin",
+    sessionIdKey: CHAT_SESSION_ID_KEY,
+    scratchpadStorageKey: CHAT_SCRATCHPAD_KEY,
+    pinnedContextStorageKey: CHAT_PINNED_KEY,
+    sessionStateKey: CHAT_SESSION_STATE_KEY,
+    sidebarWidthKey: CHAT_SIDEBAR_WIDTH_KEY,
+  });
+
   const isDirty = lastSavedEdn == null ? ednDraft.trim().length > 0 : ednDraft !== lastSavedEdn;
   const validationErrors = validation?.errors ?? [];
 
@@ -351,6 +376,14 @@ export default function ContractsPage() {
       setValidation({ ...result.validation, contract: result.contract });
       setNormalizedView(result.contract);
       setCompiledSql(null);
+      // Pin contract as chat context
+      chat.pinContextItem({
+        id: `contract:${contractId}`,
+        title: contractId,
+        path: `/ops/contracts/${contractId}`,
+        snippet: result.ednText.slice(0, 240),
+        kind: "file",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setEdnDraft("");
@@ -612,6 +645,10 @@ export default function ContractsPage() {
               style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
               {showNormalized ? "Hide JSON" : "Show JSON"}
             </button>
+            <button type="button" onClick={() => setShowChat((v) => !v)}
+              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${showChat ? palette.accent.cyan : palette.fg.subtle}`, background: showChat ? "rgba(102, 217, 239, 0.08)" : palette.bg.default, color: showChat ? palette.accent.cyan : palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
+              {showChat ? "✕ Chat" : "💬 Chat"}
+            </button>
           </div>
         </div>
 
@@ -755,6 +792,37 @@ export default function ContractsPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Right sidebar: Chat workspace ─────────────────────────────── */}
+      {showChat ? (
+        <aside
+          style={{
+            width: 460,
+            minWidth: 380,
+            borderLeft: `1px solid ${palette.fg.subtle}`,
+            display: "flex",
+            minHeight: 0,
+            overflow: "hidden",
+            background: palette.bg.darker,
+          }}
+        >
+          <ChatWorkspacePane
+            controller={chat}
+            showFiles={false}
+            showCanvasToggle={false}
+            onShowFiles={() => {}}
+            onOpenHydrationSource={(source) => {
+              // Hydration sources from chat — could open a contract
+              const contractId = source.path.split("/").pop() ?? source.path;
+              if (contractId) setSelectedId(contractId);
+            }}
+            onOpenSourceInPreview={(source: AgentSource) => {
+              const contractId = source.url.split("/").pop() ?? source.url;
+              if (contractId) setSelectedId(contractId);
+            }}
+          />
+        </aside>
+      ) : null}
     </div>
   );
 }
