@@ -85,6 +85,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   try {
     response = await fetch(`${API_BASE}${path}`, {
+      credentials: "include",
       headers: {
         ...Object.fromEntries(buildKnoxxAuthHeaders({
           "Content-Type": "application/json",

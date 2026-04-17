@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import fastifyCors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
+import fastifyCookie from '@fastify/cookie';
 import { Type } from '@sinclair/typebox';
 import * as sdk from '@mariozechner/pi-coding-agent';
 import * as crypto from 'node:crypto';
@@ -13,8 +14,9 @@ import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
 import { createDiscordGatewayManager } from './discord-gateway.mjs';
-import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
 import { createPolicyDb } from './policy-db.mjs';
+import { registerAuthRoutes, createSessionHook } from './auth/knoxx-session.mjs';
+import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
 import {
   config as readConfig,
   registerAppRoutes,
@@ -55,6 +57,7 @@ const config = readConfig();
 const app = Fastify({ logger: true });
 
 await app.register(fastifyCors, { origin: true });
+await app.register(fastifyCookie);
 await app.register(fastifyMultipart);
 await app.register(fastifyWebsocket);
 
@@ -62,6 +65,12 @@ await app.register((instance, _opts, done) => {
   registerWsRoutes(runtime, instance);
   done();
 });
+// Session cookie hook: injects x-knoxx-* headers from cookie session before CLJS routes
+app.addHook('onRequest', createSessionHook(policyDb));
+
+// GitHub OAuth + cookie session auth routes
+registerAuthRoutes(app, { policyDb, runtime });
+
 // registerAppRoutes may perform async bootstrap (Redis init, session recovery, etc.).
 await registerAppRoutes(runtime, app, config);
 

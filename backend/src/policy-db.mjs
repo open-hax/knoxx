@@ -630,6 +630,25 @@ async function ensureSchema(pool) {
       after_json JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS invites (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      code TEXT NOT NULL UNIQUE,
+      org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      inviter_membership_id UUID REFERENCES memberships(id) ON DELETE SET NULL,
+      email TEXT NOT NULL,
+      role_slugs TEXT[] NOT NULL DEFAULT '{"knowledge_worker"}',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','revoked','expired')),
+      max_uses INT NOT NULL DEFAULT 1,
+      use_count INT NOT NULL DEFAULT 0,
+      expires_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_invites_code ON invites (code);
+    CREATE INDEX IF NOT EXISTS idx_invites_email ON invites (email);
+    CREATE INDEX IF NOT EXISTS idx_invites_org_id ON invites (org_id);
   `);
 }
 
@@ -1452,5 +1471,121 @@ export async function createPolicyDb(options = {}) {
         },
       };
     },
+
+    // -----------------------------------------------------------------
+    // Invite system
+    // -----------------------------------------------------------------
+
+    async createInvite(payload = {}) {
+      const orgId = String(payload.orgId ?? payload.org_id ?? '').trim();
+      const email = String(payload.email ?? '').trim().toLowerCase();
+      if (!orgId) throw new Error('orgId is required');
+      if (!email) throw new Error('email is required');
+      const code = payload.code ?? crypto.randomUUID().replace(/-/g, '');
+      const roleSlugs = payload.roleSlugs ?? payload.role_slugs ?? ['knowledge_worker'];
+      const maxUses = payload.maxUses ?? payload.max_uses ?? 1;
+      const expiresAt = payload.expiresAt ?? payload.expires_at ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days default
+      const { rows } = await pool.query(
+        `INSERT INTO invites (code, org_id, inviter_membership_id, email, role_slugs, max_uses, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [code, orgId, payload.inviterMembershipId ?? payload.inviter_membership_id ?? null, email, roleSlugs, maxUses, expiresAt],
+      );
+      const inv = rows[0];
+      await appendAudit(pool, {
+        actorUserId: bootstrap.user.id,
+        actorMembershipId: bootstrap.membership.id,
+        orgId,
+        action: 'invite.create',
+        resourceKind: 'invite',
+        resourceId: inv.id,
+      });
+      return { invite: hydrateInvite(inv) };
+    },
+
+    async listInvites({ orgId, status } = {}) {
+      if (!orgId) throw new Error('orgId is required');
+      let sql = `SELECT * FROM invites WHERE org_id = $1`;
+      const params = [orgId];
+      if (status) {
+        sql += ` AND status = $2`;
+        params.push(status);
+      }
+      sql += ` ORDER BY created_at DESC`;
+      const { rows } = await pool.query(sql, params);
+      return { invites: rows.map(hydrateInvite) };
+    },
+
+    async getInviteByCode(code) {
+      const { rows } = await pool.query(`SELECT * FROM invites WHERE code = $1`, [code]);
+      return { invite: rows[0] ? hydrateInvite(rows[0]) : null };
+    },
+
+    async redeemInvite(code, userEmail) {
+      const email = String(userEmail).trim().toLowerCase();
+      const { rows } = await pool.query(`SELECT * FROM invites WHERE code = $1`, [code]);
+      const inv = rows[0];
+      if (!inv) throw httpError(404, 'Invite not found', 'invite_not_found');
+      if (inv.status !== 'pending') throw httpError(410, `Invite is ${inv.status}`, 'invite_' + inv.status);
+      if (inv.expires_at && new Date(inv.expires_at) < new Date()) {
+        await pool.query(`UPDATE invites SET status = 'expired', updated_at = NOW() WHERE id = $1`, [inv.id]);
+        throw httpError(410, 'Invite has expired', 'invite_expired');
+      }
+      if (inv.use_count >= inv.max_uses) throw httpError(410, 'Invite has no remaining uses', 'invite_exhausted');
+      // Auto-provision the user with the invite's org + role_slugs
+      const created = await this.createUser({
+        email,
+        orgId: inv.org_id,
+        roleSlugs: inv.role_slugs,
+        membershipStatus: 'active',
+      });
+      await pool.query(
+        `UPDATE invites SET use_count = use_count + 1, status = CASE WHEN use_count + 1 >= max_uses THEN 'accepted' ELSE status END, updated_at = NOW() WHERE id = $1`,
+        [inv.id],
+      );
+      await appendAudit(pool, {
+        actorUserId: created.user.id,
+        orgId: inv.org_id,
+        action: 'invite.redeem',
+        resourceKind: 'invite',
+        resourceId: inv.id,
+      });
+      return { invite: hydrateInvite(inv), user: created.user };
+    },
+
+    async revokeInvite(inviteId) {
+      const { rows } = await pool.query(
+        `UPDATE invites SET status = 'revoked', updated_at = NOW() WHERE id = $1 RETURNING *`,
+        [inviteId],
+      );
+      if (!rows[0]) throw httpError(404, 'Invite not found', 'invite_not_found');
+      return { invite: hydrateInvite(rows[0]) };
+    },
+
+    async isEmailWhitelisted(email) {
+      const lc = String(email).trim().toLowerCase();
+      // Bootstrap system admin is always whitelisted
+      if (lc === String(bootstrap.user.email).toLowerCase()) return true;
+      // Check if user already exists in the policy DB
+      const { rows } = await pool.query(`SELECT id FROM users WHERE email = $1 AND status = 'active'`, [lc]);
+      return rows.length > 0;
+    },
+  };
+}
+
+function hydrateInvite(row) {
+  return {
+    id: row.id,
+    code: row.code,
+    orgId: row.org_id,
+    inviterMembershipId: row.inviter_membership_id,
+    email: row.email,
+    roleSlugs: row.role_slugs,
+    status: row.status,
+    maxUses: row.max_uses,
+    useCount: row.use_count,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
