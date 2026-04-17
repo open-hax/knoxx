@@ -21,8 +21,9 @@ import {
   createPolicyDb,
   registerAuthRoutes,
   createSessionHook,
+  getPiIngestStatus,
+  listPiSessions,
 } from '../dist/app.js';
-import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
 
 globalThis.require = globalThis.require || createRequire(import.meta.url);
 
