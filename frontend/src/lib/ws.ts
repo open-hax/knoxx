@@ -40,13 +40,30 @@ export function connectStream(
 ): StreamConnection {
   let socket: WebSocket | null = null;
   let currentConversationId = initialConversationId ?? null;
+  let disposed = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectDelay = 1000;
+  const MAX_RECONNECT_DELAY = 30000;
 
   const connectSocket = () => {
+    if (disposed) return;
     socket = new WebSocket(wsUrl(API_BASE, sessionId, currentConversationId));
 
-    socket.addEventListener("open", () => handlers.onStatus?.("connected"));
-    socket.addEventListener("close", () => handlers.onStatus?.("closed"));
-    socket.addEventListener("error", () => handlers.onStatus?.("error"));
+    socket.addEventListener("open", () => {
+      reconnectDelay = 1000; // reset on successful connect
+      handlers.onStatus?.("connected");
+    });
+    socket.addEventListener("close", () => {
+      handlers.onStatus?.("closed");
+      // Auto-reconnect unless explicitly disconnected
+      if (!disposed) {
+        reconnectTimer = setTimeout(connectSocket, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+      }
+    });
+    socket.addEventListener("error", () => {
+      handlers.onStatus?.("error");
+    });
 
     socket.addEventListener("message", (event) => {
       try {
@@ -75,7 +92,11 @@ export function connectStream(
 
   connectSocket();
 
-  const disconnect = () => socket?.close();
+  const disconnect = () => {
+    disposed = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    socket?.close();
+  };
   const setConversationId = (conversationId: string | null) => {
     if (conversationId !== currentConversationId) {
       currentConversationId = conversationId;
