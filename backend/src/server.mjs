@@ -13,20 +13,19 @@ import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
-import { createDiscordGatewayManager } from './discord-gateway.mjs';
-import { createPolicyDb } from './policy-db.mjs';
-import { registerAuthRoutes, createSessionHook } from './auth/knoxx-session.mjs';
-import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
 import {
   config as readConfig,
   registerAppRoutes,
   registerWsRoutes,
+  createPolicyDb,
+  createDiscordGatewayManager,
 } from '../dist/app.js';
+import { registerAuthRoutes, createSessionHook } from './auth/knoxx-session.mjs';
+import { getPiIngestStatus, listPiSessions } from './pi-session-ingester.mjs';
 
 globalThis.require = globalThis.require || createRequire(import.meta.url);
 
 const discordGateway = createDiscordGatewayManager({ log: console });
-globalThis.knoxxDiscordGateway = discordGateway;
 
 const policyDb = await createPolicyDb({
   connectionString: process.env.KNOXX_POLICY_DATABASE_URL || process.env.DATABASE_URL || '',

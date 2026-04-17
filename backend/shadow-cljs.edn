@@ -27,17 +27,12 @@
                              :registerAppRoutes knoxx.backend.core/register-app-routes!
                              :registerWsRoutes knoxx.backend.core/register-ws-routes!
                              :start knoxx.backend.core/start!
-                             :createPolicyDb knoxx.backend.policy-db/create-policy-db}}}
+                             :createPolicyDb knoxx.backend.policy-db/create-policy-db
+                             :createDiscordGatewayManager knoxx.backend.discord-gateway/createDiscordGatewayManager}}}
    :js-options {:js-provider :import
                  :keep-as-import #{"pg" "discord.js"}}
    :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true
                       :infer-externs :auto
-                      ;; NOTE: :warnings {:infer-warning false} is the standard CLJS way to
-                      ;; suppress infer-warnings, but shadow-cljs 3.x does not honor it in
-                      ;; :compiler-options. With :js-provider :import + Node.js interop,
-                      ;; (.method obj) calls are ubiquitous and ALL trigger :infer-warning.
-                      ;; These are cosmetic only — externs are auto-inferred at :auto level.
-                      ;; The 156 infer-warnings are expected and benign for this target.
                       :warnings {:infer-warning false}}}}}
