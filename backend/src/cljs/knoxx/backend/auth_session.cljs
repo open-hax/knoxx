@@ -15,7 +15,7 @@
                        (let [buf (.randomBytes crypto 32)]
                          (.toString buf "hex")))]
         (when (str/blank? env-secret)
-          (.warn js/console "[knoxx-session] KNOXX_SESSION_SECRET not set; using ephemeral key. Sessions will not survive restarts."))
+          (.log js/console "[knoxx-session] Using ephemeral session key until DB recovery completes"))
         (reset! session-secret-mem secret)
         secret)))
 
@@ -56,6 +56,86 @@
 (def ^:private redis-client (atom nil))
 (def ^:private redis-connect-promise (atom nil))
 
+;; --- Persistent session store (Postgres) ---
+
+(def ^:private db-session-store (atom nil))
+
+(defn set-db-session-store!
+  [policyDb]
+  (reset! db-session-store policyDb)
+  ;; Recover or persist the session secret so tokens survive restarts
+  (recover-or-persist-session-secret! policyDb))
+
+(defn- recover-or-persist-session-secret!
+  "If KNOXX_SESSION_SECRET env is set, use it. Otherwise, try to load from DB
+   (table: knoxx_config, key: session_secret). If none exists, generate, store, and use."
+  [policyDb]
+  (let [env-secret (aget (.-env js/process) "KNOXX_SESSION_SECRET")]
+    (if (not (str/blank? env-secret))
+      (do
+        (reset! session-secret-mem env-secret)
+        (.log js/console "[knoxx-session] Using session secret from KNOXX_SESSION_SECRET env"))
+      ;; No env secret — try DB, then generate
+      (-> (.query policyDb "SELECT value FROM knoxx_config WHERE key = 'session_secret'" [])
+          (.then
+           (fn [result]
+             (let [rows (aget result "rows")]
+               (if (> (.-length rows) 0)
+                 (let [stored (aget rows 0 "value")]
+                   (reset! session-secret-mem stored)
+                   (.log js/console "[knoxx-session] Recovered session secret from database"))
+                 ;; Generate new secret and persist
+                 (let [new-secret (.toString (.randomBytes crypto 32) "hex")]
+                   (reset! session-secret-mem new-secret)
+                   (-> (.query policyDb
+                               "INSERT INTO knoxx_config (key, value) VALUES ('session_secret', $1)
+                                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+                               [new-secret])
+                       (.then (fn [_]
+                                (.log js/console "[knoxx-session] Generated and persisted session secret to database")))
+                       (.catch (fn [err2]
+                                 (.log js/console "[knoxx-session] ERROR persisting secret:" (.-message err2))))))))))
+          (.catch (fn [err]
+                    (.log js/console "[knoxx-session] ERROR loading session secret from DB:" (.-message err))))))))
+
+(defn- db-store-session
+  [token session-data]
+  (if-not @db-session-store
+    (js/Promise.resolve nil)
+    (let [db @db-session-store
+          payload #js {:token       token
+                      :userId      (or (aget session-data "userId") "")
+                      :membershipId (or (aget session-data "membershipId") "")
+                      :orgId       (or (aget session-data "orgId") "")
+                      :email       (or (aget session-data "email") "")
+                      :displayName (or (aget session-data "displayName") "")
+                      :authProvider (or (aget session-data "authProvider") "github")
+                      :externalSubject (or (aget session-data "externalId") nil)
+                      :ipAddress   (or (aget session-data "ipAddress") nil)
+                      :userAgent   (or (aget session-data "userAgent") nil)}]
+      (.catch (.createSession db payload) (fn [_] nil)))))
+
+(defn- db-load-session
+  [token]
+  (if-not @db-session-store
+    (do (js/Promise.resolve nil))
+    (-> (.getSessionByToken @db-session-store token)
+        (.then (fn [result]
+                 (when (and result (aget result "session"))
+                   (let [s (aget result "session")]
+                     #js {:id            (aget s "id")
+                          :userId        (aget s "userId")
+                          :membershipId  (aget s "membershipId")
+                          :email         (aget s "email")
+                          :orgSlug       nil ;; resolved from membership if needed
+                          :orgId         (aget s "orgId")
+                          :displayName   (aget s "displayName")
+                          :githubLogin   nil
+                          :githubId      nil
+                          :authProvider  (aget s "authProvider")
+                          :createdAt     (aget s "createdAt")}))))
+        (.catch (fn [_] nil)))))
+
 (defn- get-redis
   []
   (if (and @redis-client (.-isOpen @redis-client))
@@ -82,29 +162,40 @@
 
 (defn- store-session
   [session-id data]
-  (-> (get-redis)
-      (.then
-       (fn [redis]
-         (let [ttl (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10)]
-           (.set redis (str "knoxx:session:" session-id) (js/JSON.stringify (clj->js data))
-                 (clj->js {:EX ttl})))))))
+  (let [token (or (aget data "_rawToken") "")]
+    (-> (db-store-session token data)
+        (.catch (fn [err]
+                  (.log js/console "[knoxx-session] WARN: DB store failed:" (.-message err))))
+        (.then (fn [_]
+                 (-> (get-redis)
+                     (.then
+                       (fn [redis]
+                         (let [ttl (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10)]
+                           (.set redis (str "knoxx:session:" session-id)
+                                 (js/JSON.stringify (clj->js data))
+                                 (clj->js {:EX ttl})))))))))))
 
 (defn- load-session
-  [session-id]
+  [session-id token]
+  ;; Try Redis first (fast cache), fall back to Postgres (persistent)
   (-> (get-redis)
+      (.then (fn [redis] (.get redis (str "knoxx:session:" session-id))))
       (.then
-       (fn [redis]
-         (.get redis (str "knoxx:session:" session-id))))
-      (.then
-       (fn [raw]
-         (when raw
-           (try (js/JSON.parse raw)
-                (catch :default _ nil)))))))
+        (fn [raw]
+          (if raw
+            (try (js/JSON.parse raw) (catch :default _err1 nil))
+            (do
+(db-load-session (or token ""))))))
+      (.catch (fn [_err2] (db-load-session (or token ""))))))
 
 (defn- delete-session
-  [session-id]
+  [session-id token]
+  (when (and @db-session-store (not (str/blank? token)))
+    (.catch (.deleteSessionByToken @db-session-store token) (fn [_err3] nil)))
   (-> (get-redis)
-      (.then (fn [redis] (.del redis (str "knoxx:session:" session-id))))))
+      (.then (fn [redis] (.del redis (str "knoxx:session:" session-id))))
+      (.catch (fn [_err4] nil))
+      (.then (fn [_err5] nil))))
 
 
 (defn- exchange-github-code
@@ -244,6 +335,7 @@
       (.then
         (fn [fresh-ctx]
           (let [session-id   (.randomUUID crypto)
+                raw-token    (sign-token #js {:sid session-id})
                 session-data #js {:membershipId (some-> fresh-ctx (aget "membership") (aget "id"))
                                   :userId       (some-> fresh-ctx (aget "user") (aget "id"))
                                   :email        email
@@ -253,9 +345,10 @@
                                   :githubLogin  (aget gh-user "login")
                                   :githubId     (aget gh-user "id")
                                   :authProvider "github"
+                                  :_rawToken    raw-token
                                   :createdAt    (.toISOString (js/Date.))}]
             (-> (store-session session-id session-data)
-                (.then (fn [_] (sign-token #js {:sid session-id})))
+                (.then (fn [_] raw-token))
                 (.then
                   (fn [token]
                     (set-session-cookie reply token public-base-url)
@@ -376,6 +469,9 @@
         client-secret (or (aget (.-env js/process) "KNOXX_GITHUB_OAUTH_CLIENT_SECRET") "")
         github-enabled (and (not (str/blank? client-id)) (not (str/blank? client-secret)))]
 
+    ;; Wire persistent session store so auth_session can save/load sessions from Postgres
+    (when policyDb (set-db-session-store! policyDb))
+
     (.get app "/api/auth/config"
           (fn [_req reply]
             (.send reply (clj->js {:githubEnabled github-enabled
@@ -414,7 +510,7 @@
                (when cookie-token
                  (let [payload (verify-token cookie-token)]
                    (when (and payload (aget payload "sid"))
-                     (.catch (delete-session (aget payload "sid")) (fn [_])))))
+                     (.catch (delete-session (aget payload "sid") cookie-token) (fn [_])))))
                (clear-session-cookie reply public-base-url)
                (.send reply (clj->js {:ok true})))))
 
@@ -506,7 +602,7 @@
             (when cookie-token
               (let [payload (verify-token cookie-token)]
                 (when (and payload (aget payload "sid"))
-                  (-> (load-session (aget payload "sid"))
+                  (-> (load-session (aget payload "sid") cookie-token)
                       (.then
                        (fn [session-data]
                          (if-not session-data
@@ -532,7 +628,7 @@
           (let [payload (verify-token cookie-token)]
             (if-not (and payload (aget payload "sid"))
               (js/Promise.reject (http-error 401 "Invalid session token" "invalid_token"))
-              (-> (load-session (aget payload "sid"))
+              (-> (load-session (aget payload "sid") cookie-token)
                   (.then
                    (fn [session-data]
                      (if-not session-data

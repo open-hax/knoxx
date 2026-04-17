@@ -15,7 +15,8 @@
    See: https://github.com/thheller/shadow-cljs/issues/1219"
   (:require [clojure.string :as str]
             [honey.sql :as sql]
-            ["pg" :as pg]))
+            ["pg" :as pg]
+            ["node:crypto" :as crypto]))
 
 ;; ---------------------------------------------------------------------------
 ;; Data Constants
@@ -468,6 +469,35 @@
       before_json JSONB,
       after_json JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      membership_id UUID NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
+      org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      email TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      auth_provider TEXT NOT NULL DEFAULT 'github',
+      external_subject TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
+    CREATE INDEX IF NOT EXISTS sessions_membership_idx ON sessions (membership_id);
+    CREATE INDEX IF NOT EXISTS sessions_token_hash_idx ON sessions (token_hash);
+    CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions (expires_at);
+
+    CREATE TABLE IF NOT EXISTS knoxx_config (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   " nil))
 
@@ -1278,6 +1308,87 @@
                    (.then (fn [_] #js {:dataLake (->js-data-lake lake)}))))))))))
 
 ;; ---------------------------------------------------------------------------
+;; Session persistence (Postgres)
+;; ---------------------------------------------------------------------------
+
+(defn- hash-token-with-salt
+  [token salt]
+  (let [h (.createHash crypto "sha256")]
+    (.update h (str salt ":" token) "utf8")
+    (.digest h "hex")))
+
+(defn- generate-salt
+  []
+  (.toString (.randomBytes crypto 16) "hex"))
+
+(defn- factory-create-session
+  [pool session-data]
+  (let [token (or (aget session-data "token") "")
+        ttl-secs (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10)
+        salt (generate-salt)
+        token-hash (hash-token-with-salt token salt)
+        expires-at (js/Date. (+ (js/Date.now) (* ttl-secs 1000)))]
+    (if (str/blank? token)
+      (js/Promise.reject (js/Error. "token is required for session creation"))
+      (-> (query-one! pool
+                      "INSERT INTO sessions (user_id, membership_id, org_id, token_hash, salt, email, display_name, auth_provider, external_subject, ip_address, user_agent, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *"
+                      [(or (aget session-data "userId") "")
+                       (or (aget session-data "membershipId") "")
+                       (or (aget session-data "orgId") "")
+                       token-hash
+                       salt
+                       (or (aget session-data "email") "")
+                       (or (aget session-data "displayName") "")
+                       (or (aget session-data "authProvider") "github")
+                       (or (aget session-data "externalSubject") nil)
+                       (or (aget session-data "ipAddress") nil)
+                       (or (aget session-data "userAgent") nil)
+                       (.toISOString expires-at)])
+          (.then
+           (fn [row]
+             #js {:session #js {:id (aget row "id")
+                                :userId (aget row "user_id")
+                                :membershipId (aget row "membership_id")
+                                :orgId (aget row "org_id")
+                                :email (aget row "email")
+                                :displayName (aget row "display_name")
+                                :authProvider (aget row "auth_provider")
+                                :expiresAt (aget row "expires_at")
+                                :createdAt (aget row "created_at")}}))))))
+(defn- factory-get-session-by-token
+  [pool token]
+  (if (str/blank? token)
+    (js/Promise.resolve nil)
+    (-> (query! pool
+                "SELECT * FROM sessions WHERE expires_at > NOW() ORDER BY created_at DESC LIMIT 50"
+                [])
+        (.then
+          (fn [result]
+            (let [rows (aget result "rows")]
+              (loop [i 0]
+                (if (>= i (.-length rows))
+                  nil
+                  (let [row (aget rows i)
+                        h  (aget row "token_hash")
+                        s  (aget row "salt")
+                        c  (hash-token-with-salt token s)]
+                    (if (= h c)
+                      (do
+                        (.catch (query! pool "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1" [(aget row "id")])
+                                (fn [_err] nil))
+                        (js/Promise.resolve
+                          #js {:session #js {:id            (aget row "id")
+                                             :userId        (aget row "user_id")
+                                             :membershipId  (aget row "membership_id")
+                                             :orgId         (aget row "org_id")
+                                             :email         (aget row "email")
+                                             :displayName   (aget row "display_name")
+                                             :authProvider  (aget row "auth_provider")
+                                             :expiresAt     (aget row "expires_at")
+                                             :createdAt     (aget row "created_at")}}))
+                      (recur (inc i)))))))))
+        (.catch (fn [_err] nil)))))
+;; ---------------------------------------------------------------------------
 ;; Factory
 ;; ---------------------------------------------------------------------------
 
@@ -1377,5 +1488,27 @@
 
                                  :createDataLake
                                  (fn [payload]
-                                   (factory-create-data-lake pool uid mid payload))})))))))
+                                   (factory-create-data-lake pool uid mid payload))
+
+                                 :createSession
+                                 (fn [session-data]
+                                   (factory-create-session pool session-data))
+
+                                 :getSessionByToken
+                                 (fn [token]
+                                   (factory-get-session-by-token pool token))
+
+                                 :deleteSessionByToken
+                                 (fn [token]
+                                   (-> (factory-get-session-by-token pool token)
+                                       (.then
+                                        (fn [session]
+                                          (when (and session (aget session "session") (aget session "session" "id"))
+                                            (.catch (query! pool "DELETE FROM sessions WHERE id = $1" [(aget session "session" "id")])
+                                                    (fn [_] nil))))
+                                        session)))
+
+                                 :query
+                                 (fn [sql params]
+                                   (query! pool sql params))})))))))
                (.catch reject))))))))
