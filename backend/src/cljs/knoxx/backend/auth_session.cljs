@@ -12,10 +12,7 @@
   (or @session-secret-mem
       (let [env-secret (aget (.-env js/process) "KNOXX_SESSION_SECRET")
             secret (or (when (not (str/blank? env-secret)) env-secret)
-                       (let [buf (.randomBytes crypto 32)]
-                         (.toString buf "hex")))]
-        (when (str/blank? env-secret)
-          (.log js/console "[knoxx-session] Using ephemeral session key until DB recovery completes"))
+                       (.toString (.randomBytes crypto 32) "hex"))]
         (reset! session-secret-mem secret)
         secret)))
 
@@ -184,18 +181,20 @@
         (fn [raw]
           (if raw
             (try (js/JSON.parse raw) (catch :default _err1 nil))
-            (do
-(db-load-session (or token ""))))))
+            (db-load-session (or token "")))))
       (.catch (fn [_err2] (db-load-session (or token ""))))))
 
 (defn- delete-session
   [session-id token]
-  (when (and @db-session-store (not (str/blank? token)))
-    (.catch (.deleteSessionByToken @db-session-store token) (fn [_err3] nil)))
-  (-> (get-redis)
-      (.then (fn [redis] (.del redis (str "knoxx:session:" session-id))))
-      (.catch (fn [_err4] nil))
-      (.then (fn [_err5] nil))))
+  ;; Delete from Postgres first (authoritative), then Redis (cache)
+  (-> (if (and @db-session-store (not (str/blank? token)))
+        (.catch (.deleteSessionByToken @db-session-store token) (fn [_] nil))
+        (js/Promise.resolve nil))
+      (.then (fn [_]
+               (-> (get-redis)
+                   (.then (fn [redis] (.del redis (str "knoxx:session:" session-id))))
+                   (.catch (fn [_] nil)))))
+      (.then (fn [_] nil))))
 
 
 (defn- exchange-github-code

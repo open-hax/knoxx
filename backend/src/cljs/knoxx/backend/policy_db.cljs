@@ -477,6 +477,7 @@
       membership_id UUID NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
       org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
       token_hash TEXT NOT NULL,
+      token_prefix TEXT NOT NULL DEFAULT '',
       salt TEXT NOT NULL,
       email TEXT NOT NULL,
       display_name TEXT NOT NULL,
@@ -491,8 +492,26 @@
 
     CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
     CREATE INDEX IF NOT EXISTS sessions_membership_idx ON sessions (membership_id);
-    CREATE INDEX IF NOT EXISTS sessions_token_hash_idx ON sessions (token_hash);
+    CREATE INDEX IF NOT EXISTS sessions_token_prefix_idx ON sessions (token_prefix);
     CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions (expires_at);
+
+    CREATE TABLE IF NOT EXISTS invites (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      code TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL,
+      inviter_membership_id UUID REFERENCES memberships(id) ON DELETE SET NULL,
+      role_slugs JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'pending',
+      redeemed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      redeemed_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS invites_org_idx ON invites (org_id);
+    CREATE INDEX IF NOT EXISTS invites_code_idx ON invites (code);
+    CREATE INDEX IF NOT EXISTS invites_status_idx ON invites (status);
 
     CREATE TABLE IF NOT EXISTS knoxx_config (
       key TEXT PRIMARY KEY,
@@ -1317,6 +1336,14 @@
     (.update h (str salt ":" token) "utf8")
     (.digest h "hex")))
 
+;; Deterministic prefix used to narrow the candidate session set quickly.
+;; We still verify the salted token_hash for correctness.
+(defn- token-prefix
+  [token]
+  (let [h (.createHash crypto "sha256")]
+    (.update h (str token) "utf8")
+    (subs (.digest h "hex") 0 12)))
+
 (defn- generate-salt
   []
   (.toString (.randomBytes crypto 16) "hex"))
@@ -1327,15 +1354,17 @@
         ttl-secs (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10)
         salt (generate-salt)
         token-hash (hash-token-with-salt token salt)
+        prefix (token-prefix token)
         expires-at (js/Date. (+ (js/Date.now) (* ttl-secs 1000)))]
     (if (str/blank? token)
       (js/Promise.reject (js/Error. "token is required for session creation"))
       (-> (query-one! pool
-                      "INSERT INTO sessions (user_id, membership_id, org_id, token_hash, salt, email, display_name, auth_provider, external_subject, ip_address, user_agent, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *"
+                      "INSERT INTO sessions (user_id, membership_id, org_id, token_hash, token_prefix, salt, email, display_name, auth_provider, external_subject, ip_address, user_agent, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *"
                       [(or (aget session-data "userId") "")
                        (or (aget session-data "membershipId") "")
                        (or (aget session-data "orgId") "")
                        token-hash
+                       prefix
                        salt
                        (or (aget session-data "email") "")
                        (or (aget session-data "displayName") "")
@@ -1355,39 +1384,184 @@
                                 :authProvider (aget row "auth_provider")
                                 :expiresAt (aget row "expires_at")
                                 :createdAt (aget row "created_at")}}))))))
+(defn- find-session-in-rows
+  [pool token rows]
+  (loop [i 0]
+    (if (>= i (.-length rows))
+      nil
+      (let [row (aget rows i)
+            h  (aget row "token_hash")
+            s  (aget row "salt")
+            c  (hash-token-with-salt token s)]
+        (if (= h c)
+          (do
+            (.catch (query! pool "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1" [(aget row "id")])
+                    (fn [_err] nil))
+            #js {:session #js {:id            (aget row "id")
+                               :userId        (aget row "user_id")
+                               :membershipId  (aget row "membership_id")
+                               :orgId         (aget row "org_id")
+                               :email         (aget row "email")
+                               :displayName   (aget row "display_name")
+                               :authProvider  (aget row "auth_provider")
+                               :expiresAt     (aget row "expires_at")
+                               :createdAt     (aget row "created_at")}})
+          (recur (inc i)))))))
+
 (defn- factory-get-session-by-token
   [pool token]
   (if (str/blank? token)
     (js/Promise.resolve nil)
-    (-> (query! pool
-                "SELECT * FROM sessions WHERE expires_at > NOW() ORDER BY created_at DESC LIMIT 50"
-                [])
+    (let [prefix (token-prefix token)]
+      (-> (query! pool
+                  "SELECT * FROM sessions WHERE token_prefix = $1 AND expires_at > NOW() ORDER BY created_at DESC LIMIT 50"
+                  [prefix])
+          (.then
+           (fn [result]
+             (let [rows (aget result "rows")
+                   found (find-session-in-rows pool token rows)]
+               (if found
+                 found
+                 ;; Back-compat for legacy sessions created before token_prefix existed.
+                 (-> (query! pool
+                             "SELECT * FROM sessions WHERE expires_at > NOW() ORDER BY created_at DESC LIMIT 200"
+                             [])
+                     (.then (fn [fallback-result]
+                              (find-session-in-rows pool token (aget fallback-result "rows")))))))))
+          (.catch (fn [_err] nil))))))
+
+(defn- factory-delete-session-by-token
+  [pool token]
+  (-> (factory-get-session-by-token pool token)
+      (.then
+       (fn [result]
+         (when (and result (aget result "session") (aget result "session" "id"))
+           (.catch (query! pool "DELETE FROM sessions WHERE id = $1" [(aget result "session" "id")])
+                   (fn [_] nil)))
+         result))))
+
+(defn- factory-cleanup-expired-sessions
+  [pool]
+  (-> (query! pool "DELETE FROM sessions WHERE expires_at < NOW()" [])
+      (.then (fn [result]
+               (let [count (or (aget result "rowCount") 0)]
+                 (when (> count 0)
+                   (.log js/console (str "[knoxx-policy-db] Cleaned up " count " expired sessions")))
+               count)))
+      (.catch (fn [_err] 0))))
+
+(defn- factory-create-invite
+  [pool uid mid payload]
+  (let [org-id (str/trim (str (or (aget payload "orgId") "")))
+        email (str/lower-case (str/trim (str (or (aget payload "email") ""))))
+        role-slugs (or (aget payload "roleSlugs") #js ["knowledge_worker"])
+        role-slugs-array (cond
+                           (js/Array.isArray role-slugs) role-slugs
+                           (sequential? role-slugs) (into-array role-slugs)
+                           :else #js ["knowledge_worker"])
+        inviter-mid (or (aget payload "inviterMembershipId") mid)
+        code (.toString (.randomBytes crypto 8) "hex")
+        ttl-secs (* 7 24 3600)
+        expires-at (js/Date. (+ (js/Date.now) (* ttl-secs 1000)))]
+    (cond
+      (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
+      (str/blank? email) (js/Promise.reject (js/Error. "email is required"))
+      :else
+      (-> (query-one! pool
+                      "INSERT INTO invites (org_id, code, email, inviter_membership_id, role_slugs, status, expires_at) VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', $6) RETURNING *"
+                      [org-id code email inviter-mid
+                       (js/JSON.stringify role-slugs-array)
+                       (.toISOString expires-at)])
+          (.then
+           (fn [row]
+             (-> (append-audit! pool {:actor-user-id uid
+                                      :actor-membership-id mid
+                                      :org-id org-id
+                                      :action "invite.create"
+                                      :resource-kind "invite"
+                                      :resource-id (aget row "id")})
+                 (.then (fn [_]
+                          #js {:invite #js {:id (aget row "id")
+                                            :orgId (aget row "org_id")
+                                            :code code
+                                            :email email
+                                            :status (aget row "status")
+                                            :expiresAt (aget row "expires_at")
+                                            :createdAt (aget row "created_at")}})))))))))
+
+(defn- factory-redeem-invite
+  [pool code email]
+  (if (or (str/blank? code) (str/blank? email))
+    (js/Promise.reject (js/Error. "code and email are required"))
+    (-> (query-one! pool
+                    "SELECT * FROM invites WHERE code = $1 AND status = 'pending' AND expires_at > NOW()"
+                    [code])
         (.then
-          (fn [result]
-            (let [rows (aget result "rows")]
-              (loop [i 0]
-                (if (>= i (.-length rows))
-                  nil
-                  (let [row (aget rows i)
-                        h  (aget row "token_hash")
-                        s  (aget row "salt")
-                        c  (hash-token-with-salt token s)]
-                    (if (= h c)
-                      (do
-                        (.catch (query! pool "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1" [(aget row "id")])
-                                (fn [_err] nil))
-                        (js/Promise.resolve
-                          #js {:session #js {:id            (aget row "id")
-                                             :userId        (aget row "user_id")
-                                             :membershipId  (aget row "membership_id")
-                                             :orgId         (aget row "org_id")
-                                             :email         (aget row "email")
-                                             :displayName   (aget row "display_name")
-                                             :authProvider  (aget row "auth_provider")
-                                             :expiresAt     (aget row "expires_at")
-                                             :createdAt     (aget row "created_at")}}))
-                      (recur (inc i)))))))))
-        (.catch (fn [_err] nil)))))
+         (fn [invite]
+           (if-not invite
+             (js/Promise.reject (let [err (js/Error. "Invalid or expired invite code")]
+                                  (set! (.-status err) 400)
+                                  err))
+             (let [invite-id (aget invite "id")
+                   invite-email (str/lower-case (str (aget invite "email")))
+                   normalized-email (str/lower-case (str email))]
+               (when-not (= invite-email normalized-email)
+                 (throw (let [err (js/Error. "Invite email does not match")]
+                          (set! (.-status err) 403)
+                          err)))
+               (-> (query-one! pool
+                               "UPDATE invites SET status = 'redeemed', redeemed_at = NOW() WHERE id = $1 RETURNING *"
+                               [invite-id])
+                   (.then
+                    (fn [updated]
+                      #js {:invite #js {:id (aget updated "id")
+                                        :orgId (aget updated "org_id")
+                                        :code code
+                                        :email (aget updated "email")
+                                        :status (aget updated "status")
+                                        :redeemedAt (aget updated "redeemed_at")
+                                        :createdAt (aget updated "created_at")}
+                           ;; For now we don't auto-provision a user here.
+                           :user nil})))))))))
+
+(defn- factory-list-invites
+  [pool opts]
+  (let [org-id (aget opts "orgId")
+        status-filter (aget opts "status")]
+    (if (str/blank? org-id)
+      (js/Promise.reject (js/Error. "orgId is required"))
+      (-> (if status-filter
+            (query! pool
+                    "SELECT * FROM invites WHERE org_id = $1::uuid AND status = $2 ORDER BY created_at DESC"
+                    [org-id status-filter])
+            (query! pool
+                    "SELECT * FROM invites WHERE org_id = $1::uuid ORDER BY created_at DESC"
+                    [org-id]))
+          (.then
+           (fn [result]
+             (let [rows (aget result "rows")
+                   invites (array)]
+               (dotimes [i (.-length rows)]
+                 (let [row (aget rows i)
+                       role-slugs (try
+                                    (let [v (aget row "role_slugs")]
+                                      (cond
+                                        (nil? v) []
+                                        (string? v) (js->clj (js/JSON.parse v))
+                                        :else (js->clj v)))
+                                    (catch :default _ []))]
+                   (.push invites
+                          #js {:id (aget row "id")
+                               :orgId (aget row "org_id")
+                               :code (aget row "code")
+                               :email (aget row "email")
+                               :status (aget row "status")
+                               :roleSlugs (into-array role-slugs)
+                               :expiresAt (aget row "expires_at")
+                               :redeemedAt (aget row "redeemed_at")
+                               :createdAt (aget row "created_at")})))
+               #js {:invites invites})))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Factory
 ;; ---------------------------------------------------------------------------
@@ -1412,6 +1586,8 @@
                       (.then (fn [_] (ensure-bootstrap-user! pool primary-org options)))
                       (.then
                        (fn [bootstrap]
+                         ;; Cleanup expired sessions on startup
+                         (.catch (factory-cleanup-expired-sessions pool) (fn [_] nil))
                          (let [uid (aget ^js bootstrap "user" "id")
                                mid (aget ^js bootstrap "membership" "id")]
                            (resolve
@@ -1500,15 +1676,25 @@
 
                                  :deleteSessionByToken
                                  (fn [token]
-                                   (-> (factory-get-session-by-token pool token)
-                                       (.then
-                                        (fn [session]
-                                          (when (and session (aget session "session") (aget session "session" "id"))
-                                            (.catch (query! pool "DELETE FROM sessions WHERE id = $1" [(aget session "session" "id")])
-                                                    (fn [_] nil))))
-                                        session)))
+                                   (factory-delete-session-by-token pool token))
+
+                                 :cleanupExpiredSessions
+                                 (fn []
+                                   (factory-cleanup-expired-sessions pool))
+
+                                 :createInvite
+                                 (fn [payload]
+                                   (factory-create-invite pool uid mid payload))
+
+                                 :redeemInvite
+                                 (fn [code email]
+                                   (factory-redeem-invite pool code email))
+
+                                 :listInvites
+                                 (fn [opts]
+                                   (factory-list-invites pool opts))
 
                                  :query
                                  (fn [sql params]
                                    (query! pool sql params))})))))))
-               (.catch reject))))))))
+               (.catch reject)))))))))
