@@ -1,0 +1,129 @@
+;; Epistemic kernel — concrete examples
+;; All records are validated against schemas in openplanner-core/epistemic.cljc
+
+;; ─── FACTS ───────────────────────────────────────────────────────────────────
+
+{:kind  :fact
+ :ctx   :己
+ :claim {:principal :agent/discord-patrol
+         :role      :agent/discord-patrol
+         :org       :org/open-hax}
+ :src   :role/discord-patrol
+ :p     1.0
+ :time  #inst "2026-04-18"}
+
+{:kind  :fact
+ :ctx   :己
+ :claim {:principal :agent/discord-patrol
+         :status    :active
+         :contract  :contract/discord-patrol}
+ :src   :actor-provision/2026-04-18
+ :p     1.0
+ :time  #inst "2026-04-18"}
+
+;; ─── OBS ─────────────────────────────────────────────────────────────────────
+
+{:kind   :obs
+ :ctx    :己
+ :about  :discord/message
+ :signal {:channel-id "123456789"
+          :author-id  "987654321"
+          :content    "hey anyone know about the new PR?"
+          :timestamp  #inst "2026-04-18T02:30:00Z"}
+ :p      0.99}
+
+;; ─── INFERENCE ───────────────────────────────────────────────────────────────
+
+{:kind  :inference
+ :from  [{:kind :obs  :ref "obs/discord-msg-001"}
+         {:kind :fact :ref "fact/actor-discord-patrol-001"}]
+ :rule  :contract/discord-patrol
+ :actor :agent/discord-patrol
+ :claim {:action     :search
+         :query      "PR review process open-hax"
+         :confidence 0.87}
+ :p     0.87}
+
+;; ─── ATTESTATION (receipt) ───────────────────────────────────────────────────
+
+{:kind     :attestation
+ :actor    :agent/discord-patrol
+ :did      {:searched-for "PR review process open-hax"
+            :results-count 4
+            :responded-in-channel "123456789"}
+ :run-id   #uuid "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+ :causedby #uuid "obs/discord-msg-001"
+ :p        0.95}
+
+;; ─── JUDGMENT ────────────────────────────────────────────────────────────────
+
+{:kind    :judgment
+ :of      #uuid "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+ :verdict :held
+ :auditor :fulfillment/loose-json
+ :p       0.92}
+
+;; ─── ACTOR BINDING ───────────────────────────────────────────────────────────
+
+{:actor/id          "agent.discord-patrol"
+ :actor/user-id     "usr_discord_patrol_001"
+ :actor/org-id      "org_open_hax"
+ :actor/role        :agent/discord-patrol
+ :actor/status      :active
+ :actor/contract-id "discord-patrol"}
+
+;; ─── AGENT CONTRACT ──────────────────────────────────────────────────────────
+
+{:contractid   "discord-patrol"
+ :contractkind "agent"
+ :contractuses ["policy/default-gate"
+                "trigger/discord-event"
+                "fulfillment/loose-json"
+                "tool-call/semantic-search-allowed"]
+ :actor        {:binding      :provisioned-user
+                :tenant-scope :org
+                :receipts     {:driver      :db
+                               :emit-event? true}}
+ :agent        {:role     :agent/discord-patrol
+                :model    "glm-5"
+                :thinking :off}}
+
+;; ─── TRIGGER CONTRACT ────────────────────────────────────────────────────────
+
+{:contractid   "trigger/discord-event"
+ :contractkind "trigger"
+ :match        {:source-kind :discord
+                :event-type  :message-create}
+ :promotes     :obs->eligible}
+
+;; ─── POLICY CONTRACT ─────────────────────────────────────────────────────────
+
+{:contractid   "policy/default-gate"
+ :contractkind "policy"
+ :predicates   [{:check :actor/status :eq :active}
+                {:check :actor/org    :eq :org/open-hax}]}
+
+;; ─── TOOL-CALL CONTRACT ──────────────────────────────────────────────────────
+
+{:contractid      "tool-call/semantic-search-allowed"
+ :contractkind    "tool-call"
+ :grants          [:attestation/search-result]
+ :allowed-tools   [:semantic-search :graph-query]
+ :denied-tools    [:file-write :shell-exec]}
+
+;; ─── FULFILLMENT CONTRACT ────────────────────────────────────────────────────
+
+{:contractid   "fulfillment/loose-json"
+ :contractkind "fulfillment"
+ :mode         :loose-json
+ :issues       :judgment
+ :criteria     {:min-p 0.7}}
+
+;; ─── ROLE CONTRACT ───────────────────────────────────────────────────────────
+
+{:contractid   "role/discord-patrol"
+ :contractkind "role"
+ :asserts-fact {:principal :agent/discord-patrol
+                :role      :agent/discord-patrol
+                :org       :org/open-hax}
+ :p            1.0}
