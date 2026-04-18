@@ -3,13 +3,16 @@
   (:require
    [kms-ingestion.drivers.protocol :as protocol]
    [kms-ingestion.drivers.local :as local]
-   [kms-ingestion.drivers.pi-sessions :as pi-sessions]))
+   [kms-ingestion.drivers.pi-sessions :as pi-sessions]
+   [kms-ingestion.drivers.promptdb :as promptdb]))
 
 (def driver-constructors
-  {"local" local/create-driver
+  {"local"      local/create-driver
    "pi-sessions" pi-sessions/create-driver
+   ;; Structured EDN epistemic ingestion — no chunking, schema-validated records
+   "promptdb"   promptdb/create-driver
    ;; Future drivers:
-   ;; "github" github/create-driver
+   ;; "github"       github/create-driver
    ;; "google_drive" google-drive/create-driver
    })
 
@@ -25,4 +28,4 @@
     (constructor config)
     (throw (ex-info (str "Unknown driver type: " driver-type)
                     {:driver-type driver-type
-                     :available (list-drivers)}))))
+                     :available   (list-drivers)}))))
