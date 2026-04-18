@@ -1,0 +1,39 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  pr-tests:
+    name: PR – run full test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Clojure CLI
+        uses: DeLaGuardo/setup-clojure@12
+        with:
+          cli: latest
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-clj-${{ hashFiles('ingestion/deps.edn') }}
+          restore-keys: ${{ runner.os }}-clj-
+
+      - name: Run tests
+        working-directory: ingestion
+        run: clojure -M:test
+
+      - name: Verify no broken ns requires
+        working-directory: ingestion
+        run: clojure -e "(require 'kms-ingestion.epistemic) (require 'kms-ingestion.drivers.promptdb) (require 'kms-ingestion.drivers.registry) (println \"ns load OK\")"
