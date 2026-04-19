@@ -591,18 +591,18 @@
 
 (defn- event-agent-upsert-job!
   "Create or update an event-agent job with Redis-first persistence.
-   
+
    Supports two modes:
    1. Template-based: job-patch contains :templateId keyword
    2. Direct spec: job-patch contains full job definition
-   
+
    Writes to Redis (hot store) and marks dirty for SQL flush.
    Does NOT mutate in-memory config* - Redis is source of truth."
   [config job-id job-patch]
   (let [;; Check if this is a template-based instantiation
         template-id (or (:templateId job-patch)
                         (:template-id job-patch))
-        
+
         ;; Build the complete job spec
         next-job (if template-id
                    ;; Template mode: instantiate from template DSL
@@ -619,16 +619,16 @@
                          current-control (control-config/event-agent-control-config live)
                          existing (some #(when (= (:id %) job-id) %) (:jobs current-control))]
                      (merge existing job-patch {:id job-id})))
-        
+
         ;; Normalize for persistence (ensures thinking-level, timestamps, etc.)
         normalized-job (templates/normalize-job-for-persistence next-job)]
-    
+
     ;; Write to Redis (hot store) - this is the canonical persistence path
     (event-agents/update-job-spec! job-id normalized-job)
-    
+
     ;; Reload runtime to pick up the change
     (event-agents/reload!)
-    
+
     {:job normalized-job
      :message (str "Upserted job " job-id " to Redis (dirty queue for SQL flush)")
      :templateId template-id
