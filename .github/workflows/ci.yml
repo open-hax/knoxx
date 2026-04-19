@@ -35,43 +35,17 @@ jobs:
           cache-dependency-path: |
             knoxx/pnpm-lock.yaml
 
-      # Knoxx is developed as a submodule inside the OpenPlanner workspace.
-      # This workflow reconstructs that layout so the local link/file deps resolve.
-      - name: Checkout OpenPlanner
-        uses: actions/checkout@v5
-        with:
-          repository: open-hax/openplanner
-          path: orgs/open-hax/openplanner
-          fetch-depth: 1
-          token: ${{ secrets.KNOXX_CI_TOKEN || github.token }}
-
-      - name: Checkout UXX
-        uses: actions/checkout@v5
-        with:
-          repository: open-hax/uxx
-          path: orgs/open-hax/uxx
-          fetch-depth: 1
-          token: ${{ secrets.KNOXX_CI_TOKEN || github.token }}
-
-      - name: Overlay Knoxx into OpenPlanner workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf orgs/open-hax/openplanner/packages/agents/knoxx
-          mkdir -p orgs/open-hax/openplanner/packages/agents
-          rsync -a --delete --exclude '.git' --exclude 'node_modules' knoxx/ orgs/open-hax/openplanner/packages/agents/knoxx/
-
       - name: Install (Knoxx workspace)
-        run: pnpm -C orgs/open-hax/openplanner/packages/agents/knoxx install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Backend typecheck (shadow-cljs compile app)
-        run: pnpm -C orgs/open-hax/openplanner/packages/agents/knoxx/backend run typecheck
+        run: pnpm -C backend run typecheck
 
       - name: Backend tests (cljs.test via shadow-cljs)
-        run: pnpm -C orgs/open-hax/openplanner/packages/agents/knoxx/backend test
+        run: pnpm -C backend test
 
       - name: Frontend typecheck (tsc)
-        run: pnpm -C orgs/open-hax/openplanner/packages/agents/knoxx/frontend run typecheck
+        run: pnpm -C frontend run typecheck
 
       - name: Frontend tests (vitest)
-        run: pnpm -C orgs/open-hax/openplanner/packages/agents/knoxx/frontend test
+        run: pnpm -C frontend test

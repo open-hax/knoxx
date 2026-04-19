@@ -13,6 +13,6 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@open-hax/uxx": "link:../../../../uxx"
+    "@open-hax/uxx": "0.2.2"
   }
 }
