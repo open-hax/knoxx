@@ -22,6 +22,14 @@ jobs:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
 
+      - name: Setup Java (required by shadow-cljs / Closure Compiler)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # Closure Compiler artifacts used by shadow-cljs now require Java 21
+          # (class file version 65).
+          java-version: "21"
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
