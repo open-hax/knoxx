@@ -1,4 +1,4 @@
-{:source-paths ["src/cljs"]
+{:source-paths ["src/cljs" "test/cljs"]
 
  :dependencies [[cider/cider-nrepl "0.50.2"]
                 [refactor-nrepl "3.9.1"]
@@ -28,4 +28,13 @@
                       :optimizations :simple
                       :source-map true
                       :infer-externs :auto
-                      :warnings {:infer-warning false}}}}}
+                      :warnings {:infer-warning false}}}
+
+  :test
+  {:target :node-test
+   :output-to "target/test/test.js"
+   :ns-regex ["knoxx.backend.event-agents-test$"]
+   :autorun true
+   :source-paths ["src/cljs" "test/cljs"]
+   :compiler-options {:output-feature-set :es-next
+                      :infer-externs :auto}}}}

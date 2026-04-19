@@ -35,6 +35,38 @@ const CHAT_SCRATCHPAD_KEY = "knoxx_contracts_scratchpad_state";
 const CHAT_PINNED_KEY = "knoxx_contracts_pinned_context";
 const CHAT_SESSION_STATE_KEY = "knoxx_contracts_chat_session_state";
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_contracts_sidebar_width_px";
+const AUTO_FOCUS_CONTRACT_KEY = "knoxx_contracts_auto_focus_contract";
+
+const LEFT_PANEL_OPEN_KEY = "knoxx_contracts_left_panel_open";
+const LEFT_PANEL_TAB_KEY = "knoxx_contracts_left_panel_tab";
+
+const CHAT_DOCK_BREAKPOINT_PX = 1100;
+
+function useNarrowLayout(breakpointPx: number): boolean {
+  const [isNarrow, setIsNarrow] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= breakpointPx;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia(`(max-width: ${breakpointPx}px)`);
+    const onChange = (evt: MediaQueryListEvent) => setIsNarrow(evt.matches);
+
+    setIsNarrow(media.matches);
+
+    // Safari fallback
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", onChange);
+      return () => media.removeEventListener("change", onChange);
+    }
+
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
+  }, [breakpointPx]);
+
+  return isNarrow;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -285,11 +317,49 @@ export default function ContractsPage() {
 
   const [showChat, setShowChat] = useState(true);
 
-  // ── Chat workspace controller ──────────────────────────────────────────
+  const isNarrow = useNarrowLayout(CHAT_DOCK_BREAKPOINT_PX);
+
+  const [showLeftPanel, setShowLeftPanel] = useState(() => {
+    const stored = localStorage.getItem(LEFT_PANEL_OPEN_KEY);
+    return stored !== null ? stored === "true" : true;
+  });
+
+  const [leftPanelTab, setLeftPanelTab] = useState<"agents" | "metadata">(() => {
+    const stored = localStorage.getItem(LEFT_PANEL_TAB_KEY);
+    return stored === "metadata" ? "metadata" : "agents";
+  });
+
+  const toggleLeftPanel = useCallback(() => {
+    setShowLeftPanel((prev) => {
+      const next = !prev;
+      localStorage.setItem(LEFT_PANEL_OPEN_KEY, String(next));
+      return next;
+    });
+  }, []);
+
+  const setLeftTab = useCallback((tab: "agents" | "metadata") => {
+    setLeftPanelTab(tab);
+    localStorage.setItem(LEFT_PANEL_TAB_KEY, tab);
+  }, []);
+
+  // ── Auto-focus toggle: when ON, contract agent interactions switch the editor focus ──
+  const [autoFocusContract, setAutoFocusContract] = useState(() => {
+    const stored = localStorage.getItem(AUTO_FOCUS_CONTRACT_KEY);
+    return stored !== null ? stored === "true" : true; // default ON
+  });
+  const toggleAutoFocus = useCallback(() => {
+    setAutoFocusContract((prev) => {
+      const next = !prev;
+      localStorage.setItem(AUTO_FOCUS_CONTRACT_KEY, String(next));
+      return next;
+    });
+  }, []);
+
+  // ── Chat workspace controller (contract librarian persona) ───────────
   const chat = useChatWorkspaceController({
     initialShowCanvas: false,
     initialSidebarWidthPx: 420,
-    defaultRole: "system_admin",
+    defaultRole: "contract_librarian",
     sessionIdKey: CHAT_SESSION_ID_KEY,
     scratchpadStorageKey: CHAT_SCRATCHPAD_KEY,
     pinnedContextStorageKey: CHAT_PINNED_KEY,
@@ -502,104 +572,269 @@ export default function ContractsPage() {
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", flex: "1 1 0%", minHeight: 0, background: palette.bg.default, color: palette.fg.default }}>
-      {/* ── Left sidebar: Agent browser ──────────────────────────────── */}
-      <div style={{
-        width: 320, minWidth: 280, borderRight: `1px solid ${palette.fg.subtle}`,
-        display: "flex", flexDirection: "column", background: palette.bg.darker,
-      }}>
+    <div
+      style={{
+        display: "flex",
+        flex: "1 1 0%",
+        minHeight: 0,
+        minWidth: 0,
+        flexDirection: "column",
+        background: palette.bg.default,
+        color: palette.fg.default,
+      }}
+    >
+      <div style={{ display: "flex", flex: "1 1 0%", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+        {/* ── Left consolidated panel (contracts + metadata) ───────────── */}
+        {showLeftPanel ? (
+          <div style={{
+            width: 360, minWidth: 300, borderRight: `1px solid ${palette.fg.subtle}`,
+            display: "flex", flexDirection: "column", background: palette.bg.darker, overflow: "hidden",
+          }}>
         {/* Sidebar header */}
-        <div style={{ padding: "16px 16px 12px", borderBottom: `1px solid ${palette.fg.subtle}` }}>
-          <div style={{ fontSize: tokens.fontSize.lg, fontWeight: 600, color: palette.fg.default }}>Contracts</div>
-          <div style={{ fontSize: tokens.fontSize.xs, color: palette.fg.muted, marginTop: 4 }}>
-            {agentEntries.length} agent{agentEntries.length !== 1 ? "s" : ""} · {contracts.length} contract{contracts.length !== 1 ? "s" : ""}
+        <div style={{
+          padding: "16px 16px 12px",
+          borderBottom: `1px solid ${palette.fg.subtle}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: tokens.fontSize.lg, fontWeight: 600, color: palette.fg.default }}>Contracts</div>
+            <div style={{ fontSize: tokens.fontSize.xs, color: palette.fg.muted, marginTop: 4 }}>
+              {agentEntries.length} agent{agentEntries.length !== 1 ? "s" : ""} · {contracts.length} contract{contracts.length !== 1 ? "s" : ""}
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={toggleLeftPanel}
+            style={{
+              padding: "4px 10px",
+              borderRadius: tokens.radius.sm,
+              border: `1px solid ${palette.fg.subtle}`,
+              background: palette.bg.default,
+              color: palette.fg.soft,
+              fontSize: tokens.fontSize.xs,
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+          >
+            Hide
+          </button>
         </div>
 
-        {/* Agent list */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "8px 8px" }}>
-          {loadingAgents ? (
-            <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>Loading agents…</div>
-          ) : agentEntries.length === 0 ? (
-            <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>No agents yet. Save a contract to create one.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {agentEntries.map((entry) => {
-                const isSelected = entry.id === selectedId;
-                return (
+        {/* Tabs */}
+        <div style={{ display: "flex", gap: 6, padding: "8px 10px", borderBottom: `1px solid ${palette.fg.subtle}` }}>
+          <button
+            type="button"
+            onClick={() => setLeftTab("agents")}
+            style={{
+              flex: 1,
+              padding: "6px 10px",
+              borderRadius: tokens.radius.sm,
+              border: `1px solid ${leftPanelTab === "agents" ? palette.accent.cyan : palette.fg.subtle}`,
+              background: leftPanelTab === "agents" ? "rgba(102, 217, 239, 0.08)" : palette.bg.default,
+              color: leftPanelTab === "agents" ? palette.accent.cyan : palette.fg.soft,
+              fontSize: tokens.fontSize.xs,
+              cursor: "pointer",
+            }}
+          >
+            Agents
+          </button>
+          <button
+            type="button"
+            onClick={() => setLeftTab("metadata")}
+            style={{
+              flex: 1,
+              padding: "6px 10px",
+              borderRadius: tokens.radius.sm,
+              border: `1px solid ${leftPanelTab === "metadata" ? palette.accent.cyan : palette.fg.subtle}`,
+              background: leftPanelTab === "metadata" ? "rgba(102, 217, 239, 0.08)" : palette.bg.default,
+              color: leftPanelTab === "metadata" ? palette.accent.cyan : palette.fg.soft,
+              fontSize: tokens.fontSize.xs,
+              cursor: "pointer",
+            }}
+          >
+            Metadata
+          </button>
+        </div>
+
+        {/* Panel body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "10px 10px 12px" }}>
+          {leftPanelTab === "agents" ? (
+            <>
+              {loadingAgents ? (
+                <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>Loading agents…</div>
+              ) : agentEntries.length === 0 ? (
+                <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>No agents yet. Save a contract to create one.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {agentEntries.map((entry) => {
+                    const isSelected = entry.id === selectedId;
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        onClick={() => setSelectedId(entry.id)}
+                        style={{
+                          width: "100%", padding: "10px 12px", textAlign: "left",
+                          borderRadius: tokens.radius.md,
+                          border: `1px solid ${isSelected ? palette.accent.cyan : "transparent"}`,
+                          background: isSelected ? "rgba(102, 217, 239, 0.08)" : "transparent",
+                          cursor: "pointer", transition: "background 0.1s, border-color 0.1s",
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)";
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent";
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                            <span style={{ color: statusColor(entry.status, palette), fontSize: 10 }}>{statusDot(entry.status)}</span>
+                            <span style={{
+                              fontSize: tokens.fontSize.sm, fontWeight: 500,
+                              color: isSelected ? palette.accent.cyan : palette.fg.default,
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>
+                              {entry.label}
+                            </span>
+                          </div>
+                          <span style={{
+                            fontSize: tokens.fontSize.xs, padding: "1px 6px",
+                            borderRadius: tokens.radius.xs,
+                            background: entry.enabled ? "rgba(166, 226, 46, 0.1)" : "rgba(117, 113, 94, 0.15)",
+                            color: entry.enabled ? palette.accent.green : palette.fg.muted,
+                          }}>
+                            {entry.enabled ? "on" : "off"}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
+                          <span>{entry.triggerKind}</span>
+                          <span>·</span>
+                          <span>{entry.sourceKind}</span>
+                          {entry.model ? (<><span>·</span><span>{entry.model}</span></>) : null}
+                        </div>
+                        {entry.lastStatus ? (
+                          <div style={{ marginTop: 3, fontSize: tokens.fontSize.xs, color: entry.lastStatus === "ok" ? palette.accent.green : palette.accent.orange }}>
+                            last: {entry.lastStatus}
+                          </div>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+
+                  {/* New contract button */}
                   <button
-                    key={entry.id}
                     type="button"
-                    onClick={() => setSelectedId(entry.id)}
+                    onClick={() => { setSelectedId(null); setEdnDraft(DEFAULT_CONTRACT_EDN); setLastSavedEdn(null); setLeftTab("metadata"); }}
                     style={{
-                      width: "100%", padding: "10px 12px", textAlign: "left",
+                      width: "100%", padding: "10px 12px", textAlign: "center",
                       borderRadius: tokens.radius.md,
-                      border: `1px solid ${isSelected ? palette.accent.cyan : "transparent"}`,
-                      background: isSelected ? "rgba(102, 217, 239, 0.08)" : "transparent",
-                      cursor: "pointer", transition: "background 0.1s, border-color 0.1s",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)";
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent";
+                      border: `1px dashed ${palette.fg.subtle}`,
+                      background: "transparent", cursor: "pointer",
+                      fontSize: tokens.fontSize.sm, color: palette.fg.muted,
                     }}
                   >
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                        <span style={{ color: statusColor(entry.status, palette), fontSize: 10 }}>{statusDot(entry.status)}</span>
-                        <span style={{
-                          fontSize: tokens.fontSize.sm, fontWeight: 500,
-                          color: isSelected ? palette.accent.cyan : palette.fg.default,
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
-                          {entry.label}
-                        </span>
-                      </div>
-                      <span style={{
-                        fontSize: tokens.fontSize.xs, padding: "1px 6px",
-                        borderRadius: tokens.radius.xs,
-                        background: entry.enabled ? "rgba(166, 226, 46, 0.1)" : "rgba(117, 113, 94, 0.15)",
-                        color: entry.enabled ? palette.accent.green : palette.fg.muted,
-                      }}>
-                        {entry.enabled ? "on" : "off"}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
-                      <span>{entry.triggerKind}</span>
-                      <span>·</span>
-                      <span>{entry.sourceKind}</span>
-                      {entry.model ? (<><span>·</span><span>{entry.model}</span></>) : null}
-                    </div>
-                    {entry.lastStatus ? (
-                      <div style={{ marginTop: 3, fontSize: tokens.fontSize.xs, color: entry.lastStatus === "ok" ? palette.accent.green : palette.accent.orange }}>
-                        last: {entry.lastStatus}
-                      </div>
-                    ) : null}
+                    + New contract
                   </button>
-                );
-              })}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "2px 4px" }}>
+              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted, marginBottom: 4 }}>
+                Metadata
+              </div>
 
-              {/* New contract button */}
-              <button
-                type="button"
-                onClick={() => { setSelectedId(null); setEdnDraft(DEFAULT_CONTRACT_EDN); setLastSavedEdn(null); }}
-                style={{
-                  width: "100%", padding: "10px 12px", textAlign: "center",
-                  borderRadius: tokens.radius.md,
-                  border: `1px dashed ${palette.fg.subtle}`,
-                  background: "transparent", cursor: "pointer",
-                  fontSize: tokens.fontSize.sm, color: palette.fg.muted,
-                }}
-              >
-                + New contract
-              </button>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: tokens.fontSize.sm, color: palette.fg.default }}>
+                <input type="checkbox" checked={enabledToken !== "false"} onChange={(e) => setEdnDraft((current) => replaceSimpleValue(current, "enabled", e.target.checked ? "true" : "false"))} />
+                Enabled
+              </label>
+
+              <SearchableSelect label="Trigger" value={triggerKindToken.replace(/^:/, "")} onChange={(v) => setEdnDraft((c) => replaceSimpleValue(c, "trigger-kind", `:${v}`))} options={Array.from(TRIGGER_KIND_OPTIONS)} />
+              <SearchableSelect label="Source" value={sourceKindToken.replace(/^:/, "")} onChange={(v) => setEdnDraft((c) => replaceSimpleValue(c, "source-kind", `:${v}`))} options={Array.from(SOURCE_KIND_OPTIONS)} />
+
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Source mode</div>
+                <input
+                  value={sourceModeToken.replace(/^:/, "")}
+                  onChange={(e) => setEdnDraft((c) => replaceSimpleValue(c, "source-mode", `:${e.target.value}`))}
+                  style={{ width: "100%", padding: "6px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
+                />
+              </label>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Cadence (min)</div>
+                <input
+                  type="number"
+                  min={1}
+                  value={cadenceToken.replace(/[^0-9]/g, "") || "1"}
+                  onChange={(e) => setEdnDraft((c) => replaceSimpleValue(c, "cadence-min", String(Math.max(1, Number(e.target.value || 1)))))}
+                  style={{ width: "100%", padding: "6px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
+                />
+              </label>
+
+              <SearchableSelect label="Role" value={roleToken.replace(/^:/, "").replace(/"/g, "")} onChange={(v) => setEdnDraft((c) => replaceAgentValue(c, "role", `:${v}`))} options={ROLE_OPTIONS} />
+              <SearchableSelect label="Model" value={modelToken.replace(/^"|"$/g, "")} onChange={(v) => setEdnDraft((c) => replaceAgentValue(c, "model", `"${v}"`))} options={MODEL_OPTIONS} />
+              <SearchableSelect label="Thinking" value={thinkingToken.replace(/^:/, "")} onChange={(v) => setEdnDraft((c) => replaceAgentValue(c, "thinking", `:${v}`))} options={Array.from(THINKING_OPTIONS)} />
+
+              <TagInput label="Events (always)" value={eventsAlways} onChange={(next) => setEdnDraft((c) => setKeywordVector(c, ":always", next))} suggestions={kindSuggestions} />
+              <TagInput label="Events (maybe)" value={eventsMaybe} onChange={(next) => setEdnDraft((c) => setKeywordVector(c, ":maybe", next))} suggestions={kindSuggestions} />
+
+              {validation ? (
+                <div style={{
+                  padding: "6px 10px", borderRadius: tokens.radius.md, fontSize: tokens.fontSize.xs,
+                  border: `1px solid ${validation.ok ? "rgba(166, 226, 46, 0.3)" : "rgba(249, 38, 114, 0.3)"}`,
+                  background: validation.ok ? "rgba(166, 226, 46, 0.08)" : "rgba(249, 38, 114, 0.08)",
+                  color: validation.ok ? palette.accent.green : palette.accent.red,
+                }}>
+                  {validation.ok ? "✓ Valid" : `✕ ${validation.errors.length} error(s)`}
+                </div>
+              ) : null}
+
+              {isDirty ? (
+                <div style={{ fontSize: tokens.fontSize.xs, color: palette.accent.orange, padding: "4px 0" }}>
+                  ● unsaved changes
+                </div>
+              ) : null}
             </div>
           )}
         </div>
-      </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              width: 38,
+              borderRight: `1px solid ${palette.fg.subtle}`,
+              background: palette.bg.darker,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <button
+              type="button"
+              onClick={toggleLeftPanel}
+              style={{
+                writingMode: "vertical-rl",
+                transform: "rotate(180deg)",
+                padding: "10px 6px",
+                borderRadius: tokens.radius.sm,
+                border: `1px solid ${palette.fg.subtle}`,
+                background: palette.bg.default,
+                color: palette.fg.soft,
+                fontSize: tokens.fontSize.xs,
+                cursor: "pointer",
+              }}
+            >
+              Show
+            </button>
+          </div>
+        )}
 
-      {/* ── Main content ────────────────────────────────────────────── */}
+        {/* ── Main content ────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
         {/* Header bar */}
         <div style={{
@@ -621,6 +856,10 @@ export default function ContractsPage() {
             )}
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button type="button" onClick={toggleLeftPanel}
+              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${showLeftPanel ? palette.accent.cyan : palette.fg.subtle}`, background: showLeftPanel ? "rgba(102, 217, 239, 0.08)" : palette.bg.default, color: showLeftPanel ? palette.accent.cyan : palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
+              {showLeftPanel ? "✕ Left" : "☰ Left"}
+            </button>
             <button type="button" onClick={() => void loadAgentLibrary()} disabled={loadingAgents}
               style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
               {loadingAgents ? "Loading…" : "Refresh"}
@@ -669,13 +908,13 @@ export default function ContractsPage() {
           </div>
         ) : null}
 
-        {/* Main content area: metadata + editor */}
+        {/* Main content area: editor */}
         <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
           {/* Metadata sidebar */}
           <div style={{
             width: 280, minWidth: 240, borderRight: `1px solid ${palette.fg.subtle}`,
             background: palette.bg.darker, padding: "16px 14px", overflowY: "auto",
-            display: "flex", flexDirection: "column", gap: 12,
+            display: "none",
           }}>
             <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted, marginBottom: 4 }}>
               Metadata
@@ -793,35 +1032,116 @@ export default function ContractsPage() {
         </div>
       </div>
 
-      {/* ── Right sidebar: Chat workspace ─────────────────────────────── */}
-      {showChat ? (
-        <aside
-          style={{
-            width: 460,
-            minWidth: 380,
-            borderLeft: `1px solid ${palette.fg.subtle}`,
+        {/* ── Right sidebar: Contract Librarian Chat workspace (wide) ───── */}
+        {!isNarrow && showChat ? (
+          <aside
+            style={{
+              width: 460,
+              minWidth: 380,
+              borderLeft: `1px solid ${palette.fg.subtle}`,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+              overflow: "hidden",
+              background: palette.bg.darker,
+            }}
+          >
+            {/* Auto-focus toggle bar */}
+            <div style={{
+              padding: "6px 12px",
+              borderBottom: `1px solid ${palette.fg.subtle}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              fontSize: tokens.fontSize.xs,
+            }}>
+              <span style={{ color: palette.fg.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                📋 Contract Librarian
+              </span>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: autoFocusContract ? palette.accent.cyan : palette.fg.muted }}>
+                <input
+                  type="checkbox"
+                  checked={autoFocusContract}
+                  onChange={toggleAutoFocus}
+                  style={{ cursor: "pointer" }}
+                />
+                Auto-focus
+              </label>
+            </div>
+            <ChatWorkspacePane
+              controller={chat}
+              showFiles={false}
+              showCanvasToggle={false}
+              onShowFiles={() => {}}
+              onOpenHydrationSource={(source) => {
+                if (autoFocusContract) {
+                  const contractId = source.path.split("/").pop() ?? source.path;
+                  if (contractId) setSelectedId(contractId);
+                }
+              }}
+              onOpenSourceInPreview={(source: AgentSource) => {
+                if (autoFocusContract) {
+                  const contractId = source.url.split("/").pop() ?? source.url;
+                  if (contractId) setSelectedId(contractId);
+                }
+              }}
+            />
+          </aside>
+        ) : null}
+      </div>
+
+      {/* ── Bottom chat panel (narrow) ───────────────────────────────── */}
+      {isNarrow && showChat ? (
+        <div style={{
+          height: "38vh",
+          minHeight: 260,
+          maxHeight: "55vh",
+          borderTop: `1px solid ${palette.fg.subtle}`,
+          background: palette.bg.darker,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}>
+          <div style={{
+            padding: "6px 12px",
+            borderBottom: `1px solid ${palette.fg.subtle}`,
             display: "flex",
-            minHeight: 0,
-            overflow: "hidden",
-            background: palette.bg.darker,
-          }}
-        >
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: tokens.fontSize.xs,
+          }}>
+            <span style={{ color: palette.fg.muted, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              📋 Contract Librarian
+            </span>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: autoFocusContract ? palette.accent.cyan : palette.fg.muted }}>
+              <input
+                type="checkbox"
+                checked={autoFocusContract}
+                onChange={toggleAutoFocus}
+                style={{ cursor: "pointer" }}
+              />
+              Auto-focus
+            </label>
+          </div>
           <ChatWorkspacePane
             controller={chat}
             showFiles={false}
             showCanvasToggle={false}
             onShowFiles={() => {}}
             onOpenHydrationSource={(source) => {
-              // Hydration sources from chat — could open a contract
-              const contractId = source.path.split("/").pop() ?? source.path;
-              if (contractId) setSelectedId(contractId);
+              if (autoFocusContract) {
+                const contractId = source.path.split("/").pop() ?? source.path;
+                if (contractId) setSelectedId(contractId);
+              }
             }}
             onOpenSourceInPreview={(source: AgentSource) => {
-              const contractId = source.url.split("/").pop() ?? source.url;
-              if (contractId) setSelectedId(contractId);
+              if (autoFocusContract) {
+                const contractId = source.url.split("/").pop() ?? source.url;
+                if (contractId) setSelectedId(contractId);
+              }
             }}
           />
-        </aside>
+        </div>
       ) : null}
     </div>
   );

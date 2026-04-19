@@ -12,6 +12,32 @@
   (and (not (str/blank? (:proxx-base-url config)))
        (not (str/blank? (:proxx-auth-token config)))))
 
+(defn- request-session-key
+  "Best-effort extraction of a stable Knoxx session key from request headers.
+
+   Knoxx frontend always sends x-knoxx-session-id. We map that to Proxx's
+   prompt_cache_key for provider+account session affinity." 
+  [request]
+  (let [headers (or (aget request "headers") #js {})
+        v (or (aget headers "x-knoxx-session-id")
+              (aget headers "x-session-id")
+              (aget headers "x-open-hax-session-id"))]
+    (when (string? v)
+      (let [trimmed (str/trim v)]
+        (when-not (str/blank? trimmed)
+          trimmed)))))
+
+(defn- ensure-prompt-cache-key!
+  "Mutates payload in-place, adding prompt_cache_key when missing.
+
+   Proxx uses prompt_cache_key as the affinity key in routing + analytics." 
+  [request payload]
+  (let [session-key (request-session-key request)
+        existing (or (aget payload "prompt_cache_key") (aget payload "promptCacheKey"))]
+    (when (and session-key (or (nil? existing) (str/blank? (str existing))))
+      (aset payload "prompt_cache_key" session-key)))
+  payload)
+
 (defn register-model-routes!
   [app runtime config]
   (route! app "GET" "/api/proxx/health"
@@ -137,13 +163,15 @@
   (route! app "POST" "/api/proxx/chat"
           (fn [request reply]
             (let [body (or (aget request "body") #js {})
-                  payload #js {:model (or (aget body "model") (:llmModel @settings-state*))
-                               :messages (or (aget body "messages") #js [])
-                               :temperature (aget body "temperature")
-                               :top_p (aget body "top_p")
-                               :max_tokens (aget body "max_tokens")
-                               :stop (aget body "stop")
-                               :stream false}]
+                  payload (ensure-prompt-cache-key!
+                           request
+                           #js {:model (or (aget body "model") (:llmModel @settings-state*))
+                                :messages (or (aget body "messages") #js [])
+                                :temperature (aget body "temperature")
+                                :top_p (aget body "top_p")
+                                :max_tokens (aget body "max_tokens")
+                                :stop (aget body "stop")
+                                :stream false})]
               (-> (fetch-json (str (:proxx-base-url config) "/v1/chat/completions")
                               #js {:method "POST"
                                    :headers (bearer-headers (:proxx-auth-token config))
@@ -231,7 +259,7 @@
   (route! app "POST" "/v1/chat/completions"
           (fn [request reply]
             (when (require-openai-key! config request reply)
-              (let [payload (or (aget request "body") #js {})]
+              (let [payload (ensure-prompt-cache-key! request (or (aget request "body") #js {}))]
                 (-> (js/fetch (str (:proxx-base-url config) "/v1/chat/completions")
                               #js {:method "POST"
                                    :headers (bearer-headers (:proxx-auth-token config))
@@ -245,8 +273,10 @@
           (fn [request reply]
             (when (require-openai-key! config request reply)
               (let [body (or (aget request "body") #js {})
-                    payload (doto (.assign js/Object #js {} body)
-                              (aset "model" (or (aget body "model") (:embedModel @settings-state*) (:proxx-embed-model config))))]
+                    payload (ensure-prompt-cache-key!
+                             request
+                             (doto (.assign js/Object #js {} body)
+                               (aset "model" (or (aget body "model") (:embedModel @settings-state*) (:proxx-embed-model config)))))]
                 (-> (js/fetch (str (:proxx-base-url config) "/v1/embeddings")
                               #js {:method "POST"
                                    :headers (bearer-headers (:proxx-auth-token config))

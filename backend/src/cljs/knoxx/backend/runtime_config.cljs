@@ -35,7 +35,14 @@
                     ["music.copyright_check" "Copyright Check" "Check copyright status of audio"]
                     ["audio.spectrogram" "Audio Spectrogram" "Generate spectrogram from audio"]
                     ["audio.waveform" "Audio Waveform" "Generate waveform from audio"]
-                    ["multimodal.upload" "Multimodal Upload" "Upload images, audio, video, and documents for multimodal AI"]]
+                    ["multimodal.upload" "Multimodal Upload" "Upload images, audio, video, and documents for multimodal AI"]
+                    ["openplanner.query-graph" "OpenPlanner Query Graph" "Query the epistemic knowledge graph via MCP"]
+                    ["openplanner.search-events" "OpenPlanner Search Events" "Search the epistemic event store via MCP"]
+                    ["openplanner.append-fact" "OpenPlanner Append Fact" "Append a Fact to the epistemic kernel"]
+                    ["openplanner.append-obs" "OpenPlanner Append Obs" "Append an Observation to the epistemic kernel"]
+                    ["openplanner.append-inference" "OpenPlanner Append Inference" "Append an Inference to the epistemic kernel"]
+                    ["openplanner.append-attestation" "OpenPlanner Append Attestation" "Append an Attestation to the epistemic kernel"]
+                    ["openplanner.append-judgment" "OpenPlanner Append Judgment" "Append a Judgment to the epistemic kernel"]]
    "org_admin" [["read" "Read" "Read files and retrieved context"]
                  ["write" "Write" "Create new markdown drafts and artifacts"]
                  ["edit" "Edit" "Revise existing documents and drafts"]
@@ -66,7 +73,14 @@
                  ["music.copyright_check" "Copyright Check" "Check copyright status of audio"]
                  ["audio.spectrogram" "Audio Spectrogram" "Generate spectrogram from audio"]
                  ["audio.waveform" "Audio Waveform" "Generate waveform from audio"]
-                 ["multimodal.upload" "Multimodal Upload" "Upload images, audio, video, and documents for multimodal AI"]]
+                 ["multimodal.upload" "Multimodal Upload" "Upload images, audio, video, and documents for multimodal AI"]
+                 ["openplanner.query-graph" "OpenPlanner Query Graph" "Query the epistemic knowledge graph via MCP"]
+                 ["openplanner.search-events" "OpenPlanner Search Events" "Search the epistemic event store via MCP"]
+                 ["openplanner.append-fact" "OpenPlanner Append Fact" "Append a Fact to the epistemic kernel"]
+                 ["openplanner.append-obs" "OpenPlanner Append Obs" "Append an Observation to the epistemic kernel"]
+                 ["openplanner.append-inference" "OpenPlanner Append Inference" "Append an Inference to the epistemic kernel"]
+                 ["openplanner.append-attestation" "OpenPlanner Append Attestation" "Append an Attestation to the epistemic kernel"]
+                 ["openplanner.append-judgment" "OpenPlanner Append Judgment" "Append a Judgment to the epistemic kernel"]]
    "knowledge_worker" [["read" "Read" "Read files and retrieved context"]
                         ["canvas" "Canvas" "Open long-form markdown drafting canvas"]]
    "data_analyst" [["read" "Read" "Read files and retrieved context"]
@@ -103,7 +117,21 @@
                  ["memory_search" "Memory Search" "Search prior translation sessions"]
                  ["memory_session" "Memory Session" "Load prior translation context"]
                  ["graph_query" "Graph Query" "Query translation examples from knowledge graph"]
-                 ["save_translation" "Save Translation" "Save translated content to database"]]})
+                 ["save_translation" "Save Translation" "Save translated content to database"]]
+   "contract_librarian" [["read" "Read" "Read files and retrieved context"]
+                          ["websearch" "Web Search" "Search the live web through Proxx websearch"]
+                          ["memory_search" "Memory Search" "Search prior Knoxx sessions in OpenPlanner"]
+                          ["memory_session" "Memory Session" "Load a specific Knoxx session from OpenPlanner"]
+                          ["graph_query" "Graph Query" "Query the canonical knowledge graph"]
+                          ["semantic_query" "Semantic Query" "Search the active Knoxx corpus"]
+                          ["contract.write" "Contract Write" "Create or update a contract by writing EDN text"]
+                          ["openplanner.query-graph" "OpenPlanner Query Graph" "Query the epistemic knowledge graph via MCP"]
+                          ["openplanner.search-events" "OpenPlanner Search Events" "Search the epistemic event store via MCP"]
+                          ["openplanner.append-fact" "OpenPlanner Append Fact" "Append a Fact to the epistemic kernel"]
+                          ["openplanner.append-obs" "OpenPlanner Append Obs" "Append an Observation to the epistemic kernel"]
+                          ["openplanner.append-inference" "OpenPlanner Append Inference" "Append an Inference to the epistemic kernel"]
+                          ["openplanner.append-attestation" "OpenPlanner Append Attestation" "Append an Attestation to the epistemic kernel"]
+                          ["openplanner.append-judgment" "OpenPlanner Append Judgment" "Append a Judgment to the epistemic kernel"]]})
 
 (def role-aliases
   {"executive" "knowledge_worker"
@@ -215,7 +243,12 @@
                              "You are Knoxx, the grounded workspace assistant for the devel corpus. Preserve multi-turn context within the active conversation, use workspace tools when needed, cite file paths when they matter, and prefer grounded synthesis over shallow enumeration. Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, use semantic_query, semantic_read, and graph_query instead of guessing. Long-term conversational memory lives in OpenPlanner; when the user asks about previous sessions, prior decisions, or your own earlier actions, use memory_search and memory_session instead of pretending to remember.")
    ;; MCP (Model Context Protocol) integration
    :mcp-enabled (not= (env "MCP_ENABLED" "false") "false")
-   :mcp-servers (env "MCP_SERVERS" "")}
+   :mcp-servers (env "MCP_SERVERS" "")
+   ;; OpenPlanner MCP server config
+   :openplanner-mcp-base-url (env "OPENPLANNER_MCP_BASE_URL" "http://openplanner-mcp:8010")
+   :openplanner-mcp-tool-name (env "OPENPLANNER_MCP_TOOL_NAME" "openplanner")
+   :openplanner-mcp-project (env "KNOXX_OPENPLANNER_PROJECT" "devel")
+   :openplanner-mcp-source (env "KNOXX_OPENPLANNER_SOURCE" "knoxx")}
         existing @config*]
     (if existing
       (merge fresh-config (into {} (remove (fn [[_k v]] (nil? v))) existing))

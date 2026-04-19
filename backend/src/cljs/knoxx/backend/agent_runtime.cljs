@@ -13,6 +13,43 @@
 (defonce sdk-runtime* (atom nil))
 (defonce agent-sessions* (atom {}))
 
+;; Proxx session affinity: Proxx uses prompt_cache_key to lock a session to an
+;; account+provider pair. pi-coding-agent does not emit prompt_cache_key by
+;; default, so we inject it via an always-on extension installed into the
+;; Knoxx agent runtime directory.
+(def ^:private proxx-session-affinity-extension-code
+  (str
+   "import type { ExtensionAPI } from \"@mariozechner/pi-coding-agent\";\n\n"
+   "function isRecord(value: unknown): value is Record<string, unknown> {\n"
+   "  return typeof value === 'object' && value !== null;\n"
+   "}\n\n"
+   "export default function (pi: ExtensionAPI) {\n"
+   "  pi.on('before_provider_request', (event, ctx) => {\n"
+   "    // Only touch Knoxx→Proxx traffic.\n"
+   "    if (ctx.model?.provider !== 'proxx') return;\n"
+   "\n"
+   "    const sessionKey = typeof ctx.sessionManager?.getSessionId === 'function'\n"
+   "      ? String(ctx.sessionManager.getSessionId() ?? '').trim()\n"
+   "      : '';\n"
+   "    if (!sessionKey) return;\n"
+   "\n"
+   "    const payload = event.payload;\n"
+   "    if (payload === null || typeof payload !== 'object') return;\n"
+   "    const record = payload as Record<string, unknown>;\n"
+   "\n"
+   "    const existing = typeof record.prompt_cache_key === 'string'\n"
+   "      ? record.prompt_cache_key.trim()\n"
+   "      : typeof record.promptCacheKey === 'string'\n"
+   "        ? record.promptCacheKey.trim()\n"
+   "        : '';\n"
+   "\n"
+   "    if (existing) return record;\n"
+   "\n"
+   "    // Proxx extracts prompt_cache_key from request bodies to enforce affinity.\n"
+   "    return { ...record, prompt_cache_key: sessionKey };\n"
+   "  });\n"
+   "}\n"))
+
 (defn- js-array-seq
   [value]
   (if (array? value) (array-seq value) []))
@@ -131,6 +168,8 @@
           runtime-dir (:agent-dir config)
           models-file (.join node-path runtime-dir "models.json")
           auth-file (.join node-path runtime-dir "auth.json")
+          extensions-dir (.join node-path runtime-dir "extensions")
+          affinity-extension-file (.join node-path extensions-dir "proxx-session-affinity.ts")
           SettingsManager (aget sdk "SettingsManager")
           AuthStorage (aget sdk "AuthStorage")
           ModelRegistry (aget sdk "ModelRegistry")
@@ -146,6 +185,13 @@
                                                       (.stringify js/JSON (clj->js (models-config config model-ids)) nil 2)
                                                       "utf8")
                                           (.then (fn [] nil))))))))
+                (.then (fn []
+                         (-> (.mkdir node-fs extensions-dir #js {:recursive true})
+                             (.then (fn []
+                                      (.writeFile node-fs
+                                                  affinity-extension-file
+                                                  proxx-session-affinity-extension-code
+                                                  "utf8"))))))
                 (.then (fn []
                          (let [auth-storage (.create AuthStorage auth-file)
                                _ (when-not (str/blank? (:proxx-auth-token config))
@@ -170,7 +216,9 @@
   ([runtime config conversation-id model-id] (create-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context] (create-agent-session! runtime config conversation-id model-id auth-context (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context thinking-level]
-  (-> (ensure-sdk-runtime! runtime config)
+   (create-agent-session! runtime config conversation-id model-id auth-context thinking-level nil))
+  ([runtime config conversation-id model-id auth-context thinking-level session-id]
+   (-> (ensure-sdk-runtime! runtime config)
       (.then
        (fn [sdk-runtime]
          (let [sdk (aget runtime "sdk")
@@ -205,6 +253,8 @@
              (if (no-content? model)
                (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))
                (let [session-manager (.inMemory SessionManager (:workspace-root config))]
+                 (when-not (str/blank? (str (or session-id "")))
+                   (.newSession session-manager #js {:id (str session-id)}))
                  (.appendModelChange session-manager "proxx" model-id)
                  (.appendThinkingLevelChange session-manager thinking-level)
                  (-> (rehydrate-session-manager-from-redis! session-manager conversation-id)
@@ -221,6 +271,8 @@
   ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context] (ensure-agent-session! runtime config conversation-id model-id auth-context (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context thinking-level]
+   (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level nil))
+  ([runtime config conversation-id model-id auth-context thinking-level session-id]
   (let [thinking-level (or (normalize-thinking-level thinking-level)
                            (:agent-thinking-level config)
                            "off")]
@@ -233,11 +285,11 @@
             (.setThinkingLevel session thinking-level)
             (js/Promise.resolve session))
           ;; Model changed mid-conversation: rebuild session so the requested model is respected.
-          (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level)
+          (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
               (.then (fn [next-session]
                        (swap! agent-sessions* assoc conversation-id {:session next-session :model-id model-id})
                        next-session)))))
-      (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level)
+      (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
           (.then (fn [session]
                    (swap! agent-sessions* assoc conversation-id {:session session :model-id model-id})
                    session)))))))
