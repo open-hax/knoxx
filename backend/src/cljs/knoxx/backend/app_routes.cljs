@@ -254,7 +254,7 @@
                                       :replace-first replace-first
                                       :clip-text clip-text})
 
-  (contracts-routes/register-contracts-routes! app runtime
+  (contracts-routes/register-contracts-routes! app runtime config
                                               {:route! route!
                                                :json-response! json-response!
                                                :error-response! error-response!

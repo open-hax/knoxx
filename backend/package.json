@@ -7,6 +7,8 @@
     "build": "shadow-cljs release app",
     "watch": "shadow-cljs watch app",
     "start": "node src/server.mjs",
+    "test": "node scripts/run-shadow-tests-ci.mjs",
+    "test:shadow": "shadow-cljs compile test",
     "test:e2e": "node --test tests/*.e2e.test.mjs",
     "import:agent-sessions": "python3 scripts/import_agent_sessions.py",
     "lint": "clj-kondo --lint src/cljs",

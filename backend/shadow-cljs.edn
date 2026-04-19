@@ -33,9 +33,8 @@
 
   :test
   {:target :node-test
-   :output-to "target/test/test.js"
+   :output-to "target/test/test.cjs"
    :ns-regex ["knoxx.backend.event-agents-test$"]
    :autorun true
-   :source-paths ["src/cljs" "test/cljs"]
    :compiler-options {:output-feature-set :es-next
                       :infer-externs :auto}}}}
