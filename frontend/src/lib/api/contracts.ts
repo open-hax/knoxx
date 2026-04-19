@@ -139,6 +139,41 @@ export async function copyContract(
   );
 }
 
+// ── Contract Agent API (EDN-native) ──────────────────────────────────────────
+
+/**
+ * Read a contract as raw EDN text via the agent API.
+ * Returns the raw EDN string (not wrapped in JSON).
+ */
+export async function agentGetContractEdn(
+  contractId: string,
+): Promise<string> {
+  const resp = await fetch(
+    `/api/agent/contracts/${encodeURIComponent(contractId)}`,
+    { method: "GET", headers: { Accept: "text/plain" } },
+  );
+  return resp.text();
+}
+
+/**
+ * Save a contract as raw EDN text via the agent API.
+ * Accepts EDN text directly (not JSON-wrapped).
+ */
+export async function agentPutContractEdn(
+  contractId: string,
+  ednText: string,
+): Promise<string> {
+  const resp = await fetch(
+    `/api/agent/contracts/${encodeURIComponent(contractId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: ednText,
+    },
+  );
+  return resp.text();
+}
+
 // ── Default contract template ───────────────────────────────────────────────
 
 export const DEFAULT_CONTRACT_EDN = `{:contract/id "new-agent"
@@ -209,6 +244,7 @@ export const ROLE_OPTIONS = [
   "executive",
   "analyst",
   "editor",
+  "contract_librarian",
 ];
 
 export const TRIGGER_KIND_OPTIONS = ["event", "cron", "manual"] as const;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { Badge, Button } from '@open-hax/uxx';
+import { Badge, Button, SearchableSelect } from '@open-hax/uxx';
 import ChatComposer from '../ChatComposer';
 import ConsolePanel from '../ConsolePanel';
 import { ChatMessageList } from './ChatMessageList';
@@ -215,24 +215,14 @@ export function ChatMainPane({
           {showCanvasToggle ? <Button variant="ghost" size="sm" onClick={onToggleCanvas}>Canvas</Button> : null}
           <Button variant="ghost" size="sm" onClick={onToggleConsole}>Console</Button>
           <div style={{ flex: 1 }} />
-          <select
+          <SearchableSelect
+            options={proxxModels.map(m => m.id)}
             value={selectedModel}
-            onChange={(event) => onSelectedModelChange(event.target.value)}
-            style={{
-              borderRadius: 6,
-              border: '1px solid var(--token-colors-border-subtle)',
-              padding: '4px 8px',
-              fontSize: 12,
-              maxWidth: 300,
-              background: 'var(--token-colors-surface-input)',
-              color: 'var(--token-colors-text-default)',
-            }}
-          >
-            {proxxModels.length === 0 ? <option value="">No models available</option> : null}
-            {proxxModels.map((model) => (
-              <option key={model.id} value={model.id}>{model.id}</option>
-            ))}
-          </select>
+            onChange={onSelectedModelChange}
+            placeholder={proxxModels.length === 0 ? "No models" : "Select model"}
+            disabled={proxxModels.length === 0}
+            size="sm"
+          />
           <Badge variant={proxxReachable ? 'success' : proxxConfigured ? 'warning' : 'error'} size="sm" dot>
             {proxxReachable ? 'online' : proxxConfigured ? 'offline' : 'not configured'}
           </Badge>

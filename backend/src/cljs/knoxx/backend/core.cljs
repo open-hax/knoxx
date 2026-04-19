@@ -2,6 +2,7 @@
   (:require [knoxx.backend.agent-hydration :refer [ensure-settings!]]
             [knoxx.backend.agent-turns :as agent-turns :refer [recover-active-agent-sessions! lounge-messages*]]
             [knoxx.backend.app-routes :as app-routes]
+            [knoxx.backend.contracts-routes :as contracts-routes]
             [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.discord-gateway :as discord-gateway]
@@ -38,11 +39,18 @@
         (.then (fn [_]
                  ;; Initialize MCP gateway if enabled
                  (when (:mcp-enabled resolved-config)
-                   (-> (mcp/initialize!)
-                       (.then (fn [_]
-                                (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
-                       (.catch (fn [err]
-                                 (.log.error app "MCP gateway initialization failed" err)))))
+                   (let [;; Auto-register openplanner MCP server from config if not in MCP_SERVERS env
+                         existing-servers (mcp/parse-mcp-servers-env (or (aget js/process.env "MCP_SERVERS") ""))
+                         openplanner-url (:openplanner-mcp-base-url resolved-config)
+                         openplanner-name (:openplanner-mcp-tool-name resolved-config "openplanner")
+                         merged-servers (if (contains? existing-servers openplanner-name)
+                                          existing-servers
+                                          (assoc existing-servers openplanner-name {:url openplanner-url :transport "http"}))]
+                     (-> (mcp/initialize! {:servers merged-servers})
+                         (.then (fn [_]
+                                  (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
+                         (.catch (fn [err]
+                                   (.log.error app "MCP gateway initialization failed" err))))))
                  (clj->js resolved-config))))))
 
 (defn start!
@@ -88,6 +96,15 @@
                      (app-routes/register-routes! runtime app config lounge-messages*)
                      ;; Start generic event-agent runtime
                      (event-agents/start! config)
+                     ;; Migrate event-agent jobs → EDN contracts (one-time, idempotent)
+                     (-> (contracts-routes/migrate-event-agents->contracts!)
+                         (.then (fn [result]
+                                  (when (seq (:seeded result))
+                                    (.log.info app (str "Migrated " (count (:seeded result)) " event-agent jobs → EDN contracts: " (pr-str (:seeded result)))))))
+                         (.catch (fn [err]
+                                  (.log.warn app (str "Event-agent → contract migration skipped: " (.-message err))))))
+                     ;; Ensure the contract_librarian agent's own contract exists
+                     (contracts-routes/ensure-contract-librarian-contract!)
                      (.listen app #js {:host (:host config)
                                        :port (:port config)})))
             (.then (fn [_]
