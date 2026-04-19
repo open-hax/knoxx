@@ -43,7 +43,7 @@ function normalizeConversationResponse(response: Record<string, unknown>) {
 
 export async function listProxxModels(): Promise<ProxxModelInfo[]> {
   const data = await request<{ models: ProxxModelInfo[] }>("/api/proxx/models");
-  return data.models;
+  return data.models.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export async function proxxHealth(): Promise<ProxxHealth> {

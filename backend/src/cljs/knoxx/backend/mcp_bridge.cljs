@@ -17,7 +17,7 @@
 ;; Config parsing
 ;; ---------------------------------------------------------------------------
 
-(defn- parse-mcp-servers-env
+(defn parse-mcp-servers-env
   "Parse MCP_SERVERS env: \"id:url:transport,id:command:args:transport\""
   [env-value]
   (if (str/blank? env-value)

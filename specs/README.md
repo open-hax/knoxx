@@ -27,6 +27,17 @@ Child specs:
 - `knowledge-ops-adaptive-expand-policy-seam.md` (2 pts)
 - `knowledge-ops-adaptive-expand-policy-telemetry.md` (2 pts)
 
+### Epistemic Kernel + MCP Integration
+
+Epic: Knoxx ↔ Openplanner MCP Integration
+
+Child specs:
+- `knoxx-openplanner-mcp-integration.md` (5 pts) — Knoxx side: contract-based MCP tool access, env config, agent behavior
+- `openplanner-mcp-server.md` (5 pts) — MCP server: tool endpoints, promptdb-core validation, Docker Compose
+
+Shared dependency:
+- `packages/promptdb-core/` — Malli schemas for Fact, Obs, Inference, Attestation, Judgment
+
 ### Translation Review (Client Priority)
 
 Epic: `knowledge-ops-translation-review-epic.md` (15 pts total)

@@ -58,7 +58,7 @@
                      (.then (fn [text]
                               (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
 
-(defn- map-discord-message
+(defn map-discord-message
   [msg]
   {:id (aget msg "id")
    :channelId (or (aget msg "channel_id") "")
@@ -296,7 +296,7 @@
       {:toolId (:toolId policy)
        :effect (:effect policy)}))))
 
-(defn- event-summary-text
+(defn event-summary-text
   [event]
   (let [payload (or (:payload event) {})]
     (str "Event source: " (:sourceKind event) "\n"
@@ -316,7 +316,7 @@
          (when-let [payload-preview (:payloadPreview payload)]
            (str "Payload preview: " payload-preview "\n")))))
 
-(defn- start-agent-run!
+(defn build-agent-run-payload
   [config job event]
   (let [agent-spec (:agentSpec job)
         now (.now js/Date)
@@ -326,23 +326,27 @@
         user-message (str "An event matched this job.\n\n"
                           (or (:taskPrompt agent-spec) "")
                           (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
-                          (event-summary-text event))
-        body #js {:conversation_id conversation-id
-                  :session_id session-id
-                  :run_id run-id
-                  :message user-message
-                  :agent_spec #js {:role (or (:role agent-spec) "knowledge_worker")
-                                   :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
-                                   :model (or (:model agent-spec) (:proxx-default-model config) "glm-5")
-                                   :thinking_level (or (:thinkingLevel agent-spec) "off")
-                                   :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
-                  :model (or (:model agent-spec) (:proxx-default-model config) "glm-5")}]
+                          (event-summary-text event))]
+    {:conversation_id conversation-id
+     :session_id session-id
+     :run_id run-id
+     :message user-message
+     :agent_spec {:role (or (:role agent-spec) "knowledge_worker")
+                  :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
+                  :model (or (:model agent-spec) (:proxx-default-model config) "glm-5")
+                  :thinking_level (or (:thinkingLevel agent-spec) "off")
+                  :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
+     :model (or (:model agent-spec) (:proxx-default-model config) "glm-5")}))
+
+(defn- start-agent-run!
+  [config job event]
+  (let [body (build-agent-run-payload config job event)]
     (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/direct/start")
                      #js {:method "POST"
                           :headers (direct-start-headers config)
-                          :body (.stringify js/JSON body)})
+                          :body (.stringify js/JSON (clj->js body))})
         (.then (fn [result]
-                 (println "[event-agents] queued run" run-id "for job" (:id job) "event" (:eventKind event))
+                 (println "[event-agents] queued run" (:run_id body) "for job" (:id job) "event" (:eventKind event))
                  result))
         (.catch (fn [err]
                   (println "[event-agents] failed to queue run for job" (:id job) ":" (.-message err))
@@ -380,7 +384,7 @@
   [event-kind]
   (some #(= (str event-kind) %) ["discord.message.mention"]))
 
-(defn- job-matches-event?
+(defn job-matches-event?
   [control job event]
   (let [payload (or (:payload event) {})
         event-kind (:eventKind event)]

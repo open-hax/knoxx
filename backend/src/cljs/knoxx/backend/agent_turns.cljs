@@ -231,7 +231,7 @@
                                           (assoc :updated_at (now-iso)))))
                        (append-run-event! run-id memory-event)
                        (broadcast-ws-session! session-id "events" memory-event)))
-                   (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level)
+                   (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
                      (.then (fn [session]
                               (let [ttft-recorded? (atom false)
                                     aborting? (atom false)
@@ -617,7 +617,7 @@
                            :reason "missing session or conversation id"})
 
       (str/blank? message)
-      (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level)
+      (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
           (.then (fn [_]
                    (-> (session-store/update-session! (redis/get-client) session-id
                                                      {:status "waiting_input"
