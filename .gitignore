@@ -1,6 +1,7 @@
 .env
 node_modules/
 dist/
+backend/target/
 *.log
 .DS_Store
 __pycache__/
