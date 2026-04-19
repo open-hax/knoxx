@@ -23,7 +23,7 @@
     "@lezer/highlight": "^1.2.3",
     "@nextjournal/lang-clojure": "^1.0.0",
     "@open-hax/uxx": "0.2.0",
-    "@octave-commons/webgl-graph-view": "0.1.0",
+    "@octave-commons/webgl-graph-view": "0.3.0",
     "chart.js": "^4.5.1",
     "codemirror": "^6.0.2",
     "lucide-react": "^0.576.0",

@@ -4,7 +4,7 @@ import {
   type GraphEdge as RenderGraphEdge,
   type GraphNode as RenderGraphNode,
   type NodeStyle,
-} from "@workspace/webgl-graph-view";
+} from "@octave-commons/webgl-graph-view";
 import type { GraphExportEdge, GraphExportNode } from "../../lib/types";
 
 export const CANONICAL_LAKES = ["devel", "web", "bluesky", "knoxx-session"] as const;
