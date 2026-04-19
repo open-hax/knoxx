@@ -90,6 +90,8 @@ function makeProps(messages: ChatMessage[]) {
     onLiveControlTextChange: noop,
     queueingControl: null,
     onQueueLiveControl: noopAsync,
+    abortingTurn: false,
+    onAbortTurn: noopAsync,
     activeRunId: null,
     hydrationSources: [],
     runtimeEvents: [],

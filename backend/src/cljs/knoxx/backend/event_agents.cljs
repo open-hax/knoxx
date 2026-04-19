@@ -6,9 +6,13 @@
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
             [knoxx.backend.discord-gateway :as dg]
-            [knoxx.backend.runtime-config :as runtime-config]
+            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.runtime.models :as runtime-models]
+            [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.agent-templates :as templates]))
+            [knoxx.backend.agent-templates :as templates]
+            [knoxx.backend.util.parse :refer [parse-positive-int]]))
 
 (declare start!)
 
@@ -22,11 +26,11 @@
 (defonce discord-gateway-unsubscribe* (atom nil))
 
 (defn- cfg []
-  (runtime-config/cfg))
+  (runtime-models/enrich-config (runtime-config/cfg)))
 
 (defn- control-config
   [config]
-  (runtime-config/event-agent-control-config config))
+  (control-config/event-agent-control-config config))
 
 (defn- discord-token
   []
@@ -120,8 +124,8 @@
 
 (defn- job-max-messages
   [job fallback]
-  (or (runtime-config/parse-positive-int (get-in job [:source :config :maxMessages]))
-      (runtime-config/parse-positive-int fallback)
+  (or (parse-positive-int (get-in job [:source :config :maxMessages]))
+      (parse-positive-int fallback)
       25))
 
 (defn- discord-last-seen
@@ -714,12 +718,12 @@
     ;; =======================================================================
     (let [recovery-promise
           (if-let [client (redis/get-client)]
-            (-> (runtime-config/load-event-agent-control)
+            (-> (control-config/load-event-agent-control)
                 (.then (fn [saved-control]
                          (when saved-control
-                           (swap! runtime-config/config*
+                           (swap! runtime-state/config*
                                   (fn [current-cfg]
-                                    (assoc (or current-cfg (runtime-config/cfg))
+                                    (assoc (or current-cfg (cfg))
                                            :event-agent-control saved-control)))))))
             (js/Promise.resolve nil))]
       (-> recovery-promise

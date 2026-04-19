@@ -1,7 +1,7 @@
 (ns knoxx.backend.openplanner-memory
   (:require [clojure.string :as str]
             [knoxx.backend.http :as backend-http]
-            [knoxx.backend.runtime-config :as runtime-config]))
+            [knoxx.backend.util.time :as time]))
 
 (defn js-array-seq
   [arr]
@@ -294,7 +294,7 @@
   [config {:keys [id ts kind project session message role model text extra]}]
   {:schema "openplanner.event.v1"
    :id id
-   :ts (or ts (runtime-config/now-iso))
+   :ts (or ts (time/now-iso))
    :source "knoxx"
    :kind kind
    :source_ref {:project (or project (:project-name config))

@@ -1,0 +1,5 @@
+{:cap/id :cap/music
+ :cap/tools [:music.identify_file
+             :music.acoustid_lookup
+             :music.musicbrainz_recording
+             :music.copyright_check]}

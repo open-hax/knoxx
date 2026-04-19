@@ -4,7 +4,8 @@
             [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.http :as backend-http]
             [knoxx.backend.mcp-bridge :as mcp]
-            [knoxx.backend.runtime-config :as runtime-config]))
+            [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.triggers.control-config :as control-config]))
 
 (defn send-email!
   "Send an email via Gmail SMTP using nodemailer.
@@ -37,16 +38,16 @@
 
 (defn- event-agents-control-response
   [config]
-  (let [live-config (or @runtime-config/config* config)
+  (let [live-config (or @runtime-state/config* config)
         token (:discord-bot-token live-config)
         configured (not (str/blank? token))
-        control (runtime-config/event-agent-control-config live-config)
+        control (control-config/event-agent-control-config live-config)
         runtime (event-agents/status-snapshot live-config)]
     {:configured configured
      :tokenPreview (if configured (masked-discord-token token) "")
-     :availableRoles (runtime-config/event-agent-role-options)
-     :availableSourceKinds (runtime-config/event-agent-source-kind-options)
-     :availableTriggerKinds (runtime-config/event-agent-trigger-kind-options)
+     :availableRoles (control-config/event-agent-role-options live-config)
+     :availableSourceKinds (control-config/event-agent-source-kind-options)
+     :availableTriggerKinds (control-config/event-agent-trigger-kind-options)
      :control control
      :runtime runtime}))
 
@@ -300,7 +301,7 @@
                         role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish")
                         channel-id (str/trim (str (or (aget body "channelId") "")))
                         content (str/trim (str (or (aget body "content") "")))
-                        token (:discord-bot-token (or @runtime-config/config* config))
+                        token (:discord-bot-token (or @runtime-state/config* config))
                         validation-error (cond
                                            (str/blank? token) "Discord bot token not configured. Set DISCORD_BOT_TOKEN env var or configure it in the admin panel."
                                            (str/blank? channel-id) "Missing required field: channelId"
@@ -335,7 +336,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (ensure-permission! ctx "platform.org.read")
-                (let [live-config (or @runtime-config/config* config)
+                (let [live-config (or @runtime-state/config* config)
                       token (:discord-bot-token live-config)
                       configured (not (str/blank? token))
                       masked (if configured (masked-discord-token token) "")]
@@ -355,8 +356,8 @@
                       (do
                         ;; Update in-memory config + env var so the running server picks it up
                         (aset js/process.env "DISCORD_BOT_TOKEN" new-token)
-                        (swap! runtime-config/config* (fn [current-cfg]
-                                                       (assoc (or current-cfg (runtime-config/cfg))
+                        (swap! runtime-state/config* (fn [current-cfg]
+                                                       (assoc (or current-cfg config)
                                                               :discord-bot-token new-token)))
                         (restart-discord-gateway! new-token)
                         (event-agents/reload!)
@@ -381,13 +382,13 @@
                 (try
                   (ensure-permission! ctx "platform.org.create")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
-                        live-config (or @runtime-config/config* config)
-                        next-control (runtime-config/event-agent-control-config
+                        live-config (or @runtime-state/config* config)
+                        next-control (control-config/event-agent-control-config
                                       (assoc live-config :event-agent-control body))]
-                    (swap! runtime-config/config* (fn [current-cfg]
-                                                   (assoc (or current-cfg (runtime-config/cfg))
+                    (swap! runtime-state/config* (fn [current-cfg]
+                                                   (assoc (or current-cfg config)
                                                           :event-agent-control next-control)))
-                    (runtime-config/persist-event-agent-control! next-control)
+                    (control-config/persist-event-agent-control! next-control)
                     (event-agents/reload!)
                     (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
                   (catch :default err
@@ -443,13 +444,13 @@
                 (try
                   (ensure-permission! ctx "platform.org.create")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
-                        live-config (or @runtime-config/config* config)
-                        next-control (runtime-config/event-agent-control-config
+                        live-config (or @runtime-state/config* config)
+                        next-control (control-config/event-agent-control-config
                                       (assoc live-config :event-agent-control body))]
-                    (swap! runtime-config/config* (fn [current-cfg]
-                                                   (assoc (or current-cfg (runtime-config/cfg))
+                    (swap! runtime-state/config* (fn [current-cfg]
+                                                   (assoc (or current-cfg config)
                                                           :event-agent-control next-control)))
-                    (runtime-config/persist-event-agent-control! next-control)
+                    (control-config/persist-event-agent-control! next-control)
                     (event-agents/reload!)
                     (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
                   (catch :default err

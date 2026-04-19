@@ -1,6 +1,6 @@
 (ns knoxx.backend.run-state
   (:require [clojure.string :as str]
-            [knoxx.backend.runtime-config :as runtime-config]
+            [knoxx.backend.util.time :as time]
             [knoxx.backend.redis-client :as redis]))
 
 (def RUN_EVENTS_KEY_PREFIX "knoxx:run_events:")
@@ -62,7 +62,7 @@
   (update-run! run-id
                (fn [run]
                  (-> run
-                     (assoc :updated_at (runtime-config/now-iso))
+                     (assoc :updated_at (time/now-iso))
                      (update :events #(append-limited % event 200)))))
   ;; Persist event to Redis for crash recovery / WS reconnect replay
   (when-let [redis-client (redis/get-client)]
@@ -197,7 +197,7 @@
           :conversation_id conversation-id
           :session_id session-id
           :type type
-          :at (runtime-config/now-iso)}
+          :at (time/now-iso)}
          extra))
 
 (defn percentile-95

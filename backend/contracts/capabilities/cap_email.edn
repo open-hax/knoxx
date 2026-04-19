@@ -1,0 +1,2 @@
+{:cap/id :cap/email
+ :cap/tools [:email.send]}

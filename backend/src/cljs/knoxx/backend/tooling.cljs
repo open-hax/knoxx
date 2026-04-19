@@ -2,13 +2,19 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :as authz]
             [knoxx.backend.http :as backend-http]
-            [knoxx.backend.runtime-config :as runtime-config]))
+            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.runtime.roles :as roles]
+            [knoxx.backend.runtime.state :as state]
+            [knoxx.backend.tools.registry :as tool-registry]))
+
+(defn- current-config
+  []
+  (or @state/config*
+      (runtime-config/cfg)))
 
 (defn normalize-role
   [role]
-  (let [role (str (or role ""))
-        canonical (or (get runtime-config/role-aliases role) role)]
-    (if (contains? runtime-config/role-tools canonical) canonical "knowledge_worker")))
+  (roles/normalize-role (current-config) role))
 
 (defn email-enabled?
   [config]
@@ -28,8 +34,9 @@
 
 (defn ensure-role-can-use!
   ([role tool-id]
-   (let [normalized (normalize-role role)
-         allowed (into #{} (map first) (get runtime-config/role-tools normalized))]
+   (let [config (current-config)
+         normalized (roles/normalize-role config role)
+         allowed (set (roles/role-tool-ids config normalized))]
      (when-not (contains? allowed tool-id)
        (throw (js/Error. (str "Role '" normalized "' cannot use tool '" tool-id "'"))))
      normalized))
@@ -43,20 +50,20 @@
 
 (defn tool-catalog
   ([config role]
-   (let [normalized (normalize-role role)
+   (let [normalized (roles/normalize-role config role)
          email? (email-enabled? config)
          discord? (discord-enabled? config)]
      {:role normalized
       :email_enabled email?
-      :tools (mapv (fn [[tool-id label description]]
-                     {:id tool-id
+      :tools (mapv (fn [{:keys [id label description]}]
+                     {:id id
                       :label label
                       :description description
                       :enabled (cond
-                                 (= tool-id "email.send") email?
-                                 (str/starts-with? tool-id "discord.") discord?
+                                 (= id "email.send") email?
+                                 (str/starts-with? id "discord.") discord?
                                  :else true)})
-                   (get runtime-config/role-tools normalized))}))
+                   (roles/role-tools config normalized))}))
   ([config role auth-context]
    (if auth-context
      (let [email? (email-enabled? config)
@@ -67,89 +74,14 @@
                                  set)
            tools (cond-> (->> allowed-tool-ids
                               (map (fn [tool-id]
-                                     {:id tool-id
-                                       :label (case tool-id
-                                               "read" "Read"
-                                               "write" "Write"
-                                               "edit" "Edit"
-                                               "bash" "Shell"
-                                               "websearch" "Web Search"
-                                               "canvas" "Canvas"
-                                               "email.send" "Email"
-                                               "discord.publish" "Discord Publish"
-                                               "discord.send" "Discord Send"
-                                               "discord.read" "Discord Read"
-                                               "discord.channel.messages" "Discord Channel Messages"
-                                               "discord.channel.scroll" "Discord Channel Scroll"
-                                               "discord.dm.messages" "Discord DM Messages"
-                                               "discord.search" "Discord Search"
-                                               "discord.guilds" "Discord Guilds"
-                                               "discord.channels" "Discord Channels"
-                                               "discord.list.servers" "Discord List Servers"
-                                               "discord.list.channels" "Discord List Channels"
-                                               "event_agents.status" "Event Agent Status"
-                                               "event_agents.dispatch" "Event Agent Dispatch"
-                                               "event_agents.run_job" "Event Agent Run Job"
-                                               "event_agents.upsert_job" "Event Agent Upsert Job"
-                                               "schedule_event_agent" "Schedule Event Agent"
-                                               "contract.write" "Contract Write"
-                                               "bluesky.publish" "Bluesky"
-                                               "semantic_query" "Semantic Query"
-                                               "graph_query" "Graph Query"
-                                               "memory_search" "Memory Search"
-                                               "memory_session" "Memory Session"
-                                               "save_translation" "Save Translation"
-                                               "openplanner.query-graph" "OpenPlanner Query Graph"
-                                               "openplanner.search-events" "OpenPlanner Search Events"
-                                               "openplanner.append-fact" "OpenPlanner Append Fact"
-                                               "openplanner.append-obs" "OpenPlanner Append Obs"
-                                               "openplanner.append-inference" "OpenPlanner Append Inference"
-                                               "openplanner.append-attestation" "OpenPlanner Append Attestation"
-                                               "openplanner.append-judgment" "OpenPlanner Append Judgment"
-                                               tool-id)
-                                      :description (case tool-id
-                                                     "read" "Read files and retrieved context"
-                                                     "write" "Create new markdown drafts and artifacts"
-                                                     "edit" "Revise existing documents and drafts"
-                                                     "bash" "Run controlled shell commands"
-                                                     "websearch" "Search the live web through Proxx websearch"
-                                                     "canvas" "Open long-form markdown drafting canvas"
-                                                     "email.send" "Send drafts through configured email account"
-                                                     "discord.publish" "Publish updates to Discord"
-                                                     "discord.send" "Send Discord messages and threaded replies"
-                                                     "discord.read" "Read messages from Discord channels"
-                                                     "discord.channel.messages" "Fetch messages from a Discord channel with before/after/around cursors"
-                                                     "discord.channel.scroll" "Scroll older messages in a Discord channel"
-                                                     "discord.dm.messages" "Fetch messages from a Discord DM channel"
-                                                     "discord.search" "Search messages in Discord channels"
-                                                     "discord.guilds" "List Discord servers the bot is in"
-                                                     "discord.channels" "List channels in a Discord server"
-                                                     "discord.list.servers" "List all Discord servers the bot can access"
-                                                     "discord.list.channels" "List channels in one or all Discord servers"
-                                                     "event_agents.status" "Inspect scheduled event-agent runtime state and configuration"
-                                                     "event_agents.dispatch" "Dispatch a structured event into the event-agent runtime"
-                                                     "event_agents.run_job" "Trigger a configured event-agent job immediately"
-                                                     "event_agents.upsert_job" "Create or update a scheduled event-agent job"
-                                                     "schedule_event_agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"
-                                                     "contract.write" "Create or update a contract by writing EDN text"
-                                                     "bluesky.publish" "Publish updates to Bluesky"
-                                                     "semantic_query" "Query semantic context in the active corpus"
-                                                     "graph_query" "Query the canonical knowledge graph across devel/web/bluesky/knoxx-session lakes"
-                                                     "memory_search" "Search prior Knoxx sessions in OpenPlanner"
-                                                     "memory_session" "Load a specific Knoxx session from OpenPlanner"
-                                                     "save_translation" "Save translated segments to the translation database"
-                                                     "openplanner.query-graph" "Query the epistemic knowledge graph via MCP"
-                                                     "openplanner.search-events" "Search the epistemic event store via MCP"
-                                                     "openplanner.append-fact" "Append a Fact to the epistemic kernel"
-                                                     "openplanner.append-obs" "Append an Observation to the epistemic kernel"
-                                                     "openplanner.append-inference" "Append an Inference to the epistemic kernel"
-                                                     "openplanner.append-attestation" "Append an Attestation to the epistemic kernel"
-                                                     "openplanner.append-judgment" "Append a Judgment to the epistemic kernel"
-                                                     tool-id)
-                                      :enabled (cond
+                                     (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
+                                       {:id tool-id
+                                        :label label
+                                        :description description
+                                        :enabled (cond
                                                  (= tool-id "email.send") email?
                                                  (str/starts-with? tool-id "discord.") discord?
-                                                 :else true)}))
+                                                 :else true)})))
                               vec)
                    (contains? allowed-tool-ids "semantic_query")
                    (conj {:id "graph_query"

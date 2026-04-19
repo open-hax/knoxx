@@ -82,8 +82,9 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
   const recentEventCount = Array.isArray(status?.runtime.sources?.recentEvents)
     ? (status?.runtime.sources?.recentEvents as unknown[]).length
     : 0;
-  const seenDiscordChannels = Array.isArray(status?.runtime.sources?.discord && (status.runtime.sources.discord as Record<string, unknown>).lastSeenChannels)
-    ? (((status.runtime.sources?.discord as Record<string, unknown>).lastSeenChannels as unknown[])?.length ?? 0)
+  const discordRuntime = status?.runtime.sources?.discord as Record<string, unknown> | undefined;
+  const seenDiscordChannels = discordRuntime && Array.isArray(discordRuntime.lastSeenChannels)
+    ? (discordRuntime.lastSeenChannels as unknown[]).length
     : 0;
 
   const load = useCallback(async () => {

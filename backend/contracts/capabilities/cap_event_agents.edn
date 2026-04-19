@@ -1,0 +1,5 @@
+{:cap/id :cap/event-agents
+ :cap/tools [:event_agents.status
+             :event_agents.dispatch
+             :event_agents.run_job
+             :event_agents.upsert_job]}

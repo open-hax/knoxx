@@ -3,7 +3,7 @@
             [knoxx.backend.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
             [knoxx.backend.document-state :refer [normalize-relative-path]]
             [knoxx.backend.http :as backend-http :refer [js-array-seq]]
-            [knoxx.backend.runtime-config :refer [cfg]]))
+            [knoxx.backend.runtime.config :refer [cfg]]))
 
 (defn parse-json-object
   [value]
@@ -140,4 +140,3 @@
                       (filter (fn [hit]
                                 (contains? allowed (str (or (hit-session-id hit) "")))))
                       vec))))))
-

@@ -1,0 +1,2 @@
+{:cap/id :cap/write
+ :cap/tools [:write]}

@@ -1,0 +1,2 @@
+{:cap/id :cap/websearch
+ :cap/tools [:websearch]}

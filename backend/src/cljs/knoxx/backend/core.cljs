@@ -10,7 +10,9 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-recovery :as session-recovery]
             [knoxx.backend.run-state :refer [active-runs-count]]
-            [knoxx.backend.runtime-config :as runtime-config :refer [cfg]]
+            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.runtime.models :as runtime-models]
+            [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.session-titles :refer [load-session-titles!]]))
 
 (defonce server* (atom nil))
@@ -21,13 +23,13 @@
 
 (defn config-js
   []
-  (clj->js (cfg)))
+  (clj->js (runtime-models/enrich-config (runtime-config/cfg))))
 
 (defn register-app-routes!
   [runtime app config lounge-messages*]
-  (let [resolved-config (if (map? config) config (cfg))]
+  (let [resolved-config (runtime-models/enrich-config (if (map? config) config (runtime-config/cfg)))]
     (ensure-settings! resolved-config)
-    (reset! runtime-config/config* resolved-config)
+    (reset! runtime-state/config* resolved-config)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
     ;; Defer event-agent startup until Redis is connected so control config
     ;; overrides can be recovered. session-recovery/start! connects Redis.
@@ -56,12 +58,12 @@
 (defn start!
   [runtime]
   (when-not @server*
-    (let [config (cfg)
+    (let [config (runtime-models/enrich-config (runtime-config/cfg))
           Fastify (aget runtime "Fastify")
           fastify-cors (aget runtime "fastifyCors")
           fastify-multipart (aget runtime "fastifyMultipart")
           app (Fastify #js {:logger true})]
-      (reset! runtime-config/config* config)
+      (reset! runtime-state/config* config)
       (ensure-settings! config)
       (let [redis-startup (-> (redis/init-redis! (:redis-url config))
                               (.then (fn [redis-client]
@@ -96,15 +98,8 @@
                      (app-routes/register-routes! runtime app config lounge-messages*)
                      ;; Start generic event-agent runtime
                      (event-agents/start! config)
-                     ;; Migrate event-agent jobs → EDN contracts (one-time, idempotent)
-                     (-> (contracts-routes/migrate-event-agents->contracts!)
-                         (.then (fn [result]
-                                  (when (seq (:seeded result))
-                                    (.log.info app (str "Migrated " (count (:seeded result)) " event-agent jobs → EDN contracts: " (pr-str (:seeded result)))))))
-                         (.catch (fn [err]
-                                  (.log.warn app (str "Event-agent → contract migration skipped: " (.-message err))))))
-                     ;; Ensure the contract_librarian agent's own contract exists
-                     (contracts-routes/ensure-contract-librarian-contract!)
+                     ;; Sync filesystem contracts → Redis index (write-through cache).
+                     (contracts-routes/sync-contract-index! config)
                      (.listen app #js {:host (:host config)
                                        :port (:port config)})))
             (.then (fn [_]

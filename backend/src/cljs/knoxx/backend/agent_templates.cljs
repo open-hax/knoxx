@@ -9,7 +9,8 @@
    - Instances: Concrete job specs with triggers, filters, and overrides
    - Persistence: Redis (hot) → SQL (cold) write-behind queue"
   (:require [clojure.string :as str]
-            [knoxx.backend.runtime-config :as runtime-config]))
+            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.runtime.defaults :as defaults]))
 
 ;; =============================================================================
 ;; Model Profiles
@@ -27,7 +28,7 @@
 
 (defn resolve-model-profile [profile-id]
   (or (get model-profiles profile-id)
-      {:model (runtime-config/default-model) :thinking-level "off"}))
+      {:model (defaults/default-model (runtime-config/cfg)) :thinking-level "off"}))
 
 (defn all-model-profiles []
   (vec (keys model-profiles)))

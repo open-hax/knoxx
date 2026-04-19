@@ -515,11 +515,13 @@ export default function GardensPage() {
       </div>
 
       {data?.gardens?.length === 0 && !loading ? (
-        <Card variant="default" padding="lg" className="text-center">
-          <p className="text-slate-500">No gardens yet.</p>
-          <p className="mt-1 text-sm text-slate-400">
-            Create a garden to start publishing markdown documents with themes.
-          </p>
+        <Card variant="default" padding="lg">
+          <div className="text-center">
+            <p className="text-slate-500">No gardens yet.</p>
+            <p className="mt-1 text-sm text-slate-400">
+              Create a garden to start publishing markdown documents with themes.
+            </p>
+          </div>
         </Card>
       ) : null}
     </div>

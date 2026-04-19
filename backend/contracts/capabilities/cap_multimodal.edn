@@ -1,0 +1,2 @@
+{:cap/id :cap/multimodal
+ :cap/tools [:multimodal.upload]}

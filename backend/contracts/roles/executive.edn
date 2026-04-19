@@ -1,0 +1,7 @@
+{:role/id :role/executive
+ :role/capabilities [:cap/read
+                     :cap/websearch
+                     :cap/canvas
+                     :cap/discord-read
+                     :cap/event-agents
+                     :cap/schedule-event-agent]}

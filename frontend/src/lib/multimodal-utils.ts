@@ -6,6 +6,8 @@
 
 import type { ContentPart, MessageAttachment } from "../lib/types";
 
+type BinaryContentType = Exclude<ContentPart["type"], "text">;
+
 /**
  * Convert a File to base64 data URL
  */
@@ -30,7 +32,7 @@ export async function fileToBase64(file: File): Promise<string> {
 /**
  * Get the content type category from a MIME type
  */
-export function getContentType(mimeType: string): ContentPart["type"] {
+export function getContentType(mimeType: string): BinaryContentType {
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("audio/")) return "audio";
   if (mimeType.startsWith("video/")) return "video";

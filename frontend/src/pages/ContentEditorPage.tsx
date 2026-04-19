@@ -73,10 +73,8 @@ export function ContentEditorPage() {
         <EmptyState
           title="No document selected"
           message="Select a document from the content list to start editing."
-          primaryAction={{
-            label: "Browse content",
-            onClick: () => navigate("/workbench/content"),
-          }}
+          actionLabel="Browse content"
+          onAction={() => navigate("/workbench/content")}
         />
       </div>
     );

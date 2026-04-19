@@ -8,7 +8,9 @@
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? http-error js-array-seq]]
             [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-semantic-search!]]
-            [knoxx.backend.runtime-config :as runtime-config :refer [default-settings]]
+            [knoxx.backend.runtime.defaults :refer [default-settings]]
+            [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-semantic-search-text openplanner-session-text graph-query-result-text websearch-result-text]]))
 
 (defonce settings-state* (atom nil))
@@ -277,7 +279,7 @@
 
 (defn- live-config
   [config]
-  (or @runtime-config/config* config))
+  (or @runtime-state/config* config))
 
 (defn- discord-gateway-manager
   []
@@ -576,7 +578,7 @@
 (defn- event-agent-status!
   [config]
   (let [live (live-config config)
-        control (runtime-config/event-agent-control-config live)
+        control (control-config/event-agent-control-config live)
         runtime (event-agents/status-snapshot live)]
     {:control control
      :runtime runtime}))
@@ -614,7 +616,7 @@
                      (templates/instantiate-job template-id job-id trigger source filters overrides))
                    ;; Direct mode: merge with existing or use patch as-is
                    (let [live (live-config config)
-                         current-control (runtime-config/event-agent-control-config live)
+                         current-control (control-config/event-agent-control-config live)
                          existing (some #(when (= (:id %) job-id) %) (:jobs current-control))]
                      (merge existing job-patch {:id job-id})))
         
@@ -1544,7 +1546,7 @@
          ;; Contract write tool — accepts EDN text, validates, stores
          contract-write-params (.Object Type
                                         #js {:contract_id (.String Type #js {:description "Contract ID to create or update."})
-                                             :edn_text (.String Type #js {:description "Complete EDN contract text to save. Must be valid EDN with ::contract/id matching contract_id."})})
+                                             :edn_text (.String Type #js {:description "Complete EDN contract text to save. Must be valid EDN with :contract/id matching contract_id."})})
 
          base-url (or (:knoxx-base-url config) "")
 
@@ -1577,7 +1579,7 @@
                     (aset "description" "Create or update a contract by writing EDN text. Validates before saving. This is your ONLY write tool — use it to create and edit contracts.")
                     (aset "promptSnippet" "Write or update a contract's EDN text.")
                     (aset "promptGuidelines" (clj->js ["Use contract.write to save contract EDN."
-                                                       "The EDN must have ::contract/id matching the contract_id parameter."
+                                                       "The EDN must have :contract/id matching the contract_id parameter."
                                                        "The server validates before saving — if validation fails, fix the EDN and retry."
                                                        "This is the ONLY write tool available to you. No bash, no discord, no general write."]))
                     (aset "parameters" contract-write-params)

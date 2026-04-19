@@ -1,0 +1,2 @@
+{:cap/id :cap/bluesky
+ :cap/tools [:bluesky.publish]}

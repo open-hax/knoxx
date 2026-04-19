@@ -1,0 +1,3 @@
+{:cap/id :cap/audio
+ :cap/tools [:audio.spectrogram
+             :audio.waveform]}

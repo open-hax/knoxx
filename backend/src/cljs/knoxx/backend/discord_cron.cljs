@@ -6,7 +6,9 @@
    so the admin dashboard can tune cadence, channels, roles, prompts, and model
    selection per job."
   (:require [clojure.string :as str]
-            [knoxx.backend.runtime-config :as runtime-config]))
+            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.runtime.models :as runtime-models]
+            [knoxx.backend.triggers.control-config :as control-config]))
 
 (defonce running?* (atom false))
 (defonce cron-tasks* (atom {}))
@@ -15,11 +17,11 @@
 (defonce job-state* (atom {}))
 
 (defn- cfg []
-  (runtime-config/cfg))
+  (runtime-models/enrich-config (runtime-config/cfg)))
 
 (defn- control-config
   [config]
-  (runtime-config/discord-agent-control-config config))
+  (control-config/discord-agent-control-config config))
 
 (defn- discord-token
   []
