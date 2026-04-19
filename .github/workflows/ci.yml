@@ -43,6 +43,7 @@ jobs:
           repository: open-hax/openplanner
           path: orgs/open-hax/openplanner
           fetch-depth: 1
+          token: ${{ secrets.KNOXX_CI_TOKEN || github.token }}
 
       - name: Checkout UXX
         uses: actions/checkout@v5
@@ -50,6 +51,7 @@ jobs:
           repository: open-hax/uxx
           path: orgs/open-hax/uxx
           fetch-depth: 1
+          token: ${{ secrets.KNOXX_CI_TOKEN || github.token }}
 
       - name: Overlay Knoxx into OpenPlanner workspace
         shell: bash
