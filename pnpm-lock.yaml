@@ -121,8 +121,8 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0
       '@octave-commons/webgl-graph-view':
-        specifier: 0.1.0
-        version: 0.1.0
+        specifier: 0.3.0
+        version: 0.3.0
       '@open-hax/uxx':
         specifier: 0.2.0
         version: 0.2.0(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -995,8 +995,8 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@octave-commons/webgl-graph-view@0.1.0':
-    resolution: {integrity: sha512-1pRuqJRCY3a9EQNDExusGRQmfjYRCnCeneWH4nXXf8cxA8VLoUF3qlQ4pGnPB1gMx1qENl69VEjJPNelRkSZAA==}
+  '@octave-commons/webgl-graph-view@0.3.0':
+    resolution: {integrity: sha512-H9/HLY3dZhHjxHJFYp9vcWStA4wT/oaiwaSHkba6kbOIONh6lMeiSwplxfXJef0z4L1EjW51CyI8jBHOzt0l9Q==}
 
   '@open-hax/uxx-helix@0.1.0':
     resolution: {integrity: sha512-GVPvB3JzI7qZsLT1W6hq5D4QC5dcyOwzaP25geitaKadOZHfkEpHjcILmuZquyLPdPfKXkZu5w9nSiakFlgalQ==}
@@ -5086,7 +5086,7 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
-  '@octave-commons/webgl-graph-view@0.1.0': {}
+  '@octave-commons/webgl-graph-view@0.3.0': {}
 
   '@open-hax/uxx-helix@0.1.0':
     dependencies:
