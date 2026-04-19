@@ -21,8 +21,6 @@ jobs:
     steps:
       - name: Checkout Knoxx
         uses: actions/checkout@v5
-        with:
-          path: knoxx
 
       - uses: pnpm/action-setup@v4
         with:
@@ -32,8 +30,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: |
-            knoxx/pnpm-lock.yaml
 
       - name: Install (Knoxx workspace)
         run: pnpm install --frozen-lockfile
