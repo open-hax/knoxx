@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node ./node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "test:coverage": "node ./node_modules/vitest/vitest.mjs run --config vitest.config.ts --coverage",
     "test:watch": "node ./node_modules/vitest/vitest.mjs --config vitest.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint:size": "node ../scripts/lint-file-sizes.mjs frontend/src"
@@ -41,6 +42,7 @@
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.4.1",
+    "@vitest/coverage-v8": "^1.6.1",
     "autoprefixer": "^10.4.21",
     "jsdom": "^24.0.0",
     "postcss": "^8.5.3",

@@ -51,5 +51,15 @@ jobs:
       - name: Frontend typecheck (tsc)
         run: pnpm -C frontend run typecheck
 
-      - name: Frontend tests (vitest)
-        run: pnpm -C frontend test
+      - name: Frontend tests + coverage (vitest)
+        run: pnpm -C frontend run test:coverage
+
+      - name: Upload frontend coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: knoxx-frontend-coverage
+          path: frontend/coverage
+          if-no-files-found: error
+
+      - name: Coverage summary
+        run: node --input-type=module -e "import fs from 'node:fs'; const p='frontend/coverage/coverage-summary.json'; const s=JSON.parse(fs.readFileSync(p,'utf8')).total; const f=(x)=>x?.pct??0; console.log('Lines:',f(s.lines),'%','Statements:',f(s.statements),'%','Functions:',f(s.functions),'%','Branches:',f(s.branches),'%');"
