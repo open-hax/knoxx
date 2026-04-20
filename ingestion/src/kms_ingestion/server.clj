@@ -18,7 +18,7 @@
    [kms-ingestion.translation.worker :as translation-worker]
    [kms-ingestion.config :as config])
   (:import
-   [java.nio.file FileSystems Path Paths StandardWatchEventKinds WatchEvent$Kind WatchKey WatchService]
+   [java.nio.file FileSystems Path StandardWatchEventKinds WatchEvent$Kind WatchKey WatchService]
    [java.util.concurrent TimeUnit])
   (:gen-class))
 
@@ -66,10 +66,9 @@
 
 (defn- source-scan-opts
   [source]
-  (let [cfg (or (parse-jsonish (:config source)) {})]
-    {:file-types (or (parse-jsonish (:file_types source)) (:file_types source) (:file-types source))
-     :include-patterns (or (parse-jsonish (:include_patterns source)) (:include_patterns source) (:include-patterns source))
-     :exclude-patterns (or (parse-jsonish (:exclude_patterns source)) (:exclude_patterns source) (:exclude-patterns source))}))
+  {:file-types (or (parse-jsonish (:file_types source)) (:file_types source) (:file-types source))
+   :include-patterns (or (parse-jsonish (:include_patterns source)) (:include_patterns source) (:include-patterns source))
+   :exclude-patterns (or (parse-jsonish (:exclude_patterns source)) (:exclude_patterns source) (:exclude-patterns source))})
 
 (defn- source-root-path
   [source]
@@ -388,7 +387,7 @@
                  :access-control-allow-headers ["Content-Type" "Authorization"])))
 
 (defn -main
-  [& args]
+  [& _args]
   (println "Starting KMS Ingestion service...")
   (println (str "Config: " (config/config)))
   

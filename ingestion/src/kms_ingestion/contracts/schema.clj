@@ -1,8 +1,7 @@
 (ns kms-ingestion.contracts.schema
   "Schema for contract-driven ingestion configuration."
   (:require
-   [clojure.string :as str]
-   [malli.core :as m]))
+   [clojure.string :as str]))
 
 (def NonBlankString
   [:and :string [:fn (fn [s] (not (str/blank? s)))]] )

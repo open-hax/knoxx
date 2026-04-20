@@ -1,6 +1,8 @@
 (ns kms-ingestion.db
   "Database connection pool and queries."
   (:require
+   [cheshire.core :as json]
+   [clojure.string :as str]
    [next.jdbc :as jdbc]
    [next.jdbc.connection :as connection]
    [next.jdbc.result-set :as rs]
@@ -179,11 +181,11 @@
      VALUES (?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb)
      RETURNING *"
    tenant-id driver-type name
-   (cheshire.core/generate-string config)
-   (cheshire.core/generate-string (or collections ["devel-docs" "devel-code" "devel-config" "devel-data"]))
-   (when file-types (cheshire.core/generate-string file-types))
-   (when include-patterns (cheshire.core/generate-string include-patterns))
-   (when exclude-patterns (cheshire.core/generate-string exclude-patterns))))
+   (json/generate-string config)
+   (json/generate-string (or collections ["devel-docs" "devel-code" "devel-config" "devel-data"]))
+   (when file-types (json/generate-string file-types))
+   (when include-patterns (json/generate-string include-patterns))
+   (when exclude-patterns (json/generate-string exclude-patterns))))
 
 (defn mark-source-scanned!
   "Update last_scan_at when a source is queued or completed."
@@ -252,14 +254,14 @@
   [source-id tenant-id config]
   (query-one
    "INSERT INTO ingestion_jobs (source_id, tenant_id, config) VALUES (?::uuid, ?, ?::jsonb) RETURNING *"
-   source-id tenant-id (cheshire.core/generate-string config)))
+   source-id tenant-id (json/generate-string config)))
 
 (defn update-job!
   "Update job status and progress."
   [job-id updates]
   (let [set-clauses (for [[k _] updates]
                       (str (name k) " = ?"))
-        sql (str "UPDATE ingestion_jobs SET " (clojure.string/join ", " set-clauses)
+        sql (str "UPDATE ingestion_jobs SET " (str/join ", " set-clauses)
                  " WHERE job_id = ?::uuid RETURNING *")
         params (concat (vals updates) [job-id])]
     (apply query-one sql params)))
@@ -286,9 +288,9 @@
                      metadata-map (cond
                                     (nil? metadata) {}
                                     (instance? org.postgresql.util.PGobject metadata)
-                                    (cheshire.core/parse-string (.getValue ^org.postgresql.util.PGobject metadata) true)
+                                    (json/parse-string (.getValue ^org.postgresql.util.PGobject metadata) true)
                                     (string? metadata)
-                                    (cheshire.core/parse-string metadata true)
+                                    (json/parse-string metadata true)
                                     (map? metadata)
                                     metadata
                                     :else {})]
@@ -350,14 +352,14 @@
    RETURNING *"
    file-id source-id tenant-id path content-hash (or status "ingested")
    chunks
-   (cheshire.core/generate-string (or collections [tenant-id]))
-   (when metadata (cheshire.core/generate-string metadata))))
+   (json/generate-string (or collections [tenant-id]))
+   (when metadata (json/generate-string metadata))))
 
 (defn list-file-states-under-path
   "Return file state rows for a tenant under a workspace-relative path prefix."
   [tenant-id path-prefix]
-  (let [normalized (clojure.string/trim (or path-prefix ""))]
-    (if (clojure.string/blank? normalized)
+  (let [normalized (str/trim (or path-prefix ""))]
+    (if (str/blank? normalized)
       (query
        "SELECT path, status, chunks, metadata, last_ingested_at FROM ingestion_file_state WHERE tenant_id = ?"
        tenant-id)

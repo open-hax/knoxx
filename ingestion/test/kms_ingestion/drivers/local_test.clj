@@ -97,21 +97,21 @@
     (is (not (some #(.startsWith % "node_modules") paths))
         "node_modules must be pruned entirely")))
 
-(deftest stream-files-respects-existing-state
-  (testing "unchanged files (same size+mtime) are not re-emitted"
-    (write! "notes.md" "content")
-    (let [f (io/file *root* "notes.md")
-          size (.length f)
-          mtime (str (-> (java.nio.file.Files/getLastModifiedTime
-                           (.toPath f)
-                           (make-array java.nio.file.LinkOption 0))
-                         .toInstant))
-          existing-state {(.getAbsolutePath f)
-                          {:metadata {:size size :modified_at mtime}}}]
-      (let [results (local/stream-files (.getAbsolutePath *root*)
-                                        {:existing-state existing-state})]
-        (is (empty? results)
-            "file with matching size+mtime must be suppressed")))))
+	(deftest stream-files-respects-existing-state
+	  (testing "unchanged files (same size+mtime) are not re-emitted"
+	    (write! "notes.md" "content")
+	    (let [f (io/file *root* "notes.md")
+	          size (.length f)
+	          mtime (str (-> (java.nio.file.Files/getLastModifiedTime
+	                           (.toPath f)
+	                           (make-array java.nio.file.LinkOption 0))
+	                         .toInstant))
+	          existing-state {(.getAbsolutePath f)
+	                          {:metadata {:size size :modified_at mtime}}}
+	          results (local/stream-files (.getAbsolutePath *root*)
+	                                     {:existing-state existing-state})]
+	      (is (empty? results)
+	          "file with matching size+mtime must be suppressed"))))
 
 (deftest stream-files-file-types-filter
   (write! "a.md" "markdown")

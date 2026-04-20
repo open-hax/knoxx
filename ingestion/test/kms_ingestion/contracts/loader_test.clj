@@ -118,5 +118,4 @@
           (loader/invalidate-cache!)
           (let [result (loader/load-source-contract "acme" "gdrive")]
             (is (map? result))
-            (is (= "test-token"
-                   (get-in result [:source/config :credentials-secret]))))))))))
+            (is (= "test-token" (get-in result [:source/config :credentials-secret])))))))))

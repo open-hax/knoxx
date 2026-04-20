@@ -130,7 +130,7 @@
    (if-not (.exists root)
      ()
      (let [follow?   (cr/follow-symlinks? contract)
-           root-real (.. root toPath toRealPath)]
+           root-real (.toRealPath (.toPath root) (make-array java.nio.file.LinkOption 0))]
        (letfn [(walk [stack visited]
                  (lazy-seq
                   (when-let [^java.io.File entry (first stack)]
@@ -144,7 +144,7 @@
                           (skip-directory-name? entry-name contract) (walk rest-stack visited)
                           (and symlink? (not follow?))               (walk rest-stack visited)
                           :else
-                          (let [real-path (.. entry-path toRealPath)
+                          (let [real-path (.toRealPath entry-path (make-array java.nio.file.LinkOption 0))
                                 escaped?  (not (.startsWith real-path root-real))
                                 cycle?    (contains? visited real-path)]
                             (if (or escaped? cycle?)
@@ -159,7 +159,7 @@
                           (cons entry (walk rest-stack visited)))
                         :else
                         (walk rest-stack visited))))))]
-         (walk (list root) #{root-real})))))))
+         (walk (list root) #{}))))))
 
 ;;; ---- file descriptor helpers ----------------------------------------------
 

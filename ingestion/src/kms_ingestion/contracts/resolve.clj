@@ -70,5 +70,57 @@
 ;; ────────────────────────────────────────────────────────────────────────────
 
 (defn sink-type    [c] (get-in-contract c [:source/sink :type]       #(config/ingest-sink-type)))
+(defn sink-collections [c] (get-in-contract c [:source/sink :collections] (constantly nil)))
+(defn sink-language [c] (get-in-contract c [:source/sink :language] (constantly "en")))
+(defn sink-model [c] (get-in-contract c [:source/sink :model] #(config/proxx-default-model)))
 (defn sink-url     [c] (get-in-contract c [:source/sink :url]        (constantly nil)))
 (defn sink-api-key [c] (get-in-contract c [:source/sink :api-key]    (constantly nil)))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Semantic
+;; ────────────────────────────────────────────────────────────────────────────
+
+(defn semantic-enabled? [c]
+  (get-in-contract c [:source/semantic :enabled?] #(config/semantic-edge-build-enabled?)))
+
+(defn semantic-k [c]
+  (get-in-contract c [:source/semantic :k] #(config/semantic-edge-build-k)))
+
+(defn semantic-min-similarity [c]
+  (get-in-contract c [:source/semantic :min-similarity] #(config/semantic-edge-build-min-similarity)))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Translation
+;; ────────────────────────────────────────────────────────────────────────────
+
+(defn translation-enabled? [c]
+  (get-in-contract c [:source/translation :enabled?] #(config/translation-agent-enabled?)))
+
+(defn translation-model [c]
+  (get-in-contract c [:source/translation :model] #(config/translation-model)))
+
+(defn translation-poll-ms [c]
+  (get-in-contract c [:source/translation :poll-ms] #(config/translation-poll-ms)))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Projection
+;; ────────────────────────────────────────────────────────────────────────────
+
+(defn domain-strategy [c]
+  (get-in-contract c [:source/projection :domain-strategy] (constantly :fixed)))
+
+(defn projection-language [c]
+  (get-in-contract c [:source/projection :language] (constantly "en")))
+
+;; ────────────────────────────────────────────────────────────────────────────
+;; Backpressure
+;; ────────────────────────────────────────────────────────────────────────────
+
+(defn backpressure-strategy [c]
+  (get-in-contract c [:source/backpressure :strategy] (constantly :fixed)))
+
+(defn backpressure-base-ms [c]
+  (get-in-contract c [:source/backpressure :base-delay-ms] (constantly 250)))
+
+(defn backpressure-window [c]
+  (get-in-contract c [:source/backpressure :failure-window] (constantly 5)))

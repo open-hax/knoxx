@@ -1,5 +1,7 @@
 (ns kms-ingestion.config
-  "Environment configuration.")
+  "Environment configuration."
+  (:require
+   [clojure.string :as str]))
 
 (defn env-bool
   [key default]
@@ -25,6 +27,18 @@
   [key default]
   (or (System/getenv key) default))
 
+(defn env-keyword
+  "Read an environment variable and return a keyword.
+
+  Normalizes to lower-case; returns default when the env var is absent or blank.
+  Example: POLL -> :poll
+  "
+  [key default]
+  (let [v (System/getenv key)]
+    (if (or (nil? v) (str/blank? v))
+      default
+      (keyword (str/lower-case v)))))
+
 (defn config
   "Get full configuration map."
   []
@@ -47,6 +61,16 @@
    :translation-poll-ms (env-int "TRANSLATION_POLL_MS" 5000)
    :qdrant-url (env "QDRANT_URL" "http://localhost:6333")
    :workspace-path (env "WORKSPACE_PATH" "/app/workspace")
+
+   ;; Ingestion contract fallback knobs (used when no contract values are present)
+   :ingest-hidden-policy (env-keyword "INGEST_HIDDEN_POLICY" :skip)
+   :ingest-follow-symlinks? (env-bool "INGEST_FOLLOW_SYMLINKS" false)
+   :ingest-schedule-mode (env-keyword "INGEST_SCHEDULE_MODE" :hybrid)
+   :ingest-sync-interval-minutes (env-int "INGEST_SYNC_INTERVAL_MINUTES" 30)
+   :ingest-bootstrap? (env-bool "INGEST_BOOTSTRAP" true)
+   :ingest-retry-failed? (env-bool "INGEST_RETRY_FAILED" true)
+   :ingest-sink-type (env-keyword "INGEST_SINK_TYPE" :openplanner)
+
    :ingest-scheduler-poll-ms (env-int "INGEST_SCHEDULER_POLL_MS" 60000)
    :passive-watch-enabled (env-bool "PASSIVE_WATCH_ENABLED" true)
    :passive-watch-poll-ms (env-int "PASSIVE_WATCH_POLL_MS" 60000)
@@ -77,10 +101,24 @@
 (defn translation-poll-ms [] (:translation-poll-ms (config)))
 (defn qdrant-url [] (:qdrant-url (config)))
 (defn workspace-path [] (:workspace-path (config)))
+
+;; These ingestion-* accessors exist primarily for the contracts.resolve shim layer.
+(defn ingest-hidden-policy [] (:ingest-hidden-policy (config)))
+(defn ingest-follow-symlinks? [] (:ingest-follow-symlinks? (config)))
+(defn ingest-schedule-mode [] (:ingest-schedule-mode (config)))
+(defn ingest-sync-interval-minutes [] (:ingest-sync-interval-minutes (config)))
+(defn ingest-bootstrap? [] (:ingest-bootstrap? (config)))
+(defn ingest-retry-failed? [] (:ingest-retry-failed? (config)))
+(defn ingest-sink-type [] (:ingest-sink-type (config)))
 (defn ingest-scheduler-poll-ms [] (:ingest-scheduler-poll-ms (config)))
 (defn passive-watch-enabled? [] (:passive-watch-enabled (config)))
 (defn passive-watch-poll-ms [] (:passive-watch-poll-ms (config)))
 (defn passive-watch-debounce-ms [] (:passive-watch-debounce-ms (config)))
+
+;; Back-compat wrappers (older naming expected by contracts.resolve)
+(defn ingest-passive-watch-enabled? [] (passive-watch-enabled?))
+(defn ingest-passive-watch-poll-ms [] (passive-watch-poll-ms))
+(defn ingest-passive-watch-debounce-ms [] (passive-watch-debounce-ms))
 (defn ingest-batch-size [] (:ingest-batch-size (config)))
 (defn ingest-batch-parallelism [] (:ingest-batch-parallelism (config)))
 (defn ingest-throttle-enabled? [] (:ingest-throttle-enabled (config)))

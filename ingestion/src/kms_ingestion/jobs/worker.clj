@@ -1,7 +1,6 @@
 (ns kms-ingestion.jobs.worker
   "Job processing worker for ingestion."
   (:require
-   [clojure.string :as str]
    [kms-ingestion.config :as config]
    [kms-ingestion.contracts.loader :as contracts]
    [kms-ingestion.contracts.resolve :as cr]
@@ -57,39 +56,39 @@
   [job-id driver file-meta {:keys [tenant-id source-id ragussy-url collections
                                    use-openplanner? openplanner-url openplanner-api-key
                                    graph-context driver-type contract]}]
-  (control/maybe-throttle!
-   job-id
-   {:throttle-enabled? (cr/throttle-enabled? contract)
-    :max-load-per-core (cr/max-load-per-core contract)})
-  (try
-    (let [file-data (protocol/extract driver (:id file-meta))
-          content-hash (when (:content file-data)
-                         (local/sha256 (:id file-meta)))
-          file-meta-with-hash (assoc file-meta :content-hash content-hash)
-          payload-file (assoc file-data :content-hash content-hash)
-          pi-sessions? (= driver-type "pi-sessions")
-          sink-type (cr/sink-type contract)
-          ingest-result (if (:content file-data)
-                          (cond
-                            pi-sessions?
-                            (support/ingest-pi-session-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file)
+  (let [pi-sessions? (= driver-type "pi-sessions")]
+    (control/maybe-throttle!
+     job-id
+     {:throttle-enabled? (cr/throttle-enabled? contract)
+      :max-load-per-core (cr/max-load-per-core contract)})
+    (try
+      (let [file-data (protocol/extract driver (:id file-meta))
+            content-hash (when (:content file-data)
+                           (local/sha256 (:id file-meta)))
+            file-meta-with-hash (assoc file-meta :content-hash content-hash)
+            payload-file (assoc file-data :content-hash content-hash)
+            sink-type (cr/sink-type contract)
+            ingest-result (if (:content file-data)
+                            (cond
+                              pi-sessions?
+                              (support/ingest-pi-session-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file)
 
-                            (= sink-type :openplanner)
-                            (support/ingest-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file graph-context)
+                              (= sink-type :openplanner)
+                              (support/ingest-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file graph-context)
 
-                            (= sink-type :ragussy)
-                            (support/ingest-via-ragussy! ragussy-url collections payload-file)
+                              (= sink-type :ragussy)
+                              (support/ingest-via-ragussy! ragussy-url collections payload-file)
 
-                            :else
-                            {:status :failed :error (str "unsupported sink type: " sink-type)})
-                          {:status :failed :error "no content"})]
-      (assoc ingest-result :file file-meta-with-hash))
-    (catch Exception e
-      (when (or use-openplanner? pi-sessions?)
-        (control/note-openplanner-failure! job-id (.getMessage e)))
-      {:status :failed
-       :file file-meta
-       :error (.getMessage e)})))
+                              :else
+                              {:status :failed :error (str "unsupported sink type: " sink-type)})
+                            {:status :failed :error "no content"})]
+        (assoc ingest-result :file file-meta-with-hash))
+      (catch Exception e
+        (when (or use-openplanner? pi-sessions?)
+          (control/note-openplanner-failure! job-id (.getMessage e)))
+        {:status :failed
+         :file file-meta
+         :error (.getMessage e)}))))
 
 (defn process-job!
   "Process an ingestion job."

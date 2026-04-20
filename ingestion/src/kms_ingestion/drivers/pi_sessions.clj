@@ -47,8 +47,10 @@
 (defn- read-jsonl-file
   "Read a JSONL file and return parsed entries."
   [^java.io.File file]
-  (with-open [reader (BufferedReader. (FileReader. file))]
-    (doall (parse-jsonl-lines (line-seq reader)))))
+  (if (> (.length file) max-session-size)
+    []
+    (with-open [reader (BufferedReader. (FileReader. file))]
+      (doall (parse-jsonl-lines (line-seq reader))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Text helpers
