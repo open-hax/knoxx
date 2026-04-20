@@ -255,6 +255,18 @@ export function createChatWorkspaceActions({
   const ensureWorkspaceSync = async () => {
     setSyncingWorkspace(true);
     try {
+      // Ensure we have a workspace_root (absolute path) from the ingestion service.
+      // This must be used as the local driver root_path when running on the host.
+      let effectiveBrowse = browseData;
+      if (!effectiveBrowse) {
+        const resp = await fetch("/api/ingestion/browse");
+        if (resp.ok) {
+          effectiveBrowse = (await resp.json()) as BrowseResponse;
+          setBrowseData(effectiveBrowse);
+        }
+      }
+      const workspaceRoot = effectiveBrowse?.workspace_root;
+
       const sourcesResponse = await fetch("/api/ingestion/sources");
       if (!sourcesResponse.ok) throw new Error(`Failed to list sources: ${sourcesResponse.status}`);
       const sources = (await sourcesResponse.json()) as IngestionSource[];
@@ -266,10 +278,11 @@ export function createChatWorkspaceActions({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             driver_type: "local",
-            name: "devel workspace",
+            name: "workspace",
             config: {
-              root_path: "/app/workspace/devel",
+              root_path: workspaceRoot || "/app/workspace/devel",
               sync_interval_minutes: defaultSyncIntervalMinutes,
+              workspace_source: true,
             },
             collections: ["devel"],
             file_types: defaultFileTypes,
@@ -279,10 +292,10 @@ export function createChatWorkspaceActions({
         if (!createResponse.ok) throw new Error(`Failed to create source: ${createResponse.status}`);
         const createdSource = (await createResponse.json()) as IngestionSource;
         source = createdSource;
-        appendConsoleLine(`[ingestion] created source ${createdSource.source_id} for devel workspace`);
+        appendConsoleLine(`[ingestion] created workspace source ${createdSource.source_id} (root ${workspaceRoot || "unknown"})`);
       }
 
-      if (!source) throw new Error("Failed to resolve devel workspace source");
+      if (!source) throw new Error("Failed to resolve workspace source");
       setWorkspaceSourceId(source.source_id);
 
       const jobResponse = await fetch("/api/ingestion/jobs", {
@@ -292,7 +305,7 @@ export function createChatWorkspaceActions({
       });
       if (!jobResponse.ok) throw new Error(`Failed to start sync: ${jobResponse.status}`);
       const job = (await jobResponse.json()) as { job_id: string };
-      appendConsoleLine(`[ingestion] queued devel workspace sync job ${job.job_id} (interval ${defaultSyncIntervalMinutes}m)`);
+      appendConsoleLine(`[ingestion] queued workspace sync job ${job.job_id} (interval ${defaultSyncIntervalMinutes}m)`);
       void refreshWorkspaceStatus();
     } catch (error) {
       appendConsoleLine(`[ingestion] sync failed: ${(error as Error).message}`);

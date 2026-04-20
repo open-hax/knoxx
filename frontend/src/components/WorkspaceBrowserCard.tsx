@@ -78,6 +78,7 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [creating, setCreating] = useState(false);
   const [creatingAndStarting, setCreatingAndStarting] = useState(false);
+  const [collectionsText, setCollectionsText] = useState('devel');
   const [kind, setKind] = useState('docs');
   const [fileTypes, setFileTypes] = useState('.md,.txt,.org,.rst,.adoc');
   const [excludePatterns, setExcludePatterns] = useState('**/.git/**,**/node_modules/**,**/dist/**,**/coverage/**,**/*.png,**/*.jpg,**/*.jpeg,**/*.gif,**/*.pdf,**/*.zip,**/*.tar.gz');
@@ -156,11 +157,17 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
     setCreating(true);
     setError(null);
     try {
+      const workspaceRoot = browseData?.workspace_root || '/app/workspace/devel';
+      const rootPath = currentPath ? `${workspaceRoot}/${currentPath}` : workspaceRoot;
+      const collections = collectionsText
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
       await onCreateSource({
         driver_type: 'local',
-        name: `${folderName(currentPath)} → devel (${kind})`,
-        config: { root_path: currentPath ? `/app/workspace/devel/${currentPath}` : '/app/workspace/devel' },
-        collections: ['devel'],
+        name: `${folderName(currentPath)} → ${collections.join(',') || 'devel'} (${kind})`,
+        config: { root_path: rootPath },
+        collections: collections.length ? collections : ['devel'],
         file_types: fileTypes.split(',').map((v) => v.trim()).filter(Boolean),
         exclude_patterns: excludePatterns.split(',').map((v) => v.trim()).filter(Boolean),
       });
@@ -179,11 +186,17 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
     setCreatingAndStarting(true);
     setError(null);
     try {
+      const workspaceRoot = browseData?.workspace_root || '/app/workspace/devel';
+      const rootPath = currentPath ? `${workspaceRoot}/${currentPath}` : workspaceRoot;
+      const collections = collectionsText
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
       const created = await onCreateSource({
         driver_type: 'local',
-        name: `${folderName(currentPath)} → devel (${kind})`,
-        config: { root_path: currentPath ? `/app/workspace/devel/${currentPath}` : '/app/workspace/devel' },
-        collections: ['devel'],
+        name: `${folderName(currentPath)} → ${collections.join(',') || 'devel'} (${kind})`,
+        config: { root_path: rootPath },
+        collections: collections.length ? collections : ['devel'],
         file_types: fileTypes.split(',').map((v) => v.trim()).filter(Boolean),
         exclude_patterns: excludePatterns.split(',').map((v) => v.trim()).filter(Boolean),
       });
@@ -226,7 +239,7 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <span className="font-medium text-slate-700 dark:text-slate-200">Path:</span>
-            <button type="button" className="underline-offset-2 hover:underline" onClick={() => loadDirectory('')}>devel</button>
+            <button type="button" className="underline-offset-2 hover:underline" onClick={() => loadDirectory('')}>workspace</button>
             {breadcrumbs.map((crumb, idx) => {
               const path = breadcrumbs.slice(0, idx + 1).join('/');
               return (
@@ -242,6 +255,7 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
 
           <div className="grid gap-3">
             <Input value={entryFilter} onChange={(e: ChangeEvent<HTMLInputElement>) => setEntryFilter(e.target.value)} placeholder="Filter entries..." />
+            <Input value={collectionsText} onChange={(e: ChangeEvent<HTMLInputElement>) => setCollectionsText(e.target.value)} placeholder="Collections / projects (comma-separated)" />
             <Input value={kind} onChange={(e: ChangeEvent<HTMLInputElement>) => { setKind(e.target.value); setFileTypes(inferFileTypesForKind(e.target.value)); }} placeholder="Kind (docs/code/config/data)" />
             <Input value={fileTypes} onChange={(e: ChangeEvent<HTMLInputElement>) => setFileTypes(e.target.value)} placeholder=".md,.txt,.clj" />
             <Input value={excludePatterns} onChange={(e: ChangeEvent<HTMLInputElement>) => setExcludePatterns(e.target.value)} placeholder="Exclude globs" />

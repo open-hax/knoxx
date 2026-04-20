@@ -23,6 +23,8 @@
 // Load host env for real API keys (avoids committing secrets)
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { execSync } = require('child_process');
 
 function loadSimpleEnv(envPath) {
   try {
@@ -43,14 +45,41 @@ function loadSimpleEnv(envPath) {
   }
 }
 
-const hostEnv = loadSimpleEnv(path.join('/home/err/.knoxx', '.env.cephalon-host'));
+function tryGitTopLevel(cwd) {
+  try {
+    return execSync('git rev-parse --show-toplevel', { cwd, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString('utf8')
+      .trim();
+  } catch (_err) {
+    return null;
+  }
+}
+
+const knoxxRoot = __dirname;
+const backendDir = path.join(knoxxRoot, 'backend');
+const frontendDir = path.join(knoxxRoot, 'frontend');
+const ingestionDir = path.join(knoxxRoot, 'ingestion');
+
+// Workspace root is where Knoxx is allowed to read/write files.
+// DO NOT hard-code /home/err/devel: other machines/users check out elsewhere.
+const workspaceRoot =
+  process.env.WORKSPACE_ROOT ||
+  process.env.WORKSPACE_PATH ||
+  process.env.KNOXX_WORKSPACE_ROOT ||
+  tryGitTopLevel(knoxxRoot) ||
+  // Fallback: assume standard repo layout: <root>/orgs/open-hax/openplanner/packages/agents/knoxx
+  path.resolve(knoxxRoot, '../../../../../../..');
+
+const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env.cephalon-host');
+const hostEnvPath = process.env.KNOXX_HOST_ENV_PATH || defaultHostEnvPath;
+const hostEnv = loadSimpleEnv(hostEnvPath);
 
 module.exports = {
   apps: [
     // ── 1. shadow-cljs watch ──────────────────────────────────────────
     {
       name: 'knoxx-shadow',
-      cwd: '/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend',
+      cwd: backendDir,
       script: 'pnpm',
       args: 'watch',
       watch: false,
@@ -65,7 +94,7 @@ module.exports = {
     // ── 2. Backend (Node + compiled CLJS) ────────────────────────────
     {
       name: 'knoxx-backend',
-      cwd: '/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend',
+      cwd: backendDir,
       script: 'src/server.mjs',
       // Auto-restart when shadow-cljs produces new output
       watch: ['dist', 'src/server.mjs'],
@@ -78,7 +107,7 @@ module.exports = {
         NODE_ENV: 'development',
         HOST: '0.0.0.0',
         PORT: '8000',
-        WORKSPACE_ROOT: '/home/err/devel',
+        WORKSPACE_ROOT: workspaceRoot,
         KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
         KNOXX_COLLECTION_NAME: 'devel_docs',
         // Public base URL used for OAuth redirect_uri + cookie scope
@@ -107,7 +136,7 @@ module.exports = {
     // ── 3. Frontend (Vite dev server) ────────────────────────────────
     {
       name: 'knoxx-frontend',
-      cwd: '/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/frontend',
+      cwd: frontendDir,
       script: 'pnpm',
       args: 'dev',
       watch: false,
@@ -124,7 +153,7 @@ module.exports = {
     // ── 4. Ingestion (Clojure JVM) ──────────────────────────────────
     {
       name: 'knoxx-ingestion',
-      cwd: '/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/ingestion',
+      cwd: ingestionDir,
       script: 'clojure',
       interpreter: '/bin/bash',
       args: '-M:run',
@@ -137,7 +166,7 @@ module.exports = {
         DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
         REDIS_URL: 'redis://127.0.0.1:6379',
         KNOXX_BACKEND_URL: 'http://127.0.0.1:8000',
-        WORKSPACE_PATH: '/home/err/devel',
+        WORKSPACE_PATH: workspaceRoot,
         OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
         PROXX_BASE_URL: 'http://127.0.0.1:8790',
         PROXX_AUTH_TOKEN: 'change-me-openplanner-proxx-token',

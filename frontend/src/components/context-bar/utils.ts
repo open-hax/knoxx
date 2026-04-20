@@ -20,6 +20,7 @@ export function contextPath(row: GroundedContextRow): string {
 export function isWorkspaceSource(source: IngestionSource): boolean {
   const config = source.config ?? {};
   const rootPath = config.root_path ?? config["root-path"];
+  if (config.workspace_source === true || config.workspaceSource === true) return true;
   return rootPath === "/app/workspace/devel" || (source.name === "devel workspace" && rootPath == null);
 }
 
