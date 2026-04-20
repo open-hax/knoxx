@@ -1005,37 +1005,43 @@
 (defn- ensure-bootstrap-allowlist-users!
   [pool primary-org options]
   (let [emails (parse-bootstrap-allowlist-emails options)
-        role-slugs (parse-bootstrap-allowlist-role-slugs options)]
+        role-slugs (parse-bootstrap-allowlist-role-slugs options)
+        org-id (aget primary-org "id")]
     (if (empty? emails)
       (js/Promise.resolve nil)
       (-> (js/Promise.all
            (clj->js
-            (map (fn [email]
-                   (-> (query-one! pool
-                                   "INSERT INTO users (email, display_name, auth_provider, status) VALUES ($1, $2, 'bootstrap', 'active') ON CONFLICT (email) DO UPDATE SET updated_at = NOW() RETURNING *"
-                                   [email email])
-                       (.then
-                        (fn [user]
-                          (-> (query-one! pool
-                                          "INSERT INTO memberships (user_id, org_id, status, is_default) VALUES ($1, $2, 'active', FALSE) ON CONFLICT (user_id, org_id) DO UPDATE SET updated_at = NOW() RETURNING *"
-                                          [(aget user "id") (aget primary-org "id")])
-                              (.then
-                               (fn [membership]
-                                 (-> (js/Promise.all
-                                      (clj->js
-                                       (map (fn [slug]
-                                              (-> (find-role pool {:slug slug :org-id nil})
-                                                  (.then
-                                                   (fn [role]
-                                                     (when role
-                                                       (query! pool
-                                                               "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
-                                                               [(aget membership "id") (aget role "id")]))))))
-                                            role-slugs)))
-                                     (.then (fn [_] #js {:email email :ok true})))))))))
-                 emails)))
+            (mapv
+             (fn [email]
+               (-> (query-one! pool
+                               "INSERT INTO users (email, display_name, auth_provider, status) VALUES ($1, $2, 'bootstrap', 'active') ON CONFLICT (email) DO UPDATE SET updated_at = NOW() RETURNING *"
+                               [email email])
+                   (.then
+                    (fn [user]
+                      (query-one! pool
+                                 "INSERT INTO memberships (user_id, org_id, status, is_default) VALUES ($1, $2, 'active', FALSE) ON CONFLICT (user_id, org_id) DO UPDATE SET updated_at = NOW() RETURNING *"
+                                 [(aget user "id") org-id])))
+                   (.then
+                    (fn [membership]
+                      (-> (js/Promise.all
+                           (clj->js
+                            (mapv
+                             (fn [slug]
+                               (-> (find-role pool {:slug slug :org-id org-id})
+                                   (.then (fn [role]
+                                            (if role
+                                              role
+                                              (find-role pool {:slug slug :org-id nil}))))
+                                   (.then
+                                    (fn [role]
+                                      (when role
+                                        (query! pool
+                                                "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
+                                                [(aget membership "id") (aget role "id")]))))))
+                             role-slugs)))
+                          (.then (fn [_] #js {:email email :ok true})))))))
+             emails)))
           (.then (fn [_] nil))))))
-
 ;; ---------------------------------------------------------------------------
 ;; Audit
 ;; ---------------------------------------------------------------------------
