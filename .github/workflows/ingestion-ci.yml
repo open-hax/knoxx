@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   ingestion-test:
-    name: ingestion (clojure unit tests)
+    name: ingestion (clojure lint + unit tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -31,8 +31,6 @@ jobs:
         working-directory: ingestion
 
     env:
-      # Keep tests hermetic — no real services expected.
-      # Loader tests write temp dirs; no DB or Redis needed.
       CONTRACTS_DIR: ${{ github.workspace }}/contracts
 
     steps:
@@ -59,13 +57,15 @@ jobs:
         uses: DeLaGuardo/setup-clojure@13
         with:
           cli: latest
+          clj-kondo: latest
 
       - name: Download deps
         run: clojure -P -A:test
 
+      - name: Lint (clj-kondo)
+        # Runs over src + test; exits non-zero on any error-level finding.
+        # Warnings are printed but do not fail the build yet.
+        run: clj-kondo --lint src test --fail-level error
+
       - name: Run tests
         run: clojure -M:test
-
-      - name: Verify test exit
-        if: failure()
-        run: echo 'Tests failed — check output above.'
