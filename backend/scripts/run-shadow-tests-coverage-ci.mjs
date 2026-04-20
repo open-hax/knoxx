@@ -45,7 +45,9 @@ function exitForTestCounters(output) {
 }
 
 async function main() {
-  // 1) Compile the CI test bundle (no autorun)
+  // 1) Compile the CI test bundle (no autorun, :optimizations :none so that
+  //    V8/c8 sees individual cljs-runtime/*.js files rather than one minified
+  //    bundle.  Sourcemaps remap hits back to src/cljs/knoxx/** for display.
   {
     const res = await spawnP(SHADOW_CMD, ['compile', TEST_BUILD]);
 
@@ -59,29 +61,23 @@ async function main() {
     }
   }
 
-  // 2) Run the bundle under c8 to collect coverage.
-  //    NOTE: cljs.test failures do not reliably set process exit codes, so we
-  //    parse the printed "X failures, Y errors." counters.
+  // 2) Run the bundle under c8.
   //
-  //    shadow-cljs :optimizations :none emits individual cljs-runtime/*.js
-  //    files with sourcemaps that remap to src/cljs/knoxx/**. c8 resolves
-  //    those automatically from the V8 coverage data — we do NOT use --all
-  //    or --src here because those flags enumerate raw JS files and find
-  //    nothing in a .cljs source tree, producing 0 coverage.
+  //    With :optimizations :none, shadow emits individual files under
+  //    target/test/cljs-runtime/.  We include only the knoxx/backend/**
+  //    runtime files and exclude test namespaces (*_test*) so the numbers
+  //    reflect production code only.
   //
-  //    --include is matched against the remapped .cljs paths after sourcemap
-  //    resolution, scoping the report to Knoxx sources only.
+  //    --all is intentionally omitted: it enumerates raw JS, not .cljs,
+  //    and inflates 0-coverage lines for files never loaded.
   const c8Args = [
     'c8',
     '--reporter=text',
     '--reporter=json-summary',
     '--reporter=lcov',
     '--reports-dir', 'coverage',
-    // Scope to Knoxx sources only (matched post-sourcemap-remap).
-    '--include', 'src/cljs/knoxx/**',
-    // Exclude test files from coverage numbers.
-    '--exclude', 'test/**',
-    '--exclude', 'target/**',
+    '--include', 'target/test/cljs-runtime/knoxx/backend/**',
+    '--exclude', 'target/test/cljs-runtime/knoxx/backend/**_test*',
     'node',
     TEST_BUNDLE,
   ];
@@ -93,7 +89,6 @@ async function main() {
     process.exit(res.code ?? 1);
   }
 
-  // Even if c8 exits 0, tests can still have failures.
   if (res.code !== 0) {
     console.error(`[knoxx] c8 exited with non-zero status ${res.code}`);
     process.exit(1);

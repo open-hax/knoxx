@@ -40,12 +40,14 @@
                       :infer-externs :auto}}
 
   ;; CI/coverage build: compile the node runner, but do not autorun.
-  ;; This lets us run the generated .cjs under c8 to collect V8 coverage.
+  ;; :optimizations :none emits individual cljs-runtime/*.js files so V8/c8
+  ;; can instrument them; sourcemaps then remap hits back to .cljs paths.
   :test-ci
   {:target :node-test
    :output-to "target/test/test-ci.cjs"
    :ns-regex ["knoxx.backend.*-test$"]
    :autorun false
    :compiler-options {:output-feature-set :es-next
+                      :optimizations :none
                       :source-map true
                       :infer-externs :auto}}}}
