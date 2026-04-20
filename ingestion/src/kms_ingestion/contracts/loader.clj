@@ -16,8 +16,7 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [clojure.walk :as walk]
-   [kms-ingestion.contracts.schema :as schema]))
+   [clojure.walk :as walk]))
 
 ;; ──────────────────────────────────────────────────────────────────────────────
 ;; Internal helpers
@@ -132,35 +131,35 @@
    :tenant/id        "_defaults"
 
    :source/schedule
-   {:mode                     :hybrid
-    :sync-interval-minutes    30
-    :scheduler-poll-ms        60000
-    :passive-watch-enabled?   true
-    :passive-watch-poll-ms    60000
+   {:mode                      :hybrid
+    :sync-interval-minutes     30
+    :scheduler-poll-ms         60000
+    :passive-watch-enabled?    true
+    :passive-watch-poll-ms     60000
     :passive-watch-debounce-ms 5000
-    :bootstrap?               true}
+    :bootstrap?                true}
 
    :source/semantic
-   {:enabled?          true
-    :build-index?      true
-    :chunk-size        800
-    :chunk-overlap     100}
+   {:enabled?     true
+    :build-index? true
+    :chunk-size   800
+    :chunk-overlap 100}
 
    :source/ingest
-   {:batch-size          10
-    :batch-parallelism   4
-    :batch-delay-ms      100
-    :throttle-enabled?   true
-    :max-load-per-core   0.85
-    :throttle-sleep-ms   1000
-    :retry-failed?       true}
+   {:batch-size        10
+    :batch-parallelism 4
+    :batch-delay-ms    100
+    :throttle-enabled? true
+    :max-load-per-core 0.85
+    :throttle-sleep-ms 1000
+    :retry-failed?     true}
 
    :source/sink
-   {:type          :openplanner
-    :visibility    "internal"
-    :source-label  "kms-ingestion"
-    :created-by    "kms-ingestion"
-    :language      "en"}})
+   {:type         :openplanner
+    :visibility   "internal"
+    :source-label "kms-ingestion"
+    :created-by   "kms-ingestion"
+    :language     "en"}})
 
 ;; ──────────────────────────────────────────────────────────────────────────────
 ;; Cache
@@ -193,23 +192,22 @@
        cached
        (let [root (contracts-root)]
          (when root
-           (let [global-defaults  (read-edn-file (str root "/_defaults.edn"))
-                 tenant-defaults  (read-edn-file (str root "/" tenant-id "/_defaults.edn"))
-                 source-id-str    (if (keyword? source-id) (name source-id) source-id)
-                 source-contract  (read-edn-file
-                                   (str root "/" tenant-id "/sources/" source-id-str ".edn"))
-                 merged           (reduce deep-merge
-                                          runtime-floor
-                                          (filter some?
-                                                  [global-defaults
-                                                   tenant-defaults
-                                                   source-contract
-                                                   job-override]))
-                 resolved         (resolve-secrets merged)]
+           (let [global-defaults (read-edn-file (str root "/_defaults.edn"))
+                 tenant-defaults (read-edn-file (str root "/" tenant-id "/_defaults.edn"))
+                 source-id-str   (if (keyword? source-id) (name source-id) source-id)
+                 source-contract (read-edn-file
+                                  (str root "/" tenant-id "/sources/" source-id-str ".edn"))
+                 merged          (reduce deep-merge
+                                         runtime-floor
+                                         (filter some?
+                                                 [global-defaults
+                                                  tenant-defaults
+                                                  source-contract
+                                                  job-override]))
+                 resolved        (resolve-secrets merged)]
              (when-not job-override
                (swap! cache assoc cache-key resolved))
-             resolved)))))
-   ))
+             resolved)))))))
 
 (defn load-all-source-contracts
   "Load all source contracts under contracts/<tenant>/sources/.
@@ -223,4 +221,4 @@
                 (for [^java.io.File f (.listFiles sources-dir)
                       :when (str/ends-with? (.getName f) ".edn")]
                   (let [source-id (str/replace (.getName f) #"\.edn$" "")]
-                    [source-id (load-source-contract tenant-id source-id)])))))))))
+                    [source-id (load-source-contract tenant-id source-id)]))))))))
