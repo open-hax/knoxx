@@ -12,7 +12,6 @@
    [java.time Instant]))
 
 (defn- get-root-path
-  "Extract root-path from config, handling both :root-path and :root_path keys."
   [config]
   (or (:root-path config)
       (:root_path config)
@@ -35,19 +34,17 @@
 (defn- contract-or-default
   [contract resolver default-value]
   (let [v (resolver contract)]
-    (if (or (nil? v)
-            (and (coll? v) (empty? v)))
+    (if (or (nil? v) (and (coll? v) (empty? v)))
       default-value
       v)))
 
 (defn text-like-file?
-  "Default heuristic for files we can safely treat as text documents."
   ([path]
    (text-like-file? path nil))
   ([path contract]
-   (let [name      (str/lower-case (str (fs/file-name path)))
-         ext-raw   (str/lower-case (or (fs/extension path) ""))
-         ext       (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
+   (let [name            (str/lower-case (str (fs/file-name path)))
+         ext-raw         (str/lower-case (or (fs/extension path) ""))
+         ext             (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
          text-extensions (contract-or-default contract cr/text-extensions default-text-extensions)
          text-filenames  (contract-or-default contract cr/text-filenames  default-text-filenames)]
      (or (text-extensions ext)
@@ -58,17 +55,11 @@
          (str/ends-with? name ".desktop")))))
 
 (defn path-matches-glob?
-  "Check if a filename matches a simple glob pattern like *.md."
   [filename pattern]
   (cond
-    (.startsWith pattern "*.")
-    (str/ends-with? filename (subs pattern 1))
-
-    (.startsWith pattern "**/")
-    (str/ends-with? filename (subs pattern 3))
-
-    :else
-    (= filename pattern)))
+    (.startsWith pattern "*.") (str/ends-with? filename (subs pattern 1))
+    (.startsWith pattern "**/") (str/ends-with? filename (subs pattern 3))
+    :else (= filename pattern)))
 
 (defn skip-directory-name?
   ([name]
@@ -82,7 +73,6 @@
          (skip-dirs name)))))
 
 (defn sha256
-  "Compute SHA-256 hash of a file."
   [path]
   (try
     (let [digest     (MessageDigest/getInstance "SHA-256")
@@ -92,7 +82,6 @@
     (catch Exception _ nil)))
 
 (defn modified-time
-  "Get file modification time as Instant."
   [path]
   (try
     (-> (Files/getLastModifiedTime (fs/path path) (make-array java.nio.file.LinkOption 0))
@@ -100,7 +89,6 @@
     (catch Exception _ nil)))
 
 (defn- file-seq-recursive
-  "Lazy depth-first file walk that skips hidden/generated dirs before descent."
   ([^java.io.File root]
    (file-seq-recursive root nil))
   ([^java.io.File root contract]
@@ -148,8 +136,6 @@
               (not (text-like-file? abs-path contract)))))))
 
 (defn stream-files
-  "Lazy stream of new/changed file metadata based on size+mtime first.
-   Does not read file contents or hash unchanged files during discovery."
   [root-path opts]
   (if (or (nil? root-path) (str/blank? (str root-path)))
     ()
@@ -172,25 +158,23 @@
                   (when (candidate-file? rel-path f-name ext
                                          file-types include-patterns exclude-patterns
                                          abs-path contract)
-                    (let [file-id        abs-path
-                          mod-time       (modified-time abs-path)
-                          size           (.length file)
-                          existing       (get existing-state file-id)
-                          existing-meta  (:metadata existing)
-                          same-version?  (and existing
-                                              (= (:size existing-meta) size)
-                                              (= (str (:modified_at existing-meta))
-                                                 (some-> mod-time str)))]
+                    (let [file-id       abs-path
+                          mod-time      (modified-time abs-path)
+                          size          (.length file)
+                          existing      (get existing-state file-id)
+                          existing-meta (:metadata existing)
+                          same-version? (and existing
+                                             (= (:size existing-meta) size)
+                                             (= (str (:modified_at existing-meta))
+                                                (some-> mod-time str)))]
                       (when-not same-version?
-                        {:id         file-id
-                         :path       rel-path
-                         :size       size
+                        {:id          file-id
+                         :path        rel-path
+                         :size        size
                          :modified-at mod-time
-                         :change     (if existing :changed :new)}))))))))))))
+                         :change      (if existing :changed :new)}))))))))))))
 
 (defn snapshot-files
-  "Lightweight file snapshot for passive watch diffing.
-   Uses path/size/mtime only, no content hashing."
   [root-path opts]
   (if (or (nil? root-path) (str/blank? (str root-path)))
     {}
@@ -219,12 +203,10 @@
       @entries)))
 
 (defn find-files
-  "Find all files under root-path, applying filters."
   [root-path opts]
   (if (or (nil? root-path) (str/blank? (str root-path)))
     {:total-files 0 :new-files 0 :changed-files 0 :unchanged-files 0 :skipped-files 0 :files []}
-    (let [root-path-str    (str root-path)
-          root-file        (java.io.File. root-path-str)
+    (let [root-file        (java.io.File. (str root-path))
           root-abs         (.getAbsoluteFile root-file)
           existing-state   (:existing-state opts)
           file-types       (:file-types opts)
@@ -275,17 +257,15 @@
                                          :path        rel-path
                                          :size        size
                                          :modified-at mod-time}))))
-              ;; candidate-file? returned false
               (swap! stats update :skipped inc)))))
-      {:total-files     (:total    @stats)
-       :new-files       (:new      @stats)
-       :changed-files   (:changed  @stats)
+      {:total-files     (:total     @stats)
+       :new-files       (:new       @stats)
+       :changed-files   (:changed   @stats)
        :unchanged-files (:unchanged @stats)
-       :skipped-files   (:skipped  @stats)
+       :skipped-files   (:skipped   @stats)
        :files           @files})))
 
 (defn read-file-content
-  "Read file content as UTF-8 string."
   [path]
   (try
     (slurp path :encoding "UTF-8")
@@ -319,6 +299,5 @@
     nil))
 
 (defn create-driver
-  "Create a new LocalDriver instance."
   [config]
   (->LocalDriver config (atom {})))
