@@ -1,5 +1,5 @@
 /**
- * Knoxx dev-mode PM2 ecosystem
+ * Knoxx PM2 ecosystem
  *
  * Runs all three Knoxx services on the host for source-mapped debugging:
  *   1. knoxx-shadow    — shadow-cljs watch (compiles CLJS → dist/)
@@ -19,6 +19,31 @@
  *   pm2 stop knoxx            # stop all
  *   pm2 delete knoxx          # remove all
  */
+
+// Load host env for real API keys (avoids committing secrets)
+const fs = require('fs');
+const path = require('path');
+
+function loadSimpleEnv(envPath) {
+  try {
+    const raw = fs.readFileSync(envPath, 'utf8');
+    return raw.split(/\r?\n/).reduce((acc, line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return acc;
+      const idx = trimmed.indexOf('=');
+      if (idx < 0) return acc;
+      const key = trimmed.slice(0, idx).trim();
+      const value = trimmed.slice(idx + 1);
+      if (!key) return acc;
+      acc[key] = value;
+      return acc;
+    }, {});
+  } catch (_err) {
+    return {};
+  }
+}
+
+const hostEnv = loadSimpleEnv(path.join('/home/err/.knoxx', '.env.cephalon-host'));
 
 module.exports = {
   apps: [
@@ -56,13 +81,18 @@ module.exports = {
         WORKSPACE_ROOT: '/home/err/devel',
         KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
         KNOXX_COLLECTION_NAME: 'devel_docs',
+        // Public base URL used for OAuth redirect_uri + cookie scope
+        KNOXX_PUBLIC_BASE_URL: hostEnv.KNOXX_PUBLIC_BASE_URL || 'http://localhost',
+        // GitHub OAuth
+        KNOXX_GITHUB_OAUTH_CLIENT_ID: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_ID || '',
+        KNOXX_GITHUB_OAUTH_CLIENT_SECRET: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_SECRET || '',
         // Proxx (on host via compose port-forward)
         PROXX_BASE_URL: 'http://127.0.0.1:8790',
         PROXX_DEFAULT_MODEL: 'glm-5',
-        PROXX_AUTH_TOKEN: 'change-me-openplanner-proxx-token',
+        PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || 'change-me-openplanner-proxx-token',
         // OpenPlanner (on host via compose port-forward)
         OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
-        OPENPLANNER_API_KEY: 'change-me',
+        OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
         // Redis + Postgres (compose services forwarded to host)
         REDIS_URL: 'redis://127.0.0.1:6379',
         KNOXX_POLICY_DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
