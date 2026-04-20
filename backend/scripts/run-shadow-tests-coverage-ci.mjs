@@ -69,6 +69,23 @@ async function main() {
     '--reporter=lcov',
     '--reports-dir',
     'coverage',
+    // Focus coverage on Knoxx sources by excluding CLJS/goog runtime noise.
+    // We exclude on the generated JS paths (pre-remap) to avoid accidentally
+    // filtering out the remapped .cljs sources.
+    '--exclude',
+    '**/cljs-runtime/cljs/**',
+    '--exclude',
+    '**/cljs-runtime/goog/**',
+    '--exclude',
+    '**/cljs-runtime/clojure/**',
+    '--exclude',
+    '**/cljs-runtime/shadow/**',
+    '--exclude',
+    '**/cljs-runtime/shadow.js.shim.module$*',
+    '--exclude',
+    '**/cljs-runtime/shadow.module.main.append.js',
+    '--exclude',
+    'target/test/test-ci.cjs',
     'node',
     TEST_BUNDLE,
   ];
