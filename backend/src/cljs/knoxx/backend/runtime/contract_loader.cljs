@@ -5,7 +5,7 @@
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 
-(defn- safe-path-segment!
+(defn safe-path-segment!
   "Reject path traversal and odd unicode by constraining to a conservative charset." 
   [segment kind]
   (let [s (str segment)]

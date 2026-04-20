@@ -29,18 +29,38 @@
 
 (def ^:private event-agent-control-redis-key "event-agent:control-config")
 
+(def ^:private max-messages-limit 100)
+
+(defn- clamp-max-messages
+  [value fallback]
+  (let [n (or (parse-positive-int value)
+              (parse-positive-int fallback)
+              25)]
+    (max 1 (min max-messages-limit n))))
+
+(defn- clamp-source-config
+  [source-config default-config]
+  (let [cfg (or source-config {})]
+    (assoc cfg :maxMessages (clamp-max-messages (:maxMessages cfg)
+                                                (:maxMessages (or default-config {}))))))
+
 (defn persist-event-agent-control!
   "Persist the event-agent-control overrides to Redis so they survive restarts." 
   [control]
-  (when-let [client (redis/get-client)]
-    (redis/set-json client event-agent-control-redis-key control)
-    (println "[control-config] persisted event-agent-control to Redis"))
-  control)
+  (if-let [client (redis/get-client)]
+    (-> (redis/set-json client event-agent-control-redis-key control)
+        (.then (fn [_]
+                 (println "[control-config] persisted event-agent-control to Redis")
+                 control))
+        (.catch (fn [err]
+                  (println "[control-config] failed to persist event-agent-control to Redis:" (.-message err))
+                  control)))
+    (js/Promise.resolve control)))
 
 (defn load-event-agent-control
   "Load event-agent-control overrides from Redis. Returns nil if not found." 
   []
-  (when-let [client (redis/get-client)]
+  (if-let [client (redis/get-client)]
     (-> (redis/get-json client event-agent-control-redis-key)
         (.then (fn [saved]
                  (when saved
@@ -48,7 +68,8 @@
                  saved))
         (.catch (fn [err]
                   (println "[control-config] failed to load event-agent-control from Redis:" (.-message err))
-                  nil)))))
+                  nil)))
+    (js/Promise.resolve nil)))
 
 (defn discord-agent-role-options
   "Roles that can be used for scheduled Discord jobs.
@@ -338,7 +359,8 @@
                :eventKinds event-kinds}
      :source {:kind source-kind
               :mode source-mode
-              :config (or (:config source-config) {})}
+              :config (clamp-source-config (:config source-config)
+                                          (get-in default-job [:source :config]))}
      :filters (or (:filters source) (:filters default-job) {})
      :agentSpec {:role role
                  :model (or (some-> (:model agent-source) str str/trim not-empty)
@@ -364,6 +386,7 @@
         defaults (default-event-agent-control config)
         default-sources (:sources defaults)
         saved-sources (or (:sources saved) {})
+        github-webhook-secret-configured (get-in default-sources [:github :webhookSecretConfigured])
         default-jobs (:jobs defaults)
         saved-jobs (vec (or (:jobs saved) []))
         default-job-ids (into #{} (map :id) default-jobs)
@@ -388,9 +411,12 @@
                                                                  :description "Custom scheduled event-agent job"}
                                                                 job)))))
                          vec)]
-    {:sources {:discord (merge (:discord default-sources) (or (:discord saved-sources) {}))
-               :github (merge (:github default-sources) (or (:github saved-sources) {}))
-               :cron (merge (:cron default-sources) (or (:cron saved-sources) {}))}
+    {:sources (-> {:discord (merge (:discord default-sources) (or (:discord saved-sources) {}))
+                   :github (merge (:github default-sources) (or (:github saved-sources) {}))
+                   :cron (merge (:cron default-sources) (or (:cron saved-sources) {}))}
+                 ;; Never let persisted Redis overrides lie about secret configuration.
+                 (assoc-in [:github :webhookSecretConfigured]
+                           (boolean github-webhook-secret-configured)))
      :jobs (vec (concat
                  (mapv (fn [default-job]
                          (normalize-event-agent-job config default-job (get saved-jobs-by-id (:id default-job))))

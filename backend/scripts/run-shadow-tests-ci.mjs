@@ -25,9 +25,15 @@ function run() {
     process.exit(1);
   });
 
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
+    if (signal) {
+      console.error(`[knoxx] shadow-cljs terminated by signal ${signal}`);
+      process.exit(code ?? 1);
+      return;
+    }
+
     if (code !== 0) {
-      process.exit(code);
+      process.exit(code ?? 1);
       return;
     }
 

@@ -37,6 +37,18 @@
            :errors [{:path [] :message (str "EDN parse error: " (.-message err))}]
            :warnings []})))))
 
+(defn- safe-contract-id
+  "Validate a contract id segment early (before we call loader/contract-file-path).
+
+   Returns {:ok true :id <string>} or {:ok false :error <string>}." 
+  [raw-id]
+  (try
+    {:ok true
+     :id (loader/safe-path-segment! raw-id "contract-id")}
+    (catch :default err
+      {:ok false
+       :error (or (.-message err) (str err))})))
+
 (defn- contract-metadata!
   "Return Promise of ContractListItem-like map for a contract id." 
   [config contract-id]
@@ -114,17 +126,35 @@
 (defn- handle-save-contract
   [do-json config contract-id edn-text]
   (let [validation (validate-contract-edn edn-text)
-        file-path (loader/contract-file-path config contract-id)]
-    (-> (loader/write-edn-file! file-path edn-text)
-        (.then (fn [_]
-                 (sync-contract-index! config)))
-        (.then (fn [_]
-                 (do-json 200 {:ok true
-                               :ednText edn-text
-                               :contract (:contract validation)
-                               :validation (dissoc validation :contract)})))
-        (.catch (fn [err]
-                  (do-json 500 {:detail (str "Failed to save contract: " (.-message err))}))))))
+        validation-out (dissoc validation :contract)
+        parsed (:contract validation)
+        parsed-id (some-> (:contract/id parsed) str)
+        route-id (str contract-id)]
+    (cond
+      (not (:ok validation))
+      (do-json 400 {:ok false
+                    :detail "Contract EDN failed validation"
+                    :validation validation-out})
+
+      (not= route-id parsed-id)
+      (do-json 400 {:ok false
+                    :detail "Refusing to save contract: :contract/id does not match route contractId"
+                    :routeContractId route-id
+                    :ednContractId parsed-id
+                    :validation validation-out})
+
+      :else
+      (let [file-path (loader/contract-file-path config route-id)]
+        (-> (loader/write-edn-file! file-path edn-text)
+            (.then (fn [_]
+                     (sync-contract-index! config)))
+            (.then (fn [_]
+                     (do-json 200 {:ok true
+                                   :ednText edn-text
+                                   :contract parsed
+                                   :validation validation-out})))
+            (.catch (fn [err]
+                      (do-json 500 {:detail (str "Failed to save contract: " (.-message err))}))))))))
 
 (defn- handle-copy-contract
   [do-json config source-id new-id]
@@ -174,15 +204,23 @@
     (if-not (:ok validation)
       (do-text 422 (pr-str {:ok false
                             :errors (:errors validation)}))
-      (-> (loader/write-edn-file! (loader/contract-file-path config contract-id) edn-text)
-          (.then (fn [_]
-                   (sync-contract-index! config)))
-          (.then (fn [_]
-                   (do-text 200 (pr-str {:ok true
-                                         :contract/id contract-id
-                                         :contract (:contract validation)}))))
-          (.catch (fn [err]
-                   (do-text 500 (str ";; Failed to save contract: " (.-message err)))))))))
+      (let [parsed (:contract validation)
+            parsed-id (some-> (:contract/id parsed) str)
+            route-id (str contract-id)]
+        (if (not= route-id parsed-id)
+          (do-text 400 (pr-str {:ok false
+                                :error "contract_id_mismatch"
+                                :routeContractId route-id
+                                :ednContractId parsed-id}))
+          (-> (loader/write-edn-file! (loader/contract-file-path config route-id) edn-text)
+              (.then (fn [_]
+                       (sync-contract-index! config)))
+              (.then (fn [_]
+                       (do-text 200 (pr-str {:ok true
+                                             :contract/id route-id
+                                             :contract parsed}))))
+              (.catch (fn [err]
+                       (do-text 500 (str ";; Failed to save contract: " (.-message err)))))))))))
 
 ;; ===========================================================================
 ;; Route registration
@@ -220,7 +258,10 @@
                       (let [contract-id (str (or (aget request "params" "contractId") ""))]
                         (if (str/blank? contract-id)
                           (do-text reply 400 ";; contractId is required")
-                          (handle-agent-get-contract-edn (partial do-text reply) config contract-id)))
+                          (let [safe (safe-contract-id contract-id)]
+                            (if-not (:ok safe)
+                              (do-text reply 400 (str ";; Invalid contractId: " (:error safe)))
+                              (handle-agent-get-contract-edn (partial do-text reply) config (:id safe))))))
                       (catch :default err
                         (do-err reply err)))))))
 
@@ -234,7 +275,10 @@
                             edn-text (str (or (aget request "body") ""))]
                         (if (str/blank? contract-id)
                           (do-text reply 400 ";; contractId is required")
-                          (handle-agent-put-contract-edn (partial do-text reply) config contract-id edn-text)))
+                          (let [safe (safe-contract-id contract-id)]
+                            (if-not (:ok safe)
+                              (do-text reply 400 (str ";; Invalid contractId: " (:error safe)))
+                              (handle-agent-put-contract-edn (partial do-text reply) config (:id safe) edn-text)))))
                       (catch :default err
                         (do-err reply err)))))))
 
@@ -259,7 +303,10 @@
                       (let [contract-id (str (or (aget request "params" "contractId") ""))]
                         (if (str/blank? contract-id)
                           (do-json reply 400 {:detail "contractId is required"})
-                          (handle-get-contract (partial do-json reply) config contract-id)))
+                          (let [safe (safe-contract-id contract-id)]
+                            (if-not (:ok safe)
+                              (do-json reply 400 {:detail "Invalid contractId" :error (:error safe)})
+                              (handle-get-contract (partial do-json reply) config (:id safe))))))
                       (catch :default err
                         (do-err reply err)))))))
 
@@ -274,7 +321,10 @@
                             edn-text (str (or (:ednText body) ""))]
                         (if (str/blank? contract-id)
                           (do-json reply 400 {:detail "contractId is required"})
-                          (handle-save-contract (partial do-json reply) config contract-id edn-text)))
+                          (let [safe (safe-contract-id contract-id)]
+                            (if-not (:ok safe)
+                              (do-json reply 400 {:detail "Invalid contractId" :error (:error safe)})
+                              (handle-save-contract (partial do-json reply) config (:id safe) edn-text)))))
                       (catch :default err
                         (do-err reply err)))))))
 
@@ -301,7 +351,17 @@
                             new-id (str (or (:newId body) ""))]
                         (if (or (str/blank? source-id) (str/blank? new-id))
                           (do-json reply 400 {:detail "source contractId and newId are required"})
-                          (handle-copy-contract (partial do-json reply) config source-id new-id)))
+                          (let [safe-source (safe-contract-id source-id)
+                                safe-new (safe-contract-id new-id)]
+                            (cond
+                              (not (:ok safe-source))
+                              (do-json reply 400 {:detail "Invalid source contractId" :error (:error safe-source)})
+
+                              (not (:ok safe-new))
+                              (do-json reply 400 {:detail "Invalid newId" :error (:error safe-new)})
+
+                              :else
+                              (handle-copy-contract (partial do-json reply) config (:id safe-source) (:id safe-new))))))
                       (catch :default err
                         (do-err reply err)))))))
 

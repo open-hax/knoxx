@@ -19,7 +19,9 @@ venv/
 **/.clj-kondo/
 **/.cpcache/
 **/.shadow-cljs/
+**/.vite-vitest/
 **/.lsp
+**/.#*
 
 # Workspace symlink targets (resolved at install time)
 packages/uxx

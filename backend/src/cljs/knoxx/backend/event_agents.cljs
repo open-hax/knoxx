@@ -25,8 +25,32 @@
 (defonce recent-events* (atom []))
 (defonce discord-gateway-unsubscribe* (atom nil))
 
-(defn- cfg []
-  (runtime-models/enrich-config (runtime-config/cfg)))
+(defonce ^:private enriched-env-config-cache*
+  (atom {:base nil :enriched nil}))
+
+(defn- cached-enriched-env-config
+  "Return an enriched config derived from runtime-config/cfg.
+
+   Memoized to avoid repeated env reads / enrich-config recomputation on hot paths.
+   Cache is refreshed automatically when the base env config value changes." 
+  []
+  (let [base (runtime-config/cfg)
+        cached @enriched-env-config-cache*]
+    (if (and (:enriched cached)
+             (= base (:base cached)))
+      (:enriched cached)
+      (let [enriched (runtime-models/enrich-config base)]
+        (reset! enriched-env-config-cache* {:base base :enriched enriched})
+        enriched))))
+
+(defn- cfg
+  "Return the current enriched runtime config.
+
+   Prefer runtime-state/config* when available so dynamic overrides (e.g.
+   persisted event-agent-control) are visible to callers." 
+  []
+  (or @runtime-state/config*
+      (cached-enriched-env-config)))
 
 (defn- control-config
   [config]
