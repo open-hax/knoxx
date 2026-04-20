@@ -6,9 +6,13 @@
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
             [knoxx.backend.discord-gateway :as dg]
-            [knoxx.backend.runtime-config :as runtime-config]
+            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.runtime.models :as runtime-models]
+            [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.agent-templates :as templates]))
+            [knoxx.backend.agent-templates :as templates]
+            [knoxx.backend.util.parse :refer [parse-positive-int]]))
 
 (declare start!)
 
@@ -21,12 +25,36 @@
 (defonce recent-events* (atom []))
 (defonce discord-gateway-unsubscribe* (atom nil))
 
-(defn- cfg []
-  (runtime-config/cfg))
+(defonce ^:private enriched-env-config-cache*
+  (atom {:base nil :enriched nil}))
+
+(defn- cached-enriched-env-config
+  "Return an enriched config derived from runtime-config/cfg.
+
+   Memoized to avoid repeated env reads / enrich-config recomputation on hot paths.
+   Cache is refreshed automatically when the base env config value changes." 
+  []
+  (let [base (runtime-config/cfg)
+        cached @enriched-env-config-cache*]
+    (if (and (:enriched cached)
+             (= base (:base cached)))
+      (:enriched cached)
+      (let [enriched (runtime-models/enrich-config base)]
+        (reset! enriched-env-config-cache* {:base base :enriched enriched})
+        enriched))))
+
+(defn- cfg
+  "Return the current enriched runtime config.
+
+   Prefer runtime-state/config* when available so dynamic overrides (e.g.
+   persisted event-agent-control) are visible to callers." 
+  []
+  (or @runtime-state/config*
+      (cached-enriched-env-config)))
 
 (defn- control-config
   [config]
-  (runtime-config/event-agent-control-config config))
+  (control-config/event-agent-control-config config))
 
 (defn- discord-token
   []
@@ -120,8 +148,8 @@
 
 (defn- job-max-messages
   [job fallback]
-  (or (runtime-config/parse-positive-int (get-in job [:source :config :maxMessages]))
-      (runtime-config/parse-positive-int fallback)
+  (or (parse-positive-int (get-in job [:source :config :maxMessages]))
+      (parse-positive-int fallback)
       25))
 
 (defn- discord-last-seen
@@ -714,12 +742,12 @@
     ;; =======================================================================
     (let [recovery-promise
           (if-let [client (redis/get-client)]
-            (-> (runtime-config/load-event-agent-control)
+            (-> (control-config/load-event-agent-control)
                 (.then (fn [saved-control]
                          (when saved-control
-                           (swap! runtime-config/config*
+                           (swap! runtime-state/config*
                                   (fn [current-cfg]
-                                    (assoc (or current-cfg (runtime-config/cfg))
+                                    (assoc (or current-cfg (cfg))
                                            :event-agent-control saved-control)))))))
             (js/Promise.resolve nil))]
       (-> recovery-promise

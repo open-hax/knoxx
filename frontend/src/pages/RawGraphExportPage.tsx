@@ -8,7 +8,7 @@ import {
   type GraphData as RenderGraphData,
   type GraphEdge as RenderGraphEdge,
   type GraphNode as RenderGraphNode,
-} from '@workspace/webgl-graph-view';
+} from '@octave-commons/webgl-graph-view';
 import { fetchGraphExport } from '../lib/nextApi';
 import type { GraphExportEdge, GraphExportNode, GraphExportResponse } from '../lib/types';
 import {

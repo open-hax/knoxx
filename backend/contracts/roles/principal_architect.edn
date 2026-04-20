@@ -1,0 +1,6 @@
+{:role/id :role/principal-architect
+ :role/capabilities [:cap/read
+                     :cap/write
+                     :cap/edit
+                     :cap/bash
+                     :cap/canvas]}

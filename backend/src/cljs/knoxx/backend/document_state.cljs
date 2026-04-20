@@ -1,7 +1,7 @@
 (ns knoxx.backend.document-state
   (:require [clojure.string :as str]
             [knoxx.backend.authz :as authz]
-            [knoxx.backend.runtime-config :as rc]
+            [knoxx.backend.util.time :as time]
             [knoxx.backend.openplanner-memory :as op-memory]))
 
 (defonce database-state* (atom nil))
@@ -55,7 +55,7 @@
       :ownerSessionId nil
       :ownerUserId (authz/ctx-user-id auth-context)
       :ownerMembershipId (authz/ctx-membership-id auth-context)
-      :createdAt (rc/now-iso)})))
+      :createdAt (time/now-iso)})))
 
 (defn default-database-record
   []
@@ -259,7 +259,7 @@
                             (filter (fn [{:keys [rel]}]
                                       (or full (contains? wanted rel))))
                             vec)
-                 started-at (rc/now-iso)
+                 started-at (time/now-iso)
                  total (count queue)
                  mode (if full "full" "selected")]
              (swap! database-state* assoc-in [:records db-id :progress]
@@ -298,7 +298,7 @@
                                          (fn [history]
                                            (->> (conj (vec history)
                                                       {:id (.randomUUID node-crypto)
-                                                       :completedAt (rc/now-iso)
+                                                       :completedAt (time/now-iso)
                                                        :mode mode
                                                        :chunksUpserted 0
                                                        :processedChunks 0
@@ -363,7 +363,7 @@
                                      started-ms (.getTime (js/Date. started-at))
                                      duration-seconds (max 0 (js/Math.round (/ (- (.now js/Date) started-ms) 1000)))
                                      history-item {:id (.randomUUID node-crypto)
-                                                   :completedAt (rc/now-iso)
+                                                   :completedAt (time/now-iso)
                                                    :mode mode
                                                    :chunksUpserted chunk-count
                                                    :processedChunks total
@@ -375,7 +375,7 @@
                                           (let [state-with-index (reduce (fn [acc item]
                                                                            (assoc-in acc [:records db-id :indexed (:rel item)]
                                                                                      {:chunkCount (file-chunk-count (:content item))
-                                                                                      :indexedAt (rc/now-iso)
+                                                                                      :indexedAt (time/now-iso)
                                                                                       :openplanner true}))
                                                                          state
                                                                          indexed-items)]

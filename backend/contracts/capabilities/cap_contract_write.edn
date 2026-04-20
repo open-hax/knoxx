@@ -1,0 +1,2 @@
+{:cap/id :cap/contract-write
+ :cap/tools [:contract.write]}

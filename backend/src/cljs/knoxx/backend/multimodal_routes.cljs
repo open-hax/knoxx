@@ -6,7 +6,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [with-request-context! ensure-permission!]]
             [knoxx.backend.http :refer [json-response! error-response! js-array-seq]]
-            [knoxx.backend.runtime-config :refer [now-iso]]))
+            [knoxx.backend.util.time :refer [now-iso]]))
 
 (def ^:private upload-dir "uploads/multimodal")
 (def ^:private max-file-size-bytes (* 100 1024 1024)) ;; 100MB

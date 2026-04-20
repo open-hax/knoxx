@@ -1,0 +1,5 @@
+{:role/id :role/data-analyst
+ :role/capabilities [:cap/read
+                     :cap/write
+                     :cap/edit
+                     :cap/canvas]}

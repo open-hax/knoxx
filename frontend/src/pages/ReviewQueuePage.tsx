@@ -137,10 +137,8 @@ export function ReviewQueuePage() {
         <EmptyState
           title="Review queue is empty"
           message="All items have been processed. Great work!"
-          primaryAction={{
-            label: "View Dashboard",
-            onClick: () => navigate("/workbench/dashboard"),
-          }}
+          actionLabel="View Dashboard"
+          onAction={() => navigate("/workbench/dashboard")}
         />
       </div>
     );

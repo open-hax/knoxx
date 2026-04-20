@@ -6,10 +6,10 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueueList } from "./QueueList";
-import { ITEM_TYPE_CONFIG, ITEM_STATUS_CONFIG, type ReviewItem } from "./review-types";
+import { ITEM_TYPE_CONFIG, ITEM_STATUS_CONFIG, type ReviewItem, type ReviewItemStatus } from "./review-types";
 
 // Create mock items matching the new API structure
-const MOCK_REVIEW_ITEMS: Array<ReviewItem & { id: string; type: "synthesis" | "MT" | "ingestion"; status: string; summary: string }> = [
+const MOCK_REVIEW_ITEMS: Array<ReviewItem & { id: string; type: "synthesis" | "MT" | "ingestion"; status: ReviewItemStatus; summary: string }> = [
   {
     doc_id: "rev-1",
     id: "rev-1",

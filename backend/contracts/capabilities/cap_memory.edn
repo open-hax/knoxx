@@ -1,0 +1,3 @@
+{:cap/id :cap/memory
+ :cap/tools [:memory_search
+             :memory_session]}

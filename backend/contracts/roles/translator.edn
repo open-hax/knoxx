@@ -1,0 +1,5 @@
+{:role/id :role/translator
+ :role/capabilities [:cap/read
+                     :cap/memory
+                     :cap/semantic
+                     :cap/translation]}

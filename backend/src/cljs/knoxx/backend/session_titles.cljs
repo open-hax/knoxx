@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.http :as backend-http]
             [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.runtime-config :as runtime-config]
+            [knoxx.backend.util.time :as time]
             [knoxx.backend.text :as text]))
 
 (defonce session-titles* (atom {}))
@@ -144,7 +144,7 @@
         updated-at (or (:ts row)
                        (:created_at row)
                        (:updated_at row)
-                       (runtime-config/now-iso))]
+                       (time/now-iso))]
     (when (and (= kind "knoxx.session_title") title)
       {:title title
        :title_model title-model
@@ -160,7 +160,7 @@
   (let [resolved {:title (or (normalize-session-title title) "Untitled session")
                   :title_model title-model
                   :session session-id
-                  :updated_at (or updated-at (runtime-config/now-iso))}]
+                  :updated_at (or updated-at (time/now-iso))}]
     (swap! session-titles* assoc session-id resolved)
     (swap! session-title-promises* dissoc session-id)
     (when-let [redis-client (redis/get-client)]
@@ -206,7 +206,7 @@
 (defn session-title-event
   [config session-id title title-model]
   (let [event-id (str "knoxx:session-title:" session-id)
-        ts (runtime-config/now-iso)
+        ts (time/now-iso)
         normalized-title (or (normalize-session-title title) "Untitled session")]
     {:schema "openplanner.event.v1"
      :id event-id
@@ -354,7 +354,7 @@
                    {:title (:title entry)
                     :title_model (:title_model entry)
                     :session session-id
-                    :updated_at (runtime-config/now-iso)
+                    :updated_at (time/now-iso)
                     :stored false}))))))
 
 (defn ensure-session-title!
@@ -432,14 +432,14 @@
                                               :total (count session-ids)
                                               :failed 0
                                               :force (boolean force)
-                                              :started_at (runtime-config/now-iso)
+                                              :started_at (time/now-iso)
                                               :completed_at nil
                                               :last_error nil})
              (if (empty? session-ids)
                (do
                  (swap! session-title-backfill* assoc
                         :active false
-                        :completed_at (runtime-config/now-iso))
+                        :completed_at (time/now-iso))
                  @session-title-backfill*)
                (letfn [(step [remaining]
                          (if-let [session-id (first remaining)]
@@ -470,19 +470,19 @@
                            (do
                              (swap! session-title-backfill* assoc
                                     :active false
-                                    :completed_at (runtime-config/now-iso))
+                                    :completed_at (time/now-iso))
                              (js/Promise.resolve @session-title-backfill*))))]
                  (-> (step session-ids)
                      (.catch (fn [err]
                                (swap! session-title-backfill* assoc
                                       :active false
-                                      :completed_at (runtime-config/now-iso)
+                                      :completed_at (time/now-iso)
                                       :last_error (str err))
                                nil)))
                  @session-title-backfill*)))))
         (.catch (fn [err]
                   (swap! session-title-backfill* assoc
                          :active false
-                         :completed_at (runtime-config/now-iso)
+                         :completed_at (time/now-iso)
                          :last_error (str err))
                   (js/Promise.resolve @session-title-backfill*))))))

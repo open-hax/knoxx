@@ -8,7 +8,9 @@
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? http-error js-array-seq]]
             [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-semantic-search!]]
-            [knoxx.backend.runtime-config :as runtime-config :refer [default-settings]]
+            [knoxx.backend.runtime.defaults :refer [default-settings]]
+            [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-semantic-search-text openplanner-session-text graph-query-result-text websearch-result-text]]))
 
 (defonce settings-state* (atom nil))
@@ -277,7 +279,7 @@
 
 (defn- live-config
   [config]
-  (or @runtime-config/config* config))
+  (or @runtime-state/config* config))
 
 (defn- discord-gateway-manager
   []
@@ -576,7 +578,7 @@
 (defn- event-agent-status!
   [config]
   (let [live (live-config config)
-        control (runtime-config/event-agent-control-config live)
+        control (control-config/event-agent-control-config live)
         runtime (event-agents/status-snapshot live)]
     {:control control
      :runtime runtime}))
@@ -589,18 +591,18 @@
 
 (defn- event-agent-upsert-job!
   "Create or update an event-agent job with Redis-first persistence.
-   
+
    Supports two modes:
    1. Template-based: job-patch contains :templateId keyword
    2. Direct spec: job-patch contains full job definition
-   
+
    Writes to Redis (hot store) and marks dirty for SQL flush.
    Does NOT mutate in-memory config* - Redis is source of truth."
   [config job-id job-patch]
   (let [;; Check if this is a template-based instantiation
         template-id (or (:templateId job-patch)
                         (:template-id job-patch))
-        
+
         ;; Build the complete job spec
         next-job (if template-id
                    ;; Template mode: instantiate from template DSL
@@ -614,19 +616,19 @@
                      (templates/instantiate-job template-id job-id trigger source filters overrides))
                    ;; Direct mode: merge with existing or use patch as-is
                    (let [live (live-config config)
-                         current-control (runtime-config/event-agent-control-config live)
+                         current-control (control-config/event-agent-control-config live)
                          existing (some #(when (= (:id %) job-id) %) (:jobs current-control))]
                      (merge existing job-patch {:id job-id})))
-        
+
         ;; Normalize for persistence (ensures thinking-level, timestamps, etc.)
         normalized-job (templates/normalize-job-for-persistence next-job)]
-    
+
     ;; Write to Redis (hot store) - this is the canonical persistence path
     (event-agents/update-job-spec! job-id normalized-job)
-    
+
     ;; Reload runtime to pick up the change
     (event-agents/reload!)
-    
+
     {:job normalized-job
      :message (str "Upserted job " job-id " to Redis (dirty queue for SQL flush)")
      :templateId template-id
@@ -1544,7 +1546,7 @@
          ;; Contract write tool — accepts EDN text, validates, stores
          contract-write-params (.Object Type
                                         #js {:contract_id (.String Type #js {:description "Contract ID to create or update."})
-                                             :edn_text (.String Type #js {:description "Complete EDN contract text to save. Must be valid EDN with ::contract/id matching contract_id."})})
+                                             :edn_text (.String Type #js {:description "Complete EDN contract text to save. Must be valid EDN with :contract/id matching contract_id."})})
 
          base-url (or (:knoxx-base-url config) "")
 
@@ -1577,7 +1579,7 @@
                     (aset "description" "Create or update a contract by writing EDN text. Validates before saving. This is your ONLY write tool — use it to create and edit contracts.")
                     (aset "promptSnippet" "Write or update a contract's EDN text.")
                     (aset "promptGuidelines" (clj->js ["Use contract.write to save contract EDN."
-                                                       "The EDN must have ::contract/id matching the contract_id parameter."
+                                                       "The EDN must have :contract/id matching the contract_id parameter."
                                                        "The server validates before saving — if validation fails, fix the EDN and retry."
                                                        "This is the ONLY write tool available to you. No bash, no discord, no general write."]))
                     (aset "parameters" contract-write-params)

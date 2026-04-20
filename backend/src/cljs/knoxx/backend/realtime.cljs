@@ -1,6 +1,6 @@
 (ns knoxx.backend.realtime
   (:require [clojure.string :as str]
-            [knoxx.backend.runtime-config :as runtime-config]))
+            [knoxx.backend.util.time :as time]))
 
 (defonce ws-clients* (atom {}))
 (defonce ws-stats-interval* (atom nil))
@@ -8,7 +8,7 @@
 (defn ws-envelope
   [channel payload]
   {:channel channel
-   :timestamp (runtime-config/now-iso)
+   :timestamp (time/now-iso)
    :payload payload})
 
 (defn safe-ws-send!
@@ -69,7 +69,7 @@
         mem-percent (min 100 (* 100 (- 1 (/ free-mem total-mem))))]
     (-> (collect-nvidia-gpu-stats! runtime)
         (.then (fn [gpu]
-                 {:timestamp (runtime-config/now-iso)
+                 {:timestamp (time/now-iso)
                   :cpu_percent cpu-percent
                   :memory_percent mem-percent
                   :memory_used_bytes used-mem

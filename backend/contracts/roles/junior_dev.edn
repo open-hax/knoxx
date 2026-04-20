@@ -1,0 +1,4 @@
+{:role/id :role/junior-dev
+ :role/capabilities [:cap/read
+                     :cap/write
+                     :cap/canvas]}

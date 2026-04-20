@@ -5,7 +5,8 @@
             [knoxx.backend.authz :refer [with-request-context! run-visible? ensure-permission!]]
             [knoxx.backend.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq request-query-string]]
             [knoxx.backend.run-state :refer [runs* run-order* summarize-run]]
-            [knoxx.backend.runtime-config :refer [now-iso allowlisted-model-id?]]))
+            [knoxx.backend.runtime.models :refer [allowlisted-model-id?]]
+            [knoxx.backend.util.time :refer [now-iso]]))
 
 (defn- proxx-configured?
   [config]

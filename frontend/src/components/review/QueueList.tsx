@@ -7,6 +7,7 @@
 import { useMemo } from "react";
 import type {
   ReviewItem,
+  ReviewItemStatus,
   ReviewItemType,
   ITEM_TYPE_CONFIG,
   ITEM_STATUS_CONFIG,
@@ -15,11 +16,11 @@ import styles from "./QueueList.module.css";
 
 interface QueueListProps {
   /** Review items to display */
-  items: Array<ReviewItem & { id: string; type: ReviewItemType; status: string; summary: string }>;
+  items: Array<ReviewItem & { id: string; type: ReviewItemType; status: ReviewItemStatus; summary: string }>;
   /** Currently selected item ID */
   selectedId?: string;
   /** Callback when item is selected */
-  onSelect: (item: ReviewItem & { id: string; type: ReviewItemType; status: string; summary: string }) => void;
+  onSelect: (item: ReviewItem & { id: string; type: ReviewItemType; status: ReviewItemStatus; summary: string }) => void;
   /** Item type config for display */
   itemTypeConfig: typeof ITEM_TYPE_CONFIG;
   /** Item status config for display */

@@ -2,7 +2,8 @@
 
  :dependencies [[cider/cider-nrepl "0.50.2"]
                 [refactor-nrepl "3.9.1"]
-                [com.github.seancorfield/honeysql "2.7.1368"]]
+                [com.github.seancorfield/honeysql "2.7.1368"]
+                [metosin/malli "0.16.4"]]
 
  :nrepl {:port 4500}
 
@@ -23,7 +24,7 @@
                              :getPiIngestStatus knoxx.backend.pi-session-ingester/get-pi-ingest-status
                              :listPiSessions knoxx.backend.pi-session-ingester/list-pi-sessions}}}
    :js-options {:js-provider :import
-                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs/promises" "node:path" "node:crypto" "node:url"}}
+                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises" "node:path" "node:crypto" "node:url"}}
    :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true
@@ -32,9 +33,19 @@
 
   :test
   {:target :node-test
-   :output-to "target/test/test.js"
+   :output-to "target/test/test.cjs"
    :ns-regex ["knoxx.backend.event-agents-test$"]
    :autorun true
-   :source-paths ["src/cljs" "test/cljs"]
    :compiler-options {:output-feature-set :es-next
+                      :infer-externs :auto}}
+
+  ;; CI/coverage build: compile the node runner, but do not autorun.
+  ;; This lets us run the generated .cjs under c8 to collect V8 coverage.
+  :test-ci
+  {:target :node-test
+   :output-to "target/test/test-ci.cjs"
+   :ns-regex ["knoxx.backend.event-agents-test$"]
+   :autorun false
+   :compiler-options {:output-feature-set :es-next
+                      :source-map true
                       :infer-externs :auto}}}}

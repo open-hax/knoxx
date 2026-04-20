@@ -3,7 +3,6 @@ import { useResolvedTheme, tokens } from "@open-hax/uxx";
 import type { ThemePalette } from "@open-hax/uxx/tokens";
 
 import {
-  compileContract,
   copyContract,
   DEFAULT_CONTRACT_EDN,
   EVENT_KIND_OPTIONS,
@@ -17,7 +16,6 @@ import {
   TRIGGER_KIND_OPTIONS,
   validateContract,
   type AgentContract,
-  type ContractCompileResult,
   type ContractListItem,
   type ContractValidationResult,
 } from "../lib/api/contracts";
@@ -304,16 +302,12 @@ export default function ContractsPage() {
 
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
-  const [compiling, setCompiling] = useState(false);
 
   const [copyTarget, setCopyTarget] = useState("");
   const [showCopy, setShowCopy] = useState(false);
 
   const [showNormalized, setShowNormalized] = useState(false);
   const [normalizedView, setNormalizedView] = useState<unknown>(null);
-
-  const [showSql, setShowSql] = useState(false);
-  const [compiledSql, setCompiledSql] = useState<ContractCompileResult["sql"] | null>(null);
 
   const [showChat, setShowChat] = useState(true);
 
@@ -445,7 +439,6 @@ export default function ContractsPage() {
       setLastSavedEdn(result.ednText);
       setValidation({ ...result.validation, contract: result.contract });
       setNormalizedView(result.contract);
-      setCompiledSql(null);
       // Pin contract as chat context
       chat.pinContextItem({
         id: `contract:${contractId}`,
@@ -460,7 +453,6 @@ export default function ContractsPage() {
       setLastSavedEdn(null);
       setValidation(null);
       setNormalizedView(null);
-      setCompiledSql(null);
     }
   }, []);
 
@@ -474,7 +466,6 @@ export default function ContractsPage() {
       setLastSavedEdn(null);
       setValidation(null);
       setNormalizedView(null);
-      setCompiledSql(null);
     }
   }, [selectedId, loadContract]);
 
@@ -506,7 +497,6 @@ export default function ContractsPage() {
       setLastSavedEdn(result.ednText);
       setValidation({ ...result.validation, contract: result.contract });
       setNormalizedView(result.contract);
-      setCompiledSql(null);
       setNotice(result.validation.ok ? { tone: "success", text: `Saved ${contractId}.` } : { tone: "error", text: `Saved ${contractId}, but validation has ${result.validation.errors.length} error(s).` });
       await loadAgentLibrary();
     } catch (err) {
@@ -533,22 +523,6 @@ export default function ContractsPage() {
       setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
     } finally { setSaving(false); }
   }, [copyTarget, loadAgentLibrary, selectedId]);
-
-  const handleCompile = useCallback(async () => {
-    if (!selectedId) return;
-    setCompiling(true); setNotice(null); setError("");
-    try {
-      const result = await compileContract(selectedId);
-      if (result.ok) {
-        setCompiledSql(result.sql); setShowSql(true);
-        setNotice({ tone: "success", text: `Compiled ${selectedId}.` });
-      } else {
-        setNotice({ tone: "error", text: `Compile failed: ${result.errors?.map((e) => e.message).join(", ") ?? "unknown"}` });
-      }
-    } catch (err) {
-      setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
-    } finally { setCompiling(false); }
-  }, [selectedId]);
 
   // ── Metadata form sync from EDN ───────────────────────────────────────
 
@@ -876,10 +850,6 @@ export default function ContractsPage() {
               style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
               Clone
             </button>
-            <button type="button" onClick={() => void handleCompile()} disabled={compiling || !selectedId}
-              style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid rgba(253, 151, 31, 0.3)`, background: "rgba(253, 151, 31, 0.08)", color: palette.accent.orange, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
-              {compiling ? "Compiling…" : "Compile SQL"}
-            </button>
             <button type="button" onClick={() => setShowNormalized((v) => !v)}
               style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.default, color: palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
               {showNormalized ? "Hide JSON" : "Show JSON"}
@@ -991,15 +961,8 @@ export default function ContractsPage() {
               />
             </div>
 
-            {/* Bottom panels: SQL / normalized / notices */}
+            {/* Bottom panels: normalized / notices */}
             <div style={{ flexShrink: 0 }}>
-              {showSql && compiledSql ? (
-                <div style={{ borderTop: `1px solid ${palette.fg.subtle}`, padding: "12px 16px", background: palette.bg.darker }}>
-                  <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted, marginBottom: 8 }}>SQL projections</div>
-                  <pre style={{ maxHeight: 200, overflow: "auto", padding: 12, borderRadius: tokens.radius.md, background: palette.bg.default, fontSize: tokens.fontSize.xs, color: palette.accent.green }}>{prettyJson(compiledSql)}</pre>
-                </div>
-              ) : null}
-
               {showNormalized ? (
                 <div style={{ borderTop: `1px solid ${palette.fg.subtle}`, padding: "12px 16px", background: palette.bg.darker }}>
                   <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted, marginBottom: 8 }}>Normalized view</div>

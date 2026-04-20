@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :as authz]
             [knoxx.backend.document-state :refer [database-state* js-array-seq request-session-id database-docs-dir database-owner-key default-database-id default-database-record ensure-database-state! ensure-dir! profile-can-access? effective-active-database-id active-database-profile normalize-relative-path sanitize-upload-name create-db-id list-documents! active-record start-document-ingestion! priority-ingest-workspace-files!]]
-            [knoxx.backend.runtime-config :as rc]))
+            [knoxx.backend.util.time :as time]))
 
 (defn register-document-routes!
   [app runtime config {:keys [route! json-response! error-response!
@@ -277,7 +277,7 @@
                                    :forumMode (boolean (:forumMode body))
                                    :privateToSession (boolean (:privateToSession body))
                                    :ownerSessionId (when (:privateToSession body) session-id)
-                                   :createdAt (rc/now-iso)}]
+                                   :createdAt (time/now-iso)}]
                       (-> (ensure-dir! runtime docs-path)
                           (.then (fn []
                                    (swap! database-state*

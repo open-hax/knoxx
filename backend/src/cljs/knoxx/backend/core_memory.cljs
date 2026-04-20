@@ -3,7 +3,7 @@
             [knoxx.backend.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
             [knoxx.backend.document-state :refer [normalize-relative-path]]
             [knoxx.backend.http :as backend-http :refer [js-array-seq]]
-            [knoxx.backend.runtime-config :refer [cfg]]))
+            [knoxx.backend.runtime.config :refer [cfg]]))
 
 (defn parse-json-object
   [value]
@@ -84,7 +84,10 @@
           user-ids (into #{} (keep #(some-> % :user_id str not-empty)) extras)
           same-org? (contains? org-ids (str (ctx-org-id ctx)))]
       (cond
-        (empty? org-ids) false
+        ;; Legacy OpenPlanner sessions may not have org_id/membership_id/user_id
+        ;; embedded in :extra. If the caller already has cross-session memory
+        ;; permission, allow these sessions to be visible.
+        (empty? org-ids) (ctx-permitted? ctx "agent.memory.cross_session")
         (not same-org?) false
         (ctx-permitted? ctx "agent.memory.cross_session") true
         :else (or (contains? membership-ids (str (ctx-membership-id ctx)))
@@ -140,4 +143,3 @@
                       (filter (fn [hit]
                                 (contains? allowed (str (or (hit-session-id hit) "")))))
                       vec))))))
-

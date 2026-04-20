@@ -1,0 +1,8 @@
+{:cap/id :cap/openplanner
+ :cap/tools [:openplanner.query-graph
+             :openplanner.search-events
+             :openplanner.append-fact
+             :openplanner.append-obs
+             :openplanner.append-inference
+             :openplanner.append-attestation
+             :openplanner.append-judgment]}

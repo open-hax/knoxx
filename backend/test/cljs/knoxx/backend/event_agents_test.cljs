@@ -12,7 +12,7 @@
                       :github {}}
                  :jobs [{:id "job-1"
                         :enabled true
-                        :trigger {:kind "event" :eventKinds ["discord.message.mention"]}
+                        :trigger {:kind "event" :eventKinds ["discord.message.mention" "discord.message.created"]}
                         :source {:kind "discord"}
                         :filters {:channels ["123"] :keywords ["urgent"]}
                         :agentSpec {}}]}
@@ -90,8 +90,8 @@
         (is (= (:model payload) "glm-5"))
         (is (= (get-in payload [:agent_spec :role]) "executive"))
         (is (= (get-in payload [:agent_spec :system_prompt]) "You are a robot."))
-        (is (some #(= % {:toolId "discord.send" :effect "allow"}) 
-                  (get-in payload [:agent_spec :tool_policies])))))))
+        (is (= (js->clj (get-in payload [:agent_spec :tool_policies]) :keywordize-keys true)
+               [{:toolId "discord.send" :effect "allow"}]))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Target 4: Discord Message Normalization
@@ -112,4 +112,3 @@
         (is (= (:content mapped) "Hello!"))
         (is (= (:authorUsername mapped) "Alice"))
         (is (false? (:authorIsBot mapped)))))))
-)

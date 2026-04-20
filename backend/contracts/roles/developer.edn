@@ -1,0 +1,6 @@
+{:role/id :role/developer
+ :role/capabilities [:cap/read
+                     :cap/write
+                     :cap/edit
+                     :cap/bash
+                     :cap/canvas]}

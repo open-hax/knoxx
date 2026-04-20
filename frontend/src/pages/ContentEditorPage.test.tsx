@@ -46,7 +46,7 @@ describe("ContentEditorPage", () => {
       </RouterWrapper>
     );
 
-    const bodyEditor = screen.getByPlaceholderText("Start writing...");
+    const bodyEditor = screen.getByPlaceholderText("Start writing...") as HTMLTextAreaElement;
     expect(bodyEditor).toBeInTheDocument();
     expect(bodyEditor.value).toContain("# Getting Started with Knowledge Ops");
   });

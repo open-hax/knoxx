@@ -17,7 +17,8 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws!]]
             [knoxx.backend.run-state :as run-state :refer [runs* run-order* summarize-run]]
-            [knoxx.backend.runtime-config :refer [now-iso parse-positive-int truthy-param?]]
+            [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
+            [knoxx.backend.util.time :refer [now-iso]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [start-session-title-backfill! session-title-backfill* session-titles* get-cached-session-title! session-title-seed-text heuristic-session-title stored-session-title-entry cache-session-title-entry! resolve-session-title! cache-session-title! normalize-session-title]]
             [knoxx.backend.text :refer [count-occurrences replace-first clip-text]]
@@ -253,7 +254,7 @@
                                       :replace-first replace-first
                                       :clip-text clip-text})
 
-  (contracts-routes/register-contracts-routes! app runtime
+  (contracts-routes/register-contracts-routes! app runtime config
                                               {:route! route!
                                                :json-response! json-response!
                                                :error-response! error-response!

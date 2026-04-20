@@ -63,11 +63,11 @@ function isContentPartsArray(value: unknown): value is Array<Record<string, unkn
 function unescapeJsonStringFragment(value: string): string {
   // Best-effort: handles common escapes we see in tool wrappers.
   return value
-    .replaceAll("\\n", "\n")
-    .replaceAll("\\t", "\t")
-    .replaceAll("\\r", "\r")
-    .replaceAll('\\"', '"')
-    .replaceAll("\\\\", "\\");
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t")
+    .replace(/\\r/g, "\r")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
 }
 
 function extractJsonLikeText(value: string): string | null {

@@ -39,18 +39,6 @@ export interface ContractValidationResult {
   contract?: AgentContract | null;
 }
 
-export interface ContractCompileResult {
-  ok: boolean;
-  contract: AgentContract;
-  sql: {
-    contract: Record<string, unknown>;
-    "event-kinds": Array<Record<string, unknown>>;
-    bindings: Array<Record<string, unknown>>;
-    tools: Array<Record<string, unknown>>;
-  };
-  errors?: Array<{ path: string[]; message: string }>;
-}
-
 export interface ContractListItem {
   id: string;
   kind: string;
@@ -114,15 +102,6 @@ export async function validateContract(
       method: "POST",
       body: JSON.stringify({ ednText }),
     },
-  );
-}
-
-export async function compileContract(
-  contractId: string,
-): Promise<ContractCompileResult> {
-  return request<ContractCompileResult>(
-    `/api/admin/contracts/${encodeURIComponent(contractId)}/compile`,
-    { method: "POST" },
   );
 }
 

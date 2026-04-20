@@ -1,0 +1,2 @@
+{:cap/id :cap/bash
+ :cap/tools [:bash]}
