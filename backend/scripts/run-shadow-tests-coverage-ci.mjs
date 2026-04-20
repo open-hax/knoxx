@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process';
-import { readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 const SHADOW_CMD = process.platform === 'win32' ? 'shadow-cljs.cmd' : 'shadow-cljs';
 const TEST_BUILD = 'test-ci';
 const TEST_BUNDLE = 'target/test/test-ci.cjs';
+
+// Shadow-cljs emits individual cljs-runtime files under:
+//   .shadow-cljs/builds/test-ci/dev/out/cljs-runtime/
+// (not target/test/) when :optimizations :none is set.
+const CLJS_RUNTIME = '.shadow-cljs/builds/test-ci/dev/out/cljs-runtime';
 
 function spawnP(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -34,50 +37,27 @@ function exitForTestCounters(output) {
   process.exit(1);
 }
 
-// Walk a directory up to `depth` levels, printing every file path.
-function walkDir(dir, depth = 4, prefix = '') {
-  if (!existsSync(dir)) { console.log(`  [not found] ${dir}`); return; }
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    console.log(`  ${prefix}${entry.name}`);
-    if (entry.isDirectory() && depth > 0) walkDir(full, depth - 1, prefix + '  ');
-  }
-}
-
 async function main() {
-  // 1) Compile
+  // 1) Compile with :optimizations :none so shadow emits individual
+  //    cljs-runtime/*.js files that V8/c8 can instrument per-file.
   {
     const res = await spawnP(SHADOW_CMD, ['compile', TEST_BUILD]);
     if (res.signal) { console.error(`[knoxx] signal ${res.signal}`); process.exit(res.code ?? 1); }
     if (res.code !== 0) process.exit(res.code ?? 1);
   }
 
-  // 2) Diagnostic: show what shadow emitted under target/test/
-  console.log('\n[knoxx-diag] target/test/ tree:');
-  walkDir('target/test', 3);
-
-  // 3) Run c8 with NO --include/--exclude first so we see raw coverage output.
-  console.log('\n[knoxx-diag] running c8 with no include filter:');
-  {
-    const c8Args = [
-      'c8',
-      '--reporter=text',
-      '--reports-dir', 'coverage',
-      'node', TEST_BUNDLE,
-    ];
-    await spawnP('pnpm', ['exec', ...c8Args]);
-  }
-
-  // 4) Now run the real scoped coverage pass.
-  console.log('\n[knoxx-diag] running c8 with knoxx/backend include:');
+  // 2) Run under c8.
+  //    --include  → knoxx/backend production sources only
+  //    --exclude  → test namespaces + everything outside knoxx/backend
   const c8Args = [
     'c8',
     '--reporter=text',
     '--reporter=json-summary',
     '--reporter=lcov',
     '--reports-dir', 'coverage',
-    '--include', 'target/test/cljs-runtime/knoxx/backend/**',
-    '--exclude', 'target/test/cljs-runtime/knoxx/backend/**_test*',
+    '--include', `${CLJS_RUNTIME}/knoxx/backend/**`,
+    '--exclude', `${CLJS_RUNTIME}/knoxx/backend/**_test*`,
+    '--exclude', `${CLJS_RUNTIME}/knoxx/backend/**-test*`,
     'node', TEST_BUNDLE,
   ];
 
