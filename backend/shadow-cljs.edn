@@ -34,7 +34,7 @@
   :test
   {:target :node-test
    :output-to "target/test/test.cjs"
-   :ns-regex ["knoxx.backend.event-agents-test$"]
+   :ns-regex ["knoxx.backend.*-test$"]
    :autorun true
    :compiler-options {:output-feature-set :es-next
                       :infer-externs :auto}}
@@ -44,7 +44,7 @@
   :test-ci
   {:target :node-test
    :output-to "target/test/test-ci.cjs"
-   :ns-regex ["knoxx.backend.event-agents-test$"]
+   :ns-regex ["knoxx.backend.*-test$"]
    :autorun false
    :compiler-options {:output-feature-set :es-next
                       :source-map true
