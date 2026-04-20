@@ -22,20 +22,25 @@
 ;; Internal helpers
 ;; ────────────────────────────────────────────────────────────────────────────
 
+(def ^:dynamic *env-resolver*
+  "Resolver fn for env secrets. Rebind in tests to inject values.
+  Signature: (fn [var-name]) => string-or-nil"
+  (fn [var-name] (System/getenv var-name)))
+
 (defn- resolve-secret
   "Resolve a single secret ref to its environment value, or nil."
   [ref]
   (cond
     (keyword? ref)
     (when (= (namespace ref) "env")
-      (System/getenv (name ref)))
+      (*env-resolver* (name ref)))
 
     (string? ref)
     (cond
       (str/starts-with? ref ":env/")
-      (System/getenv (subs ref 5))
+      (*env-resolver* (subs ref 5))
       (str/starts-with? ref "env:")
-      (System/getenv (subs ref 4)))
+      (*env-resolver* (subs ref 4)))
 
     :else nil))
 
