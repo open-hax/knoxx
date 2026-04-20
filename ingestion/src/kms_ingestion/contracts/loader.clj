@@ -18,18 +18,17 @@
    [clojure.string :as str]
    [clojure.walk :as walk]))
 
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 ;; Internal helpers
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 
 (defn- resolve-secret
   "Resolve a single secret ref to its environment value, or nil."
   [ref]
   (cond
     (keyword? ref)
-    (let [n (name ref)]
-      (when (str/starts-with? n "env/")
-        (System/getenv (str/replace-first n "env/" ""))))
+    (when (= (namespace ref) "env")
+      (System/getenv (name ref)))
 
     (string? ref)
     (cond
@@ -44,7 +43,7 @@
   [v]
   (boolean
    (cond
-     (keyword? v) (str/starts-with? (name v) "env/")
+     (keyword? v) (= (namespace v) "env")
      (string?  v) (or (str/starts-with? v ":env/")
                       (str/starts-with? v "env:"))
      :else false)))
@@ -73,9 +72,9 @@
     (when (.exists f)
       (edn/read-string (slurp f)))))
 
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 ;; Contracts root — injectable for tests
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 
 (def ^:dynamic *contracts-dir* nil)
 
@@ -105,9 +104,9 @@
             (let [parent (str cwd "/../contracts")]
               (when (.isDirectory (io/file parent)) parent))))))
 
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 ;; Runtime floor
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 
 (def ^:private runtime-floor
   {:source/discovery
@@ -140,9 +139,9 @@
     :bootstrap?                true}
 
    :source/semantic
-   {:enabled?     true
-    :build-index? true
-    :chunk-size   800
+   {:enabled?      true
+    :build-index?  true
+    :chunk-size    800
     :chunk-overlap 100}
 
    :source/ingest
@@ -161,17 +160,17 @@
     :created-by   "kms-ingestion"
     :language     "en"}})
 
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 ;; Cache
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 
 (defonce ^:private cache (atom {}))
 
 (defn invalidate-cache! [] (reset! cache {}))
 
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 ;; Public API
-;; ──────────────────────────────────────────────────────────────────────────────
+;; ────────────────────────────────────────────────────────────────────────────
 
 (defn load-source-contract
   "Return the fully-merged, secret-resolved contract for a source.
@@ -182,7 +181,8 @@
     job-override - optional map of contract keys to merge last
 
   Returns a merged map conforming to IngestSourceContract schema,
-  with secrets resolved.  Nil when no contracts directory is found."
+  with secrets resolved.  Nil when no contracts directory is found,
+  or when no contract files exist for the given tenant/source."
   ([tenant-id source-id]
    (load-source-contract tenant-id source-id nil))
   ([tenant-id source-id job-override]
@@ -197,17 +197,17 @@
                  source-id-str   (if (keyword? source-id) (name source-id) source-id)
                  source-contract (read-edn-file
                                   (str root "/" tenant-id "/sources/" source-id-str ".edn"))
-                 merged          (reduce deep-merge
-                                         runtime-floor
-                                         (filter some?
-                                                 [global-defaults
-                                                  tenant-defaults
-                                                  source-contract
-                                                  job-override]))
-                 resolved        (resolve-secrets merged)]
-             (when-not job-override
-               (swap! cache assoc cache-key resolved))
-             resolved)))))))
+                 layers          (filter some?
+                                         [global-defaults
+                                          tenant-defaults
+                                          source-contract
+                                          job-override])]
+             (when (seq layers)
+               (let [merged   (reduce deep-merge runtime-floor layers)
+                     resolved (resolve-secrets merged)]
+                 (when-not job-override
+                   (swap! cache assoc cache-key resolved))
+                 resolved)))))))))
 
 (defn load-all-source-contracts
   "Load all source contracts under contracts/<tenant>/sources/.

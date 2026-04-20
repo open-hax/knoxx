@@ -39,21 +39,27 @@
 (def default-text-filenames
   #{"dockerfile" "makefile" "justfile" "license" "copying" "release" "publish" "hooks"})
 
+(def ^:private default-skip-extensions
+  #{".min.js" ".min.css" ".d.ts" ".map" ".pyc" ".pyo"
+    ".so" ".dylib" ".dll" ".exe" ".bin"})
+
 (defn text-like-file?
   ([path] (text-like-file? path nil))
   ([path contract]
    (let [name            (str/lower-case (str (fs/file-name path)))
          ext-raw         (str/lower-case (or (fs/extension path) ""))
          ext             (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
+         skip-extensions (contract-or-default contract cr/skip-extensions default-skip-extensions)
          text-extensions (contract-or-default contract cr/text-extensions default-text-extensions)
          text-filenames  (contract-or-default contract cr/text-filenames  default-text-filenames)]
      (boolean
-      (or (text-extensions ext)
-          (text-filenames name)
-          (= name "dockerfile")
-          (str/ends-with? name ".env.example")
-          (str/ends-with? name ".service")
-          (str/ends-with? name ".desktop"))))))
+      (and (not (some #(str/ends-with? name %) skip-extensions))
+           (or (text-extensions ext)
+               (text-filenames name)
+               (= name "dockerfile")
+               (str/ends-with? name ".env.example")
+               (str/ends-with? name ".service")
+               (str/ends-with? name ".desktop")))))))
 
 (defn path-matches-glob? [filename pattern]
   (cond
