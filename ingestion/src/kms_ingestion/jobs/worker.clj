@@ -85,7 +85,7 @@
                           {:status :failed :error "no content"})]
       (assoc ingest-result :file file-meta-with-hash))
     (catch Exception e
-      (when use-openplanner?
+      (when (or use-openplanner? pi-sessions?)
         (control/note-openplanner-failure! job-id (.getMessage e)))
       {:status :failed
        :file file-meta
@@ -263,8 +263,9 @@
                                           :processed_files (+ processed batch-processed (count deleted-paths))
                                           :failed_files (+ failed batch-failed)
                                           :chunks_created (+ chunks-total batch-chunks)})
-                  (when (pos? (cr/batch-delay-ms contract))
-                    (Thread/sleep (long (cr/batch-delay-ms contract))))
+                  (let [delay-ms (cr/batch-delay-ms contract)]
+                    (when (and delay-ms (pos? delay-ms))
+                      (Thread/sleep (long delay-ms))))
                   (recur (drop batch-size remaining)
                          (+ discovered batch-size-actual)
                          (+ processed batch-processed)
