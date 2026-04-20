@@ -29,8 +29,6 @@
 
 (deftest runtime-floor-applied-when-no-contracts
   (testing "returns runtime floor values when contracts dir is absent"
-    ;; *contracts-dir* is the bare tmp dir — no _defaults.edn present
-    ;; so every read-edn-file returns nil and reduce over empty list returns nil
     (let [result (loader/load-source-contract "nobody" "nothing")]
       (is (nil? result)))))
 
@@ -115,10 +113,10 @@
                    :source/name   "Google Drive"
                    :source/driver :google-drive
                    :source/config {:credentials-secret :env/GDRIVE_CREDS}})
-      (System/setProperty "GDRIVE_CREDS" "test-token")
-      (loader/with-contracts-dir cdir
-        (loader/invalidate-cache!)
-        (let [result (loader/load-source-contract "acme" "gdrive")]
-          (is (map? result))
-          (is (not= :env/GDRIVE_CREDS
-                    (get-in result [:source/config :credentials-secret]))))))))
+      (binding [loader/*env-resolver* (fn [k] (when (= k "GDRIVE_CREDS") "test-token"))]
+        (loader/with-contracts-dir cdir
+          (loader/invalidate-cache!)
+          (let [result (loader/load-source-contract "acme" "gdrive")]
+            (is (map? result))
+            (is (= "test-token"
+                   (get-in result [:source/config :credentials-secret]))))))))))
