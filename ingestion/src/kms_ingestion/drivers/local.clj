@@ -47,31 +47,40 @@
          ext             (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
          text-extensions (contract-or-default contract cr/text-extensions default-text-extensions)
          text-filenames  (contract-or-default contract cr/text-filenames  default-text-filenames)]
-     (or (text-extensions ext)
-         (text-filenames name)
-         (= name "dockerfile")
-         (str/ends-with? name ".env.example")
-         (str/ends-with? name ".service")
-         (str/ends-with? name ".desktop")))))
+     (boolean
+      (or (text-extensions ext)
+          (text-filenames name)
+          (= name "dockerfile")
+          (str/ends-with? name ".env.example")
+          (str/ends-with? name ".service")
+          (str/ends-with? name ".desktop"))))))
 
 (defn path-matches-glob? [filename pattern]
   (cond
     (.startsWith pattern "*.")  (str/ends-with? filename (subs pattern 1))
     (.startsWith pattern "**/") (str/ends-with? filename (subs pattern 3))
+    (.endsWith   pattern "/*")  (str/starts-with? filename (subs pattern 0 (- (count pattern) 1)))
     :else                       (= filename pattern)))
+
+(def ^:private hardcoded-skip-dirs
+  #{"node_modules" ".git" "dist" ".next" "__pycache__" ".venv" "venv"
+    "target" ".pio" "coverage" ".pytest_cache" ".mypy_cache" "build"
+    ".gradle" ".idea" ".vscode" ".vs" "vendor" "fixtures" "__fixtures__"})
 
 (defn skip-directory-name?
   ([name] (skip-directory-name? name nil))
   ([name contract]
-   (let [skip-dirs     (contract-or-default contract cr/skip-dirs #{})
+   (let [skip-dirs     (if (nil? contract)
+                         hardcoded-skip-dirs
+                         (contract-or-default contract cr/skip-dirs hardcoded-skip-dirs))
          hidden-policy (cr/hidden-policy contract)]
      (or (and (= hidden-policy :skip)
               (str/starts-with? name ".")
               (not= name ".github"))
-         (skip-dirs name)))))
+         (boolean (skip-dirs name))))))
 
 (defn- candidate-file? [rel-path f-name ext file-types include-patterns exclude-patterns abs-path contract]
-  (let [skip-dirs       (contract-or-default contract cr/skip-dirs       #{})
+  (let [skip-dirs       (contract-or-default contract cr/skip-dirs       hardcoded-skip-dirs)
         skip-files      (contract-or-default contract cr/skip-files      #{})
         skip-extensions (contract-or-default contract cr/skip-extensions #{})]
     (not

@@ -1,7 +1,7 @@
 (ns kms-ingestion.contracts.loader
   "Load, merge, and cache EDN contracts from the contracts/ directory.
 
-  Precedence (low → high):
+  Precedence (low -> high):
     1. hardcoded runtime floor    (inline defaults in this ns)
     2. contracts/_defaults.edn    (global defaults)
     3. contracts/<tenant>/_defaults.edn  (tenant defaults)
@@ -74,14 +74,32 @@
     (when (.exists f)
       (edn/read-string (slurp f)))))
 
+;; ──────────────────────────────────────────────────────────────────────────────
+;; Contracts root — injectable for tests
+;; ──────────────────────────────────────────────────────────────────────────────
+
+(def ^:dynamic *contracts-dir* nil)
+
+(defn with-contracts-dir*
+  "Low-level helper; prefer the with-contracts-dir macro in tests."
+  [path f]
+  (binding [*contracts-dir* path] (f)))
+
+(defmacro with-contracts-dir
+  "Rebind the contracts directory for the duration of body. Test use only."
+  [path & body]
+  `(with-contracts-dir* ~path (fn [] ~@body)))
+
 (defn- contracts-root
   "Locate the contracts root directory.
   Checked in order:
+    - *contracts-dir* dynamic var  (test injection)
     - CONTRACTS_DIR env var
     - <cwd>/contracts
     - <cwd>/../contracts  (when running from ingestion/)"
   []
-  (or (System/getenv "CONTRACTS_DIR")
+  (or *contracts-dir*
+      (System/getenv "CONTRACTS_DIR")
       (let [cwd (System/getProperty "user.dir")]
         (or (let [local (str cwd "/contracts")]
               (when (.isDirectory (io/file local)) local))
@@ -90,9 +108,6 @@
 
 ;; ──────────────────────────────────────────────────────────────────────────────
 ;; Runtime floor
-;; These are the absolute minimums the runtime guarantees if no contract or
-;; env var supplies a value.  They correspond to the current hardcoded defaults
-;; scattered across config.clj and drivers/local.clj.
 ;; ──────────────────────────────────────────────────────────────────────────────
 
 (def ^:private runtime-floor
@@ -110,14 +125,26 @@
                           "release" "publish" "hooks"}
     :follow-symlinks?   false}
 
+   :contract/id      :defaults/ingestion
+   :source/driver    :local
+   :source/enabled?  true
+
+   :tenant/id        "_defaults"
+
    :source/schedule
-   {:mode                    :hybrid
-    :sync-interval-minutes   30
-    :scheduler-poll-ms       60000
-    :passive-watch-enabled?  true
-    :passive-watch-poll-ms   60000
+   {:mode                     :hybrid
+    :sync-interval-minutes    30
+    :scheduler-poll-ms        60000
+    :passive-watch-enabled?   true
+    :passive-watch-poll-ms    60000
     :passive-watch-debounce-ms 5000
-    :bootstrap?              true}
+    :bootstrap?               true}
+
+   :source/semantic
+   {:enabled?          true
+    :build-index?      true
+    :chunk-size        800
+    :chunk-overlap     100}
 
    :source/ingest
    {:batch-size          10
@@ -133,34 +160,7 @@
     :visibility    "internal"
     :source-label  "kms-ingestion"
     :created-by    "kms-ingestion"
-    :language      "en"}
-
-   :source/semantic
-   {:enabled?           true
-    :build-mode         :incremental
-    :k                  8
-    :min-similarity     0.5
-    :emit-graph-events? true}
-
-   :source/translation
-   {:enabled? false
-    :model    "glm-5"
-    :poll-ms  5000}
-
-   :source/projection
-   {:domain-strategy          :first-path-segment
-    :document-kind-strategy   :path-node-type
-    :visibility               "internal"
-    :language                 "en"
-    :created-by               "kms-ingestion"
-    :source                   "kms-ingestion"}
-
-   :source/backpressure
-   {:strategy        :exponential
-    :base-delay-ms   1000
-    :max-delay-ms    60000
-    :failure-window  5
-    :respect-remote? true}})
+    :language      "en"}})
 
 ;; ──────────────────────────────────────────────────────────────────────────────
 ;; Cache
@@ -168,10 +168,7 @@
 
 (defonce ^:private cache (atom {}))
 
-(defn invalidate-cache!
-  "Drop all cached contracts. Call after hot-reload or testing."
-  []
-  (reset! cache {}))
+(defn invalidate-cache! [] (reset! cache {}))
 
 ;; ──────────────────────────────────────────────────────────────────────────────
 ;; Public API
@@ -181,8 +178,8 @@
   "Return the fully-merged, secret-resolved contract for a source.
 
   Args:
-    tenant-id  - string, e.g. \"devel\"
-    source-id  - string or keyword, e.g. \"workspace\"
+    tenant-id    - string, e.g. \"devel\"
+    source-id    - string or keyword, e.g. \"workspace\"
     job-override - optional map of contract keys to merge last
 
   Returns a merged map conforming to IngestSourceContract schema,
@@ -202,12 +199,12 @@
                  source-contract  (read-edn-file
                                    (str root "/" tenant-id "/sources/" source-id-str ".edn"))
                  merged           (reduce deep-merge
-                                         runtime-floor
-                                         (filter some?
-                                                 [global-defaults
-                                                  tenant-defaults
-                                                  source-contract
-                                                  job-override]))
+                                          runtime-floor
+                                          (filter some?
+                                                  [global-defaults
+                                                   tenant-defaults
+                                                   source-contract
+                                                   job-override]))
                  resolved         (resolve-secrets merged)]
              (when-not job-override
                (swap! cache assoc cache-key resolved))
@@ -225,15 +222,5 @@
           (into {}
                 (for [^java.io.File f (.listFiles sources-dir)
                       :when (str/ends-with? (.getName f) ".edn")]
-                  (let [id (str/replace (.getName f) #"\.edn$" "")]
-                    [id (load-source-contract tenant-id id)]))))))))
-
-(defn contract-valid?
-  "Validate a merged contract map against the IngestSourceContract schema."
-  [contract]
-  (schema/valid-ingest-source-contract? contract))
-
-(defn explain-contract
-  "Return malli explain output for a merged contract map."
-  [contract]
-  (schema/explain-ingest-source-contract contract))
+                  (let [source-id (str/replace (.getName f) #"\.edn$" "")]
+                    [source-id (load-source-contract tenant-id source-id)])))))))))
