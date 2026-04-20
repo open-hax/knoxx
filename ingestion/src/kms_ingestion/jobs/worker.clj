@@ -3,6 +3,8 @@
   (:require
    [clojure.string :as str]
    [kms-ingestion.config :as config]
+   [kms-ingestion.contracts.loader :as contracts]
+   [kms-ingestion.contracts.resolve :as cr]
    [kms-ingestion.db :as db]
    [kms-ingestion.drivers.local :as local]
    [kms-ingestion.drivers.protocol :as protocol]
@@ -54,30 +56,32 @@
 (defn- ingest-file
   [job-id driver file-meta {:keys [tenant-id source-id ragussy-url collections
                                    use-openplanner? openplanner-url openplanner-api-key
-                                   graph-context driver-type]}]
-  (when (config/ingest-throttle-enabled?)
-    (let [cpu-cores (control/container-cpu-cores)
-          target-cores (* (config/ingest-max-load-per-core) (control/available-cores))]
-      (when (and cpu-cores (> cpu-cores target-cores))
-        (let [delay (control/control-delay-ms cpu-cores)]
-          (when (pos? delay)
-            (Thread/sleep (long delay)))))))
+                                   graph-context driver-type contract]}]
+  (control/maybe-throttle!
+   job-id
+   {:throttle-enabled? (cr/throttle-enabled? contract)
+    :max-load-per-core (cr/max-load-per-core contract)})
   (try
     (let [file-data (protocol/extract driver (:id file-meta))
           content-hash (when (:content file-data)
                          (local/sha256 (:id file-meta)))
           file-meta-with-hash (assoc file-meta :content-hash content-hash)
           payload-file (assoc file-data :content-hash content-hash)
-          ;; Pi-sessions driver produces structured events, not documents
           pi-sessions? (= driver-type "pi-sessions")
+          sink-type (cr/sink-type contract)
           ingest-result (if (:content file-data)
                           (cond
                             pi-sessions?
                             (support/ingest-pi-session-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file)
-                            use-openplanner?
+
+                            (= sink-type :openplanner)
                             (support/ingest-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file graph-context)
+
+                            (= sink-type :ragussy)
+                            (support/ingest-via-ragussy! ragussy-url collections payload-file)
+
                             :else
-                            (support/ingest-via-ragussy! ragussy-url collections payload-file))
+                            {:status :failed :error (str "unsupported sink type: " sink-type)})
                           {:status :failed :error "no content"})]
       (assoc ingest-result :file file-meta-with-hash))
     (catch Exception e
@@ -98,19 +102,20 @@
           tenant-id (:tenant_id source)
           job-row (db/get-job-by-id job-id)
           job-config (or (support/parse-jsonish (:config job-row)) {})
+          contract (contracts/load-source-contract tenant-id source-id job-config)
           full-scan? (true? (or (:full_scan job-config) (:full-scan job-config)))
           watch-paths (vec (or (:watch_paths job-config) (:watch-paths job-config) []))
           deleted-paths (vec (or (:deleted_paths job-config) (:deleted-paths job-config) []))
           existing-state (db/get-existing-state source-id)
-          ;; For full-scan, we still need existing-state to detect orphans
           existing-hashes (into {} (map (fn [[file-id row]] [file-id (:content_hash row)]) existing-state))
           driver-type (:driver_type source)
-          driver-config (or (support/parse-jsonish (:config source)) {})
+          base-driver-config (or (support/parse-jsonish (:config source)) {})
+          contract-driver-config (or (:source/config contract) {})
+          driver-config (merge base-driver-config contract-driver-config)
           driver (registry/create-driver driver-type driver-config)]
       (control/log! (str "[JOB " job-id "] Created " driver-type " driver"))
-      ;; Reset failed files so they get retried automatically
       (let [reset-count (db/reset-failed-files! source-id)]
-        (when (pos? reset-count)
+        (when (and (cr/retry-failed? contract) (pos? reset-count))
           (control/log! (str "[JOB " job-id "] Reset " reset-count " failed files for retry"))))
       (when-let [state (support/parse-jsonish (:state source))]
         (.set-state driver state))
@@ -118,7 +123,17 @@
                          (when full-scan? " full-scan=true")
                          (when (seq watch-paths)
                            (str " incremental=" (count watch-paths) " changed, deleted=" (count deleted-paths)))))
-      (let [discover-opts (cond-> {:existing-state existing-state}
+      (let [discover-opts (cond-> {:existing-state existing-state
+                                   :contract contract
+                                   :file-types (or (seq (cr/file-types contract))
+                                                   (:file_types source)
+                                                   (:file-types source))
+                                   :include-patterns (or (seq (cr/include-patterns contract))
+                                                         (:include_patterns source)
+                                                         (:include-patterns source))
+                                   :exclude-patterns (or (seq (cr/exclude-patterns contract))
+                                                         (:exclude_patterns source)
+                                                         (:exclude-patterns source))}
                             (seq watch-paths) (assoc :include-patterns watch-paths))
             root-path (or (:root-path driver-config) (:root_path driver-config))
             streaming? (= driver-type "local")
@@ -137,9 +152,6 @@
                              (:changed-files discovery) " changed, "
                              (:unchanged-files discovery) " unchanged")))
         (db/update-job! job-id {:total_files total-files})
-        ;; Detect orphaned files: files that exist in DB but not on filesystem
-        ;; Note: We check file existence directly, not just discovery, because
-        ;; discovery only returns new/changed files (unchanged files are skipped)
         (when (seq existing-state)
           (let [orphaned-ids (atom [])]
             (doseq [[file-id _state] existing-state]
@@ -157,20 +169,27 @@
                   :content-hash (:content_hash (get existing-state file-id))
                   :status "deleted"
                   :chunks 0
-                  :collections (or (support/parse-jsonish (:collections source)) [tenant-id])
+                  :collections (or (cr/sink-collections contract)
+                                   (support/parse-jsonish (:collections source))
+                                   [tenant-id])
                   :metadata {:deleted true}})))))
         (when (seq deleted-paths)
           (support/apply-deleted-paths! source source-id existing-hashes
-                                        (or (support/parse-jsonish (:collections source)) [tenant-id])
+                                        (or (cr/sink-collections contract)
+                                            (support/parse-jsonish (:collections source))
+                                            [tenant-id])
                                         deleted-paths))
         (let [files file-entries
-              batch-size (config/ingest-batch-size)
-              batch-parallelism (config/ingest-batch-parallelism)
+              batch-size (cr/batch-size contract)
+              batch-parallelism (cr/batch-parallelism contract)
               ragussy-url (config/ragussy-url)
               openplanner-url (config/openplanner-url)
               openplanner-api-key (config/openplanner-api-key)
-              use-openplanner? (not (str/blank? openplanner-url))
-              collections (or (support/parse-jsonish (:collections source)) [tenant-id])
+              sink-type (cr/sink-type contract)
+              use-openplanner? (= sink-type :openplanner)
+              collections (or (cr/sink-collections contract)
+                              (support/parse-jsonish (:collections source))
+                              [tenant-id])
               ingest-opts {:tenant-id tenant-id
                            :source-id source-id
                            :ragussy-url ragussy-url
@@ -179,12 +198,13 @@
                            :openplanner-url openplanner-url
                            :openplanner-api-key openplanner-api-key
                            :graph-context graph-context
-                           :driver-type driver-type}]
+                           :driver-type driver-type
+                           :contract contract}]
           (control/log! (str "[JOB " job-id "] Ingest target: "
-                             (if use-openplanner? "openplanner" "ragussy")
+                             (name sink-type)
                              ", batch-size=" batch-size
                              ", batch-parallelism=" batch-parallelism
-                             ", semantic-edges=" (config/semantic-edge-build-enabled?)
+                             ", semantic-edges=" (cr/semantic-enabled? contract)
                              (when streaming? ", mode=streaming")))
           (loop [remaining (seq files)
                  discovered 0
@@ -200,8 +220,7 @@
 
                 (empty? remaining)
                 (let [elapsed (.getSeconds (Duration/between start-time (Instant/now)))]
-                  ;; Build semantic edges for all collected docs at job completion
-                  (when (and (config/semantic-edge-build-enabled?) (seq doc-ids) use-openplanner?)
+                  (when (and (cr/semantic-enabled? contract) (seq doc-ids) use-openplanner?)
                     (control/log! (str "[JOB " job-id "] Building semantic edges for " (count doc-ids) " documents..."))
                     (let [edge-result (support/build-semantic-edges-incremental!
                                        openplanner-url openplanner-api-key doc-ids)]
@@ -244,12 +263,8 @@
                                           :processed_files (+ processed batch-processed (count deleted-paths))
                                           :failed_files (+ failed batch-failed)
                                           :chunks_created (+ chunks-total batch-chunks)})
-                  (let [cpu-cores (control/container-cpu-cores)
-                        delay (if (config/ingest-throttle-enabled?)
-                                (control/control-delay-ms cpu-cores)
-                                0)]
-                    (when (pos? delay)
-                      (Thread/sleep (long delay))))
+                  (when (pos? (cr/batch-delay-ms contract))
+                    (Thread/sleep (long (cr/batch-delay-ms contract))))
                   (recur (drop batch-size remaining)
                          (+ discovered batch-size-actual)
                          (+ processed batch-processed)
