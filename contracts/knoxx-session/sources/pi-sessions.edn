@@ -1,0 +1,23 @@
+{:contract/id :knoxx-session/pi-sessions
+ :contract/type :ingest/source
+ :contract/version 1
+ :tenant/id "knoxx-session"
+ :source/id :pi-sessions
+ :source/name "pi coding sessions"
+ :source/enabled? true
+ :source/driver :pi-sessions
+
+ :source/config
+ {:root-path :env/PI_SESSIONS_ROOT}
+
+ :source/discovery
+ {:file-types [".jsonl"]}
+
+ :source/schedule
+ {:mode :poll
+  :sync-interval-minutes 5}
+
+ :source/sink
+ {:type :openplanner
+  :lake "knoxx-session"
+  :collections ["knoxx-session"]}}
