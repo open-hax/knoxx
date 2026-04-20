@@ -43,11 +43,22 @@
                  cider/cider-nrepl {:mvn/version "0.50.2"}}
    :main-opts   ["-m" "nrepl.cmdline" "--middleware" "[cider.nrepl/cider-middleware]"]}
 
+  ;; Unit tests only — no live services required.
   :test
   {:extra-paths ["test"]
    :extra-deps  {io.github.cognitect-labs/test-runner
                  {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
-   :main-opts   ["-m" "cognitect.test-runner"]
+   :main-opts   ["-m" "cognitect.test-runner"
+                 "--namespace-regex" "kms-ingestion\\.(?!translation\\.pipeline).*-test"]
+   :exec-fn     cognitect.test-runner.api/test}
+
+  ;; Integration tests — requires INTEGRATION_TESTS=true and live services.
+  :integration
+  {:extra-paths ["test"]
+   :extra-deps  {io.github.cognitect-labs/test-runner
+                 {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+   :main-opts   ["-m" "cognitect.test-runner"
+                 "--namespace-regex" "kms-ingestion\\.translation\\.pipeline-test"]
    :exec-fn     cognitect.test-runner.api/test}
 
   :run
