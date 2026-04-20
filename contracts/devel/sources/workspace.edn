@@ -12,7 +12,7 @@
 
  :source/discovery
  {:file-types [".md" ".markdown" ".txt" ".rst" ".org" ".adoc"
-               ".json" ".jsonl" ".yaml" ".yml" ".toml" ".ini" ".cfg" ".conf" ".env"
+               ".json" ".jsonl" ".yaml" ".yml" ".toml" ".ini" ".cfg" ".conf"
                ".xml" ".csv" ".tsv" ".html" ".htm" ".css" ".js" ".jsx" ".ts" ".tsx"
                ".py" ".rb" ".php" ".java" ".kt" ".go" ".rs" ".c" ".cc" ".cpp" ".h" ".hpp"
                ".clj" ".cljs" ".cljc" ".edn" ".sql" ".sh" ".bash" ".zsh" ".fish"
@@ -21,7 +21,11 @@
                      "**/.clj-kondo/**" "**/.cpcache/**" "**/.shadow-cljs/**" "**/.pnpm-store/**"
                      "**/.next/**" "**/.venv/**" "**/venv/**" "**/__pycache__/**"
                      "**/*.png" "**/*.jpg" "**/*.jpeg" "**/*.gif" "**/*.pdf"
-                     "**/*.zip" "**/*.tar.gz"]}
+                     "**/*.zip" "**/*.tar.gz"
+                     "**/.env" "**/.env.*" "**/.env.local"
+                     "**/credentials" "**/secrets"
+                     "**/*.pem" "**/*.key" "**/id_rsa*"
+                     "**/*.p12" "**/*.jks" "**/*.keystore"]}
 
  :source/schedule
  {:mode :hybrid

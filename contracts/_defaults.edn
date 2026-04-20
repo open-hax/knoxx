@@ -45,11 +45,10 @@
   :language "en"}
 
  :source/semantic
- {:enabled? true
-  :build-mode :incremental
-  :k 8
-  :min-similarity 0.5
-  :emit-graph-events? true}
+ {:enabled?      true
+  :build-index?  true
+  :chunk-size    800
+  :chunk-overlap 100}
 
  :source/translation
  {:enabled? false

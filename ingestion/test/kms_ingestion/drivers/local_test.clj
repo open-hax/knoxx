@@ -4,9 +4,9 @@
    [clojure.test :refer [deftest is testing use-fixtures]]
    [kms-ingestion.drivers.local :as local]))
 
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 ;; Temp filesystem fixture
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 
 (def ^:dynamic *root* nil)
 
@@ -26,9 +26,9 @@
 
 (use-fixtures :each with-temp-root)
 
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 ;; skip-directory-name?
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 
 (deftest skip-directory-name-hardcoded-defaults
   (testing "node_modules and .git are skipped with nil contract"
@@ -41,13 +41,11 @@
   (testing "contract-supplied skip-dirs wins over defaults"
     (let [contract {:source/discovery {:skip-dirs #{"custom-skip"}}}]
       (is (true?  (local/skip-directory-name? "custom-skip" contract)))
-      ;; node_modules still skipped because runtime floor supplies it
-      ;; when contract is threaded through the resolver
       (is (false? (local/skip-directory-name? "src" contract))))))
 
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 ;; text-like-file?
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 
 (deftest text-like-file-defaults
   (testing "well-known text extensions pass without a contract"
@@ -59,9 +57,9 @@
       (is (false? (local/text-like-file? name nil))
           (str name " should NOT be text-like")))))
 
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 ;; path-matches-glob?
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 
 (deftest path-matches-glob
   (testing "*.ext suffix patterns"
@@ -70,12 +68,13 @@
   (testing "exact match"
     (is (true?  (local/path-matches-glob? "Makefile" "Makefile")))
     (is (false? (local/path-matches-glob? "makefile" "Makefile"))))
-  (testing "**/ prefix"
-    (is (true?  (local/path-matches-glob? "foo/bar.md" "**/.md")))))
+  (testing "**/ recursive extension glob"
+    (is (true?  (local/path-matches-glob? "foo/bar.md" "**/*.md")))
+    (is (false? (local/path-matches-glob? "foo/bar.txt" "**/*.md")))))
 
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 ;; stream-files — integration over a real temp tree
-;; ─────────────────────────────────────────────────────────────────────────────
+;; ──────────────────────────────────────────────────────────────────────────────
 
 (deftest stream-files-finds-text-files
   (write! "docs/README.md" "# Hello")
