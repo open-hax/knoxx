@@ -45,8 +45,18 @@ jobs:
       - name: Backend typecheck (shadow-cljs compile app)
         run: pnpm -C backend run typecheck
 
-      - name: Backend tests (cljs.test via shadow-cljs)
-        run: pnpm -C backend test
+      - name: Backend tests + coverage (cljs.test via shadow-cljs + c8)
+        run: pnpm -C backend run test:coverage
+
+      - name: Upload backend coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: knoxx-backend-coverage
+          path: backend/coverage
+          if-no-files-found: error
+
+      - name: Backend coverage summary
+        run: node --input-type=module -e "import fs from 'node:fs'; const p='backend/coverage/coverage-summary.json'; const s=JSON.parse(fs.readFileSync(p,'utf8')).total; const f=(x)=>x?.pct??0; console.log('Backend coverage — Lines:',f(s.lines),'%','Statements:',f(s.statements),'%','Functions:',f(s.functions),'%','Branches:',f(s.branches),'%');"
 
       - name: Frontend typecheck (tsc)
         run: pnpm -C frontend run typecheck
