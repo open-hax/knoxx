@@ -2,7 +2,6 @@
   "Local filesystem driver for ingestion."
   (:require
    [babashka.fs :as fs]
-   [clojure.java.io :as io]
    [clojure.string :as str]
    [kms-ingestion.contracts.resolve :as cr]
    [kms-ingestion.drivers.protocol :as protocol])
@@ -57,9 +56,9 @@
 (defn path-matches-glob?
   [filename pattern]
   (cond
-    (.startsWith pattern "*.") (str/ends-with? filename (subs pattern 1))
+    (.startsWith pattern "*.")  (str/ends-with? filename (subs pattern 1))
     (.startsWith pattern "**/") (str/ends-with? filename (subs pattern 3))
-    :else (= filename pattern)))
+    :else                       (= filename pattern)))
 
 (defn skip-directory-name?
   ([name]
@@ -172,7 +171,7 @@
                          :path        rel-path
                          :size        size
                          :modified-at mod-time
-                         :change      (if existing :changed :new)}))))))))))))
+                         :change      (if existing :changed :new)})))))))))))))
 
 (defn snapshot-files
   [root-path opts]
