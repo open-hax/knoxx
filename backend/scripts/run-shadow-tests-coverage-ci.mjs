@@ -62,30 +62,26 @@ async function main() {
   // 2) Run the bundle under c8 to collect coverage.
   //    NOTE: cljs.test failures do not reliably set process exit codes, so we
   //    parse the printed "X failures, Y errors." counters.
+  //
+  //    shadow-cljs :optimizations :none emits individual cljs-runtime/*.js
+  //    files with sourcemaps that remap to src/cljs/knoxx/**. c8 resolves
+  //    those automatically from the V8 coverage data — we do NOT use --all
+  //    or --src here because those flags enumerate raw JS files and find
+  //    nothing in a .cljs source tree, producing 0 coverage.
+  //
+  //    --include is matched against the remapped .cljs paths after sourcemap
+  //    resolution, scoping the report to Knoxx sources only.
   const c8Args = [
     'c8',
     '--reporter=text',
     '--reporter=json-summary',
     '--reporter=lcov',
-    '--reports-dir',
-    'coverage',
-    // Focus coverage on Knoxx sources by excluding CLJS/goog runtime noise.
-    // We exclude on the generated JS paths (pre-remap) to avoid accidentally
-    // filtering out the remapped .cljs sources.
-    '--exclude',
-    '**/cljs-runtime/cljs/**',
-    '--exclude',
-    '**/cljs-runtime/goog/**',
-    '--exclude',
-    '**/cljs-runtime/clojure/**',
-    '--exclude',
-    '**/cljs-runtime/shadow/**',
-    '--exclude',
-    '**/cljs-runtime/shadow.js.shim.module$*',
-    '--exclude',
-    '**/cljs-runtime/shadow.module.main.append.js',
-    '--exclude',
-    'target/test/test-ci.cjs',
+    '--reports-dir', 'coverage',
+    // Scope to Knoxx sources only (matched post-sourcemap-remap).
+    '--include', 'src/cljs/knoxx/**',
+    // Exclude test files from coverage numbers.
+    '--exclude', 'test/**',
+    '--exclude', 'target/**',
     'node',
     TEST_BUNDLE,
   ];
