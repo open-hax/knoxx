@@ -36,6 +36,13 @@ const policyDb = await createPolicyDb({
   primaryOrgKind: process.env.KNOXX_PRIMARY_ORG_KIND || 'platform_owner',
   bootstrapSystemAdminEmail: process.env.KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL || 'system-admin@open-hax.local',
   bootstrapSystemAdminName: process.env.KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME || 'Knoxx System Admin',
+  // Comma/space separated list of emails to auto-create as active users in
+  // the primary org during DB bootstrap. These users become "whitelisted" for
+  // GitHub OAuth login because resolveRequestContext will succeed for them.
+  bootstrapAllowlistEmails: process.env.KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS || '',
+  // Optional: role slugs to grant to allowlisted emails (defaults to
+  // knowledge_worker). Example: "knowledge_worker,system_admin".
+  bootstrapAllowlistRoleSlugs: process.env.KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS || '',
 });
 
 const runtime = {

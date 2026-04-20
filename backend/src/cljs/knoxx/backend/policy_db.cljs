@@ -975,6 +975,67 @@
                                    [(aget membership "id") (aget system-admin "id")]))
                          #js {:user user :membership membership})))))))))))
 
+(defn- parse-bootstrap-allowlist-emails
+  [options]
+  (let [raw (or (aget ^js options "bootstrapAllowlistEmails")
+                (:bootstrapAllowlistEmails options)
+                "")
+        raw (str raw)
+        parts (->> (clojure.string/split raw #"[\s,]+")
+                   (map str/trim)
+                   (remove str/blank?)
+                   (map str/lower-case)
+                   distinct
+                   vec)]
+    parts))
+
+(defn- parse-bootstrap-allowlist-role-slugs
+  [options]
+  (let [raw (or (aget ^js options "bootstrapAllowlistRoleSlugs")
+                (:bootstrapAllowlistRoleSlugs options)
+                "")
+        raw (str raw)
+        parts (->> (clojure.string/split raw #"[\s,]+")
+                   (map str/trim)
+                   (remove str/blank?)
+                   distinct
+                   vec)]
+    (if (seq parts) parts ["knowledge_worker"])))
+
+(defn- ensure-bootstrap-allowlist-users!
+  [pool primary-org options]
+  (let [emails (parse-bootstrap-allowlist-emails options)
+        role-slugs (parse-bootstrap-allowlist-role-slugs options)]
+    (if (empty? emails)
+      (js/Promise.resolve nil)
+      (-> (js/Promise.all
+           (clj->js
+            (map (fn [email]
+                   (-> (query-one! pool
+                                   "INSERT INTO users (email, display_name, auth_provider, status) VALUES ($1, $2, 'bootstrap', 'active') ON CONFLICT (email) DO UPDATE SET updated_at = NOW() RETURNING *"
+                                   [email email])
+                       (.then
+                        (fn [user]
+                          (-> (query-one! pool
+                                          "INSERT INTO memberships (user_id, org_id, status, is_default) VALUES ($1, $2, 'active', FALSE) ON CONFLICT (user_id, org_id) DO UPDATE SET updated_at = NOW() RETURNING *"
+                                          [(aget user "id") (aget primary-org "id")])
+                              (.then
+                               (fn [membership]
+                                 (-> (js/Promise.all
+                                      (clj->js
+                                       (map (fn [slug]
+                                              (-> (find-role pool {:slug slug :org-id nil})
+                                                  (.then
+                                                   (fn [role]
+                                                     (when role
+                                                       (query! pool
+                                                               "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
+                                                               [(aget membership "id") (aget role "id")]))))))
+                                            role-slugs)))
+                                     (.then (fn [_] #js {:email email :ok true})))))))))
+                 emails)))
+          (.then (fn [_] nil))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Audit
 ;; ---------------------------------------------------------------------------
@@ -1588,6 +1649,14 @@
                   (-> (ensure-builtin-platform-roles! pool)
                       (.then (fn [_] (ensure-builtin-org-roles! pool primary-org)))
                       (.then (fn [_] (ensure-bootstrap-user! pool primary-org options)))
+                      ;; Optional: additional allowlisted emails to auto-create
+                      ;; as active users in the primary org.
+                      (.then (fn [bootstrap]
+                               (-> (ensure-bootstrap-allowlist-users! pool primary-org options)
+                                   (.catch (fn [err]
+                                             (.warn js/console "[policy-db] bootstrap allowlist failed:" (.-message err))
+                                             nil))
+                                   (.then (fn [_] bootstrap)))))
                       (.then
                        (fn [bootstrap]
                          ;; Cleanup expired sessions on startup
