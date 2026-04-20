@@ -84,7 +84,10 @@
           user-ids (into #{} (keep #(some-> % :user_id str not-empty)) extras)
           same-org? (contains? org-ids (str (ctx-org-id ctx)))]
       (cond
-        (empty? org-ids) false
+        ;; Legacy OpenPlanner sessions may not have org_id/membership_id/user_id
+        ;; embedded in :extra. If the caller already has cross-session memory
+        ;; permission, allow these sessions to be visible.
+        (empty? org-ids) (ctx-permitted? ctx "agent.memory.cross_session")
         (not same-org?) false
         (ctx-permitted? ctx "agent.memory.cross_session") true
         :else (or (contains? membership-ids (str (ctx-membership-id ctx)))
