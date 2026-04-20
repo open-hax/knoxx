@@ -6,6 +6,7 @@
    [kms-ingestion.contracts.resolve :as cr]
    [kms-ingestion.drivers.protocol :as protocol])
   (:import
+   [java.math BigInteger]
    [java.nio.file Files]
    [java.security MessageDigest]
    [java.time Instant]))
@@ -63,10 +64,11 @@
 
 (defn path-matches-glob? [filename pattern]
   (cond
-    (.startsWith pattern "*.")  (str/ends-with? filename (subs pattern 1))
-    (.startsWith pattern "**/") (str/ends-with? filename (subs pattern 3))
-    (.endsWith   pattern "/*")  (str/starts-with? filename (subs pattern 0 (- (count pattern) 1)))
-    :else                       (= filename pattern)))
+    (.startsWith pattern "**/*.")  (str/ends-with? filename (subs pattern 4))
+    (.startsWith pattern "**/")    (str/ends-with? filename (subs pattern 3))
+    (.startsWith pattern "*.")     (str/ends-with? filename (subs pattern 1))
+    (.endsWith   pattern "/*")     (str/starts-with? filename (subs pattern 0 (- (count pattern) 1)))
+    :else                          (= filename pattern)))
 
 (def ^:private hardcoded-skip-dirs
   #{"node_modules" ".git" "dist" ".next" "__pycache__" ".venv" "venv"
@@ -91,7 +93,7 @@
         skip-extensions (contract-or-default contract cr/skip-extensions #{})]
     (not
      (or (and (= (cr/hidden-policy contract) :skip)
-              (some #(str/starts-with? % ".") (str/split rel-path #"/")))
+              (some #(and (str/starts-with? % ".") (not= % ".github")) (str/split rel-path #"/")))
          (some skip-dirs       (str/split rel-path #"/"))
          (skip-files      f-name)
          (skip-extensions ext)
@@ -127,26 +129,37 @@
   ([^java.io.File root contract]
    (if-not (.exists root)
      ()
-     (letfn [(walk [stack]
-               (lazy-seq
-                (when-let [^java.io.File entry (first stack)]
-                  (let [rest-stack (rest stack)
-                        name       (.getName entry)]
-                    (cond
-                      (.isDirectory entry)
-                      (if (skip-directory-name? name contract)
-                        (walk rest-stack)
-                        (let [children (->> (or (.listFiles entry) (into-array java.io.File []))
-                                            (sort-by #(.getName ^java.io.File %))
-                                            reverse)]
-                          (walk (concat children rest-stack))))
-
-                      (.isFile entry)
-                      (cons entry (walk rest-stack))
-
-                      :else
-                      (walk rest-stack))))))]
-       (walk (list root))))))
+     (let [follow?   (cr/follow-symlinks? contract)
+           root-real (.. root toPath toRealPath)]
+       (letfn [(walk [stack visited]
+                 (lazy-seq
+                  (when-let [^java.io.File entry (first stack)]
+                    (let [rest-stack (rest stack)
+                          entry-name (.getName entry)
+                          entry-path (.toPath entry)
+                          symlink?   (java.nio.file.Files/isSymbolicLink entry-path)]
+                      (cond
+                        (.isDirectory entry)
+                        (cond
+                          (skip-directory-name? entry-name contract) (walk rest-stack visited)
+                          (and symlink? (not follow?))               (walk rest-stack visited)
+                          :else
+                          (let [real-path (.. entry-path toRealPath)
+                                escaped?  (not (.startsWith real-path root-real))
+                                cycle?    (contains? visited real-path)]
+                            (if (or escaped? cycle?)
+                              (walk rest-stack visited)
+                              (let [children (->> (or (.listFiles entry) (into-array java.io.File []))
+                                                  (sort-by #(.getName ^java.io.File %))
+                                                  reverse)]
+                                (walk (concat children rest-stack) (conj visited real-path))))))
+                        (.isFile entry)
+                        (if (and symlink? (not follow?))
+                          (walk rest-stack visited)
+                          (cons entry (walk rest-stack visited)))
+                        :else
+                        (walk rest-stack visited))))))]
+         (walk (list root) #{root-real})))))))
 
 ;;; ---- file descriptor helpers ----------------------------------------------
 
@@ -285,7 +298,7 @@
   (extract [_this file-id]
     (let [content      (read-file-content file-id)
           content-hash (when content (sha256 file-id))
-          path         (str (.relativize (fs/path (get-root-path config)) (fs/path file-id)))]
+          path         (str (.relativize (.toAbsolutePath (fs/path (get-root-path config))) (fs/path file-id)))]
       {:id           file-id
        :path         path
        :content      content
