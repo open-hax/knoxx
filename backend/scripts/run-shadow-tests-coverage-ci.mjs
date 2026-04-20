@@ -6,9 +6,10 @@ const SHADOW_CMD = process.platform === 'win32' ? 'shadow-cljs.cmd' : 'shadow-cl
 const TEST_BUILD  = 'test-ci';
 const TEST_BUNDLE = 'target/test/test-ci.cjs';
 
-// Shadow emits individual cljs-runtime files here when :optimizations :none.
+// Shadow emits a flat cljs-runtime/ dir with dot-namespaced filenames, e.g.:
+//   knoxx.backend.authz.js
+//   knoxx.backend.app_shapes.js
 const CLJS_RUNTIME = '.shadow-cljs/builds/test-ci/dev/out/cljs-runtime';
-const KNOXX_BACKEND_RT = join(CLJS_RUNTIME, 'knoxx', 'backend');
 
 function spawnP(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -37,52 +38,47 @@ function exitForTestCounters(output) {
   process.exit(1);
 }
 
-// Recursively collect all .cljs / .js files under a directory.
-function collectFiles(dir) {
-  if (!existsSync(dir)) return [];
-  const results = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) results.push(...collectFiles(full));
-    else results.push(full);
-  }
-  return results;
-}
-
 async function main() {
-  // 1) Compile — :optimizations :none emits individual cljs-runtime/*.js
+  // 1) Compile — :optimizations :none emits individual flat .js files.
   {
     const res = await spawnP(SHADOW_CMD, ['compile', TEST_BUILD]);
     if (res.signal) { console.error(`[knoxx] signal ${res.signal}`); process.exit(res.code ?? 1); }
     if (res.code !== 0) process.exit(res.code ?? 1);
   }
 
-  // 2) Enumerate production source files explicitly.
-  //    Glob matching against dotfile directories is unreliable in c8/minimatch;
-  //    passing explicit --include paths for each file bypasses that entirely.
-  const allFiles  = collectFiles(KNOXX_BACKEND_RT);
-  const prodFiles = allFiles.filter(f => !f.includes('_test') && !f.includes('-test'));
-
-  if (prodFiles.length === 0) {
-    console.error(`[knoxx] No production files found under ${KNOXX_BACKEND_RT}`);
-    console.error('[knoxx] Listing CLJS_RUNTIME root:');
-    if (existsSync(CLJS_RUNTIME)) {
-      for (const e of readdirSync(CLJS_RUNTIME)) console.error('  ', e);
-    } else {
-      console.error('  (directory does not exist)');
-    }
+  // 2) Collect production knoxx.backend.*.js files from the flat runtime dir.
+  //    Filenames look like: knoxx.backend.authz.js, knoxx.backend.app_shapes.js
+  //    Exclude test files:  knoxx.backend.authz_test.js etc.
+  if (!existsSync(CLJS_RUNTIME)) {
+    console.error(`[knoxx] cljs-runtime dir not found: ${CLJS_RUNTIME}`);
     process.exit(1);
   }
 
-  const includeArgs = prodFiles.flatMap(f => ['--include', relative(process.cwd(), f)]);
+  const prodFiles = readdirSync(CLJS_RUNTIME)
+    .filter(name =>
+      name.startsWith('knoxx.backend.') &&
+      name.endsWith('.js') &&
+      !name.endsWith('.js.map') &&
+      !name.includes('_test.') &&
+      !name.includes('-test.'))
+    .map(name => relative(process.cwd(), join(CLJS_RUNTIME, name)));
 
+  if (prodFiles.length === 0) {
+    console.error('[knoxx] No knoxx.backend production files found after filtering.');
+    process.exit(1);
+  }
+
+  console.log(`[knoxx] Coverage includes ${prodFiles.length} files:`);
+  prodFiles.forEach(f => console.log('  ', f));
+
+  // 3) Run under c8 with explicit --include per file.
   const c8Args = [
     'c8',
     '--reporter=text',
     '--reporter=json-summary',
     '--reporter=lcov',
     '--reports-dir', 'coverage',
-    ...includeArgs,
+    ...prodFiles.flatMap(f => ['--include', f]),
     'node', TEST_BUNDLE,
   ];
 
