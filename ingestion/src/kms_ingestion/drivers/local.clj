@@ -7,7 +7,7 @@
    [kms-ingestion.contracts.resolve :as cr]
    [kms-ingestion.drivers.protocol :as protocol])
   (:import
-   [java.nio.file Files OpenOption]
+   [java.nio.file Files]
    [java.security MessageDigest]
    [java.time Instant]))
 
@@ -45,11 +45,11 @@
   ([path]
    (text-like-file? path nil))
   ([path contract]
-   (let [name (str/lower-case (str (fs/file-name path)))
-         ext-raw (str/lower-case (or (fs/extension path) ""))
-         ext (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
+   (let [name      (str/lower-case (str (fs/file-name path)))
+         ext-raw   (str/lower-case (or (fs/extension path) ""))
+         ext       (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
          text-extensions (contract-or-default contract cr/text-extensions default-text-extensions)
-         text-filenames (contract-or-default contract cr/text-filenames default-text-filenames)]
+         text-filenames  (contract-or-default contract cr/text-filenames  default-text-filenames)]
      (or (text-extensions ext)
          (text-filenames name)
          (= name "dockerfile")
@@ -74,7 +74,7 @@
   ([name]
    (skip-directory-name? name nil))
   ([name contract]
-   (let [skip-dirs (contract-or-default contract cr/skip-dirs #{})
+   (let [skip-dirs     (contract-or-default contract cr/skip-dirs #{})
          hidden-policy (cr/hidden-policy contract)]
      (or (and (= hidden-policy :skip)
               (str/starts-with? name ".")
@@ -85,10 +85,10 @@
   "Compute SHA-256 hash of a file."
   [path]
   (try
-    (let [digest (MessageDigest/getInstance "SHA-256")
-          bytes (Files/readAllBytes (fs/path path))]
-      (let [hash-bytes (.digest digest bytes)]
-        (format "%064x" (BigInteger. 1 hash-bytes))))
+    (let [digest     (MessageDigest/getInstance "SHA-256")
+          bytes      (Files/readAllBytes (fs/path path))
+          hash-bytes (.digest digest bytes)]
+      (format "%064x" (BigInteger. 1 hash-bytes)))
     (catch Exception _ nil)))
 
 (defn modified-time
@@ -110,7 +110,7 @@
                (lazy-seq
                 (when-let [^java.io.File entry (first stack)]
                   (let [rest-stack (rest stack)
-                        name (.getName entry)]
+                        name       (.getName entry)]
                     (cond
                       (.isDirectory entry)
                       (if (skip-directory-name? name contract)
@@ -129,14 +129,14 @@
 
 (defn- candidate-file?
   [rel-path f-name ext file-types include-patterns exclude-patterns abs-path contract]
-  (let [skip-dirs (contract-or-default contract cr/skip-dirs #{})
-        skip-files (contract-or-default contract cr/skip-files #{})
+  (let [skip-dirs       (contract-or-default contract cr/skip-dirs       #{})
+        skip-files      (contract-or-default contract cr/skip-files      #{})
         skip-extensions (contract-or-default contract cr/skip-extensions #{})]
     (not
      (or (and (= (cr/hidden-policy contract) :skip)
               (some #(str/starts-with? % ".") (str/split rel-path #"/")))
-         (some skip-dirs (str/split rel-path #"/"))
-         (skip-files f-name)
+         (some skip-dirs       (str/split rel-path #"/"))
+         (skip-files      f-name)
          (skip-extensions ext)
          (and (seq include-patterns)
               (not (some #(path-matches-glob? rel-path %) include-patterns)))
@@ -153,36 +153,40 @@
   [root-path opts]
   (if (or (nil? root-path) (str/blank? (str root-path)))
     ()
-    (let [root-file (java.io.File. (str root-path))
-          root-abs (.getAbsoluteFile root-file)
-          existing-state (:existing-state opts)
-          file-types (:file-types opts)
+    (let [root-file        (java.io.File. (str root-path))
+          root-abs         (.getAbsoluteFile root-file)
+          existing-state   (:existing-state opts)
+          file-types       (:file-types opts)
           include-patterns (:include-patterns opts)
           exclude-patterns (:exclude-patterns opts)
-          contract (:contract opts)]
+          contract         (:contract opts)]
       (when (.exists root-abs)
         (->> (file-seq-recursive root-abs contract)
-             (keep (fn [^java.io.File file]
-                     (let [abs-path (.getAbsolutePath file)
-                           rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
-                           f-name (.getName file)
-                           ext (let [dot (.lastIndexOf f-name ".")]
+             (keep
+              (fn [^java.io.File file]
+                (let [abs-path (.getAbsolutePath file)
+                      rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
+                      f-name   (.getName file)
+                      ext      (let [dot (.lastIndexOf f-name ".")]
                                  (if (>= dot 0) (subs f-name dot) ""))]
-                       (when (candidate-file? rel-path f-name ext file-types include-patterns exclude-patterns abs-path contract)
-                         (let [file-id abs-path
-                               mod-time (modified-time abs-path)
-                               size (.length file)
-                               existing (get existing-state file-id)
-                               existing-meta (:metadata existing)
-                               same-version? (and existing
-                                                  (= (:size existing-meta) size)
-                                                  (= (str (:modified_at existing-meta)) (some-> mod-time str)))]
-                           (when-not same-version?
-                             {:id file-id
-                              :path rel-path
-                              :size size
-                              :modified-at mod-time
-                              :change (if existing :changed :new)})))))))))))
+                  (when (candidate-file? rel-path f-name ext
+                                         file-types include-patterns exclude-patterns
+                                         abs-path contract)
+                    (let [file-id        abs-path
+                          mod-time       (modified-time abs-path)
+                          size           (.length file)
+                          existing       (get existing-state file-id)
+                          existing-meta  (:metadata existing)
+                          same-version?  (and existing
+                                              (= (:size existing-meta) size)
+                                              (= (str (:modified_at existing-meta))
+                                                 (some-> mod-time str)))]
+                      (when-not same-version?
+                        {:id         file-id
+                         :path       rel-path
+                         :size       size
+                         :modified-at mod-time
+                         :change     (if existing :changed :new)}))))))))))))
 
 (defn snapshot-files
   "Lightweight file snapshot for passive watch diffing.
@@ -190,25 +194,28 @@
   [root-path opts]
   (if (or (nil? root-path) (str/blank? (str root-path)))
     {}
-    (let [root-file (java.io.File. (str root-path))
-          root-abs (.getAbsoluteFile root-file)
-          file-types (:file-types opts)
+    (let [root-file        (java.io.File. (str root-path))
+          root-abs         (.getAbsoluteFile root-file)
+          file-types       (:file-types opts)
           include-patterns (:include-patterns opts)
           exclude-patterns (:exclude-patterns opts)
-          contract (:contract opts)
-          entries (atom {})]
+          contract         (:contract opts)
+          entries          (atom {})]
       (when (.exists root-abs)
         (doseq [^java.io.File file (file-seq-recursive root-abs contract)]
           (let [abs-path (.getAbsolutePath file)
                 rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
-                f-name (.getName file)
-                ext (let [dot (.lastIndexOf f-name ".")]
-                      (if (>= dot 0) (subs f-name dot) ""))]
-            (when (candidate-file? rel-path f-name ext file-types include-patterns exclude-patterns abs-path contract)
-              (swap! entries assoc rel-path {:id abs-path
-                                             :path rel-path
-                                             :size (.length file)
-                                             :modified-at (modified-time abs-path)})))))
+                f-name   (.getName file)
+                ext      (let [dot (.lastIndexOf f-name ".")]
+                           (if (>= dot 0) (subs f-name dot) ""))]
+            (when (candidate-file? rel-path f-name ext
+                                   file-types include-patterns exclude-patterns
+                                   abs-path contract)
+              (swap! entries assoc rel-path
+                     {:id          abs-path
+                      :path        rel-path
+                      :size        (.length file)
+                      :modified-at (modified-time abs-path)})))))
       @entries)))
 
 (defn find-files
@@ -216,63 +223,66 @@
   [root-path opts]
   (if (or (nil? root-path) (str/blank? (str root-path)))
     {:total-files 0 :new-files 0 :changed-files 0 :unchanged-files 0 :skipped-files 0 :files []}
-    (let [root-path-str (str root-path)
-          root-file (java.io.File. root-path-str)
-          root-abs (.getAbsoluteFile root-file)
-          existing-state (:existing-state opts)
-          file-types (:file-types opts)
+    (let [root-path-str    (str root-path)
+          root-file        (java.io.File. root-path-str)
+          root-abs         (.getAbsoluteFile root-file)
+          existing-state   (:existing-state opts)
+          file-types       (:file-types opts)
           include-patterns (:include-patterns opts)
           exclude-patterns (:exclude-patterns opts)
-          contract (:contract opts)
-          files (atom [])
-          stats (atom {:total 0 :new 0 :changed 0 :unchanged 0 :skipped 0})]
+          contract         (:contract opts)
+          files            (atom [])
+          stats            (atom {:total 0 :new 0 :changed 0 :unchanged 0 :skipped 0})]
       (when (.exists root-abs)
         (doseq [^java.io.File file (file-seq-recursive root-abs contract)]
           (let [abs-path (.getAbsolutePath file)
                 rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
-                f-name (.getName file)
-                ext (let [dot (.lastIndexOf f-name ".")]
-                      (if (>= dot 0) (subs f-name dot) ""))]
-            (if (candidate-file? rel-path f-name ext file-types include-patterns exclude-patterns abs-path contract)
-              (let [file-id abs-path
-                    mod-time (try
-                               (-> (java.nio.file.Files/getLastModifiedTime (.toPath file)
-                                     (make-array java.nio.file.LinkOption 0))
-                                   (.toInstant))
-                               (catch Exception _ nil))
-                    size (.length file)
-                    existing (get existing-state file-id)
+                f-name   (.getName file)
+                ext      (let [dot (.lastIndexOf f-name ".")]
+                           (if (>= dot 0) (subs f-name dot) ""))]
+            (if (candidate-file? rel-path f-name ext
+                                 file-types include-patterns exclude-patterns
+                                 abs-path contract)
+              (let [file-id       abs-path
+                    mod-time      (try
+                                    (-> (java.nio.file.Files/getLastModifiedTime
+                                         (.toPath file)
+                                         (make-array java.nio.file.LinkOption 0))
+                                        (.toInstant))
+                                    (catch Exception _ nil))
+                    size          (.length file)
+                    existing      (get existing-state file-id)
                     existing-meta (:metadata existing)
                     same-version? (and existing
                                        (= (:size existing-meta) size)
-                                       (= (str (:modified_at existing-meta)) (some-> mod-time str)))]
+                                       (= (str (:modified_at existing-meta))
+                                          (some-> mod-time str)))]
                 (swap! stats update :total inc)
                 (cond
                   same-version?
                   (swap! stats update :unchanged inc)
 
                   existing
-                  (do
-                    (swap! stats update :changed inc)
-                    (swap! files conj {:id file-id
-                                       :path rel-path
-                                       :size size
-                                       :modified-at mod-time}))
+                  (do (swap! stats update :changed inc)
+                      (swap! files conj {:id          file-id
+                                         :path        rel-path
+                                         :size        size
+                                         :modified-at mod-time}))
 
                   :else
-                  (do
-                    (swap! stats update :new inc)
-                    (swap! files conj {:id file-id
-                                       :path rel-path
-                                       :size size
-                                       :modified-at mod-time})))
+                  (do (swap! stats update :new inc)
+                      (swap! files conj {:id          file-id
+                                         :path        rel-path
+                                         :size        size
+                                         :modified-at mod-time}))))
+              ;; candidate-file? returned false
               (swap! stats update :skipped inc)))))
-      {:total-files (:total @stats)
-       :new-files (:new @stats)
-       :changed-files (:changed @stats)
+      {:total-files     (:total    @stats)
+       :new-files       (:new      @stats)
+       :changed-files   (:changed  @stats)
        :unchanged-files (:unchanged @stats)
-       :skipped-files (:skipped @stats)
-       :files @files})))
+       :skipped-files   (:skipped  @stats)
+       :files           @files})))
 
 (defn read-file-content
   "Read file content as UTF-8 string."
@@ -284,17 +294,15 @@
 (defrecord LocalDriver [config state]
   protocol/Driver
   (discover [_this opts]
-    (let [root-path (get-root-path config)
-          result (find-files root-path opts)]
-      result))
+    (find-files (get-root-path config) opts))
 
   (extract [_this file-id]
-    (let [content (read-file-content file-id)
+    (let [content      (read-file-content file-id)
           content-hash (when content (sha256 file-id))
-          path (str (.relativize (fs/path (get-root-path config)) (fs/path file-id)))]
-      {:id file-id
-       :path path
-       :content content
+          path         (str (.relativize (fs/path (get-root-path config)) (fs/path file-id)))]
+      {:id           file-id
+       :path         path
+       :content      content
        :content-hash content-hash}))
 
   (extract-batch [this file-ids]
