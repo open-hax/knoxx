@@ -10,6 +10,7 @@ import {
 } from '@octave-commons/webgl-graph-view';
 import { graphqlQuery } from '../lib/nextApi';
 import type { GraphExportNode } from '../lib/types';
+import { JsonTree } from './JsonTree';
 
 type GraphViewNode = {
   id: string;
@@ -123,6 +124,8 @@ export function GraphExplorer(props: {
   const [graphqlResultText, setGraphqlResultText] = useState('');
   const [graphqlError, setGraphqlError] = useState('');
   const [graphView, setGraphView] = useState<GraphView | null>(null);
+  const [jsonExpandDepth, setJsonExpandDepth] = useState(2);
+  const [showRawResult, setShowRawResult] = useState(false);
 
   const filteredNodes = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -177,6 +180,19 @@ export function GraphExplorer(props: {
     return { nodes, edges } satisfies RenderGraphData;
   }, [graphView, selectedNodeId]);
 
+  const parsedGraphView = useMemo(() => {
+    if (!graphView) return null;
+    const nodes = graphView.nodes.map((n) => ({
+      ...n,
+      data: safeJsonParse(n.dataJson),
+    }));
+    const edges = graphView.edges.map((e) => ({
+      ...e,
+      data: safeJsonParse(e.dataJson),
+    }));
+    return { nodes, edges, meta: graphView.meta };
+  }, [graphView]);
+
   useEffect(() => {
     if (!canvasRef.current) return undefined;
 
@@ -188,6 +204,10 @@ export function GraphExplorer(props: {
       denseEdgeThreshold: 16000,
       dprCap: { normal: 2.5, dense: 2.0 },
       frameIntervalMs: { normal: 16, dense: 24 },
+      // Default minScale=0.25 is often too "zoomed in" for large layouts; it
+      // clamps fitToGraph() and prevents enough zoom-out.
+      minScale: 0.03,
+      maxScale: 8,
       nodeStyle,
       edgeStyle,
       onNodeClick: (node: RenderGraphNode) => setSelectedNodeId(node.id),
@@ -205,7 +225,7 @@ export function GraphExplorer(props: {
     if (!view || !renderedGraph) return;
     view.setGraph(renderedGraph);
     if (renderedGraph.nodes.length > 0) {
-      view.fitToGraph(48);
+      view.fitToGraph(96);
     }
   }, [renderedGraph]);
 
@@ -299,10 +319,38 @@ export function GraphExplorer(props: {
       <div className="flex-1 flex flex-col rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden">
         <div className="shrink-0 px-3 py-2 border-b border-slate-700/30 flex items-center justify-between">
           <div className="text-xs text-slate-500">Rendered subgraph</div>
-          <button onClick={() => viewRef.current?.fitToGraph(48)}
-            className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-slate-700/40">
-            fit
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const view = viewRef.current;
+                if (!view) return;
+                const v = view.getView();
+                view.setView({ scale: v.scale * 0.8 });
+              }}
+              className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-slate-700/40"
+              title="Zoom out"
+            >
+              −
+            </button>
+            <button
+              onClick={() => {
+                const view = viewRef.current;
+                if (!view) return;
+                const v = view.getView();
+                view.setView({ scale: v.scale * 1.25 });
+              }}
+              className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-slate-700/40"
+              title="Zoom in"
+            >
+              +
+            </button>
+            <button
+              onClick={() => viewRef.current?.fitToGraph(96)}
+              className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-slate-700/40"
+            >
+              fit
+            </button>
+          </div>
         </div>
         <div className="flex-1">
           <canvas ref={canvasRef} className="w-full h-full" />
@@ -313,12 +361,32 @@ export function GraphExplorer(props: {
       <div className="w-[520px] shrink-0 flex flex-col rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden">
         <div className="shrink-0 px-3 py-2 border-b border-slate-700/30 flex items-center justify-between">
           <div className="text-xs text-slate-500">GraphQL (debounced → updates graph)</div>
-          <button
-            onClick={() => void runGraphql(graphqlText)}
-            className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-slate-700/40"
-          >
-            run
-          </button>
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] text-slate-500 flex items-center gap-1">
+              JSON depth
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={jsonExpandDepth}
+                onChange={(e) => setJsonExpandDepth(Math.max(0, Math.min(10, parseInt(e.target.value || '2', 10) || 2)))}
+                className="w-14 bg-slate-900/50 border border-slate-700/50 rounded px-2 py-1 text-xs text-slate-200"
+              />
+            </label>
+            <button
+              onClick={() => setShowRawResult((v) => !v)}
+              className="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 rounded hover:bg-slate-700/40"
+              title="Toggle raw JSON"
+            >
+              {showRawResult ? 'pretty' : 'raw'}
+            </button>
+            <button
+              onClick={() => void runGraphql(graphqlText)}
+              className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-slate-700/40"
+            >
+              run
+            </button>
+          </div>
         </div>
 
         <div className="p-3 border-b border-slate-700/30">
@@ -333,10 +401,101 @@ export function GraphExplorer(props: {
         </div>
 
         <div className="flex-1 overflow-auto p-3">
-          {graphqlResultText ? (
-            <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">{graphqlResultText}</pre>
-          ) : (
+          {!graphqlResultText ? (
             <div className="text-xs text-slate-600">Query results appear here</div>
+          ) : showRawResult ? (
+            <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">{graphqlResultText}</pre>
+          ) : parsedGraphView ? (
+            <div className="space-y-4">
+              <div className="text-xs text-slate-400">
+                nodes={parsedGraphView.meta.totalNodes} edges={parsedGraphView.meta.totalEdges}
+                {parsedGraphView.meta.sampledNodes ? ' (sampled nodes)' : ''}
+                {parsedGraphView.meta.sampledEdges ? ' (sampled edges)' : ''}
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-xs text-slate-500">Nodes</div>
+                <div className="overflow-auto rounded border border-slate-700/30">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-900/40 text-slate-500">
+                      <tr>
+                        <th className="text-left px-2 py-1">id</th>
+                        <th className="text-left px-2 py-1">kind</th>
+                        <th className="text-left px-2 py-1">layer</th>
+                        <th className="text-left px-2 py-1">label</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parsedGraphView.nodes.map((n) => (
+                        <tr
+                          key={n.id}
+                          className={`border-t border-slate-700/20 hover:bg-slate-700/10 cursor-pointer ${selectedNodeId === n.id ? 'bg-slate-700/20' : ''}`}
+                          onClick={() => setSelectedNodeId(n.id)}
+                          title={n.id}
+                        >
+                          <td className="px-2 py-1 font-mono text-slate-300 truncate max-w-[180px]">{n.id}</td>
+                          <td className="px-2 py-1 text-slate-300">{n.kind}</td>
+                          <td className="px-2 py-1 text-slate-400">{n.layer}</td>
+                          <td className="px-2 py-1 text-slate-200 truncate max-w-[220px]">{n.label}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {selectedNodeId && (() => {
+                const node = parsedGraphView.nodes.find((n) => n.id === selectedNodeId);
+                if (!node) return null;
+                return (
+                  <div className="space-y-2">
+                    <div className="text-xs text-slate-500">Selected node data</div>
+                    <div className="rounded border border-slate-700/30 bg-slate-900/30 p-2">
+                      <JsonTree label="data" value={node.data} defaultExpandDepth={jsonExpandDepth} />
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="space-y-2">
+                <div className="text-xs text-slate-500">Edges</div>
+                <div className="overflow-auto rounded border border-slate-700/30">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-900/40 text-slate-500">
+                      <tr>
+                        <th className="text-left px-2 py-1">kind</th>
+                        <th className="text-left px-2 py-1">layer</th>
+                        <th className="text-left px-2 py-1">source</th>
+                        <th className="text-left px-2 py-1">target</th>
+                        <th className="text-left px-2 py-1">similarity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parsedGraphView.edges.map((e, idx) => {
+                        const similarity = (e.data as any)?.similarity;
+                        const simText = typeof similarity === 'number' ? similarity.toFixed(3) : '';
+                        return (
+                          <tr key={`${e.source}|${e.target}|${e.kind}|${idx}`} className="border-t border-slate-700/20 hover:bg-slate-700/10" title={`${e.source} -> ${e.target}`}>
+                            <td className="px-2 py-1 text-slate-300">{e.kind}</td>
+                            <td className="px-2 py-1 text-slate-400">{e.layer}</td>
+                            <td className="px-2 py-1 font-mono text-slate-300 truncate max-w-[150px]">{e.source}</td>
+                            <td className="px-2 py-1 font-mono text-slate-300 truncate max-w-[150px]">{e.target}</td>
+                            <td className="px-2 py-1 text-slate-300">{simText}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <details>
+                <summary className="cursor-pointer text-xs text-slate-500">Raw JSON</summary>
+                <pre className="mt-2 text-xs text-slate-300 font-mono whitespace-pre-wrap">{graphqlResultText}</pre>
+              </details>
+            </div>
+          ) : (
+            <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">{graphqlResultText}</pre>
           )}
         </div>
       </div>
