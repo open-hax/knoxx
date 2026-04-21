@@ -75,7 +75,7 @@
   [config]
   (let [base (or (:proxx-base-url config) "")]
     (cond
-      (str/blank? base) "http://localhost:8790/v1"
+      (str/blank? base) "http://localhost:8789/v1"
       (str/ends-with? base "/v1") base
       (str/ends-with? base "/") (str base "v1")
       :else (str base "/v1"))))

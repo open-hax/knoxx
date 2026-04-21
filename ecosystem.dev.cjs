@@ -10,7 +10,7 @@
  * Dependencies (must be running separately):
  *   - Redis     on localhost:6379  (compose: knoxx-redis)
  *   - Postgres  on localhost:5432  (compose: knoxx-postgres, user=kms db=knoxx)
- *   - Proxx     on localhost:8790
+ *   - Proxx     on localhost:8789
  *   - OpenPlanner on localhost:7777
  *
  * Usage:
@@ -86,10 +86,10 @@ module.exports = {
         // GitHub OAuth
         KNOXX_GITHUB_OAUTH_CLIENT_ID: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_ID || '',
         KNOXX_GITHUB_OAUTH_CLIENT_SECRET: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_SECRET || '',
-        // Proxx (on host via compose port-forward)
-        PROXX_BASE_URL: 'http://127.0.0.1:8790',
+        // Canonical Proxx (on host via compose port-forward)
+        PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
         PROXX_DEFAULT_MODEL: 'glm-5',
-        PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || 'change-me-openplanner-proxx-token',
+        PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
         // OpenPlanner (on host via compose port-forward)
         OPENPLANNER_BASE_URL: hostEnv.OPENPLANNER_BASE_URL || 'http://127.0.0.1:7777',
         OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
@@ -152,8 +152,8 @@ module.exports = {
         KNOXX_BACKEND_URL: 'http://127.0.0.1:8000',
         WORKSPACE_PATH: '/home/err/devel',
         OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
-        PROXX_BASE_URL: 'http://127.0.0.1:8790',
-        PROXX_AUTH_TOKEN: 'change-me-openplanner-proxx-token',
+        PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
+        PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
       },
     },
   ],
