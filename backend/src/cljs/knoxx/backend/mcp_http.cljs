@@ -120,6 +120,46 @@
   (-> (.code reply status)
       (.send body)))
 
+(defn- protected-resource-metadata-url
+  [base]
+  (.toString (js/URL. "/.well-known/oauth-protected-resource" base)))
+
+(defn- www-authenticate-challenge
+  [base]
+  (str "Bearer realm=\"mcp\", resource_metadata=\""
+       (protected-resource-metadata-url base)
+       "\""))
+
+(defn- challenge-unauthorized!
+  [reply base]
+  (-> (.header reply "WWW-Authenticate" (www-authenticate-challenge base))
+      (.code 401)
+      (.send "Unauthorized")))
+
+(defn- ensure-streamable-accept!
+  [req]
+  (let [raw (aget req "raw")
+        headers (or (aget raw "headers") #js {})
+        raw-headers (or (aget raw "rawHeaders") #js [])
+        accept-value "application/json, text/event-stream"
+        accept (str/lower-case (str (or (aget headers "accept") "")))
+        has-json? (str/includes? accept "application/json")
+        has-sse? (str/includes? accept "text/event-stream")]
+    ;; The Node transport adapter reconstructs Web headers from rawHeaders,
+    ;; not from req.headers. Update both representations.
+    (when (or (str/blank? accept) (not has-json?) (not has-sse?))
+      (aset headers "accept" accept-value)
+      (aset raw "headers" headers)
+      (let [pairs (partition 2 (array-seq raw-headers))
+            filtered (->> pairs
+                          (remove (fn [[k _]]
+                                    (= "accept" (str/lower-case (str k)))))
+                          (mapcat identity)
+                          vec)]
+        (aset raw "rawHeaders"
+              (clj->js (conj filtered "accept" accept-value)))))
+    req))
+
 (defn- http-error
   ([status error detail]
    (ex-info detail {:status status :error error :detail detail}))
@@ -208,7 +248,7 @@
     (let [token (bearer-token (:req ctx))]
       (if (str/blank? token)
         (do
-          (text-send! (:reply ctx) 401 "Unauthorized")
+          (challenge-unauthorized! (:reply ctx) (:base ctx))
           (js/Promise.resolve nil))
         (js/Promise.resolve (assoc ctx :bearer-token token))))
 
@@ -498,6 +538,16 @@
                 :code_challenge_methods_supported #js ["S256"]
                 :token_endpoint_auth_methods_supported #js ["none"]})))
 
+(defn- protected-resource-metadata!
+  [{:keys [reply base]}]
+  (let [issuer (-> (.toString (js/URL. (.toString base)))
+                   (.replace (js/RegExp. "/$") ""))]
+    (.send reply
+           #js {:resource (.toString (js/URL. "/mcp" base))
+                :authorization_servers #js [issuer]
+                :scopes_supported #js ["mcp:tools"]
+                :bearer_methods_supported #js ["header"]})))
+
 (defn- register-client!
   [{:keys [req reply redis crypto]}]
   (let [{:keys [redirect-uris client-name]} (parse-register-client-body req)
@@ -677,7 +727,7 @@
                  (.send reply #js {:ok true}))))))
 
 (defn- handle-mcp-session!
-  [{:keys [req reply bearer-token]}]
+  [{:keys [req reply bearer-token base]}]
   (let [session-id (resolve-session-id req)]
     (cond
       (str/blank? (str session-id))
@@ -690,20 +740,24 @@
           (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
 
           (not= (str bearer-token) (str token))
-          (text-send! reply 401 "Unauthorized")
+          (challenge-unauthorized! reply base)
 
           :else
-          (.handleRequest transport (aget req "raw") (aget reply "raw")))))))
+          (do
+            (ensure-streamable-accept! req)
+            (.handleRequest transport (aget req "raw") (aget reply "raw"))))))))
 
 (defn- handle-mcp-post!
-  [{:keys [req reply redis bearer-token policy-db runtime config crypto McpServer StreamableHTTPServerTransport isInitializeRequest z]}]
+  [{:keys [req reply redis bearer-token policy-db runtime config crypto McpServer StreamableHTTPServerTransport isInitializeRequest z base]}]
   (let [session-id (resolve-session-id req)
         existing (when session-id (get @mcp-sessions* session-id))]
     (cond
       existing
       (if (not= (str bearer-token) (str (:token existing)))
-        (text-send! reply 401 "Unauthorized")
-        (.handleRequest (:transport existing) (aget req "raw") (aget reply "raw") (aget req "body")))
+        (challenge-unauthorized! reply base)
+        (do
+          (ensure-streamable-accept! req)
+          (.handleRequest (:transport existing) (aget req "raw") (aget reply "raw") (aget req "body"))))
 
       (not (and isInitializeRequest (isInitializeRequest (aget req "body"))))
       (do
@@ -719,7 +773,7 @@
                 (.then
                  (fn [token-record]
                    (if-not token-record
-                     (text-send! reply 401 "Unauthorized")
+                     (challenge-unauthorized! reply base)
                      (-> (resolve-token-context! policy-db token-record)
                          (.then
                           (fn [token-ctx]
@@ -761,6 +815,7 @@
                                         (swap! mcp-sessions* dissoc (str sid)))))
                               (-> (.connect server transport)
                                   (.then (fn [_]
+                                           (ensure-streamable-accept! req)
                                            (.handleRequest transport
                                                            (aget req "raw")
                                                            (aget reply "raw")
@@ -790,6 +845,9 @@
 
     (defroute app "GET" "/.well-known/oauth-authorization-server" nil
       discovery-metadata!)
+
+    (defroute app "GET" "/.well-known/oauth-protected-resource" nil
+      protected-resource-metadata!)
 
     (defroute app "POST" "/api/mcp/oauth/register" [:redis]
       register-client!)
