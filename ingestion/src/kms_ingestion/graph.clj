@@ -247,6 +247,39 @@
   [tenant-id rel-path]
   (str tenant-id ":file:" (normalize-rel-path rel-path)))
 
+(defn devel-dir-id
+  "Directory structural node ID contract. Root is '.'."
+  [tenant-id rel-dir]
+  (let [dir (-> (normalize-rel-path (or rel-dir ""))
+                (str/replace #"/+" "/")
+                (str/replace #"/$" ""))
+        dir (if (str/blank? dir) "." dir)]
+    (str tenant-id ":dir:" dir)))
+
+(defn- parent-dir
+  [dir]
+  (let [dir (-> (normalize-rel-path (or dir ""))
+                (str/replace #"/+" "/")
+                (str/replace #"/$" ""))
+        dir (if (str/blank? dir) "." dir)
+        parts (->> (str/split dir #"/") (remove str/blank?) vec)]
+    (cond
+      (= dir ".") nil
+      (<= (count parts) 1) "."
+      :else (str/join "/" (subvec parts 0 (dec (count parts)))))))
+
+(defn- dir-chain
+  "Returns the directory chain for a file path: ['.' 'a' 'a/b' ...] (includes root and parent dir)."
+  [path]
+  (let [p (normalize-rel-path path)
+        parts (->> (str/split p #"/") (remove str/blank?) vec)
+        dir-parts (subvec parts 0 (max 0 (dec (count parts))))]
+    (if (empty? dir-parts)
+      ["."]
+      (into ["."]
+            (map (fn [i] (str/join "/" (subvec dir-parts 0 i)))
+                 (range 1 (inc (count dir-parts))))))))
+
 (defn web-node-id
   [url]
   (str "web:url:" (normalize-url url)))
@@ -258,11 +291,12 @@
 (defn- graph-node-kind
   [project node-type extra]
   (cond
+    (:node_kind extra) (:node_kind extra)
     (= project "devel") "file"
     (= project "web") "url"
     (= node-type "user") "user"
     (= node-type "post") "post"
-    :else (or (:node_kind extra) "node")))
+    :else "node"))
 
 (defn graph-node-event
   [{:keys [ts source project session node-id node-type label extra text]}]
@@ -335,6 +369,40 @@
               :preview (preview-text content)}
       :text nil})))
 
+(defn devel-dir-node-event
+  [{:keys [tenant-id source-id ts dir]}]
+  (let [dir (if (str/blank? dir) "." (normalize-rel-path dir))
+        node-id (devel-dir-id tenant-id dir)
+        label (if (= dir ".") (str tenant-id " root") (basename dir))]
+    (graph-node-event
+     {:ts ts
+      :source "kms-ingestion"
+      :project tenant-id
+      :session source-id
+      :node-id node-id
+      :node-type "dir"
+      :label label
+      :extra {:path dir
+              :node_kind "dir"
+              :structural true}
+      :text nil})))
+
+(defn- devel-dir-edge-event
+  [{:keys [tenant-id source-id ts edge-type source-dir target]}]
+  (graph-edge-event
+   {:ts ts
+    :source "kms-ingestion"
+    :project tenant-id
+    :session source-id
+    :edge-type edge-type
+    :source-node-id (devel-dir-id tenant-id source-dir)
+    :target-node-id target
+    :source-lake tenant-id
+    :target-lake tenant-id
+    :extra {:path source-dir
+            :structural true}
+    :text nil}))
+
 (defn devel-stub-node-event
   [{:keys [tenant-id source-id ts path]}]
   (let [node-type (name (node-type-for-path path))]
@@ -376,6 +444,32 @@
                                       :path path
                                       :content (:content file)
                                       :content-hash (:content-hash file)})
+        dirs (dir-chain path)
+        leaf-dir (last dirs)
+        dir-events (map (fn [dir]
+                          (devel-dir-node-event {:tenant-id tenant-id
+                                                 :source-id source-id
+                                                 :ts ts
+                                                 :dir dir}))
+                        dirs)
+        dir-edge-events (concat
+                         ;; directory hierarchy
+                         (for [dir dirs
+                               :let [p (parent-dir dir)]
+                               :when p]
+                           (devel-dir-edge-event {:tenant-id tenant-id
+                                                  :source-id source-id
+                                                  :ts ts
+                                                  :edge-type "contains_dir"
+                                                  :source-dir p
+                                                  :target (devel-dir-id tenant-id dir)}))
+                         ;; parent dir contains file
+                         [(devel-dir-edge-event {:tenant-id tenant-id
+                                                 :source-id source-id
+                                                 :ts ts
+                                                 :edge-type "contains_file"
+                                                 :source-dir leaf-dir
+                                                 :target node-id})])
         node-type (node-type-for-path path)
         markdown-events
         (when (= node-type :docs)
@@ -468,7 +562,7 @@
                           :spec ns}
                   :text nil})]))
            (extract-clojure-requires (:content file))))
-        events (concat [node-event] markdown-events js-events clj-events)]
+        events (concat [node-event] dir-events dir-edge-events markdown-events js-events clj-events)]
     (->> events
          (remove nil?)
          (reduce (fn [acc ev] (assoc acc (:id ev) ev)) {})

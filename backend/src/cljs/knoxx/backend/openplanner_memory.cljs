@@ -393,20 +393,21 @@
                                                                     :conversation_id conversation-id
                                                                     :session_id session-id}
                                                                    scope-extra)})
-        devel-edges (for [path (extract-mentioned-devel-paths safe-text)]
-                      (session-graph-edge-event config {:event-id (str node-id ":mentions_devel:" path)
+        devel-edges (for [{:keys [path target_node_id target_kind]} (extract-mentioned-devel-paths safe-text)]
+                      (session-graph-edge-event config {:event-id (str node-id ":mentions_devel:" target_node_id)
                                                         :ts ts
                                                         :session conversation-id
                                                         :message node-id
                                                         :edge-type "mentions_devel_path"
                                                         :source-node-id node-id
-                                                        :target-node-id (str "devel:file:" path)
+                                                        :target-node-id target_node_id
                                                         :source-lake (:session-project-name config)
                                                         :target-lake "devel"
                                                         :extra (merge {:run_id run-id
                                                                        :conversation_id conversation-id
                                                                        :session_id session-id
-                                                                       :path path}
+                                                                       :path path
+                                                                       :target_kind target_kind}
                                                                       scope-extra)}))
         web-edges (for [url (extract-mentioned-urls safe-text)]
                     (session-graph-edge-event config {:event-id (str node-id ":mentions_web:" url)

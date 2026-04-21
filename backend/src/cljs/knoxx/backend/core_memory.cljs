@@ -76,23 +76,33 @@
   #{"Dockerfile" "Makefile" "Justfile" "Brewfile" "Procfile" "Caddyfile"})
 
 (defn- likely-file-path?
-  "Heuristic: only treat devel mentions as file nodes when the token looks like a file.
+  "Heuristic: treat devel mentions as file nodes when the token looks like a file.
 
-  This avoids emitting edges to directories like `orgs/open-hax/openplanner/packages`,
-  which have no corresponding `devel:file:*` node in the devel lake."
+  Everything else is treated as a directory structural node (devel:dir:*)."
   [path]
   (let [b (basename path)]
     (or (contains? known-extensionless-files b)
         (str/starts-with? b ".")
         (re-find #"\\." b))))
 
+(defn- devel-target-node
+  [path]
+  (let [path (normalize-devel-path path)]
+    (when-not (str/blank? path)
+      (if (likely-file-path? path)
+        {:path path
+         :target_kind "file"
+         :target_node_id (str "devel:file:" path)}
+        {:path path
+         :target_kind "dir"
+         :target_node_id (str "devel:dir:" path)}))))
+
 (defn extract-mentioned-devel-paths
   [text]
   (->> (re-seq devel-path-pattern (or text ""))
        (map second)
-       (map normalize-devel-path)
+       (map devel-target-node)
        (remove nil?)
-       (filter likely-file-path?)
        distinct
        vec))
 
