@@ -309,6 +309,35 @@
 
 ;; --- Extracted helpers for handle-github-callback (paren hygiene) ----------
 
+(defn- bootstrap-role-slugs-for-email
+  [email]
+  (let [normalized-email (str/lower-case (str/trim (str (or email ""))))
+        bootstrap-admin-email (some-> (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL")
+                                          "system-admin@open-hax.local")
+                                      str
+                                      str/trim
+                                      str/lower-case)
+        allowlisted-emails (->> (str/split (str (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS") "")) #"[\s,]+")
+                                (map str/trim)
+                                (remove str/blank?)
+                                (map str/lower-case)
+                                set)
+        allowlist-role-slugs (->> (str/split (str (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS") "")) #"[\s,]+")
+                                  (map str/trim)
+                                  (remove str/blank?)
+                                  vec)]
+    (cond
+      (= normalized-email bootstrap-admin-email)
+      #js ["system_admin"]
+
+      (contains? allowlisted-emails normalized-email)
+      (clj->js (if (seq allowlist-role-slugs)
+                 allowlist-role-slugs
+                 ["knowledge_worker"]))
+
+      :else
+      #js ["knowledge_worker"])))
+
 (defn- ensure-user-membership!
   "Resolve context for email; if no membership, bootstrap+create user, then re-resolve."
   [policyDb gh-user email]
@@ -329,7 +358,7 @@
                                :orgId           (some-> bc (aget "primaryOrg") (aget "id"))
                                :authProvider    "github"
                                :externalSubject (str "github:" (aget gh-user "id"))
-                               :roleSlugs       #js ["knowledge_worker"]})))
+                               :roleSlugs       (bootstrap-role-slugs-for-email email)})))
                     (.then (fn [_] (.resolveRequestContext policyDb headers-like)))))))))))
 
 (defn- create-session-and-redirect!
