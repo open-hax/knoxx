@@ -460,14 +460,16 @@
                   proxx-key (:proxx-auth-token config)
                   check (fn [url headers]
                           (-> (fetch-json url #js {:headers (or headers #js {}) :method "GET"})
-                              (.then (fn [resp] {:ok (aget resp "ok") :status (aget resp "status")}))
-                              (.catch (fn [err] {:ok false :error (.-message err)}))))]
+                              (.then (fn [resp] {:ok (aget resp "ok") :status (aget resp "status") :url url}))
+                              (.catch (fn [err] {:ok false :error (.-message err) :url url}))))]
               (-> (js/Promise.all
                     (into-array
                       [(check (str op-base "/v1/health") #js {"Authorization" (str "Bearer " op-key)})
                        (check (str proxx-base "/health") #js {"Authorization" (str "Bearer " proxx-key)})
                        (check (str ingestion-base "/health") nil)
-                       (check "http://127.0.0.1:8796/api/status" nil)]))
+                       (check "http://127.0.0.1:8796/api/status" nil)
+                       (check "http://127.0.0.1:3777/health" nil)
+                       (check "http://127.0.0.1:8787/v1/health" nil)]))
                   (.then (fn [results]
                            (let [r (js->clj results :keywordize-keys true)]
                              (json-response! reply 200
@@ -475,7 +477,9 @@
                                 :services {:openplanner (nth r 0)
                                            :proxx (nth r 1)
                                            :ingestion (nth r 2)
-                                           :graph-weaver (nth r 3)}}))))
+                                           :graph-weaver (nth r 3)
+                                           :shuvcrawl (nth r 4)
+                                           :vexx (nth r 5)}}))))
                   (.catch (fn [err]
                             (json-response! reply 500 {:error (.-message err)})))))))
 

@@ -370,11 +370,7 @@ export async function cancelIngestionJob(jobId: string): Promise<void> {
 
 export interface ServiceHealth {
   ok: boolean;
-  services: {
-    openplanner: { ok: boolean; status?: number; error?: string };
-    proxx: { ok: boolean; status?: number; error?: string };
-    ingestion: { ok: boolean; status?: number; error?: string };
-  };
+  services: Record<string, { ok: boolean; status?: number; error?: string; url?: string }>;
 }
 
 export async function fetchServiceHealth(): Promise<ServiceHealth> {
@@ -415,11 +411,12 @@ export async function fetchDataPgTables(): Promise<{ ok: boolean; tables: string
 }
 
 export async function fetchOpenPlannerProxy(path: string): Promise<any> {
-  return sessionRequest(`/api/data/openplanner-proxy/${path}`);
+  // Knoxx backend exposes an OpenPlanner /v1/* proxy under /api/data/op/*
+  return sessionRequest(`/api/data/op/${path}`);
 }
 
 export async function postOpenPlannerProxy(path: string, body: any): Promise<any> {
-  return sessionRequest(`/api/data/openplanner-proxy/${path}`, {
+  return sessionRequest(`/api/data/op/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
