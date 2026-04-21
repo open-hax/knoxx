@@ -138,9 +138,9 @@
                 sub-path (aget (aget req "params") "*")
                 target-url (str kms-base "/api/ingestion/" sub-path)
                 headers (js/Object.assign #js {} (aget req "headers"))]
-            (js/delete headers "host")
-            (js/delete headers "connection")
-            (js/delete headers "content-length")
+            (js/Reflect.deleteProperty headers "host")
+            (js/Reflect.deleteProperty headers "connection")
+            (js/Reflect.deleteProperty headers "content-length")
             (-> (js/fetch target-url
                           #js {:method (aget req "method")
                                :headers headers
