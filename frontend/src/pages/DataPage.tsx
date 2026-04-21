@@ -693,7 +693,9 @@ function ServicesTab({
     { id: 'proxx', name: 'Proxx', desc: 'LLM proxy, embedding provider' },
     { id: 'ingestion', name: 'Ingestion', desc: 'File discovery, chunking, ingestion' },
     { id: 'graph-weaver', name: 'Graph Weaver', desc: 'GraphQL + focusedGraphView + WebGL vendor' },
+    { id: 'eros-eris-field-app', name: 'Eros-Eris Field App', desc: 'Graph layout + semantic worker (always-on)' },
     { id: 'shuvcrawl', name: 'ShuvCrawl', desc: 'Browser crawler (web ingestion)' },
+    { id: 'myrmex', name: 'Myrmex', desc: 'Crawler scheduler + ingestion into OpenPlanner' },
     { id: 'vexx', name: 'Vexx', desc: 'Optional acceleration service (NPU/GPU)' },
   ];
   return (

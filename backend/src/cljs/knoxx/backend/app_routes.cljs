@@ -469,7 +469,9 @@
                        (check (str ingestion-base "/health") nil)
                        (check "http://127.0.0.1:8796/api/status" nil)
                        (check "http://127.0.0.1:3777/health" nil)
-                       (check "http://127.0.0.1:8787/v1/health" nil)]))
+                       (check "http://127.0.0.1:8787/v1/health" nil)
+                       (check "http://127.0.0.1:8786/health" nil)
+                       (check "http://127.0.0.1:8799/health" nil)]))
                   (.then (fn [results]
                            (let [r (js->clj results :keywordize-keys true)]
                              (json-response! reply 200
@@ -479,7 +481,9 @@
                                            :ingestion (nth r 2)
                                            :graph-weaver (nth r 3)
                                            :shuvcrawl (nth r 4)
-                                           :vexx (nth r 5)}}))))
+                                           :vexx (nth r 5)
+                                           :eros-eris-field-app (nth r 6)
+                                           :myrmex (nth r 7)}}))))
                   (.catch (fn [err]
                             (json-response! reply 500 {:error (.-message err)})))))))
 
