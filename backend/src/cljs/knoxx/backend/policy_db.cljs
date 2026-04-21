@@ -191,18 +191,33 @@
                  (tool-risk-level tool-id)])))
        vec))
 
+(defn- tool-seeds-from-registry
+  []
+  (->> (tool-registry/known-tool-ids)
+       (map (fn [tool-id]
+              (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
+                [tool-id
+                 (or label tool-id)
+                 (or description "")
+                 (tool-risk-level tool-id)])))
+       vec))
+
 (defn- merged-tool-seeds
   "Return tool definition seed rows, merging built-in TOOL-DEFINITIONS with
-   any additional tools referenced by contract capabilities." 
+   registry-known tools and any additional tools referenced by contract
+   capabilities." 
   []
   (let [base (into {} (map (fn [[id label description risk-level]]
                              [id [id label description risk-level]])
                            TOOL-DEFINITIONS))
+        from-registry (into {} (map (fn [[id label description risk-level]]
+                                      [id [id label description risk-level]])
+                                    (tool-seeds-from-registry)))
         from-contracts (into {} (map (fn [[id label description risk-level]]
                                        [id [id label description risk-level]])
                                      (tool-seeds-from-contracts)))]
     ;; Prefer explicit base metadata when it exists.
-    (->> (merge from-contracts base)
+    (->> (merge from-registry from-contracts base)
          vals
          (sort-by first)
          vec)))

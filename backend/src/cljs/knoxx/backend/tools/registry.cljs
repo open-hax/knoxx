@@ -42,10 +42,12 @@
    "multimodal.upload" {:id "multimodal.upload" :label "Multimodal Upload" :description "Upload images, audio, video, and documents for multimodal AI"}
 
    "semantic_query" {:id "semantic_query" :label "Semantic Query" :description "Query semantic context in the active corpus"}
+   "semantic_read" {:id "semantic_read" :label "Read Document" :description "Read a document by relative path from the active Knoxx corpus"}
    "graph_query" {:id "graph_query" :label "Graph Query" :description "Query the canonical knowledge graph"}
    "memory_search" {:id "memory_search" :label "Memory Search" :description "Search prior Knoxx sessions in OpenPlanner"}
    "memory_session" {:id "memory_session" :label "Memory Session" :description "Load a specific Knoxx session from OpenPlanner"}
    "save_translation" {:id "save_translation" :label "Save Translation" :description "Save translated content to database"}
+   "create_new_file" {:id "create_new_file" :label "Create New File" :description "Create a new file-backed artifact for the Knoxx canvas editor"}
 
    "contract.write" {:id "contract.write" :label "Contract Write" :description "Create or update a contract by writing EDN text"}
 

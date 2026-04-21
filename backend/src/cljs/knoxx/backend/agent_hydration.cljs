@@ -252,8 +252,8 @@
                                                               (tool-text-result (semantic-search-result-text result) result)))))))}
 
          semantic-read-tool #js {:name "semantic_read"
-                                 :label "Semantic Read"
-                                 :description "Read the full text of a specific document from the active Knoxx corpus by relative path."
+                                 :label "Read Document"
+                                 :description "Read a document by relative path from the active Knoxx corpus."
                                  :promptSnippet "Read a specific Knoxx corpus document by relative path after semantic_query identifies a likely hit."
                                  :promptGuidelines #js ["Use semantic_read after semantic_query when you need exact source text instead of summaries or snippets."
                                                         "Pass a relative document path from semantic_query results."]
