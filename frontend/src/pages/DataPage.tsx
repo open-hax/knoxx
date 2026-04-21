@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { GraphExplorer } from '../components/GraphExplorer';
 import {
   fetchIngestionSources, fetchIngestionJobs, fetchSourceAudit,
   triggerIngestionJob, fetchGraphExport, fetchServiceHealth,
   fetchDataMongoCollections, fetchDataMongoList, queryDataMongo, fetchDataPgTables, buildSemanticEdges, browseFiles, fetchFileContent,
-  fetchOpenPlannerProxy, graphqlQuery, fetchGraphWeaverStatus, fetchGraphViewUrl,
+  fetchOpenPlannerProxy,
 } from '../lib/nextApi';
 import type { IngestionSource, IngestionJob, SourceAudit, ServiceHealth } from '../lib/nextApi';
 import type { GraphExportNode, GraphExportEdge } from '../lib/types';
@@ -995,109 +996,6 @@ function DatabaseTab() {
   );
 }
 
-
-function GraphViewTab() {
-  return (
-    <div className="h-[700px] rounded-lg border border-slate-700/50 bg-slate-800/30 flex flex-col items-center justify-center gap-4">
-      <div className="text-lg text-slate-300">WebGL Graph View</div>
-      <div className="text-xs text-slate-500 text-center max-w-md">
-        The graph view is served by graph-weaver on port 8796. Open it directly for the full interactive WebGL experience with physics layout, node selection, and edge traversal.
-      </div>
-      <a href="http://127.0.0.1:8796" target="_blank" rel="noopener noreferrer"
-        className="rounded-md border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-300 hover:bg-blue-500/20 transition">
-        Open Graph View →
-      </a>
-      <div className="text-xs text-slate-600 mt-4">
-        Also available: <a href="http://127.0.0.1:8796/graphiql" target="_blank" className="text-blue-400 hover:underline">GraphiQL</a>
-      </div>
-    </div>
-  );
-}
-
-function GraphQLExplorerTab() {
-  const defaultQuery = `{
-  status {
-    nodes
-    edges
-    seeds
-    weaver { frontier inFlight }
-  }
-}`;
-  const [query, setQuery] = useState(defaultQuery);
-  const [result, setResult] = useState<string>('');
-  const [loading, setLoading] = useState(false);
-  const [gwStatus, setGwStatus] = useState<any>(null);
-
-  useEffect(() => {
-    fetchGraphWeaverStatus().then(setGwStatus).catch(() => {});
-  }, []);
-
-  const runQuery = async () => {
-    setLoading(true);
-    try {
-      const res = await graphqlQuery(query);
-      setResult(JSON.stringify(res, null, 2));
-    } catch (e: any) {
-      setResult(`Error: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const presets = [
-    { label: 'Status', query: '{ status { nodes edges seeds weaver { frontier inFlight } } }' },
-    { label: 'Graph (10)', query: '{ graphView(maxNodes:10 maxEdges:20) { nodes { id kind label x y } edges { source target kind } meta { totalNodes totalEdges } } }' },
-    { label: 'Search', query: 'query Search($q: String!) { searchNodes(query: $q limit:10) { id kind label } }' },
-    { label: 'Neighbors', query: 'query Neighbors($id: ID!) { neighbors(id: $id limit:10) { id kind label } }' },
-    { label: 'Node Preview', query: 'query Preview($id: ID!) { nodePreview(id: $id) { id kind format body truncated } }' },
-    { label: 'Config', query: '{ config { render { maxRenderNodes maxRenderEdges } weaver { ants } scan { rescanIntervalMs } } }' },
-  ];
-
-  return (
-    <div className="space-y-3">
-      {/* Status bar */}
-      {gwStatus && (
-        <div className="flex gap-4 text-xs text-slate-400">
-          <span>Nodes: <span className="text-slate-200">{fmt(gwStatus.nodes)}</span></span>
-          <span>Edges: <span className="text-slate-200">{fmt(gwStatus.edges)}</span></span>
-          <span>Seeds: <span className="text-slate-200">{gwStatus.seeds}</span></span>
-          <span>Frontier: <span className="text-slate-200">{gwStatus.weaver?.frontier}</span></span>
-        </div>
-      )}
-
-      {/* Presets */}
-      <div className="flex gap-2 flex-wrap">
-        {presets.map(p => (
-          <button key={p.label} onClick={() => { setQuery(p.query); setResult(''); }}
-            className="text-xs px-2 py-1 rounded border border-slate-700/50 text-slate-400 hover:bg-slate-700/30 hover:text-slate-200">
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Editor + Result */}
-      <div className="flex gap-4 h-[500px]">
-        <div className="w-1/2 flex flex-col">
-          <textarea value={query} onChange={e => setQuery(e.target.value)}
-            className="flex-1 bg-slate-900/50 border border-slate-700/50 rounded p-3 text-xs text-slate-200 font-mono resize-none focus:outline-none focus:border-slate-600"
-            spellCheck={false} />
-          <button onClick={runQuery} disabled={loading}
-            className="mt-2 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 disabled:opacity-50">
-            {loading ? 'Running...' : '▶ Run'}
-          </button>
-        </div>
-        <div className="w-1/2 rounded-lg border border-slate-700/50 bg-slate-900/50 overflow-auto p-3">
-          {result ? (
-            <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">{result}</pre>
-          ) : (
-            <div className="text-xs text-slate-600">Results appear here</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Main Page ─────────────────────────────────────────────────────────────
 
 const TABS = [
@@ -1106,8 +1004,6 @@ const TABS = [
   { id: 'files', label: 'Files', icon: '📁' },
   { id: 'documents', label: 'Documents', icon: '📄' },
   { id: 'graph', label: 'Graph', icon: '◇' },
-  { id: 'graphview', label: 'Graph View', icon: '◎' },
-  { id: 'graphql', label: 'GraphQL', icon: '⟐' },
   { id: 'database', label: 'Database', icon: '▣' },
   { id: 'services', label: 'Services', icon: '⚡' },
 ] as const;
@@ -1121,7 +1017,6 @@ export default function DataPage() {
   const [health, setHealth] = useState<ServiceHealth | null>(null);
   const [graphStats, setGraphStats] = useState<any>(null);
   const [graphData, setGraphData] = useState<any>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1202,9 +1097,7 @@ export default function DataPage() {
         {tab === 'sources' && <SourcesTab sources={sources} jobs={jobs} onSync={handleSync} />}
         {tab === 'files' && <FileExplorerTab />}
         {tab === 'documents' && <DocumentsTab />}
-        {tab === 'graph' && <GraphTab graphData={graphData} onSelectNode={setSelectedNodeId} selectedNodeId={selectedNodeId} />}
-        {tab === 'graphview' && <GraphViewTab />}
-        {tab === 'graphql' && <GraphQLExplorerTab />}
+        {tab === 'graph' && <GraphExplorer nodes={graphData?.nodes || []} />}
         {tab === 'database' && <DatabaseTab />}
         {tab === 'services' && <ServicesTab health={health} onBuildEdges={handleBuildEdges} />}
       </main>
