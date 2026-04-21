@@ -210,3 +210,39 @@ The bug occurs when:
 #### Reference
 
 See commit `96f76d41` for the fix that resolved this issue.
+
+## Knoxx MCP (HTTP) facade
+
+Knoxx now exposes an **MCP (Model Context Protocol) server over HTTP** at:
+
+- `POST /mcp` (JSON-RPC)
+- `GET /mcp` (SSE/session transport)
+- `DELETE /mcp` (session close)
+
+### Auth model
+
+The MCP server is protected behind the same GitHub OAuth login used by the Knoxx UI.
+
+Flow:
+
+1. An MCP client sends the user to the OAuth authorize endpoint:
+   `GET /api/mcp/oauth/authorize?...`
+2. The user logs in via Knoxx `/api/auth/login` if needed.
+3. Knoxx shows a consent screen with **capability dials** (tool allowlist).
+4. The client exchanges the code at `POST /api/mcp/oauth/token` (PKCE S256).
+5. The client calls MCP endpoints with `Authorization: Bearer <access_token>`.
+
+Discovery:
+
+- `GET /.well-known/oauth-authorization-server`
+
+Token management (browser-session only):
+
+- `GET /api/mcp/tokens`
+- `DELETE /api/mcp/tokens/:tokenId`
+
+### Notes
+
+- Tokens are stored in Redis (same `REDIS_URL` as Knoxx sessions).
+- Delegated tools are intersected with the user's current Knoxx policy context, so
+  tokens cannot grant capabilities above the user's membership.

@@ -3,6 +3,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
 import fastifyCookie from '@fastify/cookie';
+import fastifyFormbody from '@fastify/formbody';
 import { Type } from '@sinclair/typebox';
 import * as sdk from '@mariozechner/pi-coding-agent';
 import * as crypto from 'node:crypto';
@@ -13,6 +14,11 @@ import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
+import { createClient } from 'redis';
+import { z } from 'zod';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import {
   config as readConfig,
   registerAppRoutes,
@@ -21,6 +27,8 @@ import {
   createPolicyDb,
   registerAuthRoutes,
   createSessionHook,
+  resolveAuthContext,
+  createKnoxxCustomTools,
   getPiIngestStatus,
   listPiSessions,
 } from '../dist/app.js';
@@ -78,6 +86,7 @@ app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, 
 
 await app.register(fastifyCors, { origin: true });
 await app.register(fastifyCookie);
+await app.register(fastifyFormbody);
 await app.register(fastifyMultipart);
 await app.register(fastifyWebsocket);
 
@@ -98,6 +107,473 @@ registerAuthRoutes(app, { policyDb, runtime });
 
 // registerAppRoutes may perform async bootstrap (Redis init, session recovery, etc.).
 await registerAppRoutes(runtime, app, config);
+
+// ---------------------------------------------------------------------------
+// Knoxx MCP (Model Context Protocol) HTTP facade
+// ---------------------------------------------------------------------------
+
+const MCP_ENV = z
+  .object({
+    KNOXX_PUBLIC_BASE_URL: z.string().optional(),
+    KNOXX_MCP_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().optional(),
+    KNOXX_MCP_CODE_TTL_SECONDS: z.coerce.number().int().positive().optional(),
+    REDIS_URL: z.string().optional(),
+  })
+  .parse(process.env);
+
+const publicBaseUrl = new URL(MCP_ENV.KNOXX_PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost');
+
+const mcpRedis = {
+  client: null,
+  connectPromise: null,
+};
+
+async function getRedis() {
+  if (mcpRedis.client && mcpRedis.client.isOpen) return mcpRedis.client;
+  if (mcpRedis.connectPromise) return mcpRedis.connectPromise;
+  const url = MCP_ENV.REDIS_URL || process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+  const client = createClient({ url });
+  client.on('error', (err) => app.log.error({ err }, '[knoxx-mcp] redis error'));
+  mcpRedis.connectPromise = client
+    .connect()
+    .then(() => {
+      mcpRedis.client = client;
+      mcpRedis.connectPromise = null;
+      app.log.info(`[knoxx-mcp] redis connected (${url})`);
+      return client;
+    })
+    .catch((err) => {
+      mcpRedis.connectPromise = null;
+      throw err;
+    });
+  return mcpRedis.connectPromise;
+}
+
+const MCP_CODE_TTL_SECONDS = MCP_ENV.KNOXX_MCP_CODE_TTL_SECONDS ?? 300;
+const MCP_TOKEN_TTL_SECONDS = MCP_ENV.KNOXX_MCP_TOKEN_TTL_SECONDS ?? 60 * 60 * 24 * 30;
+
+function base64url(buf) {
+  return Buffer.from(buf).toString('base64url');
+}
+
+function pkceChallenge(verifier) {
+  return base64url(crypto.createHash('sha256').update(verifier).digest());
+}
+
+function parseBearerToken(req) {
+  const raw = String(req.headers?.authorization || '');
+  const m = raw.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1].trim() : null;
+}
+
+async function requireBrowserAuthContext(req, reply) {
+  try {
+    // resolveAuthContext comes from CLJS and understands Knoxx cookie sessions.
+    return await resolveAuthContext(req, policyDb);
+  } catch (err) {
+    const currentUrl = new URL(req.raw.url || '/api/mcp/oauth/authorize', publicBaseUrl);
+    const loginUrl = new URL('/api/auth/login', publicBaseUrl);
+    loginUrl.searchParams.set('redirect', currentUrl.pathname + currentUrl.search);
+    reply.redirect(302, loginUrl.toString());
+    return null;
+  }
+}
+
+function toolCheckboxHtml(tools, selected) {
+  const safe = (s) => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  return tools
+    .map((t) => {
+      const name = String(t.name || '');
+      const label = String(t.label || t.name || t.description || name);
+      const desc = String(t.description || '');
+      const checked = selected.has(name) ? 'checked' : '';
+      return `
+        <label style="display:block; margin: 6px 0;">
+          <input type="checkbox" name="tool" value="${safe(name)}" ${checked} />
+          <span style="font-weight:600;">${safe(label)}</span>
+          <span style="color:#666;">(${safe(name)})</span>
+          <div style="color:#444; margin-left: 22px;">${safe(desc)}</div>
+        </label>
+      `;
+    })
+    .join('\n');
+}
+
+function normalizeToolSelection(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(String);
+  return [String(raw)];
+}
+
+app.get('/.well-known/oauth-authorization-server', async (_req, reply) => {
+  const issuer = new URL(publicBaseUrl);
+  // Allow the running service to be reverse-proxied without hardcoding port.
+  reply.send({
+    issuer: issuer.toString().replace(/\/$/, ''),
+    authorization_endpoint: new URL('/api/mcp/oauth/authorize', issuer).toString(),
+    token_endpoint: new URL('/api/mcp/oauth/token', issuer).toString(),
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code'],
+    code_challenge_methods_supported: ['S256'],
+    token_endpoint_auth_methods_supported: ['none'],
+  });
+});
+
+// OAuth authorize endpoint with a consent screen.
+// This uses the existing Knoxx GitHub OAuth session cookie for user identity,
+// then issues a short-lived authorization code tied to a chosen tool allowlist.
+app.get('/api/mcp/oauth/authorize', async (req, reply) => {
+  const q = req.query || {};
+  const clientId = String(q.client_id || '');
+  const redirectUri = String(q.redirect_uri || '');
+  const state = q.state ? String(q.state) : '';
+  const codeChallenge = String(q.code_challenge || '');
+  const codeChallengeMethod = String(q.code_challenge_method || 'S256');
+  const requestedScope = String(q.scope || '');
+
+  if (!clientId || !redirectUri || !codeChallenge || codeChallengeMethod !== 'S256') {
+    reply.code(400).send({ error: 'invalid_request', detail: 'Missing required OAuth parameters (client_id, redirect_uri, code_challenge, S256)' });
+    return;
+  }
+
+  const ctx = await requireBrowserAuthContext(req, reply);
+  if (!ctx) return;
+
+  const tools = createKnoxxCustomTools(runtime, config, ctx) || [];
+  const requested = new Set(requestedScope.split(/\s+/).map((s) => s.trim()).filter(Boolean));
+  const selected = new Set();
+  for (const t of tools) {
+    const name = String(t?.name || '');
+    if (!name) continue;
+    if (requested.has('all') || requested.has(name)) selected.add(name);
+  }
+  if (selected.size === 0) {
+    // Sensible default: read-only-ish memory + search tools if available.
+    ['semantic_query', 'semantic_read', 'memory_search', 'memory_session', 'graph_query', 'websearch', 'read'].forEach((id) => selected.add(id));
+  }
+
+  const confirmUrl = new URL('/api/mcp/oauth/authorize/confirm', publicBaseUrl);
+  confirmUrl.searchParams.set('client_id', clientId);
+  confirmUrl.searchParams.set('redirect_uri', redirectUri);
+  if (state) confirmUrl.searchParams.set('state', state);
+  confirmUrl.searchParams.set('code_challenge', codeChallenge);
+  confirmUrl.searchParams.set('code_challenge_method', 'S256');
+  // We re-emit requested scope for display/debug, but actual allowlist comes from checkboxes.
+  if (requestedScope) confirmUrl.searchParams.set('scope', requestedScope);
+
+  const html = `<!doctype html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>Authorize MCP Client</title>
+      <style>
+        body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 24px; }
+        .box { max-width: 920px; }
+        .meta { color: #555; margin-bottom: 12px; }
+        .tools { border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; }
+        .actions { margin-top: 18px; display: flex; gap: 12px; }
+        button { padding: 8px 14px; border-radius: 8px; border: 1px solid #333; background: #111; color: #fff; cursor: pointer; }
+        a { color: #0b67d0; }
+      </style>
+    </head>
+    <body>
+      <div class="box">
+        <h1>Authorize MCP Client</h1>
+        <div class="meta">
+          <div><strong>Client:</strong> ${clientId}</div>
+          <div><strong>Redirect URI:</strong> ${redirectUri}</div>
+          <div><strong>User:</strong> ${String(ctx?.user?.email || ctx?.userEmail || '')}</div>
+          <div><strong>Org:</strong> ${String(ctx?.org?.slug || ctx?.orgSlug || '')}</div>
+        </div>
+
+        <form method="GET" action="${confirmUrl.pathname}">
+          <input type="hidden" name="client_id" value="${clientId}" />
+          <input type="hidden" name="redirect_uri" value="${redirectUri}" />
+          <input type="hidden" name="state" value="${state}" />
+          <input type="hidden" name="code_challenge" value="${codeChallenge}" />
+          <input type="hidden" name="code_challenge_method" value="S256" />
+          <input type="hidden" name="scope" value="${requestedScope}" />
+
+          <h2>Capabilities</h2>
+          <p>Select exactly which Knoxx tools this client can call. You can always revoke tokens later.</p>
+          <div class="tools">
+            ${toolCheckboxHtml(tools, selected)}
+          </div>
+
+          <div class="actions">
+            <button type="submit">Authorize</button>
+            <a href="/">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </body>
+  </html>`;
+
+  reply.header('content-type', 'text/html; charset=utf-8').send(html);
+});
+
+app.get('/api/mcp/oauth/authorize/confirm', async (req, reply) => {
+  const q = req.query || {};
+  const clientId = String(q.client_id || '');
+  const redirectUri = String(q.redirect_uri || '');
+  const state = q.state ? String(q.state) : '';
+  const codeChallenge = String(q.code_challenge || '');
+  const codeChallengeMethod = String(q.code_challenge_method || 'S256');
+  const selectedTools = normalizeToolSelection(q.tool);
+
+  if (!clientId || !redirectUri || !codeChallenge || codeChallengeMethod !== 'S256') {
+    reply.code(400).send({ error: 'invalid_request', detail: 'Missing required OAuth parameters' });
+    return;
+  }
+
+  const ctx = await requireBrowserAuthContext(req, reply);
+  if (!ctx) return;
+
+  const allTools = createKnoxxCustomTools(runtime, config, ctx) || [];
+  const available = new Set(allTools.map((t) => String(t?.name || '')).filter(Boolean));
+  const requested = [...new Set(selectedTools.map((t) => String(t).trim()).filter(Boolean))].filter((t) => available.has(t));
+  if (requested.length === 0) {
+    reply.code(400).send({ error: 'invalid_scope', detail: 'No valid tools selected' });
+    return;
+  }
+
+  const membershipId = String(ctx?.membership?.id || ctx?.membershipId || '');
+  const userEmail = String(ctx?.user?.email || ctx?.userEmail || '');
+  const orgSlug = String(ctx?.org?.slug || ctx?.orgSlug || '');
+
+  const code = crypto.randomUUID();
+  const redis = await getRedis();
+  const codeKey = `knoxx:mcp:code:${code}`;
+  const codeValue = {
+    code,
+    clientId,
+    redirectUri,
+    codeChallenge,
+    codeChallengeMethod: 'S256',
+    tools: requested,
+    membershipId,
+    userEmail,
+    orgSlug,
+    createdAt: new Date().toISOString(),
+  };
+  await redis.set(codeKey, JSON.stringify(codeValue), { EX: MCP_CODE_TTL_SECONDS });
+
+  const redirect = new URL(redirectUri);
+  redirect.searchParams.set('code', code);
+  if (state) redirect.searchParams.set('state', state);
+  reply.redirect(302, redirect.toString());
+});
+
+// OAuth token exchange endpoint (authorization_code + PKCE S256).
+app.post('/api/mcp/oauth/token', async (req, reply) => {
+  const body = req.body || {};
+  const grantType = String(body.grant_type || body.grantType || '');
+  const code = String(body.code || '');
+  const codeVerifier = String(body.code_verifier || body.codeVerifier || '');
+  const clientId = String(body.client_id || body.clientId || '');
+  const redirectUri = String(body.redirect_uri || body.redirectUri || '');
+
+  if (grantType !== 'authorization_code' || !code || !codeVerifier || !clientId || !redirectUri) {
+    reply.code(400).send({ error: 'invalid_request' });
+    return;
+  }
+
+  const redis = await getRedis();
+  const codeKey = `knoxx:mcp:code:${code}`;
+  const raw = await redis.get(codeKey);
+  if (!raw) {
+    reply.code(400).send({ error: 'invalid_grant', detail: 'Unknown or expired code' });
+    return;
+  }
+
+  const record = JSON.parse(raw);
+  if (record.clientId !== clientId || record.redirectUri !== redirectUri) {
+    reply.code(400).send({ error: 'invalid_grant', detail: 'Client/redirect mismatch' });
+    return;
+  }
+
+  const expected = String(record.codeChallenge || '');
+  const actual = pkceChallenge(codeVerifier);
+  if (!expected || expected !== actual) {
+    reply.code(400).send({ error: 'invalid_grant', detail: 'PKCE verification failed' });
+    return;
+  }
+
+  await redis.del(codeKey);
+
+  const accessToken = crypto.randomUUID();
+  const tokenKey = `knoxx:mcp:token:${accessToken}`;
+  const tokenValue = {
+    accessToken,
+    clientId,
+    membershipId: record.membershipId,
+    userEmail: record.userEmail,
+    orgSlug: record.orgSlug,
+    tools: record.tools,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + MCP_TOKEN_TTL_SECONDS * 1000).toISOString(),
+  };
+  await redis.set(tokenKey, JSON.stringify(tokenValue), { EX: MCP_TOKEN_TTL_SECONDS });
+
+  if (record.membershipId) {
+    await redis.sAdd(`knoxx:mcp:user:${record.membershipId}:tokens`, accessToken);
+  }
+
+  reply.send({
+    access_token: accessToken,
+    token_type: 'Bearer',
+    scope: Array.isArray(record.tools) ? record.tools.join(' ') : '',
+    expires_in: MCP_TOKEN_TTL_SECONDS,
+  });
+});
+
+app.get('/api/mcp/tokens', async (req, reply) => {
+  const ctx = await requireBrowserAuthContext(req, reply);
+  if (!ctx) return;
+  const membershipId = String(ctx?.membership?.id || ctx?.membershipId || '');
+  if (!membershipId) {
+    reply.code(400).send({ error: 'missing_membership' });
+    return;
+  }
+  const redis = await getRedis();
+  const tokenIds = await redis.sMembers(`knoxx:mcp:user:${membershipId}:tokens`);
+  const records = [];
+  for (const tokenId of tokenIds) {
+    const raw = await redis.get(`knoxx:mcp:token:${tokenId}`);
+    if (raw) records.push(JSON.parse(raw));
+  }
+  reply.send({ ok: true, tokens: records });
+});
+
+app.delete('/api/mcp/tokens/:tokenId', async (req, reply) => {
+  const ctx = await requireBrowserAuthContext(req, reply);
+  if (!ctx) return;
+  const membershipId = String(ctx?.membership?.id || ctx?.membershipId || '');
+  const tokenId = String(req.params?.tokenId || '');
+  if (!membershipId || !tokenId) {
+    reply.code(400).send({ error: 'invalid_request' });
+    return;
+  }
+  const redis = await getRedis();
+  await redis.del(`knoxx:mcp:token:${tokenId}`);
+  await redis.sRem(`knoxx:mcp:user:${membershipId}:tokens`, tokenId);
+  reply.send({ ok: true });
+});
+
+async function loadMcpToken(req) {
+  const token = parseBearerToken(req);
+  if (!token) return null;
+  const redis = await getRedis();
+  const raw = await redis.get(`knoxx:mcp:token:${token}`);
+  if (!raw) return null;
+  return JSON.parse(raw);
+}
+
+function resolveSessionId(req) {
+  const headerSessionId = req.headers?.['mcp-session-id'];
+  if (typeof headerSessionId === 'string' && headerSessionId.length > 0) return headerSessionId;
+  const querySessionId = req.query?.sessionId;
+  if (typeof querySessionId === 'string' && querySessionId.length > 0) return querySessionId;
+  return undefined;
+}
+
+const mcpSessions = new Map();
+
+async function handleMcpPost(req, reply) {
+  const sessionId = resolveSessionId(req);
+  const existing = sessionId ? mcpSessions.get(sessionId) : null;
+  if (existing) {
+    const token = parseBearerToken(req);
+    if (!token || token !== existing.tokenId) {
+      reply.code(401).send('Unauthorized');
+      return;
+    }
+    await existing.transport.handleRequest(req.raw, reply.raw, req.body);
+    return;
+  }
+
+  if (!isInitializeRequest(req.body)) {
+    reply.code(400).send({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Bad Request: Server not initialized' },
+      id: null,
+    });
+    return;
+  }
+
+  const tokenRecord = await loadMcpToken(req);
+  if (!tokenRecord) {
+    reply.code(401).send('Unauthorized');
+    return;
+  }
+
+  // Resolve fresh Knoxx policy context from the token principal to ensure delegated tools
+  // can never exceed the caller's current membership/role policy.
+  const headersLike = {};
+  if (tokenRecord.membershipId) headersLike['x-knoxx-membership-id'] = tokenRecord.membershipId;
+  if (tokenRecord.userEmail) headersLike['x-knoxx-user-email'] = tokenRecord.userEmail;
+  if (tokenRecord.orgSlug) headersLike['x-knoxx-org-slug'] = tokenRecord.orgSlug;
+  const ctx = await policyDb.resolveRequestContext(headersLike);
+
+  const allTools = createKnoxxCustomTools(runtime, config, ctx) || [];
+  const allow = new Set((tokenRecord.tools || []).map(String));
+  const effectiveTools = allTools.filter((t) => allow.has(String(t?.name || '')));
+
+  const server = new McpServer({ name: 'knoxx', version: '0.1.0' });
+  for (const tool of effectiveTools) {
+    const toolName = String(tool?.name || '').trim();
+    if (!toolName) continue;
+    server.registerTool(
+      toolName,
+      {
+        description: String(tool?.description || tool?.label || toolName),
+        inputSchema: z.record(z.any()),
+      },
+      async (params) => {
+        // Pass params as-is to the CLJS tool execute function.
+        // tool.execute returns MCP-compatible {content: [...], ...} objects.
+        return await tool.execute('mcp', params, null, null, null);
+      },
+    );
+  }
+
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    onsessioninitialized: async (sid) => {
+      mcpSessions.set(sid, { transport, tokenId: tokenRecord.accessToken });
+    },
+  });
+
+  transport.onclose = () => {
+    if (transport.sessionId) mcpSessions.delete(transport.sessionId);
+  };
+
+  await server.connect(transport);
+  await transport.handleRequest(req.raw, reply.raw, req.body);
+}
+
+async function handleMcpSession(req, reply) {
+  const sessionId = resolveSessionId(req);
+  if (!sessionId) {
+    reply.code(400).send('Missing mcp-session-id');
+    return;
+  }
+  const existing = mcpSessions.get(sessionId);
+  if (!existing) {
+    reply.code(404).send(`Invalid mcp-session-id: ${sessionId}`);
+    return;
+  }
+  const token = parseBearerToken(req);
+  if (!token || token !== existing.tokenId) {
+    reply.code(401).send('Unauthorized');
+    return;
+  }
+  await existing.transport.handleRequest(req.raw, reply.raw);
+}
+
+app.post('/mcp', handleMcpPost);
+app.get('/mcp', handleMcpSession);
+app.delete('/mcp', handleMcpSession);
 
 // ---------------------------------------------------------------------------
 // Pi Session Ingestion Routes

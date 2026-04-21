@@ -21,6 +21,10 @@
                              :createPolicyDb knoxx.backend.policy-db/create-policy-db
                              :registerAuthRoutes knoxx.backend.auth-session/register-auth-routes
                              :createSessionHook knoxx.backend.auth-session/create-session-hook
+                             ;; Used by MCP OAuth + capability delegation flow.
+                             :resolveAuthContext knoxx.backend.auth-session/resolve-auth-context
+                             ;; Used by the Knoxx MCP facade to expose the same tool objects as the agent runtime.
+                             :createKnoxxCustomTools knoxx.backend.mcp-expose/create-knoxx-custom-tools-js
                              :getPiIngestStatus knoxx.backend.pi-session-ingester/get-pi-ingest-status
                              :listPiSessions knoxx.backend.pi-session-ingester/list-pi-sessions}}}
    :js-options {:js-provider :import
