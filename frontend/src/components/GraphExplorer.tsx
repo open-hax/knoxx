@@ -500,11 +500,35 @@ export function GraphExplorer(props: {
             <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">{graphqlResultText}</pre>
           ) : parsedGraphView ? (
             <div className="space-y-4">
-              <div className="text-xs text-slate-400">
-                nodes={parsedGraphView.meta.totalNodes} edges={parsedGraphView.meta.totalEdges}
-                {parsedGraphView.meta.sampledNodes ? ' (sampled nodes)' : ''}
-                {parsedGraphView.meta.sampledEdges ? ' (sampled edges)' : ''}
-              </div>
+              {(() => {
+                const nodeIds = new Set(parsedGraphView.nodes.map((n) => n.id));
+                const missing = new Set<string>();
+                for (const e of parsedGraphView.edges) {
+                  if (!nodeIds.has(e.source)) missing.add(e.source);
+                  if (!nodeIds.has(e.target)) missing.add(e.target);
+                }
+                const missingList = [...missing].slice(0, 12);
+                return (
+                  <>
+                    <div className="text-xs text-slate-400">
+                      nodes={parsedGraphView.meta.totalNodes} edges={parsedGraphView.meta.totalEdges}
+                      {parsedGraphView.meta.sampledNodes ? ' (sampled nodes)' : ''}
+                      {parsedGraphView.meta.sampledEdges ? ' (sampled edges)' : ''}
+                    </div>
+                    {missing.size > 0 && (
+                      <div className="rounded bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-200">
+                        Dangling edge endpoint(s): {missing.size} referenced node id(s) are missing from the node list.
+                        <div className="mt-1 font-mono text-[10px] text-amber-300/90 break-words">
+                          {missingList.join(' · ')}{missing.size > missingList.length ? ' …' : ''}
+                        </div>
+                        <div className="mt-1 text-[10px] text-amber-300/80">
+                          This usually means the edge references a devel path that is a directory or otherwise not ingested as a `devel:file:*` node.
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               <div className="space-y-2">
                 <div className="text-xs text-slate-500">Nodes</div>

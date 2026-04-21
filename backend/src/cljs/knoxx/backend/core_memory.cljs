@@ -63,12 +63,36 @@
        distinct
        vec))
 
+(defn- basename
+  [path]
+  (let [s (-> (str path)
+              (str/replace #"\\\\" "/")
+              (str/replace #"/+" "/"))
+        parts (->> (str/split s #"/")
+                   (remove str/blank?))]
+    (or (last parts) s)))
+
+(def ^:private known-extensionless-files
+  #{"Dockerfile" "Makefile" "Justfile" "Brewfile" "Procfile" "Caddyfile"})
+
+(defn- likely-file-path?
+  "Heuristic: only treat devel mentions as file nodes when the token looks like a file.
+
+  This avoids emitting edges to directories like `orgs/open-hax/openplanner/packages`,
+  which have no corresponding `devel:file:*` node in the devel lake."
+  [path]
+  (let [b (basename path)]
+    (or (contains? known-extensionless-files b)
+        (str/starts-with? b ".")
+        (re-find #"\\." b))))
+
 (defn extract-mentioned-devel-paths
   [text]
   (->> (re-seq devel-path-pattern (or text ""))
        (map second)
        (map normalize-devel-path)
        (remove nil?)
+       (filter likely-file-path?)
        distinct
        vec))
 
