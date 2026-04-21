@@ -329,7 +329,327 @@
                   (.catch (fn [err]
                             (json-response! reply 502 {:detail (str "Proxy request failed: " err)})))))))
 
-  (route! app "GET" "/api/knoxx/health"
+  ;; ── Ingestion service proxy ───────────────────────────────────────────
+  (let [ingestion-base (:ingestion-base-url config)]
+    ;; Direct ingestion/* pass-through (for chat page compatibility)
+    (route! app "GET" "/api/ingestion/browse"
+            (fn [request reply]
+              (let [qs (request-query-string request)
+                    target-url (str ingestion-base "/api/ingestion/browse" qs)]
+                (-> (fetch-json target-url #js {:method "GET"})
+                    (.then (fn [resp]
+                             (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:error (.-message err)})))))))
+
+    (route! app "GET" "/api/ingestion/file"
+            (fn [request reply]
+              (let [qs (request-query-string request)
+                    target-url (str ingestion-base "/api/ingestion/file" qs)]
+                (-> (fetch-json target-url #js {:method "GET"})
+                    (.then (fn [resp]
+                             (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:error (.-message err)})))))))
+
+    (route! app "GET" "/api/ingestion/sources"
+            (fn [_request reply]
+              (-> (fetch-json (str ingestion-base "/api/ingestion/sources") #js {:method "GET"})
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)}))))))
+
+    (route! app "GET" "/api/ingestion/jobs"
+            (fn [request reply]
+              (let [qs (request-query-string request)
+                    target-url (str ingestion-base "/api/ingestion/jobs" qs)]
+                (-> (fetch-json target-url #js {:method "GET"})
+                    (.then (fn [resp]
+                             (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:error (.-message err)})))))))
+
+    (route! app "POST" "/api/ingestion/jobs"
+            (fn [request reply]
+              (let [body (aget request "body")
+                    target-url (str ingestion-base "/api/ingestion/jobs")]
+                (-> (fetch-json target-url #js {:method "POST"
+                                                 :headers #js {"Content-Type" "application/json"}
+                                                 :body (js/JSON.stringify (or body #js {}))})
+                    (.then (fn [resp]
+                             (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:error (.-message err)})))))))
+
+    ;; Named proxy for other ingestion endpoints
+    (route! app "GET" "/api/ingestion-proxy/*"
+            (fn [request reply]
+              (let [path (aget request "params" "*")
+                    qs (request-query-string request)
+                    target-url (str ingestion-base "/api/ingestion/" path qs)]
+                (-> (fetch-json target-url #js {:method "GET"})
+                    (.then (fn [resp]
+                             (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:detail (str "Ingestion proxy failed: " err)})))))))
+
+    (route! app "POST" "/api/ingestion-proxy/*"
+            (fn [request reply]
+              (let [path (aget request "params" "*")
+                    target-url (str ingestion-base "/api/ingestion/" path)
+                    body (aget request "body")]
+                (-> (fetch-json target-url #js {:method "POST"
+                                                 :headers #js {"Content-Type" "application/json"}
+                                                 :body (js/JSON.stringify (or body #js {}))})
+                    (.then (fn [resp]
+                             (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:detail (str "Ingestion proxy failed: " err)})))))))
+
+    (route! app "DELETE" "/api/ingestion-proxy/*"
+            (fn [request reply]
+              (let [path (aget request "params" "*")
+                    target-url (str ingestion-base "/api/ingestion/" path)]
+                (-> (fetch-json target-url #js {:method "DELETE"})
+                    (.then (fn [resp]
+                             (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:detail (str "Ingestion proxy failed: " err)}))))))))
+
+  ;; ── Data explorer routes ─────────────────────────────────────────────
+  ;; Service health aggregation
+    ;; OpenPlanner API proxy for documents, search, etc.
+  (route! app "GET" "/api/data/op/*"
+          (fn [request reply]
+            (let [path (aget request "params" "*")
+                  raw-url (aget request "raw" "url")
+                  query-idx (.indexOf raw-url "?")
+                  qs (if (>= query-idx 0) (subs raw-url query-idx) "")
+                  op-base (:openplanner-base-url config)
+                  op-key (:openplanner-api-key config)]
+              (-> (fetch-json (str op-base "/v1/" path qs)
+                              #js {:headers #js {"Authorization" (str "Bearer " op-key)}})
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+  (route! app "POST" "/api/data/op/*"
+          (fn [request reply]
+            (let [path (aget request "params" "*")
+                  body (aget request "body")
+                  op-base (:openplanner-base-url config)
+                  op-key (:openplanner-api-key config)]
+              (-> (fetch-json (str op-base "/v1/" path)
+                              #js {:method "POST"
+                                   :headers #js {"Content-Type" "application/json"
+                                                  "Authorization" (str "Bearer " op-key)}
+                                   :body (js/JSON.stringify (or body #js {}))})
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+(route! app "GET" "/api/data/health"
+          (fn [_request reply]
+            (let [ingestion-base (:ingestion-base-url config)
+                  op-base (:openplanner-base-url config)
+                  op-key (:openplanner-api-key config)
+                  proxx-base (:proxx-base-url config)
+                  proxx-key (:proxx-auth-token config)
+                  check (fn [url headers]
+                          (-> (fetch-json url #js {:headers (or headers #js {}) :method "GET"})
+                              (.then (fn [resp] {:ok (aget resp "ok") :status (aget resp "status")}))
+                              (.catch (fn [err] {:ok false :error (.-message err)}))))]
+              (-> (js/Promise.all
+                    (into-array
+                      [(check (str op-base "/v1/health") #js {"Authorization" (str "Bearer " op-key)})
+                       (check (str proxx-base "/health") #js {"Authorization" (str "Bearer " proxx-key)})
+                       (check (str ingestion-base "/health") nil)
+                       (check "http://127.0.0.1:8796/api/status" nil)]))
+                  (.then (fn [results]
+                           (let [r (js->clj results :keywordize-keys true)]
+                             (json-response! reply 200
+                               {:ok true
+                                :services {:openplanner (nth r 0)
+                                           :proxx (nth r 1)
+                                           :ingestion (nth r 2)
+                                           :graph-weaver (nth r 3)}}))))
+                  (.catch (fn [err]
+                            (json-response! reply 500 {:error (.-message err)})))))))
+
+  ;; MongoDB stats via OpenPlanner
+  (route! app "GET" "/api/data/mongo/collections"
+          (fn [_request reply]
+            (let [op-base (:openplanner-base-url config)
+                  op-key (:openplanner-api-key config)]
+              (-> (js/Promise.all
+                    (into-array
+                      [(fetch-json (str op-base "/v1/documents/stats")
+                                   #js {:headers #js {"Authorization" (str "Bearer " op-key)}})
+                       (fetch-json (str op-base "/v1/graph/monitoring")
+                                   #js {:headers #js {"Authorization" (str "Bearer " op-key)}})]))
+                  (.then (fn [results]
+                           (let [r (js->clj results :keywordize-keys true)]
+                             (json-response! reply 200
+                               {:ok true :documents (aget (nth r 0) "body") :graph (aget (nth r 1) "body")}))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+  ;; MongoDB collections list
+  (route! app "GET" "/api/data/mongo/list"
+          (fn [_request reply]
+            (let [op-base (:openplanner-base-url config)
+                  op-key (:openplanner-api-key config)]
+              (-> (fetch-json (str op-base "/v1/mongo/collections")
+                              #js {:headers #js {"Authorization" (str "Bearer " op-key)}})
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+  ;; MongoDB collection query
+  (route! app "POST" "/api/data/mongo/query"
+          (fn [request reply]
+            (let [body (or (aget request "body") #js {})
+                  op-base (:openplanner-base-url config)
+                  op-key (:openplanner-api-key config)]
+              (-> (fetch-json (str op-base "/v1/mongo/query")
+                              #js {:method "POST"
+                                   :headers #js {"Content-Type" "application/json"
+                                                  "Authorization" (str "Bearer " op-key)}
+                                   :body (js/JSON.stringify body)})
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+  ;; PostgreSQL tables
+  (route! app "GET" "/api/data/pg/tables"
+          (fn [_request reply]
+            (json-response! reply 200
+              {:ok true
+               :tables ["ingestion_sources" "ingestion_jobs" "ingestion_file_state"
+                        "orgs" "users" "roles" "memberships" "data_lakes"
+                        "sessions" "audit_events" "permissions"]})))
+
+  ;; OpenPlanner job triggers
+  (route! app "POST" "/api/data/jobs/build-semantic-edges"
+          (fn [request reply]
+            (let [body (or (aget request "body") #js {})
+                  k (or (aget body "k") 8)
+                  min-sim (or (aget body "minSimilarity") 0.3)
+                  op-base (:openplanner-base-url config)
+                  op-key (:openplanner-api-key config)]
+              (-> (fetch-json (str op-base "/v1/jobs/build-semantic-edges")
+                              #js {:method "POST"
+                                   :headers #js {"Content-Type" "application/json"
+                                                  "Authorization" (str "Bearer " op-key)}
+                                   :body (js/JSON.stringify #js {:k k :minSimilarity min-sim})})
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+  (route! app "POST" "/api/data/pg/query"
+          (fn [request reply]
+            (let [body (or (aget request "body") #js {})
+                  raw-sql (or (aget body "sql") "")
+                  table (or (aget body "table") "")
+                  limit (or (aget body "limit") 50)
+                  db (policy-db runtime)
+                  query-fn (when db (aget db "query"))]
+              (cond
+                (nil? db)
+                (json-response! reply 503 {:error "Policy database not configured"})
+
+                (not (str/blank? raw-sql))
+                ;; Raw SQL mode — SELECT only
+                (let [trimmed (str/trim raw-sql)]
+                  (if-not (str/starts-with? (str/upper-case trimmed) "SELECT")
+                    (json-response! reply 400 {:error "Only SELECT queries are allowed"})
+                    (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
+                          ;; Inject LIMIT if none present
+                          has-limit (re-find #"(?i)\bLIMIT\b" trimmed)
+                          final-sql (if has-limit
+                                      trimmed
+                                      (str trimmed " LIMIT " enforced-limit))]
+                      (-> (query-fn final-sql #js [])
+                          (.then (fn [result]
+                                   (let [rows (js->clj (aget result "rows") :keywordize-keys true)]
+                                     (json-response! reply 200
+                                       {:ok true :rows rows :count (count rows)}))))
+                          (.catch (fn [err]
+                                    (json-response! reply 400 {:error (.-message err)})))))))
+
+                ;; Table browse mode
+                (or (str/blank? table)
+                    (re-find #"[^a-zA-Z0-9_]" table))
+                (json-response! reply 400 {:error "Invalid table name"})
+
+                :else
+                (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
+                      sql-str (str "SELECT * FROM " table " LIMIT " enforced-limit)]
+                  (-> (query-fn sql-str #js [])
+                      (.then (fn [result]
+                               (let [rows (js->clj (aget result "rows") :keywordize-keys true)]
+                                 (json-response! reply 200
+                                   {:ok true :table table :rows rows :count (count rows)}))))
+                      (.catch (fn [err]
+                                (json-response! reply 400 {:error (.-message err)})))))))))
+
+(route! app "GET" "/api/data/browse"
+          (fn [request reply]
+            (let [qs (aget request "query")
+                  path (or (aget qs "path") "")
+                  ingestion-base (:ingestion-base-url config)
+                  target-url (str ingestion-base "/api/ingestion/browse" (if (str/blank? path) "" (str "?path=" (js/encodeURIComponent path))))]
+              (-> (fetch-json target-url nil)
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+  (route! app "GET" "/api/data/file"
+          (fn [request reply]
+            (let [qs (aget request "query")
+                  path (or (aget qs "path") "")
+                  ingestion-base (:ingestion-base-url config)]
+              (-> (fetch-json (str ingestion-base "/api/ingestion/file?path=" (js/encodeURIComponent path)) nil)
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+    ;; ── Graph-weaver proxy ────────────────────────────────────────────────
+  (route! app "POST" "/api/data/graphql"
+          (fn [request reply]
+            (let [body (or (aget request "body") #js {})
+                  gw-url "http://127.0.0.1:8796/graphql"]
+              (-> (fetch-json gw-url
+                              #js {:method "POST"
+                                   :headers #js {"Content-Type" "application/json"}
+                                   :body (js/JSON.stringify body)})
+                  (.then (fn [resp]
+                           (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                  (.catch (fn [err]
+                            (json-response! reply 502 {:error (.-message err)})))))))
+
+  (route! app "GET" "/api/data/graph/status"
+          (fn [_request reply]
+            (-> (fetch-json "http://127.0.0.1:8796/api/status" #js {:method "GET"})
+                (.then (fn [resp]
+                         (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
+                (.catch (fn [err]
+                          (json-response! reply 502 {:error (.-message err)}))))))
+
+  ;; Embed the graph-weaver WebGL view URL for the frontend
+  (route! app "GET" "/api/data/graph/view-url"
+          (fn [_request reply]
+            (json-response! reply 200 {:url "http://127.0.0.1:8796"})))
+
+(route! app "GET" "/api/knoxx/health"
           (fn [_request reply]
             (json-response! reply 200 {:reachable true
                                        :configured true

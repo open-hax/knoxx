@@ -276,3 +276,198 @@ export async function fetchGraphExport(params: {
 
   return sessionRequest<GraphExportResponse>(`/api/graph/export${query.size > 0 ? `?${query.toString()}` : ''}`);
 }
+
+// ── Ingestion proxy API ──────────────────────────────────────────────────
+
+export interface IngestionSource {
+  source_id: string;
+  tenant_id: string;
+  driver_type: string;
+  name: string;
+  config: Record<string, unknown>;
+  state: Record<string, unknown>;
+  collections?: string[];
+  file_types?: string[];
+  include_patterns?: string[];
+  exclude_patterns?: string[];
+  last_scan_at: string | null;
+  last_error: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IngestionJob {
+  job_id: string;
+  source_id: string;
+  tenant_id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  total_files: number;
+  processed_files: number;
+  failed_files: number;
+  skipped_files: number;
+  chunks_created: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+export interface SourceAudit {
+  source_id: string;
+  tenant_id: string;
+  driver_type: string;
+  root_path: string | null;
+  collections: string[];
+  file_types: string[];
+  matching_files: number;
+  new_files: number;
+  changed_files: number;
+  unchanged_files: number;
+  state_ingested_files: number;
+  state_failed_files: number;
+  openplanner_documents: number;
+  coverage_delta: number;
+}
+
+async function ingestionRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = buildKnoxxAuthHeaders(init?.headers);
+  headers.set('x-knoxx-session-id', getKnoxxSessionId());
+  const res = await fetch(`/api/ingestion-proxy/${path}`, { ...init, headers });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ProxyApiError(res.status, text || `Ingestion request failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function fetchIngestionSources(): Promise<IngestionSource[]> {
+  return ingestionRequest<IngestionSource[]>('sources');
+}
+
+export async function fetchIngestionJobs(tenantId?: string): Promise<IngestionJob[]> {
+  const qs = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : '';
+  return ingestionRequest<IngestionJob[]>(`jobs${qs}`);
+}
+
+export async function fetchSourceAudit(sourceId: string): Promise<SourceAudit> {
+  return ingestionRequest<SourceAudit>(`sources/${encodeURIComponent(sourceId)}/audit`);
+}
+
+export async function triggerIngestionJob(sourceId: string): Promise<IngestionJob> {
+  return ingestionRequest<IngestionJob>('jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source_id: sourceId }),
+  });
+}
+
+export async function cancelIngestionJob(jobId: string): Promise<void> {
+  await ingestionRequest<void>(`jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+}
+
+// ── Data Explorer API ────────────────────────────────────────────────────
+
+export interface ServiceHealth {
+  ok: boolean;
+  services: {
+    openplanner: { ok: boolean; status?: number; error?: string };
+    proxx: { ok: boolean; status?: number; error?: string };
+    ingestion: { ok: boolean; status?: number; error?: string };
+  };
+}
+
+export async function fetchServiceHealth(): Promise<ServiceHealth> {
+  return sessionRequest<ServiceHealth>('/api/data/health');
+}
+
+export async function fetchDataMongoCollections(): Promise<{ ok: boolean; documents: any; graph: any }> {
+  return sessionRequest('/api/data/mongo/collections');
+}
+
+export interface MongoCollectionInfo {
+  name: string;
+  count: number;
+  type?: string;
+}
+
+export async function fetchDataMongoList(): Promise<{ ok: boolean; collections: MongoCollectionInfo[] }> {
+  return sessionRequest('/api/data/mongo/list');
+}
+
+export async function queryDataMongo(payload: {
+  collection: string;
+  filter?: Record<string, unknown>;
+  sort?: Record<string, 1 | -1>;
+  projection?: Record<string, number>;
+  limit?: number;
+  skip?: number;
+}): Promise<{ ok: boolean; collection: string; count: number; total: number; skip: number; limit: number; rows: any[]; error?: string }> {
+  return sessionRequest('/api/data/mongo/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchDataPgTables(): Promise<{ ok: boolean; tables: string[] }> {
+  return sessionRequest('/api/data/pg/tables');
+}
+
+export async function fetchOpenPlannerProxy(path: string): Promise<any> {
+  return sessionRequest(`/api/data/openplanner-proxy/${path}`);
+}
+
+export async function postOpenPlannerProxy(path: string, body: any): Promise<any> {
+  return sessionRequest(`/api/data/openplanner-proxy/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function buildSemanticEdges(opts: { k?: number; minSimilarity?: number } = {}): Promise<any> {
+  return sessionRequest('/api/data/jobs/build-semantic-edges', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  });
+}
+
+export async function buildSemanticEdgesIncremental(body: any): Promise<any> {
+  return sessionRequest('/api/data/jobs/build-semantic-edges/incremental', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function browseFiles(path: string): Promise<any> {
+  return sessionRequest(`/api/data/browse?path=${encodeURIComponent(path)}`);
+}
+
+export async function fetchFileContent(path: string): Promise<{ content: string; path: string }> {
+  return sessionRequest(`/api/data/file?path=${encodeURIComponent(path)}`);
+}
+
+// ── GraphQL / Graph-weaver API ────────────────────────────────────────────
+
+export async function graphqlQuery<T = any>(query: string, variables?: Record<string, any>): Promise<T> {
+  const res = await fetch('/api/data/graphql', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...buildKnoxxAuthHeaders() },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) throw new Error(`GraphQL request failed: ${res.status}`);
+  const data = await res.json();
+  if (data.errors) throw new Error(data.errors.map((e: any) => e.message).join('; '));
+  return data.data as T;
+}
+
+export async function fetchGraphWeaverStatus(): Promise<any> {
+  return sessionRequest('/api/data/graph/status');
+}
+
+export async function fetchGraphViewUrl(): Promise<{ url: string }> {
+  return sessionRequest('/api/data/graph/view-url');
+}
