@@ -212,11 +212,56 @@ app.get('/.well-known/oauth-authorization-server', async (_req, reply) => {
     issuer: issuer.toString().replace(/\/$/, ''),
     authorization_endpoint: new URL('/api/mcp/oauth/authorize', issuer).toString(),
     token_endpoint: new URL('/api/mcp/oauth/token', issuer).toString(),
+    registration_endpoint: new URL('/api/mcp/oauth/register', issuer).toString(),
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none'],
   });
+});
+
+async function getRegisteredClient(clientId) {
+  if (!clientId) return null;
+  const redis = await getRedis();
+  const raw = await redis.get(`knoxx:mcp:client:${clientId}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function redirectUriAllowed(client, redirectUri) {
+  if (!client) return true;
+  const uris = Array.isArray(client.redirect_uris) ? client.redirect_uris : [];
+  return uris.includes(redirectUri);
+}
+
+// OAuth Dynamic Client Registration (minimal).
+// Many MCP clients will try to auto-register; we support public clients (no secret).
+app.post('/api/mcp/oauth/register', async (req, reply) => {
+  const body = req.body || {};
+  const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris.map(String) : [];
+  if (redirectUris.length === 0) {
+    reply.code(400).send({ error: 'invalid_client_metadata', detail: 'redirect_uris is required' });
+    return;
+  }
+
+  const clientId = crypto.randomUUID();
+  const client = {
+    client_id: clientId,
+    client_name: body.client_name ? String(body.client_name) : 'mcp-client',
+    redirect_uris: redirectUris,
+    token_endpoint_auth_method: 'none',
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+    created_at: new Date().toISOString(),
+  };
+
+  const redis = await getRedis();
+  await redis.set(`knoxx:mcp:client:${clientId}`, JSON.stringify(client));
+  reply.code(201).send(client);
 });
 
 // OAuth authorize endpoint with a consent screen.
@@ -233,6 +278,12 @@ app.get('/api/mcp/oauth/authorize', async (req, reply) => {
 
   if (!clientId || !redirectUri || !codeChallenge || codeChallengeMethod !== 'S256') {
     reply.code(400).send({ error: 'invalid_request', detail: 'Missing required OAuth parameters (client_id, redirect_uri, code_challenge, S256)' });
+    return;
+  }
+
+  const registeredClient = await getRegisteredClient(clientId);
+  if (registeredClient && !redirectUriAllowed(registeredClient, redirectUri)) {
+    reply.code(400).send({ error: 'invalid_request', detail: 'redirect_uri not allowed for registered client' });
     return;
   }
 
@@ -326,6 +377,12 @@ app.get('/api/mcp/oauth/authorize/confirm', async (req, reply) => {
     return;
   }
 
+  const registeredClient = await getRegisteredClient(clientId);
+  if (registeredClient && !redirectUriAllowed(registeredClient, redirectUri)) {
+    reply.code(400).send({ error: 'invalid_request', detail: 'redirect_uri not allowed for registered client' });
+    return;
+  }
+
   const ctx = await requireBrowserAuthContext(req, reply);
   if (!ctx) return;
 
@@ -379,6 +436,13 @@ app.post('/api/mcp/oauth/token', async (req, reply) => {
   }
 
   const redis = await getRedis();
+
+  const registeredClient = await getRegisteredClient(clientId);
+  if (registeredClient && !redirectUriAllowed(registeredClient, redirectUri)) {
+    reply.code(400).send({ error: 'invalid_grant', detail: 'redirect_uri not allowed for registered client' });
+    return;
+  }
+
   const codeKey = `knoxx:mcp:code:${code}`;
   const raw = await redis.get(codeKey);
   if (!raw) {

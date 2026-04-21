@@ -236,6 +236,10 @@ Discovery:
 
 - `GET /.well-known/oauth-authorization-server`
 
+Client registration (for MCP clients that auto-register):
+
+- `POST /api/mcp/oauth/register` (public clients, no client_secret)
+
 Token management (browser-session only):
 
 - `GET /api/mcp/tokens`
