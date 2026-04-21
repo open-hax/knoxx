@@ -524,6 +524,56 @@
       (aset headers-like "x-knoxx-org-slug" org-slug))
     (.call resolver policy-db headers-like)))
 
+(defn- apply-zod-description
+  [schema-node schema-json]
+  (let [description (some-> (aget schema-json "description") str str/trim not-empty)]
+    (if description
+      (.describe schema-node description)
+      schema-node)))
+
+(defn- typebox->zod-node
+  [z schema-json]
+  (let [schema-type (aget schema-json "type")
+        node (case schema-type
+               "string" (.string z)
+               "number" (.number z)
+               "integer" (-> (.number z) (.int))
+               "boolean" (.boolean z)
+               "array" (let [item-schema (or (typebox->zod-node z (aget schema-json "items"))
+                                              (.any z))]
+                         (.array z item-schema))
+               "object" (or (typebox->zod-shape z schema-json)
+                             (.object z #js {}))
+               (.any z))]
+    (-> node
+        (apply-zod-description schema-json)
+        ((fn [n]
+           (if-let [minimum (aget schema-json "minimum")]
+             (.min n minimum)
+             n)))
+        ((fn [n]
+           (if-let [maximum (aget schema-json "maximum")]
+             (.max n maximum)
+             n))))))
+
+(defn- typebox->zod-shape
+  [z schema-json]
+  (let [properties (or (aget schema-json "properties") #js {})
+        required-set (into #{} (map str) (array-seq (or (aget schema-json "required") #js [])))
+        entries (.entries js/Object properties)]
+    (when (seq (array-seq entries))
+      (reduce (fn [shape entry]
+                (let [field-name (aget entry 0)
+                      field-schema-json (aget entry 1)
+                      field-schema (typebox->zod-node z field-schema-json)
+                      final-schema (if (contains? required-set (str field-name))
+                                     field-schema
+                                     (.optional field-schema))]
+                  (aset shape field-name final-schema)
+                  shape))
+              (js-obj)
+              (array-seq entries)))))
+
 (defn- discovery-metadata!
   [{:keys [reply base]}]
   (let [issuer (js/URL. (.toString base))]
@@ -787,8 +837,6 @@
                                                  into-array)
                                   server (new McpServer #js {:name "knoxx"
                                                              :version "0.1.0"})
-                                  input-schema (when z
-                                                 (.record z (.any z)))
                                   transport* (atom nil)
                                   transport (new StreamableHTTPServerTransport
                                                  #js {:sessionIdGenerator (fn [] (.randomUUID crypto))
@@ -799,7 +847,10 @@
                                                                                         :token (aget token-record "accessToken")})))})]
                               (reset! transport* transport)
                               (doseq [tool (array-seq effective)]
-                                (let [tool-name (some-> (aget tool "name") str str/trim not-empty)]
+                                (let [tool-name (some-> (aget tool "name") str str/trim not-empty)
+                                      input-schema (or (when z
+                                                         (typebox->zod-shape z (or (aget tool "parameters") #js {})))
+                                                       #js {})]
                                   (when tool-name
                                     (.registerTool server
                                                    tool-name
