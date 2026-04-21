@@ -57,7 +57,9 @@
    ;; TTS (ElevenLabs)
    ;; NOTE: support a few common env var names to reduce local drift.
    :elevenlabs-api-key (or (aget js/process.env "KNOXX_ELEVENLABS_API_KEY")
+                           (aget js/process.env "KNOXX_ELEVENLABS_KEY")
                            (aget js/process.env "ELEVENLABS_API_KEY")
+                           (aget js/process.env "ELEVEN_LABS_API_KEY")
                            (aget js/process.env "XI_API_KEY")
                            "")
    :elevenlabs-voice-id (or (aget js/process.env "KNOXX_ELEVENLABS_VOICE_ID")

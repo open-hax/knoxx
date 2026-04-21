@@ -1,0 +1,263 @@
+
+(defroute register-mcp-http-routes!
+  {:method "get"
+   :path "/.well-known/oauth-authorization-server"
+   :controller
+   '(let [issuer (js/URL. (.toString base))]
+      (.send reply
+             #js {:issuer (-> (.toString issuer) (.replace (js/RegExp. "/$") ""))
+                  :authorization_endpoint (.toString (js/URL. "/api/mcp/oauth/authorize" issuer))
+                  :token_endpoint (.toString (js/URL. "/api/mcp/oauth/token" issuer))
+                  :registration_endpoint (.toString (js/URL. "/api/mcp/oauth/register" issuer))
+                  :response_types_supported #js ["code"]
+                  :grant_types_supported #js ["authorization_code"]
+                  :code_challenge_methods_supported #js ["S256"]
+                  :token_endpoint_auth_methods_supported #js ["none"]}))})
+(defn register-mcp-oauth-regster! [app runtime config]
+
+  (.post app "/api/mcp/oauth/register"
+         (fn [req reply]
+           (if-let [r (require-redis! reply)]
+             (let [body (or (aget req "body") #js {})
+                   redirect-uris (aget body "redirect_uris")
+                   redirect-uris (if (array? redirect-uris) (mapv str (array-seq redirect-uris)) [])]
+               (if (empty? redirect-uris)
+                 (json-send! reply 400 {:error "invalid_client_metadata" :detail "redirect_uris is required"})
+                 (let [client-id (.randomUUID crypto)
+                       client #js {:client_id client-id
+                                   :client_name (or (aget body "client_name") "mcp-client")
+                                   :redirect_uris (clj->js redirect-uris)
+                                   :token_endpoint_auth_method "none"
+                                   :grant_types #js ["authorization_code"]
+                                   :response_types #js ["code"]
+                                   :created_at (.toISOString (js/Date.))}]
+                   (-> (.set r (str "knoxx:mcp:client:" client-id) (js/JSON.stringify client))
+                       (.then (fn [_]
+                                (-> (.code reply 201)
+                                    (.send client))))
+                       (.catch (fn [err]
+                                 (json-send! reply 500 {:error "registration_failed" :detail (.-message err)})))))))
+
+             nil))))
+(defn register-api-mcp-tokens! [app]
+  (.get app "/api/mcp/tokens"
+      (fn [req reply]
+        (if-let [r (require-redis! reply)]
+          (-> (require-browser-auth-context! policyDb runtime config req reply)
+              (.then
+               (fn [ctx]
+                 (when ctx
+                   (let [membership-id (str (or (aget ctx "membership" "id") (aget ctx "membershipId") ""))]
+                     (if (str/blank? membership-id)
+                       (json-send! reply 400 {:error "missing_membership"})
+                       (-> (.sMembers r (str "knoxx:mcp:user:" membership-id ":tokens"))
+                           (.then
+                            (fn [token-ids]
+                              (-> (js/Promise.all
+                                   (clj->js
+                                    (for [token-id (array-seq token-ids)]
+                                      (-> (.get r (str "knoxx:mcp:token:" token-id))
+                                          (.then (fn [raw]
+                                                   (when raw
+                                                     (try (js/JSON.parse raw)
+                                                          (catch :default _ nil)))))))))
+                                  (.then
+                                   (fn [records]
+                                     (let [filtered (->> (array-seq records) (remove nil?) (into-array))]
+                                       (.send reply #js {:ok true :tokens filtered})))))))))))))
+              (.catch (fn [err]
+                        (json-send! reply 401 {:error "unauthorized" :detail (.-message err)}))))
+          nil))))
+ent (browser session only)
+
+
+(.delete app "/api/mcp/tokens/:tokenId"
+         (fn [req reply]
+           (if-let [r (require-redis! reply)]
+             (-> (require-browser-auth-context! policyDb runtime config req reply)
+                 (.then
+                  (fn [ctx]
+                    (when ctx
+                      (let [membership-id (str (or (aget ctx "membership" "id") (aget ctx "membershipId") ""))
+                            token-id (str (or (aget (aget req "params") "tokenId") ""))]
+                        (if (or (str/blank? membership-id) (str/blank? token-id))
+                          (json-send! reply 400 {:error "invalid_request"})
+                          (-> (.del r (str "knoxx:mcp:token:" token-id))
+                              (.then (fn [_]
+                                       (.sRem r (str "knoxx:mcp:user:" membership-id ":tokens") token-id)
+                                       (.send reply #js {:ok true})))))))))
+                 (.catch (fn [err]
+                           (json-send! reply 401 {:error "unauthorized" :detail (.-message err)}))))
+             nil)))
+
+(.post app "/api/mcp/oauth/token"
+       (fn [req reply]
+         (if-let [r (require-redis! reply)]
+           (let [body (or (aget req "body") #js {})
+                 grant-type (str (or (aget body "grant_type") (aget body "grantType") ""))
+                 code (str (or (aget body "code") ""))
+                 code-verifier (str (or (aget body "code_verifier") (aget body "codeVerifier") ""))
+                 client-id (str (or (aget body "client_id") (aget body "clientId") ""))
+                 redirect-uri (str (or (aget body "redirect_uri") (aget body "redirectUri") ""))]
+             (if (or (not= grant-type "authorization_code")
+                     (str/blank? code)
+                     (str/blank? code-verifier)
+                     (str/blank? client-id)
+                     (str/blank? redirect-uri))
+               (json-send! reply 400 {:error "invalid_request"})
+               (-> (get-registered-client r client-id)
+                   (.then
+                    (fn [client]
+                      (when (and client (not (redirect-uri-allowed? client redirect-uri)))
+                        (throw (js/Error. "redirect_uri not allowed for registered client")))
+                      (-> (.get r (str "knoxx:mcp:code:" code))
+                          (.then
+                           (fn [raw]
+                             (when-not raw
+                               (throw (js/Error. "Unknown or expired code")))
+                             (let [record (js/JSON.parse raw)]
+                               (when (or (not= (aget record "clientId") client-id)
+                                         (not= (aget record "redirectUri") redirect-uri))
+                                 (throw (js/Error. "Client/redirect mismatch")))
+                               (let [expected (str (or (aget record "codeChallenge") ""))
+                                     actual (pkce-challenge crypto code-verifier)]
+                                 (when (or (str/blank? expected) (not= expected actual))
+                                   (throw (js/Error. "PKCE verification failed")))
+                                 (-> (.del r (str "knoxx:mcp:code:" code))
+                                     (.then
+                                      (fn [_]
+                                        (let [access-token (.randomUUID crypto)
+                                              token-key (str "knoxx:mcp:token:" access-token)
+                                              token-value #js {:accessToken access-token
+                                                               :clientId client-id
+                                                               :membershipId (aget record "membershipId")
+                                                               :userEmail (aget record "userEmail")
+                                                               :orgSlug (aget record "orgSlug")
+                                                               :tools (aget record "tools")
+                                                               :createdAt (.toISOString (js/Date.))
+                                                               :expiresAt (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
+                                          (-> (.set r token-key (js/JSON.stringify token-value) #js {:EX token-ttl})
+                                              (.then (fn [_]
+                                                       (when-let [mid (aget record "membershipId")]
+                                                         (.sAdd r (str "knoxx:mcp:user:" mid ":tokens") access-token))
+                                                       (.send reply
+                                                              #js {:access_token access-token
+                                                                   :token_type "Bearer"
+                                                                   :scope (->> (js/Array.from (or (aget record "tools") #js []))
+                                                                               (str/join " "))
+                                                                   :expires_in token-ttl})))))))))))))))))
+             (.catch (fn [err]
+                       (json-send! reply 400 {:error "invalid_grant" :detail (.-message err)}))))))
+       nil)
+(.get app "/api/mcp/oauth/authorize/confirm"
+      (fn [req reply]
+        (handle-oauth-authorize-confirm!
+         {:policyDb policyDb
+          :runtime runtime
+          :config config
+          :crypto crypto
+          :code-ttl code-ttl}
+         req reply)))
+(letfn [(load-token-record [redis-client req]
+          (let [token (bearer-token req)]
+            (if (str/blank? token)
+              (js/Promise.resolve nil)
+              (-> (.get redis-client (str "knoxx:mcp:token:" token))
+                  (.then (fn [raw]
+                           (when raw
+                             (try (js/JSON.parse raw)
+                                  (catch :default _ nil)))))
+                  (.catch (fn [_] nil))))))
+
+        (handle-mcp-session! [req reply]
+          (let [session-id (resolve-session-id req)]
+            (cond
+              (str/blank? (str session-id))
+              (do (.code reply 400) (.send reply "Missing mcp-session-id"))
+
+              :else
+              (let [{:keys [transport token]} (get @mcp-sessions* session-id)]
+                (if-not transport
+                  (do (.code reply 404) (.send reply (str "Invalid mcp-session-id: " session-id)))
+                  (let [supplied (bearer-token req)]
+                    (if (not= (str supplied) (str token))
+                      (do (.code reply 401) (.send reply "Unauthorized"))
+                      (.handleRequest transport (aget req "raw") (aget reply "raw")))))))))
+
+        (handle-mcp-post! [req reply]
+          (let [session-id (resolve-session-id req)
+                existing (when session-id (get @mcp-sessions* session-id))
+                supplied (bearer-token req)]
+            (if existing
+              (if (not= (str supplied) (str (:token existing)))
+                (do (.code reply 401) (.send reply "Unauthorized"))
+                (.handleRequest (:transport existing) (aget req "raw") (aget reply "raw") (aget req "body")))
+              ;; New session: must initialize
+              (if-not (and isInitializeRequest (isInitializeRequest (aget req "body")))
+                (do
+                  (.code reply 400)
+                  (.send reply #js {:jsonrpc "2.0"
+                                    :error #js {:code -32000 :message "Bad Request: Server not initialized"}
+                                    :id nil}))
+                (if-let [r (require-redis! reply)]
+                  (-> (load-token-record r req)
+                      (.then
+                       (fn [token-record]
+                         (if-not token-record
+                           (do (.code reply 401) (.send reply "Unauthorized"))
+                           (let [headers-like #js {}
+                                 mid (aget token-record "membershipId")
+                                 email (aget token-record "userEmail")
+                                 org (aget token-record "orgSlug")]
+                             (when mid (aset headers-like "x-knoxx-membership-id" mid))
+                             (when email (aset headers-like "x-knoxx-user-email" email))
+                             (when org (aset headers-like "x-knoxx-org-slug" org))
+                             (-> (.resolveRequestContext policyDb headers-like)
+                                 (.then
+                                  (fn [ctx]
+                                    (let [all-tools (or (mcp-expose/create-knoxx-custom-tools-js runtime config ctx) #js [])
+                                          allowed (into #{} (map str) (array-seq (or (aget token-record "tools") #js [])))
+                                          effective (->> (array-seq all-tools)
+                                                         (filter (fn [t] (contains? allowed (str (aget t "name")))))
+                                                         (into-array))
+                                          server (new McpServer #js {:name "knoxx" :version "0.1.0"})
+                                          input-schema (when z (.record z (.any z)))
+                                          transport (new StreamableHTTPServerTransport
+                                                         #js {:sessionIdGenerator (fn [] (.randomUUID crypto))
+                                                              :onsessioninitialized (fn [sid]
+                                                                                      (swap! mcp-sessions* assoc (str sid)
+                                                                                             {:transport transport
+                                                                                              :token (aget token-record "accessToken")}) )})]
+                                      (doseq [tool (array-seq effective)]
+                                        (let [tool-name (-> (str (or (aget tool "name") "")) str/trim)]
+                                          (when-not (str/blank? tool-name)
+                                            (.registerTool
+                                             server
+                                             tool-name
+                                             #js {:description (str (or (aget tool "description") (aget tool "label") tool-name))
+                                                  :inputSchema input-schema}
+                                             (fn [params]
+                                               (.execute tool "mcp" params nil nil nil))))))
+
+                                      (set! (.-onclose transport)
+                                            (fn []
+                                              (when-let [sid (.-sessionId transport)]
+                                                (swap! mcp-sessions* dissoc (str sid)))))
+
+                                      (-> (.connect server transport)
+                                          (.then (fn [_]
+                                                   (.handleRequest transport (aget req "raw") (aget reply "raw") (aget req "body")))))))))
+                             (.catch
+                              (fn [err]
+                                (.error js/console "[knoxx-mcp] resolveRequestContext failed" err)
+                                (json-send! reply 401 {:error "unauthorized"})))))))))))
+            (.catch (fn [err]
+                      (.error js/console "[knoxx-mcp] initialize failed" err)
+                      (json-send! reply 500 {:error "mcp_init_failed" :detail (.-message err)}))))
+          nil)]
+
+
+  (.get app "/mcp" (fn [req reply] (handle-mcp-session! req reply)))
+  (.delete app "/mcp" (fn [req reply] (handle-mcp-session! req reply)))
+
+  nil)

@@ -101,7 +101,14 @@ module.exports = {
         KNOXX_STT_BASE_URL: 'http://127.0.0.1:8010',
 
         // TTS (ElevenLabs)
-        KNOXX_ELEVENLABS_API_KEY: hostEnv.KNOXX_ELEVENLABS_API_KEY || hostEnv.ELEVENLABS_API_KEY || hostEnv.XI_API_KEY || '',
+        // Accept historical/local key names from ~/.knoxx/.env.cephalon-host
+        KNOXX_ELEVENLABS_API_KEY:
+          hostEnv.KNOXX_ELEVENLABS_API_KEY
+          || hostEnv.KNOXX_ELEVENLABS_KEY
+          || hostEnv.ELEVENLABS_API_KEY
+          || hostEnv.ELEVEN_LABS_API_KEY
+          || hostEnv.XI_API_KEY
+          || '',
         KNOXX_ELEVENLABS_VOICE_ID: hostEnv.KNOXX_ELEVENLABS_VOICE_ID || hostEnv.ELEVENLABS_VOICE_ID || '',
         KNOXX_ELEVENLABS_MODEL_ID: hostEnv.KNOXX_ELEVENLABS_MODEL_ID || hostEnv.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2',
 
