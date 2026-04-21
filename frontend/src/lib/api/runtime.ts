@@ -92,6 +92,30 @@ export async function voiceSttTranscribe(blob: Blob, filename = "audio.webm"): P
   return (await response.json()) as SttTranscribeResponse;
 }
 
+export async function voiceTtsSynthesize(payload: {
+  text: string;
+  voice_id?: string;
+  model_id?: string;
+  output_format?: string;
+  voice_settings?: Record<string, unknown>;
+}): Promise<Blob> {
+  const response = await fetch(`${API_BASE}/api/voice/tts`, {
+    method: "POST",
+    headers: {
+      ...buildKnoxxAuthHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`${response.status} ${response.statusText}${detail ? ` - ${detail}` : ""}`);
+  }
+
+  return await response.blob();
+}
+
 export async function sendEmailDraft(payload: {
   role: string;
   to: string[];

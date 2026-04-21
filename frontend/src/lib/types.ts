@@ -293,6 +293,11 @@ export interface FrontendConfig {
   // Voice / STT (optional)
   stt_enabled?: boolean;
   stt_base_url?: string;
+
+  // Voice / TTS (optional)
+  tts_enabled?: boolean;
+  tts_provider?: string;
+  tts_default_voice_id?: string;
 }
 
 export interface SttTranscribeResponse {

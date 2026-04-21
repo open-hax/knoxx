@@ -1,6 +1,7 @@
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import { AgentTraceTimeline, ToolReceiptGroup } from "../ToolReceiptBlock";
 import { MultimodalContent } from "./MultimodalContent";
+import { SpeakAssistantButton } from "./SpeakAssistantButton";
 import { VoiceReplyButton } from "./VoiceReplyButton";
 import type {
   AgentSource,
@@ -114,6 +115,9 @@ export function ChatMessageList({
                     disabled={voiceReplyDisabled}
                     onTranscript={(text) => onSend(text)}
                   />
+                ) : null}
+                {message.status === "done" && Boolean(message.content?.trim()) ? (
+                  <SpeakAssistantButton text={message.content || ""} />
                 ) : null}
                 <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
               </div>

@@ -54,6 +54,19 @@
    ;; Voice / speech
    :stt-base-url (env "KNOXX_STT_BASE_URL" "")
 
+   ;; TTS (ElevenLabs)
+   ;; NOTE: support a few common env var names to reduce local drift.
+   :elevenlabs-api-key (or (aget js/process.env "KNOXX_ELEVENLABS_API_KEY")
+                           (aget js/process.env "ELEVENLABS_API_KEY")
+                           (aget js/process.env "XI_API_KEY")
+                           "")
+   :elevenlabs-voice-id (or (aget js/process.env "KNOXX_ELEVENLABS_VOICE_ID")
+                            (aget js/process.env "ELEVENLABS_VOICE_ID")
+                            "")
+   :elevenlabs-model-id (or (aget js/process.env "KNOXX_ELEVENLABS_MODEL_ID")
+                            (aget js/process.env "ELEVENLABS_MODEL_ID")
+                            "eleven_multilingual_v2")
+
    ;; Pi / agent runtime dir
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
 
