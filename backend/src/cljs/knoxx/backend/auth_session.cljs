@@ -252,11 +252,16 @@
   [reply token base-url]
   (let [secure (secure-origin? base-url)
         ttl (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10)]
+    ;; OAuth callback -> redirected protected route is a cross-site navigation
+    ;; chain from github.com. SameSite=Strict drops the fresh session cookie on
+    ;; that first redirected request, which loops MCP OAuth back into login.
+    ;; Lax preserves CSRF protection for subrequests while allowing top-level
+    ;; navigations like OAuth callback completion.
     (.setCookie reply COOKIE-NAME token
                 (clj->js {:path "/"
                           :httpOnly true
                           :secure secure
-                          :sameSite (if secure "Strict" "Lax")
+                          :sameSite "Lax"
                           :maxAge ttl}))))
 
 (defn- clear-session-cookie
@@ -266,7 +271,7 @@
                   (clj->js {:path "/"
                             :httpOnly true
                             :secure secure
-                            :sameSite (if secure "Strict" "Lax")}))))
+                            :sameSite "Lax"}))))
 
 
 (def ^:private STATE-TTL 600)
