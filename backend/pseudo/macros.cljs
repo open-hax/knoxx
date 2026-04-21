@@ -28,3 +28,22 @@
                 :grant_types_supported #js ["authorization_code"]
                 :code_challenge_methods_supported #js ["S256"]
                 :token_endpoint_auth_methods_supported #js ["none"]})))
+
+
+(defmacro defroutes
+  [fname bindings & routes]
+  `(defn ~fname ~bindings
+     ~@(for [r routes]
+         (expand-route r))))
+
+(defmacro GET [path bindings & body]
+  `(register-route! app :get ~path
+     (fn ~bindings ~@body)))
+
+(defmacro POST [path bindings & body]
+  `(register-route! app :post ~path
+     (fn ~bindings ~@body)))
+
+(defmacro DELETE [path bindings & body]
+  `(register-route! app :delete ~path
+     (fn ~bindings ~@body)))
