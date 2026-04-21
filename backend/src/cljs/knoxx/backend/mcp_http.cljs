@@ -223,3 +223,36 @@
     (into #{}
           (filter (fn [id] (contains? tool-names id)))
           defaults)))
+
+(defn register-mcp-http-routes!
+  [app _runtime config]
+  (let [base (public-base-url config)
+        send-unavailable! (fn [reply]
+                            (json-send! reply 503
+                                        {:error "mcp_routes_temporarily_unavailable"
+                                         :detail "MCP OAuth and transport routes are temporarily disabled during runtime stabilization"}))]
+
+    (.get app "/.well-known/oauth-authorization-server"
+          (fn [_req reply]
+            (let [issuer (js/URL. (.toString base))]
+              (.send reply
+                     #js {:issuer (-> (.toString issuer) (.replace (js/RegExp. "/$") ""))
+                          :authorization_endpoint (.toString (js/URL. "/api/mcp/oauth/authorize" issuer))
+                          :token_endpoint (.toString (js/URL. "/api/mcp/oauth/token" issuer))
+                          :registration_endpoint (.toString (js/URL. "/api/mcp/oauth/register" issuer))
+                          :response_types_supported #js ["code"]
+                          :grant_types_supported #js ["authorization_code"]
+                          :code_challenge_methods_supported #js ["S256"]
+                          :token_endpoint_auth_methods_supported #js ["none"]}))))
+
+    (.get app "/api/mcp/oauth/authorize" (fn [_req reply] (send-unavailable! reply)))
+    (.get app "/api/mcp/oauth/authorize/confirm" (fn [_req reply] (send-unavailable! reply)))
+    (.post app "/api/mcp/oauth/register" (fn [_req reply] (send-unavailable! reply)))
+    (.post app "/api/mcp/oauth/token" (fn [_req reply] (send-unavailable! reply)))
+    (.get app "/api/mcp/tokens" (fn [_req reply] (send-unavailable! reply)))
+    (.delete app "/api/mcp/tokens/:tokenId" (fn [_req reply] (send-unavailable! reply)))
+    (.post app "/mcp" (fn [_req reply] (send-unavailable! reply)))
+    (.get app "/mcp" (fn [_req reply] (send-unavailable! reply)))
+    (.delete app "/mcp" (fn [_req reply] (send-unavailable! reply)))
+
+    nil))
