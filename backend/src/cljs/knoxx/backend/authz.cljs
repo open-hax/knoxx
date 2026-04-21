@@ -119,7 +119,8 @@
 
 (defn ctx-tool-allowed?
   [ctx tool-id]
-  (= "allow" (ctx-tool-effect ctx tool-id)))
+  (or (system-admin? ctx)
+      (= "allow" (ctx-tool-effect ctx tool-id))))
 
 (defn ensure-permission!
   [ctx permission]
