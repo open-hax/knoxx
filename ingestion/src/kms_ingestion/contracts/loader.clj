@@ -93,7 +93,7 @@
   [path & body]
   `(with-contracts-dir* ~path (fn [] ~@body)))
 
-(defn- contracts-root
+(defn contracts-root
   "Locate the contracts root directory.
   Checked in order:
     - *contracts-dir* dynamic var  (test injection)

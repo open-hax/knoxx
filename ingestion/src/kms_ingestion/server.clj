@@ -12,6 +12,8 @@
    [reitit.ring.middleware.muuntaja :as muuntaja]
    [muuntaja.core :as m]
    [kms-ingestion.api.routes :as routes]
+   [kms-ingestion.contracts.loader :as contracts]
+   [kms-ingestion.contracts.resolve :as cr]
    [kms-ingestion.db :as db]
    [kms-ingestion.drivers.local :as local]
    [kms-ingestion.jobs.worker :as worker]
@@ -284,46 +286,84 @@
                     (println "[scheduler] error:" (.getMessage e))))
                 (Thread/sleep (long (config/ingest-scheduler-poll-ms))))))))
 
-(defn- ensure-default-workspace-source!
-  []
-  (db/ensure-tenant! "devel" "Devel Workspace")
-  (when-not (seq (db/list-sources "devel"))
-    (println "[bootstrap] creating default devel workspace source")
-    (db/create-source!
-     {:tenant-id "devel"
-     :driver-type "local"
-     :name "devel workspace"
-     :config {:root_path "/app/workspace/devel"
-               :sync_interval_minutes 30
-               :passive_watch true}
-      :collections ["devel"]
-      :file-types [".md" ".markdown" ".txt" ".rst" ".org" ".adoc"
-                   ".json" ".jsonl" ".yaml" ".yml" ".toml" ".ini" ".cfg" ".conf" ".env"
-                   ".xml" ".csv" ".tsv" ".html" ".htm" ".css" ".js" ".jsx" ".ts" ".tsx"
-                   ".py" ".rb" ".php" ".java" ".kt" ".go" ".rs" ".c" ".cc" ".cpp" ".h" ".hpp"
-                   ".clj" ".cljs" ".cljc" ".edn" ".sql" ".sh" ".bash" ".zsh" ".fish"
-                   ".tex" ".bib" ".nix" ".dockerfile" ".gradle" ".properties"]
-       :exclude-patterns ["**/.git/**" "**/node_modules/**" "**/dist/**" "**/coverage/**"
-                          "**/.clj-kondo/**" "**/.cpcache/**" "**/.shadow-cljs/**" "**/.pnpm-store/**"
-                          "**/.next/**" "**/.venv/**" "**/venv/**" "**/__pycache__/**"
-                          "**/*.png" "**/*.jpg" "**/*.jpeg" "**/*.gif" "**/*.pdf"
-                          "**/*.zip" "**/*.tar.gz"]})))
+(defn- ensure-source-from-contract!
+  "Create or verify a database source from a loaded contract map.
+  Uses the contract to derive tenant, driver type, name, config, collections,
+  file-types, and exclude-patterns — no hardcoded values.
+  If the source already exists, updates its config from the contract."
+  [tenant-id source-id-str contract]
+  (let [tenant-name (or (get contract :tenant/id) tenant-id)]
+    (db/ensure-tenant! tenant-id tenant-name)
+    (let [existing-sources (db/list-sources tenant-id)
+          driver-type      (name (or (cr/source-driver contract) :local))
+          source-name-str  (or (cr/source-name contract) source-id-str)
+          existing         (first (filter #(= source-name-str (:name %)) existing-sources))
+          cfg              (cr/source-config contract)
+          root-p           (cr/root-path contract)
+          file-types       (or (seq (cr/file-types contract)) [])
+          exclude-pats     (or (seq (cr/exclude-patterns contract)) [])
+          include-pats     (or (seq (cr/include-patterns contract)) [])
+          sync-minutes     (cr/sync-interval-minutes contract)
+          passive-w        (cr/passive-watch-enabled? contract)
+          collections      (or (cr/sink-collections contract) [tenant-id])
+          ;; Store contract source ID in config so the worker can map UUID -> contract file
+          source-cfg       (cond-> (dissoc cfg :root_path)
+                             root-p       (assoc :root_path root-p)
+                             sync-minutes (assoc :sync_interval_minutes sync-minutes)
+                             (some? passive-w) (assoc :passive_watch passive-w)
+                             true         (assoc :contract_source_id source-id-str))
+          contract-fields  {:config           source-cfg
+                            :collections      collections
+                            :file-types       (vec file-types)
+                            :exclude-patterns (vec exclude-pats)
+                            :include-patterns (vec include-pats)}]
+      (if existing
+        ;; Source exists — check if contract config has changed
+        (let [existing-cfg (or (parse-jsonish (:config existing)) {})]
+          (when (or (not= (:root_path existing-cfg) root-p)
+                    (not= (vec (or (parse-jsonish (:file_types existing)) []))
+                          (vec file-types))
+                    (not= (set (or (parse-jsonish (:exclude_patterns existing)) #{}))
+                          (set exclude-pats))
+                    (not= (:contract_source_id existing-cfg) source-id-str))
+            (println (str "[bootstrap] syncing source from contract: "
+                          tenant-id "/" source-id-str
+                          (when (not= (:root_path existing-cfg) root-p)
+                            (str " root_path: " (:root_path existing-cfg) " -> " root-p))))
+            (db/update-source! (:source_id existing) contract-fields)))
+        ;; Source does not exist — create it
+        (do
+          (println (str "[bootstrap] creating source from contract: "
+                        tenant-id "/" source-id-str " (driver=" driver-type ")"))
+          (db/create-source!
+           (assoc contract-fields
+                  :tenant-id   tenant-id
+                  :driver-type driver-type
+                  :name        source-name-str)))))))
 
-(defn- ensure-pi-sessions-source!
-  "Create a pi-sessions ingestion source if one doesn't exist."
+(defn- ensure-sources-from-contracts!
+  "Scan the contracts directory and ensure all discovered sources exist in the DB.
+  This replaces the old hardcoded ensure-default-workspace-source! and
+  ensure-pi-sessions-source! functions."
   []
-  (db/ensure-tenant! "knoxx-session" "Pi Session History")
-  (let [existing (filter #(= "pi-sessions" (:driver_type %)) (db/list-sources "knoxx-session"))]
-    (when-not (seq existing)
-      (println "[bootstrap] creating pi-sessions ingestion source")
-      (db/create-source!
-       {:tenant-id "knoxx-session"
-        :driver-type "pi-sessions"
-        :name "pi coding sessions"
-        :config {:root_path (or (System/getenv "PI_SESSIONS_ROOT") "/home/err/.pi/agent/sessions")
-                 :sync_interval_minutes 5}
-        :collections ["knoxx-session"]
-        :file-types [".jsonl"]}))))
+  (let [root (contracts/contracts-root)]
+    (if root
+      (let [root-file (io/file root)]
+        (println (str "[bootstrap] scanning contracts dir: " root))
+        (doseq [^java.io.File tenant-dir (.listFiles root-file)
+                :when (.isDirectory tenant-dir)
+                :let [tenant-id (.getName tenant-dir)
+                      sources-dir (io/file tenant-dir "sources")]
+                :when (.isDirectory sources-dir)]
+          (doseq [^java.io.File edn-file (.listFiles sources-dir)
+                  :when (str/ends-with? (.getName edn-file) ".edn")
+                  :let [source-id-str (str/replace (.getName edn-file) #"\.edn$" "")
+                        contract (contracts/load-source-contract tenant-id source-id-str)]]
+            (when contract
+              (ensure-source-from-contract! tenant-id source-id-str contract)))))
+      (do
+        (println "[bootstrap] No contracts directory found — skipping contract-driven source creation")
+        (println "[bootstrap] Set CONTRACTS_DIR env var or place contracts/ next to the ingestion package")))))
 
 (defn- start-watcher!
   []
@@ -394,8 +434,7 @@
   ;; Initialize database
   (db/init!)
   (db/reset-orphaned-jobs!)
-  (ensure-default-workspace-source!)
-  (ensure-pi-sessions-source!)
+  (ensure-sources-from-contracts!)
   (worker/init-executor!)
   (queue-initial-jobs!)
   (start-scheduler!)

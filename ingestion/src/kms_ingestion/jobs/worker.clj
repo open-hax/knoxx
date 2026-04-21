@@ -81,7 +81,9 @@
 
                               :else
                               {:status :failed :error (str "unsupported sink type: " sink-type)})
-                            {:status :failed :error "no content"})]
+                            {:status :failed :error (str "no content: " (:error file-data))})
+            _ (when (= :failed (:status ingest-result))
+                (control/log! (str "[JOB " job-id "] FAILED " (:path file-meta) ": " (:error ingest-result))))]
         (assoc ingest-result :file file-meta-with-hash))
       (catch Exception e
         (when (or use-openplanner? pi-sessions?)
@@ -99,16 +101,22 @@
                             :started_at (Timestamp/from (Instant/now))})
     (let [source-id (str (:source_id source))
           tenant-id (:tenant_id source)
+          ;; Re-fetch source from DB to get latest config (contract_source_id, etc.)
+          ;; The passed-in `source` may be a stale snapshot from before bootstrap updates
+          fresh-source (or (db/get-source source-id tenant-id) source)
           job-row (db/get-job-by-id job-id)
           job-config (or (support/parse-jsonish (:config job-row)) {})
-          contract (contracts/load-source-contract tenant-id source-id job-config)
+          base-driver-config (or (support/parse-jsonish (:config fresh-source)) {})
+          ;; Use contract_source_id from the source config if available,
+          ;; so we look up the right .edn file (not the DB UUID)
+          contract-source-id (or (:contract_source_id base-driver-config) source-id)
+          contract (contracts/load-source-contract tenant-id contract-source-id job-config)
           full-scan? (true? (or (:full_scan job-config) (:full-scan job-config)))
           watch-paths (vec (or (:watch_paths job-config) (:watch-paths job-config) []))
           deleted-paths (vec (or (:deleted_paths job-config) (:deleted-paths job-config) []))
           existing-state (db/get-existing-state source-id)
           existing-hashes (into {} (map (fn [[file-id row]] [file-id (:content_hash row)]) existing-state))
           driver-type (:driver_type source)
-          base-driver-config (or (support/parse-jsonish (:config source)) {})
           contract-driver-config (or (:source/config contract) {})
           driver-config (merge base-driver-config contract-driver-config)
           driver (registry/create-driver driver-type driver-config)]
@@ -125,14 +133,14 @@
       (let [discover-opts (cond-> {:existing-state existing-state
                                    :contract contract
                                    :file-types (or (seq (cr/file-types contract))
-                                                   (:file_types source)
-                                                   (:file-types source))
+                                                   (:file_types fresh-source)
+                                                   (:file-types fresh-source))
                                    :include-patterns (or (seq (cr/include-patterns contract))
-                                                         (:include_patterns source)
-                                                         (:include-patterns source))
+                                                         (:include_patterns fresh-source)
+                                                         (:include-patterns fresh-source))
                                    :exclude-patterns (or (seq (cr/exclude-patterns contract))
-                                                         (:exclude_patterns source)
-                                                         (:exclude-patterns source))}
+                                                         (:exclude_patterns fresh-source)
+                                                         (:exclude-patterns fresh-source))}
                             (seq watch-paths) (assoc :include-patterns watch-paths))
             root-path (or (:root-path driver-config) (:root_path driver-config))
             streaming? (= driver-type "local")

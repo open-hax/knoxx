@@ -87,6 +87,10 @@
               (not= name ".github"))
          (boolean (skip-dirs name))))))
 
+(defn- safe-seq [v]
+  (when (and v (coll? v) (not (instance? org.postgresql.util.PGobject v)))
+    (seq v)))
+
 (defn- candidate-file? [rel-path f-name ext file-types include-patterns exclude-patterns abs-path contract]
   (let [skip-dirs       (contract-or-default contract cr/skip-dirs       hardcoded-skip-dirs)
         skip-files      (contract-or-default contract cr/skip-files      #{})
@@ -97,13 +101,13 @@
          (some skip-dirs       (str/split rel-path #"/"))
          (skip-files      f-name)
          (skip-extensions ext)
-         (and (seq include-patterns)
+         (and (safe-seq include-patterns)
               (not (some #(path-matches-glob? rel-path %) include-patterns)))
-         (and (seq exclude-patterns)
+         (and (safe-seq exclude-patterns)
               (some #(path-matches-glob? rel-path %) exclude-patterns))
-         (and (seq file-types)
+         (and (safe-seq file-types)
               (not (some #(path-matches-glob? f-name (str "*" %)) file-types)))
-         (and (empty? file-types)
+         (and (not (safe-seq file-types))
               (not (text-like-file? abs-path contract)))))))
 
 ;;; ---- crypto / time --------------------------------------------------------

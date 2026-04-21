@@ -216,6 +216,25 @@
   (query-one "DELETE FROM ingestion_sources WHERE source_id = ?::uuid AND tenant_id = ? RETURNING source_id"
              source-id tenant-id))
 
+(defn update-source!
+  "Update an existing ingestion source's config, file_types, exclude_patterns, etc."
+  [source-id {:keys [config collections file-types include-patterns exclude-patterns]}]
+  (query-one
+   (str "UPDATE ingestion_sources SET "
+        "config = ?::jsonb, "
+        "collections = ?::jsonb, "
+        "file_types = ?::jsonb, "
+        "include_patterns = ?::jsonb, "
+        "exclude_patterns = ?::jsonb, "
+        "updated_at = NOW() "
+        "WHERE source_id = ?::uuid RETURNING *")
+   (json/generate-string config)
+   (json/generate-string (or collections []))
+   (when file-types (json/generate-string file-types))
+   (when include-patterns (json/generate-string include-patterns))
+   (when exclude-patterns (json/generate-string exclude-patterns))
+   source-id))
+
 ;; ============================================================
 ;; Ingestion Jobs
 ;; ============================================================

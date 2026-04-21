@@ -27,6 +27,41 @@
       v)))
 
 ;; ────────────────────────────────────────────────────────────────────────────
+;; Source Identity & Config
+;; ────────────────────────────────────────────────────────────────────────────
+
+(defn source-id
+  "Extract the source identifier (keyword or string) from a contract."
+  [c]
+  (get-in-contract c [:source/id] (constantly nil)))
+
+(defn source-name
+  "Extract the human-readable source name from a contract."
+  [c]
+  (get-in-contract c [:source/name] (constantly nil)))
+
+(defn source-driver
+  "Extract the driver type (e.g. :local, :pi-sessions) from a contract."
+  [c]
+  (get-in-contract c [:source/driver] (constantly nil)))
+
+(defn source-config
+  "Extract the source/config map (root-path, etc.) from a contract."
+  [c]
+  (get-in-contract c [:source/config] (constantly {})))
+
+(defn root-path
+  "Extract root-path from the contract's source/config, checking both key conventions."
+  [c]
+  (let [cfg (source-config c)]
+    (or (:root-path cfg) (:root_path cfg))))
+
+(defn source-enabled?
+  "Whether this source is enabled for ingestion."
+  [c]
+  (get-in-contract c [:source/enabled?] (constantly true)))
+
+;; ────────────────────────────────────────────────────────────────────────────
 ;; Discovery
 ;; ────────────────────────────────────────────────────────────────────────────
 
