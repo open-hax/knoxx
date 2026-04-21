@@ -174,7 +174,8 @@ async function requireBrowserAuthContext(req, reply) {
     const currentUrl = new URL(req.raw.url || '/api/mcp/oauth/authorize', publicBaseUrl);
     const loginUrl = new URL('/api/auth/login', publicBaseUrl);
     loginUrl.searchParams.set('redirect', currentUrl.pathname + currentUrl.search);
-    reply.redirect(302, loginUrl.toString());
+    // Fastify v5 signature: reply.redirect(url, [statusCode])
+    reply.redirect(loginUrl.toString(), 302);
     return null;
   }
 }
@@ -418,7 +419,8 @@ app.get('/api/mcp/oauth/authorize/confirm', async (req, reply) => {
   const redirect = new URL(redirectUri);
   redirect.searchParams.set('code', code);
   if (state) redirect.searchParams.set('state', state);
-  reply.redirect(302, redirect.toString());
+  // Fastify v5 signature: reply.redirect(url, [statusCode])
+  reply.redirect(redirect.toString(), 302);
 });
 
 // OAuth token exchange endpoint (authorization_code + PKCE S256).
