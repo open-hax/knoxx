@@ -1,3 +1,4 @@
 {:cap/id :cap/semantic
  :cap/tools [:semantic_query
+             :semantic_read
              :graph_query]}

@@ -4,6 +4,8 @@
                      :cap/edit
                      :cap/bash
                      :cap/websearch
+                     :cap/memory
+                     :cap/semantic
                      :cap/canvas
                      :cap/email
                      :cap/discord
