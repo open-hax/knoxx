@@ -370,7 +370,7 @@ export async function cancelIngestionJob(jobId: string): Promise<void> {
 
 export interface ServiceHealth {
   ok: boolean;
-  services: Record<string, { ok: boolean; status?: number; error?: string; url?: string }>;
+  services: Record<string, { ok: boolean; status?: number; error?: string; url?: string; detail?: unknown }>;
 }
 
 export async function fetchServiceHealth(): Promise<ServiceHealth> {

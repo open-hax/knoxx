@@ -460,7 +460,10 @@
                   proxx-key (:proxx-auth-token config)
                   check (fn [url headers]
                           (-> (fetch-json url #js {:headers (or headers #js {}) :method "GET"})
-                              (.then (fn [resp] {:ok (aget resp "ok") :status (aget resp "status") :url url}))
+                              (.then (fn [resp] {:ok (aget resp "ok")
+                                               :status (aget resp "status")
+                                               :url url
+                                               :detail (aget resp "body")}))
                               (.catch (fn [err] {:ok false :error (.-message err) :url url}))))]
               (-> (js/Promise.all
                     (into-array
@@ -471,7 +474,7 @@
                        (check "http://127.0.0.1:3777/health" nil)
                        (check "http://127.0.0.1:8787/v1/health" nil)
                        (check "http://127.0.0.1:8786/health" nil)
-                       (check "http://127.0.0.1:8799/health" nil)]))
+                       (check "http://127.0.0.1:8801/health" nil)]))
                   (.then (fn [results]
                            (let [r (js->clj results :keywordize-keys true)]
                              (json-response! reply 200
