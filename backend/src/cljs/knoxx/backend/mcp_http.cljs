@@ -156,8 +156,17 @@
 
 (defn- as-promise
   [value]
-  (if (instance? js/Promise value)
-    value
+  (cond
+    (instance? js/Promise value)
+    (.then value (fn [resolved]
+                   (if (nil? resolved)
+                     js/undefined
+                     resolved)))
+
+    (nil? value)
+    (js/Promise.resolve js/undefined)
+
+    :else
     (js/Promise.resolve value)))
 
 (defn- require-redis!
