@@ -8,7 +8,7 @@
  :source/driver :local
 
  :source/config
- {:root-path "/app/workspace/devel"}
+ {:root-path "/home/err/devel"}
 
  :source/discovery
  {:file-types [".md" ".markdown" ".txt" ".rst" ".org" ".adoc"

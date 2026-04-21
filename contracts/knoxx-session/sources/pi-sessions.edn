@@ -8,7 +8,7 @@
  :source/driver :pi-sessions
 
  :source/config
- {:root-path :env/PI_SESSIONS_ROOT}
+ {:root-path "/home/err/.pi/agent/sessions"}
 
  :source/discovery
  {:file-types [".jsonl"]}
