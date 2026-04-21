@@ -1,0 +1,71 @@
+name: ingestion-ci
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'ingestion/**'
+      - 'contracts/**'
+      - '.github/workflows/ingestion-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'ingestion/**'
+      - 'contracts/**'
+      - '.github/workflows/ingestion-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ingestion-test:
+    name: ingestion (clojure lint + unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: ingestion
+
+    env:
+      CONTRACTS_DIR: ${{ github.workspace }}/contracts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Clojure deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+          key: clojure-deps-${{ hashFiles('ingestion/deps.edn') }}
+          restore-keys: clojure-deps-
+
+      - name: Install Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13
+        with:
+          cli: latest
+          clj-kondo: latest
+
+      - name: Download deps
+        run: clojure -P -A:test
+
+      - name: Lint (clj-kondo)
+        # Runs over src + test; exits non-zero on any error-level finding.
+        # Warnings are printed but do not fail the build yet.
+        run: clj-kondo --lint src test --fail-level error
+
+      - name: Run tests
+        run: clojure -M:test

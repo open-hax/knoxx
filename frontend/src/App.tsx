@@ -7,6 +7,7 @@ import { useAuth } from "./pages/useAuth";
 import ChatPage from "./pages/ChatPage";
 import CmsPage from "./pages/CmsPage";
 import ContractsPage from "./pages/ContractsPage";
+import DataPage from "./pages/DataPage";
 import GardensPage from "./pages/GardensPage";
 import OpsRoot from "./pages/OpsRoot";
 import TranslationReviewPage from "./pages/TranslationReviewPage";
@@ -41,6 +42,9 @@ function App() {
             <NavLink to="/contracts" className={navLinkClass}>
               Contracts
             </NavLink>
+            <NavLink to="/data" className={navLinkClass}>
+              Data
+            </NavLink>
             <NavLink to="/gardens" className={navLinkClass}>
               Gardens
             </NavLink>
@@ -63,6 +67,7 @@ function App() {
           <Route path="/" element={<ChatPage />} />
           <Route path="/cms" element={<CmsPage />} />
           <Route path="/contracts" element={<ContractsPage />} />
+          <Route path="/data" element={<DataPage />} />
           <Route path="/gardens" element={<GardensPage />} />
           <Route path="/translations" element={<TranslationReviewPage />} />
           <Route path="/translations/:documentId/:targetLang" element={<TranslationReviewPage />} />

@@ -117,35 +117,42 @@
    Keeps a small baseline spacing to avoid burstiness even when under target,
    then ramps up delay steeply as CPU approaches/exceeds the target.
    Target = max-load-per-core * host cores."
-  [cpu-cores]
-  (let [cores (available-cores)
-        target (* (config/ingest-max-load-per-core) cores)
-        ratio (if (pos? target) (/ cpu-cores target) 0)]
-    (cond
-      (< ratio 0.25) 8
-      (< ratio 0.50) 15
-      (< ratio 0.70) 30
-      (< ratio 0.85) 60
-      (< ratio 1.00) 120
-      (< ratio 1.20) 250
-      (< ratio 1.50) 500
-      (< ratio 2.00) 1000
-      :else 2000)))
+  ([cpu-cores]
+   (control-delay-ms cpu-cores (config/ingest-max-load-per-core)))
+  ([cpu-cores max-load-per-core]
+   (let [cores (available-cores)
+         target (* max-load-per-core cores)
+         ratio (if (pos? target) (/ cpu-cores target) 0)]
+     (cond
+       (< ratio 0.25) 8
+       (< ratio 0.50) 15
+       (< ratio 0.70) 30
+       (< ratio 0.85) 60
+       (< ratio 1.00) 120
+       (< ratio 1.20) 250
+       (< ratio 1.50) 500
+       (< ratio 2.00) 1000
+       :else 2000))))
 
 (defn maybe-throttle!
-  [job-id]
-  (when (config/ingest-throttle-enabled?)
-    (let [cpu-cores (smoothed-cpu-cores)
-          target-cores (* (config/ingest-max-load-per-core) (available-cores))
-          delay (control-delay-ms cpu-cores)]
-      (when (and cpu-cores (>= cpu-cores (* 0.7 target-cores)))
-        (log! (str "[JOB " job-id "] Throttling: cpu="
-                   (format "%.1f" cpu-cores) " cores"
-                   " > "
-                   (format "%.1f" target-cores) " cores"
-                   ", delay=" delay "ms")))
-      (when (pos? delay)
-        (Thread/sleep (long delay))))))
+  ([job-id]
+   (maybe-throttle! job-id {:throttle-enabled? (config/ingest-throttle-enabled?)
+                            :max-load-per-core (config/ingest-max-load-per-core)}))
+  ([job-id {:keys [throttle-enabled? max-load-per-core]}]
+   (let [throttle-enabled? (if (nil? throttle-enabled?) true throttle-enabled?)
+         max-load-per-core (or max-load-per-core 0.85)]
+     (when throttle-enabled?
+       (let [cpu-cores (smoothed-cpu-cores)
+             target-cores (* max-load-per-core (available-cores))
+             delay (control-delay-ms cpu-cores max-load-per-core)]
+         (when (and cpu-cores (>= cpu-cores (* 0.7 target-cores)))
+           (log! (str "[JOB " job-id "] Throttling: cpu="
+                      (format "%.1f" cpu-cores) " cores"
+                      " > "
+                      (format "%.1f" target-cores) " cores"
+                      ", delay=" delay "ms")))
+         (when (pos? delay)
+           (Thread/sleep (long delay))))))))
 
 (defn note-openplanner-success!
   []

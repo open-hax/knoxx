@@ -161,7 +161,7 @@
   "Ingest a pi session's events via OpenPlanner /v1/events endpoint.
    The :content of file-data is a JSON string with {:session-id, :cwd, :events [...]}.
    Events are already mapped to OpenPlanner EventEnvelopeV1 format."
-  [_job-id tenant-id source-id openplanner-url openplanner-api-key file]
+  [_job-id tenant-id _source-id openplanner-url openplanner-api-key file]
   (let [parsed (some-> (:content file) (json/parse-string keyword))
         events (:events parsed)
         batch-size 20

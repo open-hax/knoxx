@@ -36,6 +36,9 @@
                              "http://host.docker.internal:7777")
    :openplanner-api-key (env "OPENPLANNER_API_KEY" "")
 
+   :ingestion-base-url (env "KMS_INGESTION_URL" "http://127.0.0.1:3003")
+
+
    :model-lab-openai-api-key (env "MODEL_LAB_OPENAI_API_KEY" "")
 
    :shibboleth-base-url (env "SHIBBOLETH_BASE_URL" "")

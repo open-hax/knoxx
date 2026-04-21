@@ -1,0 +1,71 @@
+{:contract/id :defaults/ingestion
+ :contract/type :ingest/source
+ :contract/version 1
+ :tenant/id "_defaults"
+ :source/id :defaults
+ :source/name "Global ingestion defaults"
+ :source/enabled? true
+ :source/driver :local
+
+ :source/discovery
+ {:hidden-policy :skip
+  :skip-dirs #{"node_modules" ".git" "dist" ".next" "__pycache__" ".venv" "venv"
+               "target" ".pio" "coverage" ".pytest_cache" ".mypy_cache" "build"
+               ".gradle" ".idea" ".vscode" ".vs" "vendor" "fixtures" "__fixtures__"}
+  :skip-files #{"package-lock.json" "pnpm-lock.yaml" "yarn.lock" "Cargo.lock"
+                "poetry.lock" "composer.lock" "Gemfile.lock" "flake.lock"
+                ".DS_Store" ".env" ".env.local"}
+  :skip-extensions #{".min.js" ".min.css" ".d.ts" ".map" ".pyc" ".pyo"
+                     ".so" ".dylib" ".dll" ".exe" ".bin"}
+  :text-filenames #{"dockerfile" "makefile" "justfile" "license" "copying" "release" "publish" "hooks"}}
+
+ :source/schedule
+ {:mode :hybrid
+  :sync-interval-minutes 30
+  :scheduler-poll-ms 60000
+  :passive-watch-enabled? true
+  :passive-watch-poll-ms 60000
+  :passive-watch-debounce-ms 5000
+  :bootstrap? true}
+
+ :source/ingest
+ {:batch-size 10
+  :batch-parallelism 4
+  :batch-delay-ms 100
+  :throttle-enabled? true
+  :max-load-per-core 0.85
+  :throttle-sleep-ms 1000
+  :retry-failed? true}
+
+ :source/sink
+ {:type :openplanner
+  :visibility "internal"
+  :source-label "kms-ingestion"
+  :created-by "kms-ingestion"
+  :language "en"}
+
+ :source/semantic
+ {:enabled?      true
+  :build-index?  true
+  :chunk-size    800
+  :chunk-overlap 100}
+
+ :source/translation
+ {:enabled? false
+  :model "glm-5"
+  :poll-ms 5000}
+
+ :source/projection
+ {:domain-strategy :first-path-segment
+  :document-kind-strategy :path-node-type
+  :visibility "internal"
+  :language "en"
+  :created-by "kms-ingestion"
+  :source "kms-ingestion"}
+
+ :source/backpressure
+ {:strategy :exponential
+  :base-delay-ms 1000
+  :max-delay-ms 60000
+  :failure-window 5
+  :respect-remote? true}}

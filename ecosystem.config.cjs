@@ -168,6 +168,7 @@ module.exports = {
         KNOXX_BACKEND_URL: 'http://127.0.0.1:8000',
         WORKSPACE_PATH: workspaceRoot,
         OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
+        OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
         PROXX_BASE_URL: 'http://127.0.0.1:8790',
         PROXX_AUTH_TOKEN: 'change-me-openplanner-proxx-token',
       },

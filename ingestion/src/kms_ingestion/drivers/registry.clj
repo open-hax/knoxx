@@ -1,7 +1,6 @@
 (ns kms-ingestion.drivers.registry
   "Driver registry for creating driver instances."
   (:require
-   [kms-ingestion.drivers.protocol :as protocol]
    [kms-ingestion.drivers.local :as local]
    [kms-ingestion.drivers.pi-sessions :as pi-sessions]
    [kms-ingestion.drivers.promptdb :as promptdb]))

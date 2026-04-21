@@ -2,35 +2,29 @@
   "Local filesystem driver for ingestion."
   (:require
    [babashka.fs :as fs]
-   [clojure.java.io :as io]
-   [kms-ingestion.drivers.protocol :as protocol]
-   [clojure.string :as str])
+   [clojure.string :as str]
+   [kms-ingestion.contracts.resolve :as cr]
+   [kms-ingestion.drivers.protocol :as protocol])
   (:import
+   [java.math BigInteger]
+   [java.nio.file Files]
    [java.security MessageDigest]
-   [java.nio.file Files OpenOption]
    [java.time Instant]))
 
-(defn- get-root-path
-  "Extract root-path from config, handling both :root-path and :root_path keys."
-  [config]
+;;; ---- config helpers -------------------------------------------------------
+
+(defn- get-root-path [config]
   (or (:root-path config)
       (:root_path config)
       (throw (ex-info "Missing root_path in driver config" {:config config}))))
 
-;; Skip patterns
-(def skip-dirs
-  #{"node_modules" ".git" "dist" ".next" "__pycache__" ".venv" "venv"
-    "target" ".pio" "coverage" ".pytest_cache" ".mypy_cache" "build"
-    ".gradle" ".idea" ".vscode" ".vs" "vendor" "fixtures" "__fixtures__"})
+(defn- contract-or-default [contract resolver default-value]
+  (let [v (resolver contract)]
+    (if (or (nil? v) (and (coll? v) (empty? v)))
+      default-value
+      v)))
 
-(def skip-files
-  #{"package-lock.json" "pnpm-lock.yaml" "yarn.lock" "Cargo.lock"
-    "poetry.lock" "composer.lock" "Gemfile.lock" "flake.lock"
-    ".DS_Store" ".env" ".env.local"})
-
-(def skip-extensions
-  #{".min.js" ".min.css" ".d.ts" ".map" ".pyc" ".pyo"
-     ".so" ".dylib" ".dll" ".exe" ".bin"})
+;;; ---- file classification --------------------------------------------------
 
 (def default-text-extensions
   #{".md" ".markdown" ".txt" ".rst" ".org" ".adoc"
@@ -46,353 +40,285 @@
 (def default-text-filenames
   #{"dockerfile" "makefile" "justfile" "license" "copying" "release" "publish" "hooks"})
 
+(def ^:private default-skip-extensions
+  #{".min.js" ".min.css" ".d.ts" ".map" ".pyc" ".pyo"
+    ".so" ".dylib" ".dll" ".exe" ".bin"})
+
 (defn text-like-file?
-  "Default heuristic for files we can safely treat as text documents."
-  [path]
-  (let [name (str/lower-case (str (fs/file-name path)))
-        ext-raw (str/lower-case (or (fs/extension path) ""))
-        ext (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
-        result (or (default-text-extensions ext)
-                   (default-text-filenames name)
-                   (= name "dockerfile")
-                   (str/ends-with? name ".env.example")
-                   (str/ends-with? name ".service")
-                   (str/ends-with? name ".desktop"))]
-    result))
+  ([path] (text-like-file? path nil))
+  ([path contract]
+   (let [name            (str/lower-case (str (fs/file-name path)))
+         ext-raw         (str/lower-case (or (fs/extension path) ""))
+         ext             (if (str/starts-with? ext-raw ".") ext-raw (str "." ext-raw))
+         skip-extensions (contract-or-default contract cr/skip-extensions default-skip-extensions)
+         text-extensions (contract-or-default contract cr/text-extensions default-text-extensions)
+         text-filenames  (contract-or-default contract cr/text-filenames  default-text-filenames)]
+     (boolean
+      (and (not (some #(str/ends-with? name %) skip-extensions))
+           (or (text-extensions ext)
+               (text-filenames name)
+               (= name "dockerfile")
+               (str/ends-with? name ".env.example")
+               (str/ends-with? name ".service")
+               (str/ends-with? name ".desktop")))))))
 
-(defn path-matches-glob?
-  "Check if a filename matches a simple glob pattern like *.md."
-  [filename pattern]
+(defn path-matches-glob? [filename pattern]
   (cond
-    ;; Handle *.ext patterns
-    (.startsWith pattern "*.")
-    (str/ends-with? filename (subs pattern 1))
-    
-    ;; Handle **/ prefix patterns
-    (.startsWith pattern "**/")
-    (str/ends-with? filename (subs pattern 3))
-    
-    ;; Handle exact matches
-    :else
-    (= filename pattern)))
+    (.startsWith pattern "**/*.")  (str/ends-with? filename (subs pattern 4))
+    (.startsWith pattern "**/")    (str/ends-with? filename (subs pattern 3))
+    (.startsWith pattern "*.")     (str/ends-with? filename (subs pattern 1))
+    (.endsWith   pattern "/*")     (str/starts-with? filename (subs pattern 0 (- (count pattern) 1)))
+    :else                          (= filename pattern)))
 
-(defn should-skip?
-  "Check if a path should be skipped."
-  [path]
-  (let [parts (fs/components path)
-        name (fs/file-name path)
-        ext (fs/extension path)]
-    (or
-     ;; Skip hidden directories (except .github)
-     (some (fn [part]
-             (and (str/starts-with? part ".")
-                  (not= part ".github")
-                  (or (skip-dirs part)
-                      (not (fs/extension part))))) ; hidden dir
-           parts)
-     ;; Skip specific files
-     (skip-files name)
-     ;; Skip by extension
-     (skip-extensions ext)
-     ;; Skip test files (unless explicitly included)
-     (and (or (str/includes? (str/lower-case name) "test")
-              (str/includes? (str/lower-case name) "spec"))
-          ;; Don't skip if there are explicit include patterns
-          false))))
+(def ^:private hardcoded-skip-dirs
+  #{"node_modules" ".git" "dist" ".next" "__pycache__" ".venv" "venv"
+    "target" ".pio" "coverage" ".pytest_cache" ".mypy_cache" "build"
+    ".gradle" ".idea" ".vscode" ".vs" "vendor" "fixtures" "__fixtures__"})
 
-(defn sha256
-  "Compute SHA-256 hash of a file."
-  [path]
+(defn skip-directory-name?
+  ([name] (skip-directory-name? name nil))
+  ([name contract]
+   (let [skip-dirs     (if (nil? contract)
+                         hardcoded-skip-dirs
+                         (contract-or-default contract cr/skip-dirs hardcoded-skip-dirs))
+         hidden-policy (cr/hidden-policy contract)]
+     (or (and (= hidden-policy :skip)
+              (str/starts-with? name ".")
+              (not= name ".github"))
+         (boolean (skip-dirs name))))))
+
+(defn- safe-seq [v]
+  (when (and v (coll? v) (not (instance? org.postgresql.util.PGobject v)))
+    (seq v)))
+
+(defn- candidate-file? [rel-path f-name ext file-types include-patterns exclude-patterns abs-path contract]
+  (let [skip-dirs       (contract-or-default contract cr/skip-dirs       hardcoded-skip-dirs)
+        skip-files      (contract-or-default contract cr/skip-files      #{})
+        skip-extensions (contract-or-default contract cr/skip-extensions #{})]
+    (not
+     (or (and (= (cr/hidden-policy contract) :skip)
+              (some #(and (str/starts-with? % ".") (not= % ".github")) (str/split rel-path #"/")))
+         (some skip-dirs       (str/split rel-path #"/"))
+         (skip-files      f-name)
+         (skip-extensions ext)
+         (and (safe-seq include-patterns)
+              (not (some #(path-matches-glob? rel-path %) include-patterns)))
+         (and (safe-seq exclude-patterns)
+              (some #(path-matches-glob? rel-path %) exclude-patterns))
+         (and (safe-seq file-types)
+              (not (some #(path-matches-glob? f-name (str "*" %)) file-types)))
+         (and (not (safe-seq file-types))
+              (not (text-like-file? abs-path contract)))))))
+
+;;; ---- crypto / time --------------------------------------------------------
+
+(defn sha256 [path]
   (try
-    (let [digest (MessageDigest/getInstance "SHA-256")
-          bytes (Files/readAllBytes (fs/path path))]
-      (let [hash-bytes (.digest digest bytes)]
-        (format "%064x" (BigInteger. 1 hash-bytes))))
+    (let [digest     (MessageDigest/getInstance "SHA-256")
+          bytes      (Files/readAllBytes (fs/path path))
+          hash-bytes (.digest digest bytes)]
+      (format "%064x" (BigInteger. 1 hash-bytes)))
     (catch Exception _ nil)))
 
-(defn file-size
-  "Get file size in bytes."
-  [path]
-  (try
-    (fs/size path)
-    (catch Exception _ 0)))
-
-(defn modified-time
-  "Get file modification time as Instant."
-  [path]
+(defn modified-time [path]
   (try
     (-> (Files/getLastModifiedTime (fs/path path) (make-array java.nio.file.LinkOption 0))
         (.toInstant))
     (catch Exception _ nil)))
 
-(defn skip-directory-name?
-  [name]
-  (or (and (str/starts-with? name ".") (not= name ".github"))
-      (skip-dirs name)))
+;;; ---- walker ---------------------------------------------------------------
 
 (defn- file-seq-recursive
-  "Lazy depth-first file walk that skips hidden/generated dirs before descent."
-  [^java.io.File root]
-  (if-not (.exists root)
-    (do (println "[FILE-SEQ-RECURSIVE] root does not exist:" (.getAbsolutePath root))
-        ())
-    (letfn [(walk [stack]
-              (lazy-seq
-               (when-let [^java.io.File entry (first stack)]
-                 (let [rest-stack (rest stack)
-                       name (.getName entry)]
-                   (cond
-                     (.isDirectory entry)
-                     (if (skip-directory-name? name)
-                       (walk rest-stack)
-                       (let [children (->> (or (.listFiles entry) (into-array java.io.File []))
-                                           (sort-by #(.getName ^java.io.File %))
-                                           reverse)]
-                         (walk (concat children rest-stack))))
+  ([^java.io.File root] (file-seq-recursive root nil))
+  ([^java.io.File root contract]
+   (if-not (.exists root)
+     ()
+     (let [follow?   (cr/follow-symlinks? contract)
+           root-real (.toRealPath (.toPath root) (make-array java.nio.file.LinkOption 0))]
+       (letfn [(walk [stack visited]
+                 (lazy-seq
+                  (when-let [^java.io.File entry (first stack)]
+                    (let [rest-stack (rest stack)
+                          entry-name (.getName entry)
+                          entry-path (.toPath entry)
+                          symlink?   (java.nio.file.Files/isSymbolicLink entry-path)]
+                      (cond
+                        (.isDirectory entry)
+                        (cond
+                          (skip-directory-name? entry-name contract) (walk rest-stack visited)
+                          (and symlink? (not follow?))               (walk rest-stack visited)
+                          :else
+                          (let [real-path (.toRealPath entry-path (make-array java.nio.file.LinkOption 0))
+                                escaped?  (not (.startsWith real-path root-real))
+                                cycle?    (contains? visited real-path)]
+                            (if (or escaped? cycle?)
+                              (walk rest-stack visited)
+                              (let [children (->> (or (.listFiles entry) (into-array java.io.File []))
+                                                  (sort-by #(.getName ^java.io.File %))
+                                                  reverse)]
+                                (walk (concat children rest-stack) (conj visited real-path))))))
+                        (.isFile entry)
+                        (if (and symlink? (not follow?))
+                          (walk rest-stack visited)
+                          (cons entry (walk rest-stack visited)))
+                        :else
+                        (walk rest-stack visited))))))]
+         (walk (list root) #{}))))))
 
-                     (.isFile entry)
-                     (cons entry (walk rest-stack))
+;;; ---- file descriptor helpers ----------------------------------------------
 
-                     :else
-                     (walk rest-stack))))))]
-      (walk (list root)))))
+(defn- file->descriptor
+  "Build a path/name/ext map for a File relative to root-abs."
+  [^java.io.File root-abs ^java.io.File file]
+  (let [abs-path (.getAbsolutePath file)
+        rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
+        f-name   (.getName file)
+        dot      (.lastIndexOf f-name ".")
+        ext      (if (>= dot 0) (subs f-name dot) "")]
+    {:abs-path abs-path
+     :rel-path rel-path
+     :f-name   f-name
+     :ext      ext}))
 
-(defn- candidate-file?
-  [rel-path f-name ext file-types include-patterns exclude-patterns abs-path]
-  (not
-   (or (some #(str/starts-with? % ".") (str/split rel-path #"/"))
-       (some skip-dirs (str/split rel-path #"/"))
-       (skip-files f-name)
-       (skip-extensions ext)
-       (and (seq include-patterns)
-            (not (some #(path-matches-glob? rel-path %) include-patterns)))
-       (and (seq exclude-patterns)
-            (some #(path-matches-glob? rel-path %) exclude-patterns))
-       (and (seq file-types)
-            (not (some #(path-matches-glob? f-name (str "*" %)) file-types)))
-       (and (empty? file-types)
-            (not (text-like-file? abs-path))))))
+(defn- changed-entry?
+  "Return nil when file matches existing state (size+mtime), else a change map."
+  [{:keys [abs-path rel-path]} existing-state]
+  (let [mod-time      (modified-time abs-path)
+        size          (.length (java.io.File. abs-path))
+        existing      (get existing-state abs-path)
+        existing-meta (:metadata existing)
+        same?         (and existing
+                           (= (:size existing-meta) size)
+                           (= (str (:modified_at existing-meta)) (some-> mod-time str)))]
+    (when-not same?
+      {:id          abs-path
+       :path        rel-path
+       :size        size
+       :modified-at mod-time
+       :change      (if existing :changed :new)})))
+
+;;; ---- public API -----------------------------------------------------------
 
 (defn stream-files
-  "Lazy stream of new/changed file metadata based on size+mtime first.
-   Does not read file contents or hash unchanged files during discovery."
+  "Lazy stream of new/changed file entries. No content reading."
   [root-path opts]
-  (if (or (nil? root-path) (str/blank? (str root-path)))
-    ()
-    (let [root-file (java.io.File. (str root-path))
-          root-abs (.getAbsoluteFile root-file)
-          existing-state (:existing-state opts)
-          file-types (:file-types opts)
+  (when-not (or (nil? root-path) (str/blank? (str root-path)))
+    (let [root-abs         (.getAbsoluteFile (java.io.File. (str root-path)))
+          existing-state   (:existing-state opts {})
+          file-types       (:file-types opts)
           include-patterns (:include-patterns opts)
-          exclude-patterns (:exclude-patterns opts)]
+          exclude-patterns (:exclude-patterns opts)
+          contract         (:contract opts)]
       (when (.exists root-abs)
-        (->> (file-seq-recursive root-abs)
-             (keep (fn [^java.io.File file]
-                     (let [abs-path (.getAbsolutePath file)
-                           rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
-                           f-name (.getName file)
-                           ext (let [dot (.lastIndexOf f-name ".")]
-                                 (if (>= dot 0) (subs f-name dot) ""))]
-                       (when (candidate-file? rel-path f-name ext file-types include-patterns exclude-patterns abs-path)
-                         (let [file-id abs-path
-                               mod-time (modified-time abs-path)
-                               size (.length file)
-                               existing (get existing-state file-id)
-                               existing-meta (:metadata existing)
-                               same-version? (and existing
-                                                  (= (:size existing-meta) size)
-                                                  (= (str (:modified_at existing-meta)) (some-> mod-time str)))]
-                           (when-not same-version?
-                             {:id file-id
-                              :path rel-path
-                              :size size
-                              :modified-at mod-time
-                              :change (if existing :changed :new)})))))))))))
+        (->> (file-seq-recursive root-abs contract)
+             (map    #(file->descriptor root-abs %))
+             (filter #(candidate-file? (:rel-path %) (:f-name %) (:ext %)
+                                       file-types include-patterns exclude-patterns
+                                       (:abs-path %) contract))
+             (keep   #(changed-entry? % existing-state)))))))
 
 (defn snapshot-files
-  "Lightweight file snapshot for passive watch diffing.
-   Uses path/size/mtime only, no content hashing."
+  "Map of rel-path -> entry for passive watch diffing."
   [root-path opts]
   (if (or (nil? root-path) (str/blank? (str root-path)))
     {}
-    (let [root-file (java.io.File. (str root-path))
-          root-abs (.getAbsoluteFile root-file)
-          file-types (:file-types opts)
+    (let [root-abs         (.getAbsoluteFile (java.io.File. (str root-path)))
+          file-types       (:file-types opts)
           include-patterns (:include-patterns opts)
           exclude-patterns (:exclude-patterns opts)
-          entries (atom {})]
-      (when (.exists root-abs)
-        (doseq [^java.io.File file (file-seq-recursive root-abs)]
-          (let [abs-path (.getAbsolutePath file)
-                rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
-                f-name (.getName file)
-                ext (let [dot (.lastIndexOf f-name ".")]
-                      (if (>= dot 0) (subs f-name dot) ""))]
-            (when-not
-             (or (some #(str/starts-with? % ".") (str/split rel-path #"/"))
-                 (some skip-dirs (str/split rel-path #"/"))
-                 (skip-files f-name)
-                 (skip-extensions ext)
-                 (and (seq include-patterns)
-                      (not (some #(path-matches-glob? rel-path %) include-patterns)))
-                 (and (seq exclude-patterns)
-                      (some #(path-matches-glob? rel-path %) exclude-patterns))
-                 (and (seq file-types)
-                      (not (some #(path-matches-glob? f-name (str "*" %)) file-types)))
-                 (and (empty? file-types)
-                      (not (text-like-file? abs-path))))
-              (swap! entries assoc rel-path {:id abs-path
-                                             :path rel-path
-                                             :size (.length file)
-                                             :modified-at (modified-time abs-path)})))))
-      @entries)))
+          contract         (:contract opts)]
+      (if-not (.exists root-abs)
+        {}
+        (->> (file-seq-recursive root-abs contract)
+             (map    #(file->descriptor root-abs %))
+             (filter #(candidate-file? (:rel-path %) (:f-name %) (:ext %)
+                                       file-types include-patterns exclude-patterns
+                                       (:abs-path %) contract))
+             (reduce (fn [acc {:keys [rel-path abs-path]}]
+                       (assoc acc rel-path
+                              {:id          abs-path
+                               :path        rel-path
+                               :size        (.length (java.io.File. abs-path))
+                               :modified-at (modified-time abs-path)}))
+                     {}))))))
+
+(defn- classify-file
+  "Return [:new|:changed|:unchanged entry-or-nil] for a descriptor."
+  [{:keys [abs-path rel-path]} existing-state]
+  (let [mod-time      (modified-time abs-path)
+        size          (.length (java.io.File. abs-path))
+        existing      (get existing-state abs-path)
+        existing-meta (:metadata existing)
+        same?         (and existing
+                           (= (:size existing-meta) size)
+                           (= (str (:modified_at existing-meta)) (some-> mod-time str)))
+        entry         {:id abs-path :path rel-path :size size :modified-at mod-time}]
+    (cond
+      same?    [:unchanged nil]
+      existing [:changed   entry]
+      :else    [:new       entry])))
 
 (defn find-files
-  "Find all files under root-path, applying filters."
+  "Eagerly walk root-path and return stats + file list."
   [root-path opts]
   (if (or (nil? root-path) (str/blank? (str root-path)))
-    (do (println "[FIND-FILES] ERROR: root-path is nil or blank")
-        {:total-files 0 :new-files 0 :changed-files 0 :unchanged-files 0 :skipped-files 0 :files []})
-    (let [root-path-str (str root-path)
-        root-file (java.io.File. root-path-str)
-        root-abs (.getAbsoluteFile root-file)
-        existing-state (:existing-state opts)
-        file-types (:file-types opts)
-        include-patterns (:include-patterns opts)
-        exclude-patterns (:exclude-patterns opts)
-        files (atom [])
-        stats (atom {:total 0 :new 0 :changed 0 :unchanged 0 :skipped 0})]
-    (when (.exists root-abs)
-      (println (str "[FIND-FILES] Walking: " root-abs " isDir=" (.isDirectory root-abs)))
-          (doseq [^java.io.File file (file-seq-recursive root-abs)]
-        (let [abs-path (.getAbsolutePath file)
-              rel-path (str (.relativize (.toPath root-abs) (.toPath file)))
-              f-name (.getName file)
-              ext (let [dot (.lastIndexOf f-name ".")]
-                    (if (>= dot 0) (subs f-name dot) ""))]
-          (cond
-            ;; Skip dot-files and dot-dirs
-            (some #(str/starts-with? % ".")
-                  (str/split rel-path #"/"))
-            (swap! stats update :skipped inc)
+    {:total-files 0 :new-files 0 :changed-files 0 :unchanged-files 0 :skipped-files 0 :files []}
+    (let [root-abs         (.getAbsoluteFile (java.io.File. (str root-path)))
+          existing-state   (:existing-state opts {})
+          file-types       (:file-types opts)
+          include-patterns (:include-patterns opts)
+          exclude-patterns (:exclude-patterns opts)
+          contract         (:contract opts)]
+      (if-not (.exists root-abs)
+        {:total-files 0 :new-files 0 :changed-files 0 :unchanged-files 0 :skipped-files 0 :files []}
+        (let [descriptors (map #(file->descriptor root-abs %)
+                               (file-seq-recursive root-abs contract))
+              {candidates true skipped false}
+              (group-by #(candidate-file? (:rel-path %) (:f-name %) (:ext %)
+                                          file-types include-patterns exclude-patterns
+                                          (:abs-path %) contract)
+                        descriptors)
+              classified  (map #(classify-file % existing-state) (or candidates []))
+              counts      (frequencies (map first classified))]
+          {:total-files     (count candidates)
+           :new-files       (get counts :new       0)
+           :changed-files   (get counts :changed   0)
+           :unchanged-files (get counts :unchanged 0)
+           :skipped-files   (count skipped)
+           :files           (vec (keep second classified))})))))
 
-            ;; Skip well-known generated or vendored directories anywhere in the path
-            (some skip-dirs (str/split rel-path #"/"))
-            (swap! stats update :skipped inc)
+;;; ---- content --------------------------------------------------------------
 
-            ;; Skip by name
-            (skip-files f-name)
-            (swap! stats update :skipped inc)
+(defn read-file-content [path]
+  (try (slurp path :encoding "UTF-8") (catch Exception _ nil)))
 
-            ;; Skip by extension
-            (skip-extensions ext)
-            (swap! stats update :skipped inc)
-
-            ;; Apply include patterns
-            (and (seq include-patterns)
-                 (not (some #(path-matches-glob? rel-path %) include-patterns)))
-            (swap! stats update :skipped inc)
-
-            ;; Apply exclude patterns
-            (and (seq exclude-patterns)
-                 (some #(path-matches-glob? rel-path %) exclude-patterns))
-            (swap! stats update :skipped inc)
-
-            ;; Apply file type filter
-            (and (seq file-types)
-                 (not (some #(path-matches-glob? f-name (str "*" %)) file-types)))
-            (swap! stats update :skipped inc)
-
-            ;; Default: text-like only if no file-types specified
-            (and (empty? file-types)
-                 (not (text-like-file? abs-path)))
-            (swap! stats update :skipped inc)
-
-            ;; Include file
-            :else
-            (do
-              (let [file-id abs-path
-                  mod-time (try
-                             (-> (java.nio.file.Files/getLastModifiedTime (.toPath file)
-                                   (make-array java.nio.file.LinkOption 0))
-                                  (.toInstant))
-                             (catch Exception _ nil))
-                  size (.length file)
-                  existing (get existing-state file-id)
-                  existing-meta (:metadata existing)
-                  same-version? (and existing
-                                     (= (:size existing-meta) size)
-                                     (= (str (:modified_at existing-meta)) (some-> mod-time str)))]
-               (swap! stats update :total inc)
-               (cond
-                same-version?
-                (swap! stats update :unchanged inc)
-
-                existing
-                (do
-                  (swap! stats update :changed inc)
-                  (swap! files conj {:id file-id
-                                     :path rel-path
-                                     :size size
-                                     :modified-at mod-time}))
-
-                :else
-                (do
-                  (swap! stats update :new inc)
-                  (swap! files conj {:id file-id
-                                     :path rel-path
-                                     :size size
-                                      :modified-at mod-time}))))))))
-    {:total-files (:total @stats)
-     :new-files (:new @stats)
-     :changed-files (:changed @stats)
-     :unchanged-files (:unchanged @stats)
-     :skipped-files (:skipped @stats)
-     :files @files}))))
-
-(defn read-file-content
-  "Read file content as UTF-8 string."
-  [path]
-  (try
-    (slurp path :encoding "UTF-8")
-    (catch Exception _ nil)))
-
-;; ============================================================
-;; Driver Record
-;; ============================================================
+;;; ---- driver record --------------------------------------------------------
 
 (defrecord LocalDriver [config state]
   protocol/Driver
-  (discover [this opts]
-    (let [root-path (get-root-path config)
-          _ (println (str "[DRIVER-DISCOVER] root-path=" root-path " exists=" (.exists (java.io.File. (str root-path)))))
-          result (find-files root-path opts)]
-      (println (str "[DRIVER-DISCOVER] result: total=" (:total-files result) " new=" (:new-files result)))
-      result))
-  
-  (extract [this file-id]
-    (let [content (read-file-content file-id)
+  (discover [_this opts]
+    (find-files (get-root-path config) opts))
+
+  (extract [_this file-id]
+    (let [content      (read-file-content file-id)
           content-hash (when content (sha256 file-id))
-          path (str (.relativize (fs/path (get-root-path config)) (fs/path file-id)))]
-      {:id file-id
-       :path path
-       :content content
+          path         (str (.relativize (.toAbsolutePath (fs/path (get-root-path config))) (fs/path file-id)))]
+      {:id           file-id
+       :path         path
+       :content      content
        :content-hash content-hash}))
-  
+
   (extract-batch [this file-ids]
     (mapv (partial protocol/extract this) file-ids))
-  
-  (get-state [this]
+
+  (get-state [_this]
     {:root-path (get-root-path config)
      :last-scan (str (Instant/now))})
-  
-  (set-state [this new-state]
-    (reset! state new-state))
-  
-  (close [this]
-    nil))
 
-(defn create-driver
-  "Create a new LocalDriver instance."
-  [config]
+  (set-state [_this new-state]
+    (reset! state new-state))
+
+  (close [_this] nil))
+
+(defn create-driver [config]
   (->LocalDriver config (atom {})))
