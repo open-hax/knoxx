@@ -1092,7 +1092,7 @@ export default function DataPage() {
         </div>
       )}
 
-      <main className="flex-1 overflow-y-auto p-6">
+      <main className={tab === 'graph' ? 'flex-1 overflow-hidden p-0' : 'flex-1 overflow-y-auto p-6'}>
         {tab === 'overview' && <OverviewTab sources={sources} jobs={jobs} health={health} graphStats={graphStats} onBuildEdges={handleBuildEdges} />}
         {tab === 'sources' && <SourcesTab sources={sources} jobs={jobs} onSync={handleSync} />}
         {tab === 'files' && <FileExplorerTab />}
