@@ -104,6 +104,19 @@
     (throw (http/http-error 403 "permission_denied" (str "Permission '" permission "' is required"))))
   ctx)
 
+(defn ensure-tool!
+  "Enforce tool access for request-scoped endpoints.
+
+   Prefer this over ensure-permission! for endpoints that gate on tool ids
+   like `multimodal.upload`.
+
+   NOTE: system_admin bypasses tool policy checks." 
+  [ctx tool-id]
+  (when-not (or (system-admin? ctx)
+                (ctx-tool-allowed? ctx tool-id))
+    (throw (http/http-error 403 "tool_denied" (str "Tool '" tool-id "' is required"))))
+  ctx)
+
 (defn ensure-any-permission!
   [ctx permissions code message]
   (when-not (or (system-admin? ctx)

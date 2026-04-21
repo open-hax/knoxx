@@ -5,7 +5,7 @@
             [knoxx.backend.agent-runtime :refer [forward-knoxx-request! resolve-workspace-path active-agent-session queue-agent-control!]]
             [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access!]]
             [knoxx.backend.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
-            [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
+            [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.contracts-routes :as contracts-routes]
             [knoxx.backend.document-routes :as document-routes]
@@ -272,7 +272,7 @@
                                        {:route! route!
                                         :json-response! json-response!
                                         :with-request-context! with-request-context!
-                                        :ensure-permission! ensure-permission!})
+                                        :ensure-tool! ensure-tool!})
 
   (document-routes/register-document-routes! app runtime config
                                                {:route! route!

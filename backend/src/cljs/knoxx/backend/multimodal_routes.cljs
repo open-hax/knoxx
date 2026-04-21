@@ -4,7 +4,7 @@
    Supports images, audio, video, and documents for multimodal AI interactions.
    Files are stored temporarily and served back to the frontend for preview/playback."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [with-request-context! ensure-permission!]]
+            [knoxx.backend.authz :refer [with-request-context! ensure-tool!]]
             [knoxx.backend.http :refer [json-response! error-response! js-array-seq]]
             [knoxx.backend.util.time :refer [now-iso]]))
 
@@ -90,14 +90,14 @@
 (defn register-multimodal-routes!
   "Register routes for multimodal file handling."
   [app runtime config {:keys [route! json-response! error-response!
-                              with-request-context! ensure-permission!]}]
+                              with-request-context!]}]
   
   ;; Upload files for multimodal messages
   (route! app "POST" "/api/multimodal/upload"
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (when ctx (ensure-permission! ctx "multimodal.upload"))
+                (when ctx (ensure-tool! ctx "multimodal.upload"))
                 (-> (.fromAsync js/Array (.parts request))
                     (.then
                      (fn [parts]
@@ -185,7 +185,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (when ctx (ensure-permission! ctx "multimodal.upload"))
+                (when ctx (ensure-tool! ctx "multimodal.upload"))
                 (let [node-fs (aget runtime "fs")
                       node-path (aget runtime "path")
                       file-id (aget request "params" "fileId")]

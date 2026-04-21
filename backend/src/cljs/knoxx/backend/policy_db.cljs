@@ -14,8 +14,13 @@
 
    See: https://github.com/thheller/shadow-cljs/issues/1219"
   (:require [clojure.string :as str]
+            [cljs.reader :as reader]
             [honey.sql :as sql]
+            [knoxx.backend.runtime.roles :as runtime-roles]
+            [knoxx.backend.tools.registry :as tool-registry]
             ["pg" :as pg]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
             ["node:crypto" :as crypto]))
 
 ;; ---------------------------------------------------------------------------
@@ -128,9 +133,96 @@
    ["websearch" "Web Search" "Search the live web through Proxx websearch" "low"]
    ["graph_query" "Graph Query" "Query the canonical knowledge graph" "low"]])
 
+(defn- default-contracts-dir
+  []
+  (or (aget js/process.env "CONTRACTS_DIR") "contracts"))
+
+(defn- contracts-dir
+  []
+  (.resolve path (default-contracts-dir)))
+
+(defn- safe-read-edn
+  [file-path]
+  (try
+    (reader/read-string (str (.readFileSync fs file-path "utf8")))
+    (catch :default _
+      nil)))
+
+(defn- contract-tool-ids
+  "Return a set of tool ids found in contracts/capabilities/*.edn." 
+  []
+  (try
+    (let [cap-dir (.join path (contracts-dir) "capabilities")
+          names (.readdirSync fs cap-dir)
+          tool-ids (atom #{})]
+      (doseq [name (array-seq names)]
+        (when (and (string? name) (str/ends-with? name ".edn"))
+          (when-let [cap (safe-read-edn (.join path cap-dir name))]
+            (doseq [tool (or (:cap/tools cap) [])]
+              (when-let [id (tool-registry/normalize-tool-id tool)]
+                (swap! tool-ids conj id))))))
+      @tool-ids)
+    (catch :default _
+      #{})))
+
+(defn- tool-risk-level
+  [tool-id]
+  (let [id (str tool-id)]
+    (cond
+      (= id "bash") "high"
+      (= id "edit") "medium"
+      (= id "write") "medium"
+      (= id "contract.write") "high"
+      (or (= id "event_agents.upsert_job") (= id "schedule_event_agent")) "high"
+      (or (str/starts-with? id "openplanner.")
+          (str/starts-with? id "discord.")
+          (str/starts-with? id "music.")
+          (str/starts-with? id "audio.")) "medium"
+      :else "low")))
+
+(defn- tool-seeds-from-contracts
+  []
+  (->> (contract-tool-ids)
+       (map (fn [tool-id]
+              (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
+                [tool-id
+                 (or label tool-id)
+                 (or description "")
+                 (tool-risk-level tool-id)])))
+       vec))
+
+(defn- merged-tool-seeds
+  "Return tool definition seed rows, merging built-in TOOL-DEFINITIONS with
+   any additional tools referenced by contract capabilities." 
+  []
+  (let [base (into {} (map (fn [[id label description risk-level]]
+                             [id [id label description risk-level]])
+                           TOOL-DEFINITIONS))
+        from-contracts (into {} (map (fn [[id label description risk-level]]
+                                       [id [id label description risk-level]])
+                                     (tool-seeds-from-contracts)))]
+    ;; Prefer explicit base metadata when it exists.
+    (->> (merge from-contracts base)
+         vals
+         (sort-by first)
+         vec)))
+
+(defn- contracts-config
+  []
+  {:contracts-dir (default-contracts-dir)})
+
+(defn- role-tool-policies-from-contracts
+  "Return [{:toolId <id> :effect \"allow\"} ...] for the given role slug.
+
+   Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools." 
+  [role-slug]
+  (let [tool-ids (runtime-roles/role-tool-ids (contracts-config) role-slug)]
+    (when (seq tool-ids)
+      (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) tool-ids))))
+
 (def ^:private ALL-PERMISSION-CODES (map first PERMISSIONS))
 
-(def ^:private ALL-TOOL-IDS (map first TOOL-DEFINITIONS))
+(def ^:private ALL-TOOL-IDS (map first (merged-tool-seeds)))
 
 (def ^:private PLATFORM-ROLE-SEEDS
   [{:slug "system_admin"
@@ -543,7 +635,7 @@
   [pool]
   (-> (js/Promise.all
        (into-array
-        (for [[id label description risk-level] TOOL-DEFINITIONS]
+        (for [[id label description risk-level] (merged-tool-seeds)]
           (query! pool
                   "INSERT INTO tool_definitions (id, label, description, risk_level)
                    VALUES ($1, $2, $3, $4)
@@ -677,8 +769,11 @@
                (fn [role]
                  (-> (set-role-permissions! pool (aget role "id") (:permissions seed))
                      (.then (fn [_]
-                              (set-role-tool-policies! pool (aget role "id")
-                                                       (:tool-policies seed)))))))))))
+                              (let [policies (or (role-tool-policies-from-contracts (:slug seed))
+                                                 (:tool-policies seed)
+                                                 (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS))]
+                                (set-role-tool-policies! pool (aget role "id")
+                                                         policies)))))))))))
       (.then (fn [_] nil))))
 
 (defn- ensure-builtin-platform-roles!
@@ -696,8 +791,11 @@
                (fn [role]
                  (-> (set-role-permissions! pool (aget role "id") (:permissions seed))
                      (.then (fn [_]
-                              (set-role-tool-policies! pool (aget role "id")
-                                                       (:tool-policies seed)))))))))))
+                              (let [policies (or (role-tool-policies-from-contracts (:slug seed))
+                                                 (:tool-policies seed)
+                                                 (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS))]
+                                (set-role-tool-policies! pool (aget role "id")
+                                                         policies)))))))))))
       (.then (fn [_] nil))))
 
 (defn- tool-allowed

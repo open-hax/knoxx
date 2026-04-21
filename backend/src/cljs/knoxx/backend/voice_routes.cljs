@@ -60,13 +60,13 @@
 
 (defn register-voice-routes!
   [app runtime config handlers]
-  (let [{:keys [route! json-response! with-request-context! ensure-permission!]} handlers]
+  (let [{:keys [route! json-response! with-request-context! ensure-tool!]} handlers]
 
     (route! app "GET" "/api/voice/stt/health"
             (fn [request reply]
               (with-request-context! runtime request reply
                 (fn [ctx]
-                  (when ctx (ensure-permission! ctx "multimodal.upload"))
+                  (when ctx (ensure-tool! ctx "multimodal.upload"))
                   (let [base (stt-base-url config)]
                     (if (str/blank? base)
                       (json-response! reply 503 {:detail "KNOXX_STT_BASE_URL is not configured"})
@@ -82,7 +82,7 @@
             (fn [request reply]
               (with-request-context! runtime request reply
                 (fn [ctx]
-                  (when ctx (ensure-permission! ctx "multimodal.upload"))
+                  (when ctx (ensure-tool! ctx "multimodal.upload"))
                   (let [base (stt-base-url config)]
                     (if (str/blank? base)
                       (json-response! reply 503 {:detail "KNOXX_STT_BASE_URL is not configured"})
@@ -133,7 +133,7 @@
             (fn [request reply]
               (with-request-context! runtime request reply
                 (fn [ctx]
-                  (when ctx (ensure-permission! ctx "multimodal.upload"))
+                  (when ctx (ensure-tool! ctx "multimodal.upload"))
                   (let [api-key (elevenlabs-api-key config)]
                     (if (str/blank? api-key)
                       (json-response! reply 503 {:detail "KNOXX_ELEVENLABS_API_KEY is not configured"})
@@ -156,7 +156,7 @@
             (fn [request reply]
               (with-request-context! runtime request reply
                 (fn [ctx]
-                  (when ctx (ensure-permission! ctx "multimodal.upload"))
+                  (when ctx (ensure-tool! ctx "multimodal.upload"))
                   (let [api-key (elevenlabs-api-key config)
                         body (or (aget request "body") #js {})
                         text (-> (or (aget body "text") "") str)
