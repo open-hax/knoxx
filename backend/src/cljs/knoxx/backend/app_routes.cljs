@@ -37,7 +37,7 @@
                                   (default-agent-contract-id config requested-actor-id))
         resolved (effective-agent-contract config requested-contract-id requested-actor-id)
         resolved-id (:id resolved)]
-    (cond-> (merge (select-keys resolved [:role :model :system-prompt :thinking-level :tool-policies])
+    (cond-> (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies])
                    requested)
       requested-actor-id (assoc :actor-id requested-actor-id)
       resolved-id (assoc :contract-id resolved-id))))

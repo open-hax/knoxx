@@ -48,6 +48,11 @@
                                   (:systemPrompt spec))
                               str
                               not-empty)
+        task-prompt (some-> (or (:task_prompt spec)
+                                (:task-prompt spec)
+                                (:taskPrompt spec))
+                            str
+                            not-empty)
         model (some-> (:model spec) str str/trim not-empty)
         thinking-level (some-> (or (:thinking_level spec)
                                    (:thinking-level spec)
@@ -64,11 +69,12 @@
         resource-policies (or (:resource_policies spec)
                               (:resource-policies spec)
                               (:resourcePolicies spec))]
-    (when (or contract-id actor-id role system-prompt model thinking-level (seq tool-policies) resource-policies)
+    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies)
       {:contract-id contract-id
        :actor-id actor-id
        :role role
        :system-prompt system-prompt
+       :task-prompt task-prompt
        :model model
        :thinking-level thinking-level
        :tool-policies tool-policies

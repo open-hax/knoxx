@@ -98,6 +98,16 @@ export function ChatSettingsPanel({
           <div style={{ marginTop: 4, fontSize: 11, color: "var(--token-colors-text-muted)" }}>
             Role: {activeRole}
           </div>
+          {toolCatalog?.capability_ids && toolCatalog.capability_ids.length > 0 ? (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)", marginBottom: 4 }}>Capabilities</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {toolCatalog.capability_ids.map((capabilityId) => (
+                  <Badge key={capabilityId} size="sm" variant="default">{capabilityId}</Badge>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
             {toolCatalog?.tools.map((tool) => (
               <Badge key={tool.id} size="sm" variant={tool.enabled ? "default" : "warning"}>
@@ -105,6 +115,15 @@ export function ChatSettingsPanel({
               </Badge>
             ))}
           </div>
+          {toolCatalog?.system_prompt ? (
+            <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>Effective system prompt</div>
+              <pre style={{ whiteSpace: "pre-wrap", fontSize: 11, padding: 8, borderRadius: 6, background: "var(--token-colors-surface-input)", border: "1px solid var(--token-colors-border-subtle)", maxHeight: 180, overflow: "auto" }}>{toolCatalog.system_prompt}</pre>
+              {toolCatalog.actor_system_prompt ? <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>Actor prompt: {toolCatalog.actor_system_prompt}</div> : null}
+              {toolCatalog.agent_system_prompt ? <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>Agent prompt: {toolCatalog.agent_system_prompt}</div> : null}
+              {toolCatalog.task_prompt ? <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>Task prompt: {toolCatalog.task_prompt}</div> : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </Card>

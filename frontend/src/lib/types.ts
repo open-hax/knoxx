@@ -325,6 +325,12 @@ export interface ToolCatalogResponse {
   agent_id?: string | null;
   agent_label?: string | null;
   agent_trigger_kind?: string | null;
+  role_slugs?: string[];
+  capability_ids?: string[];
+  system_prompt?: string | null;
+  actor_system_prompt?: string | null;
+  agent_system_prompt?: string | null;
+  task_prompt?: string | null;
   tools: ToolDefinition[];
   email_enabled: boolean;
 }

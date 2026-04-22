@@ -75,6 +75,15 @@
                               vec)
          :system-prompt (some-> (get-in actor [:prompts :system]) str str/trim not-empty)}))))
 
+(defn- combine-system-prompts
+  [& parts]
+  (let [segments (->> parts
+                      (map (fn [part]
+                             (some-> part str str/trim not-empty)))
+                      (remove nil?))]
+    (when (seq segments)
+      (str/join "\n\n" segments))))
+
 (defn actor-catalog
   [config]
   (->> (try
@@ -182,13 +191,15 @@
                      (:knoxx-default-role config))
            :model (some-> (get-in contract [:agent :model]) str str/trim not-empty)
            :thinking-level (some-> (get-in contract [:agent :thinking]) keywordish->slug)
-           :system-prompt (or (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
-                              (:system-prompt actor-spec)
-                              (some-> (get-in contract [:prompts :task]) str str/trim not-empty))
+           :actor-system-prompt (:system-prompt actor-spec)
+           :agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
+           :system-prompt (combine-system-prompts
+                           (:system-prompt actor-spec)
+                           (some-> (get-in contract [:prompts :system]) str str/trim not-empty))
+           :task-prompt (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
            :trigger-kind (some-> (:trigger-kind contract) keywordish->slug)
            :tool-ids tool-ids
            :tool-policies tool-policies})))))
-
 (defn- manual-agent-contract?
   [entry]
   (= "manual" (some-> (:trigger-kind entry) str str/trim str/lower-case)))
@@ -315,6 +326,20 @@
       :agent_id (:id contract-spec)
       :agent_label (:id contract-spec)
       :agent_trigger_kind (:trigger-kind contract-spec)
+      :role_slugs (vec (or (:role-slugs contract-spec) []))
+      :capability_ids (vec (or (:capability-ids contract-spec) []))
+      :system_prompt (when (or (nil? auth-context)
+                               (authz/system-admin? auth-context))
+                       (:system-prompt contract-spec))
+      :actor_system_prompt (when (or (nil? auth-context)
+                                     (authz/system-admin? auth-context))
+                             (:actor-system-prompt contract-spec))
+      :agent_system_prompt (when (or (nil? auth-context)
+                                     (authz/system-admin? auth-context))
+                             (:agent-system-prompt contract-spec))
+      :task_prompt (when (or (nil? auth-context)
+                             (authz/system-admin? auth-context))
+                     (:task-prompt contract-spec))
       :email_enabled email?
       :tools tools})))
 

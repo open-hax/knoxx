@@ -93,7 +93,13 @@
 
 (defn- requested-system-prompt
   [agent-spec]
-  (some-> (:system-prompt agent-spec) str not-empty))
+  (let [system-prompt (some-> (:system-prompt agent-spec) str str/trim not-empty)
+        task-prompt (some-> (:task-prompt agent-spec) str str/trim not-empty)]
+    (cond
+      (and system-prompt task-prompt) (str system-prompt "\n\nTask:\n" task-prompt)
+      system-prompt system-prompt
+      task-prompt (str "Task:\n" task-prompt)
+      :else nil)))
 
 (defn- ensure-system-message
   [messages agent-spec]
@@ -111,6 +117,7 @@
       (:model agent-spec) (assoc :model (:model agent-spec))
       (:thinking-level agent-spec) (assoc :thinkingLevel (:thinking-level agent-spec))
       (:system-prompt agent-spec) (assoc :hasSystemPrompt true)
+      (:task-prompt agent-spec) (assoc :hasTaskPrompt true)
       (seq (:tool-policies agent-spec)) (assoc :toolPolicies (vec (:tool-policies agent-spec)))
       (:resource-policies agent-spec) (assoc :resourcePolicies (:resource-policies agent-spec)))))
 

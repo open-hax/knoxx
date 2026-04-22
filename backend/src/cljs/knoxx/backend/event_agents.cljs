@@ -417,8 +417,6 @@
         conversation-id (str "event-agent-" (:id job) "-" (str/lower-case (str (:sourceKind event))) "-" now)
         session-id (str "event-agent-session-" (:id job) "-" now)
         user-message (str "An event matched this job.\n\n"
-                          (or (:taskPrompt agent-spec) "")
-                          (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
                           (event-summary-text event))
         content-parts (event-content-parts event)
         model-id (or (:model agent-spec) "gemma4:31b")]
@@ -429,6 +427,7 @@
      :content_parts content-parts
      :agent_spec {:role (or (:role agent-spec) "knowledge_worker")
                   :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
+                  :task_prompt (or (:taskPrompt agent-spec) "")
                   :model model-id
                   :thinking_level (or (:thinkingLevel agent-spec) "off")
                   :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
