@@ -289,6 +289,36 @@
          (throw (js/Error. (str "Role '" normalized "' cannot use tool '" tool-id "'")))))
      normalized)))
 
+(defn- resolve-tool-context
+  [config role auth-context agent-contract-id actor-id]
+  (let [contract-spec (effective-agent-contract config agent-contract-id actor-id)
+        actor-spec (or (when actor-id (resolve-actor config actor-id))
+                       (when-let [resolved-actor-id (:actor-id contract-spec)]
+                         (resolve-actor config resolved-actor-id)))
+        normalized (roles/normalize-role config (or (:role contract-spec) role))
+        role-tool-ids (set (roles/role-tool-ids config normalized))
+        allowed-tool-ids (cond
+                           auth-context (let [base (auth-tool-ids auth-context)]
+                                          (if-let [contract-ids (some-> contract-spec :tool-ids set)]
+                                            (set/intersection base contract-ids)
+                                            base))
+                           contract-spec (set (:tool-ids contract-spec))
+                           :else role-tool-ids)]
+    {:contract-spec contract-spec
+     :actor-spec actor-spec
+     :normalized-role normalized
+     :allowed-tool-ids allowed-tool-ids}))
+
+(defn allowed-tool-id-set
+  ([config role]
+   (allowed-tool-id-set config role nil nil nil))
+  ([config role auth-context]
+   (allowed-tool-id-set config role auth-context nil nil))
+  ([config role auth-context agent-contract-id]
+   (allowed-tool-id-set config role auth-context agent-contract-id nil))
+  ([config role auth-context agent-contract-id actor-id]
+   (:allowed-tool-ids (resolve-tool-context config role auth-context agent-contract-id actor-id))))
+
 (defn tool-catalog
   ([config role]
    (tool-catalog config role nil nil nil))
@@ -302,18 +332,8 @@
          live-mcp-tool-ids (if (and (:mcp-enabled config) (mcp/available?) (mcp/enabled?))
                              (into #{} (map :id) (mcp/catalog))
                              #{})
-         contract-spec (effective-agent-contract config agent-contract-id actor-id)
-         actor-spec (or (when actor-id (resolve-actor config actor-id))
-                        (when-let [resolved-actor-id (:actor-id contract-spec)]
-                          (resolve-actor config resolved-actor-id)))
-         normalized (roles/normalize-role config (or (:role contract-spec) role))
-         allowed-tool-ids (cond
-                            auth-context (let [base (auth-tool-ids auth-context)]
-                                           (if-let [contract-ids (some-> contract-spec :tool-ids set)]
-                                             (set/intersection base contract-ids)
-                                             base))
-                            contract-spec (set (:tool-ids contract-spec))
-                            :else (set (roles/role-tool-ids config normalized)))
+         {:keys [contract-spec actor-spec normalized-role allowed-tool-ids]}
+         (resolve-tool-context config role auth-context agent-contract-id actor-id)
          tools (cond->> allowed-tool-ids
                  true sort
                  true (mapv (fn [tool-id]
@@ -333,7 +353,7 @@
                         :enabled true}))]
      {:role (if auth-context
               (or (:role contract-spec) (authz/primary-context-role auth-context))
-              normalized)
+              normalized-role)
       :actor_id (:id actor-spec)
       :agent_id (:id contract-spec)
       :agent_label (:id contract-spec)
@@ -356,19 +376,21 @@
       :tools tools})))
 
 (defn create-runtime-tools
-  [runtime config auth-context]
-  (let [sdk (aget runtime "sdk")
-        cwd (:workspace-root config)
-        read-tool (aget sdk "createReadTool")
-        write-tool (aget sdk "createWriteTool")
-        edit-tool (aget sdk "createEditTool")
-        bash-tool (aget sdk "createBashTool")
-        allowed? (fn [tool-id]
-                   (or (nil? auth-context)
-                       (authz/ctx-tool-allowed? auth-context tool-id)))]
-    (vec
-     (remove nil?
-             [(when (and read-tool (allowed? "read")) (read-tool cwd))
-              (when (and write-tool (allowed? "write")) (write-tool cwd))
-              (when (and edit-tool (allowed? "edit")) (edit-tool cwd))
-              (when (and bash-tool (allowed? "bash")) (bash-tool cwd))]))))
+  ([runtime config auth-context]
+   (create-runtime-tools runtime config auth-context nil nil nil))
+  ([runtime config auth-context role agent-contract-id actor-id]
+   (let [sdk (aget runtime "sdk")
+         cwd (:workspace-root config)
+         read-tool (aget sdk "createReadTool")
+         write-tool (aget sdk "createWriteTool")
+         edit-tool (aget sdk "createEditTool")
+         bash-tool (aget sdk "createBashTool")
+         allowed-tool-ids (allowed-tool-id-set config role auth-context agent-contract-id actor-id)
+         allowed? (fn [tool-id]
+                    (contains? allowed-tool-ids tool-id))]
+     (vec
+      (remove nil?
+              [(when (and read-tool (allowed? "read")) (read-tool cwd))
+               (when (and write-tool (allowed? "write")) (write-tool cwd))
+               (when (and edit-tool (allowed? "edit")) (edit-tool cwd))
+               (when (and bash-tool (allowed? "bash")) (bash-tool cwd))])))))

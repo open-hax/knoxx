@@ -2211,6 +2211,25 @@
                   tools))))
      #js [])))
 
+(defn- filter-custom-tools-by-allow-set
+  [tools allowed-tool-ids]
+  (if (nil? allowed-tool-ids)
+    tools
+    (into-array
+     (filter (fn [tool]
+               (when-let [tool-id (some-> tool (aget "name") str str/trim not-empty)]
+                 (contains? allowed-tool-ids tool-id)))
+             (js-array-seq tools)))))
+
+(defn agent-custom-tool-suite
+  [agent-spec]
+  (let [role (some-> (:role agent-spec) str str/trim str/lower-case)
+        contract-id (some-> (:contract-id agent-spec) str str/trim str/lower-case)]
+    (if (or (= role "contract_librarian")
+            (= contract-id "contract_librarian"))
+      :contract-librarian
+      :knoxx)))
+
 (defn create-contract-custom-tools
   "Create contract tools for the contract librarian agent.
    Only contract.write — the librarian reads context via general read/memory tools
@@ -2270,22 +2289,37 @@
    This is the toolset used in the contract editor chat panel."
   ([runtime config] (create-contract-librarian-tools runtime config nil))
   ([runtime config auth-context]
+   (create-contract-librarian-tools runtime config auth-context nil))
+  ([runtime config auth-context allowed-tool-ids]
    (let [contract-tools (create-contract-custom-tools runtime config auth-context)
          read-tools (create-semantic-custom-tools runtime config auth-context)
          memory-tools (create-openplanner-custom-tools runtime config auth-context)]
      ;; Contract write + read/semantic tools + memory tools
      ;; No discord, no music, no MCP, no bash, no general write/edit
-     (sanitize-custom-tools (.concat (.concat contract-tools read-tools) memory-tools)))))
+     (-> (sanitize-custom-tools (.concat (.concat contract-tools read-tools) memory-tools))
+         (filter-custom-tools-by-allow-set allowed-tool-ids)))))
 
 (defn create-knoxx-custom-tools
   ([runtime config] (create-knoxx-custom-tools runtime config nil))
   ([runtime config auth-context]
-   (sanitize-custom-tools
-    (.concat (.concat (.concat (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
-                                                                    (create-discord-custom-tools runtime config auth-context))
-                                                           (create-openplanner-custom-tools runtime config auth-context))
-                                                  (create-music-custom-tools runtime config auth-context))
-                                         (create-voice-synth-custom-tools runtime config auth-context))
-                                (create-multimodal-custom-tools runtime config auth-context))
-                       (create-workspace-media-custom-tools runtime config auth-context))
-             (create-mcp-custom-tools runtime config auth-context)))))
+   (create-knoxx-custom-tools runtime config auth-context nil))
+  ([runtime config auth-context allowed-tool-ids]
+   (-> (sanitize-custom-tools
+        (.concat (.concat (.concat (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
+                                                                        (create-discord-custom-tools runtime config auth-context))
+                                                               (create-openplanner-custom-tools runtime config auth-context))
+                                                      (create-music-custom-tools runtime config auth-context))
+                                             (create-voice-synth-custom-tools runtime config auth-context))
+                                    (create-multimodal-custom-tools runtime config auth-context))
+                           (create-workspace-media-custom-tools runtime config auth-context))
+                 (create-mcp-custom-tools runtime config auth-context)))
+       (filter-custom-tools-by-allow-set allowed-tool-ids))))
+
+(defn create-agent-custom-tools
+  ([runtime config] (create-agent-custom-tools runtime config nil nil nil))
+  ([runtime config auth-context] (create-agent-custom-tools runtime config auth-context nil nil))
+  ([runtime config auth-context agent-spec] (create-agent-custom-tools runtime config auth-context agent-spec nil))
+  ([runtime config auth-context agent-spec allowed-tool-ids]
+   (case (agent-custom-tool-suite agent-spec)
+     :contract-librarian (create-contract-librarian-tools runtime config auth-context allowed-tool-ids)
+     (create-knoxx-custom-tools runtime config auth-context allowed-tool-ids))))
