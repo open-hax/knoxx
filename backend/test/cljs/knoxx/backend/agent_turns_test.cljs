@@ -27,3 +27,16 @@
                :input_preview "path=docs/guide.md limit=20"}]
              previews)))))
 
+(deftest session->stored-messages-preserves-prior-transcript
+  (testing "live session snapshots keep existing user and assistant turns for restart recovery"
+    (let [session #js {:messages #js [#js {:role "system"
+                                           :content #js [#js {:type "text" :text "stay grounded"}]}
+                                      #js {:role "user"
+                                           :content #js [#js {:type "text" :text "first request"}]}
+                                      #js {:role "assistant"
+                                           :content #js [#js {:type "text" :text "first answer"}]}]}]
+      (is (= [{:role "system" :content "stay grounded"}
+              {:role "user" :content "first request"}
+              {:role "assistant" :content "first answer"}]
+             (agent-turns/session->stored-messages session))))))
+

@@ -1,8 +1,8 @@
 (ns knoxx.backend.agent-runtime
   (:require [clojure.string :as str]
             [knoxx.backend.agent-hydration :refer [create-knoxx-custom-tools]]
+            [knoxx.backend.http :as http]
             [knoxx.backend.http :refer [no-content? request-query-string request-forward-headers request-forward-body]]
-            [knoxx.backend.openplanner-memory :refer [rehydrate-session-manager!]]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
@@ -96,35 +96,106 @@
                     ;; Keep Knoxx running even if Proxx is offline or auth fails.
                     (js/Promise.resolve [])))))))
 
+(defn- stored-content-part->agent-part
+  [part]
+  (let [part-type (some-> (:type part) str str/lower-case)
+        text (some-> (:text part) str)
+        data (or (:data part) (:url part))
+        mime-type (some-> (:mimeType part) str)
+        filename (some-> (:filename part) str)]
+    (case part-type
+      "text" (when (not (str/blank? (str text)))
+               #js {:type "text" :text text})
+      "image" (when (not (str/blank? (str data)))
+                 #js {:type "image" :data data :mimeType mime-type})
+      "audio" (when (not (str/blank? (str data)))
+                 #js {:type "audio" :data data :mimeType mime-type})
+      "video" (when (not (str/blank? (str data)))
+                 #js {:type "video" :data data :mimeType mime-type})
+      "document" (when (not (str/blank? (str data)))
+                     #js {:type "document" :data data :mimeType mime-type :filename filename})
+      nil)))
+
 (defn stored-session-message->agent-message
   [message]
   (let [role (some-> (:role message) str)
-        content (some-> (:content message) str)]
+        content (some-> (:content message) str)
+        content-parts (vec (keep stored-content-part->agent-part (or (:content-parts message) [])))
+        payload (cond
+                  (seq content-parts) (clj->js content-parts)
+                  (not (str/blank? content)) #js [#js {:type "text" :text content}]
+                  :else nil)]
     (when (and (contains? #{"user" "assistant" "system"} role)
-               (not (str/blank? content)))
+               payload)
       #js {:role role
-           :content #js [#js {:type "text" :text content}]
+           :content payload
            :timestamp (.now js/Date)})))
 
+(defn- planner-row->stored-session-message
+  [row]
+  (let [role (some-> (:role row) str)
+        text (some-> (:text row) str)]
+    (when (and (contains? #{"user" "assistant" "system"} role)
+               (not (str/blank? text)))
+      {:role role
+       :content text})))
+
+(defn- fetch-openplanner-session-messages!
+  [config conversation-id]
+  (if (or (str/blank? conversation-id)
+          (not (http/openplanner-enabled? config)))
+    (js/Promise.resolve [])
+    (-> (http/openplanner-request! config "GET" (str "/v1/sessions/" conversation-id))
+        (.then (fn [body]
+                 (->> (or (:rows body) [])
+                      (keep planner-row->stored-session-message)
+                      vec)))
+        (.catch (fn [err]
+                  (.warn js/console "[knoxx] failed to fetch OpenPlanner session transcript" err)
+                  [])))))
+
+(defn- comparable-session-message
+  [message]
+  {:role (some-> (:role message) str)
+   :content (some-> (:content message) str)})
+
+(defn merge-restored-session-messages
+  [base-messages overlay-messages]
+  (let [base (vec (or base-messages []))
+        overlay (vec (or overlay-messages []))
+        base* (mapv comparable-session-message base)
+        overlay* (mapv comparable-session-message overlay)
+        overlap (loop [n (min (count base*) (count overlay*))]
+                  (cond
+                    (zero? n) 0
+                    (= (subvec base* (- (count base*) n))
+                       (subvec overlay* 0 n)) n
+                    :else (recur (dec n))))]
+    (into base (subvec overlay overlap))))
+
 (defn rehydrate-session-manager-from-redis!
-  [session-manager conversation-id]
+  [config session-manager conversation-id]
   (let [redis-client (redis/get-client)]
-    (if (or (str/blank? conversation-id) (nil? redis-client))
-      (js/Promise.resolve #js {:sessionManager session-manager
-                               :restored false})
-      (-> (session-store/get-conversation-active-session redis-client conversation-id)
-          (.then (fn [session-id]
-                   (if (str/blank? (str (or session-id "")))
-                     #js {:sessionManager session-manager
-                          :restored false}
-                     (-> (session-store/get-session redis-client session-id)
-                         (.then (fn [session]
-                                  (let [messages (vec (or (:messages session) []))]
-                                    (doseq [message messages]
-                                      (when-let [agent-message (stored-session-message->agent-message message)]
-                                        (.appendMessage session-manager agent-message)))
-                                    #js {:sessionManager session-manager
-                                         :restored (boolean (seq messages))})))))))))))
+    (-> (.all js/Promise
+              #js [(fetch-openplanner-session-messages! config conversation-id)
+                   (if (or (str/blank? conversation-id) (nil? redis-client))
+                     (js/Promise.resolve [])
+                     (-> (session-store/get-conversation-active-session redis-client conversation-id)
+                         (.then (fn [session-id]
+                                  (if (str/blank? (str (or session-id "")))
+                                    []
+                                    (-> (session-store/get-session redis-client session-id)
+                                        (.then (fn [session]
+                                                 (vec (or (:messages session) []))))))))))])
+        (.then (fn [parts]
+                 (let [openplanner-messages (vec (or (aget parts 0) []))
+                       redis-messages (vec (or (aget parts 1) []))
+                       merged-messages (merge-restored-session-messages openplanner-messages redis-messages)]
+                   (doseq [message merged-messages]
+                     (when-let [agent-message (stored-session-message->agent-message message)]
+                       (.appendMessage session-manager agent-message)))
+                   #js {:sessionManager session-manager
+                        :restored (boolean (seq merged-messages))})))))
 
 (defn request-stream-body
   [request]
@@ -258,15 +329,9 @@
                    (.newSession session-manager #js {:id (str session-id)}))
                  (.appendModelChange session-manager "proxx" model-id)
                  (.appendThinkingLevelChange session-manager thinking-level)
-                 (-> (rehydrate-session-manager-from-redis! session-manager conversation-id)
+                 (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id)
                      (.then (fn [result]
-                              (let [restored? (aget result "restored")
-                                    hydrated-manager (aget result "sessionManager")]
-                                (if restored?
-                                  (create-session hydrated-manager)
-                                  (-> (rehydrate-session-manager! config hydrated-manager conversation-id model-id)
-                                      (.then (fn [openplanner-manager]
-                                               (create-session openplanner-manager)))))))))))))))))
+                              (create-session (aget result "sessionManager"))))))))))))))
 
 (defn- visible-tool-signature
   [runtime config auth-context]

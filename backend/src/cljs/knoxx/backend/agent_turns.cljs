@@ -13,7 +13,7 @@
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.turn-control :as turn-control]
-            [knoxx.backend.text :refer [value->preview-text assistant-message-text assistant-message-reasoning-text clip-text]]))
+            [knoxx.backend.text :refer [value->preview-text assistant-message-text assistant-message-reasoning-text clip-text content-part-text]]))
 
 (defn- nonblank
   "Return s when it is a non-blank string (after trim)."
@@ -329,6 +329,58 @@
            vec)
       [])))
 
+(defn- session-message-text
+  [message]
+  (let [content (aget message "content")]
+    (cond
+      (string? content) content
+      (array? content) (->> (array-seq content)
+                            (map content-part-text)
+                            (remove str/blank?)
+                            (str/join "\n\n"))
+      (string? (aget message "text")) (aget message "text")
+      :else "")))
+
+(defn session->stored-messages
+  [session]
+  (let [messages (when (and session (array? (aget session "messages")))
+                   (array-seq (aget session "messages")))]
+    (->> messages
+         (keep (fn [message]
+                 (let [role (some-> (aget message "role") str)
+                       text (some-> (session-message-text message) nonblank)
+                       parts (when (= role "assistant")
+                               (assistant-content-parts message))]
+                   (when (and (contains? #{"user" "assistant" "system"} role)
+                              (or text (seq parts)))
+                     (cond-> {:role role}
+                       text (assoc :content text)
+                       (seq parts) (assoc :content-parts parts))))))
+         vec)))
+
+(defn- append-message-if-novel
+  [messages message]
+  (let [items (vec (or messages []))
+        last-message (peek items)
+        comparable (fn [entry]
+                     (select-keys entry [:role :content :content-parts]))]
+    (if (= (comparable last-message) (comparable message))
+      items
+      (conj items message))))
+
+(defn- transcript-before-prompt
+  [session user-message agent-spec]
+  (-> (session->stored-messages session)
+      (ensure-system-message agent-spec)
+      (append-message-if-novel user-message)))
+
+(defn- transcript-after-turn
+  [session fallback-messages]
+  (let [snapshot (session->stored-messages session)]
+    (if (seq snapshot)
+      snapshot
+      (vec fallback-messages))))
+
 (defn- tool-result-media-type
   [value]
   (case (some-> value str str/lower-case)
@@ -497,7 +549,15 @@
                        (broadcast-ws-session! session-id "events" memory-event)))
                    (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
                      (.then (fn [session]
-                              (let [ttft-recorded? (atom false)
+                              (let [persisted-request-messages (transcript-before-prompt session user-message agent-spec)
+                                    _ (session-store/update-session! (redis/get-client)
+                                                                     session-id
+                                                                     {:status "running"
+                                                                      :has_active_stream false
+                                                                      :messages persisted-request-messages
+                                                                      :conversation_id conversation-id
+                                                                      :run_id run-id})
+                                    ttft-recorded? (atom false)
                                     last-assistant-text* (atom "")
                                     last-reasoning-text* (atom "")
                                     aborting? (atom false)
@@ -817,14 +877,17 @@
                                                 (append-run-event! run-id completed-event)
                                                 (broadcast-ws-session! session-id "events" completed-event)
                                                 ;; Mark session as completed in Redis
+                                                (let [final-messages (transcript-after-turn session
+                                                                                           (conj persisted-request-messages
+                                                                                                 (cond-> {:role "assistant"
+                                                                                                          :content answer}
+                                                                                                   (seq assistant-content-parts) (assoc :content-parts assistant-content-parts))))]
                                                 (session-store/complete-session! (redis/get-client)
                                                                                   session-id
                                                                                   conversation-id
                                                                                   {:status "completed"
                                                                                    :answer answer
-                                                                                   :messages (conj request-messages (cond-> {:role "assistant"
-                                                                                                                             :content answer}
-                                                                                                                      (seq assistant-content-parts) (assoc :content-parts assistant-content-parts)))})
+                                                                                   :messages final-messages}))
                                                 ;; Remove from in-memory cache to prevent stale isStreaming
                                                 (remove-agent-session! conversation-id)
                                                 response)))
@@ -851,14 +914,15 @@
                                              _ (when failed-run
                                                  (index-run-memory! config failed-run))]
                                          (append-run-event! run-id error-event)
-                                         (broadcast-ws-session! session-id "events" error-event)
-                                         ;; Mark session as failed in Redis
+                                        (broadcast-ws-session! session-id "events" error-event)
+                                        ;; Mark session as failed in Redis
+                                        (let [final-messages (transcript-after-turn session persisted-request-messages)]
                                          (session-store/complete-session! (redis/get-client)
                                                                            session-id
                                                                            conversation-id
                                                                            {:status "failed"
                                                                             :error err-text
-                                                                            :messages request-messages})
+                                                                            :messages final-messages}))
                                          ;; Remove from in-memory cache to prevent stale isStreaming
                                          (remove-agent-session! conversation-id))
                                      (throw err)))))))))))))))))
