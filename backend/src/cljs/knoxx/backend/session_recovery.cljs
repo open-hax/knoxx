@@ -5,7 +5,8 @@
             [knoxx.backend.agent-runtime :as agent-runtime]
             [knoxx.backend.http :as http]
             [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]))
+            [knoxx.backend.session-store :as session-store]
+            [knoxx.backend.turn-control :as turn-control]))
 
 (defonce started?* (atom false))
 (defonce interval-handle* (atom nil))
@@ -47,11 +48,22 @@
                    (and (boolean (aget parts 0))
                         (boolean (aget parts 1)))))))))
 
+(defn- runtime-processing-session?
+  [conversation-id]
+  (let [active (agent-runtime/active-agent-session conversation-id)
+        streaming? (and active (true? (aget active "isStreaming")))
+        current-turn? (and active
+                           (try
+                             (some? (aget active "currentTurn"))
+                             (catch js/Error _ false)))
+        registered-turn? (some? (turn-control/active-turn conversation-id))]
+    (or streaming? current-turn? registered-turn?)))
+
 (defn- session-resumable?
   [session]
   (let [conversation-id (str (or (:conversation_id session) ""))
-        active (agent-runtime/active-agent-session conversation-id)]
-    (not (and active (true? (aget active "isStreaming"))))))
+        active? (runtime-processing-session? conversation-id)]
+    (not active?)))
 
 (defn- resume-sessions!
   [runtime app config sessions]

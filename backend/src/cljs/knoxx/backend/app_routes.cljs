@@ -3,7 +3,7 @@
             [knoxx.backend.admin-routes :as admin-routes]
             [knoxx.backend.agent-hydration :refer [ensure-settings! settings-state*]]
             [knoxx.backend.agent-runtime :refer [forward-knoxx-request! resolve-workspace-path active-agent-session queue-agent-control!]]
-            [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access! ensure-session-id]]
+            [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access! ensure-session-id resume-recovered-session!]]
             [knoxx.backend.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
             [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? filter-authorized-memory-hits! authorized-session-ids!]]
@@ -123,6 +123,54 @@
                                          (when (= "user" (some-> (:role message) str str/lower-case))
                                            (:content message)))))
    :latest_event (some-> (:events run) last (select-keys [:type :status :tool_name :preview :at]))})
+
+(def SESSION_RECOVERY_STALE_MS 60000)
+
+(defn- runtime-processing-session?
+  [conversation-id]
+  (let [agent-session (active-agent-session conversation-id)
+        streaming? (and agent-session (true? (aget agent-session "isStreaming")))
+        current-turn? (and agent-session
+                           (try
+                             (some? (aget agent-session "currentTurn"))
+                             (catch js/Error _ false)))
+        registered-turn? (some? (turn-control/active-turn conversation-id))]
+    (or streaming? current-turn? registered-turn?)))
+
+(defn- parse-iso-ms
+  [value]
+  (let [parsed (js/Date.parse (str (or value "")))]
+    (when-not (js/isNaN parsed)
+      parsed)))
+
+(defn- latest-run-event!
+  [run-id]
+  (let [run-id (str (or run-id ""))]
+    (cond
+      (str/blank? run-id)
+      (js/Promise.resolve nil)
+
+      (seq (get-in @runs* [run-id :events]))
+      (js/Promise.resolve (last (get-in @runs* [run-id :events])))
+
+      (nil? (redis/get-client))
+      (js/Promise.resolve nil)
+
+      :else
+      (-> (redis/lrange-json (redis/get-client) (run-state/run-events-key run-id) 0 0)
+          (.then (fn [events]
+                   (first events)))
+          (.catch (fn [_]
+                    nil))))))
+
+(defn- stale-running-session?
+  [session latest-event]
+  (let [stamp (or (:at latest-event)
+                  (:updated_at session)
+                  (:created_at session))
+        stamp-ms (parse-iso-ms stamp)]
+    (or (nil? stamp-ms)
+        (> (- (.now js/Date) stamp-ms) SESSION_RECOVERY_STALE_MS))))
 
 (defn register-routes!
   [runtime app config lounge-messages*]
@@ -1000,41 +1048,52 @@
                 (-> (session-store/get-session (redis/get-client) session-id)
                     (.then (fn [session]
                              (if session
-                               (let [can-send (session-store/session-can-send? session)]
-                                 (json-response! reply 200
-                                                   {:session_id session-id
-                                                    :conversation_id (:conversation_id session)
-                                                    :status (:status session)
-                                                    :has_active_stream (:has_active_stream session)
-                                                    :can_send (:can-send can-send)
-                                                    :reason (:reason can-send)
-                                                    :model (:model session)
-                                                    :updated_at (:updated_at session)}))
+                               (let [conversation-id' (str (or (:conversation_id session) conversation-id ""))
+                                     runtime-active? (runtime-processing-session? conversation-id')
+                                     can-send (session-store/session-can-send? session)]
+                                 (-> (if (= "running" (:status session))
+                                       (latest-run-event! (:run_id session))
+                                       (js/Promise.resolve nil))
+                                     (.then (fn [latest-event]
+                                              (let [stalled? (and (= "running" (:status session))
+                                                                  (not runtime-active?)
+                                                                  (stale-running-session? session latest-event))]
+                                                (when stalled?
+                                                  (-> (resume-recovered-session! runtime config session)
+                                                      (.catch (fn [err]
+                                                                (js/console.error "On-demand session recovery failed" err)))))
+                                                (json-response! reply 200
+                                                                {:session_id session-id
+                                                                 :conversation_id (:conversation_id session)
+                                                                 :status (:status session)
+                                                                 :has_active_stream (boolean (or (:has_active_stream session)
+                                                                                                runtime-active?))
+                                                                 :can_send (if stalled? false (:can-send can-send))
+                                                                 :reason (cond
+                                                                           stalled? "Session looked stalled after restart; recovery requested."
+                                                                           runtime-active? "Session is already processing. Use steer, follow-up, abort, or wait."
+                                                                           :else (:reason can-send))
+                                                                 :model (:model session)
+                                                                 :updated_at (:updated_at session)
+                                                                 :latest_event_at (:at latest-event)
+                                                                 :recovery_requested stalled?}))))))
                                ;; No session in Redis - check if conversation has active agent session
-                               ;; Only trust in-memory session if it's actually streaming (not stale)
-                               (let [agent-session (active-agent-session conversation-id)]
-                                 (if (and agent-session
-                                          (true? (aget agent-session "isStreaming"))
-                                          ;; Extra safeguard: verify session is actually active
-                                          ;; by checking if it has a current turn
-                                          (try
-                                            (let [current-turn (aget agent-session "currentTurn")]
-                                              (some? current-turn))
-                                            (catch js/Error _ false)))
+                               ;; No session in Redis - trust in-memory runtime if it still has a live turn.
+                               (if (runtime-processing-session? conversation-id)
                                    (json-response! reply 200
                                                      {:session_id session-id
                                                       :conversation_id conversation-id
                                                       :status "running"
                                                       :has_active_stream true
                                                       :can_send false
-                                                      :reason "Session is actively streaming"})
+                                                      :reason "Session is already processing. Use steer, follow-up, abort, or wait."})
                                    (json-response! reply 200
                                                      {:session_id session-id
                                                       :conversation_id conversation-id
                                                       :status "not_found"
                                                       :has_active_stream false
                                                       :can_send true
-                                                      :reason "No session state found. Ready for new turn."}))))))
+                                                      :reason "No session state found. Ready for new turn."})))))
                     (.catch (fn [err]
                               (js/console.error "Session status check failed" err)
                               (json-response! reply 500 {:error (str err)}))))))))
