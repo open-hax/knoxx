@@ -70,6 +70,7 @@ const knoxxRoot = __dirname;
 const backendDir = path.join(knoxxRoot, 'backend');
 const frontendDir = path.join(knoxxRoot, 'frontend');
 const ingestionDir = path.join(knoxxRoot, 'ingestion');
+const sttNpuDir = path.join(knoxxRoot, 'voice', 'stt-npu');
 
 // Workspace root is where Knoxx is allowed to read/write files.
 // DO NOT hard-code /home/err/devel: other machines/users check out elsewhere.
@@ -84,6 +85,31 @@ const workspaceRoot =
 const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env.cephalon-host');
 const hostEnvPath = process.env.KNOXX_HOST_ENV_PATH || defaultHostEnvPath;
 const hostEnv = loadSimpleEnv(hostEnvPath);
+const sttNpuPort = process.env.KNOXX_STT_PORT || hostEnv.KNOXX_STT_PORT || '8010';
+// Voice STT for the local Knoxx stack is pinned to the repo-local sidecar by default.
+// Only a process-level override should redirect it somewhere else.
+const sttNpuExplicitBaseUrl = process.env.KNOXX_STT_BASE_URL || '';
+const sttNpuBaseUrl = sttNpuExplicitBaseUrl || `http://127.0.0.1:${sttNpuPort}`;
+const sttNpuModelDir = process.env.KNOXX_STT_MODEL_DIR
+  || hostEnv.KNOXX_STT_MODEL_DIR
+  || path.join(os.homedir(), '.knoxx', 'models', 'stt-npu');
+const sttNpuPython = process.env.KNOXX_STT_PYTHON
+  || hostEnv.KNOXX_STT_PYTHON
+  || (fs.existsSync(path.join(sttNpuDir, '.venv', 'bin', 'python'))
+    ? path.join(sttNpuDir, '.venv', 'bin', 'python')
+    : 'python3');
+// auto  = only launch local STT when no explicit base URL is configured
+//         and the target port is currently free.
+// force = always include the local PM2 sidecar.
+// off   = never include the local PM2 sidecar.
+const sttNpuPm2Mode = process.env.KNOXX_STT_PM2_MODE || hostEnv.KNOXX_STT_PM2_MODE || 'auto';
+const sttNpuShouldRunLocal =
+  fs.existsSync(path.join(sttNpuDir, 'server.py'))
+  && sttNpuPm2Mode !== 'off'
+  && (
+    sttNpuPm2Mode === 'force'
+    || (!sttNpuExplicitBaseUrl && !isLocalPortBound(sttNpuPort))
+  );
 const shoedelussyDir = process.env.SHOEDELUSSY_DIR || hostEnv.SHOEDELUSSY_DIR || path.join(os.homedir(), '.knoxx', 'external', 'shoedelussy');
 const shoedelussyServerDir = path.join(shoedelussyDir, 'server');
 const shoedelussyMcpPort = process.env.SHOEDELUSSY_MCP_PORT || hostEnv.SHOEDELUSSY_MCP_PORT || '8790';
@@ -120,7 +146,37 @@ const apps = [
       },
     },
 
-    // ── 2. Backend (Node + compiled CLJS) ────────────────────────────
+    // ── 2. STT (Whisper/OpenVINO sidecar) ────────────────────────────
+    ...(sttNpuShouldRunLocal
+      ? [{
+        name: 'knoxx-stt-npu',
+        cwd: sttNpuDir,
+        script: sttNpuPython,
+        interpreter: 'none',
+        args: 'server.py',
+        watch: false,
+        autorestart: true,
+        max_restarts: 10,
+        restart_delay: 5000,
+        kill_timeout: 15000,
+        env: {
+          PORT: sttNpuPort,
+          MODEL_DIR: sttNpuModelDir,
+          WHISPER_DEVICE: process.env.WHISPER_DEVICE || hostEnv.WHISPER_DEVICE || 'NPU',
+          WHISPER_MODEL_ID:
+            process.env.WHISPER_MODEL_ID
+            || hostEnv.WHISPER_MODEL_ID
+            || 'anubhav200/openai-whisper-small-openvino-int4',
+          WHISPER_NPU_COMPILER_TYPE:
+            process.env.WHISPER_NPU_COMPILER_TYPE
+            || hostEnv.WHISPER_NPU_COMPILER_TYPE
+            || 'DRIVER',
+          PYTHONUNBUFFERED: '1',
+        },
+      }]
+      : []),
+
+    // ── 3. Backend (Node + compiled CLJS) ────────────────────────────
     {
       name: 'knoxx-backend',
       cwd: backendDir,
@@ -169,7 +225,7 @@ const apps = [
         KNOXX_POLICY_DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
         DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
         // STT (NPU service on host)
-        KNOXX_STT_BASE_URL: 'http://127.0.0.1:8010',
+        KNOXX_STT_BASE_URL: sttNpuBaseUrl,
 
         // TTS (ElevenLabs)
         // Accept historical/local key names from ~/.knoxx/.env.cephalon-host
