@@ -92,7 +92,8 @@
 (defn default-actor-id
   [config]
   (let [configured (some-> (:knoxx-default-actor-id config) str str/trim not-empty)
-        configured-actor (some-> configured (resolve-actor config))]
+        configured-actor (when configured
+                           (resolve-actor config configured))]
     (cond
       configured-actor configured
       :else (or (some-> (actor-catalog config) first :id)
@@ -140,8 +141,9 @@
         (let [enabled? (not (false? (:enabled contract)))
               actor-id (or (some-> (:contract/actor contract) str str/trim not-empty)
                            (some-> (:actor/id contract) str str/trim not-empty))
-              actor-spec (or (some-> actor-id (resolve-actor config))
-                             (some-> (default-actor-id config) (resolve-actor config)))
+              actor-spec (or (when actor-id (resolve-actor config actor-id))
+                             (when-let [default-id (default-actor-id config)]
+                               (resolve-actor config default-id)))
               contract-role-slugs (->> (concat (or (:actor/roles contract) [])
                                                [(get-in contract [:agent :role])])
                                        (map keywordish->slug)
@@ -219,12 +221,13 @@
   ([config]
    (default-agent-contract-id config nil))
   ([config actor-id]
-   (let [actor-spec (or (some-> actor-id (resolve-actor config))
-                        (some-> (default-actor-id config) (resolve-actor config)))
+   (let [actor-spec (or (when actor-id (resolve-actor config actor-id))
+                        (when-let [default-id (default-actor-id config)]
+                          (resolve-actor config default-id)))
          actor-default (some-> (:default-agent actor-spec) str str/trim not-empty)
          configured (some-> (:knoxx-default-agent-contract config) str str/trim not-empty)
-         configured-manual (some-> configured (resolve-agent-contract config))
-         actor-default-manual (some-> actor-default (resolve-agent-contract config))
+         configured-manual (when configured (resolve-agent-contract config configured))
+         actor-default-manual (when actor-default (resolve-agent-contract config actor-default))
          actor-catalog (agent-contract-catalog config (:id actor-spec))]
      (cond
        (and actor-default-manual (manual-agent-contract? actor-default-manual)) actor-default
@@ -237,9 +240,11 @@
   ([config requested-contract-id]
    (effective-agent-contract config requested-contract-id nil))
   ([config requested-contract-id actor-id]
-   (or (some-> requested-contract-id (resolve-agent-contract config))
-       (some-> (default-agent-contract-id config actor-id) (resolve-agent-contract config))
-       (some-> (default-agent-contract-id config nil) (resolve-agent-contract config)))))
+   (or (when requested-contract-id (resolve-agent-contract config requested-contract-id))
+       (when-let [actor-default-id (default-agent-contract-id config actor-id)]
+         (resolve-agent-contract config actor-default-id))
+       (when-let [global-default-id (default-agent-contract-id config nil)]
+         (resolve-agent-contract config global-default-id)))))
 
 (defn ensure-role-can-use!
   ([role tool-id]
@@ -276,8 +281,9 @@
    (let [email? (email-enabled? config)
          discord? (discord-enabled? config)
          contract-spec (effective-agent-contract config agent-contract-id actor-id)
-         actor-spec (or (some-> actor-id (resolve-actor config))
-                        (some-> (:actor-id contract-spec) (resolve-actor config)))
+         actor-spec (or (when actor-id (resolve-actor config actor-id))
+                        (when-let [resolved-actor-id (:actor-id contract-spec)]
+                          (resolve-actor config resolved-actor-id)))
          normalized (roles/normalize-role config (or (:role contract-spec) role))
          allowed-tool-ids (cond
                             auth-context (let [base (auth-tool-ids auth-context)]

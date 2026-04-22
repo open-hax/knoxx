@@ -67,11 +67,18 @@
    Falls back to knowledge_worker."
   [config role]
   (let [role (str (or role ""))
-        canonical (or (get role-aliases role) role)
+        candidates (->> [role
+                         (get role-aliases role)
+                         (some-> role (str/replace #"-" "_"))
+                         (some-> role (str/replace #"_" "-"))
+                         (some-> (get role-aliases role) (str/replace #"-" "_"))]
+                        (remove nil?))
         known (set (list-role-slugs config))]
-    (if (contains? known canonical)
-      canonical
-      "knowledge_worker")))
+    (or (some (fn [candidate]
+                (when (contains? known candidate)
+                  candidate))
+              candidates)
+        "knowledge_worker")))
 
 (defn- normalize-cap-id
   [v]
