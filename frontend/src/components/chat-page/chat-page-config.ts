@@ -24,19 +24,10 @@ export function useChatPageConfig({
   setConsoleLines,
 }: UseChatPageConfigParams) {
   useEffect(() => {
-    void Promise.all([getFrontendConfig(), getAgentContractsCatalog().catch(() => ({ agents: [] as AgentContractCatalogItem[], default_agent_contract: null }))])
+    void Promise.all([getFrontendConfig(), getAgentContractsCatalog()])
       .then(([config, catalog]) => {
-        const fetchedAgents = catalog.agents ?? [];
-        const defaultAgentId = config.default_agent_contract || catalog.default_agent_contract || fetchedAgents[0]?.id || "knoxx_default";
-        const fallbackAgent: AgentContractCatalogItem = {
-          id: defaultAgentId,
-          role: config.default_role || defaultRole,
-        };
-        const agents = fetchedAgents.length > 0
-          ? (fetchedAgents.some((agent) => agent.id === defaultAgentId)
-              ? fetchedAgents
-              : [fallbackAgent, ...fetchedAgents])
-          : [fallbackAgent];
+        const agents = catalog.agents ?? [];
+        const defaultAgentId = config.default_agent_contract || catalog.default_agent_contract || agents[0]?.id || '';
 
         setAvailableAgents(agents);
 
@@ -50,8 +41,10 @@ export function useChatPageConfig({
         const selectedAgent = agents.find((agent) => agent.id === nextAgentId) ?? agents[0];
         setActiveRole(selectedAgent?.role || config.default_role || defaultRole);
       })
-      .catch(() => undefined);
-  }, [activeAgentId, defaultRole, setActiveAgentId, setActiveRole, setAvailableAgents]);
+      .catch((error) => {
+        setConsoleLines((previous) => [...previous.slice(-400), `[agents] failed: ${(error as Error).message}`]);
+      });
+  }, [activeAgentId, defaultRole, setActiveAgentId, setActiveRole, setAvailableAgents, setConsoleLines]);
 
   useEffect(() => {
     void getToolCatalog(activeRole, activeAgentId || undefined)

@@ -94,6 +94,10 @@
       (catch :default _
         nil))))
 
+(defn- manual-agent-contract?
+  [entry]
+  (= "manual" (some-> (:trigger-kind entry) str str/trim str/lower-case)))
+
 (defn agent-contract-catalog
   [config]
   (let [agent-ids (try
@@ -108,14 +112,16 @@
     (->> agent-ids
          (keep (partial resolve-agent-contract config))
          (filter :enabled)
-         (sort-by (fn [entry] [(:trigger-kind entry) (:id entry)]))
+         (filter manual-agent-contract?)
+         (sort-by :id)
          vec)))
 
 (defn default-agent-contract-id
   [config]
-  (let [configured (some-> (:knoxx-default-agent-contract config) str str/trim not-empty)]
+  (let [configured (some-> (:knoxx-default-agent-contract config) str str/trim not-empty)
+        configured-manual (some-> configured (resolve-agent-contract config))]
     (cond
-      (and configured (resolve-agent-contract config configured)) configured
+      (and configured-manual (manual-agent-contract? configured-manual)) configured
       :else (some-> (agent-contract-catalog config) first :id))))
 
 (defn effective-agent-contract

@@ -202,8 +202,16 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (json-response! reply 200 {:agents (agent-contract-catalog config)
-                                           :default_agent_contract (default-agent-contract-id config)})))))
+                (let [agents (agent-contract-catalog config)
+                      default-agent-id (default-agent-contract-id config)
+                      default-agent (when default-agent-id
+                                      (effective-agent-contract config default-agent-id))
+                      catalog (cond-> agents
+                                (and default-agent
+                                     (not (some #(= (:id %) (:id default-agent)) agents)))
+                                (conj default-agent))]
+                  (json-response! reply 200 {:agents (vec (sort-by :id catalog))
+                                             :default_agent_contract default-agent-id}))))))
 
   (route! app "GET" "/api/auth/context"
           (fn [request reply]
