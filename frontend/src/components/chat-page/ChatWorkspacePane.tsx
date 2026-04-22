@@ -42,7 +42,9 @@ export function ChatWorkspacePane({
         onSystemPromptChange={controller.setSystemPrompt}
         conversationId={controller.conversationId}
         activeRole={controller.activeRole}
-        onActiveRoleChange={controller.setActiveRole}
+        activeAgentId={controller.activeAgentId}
+        availableAgents={controller.availableAgents}
+        onActiveAgentChange={controller.setActiveAgentId}
         toolCatalog={controller.toolCatalog}
         wsStatus={controller.wsStatus}
         isRecovering={controller.isRecovering}

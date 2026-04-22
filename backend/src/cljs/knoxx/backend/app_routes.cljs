@@ -23,10 +23,20 @@
             [knoxx.backend.session-titles :refer [start-session-title-backfill! session-title-backfill* session-titles* get-cached-session-title! session-title-seed-text heuristic-session-title stored-session-title-entry cache-session-title-entry! resolve-session-title! cache-session-title! normalize-session-title]]
             [knoxx.backend.text :refer [count-occurrences replace-first clip-text]]
             [knoxx.backend.tool-routes :as tool-routes]
-            [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled?]]
+            [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled? resolve-agent-contract agent-contract-catalog]]
             [knoxx.backend.turn-control :as turn-control]
             [knoxx.backend.voice-routes :as voice-routes]
             [knoxx.backend.translation-routes :as translation-routes]))
+
+(defn- merged-agent-spec
+  [config parsed]
+  (let [requested (or (:agent-spec parsed) {})
+        contract-id (get requested :contract-id)
+        resolved (when contract-id
+                   (resolve-agent-contract config contract-id))]
+    (cond-> (merge (select-keys resolved [:role :model :system-prompt :thinking-level :tool-policies])
+                   requested)
+      contract-id (assoc :contract-id contract-id))))
 
 (defn- requested-role
   [parsed]
@@ -182,8 +192,17 @@
              :shibboleth_enabled (and (not (str/blank? (:shibboleth-base-url config)))
                                       (not (str/blank? (:shibboleth-ui-url config))))
               :default_role (:knoxx-default-role config)
+              :default_agent_contract (:knoxx-default-agent-contract config)
               :email_enabled (email-enabled? config)
               :rbac_enabled (policy-db-enabled? runtime)})))
+
+  (route! app "GET" "/api/knoxx/agents/catalog"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "agent.chat.use"))
+                (json-response! reply 200 {:agents (agent-contract-catalog config)
+                                           :default_agent_contract (:knoxx-default-agent-contract config)})))))
 
   (route! app "GET" "/api/auth/context"
           (fn [request reply]
@@ -682,7 +701,8 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (let [parsed (normalize-chat-body (or (aget request "body") #js {}))
+                (let [parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+                      parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
                       agent-ctx (effective-auth-context ctx parsed)
                       body (assoc parsed
                                   :mode "rag"
@@ -699,7 +719,8 @@
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [node-crypto (aget runtime "crypto")
-                      parsed (normalize-chat-body (or (aget request "body") #js {}))
+                      parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+                      parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
                       agent-ctx (effective-auth-context ctx parsed)
                       session-id (:session-id parsed)
                       conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
@@ -775,7 +796,8 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (let [parsed (normalize-chat-body (or (aget request "body") #js {}))
+                (let [parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+                      parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
                       agent-ctx (effective-auth-context ctx parsed)
                       body (assoc parsed
                                   :mode "direct"
@@ -792,7 +814,8 @@
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [node-crypto (aget runtime "crypto")
-                      parsed (normalize-chat-body (or (aget request "body") #js {}))
+                      parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+                      parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
                       agent-ctx (effective-auth-context ctx parsed)
                       session-id (:session-id parsed)
                       conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))

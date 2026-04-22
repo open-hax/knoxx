@@ -9,6 +9,8 @@ type SetState<T> = Dispatch<SetStateAction<T>>;
 type CreateChatRuntimeActionsParams = {
   makeId: () => string;
   systemPrompt: string;
+  activeRole: string;
+  activeAgentId: string;
   sessionId: string;
   setSessionId: SetState<string>;
   conversationId: string | null;
@@ -33,6 +35,8 @@ type CreateChatRuntimeActionsParams = {
 export function createChatRuntimeActions({
   makeId,
   systemPrompt,
+  activeRole,
+  activeAgentId,
   sessionId,
   setSessionId,
   conversationId,
@@ -214,6 +218,10 @@ export function createChatRuntimeActions({
         run_id: activeRunIdRef.current,
         model: selectedModel,
         contentParts,
+        agentSpec: {
+          contract_id: activeAgentId || undefined,
+          role: activeRole,
+        },
       });
       const runId = response.run_id ?? activeRunIdRef.current;
       if (runId) {

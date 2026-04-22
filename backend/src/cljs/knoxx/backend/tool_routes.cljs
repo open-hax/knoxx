@@ -71,12 +71,15 @@
                               clip-text]}]
   (route! app "GET" "/api/tools/catalog"
           (fn [request reply]
-            (let [role (or (aget request "query" "role") (:knoxx-default-role config))]
+            (let [role (or (aget request "query" "role") (:knoxx-default-role config))
+                  agent-contract-id (or (aget request "query" "agent")
+                                        (aget request "query" "agentId")
+                                        (aget request "query" "agentContractId"))]
               (with-request-context! runtime request reply
                 (fn [ctx]
                   (when ctx
                     (ensure-permission! ctx "agent.chat.use"))
-                  (json-response! reply 200 (tool-catalog config role ctx)))))))
+                  (json-response! reply 200 (tool-catalog config role ctx agent-contract-id)))))))
 
   (route! app "POST" "/api/tools/email/send"
           (fn [request reply]
@@ -84,7 +87,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "email.send")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "email.send" agent-contract-id)
                         to (or (aget body "to") #js [])
                         cc (or (aget body "cc") #js [])
                         bcc (or (aget body "bcc") #js [])
@@ -108,7 +113,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "websearch")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "websearch" agent-contract-id)
                         query (str/trim (str (or (aget body "query") "")))
                         num-results (or (aget body "numResults") 8)
                         search-context-size (aget body "searchContextSize")
@@ -141,7 +148,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "read")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "read" agent-contract-id)
                         node-fs (aget runtime "fs")
                         path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
                         offset (max 1 (or (aget body "offset") 1))
@@ -186,7 +195,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write" agent-contract-id)
                         node-fs (aget runtime "fs")
                         node-path (aget runtime "path")
                         path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
@@ -224,7 +235,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "edit")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "edit" agent-contract-id)
                         node-fs (aget runtime "fs")
                         path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
                         old-string (str (or (aget body "old_string") ""))
@@ -257,7 +270,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "bash")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "bash" agent-contract-id)
                         timeout-ms (min (max (or (aget body "timeout_ms") 120000) 1000) 300000)
                         workdir (if-let [raw-workdir (aget body "workdir")]
                                   (resolve-workspace-path runtime config raw-workdir)
@@ -298,7 +313,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish" agent-contract-id)
                         channel-id (str/trim (str (or (aget body "channelId") "")))
                         content (str/trim (str (or (aget body "content") "")))
                         token (:discord-bot-token (or @runtime-state/config* config))

@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ChatMainPane } from "./ChatMainPane";
-import type { ChatMessage, ProxxModelInfo, ToolCatalogResponse } from "../../lib/types";
+import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, ToolCatalogResponse } from "../../lib/types";
 
 vi.mock("../ChatComposer", () => ({
   default: ({ onSend, isSending }: { onSend: (value: string) => void; isSending: boolean }) => (
@@ -48,6 +48,7 @@ const noop = () => {};
 const noopAsync = async () => {};
 
 const baseModels: ProxxModelInfo[] = [{ id: "gemma4:31b", name: "gemma4:31b" }];
+const baseAgents: AgentContractCatalogItem[] = [{ id: "knoxx_default", role: "knowledge_worker", model: "gemma4:31b" }];
 const baseToolCatalog: ToolCatalogResponse | null = null;
 
 function makeMessage(id: string, content: string): ChatMessage {
@@ -78,8 +79,10 @@ function makeProps(messages: ChatMessage[]) {
     systemPrompt: "",
     onSystemPromptChange: noop,
     conversationId: null,
-    activeRole: "developer",
-    onActiveRoleChange: noop,
+    activeRole: "knowledge_worker",
+    activeAgentId: "knoxx_default",
+    availableAgents: baseAgents,
+    onActiveAgentChange: noop,
     toolCatalog: baseToolCatalog,
     wsStatus: "connected" as const,
     isRecovering: false,

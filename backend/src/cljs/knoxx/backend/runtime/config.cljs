@@ -44,7 +44,8 @@
    :shibboleth-base-url (env "SHIBBOLETH_BASE_URL" "")
    :shibboleth-ui-url (env "SHIBBOLETH_UI_URL" "")
 
-   :knoxx-default-role (env "KNOXX_DEFAULT_ROLE" "executive")
+   :knoxx-default-role (env "KNOXX_DEFAULT_ROLE" "knowledge_worker")
+   :knoxx-default-agent-contract (env "KNOXX_DEFAULT_AGENT_CONTRACT" "knoxx_default")
 
    :gmail-app-email (env "GMAIL_APP_EMAIL" "")
    :gmail-app-password (env "GMAIL_APP_PASSWORD" "")

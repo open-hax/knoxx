@@ -41,9 +41,12 @@ export interface ContractValidationResult {
 
 export interface ContractListItem {
   id: string;
+  contractClass: "agents" | "actors" | "roles" | "capabilities";
   kind: string;
   version: number;
   enabled: boolean;
+  title?: string;
+  path?: string;
   ednHash: number;
   compiledAt: string | null;
   updatedAt: string;
@@ -54,6 +57,7 @@ export interface ContractListResponse {
 }
 
 export interface ContractGetResponse {
+  contractClass?: "agents" | "actors" | "roles" | "capabilities";
   contract: AgentContract;
   ednText: string;
   validation: ContractValidationResult;
@@ -61,6 +65,7 @@ export interface ContractGetResponse {
 
 export interface ContractSaveResponse {
   ok: boolean;
+  contractClass?: "agents" | "actors" | "roles" | "capabilities";
   contract: AgentContract;
   ednText: string;
   validation: ContractValidationResult;
@@ -74,33 +79,36 @@ export async function listContracts(): Promise<ContractListResponse> {
 
 export async function getContract(
   contractId: string,
+  contractClass: "agents" | "actors" | "roles" | "capabilities" = "agents",
 ): Promise<ContractGetResponse> {
   return request<ContractGetResponse>(
-    `/api/admin/contracts/${encodeURIComponent(contractId)}`,
+    `/api/admin/contracts/${encodeURIComponent(contractId)}?kind=${encodeURIComponent(contractClass)}`,
   );
 }
 
 export async function saveContract(
   contractId: string,
   ednText: string,
+  contractClass: "agents" | "actors" | "roles" | "capabilities" = "agents",
 ): Promise<ContractSaveResponse> {
   return request<ContractSaveResponse>(
     `/api/admin/contracts/${encodeURIComponent(contractId)}`,
     {
       method: "PUT",
-      body: JSON.stringify({ ednText }),
+      body: JSON.stringify({ ednText, kind: contractClass }),
     },
   );
 }
 
 export async function validateContract(
   ednText: string,
+  contractClass: "agents" | "actors" | "roles" | "capabilities" = "agents",
 ): Promise<ContractValidationResult> {
   return request<ContractValidationResult>(
     "/api/admin/contracts/validate",
     {
       method: "POST",
-      body: JSON.stringify({ ednText }),
+      body: JSON.stringify({ ednText, kind: contractClass }),
     },
   );
 }
@@ -108,12 +116,13 @@ export async function validateContract(
 export async function copyContract(
   sourceId: string,
   newId: string,
+  contractClass: "agents" | "actors" | "roles" | "capabilities" = "agents",
 ): Promise<ContractSaveResponse> {
   return request<ContractSaveResponse>(
     `/api/admin/contracts/${encodeURIComponent(sourceId)}/copy`,
     {
       method: "POST",
-      body: JSON.stringify({ newId }),
+      body: JSON.stringify({ newId, kind: contractClass }),
     },
   );
 }

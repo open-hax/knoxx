@@ -16,6 +16,7 @@ import {
 } from "./workspace-sync-constants";
 import { useChatSessionRecovery } from "./hooks";
 import type {
+  AgentContractCatalogItem,
   ChatMessage,
   MemorySessionSummary,
   ProxxModelInfo,
@@ -69,6 +70,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   } = options;
 
   const [activeRole, setActiveRole] = useState(defaultRole);
+  const [activeAgentId, setActiveAgentId] = useState("");
+  const [availableAgents, setAvailableAgents] = useState<AgentContractCatalogItem[]>([]);
   const [toolCatalog, setToolCatalog] = useState<ToolCatalogResponse | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [sessionId, setSessionId] = useState("");
@@ -247,6 +250,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     useLatestAssistantInCanvas,
   } = createChatScratchpadActions({
     activeRole,
+    activeAgentId,
     messages,
     previewData,
     setPreviewData,
@@ -281,6 +285,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   } = createChatRuntimeActions({
     makeId,
     systemPrompt,
+    activeRole,
+    activeAgentId,
     sessionId,
     setSessionId,
     conversationId,
@@ -363,10 +369,25 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   useChatPageConfig({
     defaultRole,
     activeRole,
+    activeAgentId,
     setActiveRole,
+    setActiveAgentId,
+    setAvailableAgents,
     setToolCatalog,
     setConsoleLines,
   });
+
+  useEffect(() => {
+    if (!activeAgentId) return;
+    const selectedAgent = availableAgents.find((agent) => agent.id === activeAgentId);
+    if (!selectedAgent) return;
+    if (selectedAgent.role && selectedAgent.role !== activeRole) {
+      setActiveRole(selectedAgent.role);
+    }
+    if (selectedAgent.model && selectedAgent.model !== selectedModel) {
+      setSelectedModel(selectedAgent.model);
+    }
+  }, [activeAgentId, activeRole, availableAgents, selectedModel, setActiveRole, setSelectedModel]);
 
   useChatRuntimeEffects({
     sessionId,
@@ -436,6 +457,9 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     // chat runtime state
     activeRole,
     setActiveRole,
+    activeAgentId,
+    setActiveAgentId,
+    availableAgents,
     toolCatalog,
     systemPrompt,
     setSystemPrompt,

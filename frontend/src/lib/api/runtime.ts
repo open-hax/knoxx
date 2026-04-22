@@ -1,4 +1,5 @@
 import type {
+  AgentContractCatalogResponse,
   AgentSource,
   ContentPart,
   EmailSendResponse,
@@ -69,9 +70,16 @@ export async function proxxChat(payload: {
   });
 }
 
-export async function getToolCatalog(role?: string): Promise<ToolCatalogResponse> {
-  const suffix = role ? `?role=${encodeURIComponent(role)}` : "";
-  return request<ToolCatalogResponse>(`/api/tools/catalog${suffix}`);
+export async function getToolCatalog(role?: string, agentContractId?: string): Promise<ToolCatalogResponse> {
+  const params = new URLSearchParams();
+  if (role) params.set("role", role);
+  if (agentContractId) params.set("agent", agentContractId);
+  const suffix = params.toString();
+  return request<ToolCatalogResponse>(`/api/tools/catalog${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function getAgentContractsCatalog(): Promise<AgentContractCatalogResponse> {
+  return request<AgentContractCatalogResponse>("/api/knoxx/agents/catalog");
 }
 
 export async function voiceSttTranscribe(blob: Blob, filename = "audio.webm"): Promise<SttTranscribeResponse> {
@@ -118,6 +126,7 @@ export async function voiceTtsSynthesize(payload: {
 
 export async function sendEmailDraft(payload: {
   role: string;
+  agentContractId?: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
@@ -132,6 +141,7 @@ export async function sendEmailDraft(payload: {
 
 export async function toolRead(payload: {
   role: string;
+  agentContractId?: string;
   path: string;
   offset?: number;
   limit?: number;
@@ -144,6 +154,7 @@ export async function toolRead(payload: {
 
 export async function toolWrite(payload: {
   role: string;
+  agentContractId?: string;
   path: string;
   content: string;
   create_parents?: boolean;
@@ -157,6 +168,7 @@ export async function toolWrite(payload: {
 
 export async function toolEdit(payload: {
   role: string;
+  agentContractId?: string;
   path: string;
   old_string: string;
   new_string: string;
@@ -170,6 +182,7 @@ export async function toolEdit(payload: {
 
 export async function toolBash(payload: {
   role: string;
+  agentContractId?: string;
   command: string;
   workdir?: string;
   timeout_ms?: number;
@@ -196,6 +209,7 @@ export async function knoxxChat(payload: {
   model?: string;
   direct?: boolean;
   contentParts?: ContentPart[];
+  agentSpec?: Record<string, unknown>;
 }): Promise<{ answer: string; run_id?: string | null; conversation_id?: string | null; session_id?: string | null; model?: string | null; sources?: AgentSource[]; compare?: unknown }> {
   const endpoint = payload.direct ? "/api/knoxx/direct" : "/api/knoxx/chat";
   return request<Record<string, unknown>>(endpoint, {
@@ -206,6 +220,7 @@ export async function knoxxChat(payload: {
       session_id: payload.session_id,
       model: payload.model,
       contentParts: payload.contentParts,
+      agentSpec: payload.agentSpec,
     }),
   }).then((response) => ({
     ...normalizeConversationResponse(response),
@@ -270,6 +285,7 @@ export async function knoxxChatStart(payload: {
   model?: string;
   direct?: boolean;
   contentParts?: ContentPart[];
+  agentSpec?: Record<string, unknown>;
 }): Promise<{ ok: boolean; queued: boolean; run_id?: string | null; conversation_id?: string | null; session_id?: string | null; model?: string | null }> {
   const endpoint = payload.direct ? "/api/knoxx/direct/start" : "/api/knoxx/chat/start";
   return request<Record<string, unknown>>(endpoint, {
@@ -281,6 +297,7 @@ export async function knoxxChatStart(payload: {
       run_id: payload.run_id,
       model: payload.model,
       contentParts: payload.contentParts,
+      agentSpec: payload.agentSpec,
     }),
   }).then((response) => ({
     ok: Boolean(response.ok),

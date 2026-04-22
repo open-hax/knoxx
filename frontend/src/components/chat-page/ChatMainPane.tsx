@@ -6,7 +6,7 @@ import { ChatMessageList } from './ChatMessageList';
 import { ChatRuntimePanel } from './ChatRuntimePanel';
 import { ChatScratchpadPanel } from './ChatScratchpadPanel';
 import { ChatSettingsPanel } from './ChatSettingsPanel';
-import type { ChatMessage, ProxxModelInfo, RunDetail, RunEvent, ToolCatalogResponse, ToolReceipt } from '../../lib/types';
+import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, RunDetail, RunEvent, ToolCatalogResponse, ToolReceipt } from '../../lib/types';
 import type { HydrationSource } from './types';
 
 const EMPTY_STATE = {
@@ -35,7 +35,9 @@ type ChatMainPaneProps = {
   onSystemPromptChange: (value: string) => void;
   conversationId: string | null;
   activeRole: string;
-  onActiveRoleChange: (value: string) => void;
+  activeAgentId: string;
+  availableAgents: AgentContractCatalogItem[];
+  onActiveAgentChange: (value: string) => void;
   toolCatalog: ToolCatalogResponse | null;
   wsStatus: 'connected' | 'closed' | 'error' | 'connecting';
   isRecovering: boolean;
@@ -111,7 +113,9 @@ export function ChatMainPane({
   onSystemPromptChange,
   conversationId,
   activeRole,
-  onActiveRoleChange,
+  activeAgentId,
+  availableAgents,
+  onActiveAgentChange,
   toolCatalog,
   wsStatus,
   isRecovering,
@@ -215,6 +219,27 @@ export function ChatMainPane({
           {showCanvasToggle ? <Button variant="ghost" size="sm" onClick={onToggleCanvas}>Canvas</Button> : null}
           <Button variant="ghost" size="sm" onClick={onToggleConsole}>Console</Button>
           <div style={{ flex: 1 }} />
+          <select
+            value={activeAgentId}
+            onChange={(event) => onActiveAgentChange(event.target.value)}
+            style={{
+              minWidth: 170,
+              borderRadius: 6,
+              border: '1px solid var(--token-colors-border-subtle)',
+              padding: '6px 8px',
+              fontSize: 12,
+              background: 'var(--token-colors-surface-input)',
+              color: 'var(--token-colors-text-default)',
+            }}
+            title="Active agent contract"
+          >
+            {availableAgents.length === 0 ? <option value="">No agents</option> : null}
+            {availableAgents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.id}
+              </option>
+            ))}
+          </select>
           <SearchableSelect
             options={proxxModels.map(m => m.id)}
             value={selectedModel}
@@ -235,7 +260,9 @@ export function ChatMainPane({
             onSystemPromptChange={onSystemPromptChange}
             conversationId={conversationId}
             activeRole={activeRole}
-            onActiveRoleChange={onActiveRoleChange}
+            activeAgentId={activeAgentId}
+            availableAgents={availableAgents}
+            onActiveAgentChange={onActiveAgentChange}
             toolCatalog={toolCatalog}
           />
         ) : null}

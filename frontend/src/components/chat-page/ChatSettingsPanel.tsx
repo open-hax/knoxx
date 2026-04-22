@@ -1,13 +1,15 @@
 import type { ChangeEvent } from "react";
 import { Badge, Card } from "@open-hax/uxx";
-import type { ToolCatalogResponse } from "../../lib/types";
+import type { AgentContractCatalogItem, ToolCatalogResponse } from "../../lib/types";
 
 type ChatSettingsPanelProps = {
   systemPrompt: string;
   onSystemPromptChange: (value: string) => void;
   conversationId: string | null;
   activeRole: string;
-  onActiveRoleChange: (value: string) => void;
+  activeAgentId: string;
+  availableAgents: AgentContractCatalogItem[];
+  onActiveAgentChange: (value: string) => void;
   toolCatalog: ToolCatalogResponse | null;
 };
 
@@ -16,12 +18,14 @@ export function ChatSettingsPanel({
   onSystemPromptChange,
   conversationId,
   activeRole,
-  onActiveRoleChange,
+  activeAgentId,
+  availableAgents,
+  onActiveAgentChange,
   toolCatalog,
 }: ChatSettingsPanelProps) {
   return (
     <Card variant="default" padding="sm" style={{ margin: 8, flexShrink: 0 }}>
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0,1fr) 140px 180px" }}>
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0,1fr) 140px 220px" }}>
         <div>
           <label style={{ display: "block", fontSize: 11, fontWeight: 500, marginBottom: 4 }}>Session Steering Note</label>
           <textarea
@@ -65,10 +69,10 @@ export function ChatSettingsPanel({
           </div>
         </div>
         <div>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 500, marginBottom: 4 }}>Role</label>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 500, marginBottom: 4 }}>Active agent</label>
           <select
-            value={activeRole}
-            onChange={(event) => onActiveRoleChange(event.target.value)}
+            value={activeAgentId}
+            onChange={(event) => onActiveAgentChange(event.target.value)}
             style={{
               width: "100%",
               borderRadius: 6,
@@ -79,10 +83,16 @@ export function ChatSettingsPanel({
               color: "var(--token-colors-text-default)",
             }}
           >
-            <option value="executive">Executive</option>
-            <option value="principal_architect">Principal Architect</option>
-            <option value="junior_dev">Junior Dev</option>
+            {availableAgents.length === 0 ? <option value="">No agents available</option> : null}
+            {availableAgents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.id}
+              </option>
+            ))}
           </select>
+          <div style={{ marginTop: 6, fontSize: 11, color: "var(--token-colors-text-muted)" }}>
+            Role: {activeRole}
+          </div>
           <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
             {toolCatalog?.tools.map((tool) => (
               <Badge key={tool.id} size="sm" variant={tool.enabled ? "default" : "warning"}>

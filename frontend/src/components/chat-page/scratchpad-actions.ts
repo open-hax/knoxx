@@ -15,6 +15,7 @@ type SetState<T> = Dispatch<SetStateAction<T>>;
 
 type ChatScratchpadActionParams = {
   activeRole: string;
+  activeAgentId: string;
   messages: ChatMessage[];
   previewData: PreviewResponse | null;
   setPreviewData: SetState<PreviewResponse | null>;
@@ -39,6 +40,7 @@ type ChatScratchpadActionParams = {
 
 export function createChatScratchpadActions({
   activeRole,
+  activeAgentId,
   messages,
   previewData,
   setPreviewData,
@@ -236,6 +238,7 @@ export function createChatScratchpadActions({
     try {
       const response = await toolWrite({
         role: activeRole,
+        agentContractId: activeAgentId || undefined,
         path: canvasPath,
         content: canvasContent,
         create_parents: true,
@@ -258,6 +261,7 @@ export function createChatScratchpadActions({
       if (to.length === 0) throw new Error("At least one recipient is required");
       const response = await sendEmailDraft({
         role: activeRole,
+        agentContractId: activeAgentId || undefined,
         to,
         cc,
         subject: canvasSubject || canvasTitle || "Untitled draft",

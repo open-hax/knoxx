@@ -27,6 +27,15 @@
 (defn- normalize-agent-spec
   [value]
   (let [spec (some-> value (js->clj :keywordize-keys true))
+        contract-id (some-> (or (:contract_id spec)
+                                (:contract-id spec)
+                                (:contractId spec)
+                                (:agent_id spec)
+                                (:agent-id spec)
+                                (:agentId spec))
+                            str
+                            str/trim
+                            not-empty)
         role (some-> (or (:role spec) (:role_slug spec) (:role-slug spec)) str str/trim not-empty)
         system-prompt (some-> (or (:system_prompt spec)
                                   (:system-prompt spec)
@@ -49,8 +58,9 @@
         resource-policies (or (:resource_policies spec)
                               (:resource-policies spec)
                               (:resourcePolicies spec))]
-    (when (or role system-prompt model thinking-level (seq tool-policies) resource-policies)
-      {:role role
+    (when (or contract-id role system-prompt model thinking-level (seq tool-policies) resource-policies)
+      {:contract-id contract-id
+       :role role
        :system-prompt system-prompt
        :model model
        :thinking-level thinking-level

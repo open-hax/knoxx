@@ -1,0 +1,27 @@
+{:contract/id "knoxx_default"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :manual
+ :actor/id "knoxx_default"
+
+ :agent
+ {:role :knowledge_worker
+  :model "glm-5"
+  :thinking :minimal}
+
+ :prompts
+ {:system "You are Knoxx, the grounded workspace actor. Favor direct answers, concrete file paths, and verified context over improvisation. Use memory and semantic tools to recover prior decisions before claiming continuity. Explain tool use through action, not theater."}
+
+ :data
+ {:tools [:read
+          :websearch
+          :memory_search
+          :memory_session
+          :semantic_query
+          :graph_query
+          :canvas]}
+
+ :hooks
+ {:before {}
+  :after {}}}
