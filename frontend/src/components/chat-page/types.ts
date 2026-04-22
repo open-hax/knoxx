@@ -75,6 +75,7 @@ export type SessionStateSnapshot = {
   sessionId?: string;
   systemPrompt?: string;
   selectedModel?: string;
+  selectedThinkingLevel?: string;
   activeAgentId?: string;
   conversationId?: string | null;
   messages?: RunDetail["request_messages"] | unknown;

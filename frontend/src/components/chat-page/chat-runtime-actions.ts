@@ -16,6 +16,7 @@ type CreateChatRuntimeActionsParams = {
   conversationId: string | null;
   setConversationId: SetState<string | null>;
   selectedModel: string;
+  selectedThinkingLevel: string;
   liveControlEnabled: boolean;
   liveControlText: string;
   setLiveControlText: SetState<string>;
@@ -42,6 +43,7 @@ export function createChatRuntimeActions({
   conversationId,
   setConversationId,
   selectedModel,
+  selectedThinkingLevel,
   liveControlEnabled,
   liveControlText,
   setLiveControlText,
@@ -218,6 +220,7 @@ export function createChatRuntimeActions({
         session_id: sessionId,
         run_id: activeRunIdRef.current,
         model: selectedModel,
+        thinkingLevel: selectedThinkingLevel,
         contentParts,
         agentSpec: {
           contract_id: activeAgentId || undefined,
@@ -266,6 +269,7 @@ export function createChatRuntimeActions({
       store?.removeItem(sessionStateKey);
       initializePersistedChatSession(sessionStateKey, nextSessionId, nextConversationId, {
         selectedModel,
+        selectedThinkingLevel,
         systemPrompt,
         activeAgentId,
       });

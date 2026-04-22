@@ -34,6 +34,8 @@ export function ChatWorkspacePane({
         onToggleConsole={controller.toggleConsole}
         selectedModel={controller.selectedModel}
         onSelectedModelChange={controller.setSelectedModel}
+        selectedThinkingLevel={controller.selectedThinkingLevel}
+        onSelectedThinkingLevelChange={controller.setSelectedThinkingLevel}
         proxxModels={controller.proxxModels}
         proxxReachable={controller.proxxReachable}
         proxxConfigured={controller.proxxConfigured}

@@ -72,6 +72,8 @@ function makeProps(messages: ChatMessage[]) {
     onToggleConsole: noop,
     selectedModel: "gemma4:31b",
     onSelectedModelChange: noop,
+    selectedThinkingLevel: "off",
+    onSelectedThinkingLevelChange: noop,
     proxxModels: baseModels,
     proxxReachable: true,
     proxxConfigured: true,

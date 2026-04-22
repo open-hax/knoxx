@@ -7,6 +7,7 @@ import { ChatRuntimePanel } from './ChatRuntimePanel';
 import { ChatScratchpadPanel } from './ChatScratchpadPanel';
 import { ChatSettingsPanel } from './ChatSettingsPanel';
 import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, RunDetail, RunEvent, ToolCatalogResponse, ToolReceipt } from '../../lib/types';
+import { THINKING_OPTIONS } from '../../lib/api/contracts';
 import type { HydrationSource } from './types';
 
 const EMPTY_STATE = {
@@ -27,6 +28,8 @@ type ChatMainPaneProps = {
   onToggleConsole: () => void;
   selectedModel: string;
   onSelectedModelChange: (value: string) => void;
+  selectedThinkingLevel: string;
+  onSelectedThinkingLevelChange: (value: string) => void;
   proxxModels: ProxxModelInfo[];
   proxxReachable: boolean;
   proxxConfigured: boolean;
@@ -105,6 +108,8 @@ export function ChatMainPane({
   onToggleConsole,
   selectedModel,
   onSelectedModelChange,
+  selectedThinkingLevel,
+  onSelectedThinkingLevelChange,
   proxxModels,
   proxxReachable,
   proxxConfigured,
@@ -248,6 +253,24 @@ export function ChatMainPane({
             disabled={proxxModels.length === 0}
             size="sm"
           />
+          <select
+            value={selectedThinkingLevel}
+            onChange={(event) => onSelectedThinkingLevelChange(event.target.value)}
+            style={{
+              minWidth: 110,
+              borderRadius: 6,
+              border: '1px solid var(--token-colors-border-subtle)',
+              padding: '6px 8px',
+              fontSize: 12,
+              background: 'var(--token-colors-surface-input)',
+              color: 'var(--token-colors-text-default)',
+            }}
+            title="Thinking level"
+          >
+            {THINKING_OPTIONS.map((value) => (
+              <option key={`thinking-${value}`} value={value}>{value}</option>
+            ))}
+          </select>
           <Badge variant={proxxReachable ? 'success' : proxxConfigured ? 'warning' : 'error'} size="sm" dot>
             {proxxReachable ? 'online' : proxxConfigured ? 'offline' : 'not configured'}
           </Badge>

@@ -90,6 +90,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [abortingTurn, setAbortingTurn] = useState(false);
   const [proxxModels, setProxxModels] = useState<ProxxModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedThinkingLevel, setSelectedThinkingLevel] = useState("off");
   const [proxxReachable, setProxxReachable] = useState(false);
   const [proxxConfigured, setProxxConfigured] = useState(false);
   const [browseData, setBrowseData] = useState<BrowseResponse | null>(null);
@@ -190,6 +191,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setSystemPrompt,
     selectedModel,
     setSelectedModel,
+    selectedThinkingLevel,
+    setSelectedThinkingLevel,
     activeAgentId,
     setActiveAgentId,
     conversationId,
@@ -294,6 +297,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     conversationId,
     setConversationId,
     selectedModel,
+    selectedThinkingLevel,
     liveControlEnabled,
     liveControlText,
     setLiveControlText,
@@ -481,6 +485,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     proxxModels,
     selectedModel,
     setSelectedModel,
+    selectedThinkingLevel,
+    setSelectedThinkingLevel,
     proxxReachable,
     proxxConfigured,
     isRecovering,

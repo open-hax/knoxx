@@ -207,6 +207,7 @@ export async function knoxxChat(payload: {
   conversation_id?: string | null;
   session_id?: string | null;
   model?: string;
+  thinkingLevel?: string;
   direct?: boolean;
   contentParts?: ContentPart[];
   agentSpec?: Record<string, unknown>;
@@ -219,6 +220,7 @@ export async function knoxxChat(payload: {
       conversation_id: payload.conversation_id,
       session_id: payload.session_id,
       model: payload.model,
+      thinkingLevel: payload.thinkingLevel,
       contentParts: payload.contentParts,
       agentSpec: payload.agentSpec,
     }),
@@ -283,6 +285,7 @@ export async function knoxxChatStart(payload: {
   session_id?: string | null;
   run_id?: string | null;
   model?: string;
+  thinkingLevel?: string;
   direct?: boolean;
   contentParts?: ContentPart[];
   agentSpec?: Record<string, unknown>;
@@ -296,6 +299,7 @@ export async function knoxxChatStart(payload: {
       session_id: payload.session_id,
       run_id: payload.run_id,
       model: payload.model,
+      thinkingLevel: payload.thinkingLevel,
       contentParts: payload.contentParts,
       agentSpec: payload.agentSpec,
     }),
