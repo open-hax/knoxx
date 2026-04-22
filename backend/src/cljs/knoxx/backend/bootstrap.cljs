@@ -31,7 +31,8 @@
 (defn- notify-ready!
   []
   (when-let [send (aget js/process "send")]
-    (when (fn? send)
+    (when (and (fn? send)
+               (true? (aget js/process "connected")))
       (send "ready"))))
 
 (defn- ensure-fastify-json-empty-body-parser!
