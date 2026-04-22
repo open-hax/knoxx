@@ -23,6 +23,11 @@
       (when-not (str/blank? trimmed)
         trimmed))))
 
+(defn ensure-session-id
+  [node-crypto session-id]
+  (or (nonblank session-id)
+      (.randomUUID node-crypto)))
+
 (defn- preview-text-nonblank
   "Like value->preview-text, but returns nil for blank previews so OR chains keep searching." 
   [value max-chars]
@@ -93,13 +98,7 @@
 
 (defn- requested-system-prompt
   [agent-spec]
-  (let [system-prompt (some-> (:system-prompt agent-spec) str str/trim not-empty)
-        task-prompt (some-> (:task-prompt agent-spec) str str/trim not-empty)]
-    (cond
-      (and system-prompt task-prompt) (str system-prompt "\n\nTask:\n" task-prompt)
-      system-prompt system-prompt
-      task-prompt (str "Task:\n" task-prompt)
-      :else nil)))
+  (some-> (:system-prompt agent-spec) str str/trim not-empty))
 
 (defn- ensure-system-message
   [messages agent-spec]
@@ -311,6 +310,7 @@
   [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
   (let [node-crypto (aget runtime "crypto")
         conversation-id (or conversation-id (.randomUUID node-crypto))
+        session-id (ensure-session-id node-crypto session-id)
         _ (ensure-conversation-access! auth-context conversation-id)
         _ (remember-conversation-access! auth-context conversation-id)
         mode (or mode "direct")
