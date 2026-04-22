@@ -29,6 +29,8 @@
 
 (def ^:private event-agent-control-redis-key "event-agent:control-config")
 
+(declare default-discord-model)
+
 (def ^:private max-messages-limit 100)
 
 (defn- clamp-max-messages
@@ -80,7 +82,7 @@
 
 (defn- default-discord-agent-jobs
   [config]
-  (let [default-model (or (:proxx-default-model config) "glm-5")
+  (let [default-model (default-discord-model config)
         known-roles (set (roles/list-role-slugs config))
         default-role (if (contains? known-roles "system_admin")
                        "system_admin"
@@ -251,12 +253,17 @@
    {:toolId "discord.list.servers" :effect "allow"}
    {:toolId "discord.list.channels" :effect "allow"}
    {:toolId "websearch" :effect "allow"}
+   {:toolId "web.read" :effect "allow"}
    {:toolId "memory_search" :effect "allow"}
    {:toolId "graph_query" :effect "allow"}])
 
+(defn- default-discord-model
+  [_config]
+  "gemma4:31b")
+
 (defn default-event-agent-control
   [config]
-  (let [default-model (or (:proxx-default-model config) "glm-5")
+  (let [default-model (default-discord-model config)
         known-roles (set (roles/list-role-slugs config))
         default-role (if (contains? known-roles "system_admin")
                        "system_admin"
@@ -317,6 +324,39 @@
                          :thinkingLevel "minimal"
                          :systemPrompt "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans."
                          :taskPrompt "Summarize recent cross-channel Discord activity, identify meaningful opportunities or risks, and decide whether to publish a concise proactive message."
+                         :toolPolicies (default-discord-tool-policies)}}
+            {:id "ussyverse-social-creative"
+             :name "Ussyverse social creative"
+             :enabled true
+             :trigger {:kind "cron"
+                       :cadenceMinutes 10
+                       :eventKinds []}
+             :source {:kind "discord"
+                      :mode "synthesize"
+                      :config {:maxMessages 20}}
+             :filters {:publishChannels ["1494137016303095828" "1444189585373663417"]}
+             :agentSpec {:role default-role
+                         :model default-model
+                         :thinkingLevel "off"
+                         :systemPrompt "You are Frankie Infinite Yap: creative, fun, sociable, entertaining, and musical. You are weird in a good way, lively without being exhausting, and capable of making the room feel more alive. Prefer one sharp, delightful contribution over bland chatter."
+                         :taskPrompt "Every 10 minutes, inspect the current Ussyverse server conversation around the two home channels and the wider guild they belong to. Read links with web.read when useful. Read attachment URLs when relevant. If you have something genuinely fun, musical, witty, or socially catalytic to add, post exactly one message into either 1494137016303095828 (frankie-infinite-yap) or 1444189585373663417 (errorcoded-slop). You may include attachment URLs with discord.send when sharing something improves the bit. Silence is allowed, but default toward being delightfully present."
+                         :toolPolicies (default-discord-tool-policies)}}
+            {:id "ussyverse-social-replies"
+             :name "Ussyverse social replies"
+             :enabled true
+             :trigger {:kind "event"
+                       :cadenceMinutes 1
+                       :eventKinds ["discord.message.mention" "discord.message.keyword"]}
+             :source {:kind "discord"
+                      :mode "respond"
+                      :config {:maxMessages 20}}
+             :filters {:channels ["1494137016303095828" "1444189585373663417"]
+                       :keywords ["frankie" "yap" "music" "song" "slop" "ussy"]}
+             :agentSpec {:role default-role
+                         :model default-model
+                         :thinkingLevel "off"
+                         :systemPrompt "You are Frankie Infinite Yap in event mode: playful, social, entertaining, and musically inclined. Mentions and keywords are invitations, not obligations. Read the room, be fun, and never sound like a corporate helpdesk."
+                         :taskPrompt "A Discord event fired in one of your home channels. Read nearby context, inspect links or attachment URLs if useful, and decide whether to reply in-channel. Replies should feel alive, funny, musical, or socially connective."
                          :toolPolicies (default-discord-tool-policies)}}]}))
 
 (defn- normalize-event-agent-job
@@ -365,7 +405,7 @@
      :agentSpec {:role role
                  :model (or (some-> (:model agent-source) str str/trim not-empty)
                             (:model (:agentSpec default-job))
-                            (:proxx-default-model config))
+                            (default-discord-model config))
                  :thinkingLevel thinking-level
                  :systemPrompt (or (some-> (:systemPrompt agent-source) str not-empty)
                                    (:systemPrompt (:agentSpec default-job))

@@ -94,7 +94,19 @@
    :authorId (or (aget msg "author" "id") "")
    :authorUsername (or (aget msg "author" "username") "unknown")
    :authorIsBot (boolean (aget msg "author" "bot"))
-   :timestamp (or (aget msg "timestamp") "")})
+   :timestamp (or (aget msg "timestamp") "")
+   :attachments (->> (if (array? (aget msg "attachments")) (array-seq (aget msg "attachments")) [])
+                     (mapv (fn [attachment]
+                             {:id (or (aget attachment "id") "")
+                              :filename (or (aget attachment "filename") "")
+                              :contentType (or (aget attachment "content_type") (aget attachment "contentType"))
+                              :size (or (aget attachment "size") 0)
+                              :url (or (aget attachment "url") "")})))
+   :embeds (->> (if (array? (aget msg "embeds")) (array-seq (aget msg "embeds")) [])
+               (mapv (fn [embed]
+                       {:title (or (aget embed "title") nil)
+                        :description (or (aget embed "description") nil)
+                        :url (or (aget embed "url") nil)})))})
 
 (defn- sort-newest-first
   [messages]
@@ -125,15 +137,29 @@
   [control]
   (or (get-in control [:sources :discord]) {}))
 
+(defn- filter-string-list
+  [values]
+  (->> (or values [])
+       (map (fn [value] (some-> value str str/trim not-empty)))
+       (remove nil?)
+       vec))
+
 (defn- job-channels
   [control job]
-  (let [channels (->> (or (get-in job [:filters :channels]) [])
-                      (map (fn [value] (some-> value str str/trim not-empty)))
-                      (remove nil?)
-                      vec)]
+  (let [channels (filter-string-list (get-in job [:filters :channels]))]
     (if (seq channels)
       channels
       (vec (or (:defaultChannels (discord-source-config control)) [])))))
+
+(defn- job-publish-channels
+  [job]
+  (filter-string-list (or (get-in job [:filters :publishChannels])
+                          (get-in job [:filters :publish_channels]))))
+
+(defn- job-guild-ids
+  [job]
+  (filter-string-list (or (get-in job [:filters :guildIds])
+                          (get-in job [:filters :guild_ids]))))
 
 (defn- job-keywords
   [control job]
@@ -326,7 +352,18 @@
 
 (defn event-summary-text
   [event]
-  (let [payload (or (:payload event) {})]
+  (let [payload (or (:payload event) {})
+        attachments (or (:attachments payload) [])
+        attachment-lines (when (seq attachments)
+                           (str "Attachments:\n"
+                                (str/join "\n"
+                                          (map (fn [attachment]
+                                                 (str "- " (:filename attachment)
+                                                      (when-let [url (:url attachment)]
+                                                        (str " <" url ">"))))
+                                               attachments))
+                                "\n"))
+        publish-channels (or (:publishChannels payload) [])]
     (str "Event source: " (:sourceKind event) "\n"
          "Event kind: " (:eventKind event) "\n"
          "Event id: " (:id event) "\n"
@@ -339,10 +376,38 @@
            (str "Repository: " repository "\n"))
          (when-let [content (:content payload)]
            (str "Content: " content "\n"))
+         attachment-lines
+         (when (seq publish-channels)
+           (str "Publish channels: " (str/join ", " publish-channels) "\n"))
          (when-let [summary (:summary payload)]
            (str "Summary: " summary "\n"))
          (when-let [payload-preview (:payloadPreview payload)]
            (str "Payload preview: " payload-preview "\n")))))
+
+(defn- event-content-parts
+  [event]
+  (->> (or (get-in event [:payload :attachments]) [])
+       (keep (fn [attachment]
+               (let [url (:url attachment)
+                     content-type (some-> (:contentType attachment) str str/lower-case)]
+                 (cond
+                   (and url (some-> content-type (str/starts-with? "image/")))
+                   {:type "image"
+                    :url url
+                    :mimeType (:contentType attachment)
+                    :filename (:filename attachment)}
+
+                   (and url (or (some-> content-type (str/starts-with? "text/"))
+                                (some-> content-type (str/includes? "json"))
+                                (some-> content-type (str/includes? "html"))
+                                (some-> content-type (str/includes? "pdf"))))
+                   {:type "document"
+                    :url url
+                    :mimeType (:contentType attachment)
+                    :filename (:filename attachment)}
+
+                   :else nil))))
+       vec))
 
 (defn build-agent-run-payload
   [config job event]
@@ -354,17 +419,20 @@
         user-message (str "An event matched this job.\n\n"
                           (or (:taskPrompt agent-spec) "")
                           (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
-                          (event-summary-text event))]
+                          (event-summary-text event))
+        content-parts (event-content-parts event)
+        model-id (or (:model agent-spec) "gemma4:31b")]
     {:conversation_id conversation-id
      :session_id session-id
      :run_id run-id
      :message user-message
+     :content_parts content-parts
      :agent_spec {:role (or (:role agent-spec) "knowledge_worker")
                   :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
-                  :model (or (:model agent-spec) (:proxx-default-model config) "glm-5")
+                  :model model-id
                   :thinking_level (or (:thinkingLevel agent-spec) "off")
                   :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
-     :model (or (:model agent-spec) (:proxx-default-model config) "glm-5")}))
+     :model model-id}))
 
 (defn- start-agent-run!
   [config job event]
@@ -495,7 +563,9 @@
                  :authorUsername (:authorUsername message)
                  :authorIsBot (:authorIsBot message)
                  :content (:content message)
-                 :messageId (:id message)}]
+                 :messageId (:id message)
+                 :attachments (vec (or (:attachments message) []))
+                 :embeds (vec (or (:embeds message) []))}]
     (when-not (:authorIsBot message)
       (remember-discord-latest! (:channelId message) [message])
       (dispatch-event! {:sourceKind "discord"
@@ -550,30 +620,68 @@
       keyword? "discord.message.keyword"
       :else nil)))
 
+(defn- resolve-job-channel-ids!
+  [control job]
+  (let [explicit-channels (job-channels control job)
+        guild-ids (job-guild-ids job)
+        publish-channels (job-publish-channels job)]
+    (if (seq guild-ids)
+      (-> (or (dg/list-channels) (js/Promise.resolve #js []))
+          (.then (fn [channels]
+                   (let [rows (js->clj channels :keywordize-keys true)]
+                     (->> rows
+                          (filter (fn [channel]
+                                    (contains? (set guild-ids) (:guildId channel))))
+                          (map :id)
+                          distinct
+                          vec)))))
+      (if (and (empty? explicit-channels) (seq publish-channels))
+        (-> (or (dg/list-channels) (js/Promise.resolve #js []))
+            (.then (fn [channels]
+                     (let [rows (js->clj channels :keywordize-keys true)
+                           guilds (->> rows
+                                       (filter (fn [channel]
+                                                 (contains? (set publish-channels) (:id channel))))
+                                       (map :guildId)
+                                       distinct
+                                       vec)]
+                       (if (seq guilds)
+                         (->> rows
+                              (filter (fn [channel]
+                                        (contains? (set guilds) (:guildId channel))))
+                              (map :id)
+                              distinct
+                              vec)
+                         (if (seq publish-channels)
+                           publish-channels
+                           explicit-channels)))))
+        (js/Promise.resolve explicit-channels))))))
+
 (defn- execute-discord-patrol!
   [config control job]
-  (let [channels (job-channels control job)
-        limit (job-max-messages job 25)]
-    (if (seq channels)
-      (js/Promise.all
-       (clj->js
-        (mapv (fn [channel-id]
-                (-> (read-discord-channel! channel-id limit)
-                    (.then (fn [messages]
-                             (let [fresh (unseen-discord-messages channel-id messages)]
-                               (doseq [message fresh]
-                                 (when-let [match-kind (discord-message-match-kind control job message)]
-                                   (dispatch-discord-message-event! control job message match-kind)))
-                               (remember-discord-latest! channel-id messages)
-                               {:channelId channel-id
-                                :fetched (count messages)
-                                :fresh (count fresh)})))
-                    (.catch (fn [err]
-                              (println "[event-agents] discord patrol failed for" channel-id ":" (.-message err))
-                              {:channelId channel-id
-                               :error true}))))
-              channels)))
-      (js/Promise.resolve nil))))
+  (let [limit (job-max-messages job 25)]
+    (-> (resolve-job-channel-ids! control job)
+        (.then (fn [channels]
+                 (if (seq channels)
+                   (js/Promise.all
+                    (clj->js
+                     (mapv (fn [channel-id]
+                             (-> (read-discord-channel! channel-id limit)
+                                 (.then (fn [messages]
+                                          (let [fresh (unseen-discord-messages channel-id messages)]
+                                            (doseq [message fresh]
+                                              (when-let [match-kind (discord-message-match-kind control job message)]
+                                                (dispatch-discord-message-event! control job message match-kind)))
+                                            (remember-discord-latest! channel-id messages)
+                                            {:channelId channel-id
+                                             :fetched (count messages)
+                                             :fresh (count fresh)})))
+                                 (.catch (fn [err]
+                                           (println "[event-agents] discord patrol failed for" channel-id ":" (.-message err))
+                                           {:channelId channel-id
+                                            :error true}))))
+                           channels)))
+                   (js/Promise.resolve nil)))))))
 
 (defn- summarize-discord-channel
   [channel-id messages]
@@ -581,44 +689,52 @@
        (remove :authorIsBot)
        (take 8)
        (map (fn [message]
-              (str "[" channel-id "] <" (:authorUsername message) "> "
-                   (subs (:content message) 0 (min 180 (count (:content message)))))))
+              (let [attachments (:attachments message)
+                    attachment-text (when (seq attachments)
+                                      (str " attachments="
+                                           (str/join ", " (map :filename attachments))))]
+                (str "[" channel-id "] <" (:authorUsername message) "> "
+                     (subs (:content message) 0 (min 180 (count (:content message))))
+                     (or attachment-text "")))))
        (str/join "\n")))
 
 (defn- execute-discord-synthesis!
   [config control job]
-  (let [channels (job-channels control job)
-        limit (job-max-messages job 12)]
-    (if (seq channels)
-      (-> (js/Promise.all
-           (clj->js
-            (mapv (fn [channel-id]
-                    (-> (read-discord-channel! channel-id limit)
-                        (.then (fn [messages]
-                                 {:channelId channel-id
-                                  :messages messages}))
-                        (.catch (fn [_]
-                                  {:channelId channel-id
-                                   :messages []}))))
-                  channels)))
-          (.then (fn [results]
-                   (let [rows (js->clj results :keywordize-keys true)
-                         summary (->> rows
-                                      (map (fn [{:keys [channelId messages]}]
-                                             (summarize-discord-channel channelId messages)))
-                                      (remove str/blank?)
-                                      (str/join "\n\n"))]
-                     (if (str/blank? summary)
-                       (js/Promise.resolve nil)
-                       (start-agent-run!
-                        config
-                        job
-                        {:sourceKind "discord"
-                         :eventKind "discord.snapshot.summary"
-                         :timestamp (.toISOString (js/Date.))
-                         :payload {:summary summary
-                                   :channelId (first channels)}}))))))
-      (js/Promise.resolve nil))))
+  (let [limit (job-max-messages job 12)
+        publish-channels (job-publish-channels job)]
+    (-> (resolve-job-channel-ids! control job)
+        (.then (fn [channels]
+                 (if (seq channels)
+                   (-> (js/Promise.all
+                        (clj->js
+                         (mapv (fn [channel-id]
+                                 (-> (read-discord-channel! channel-id limit)
+                                     (.then (fn [messages]
+                                              {:channelId channel-id
+                                               :messages messages}))
+                                     (.catch (fn [_]
+                                               {:channelId channel-id
+                                                :messages []}))))
+                               channels)))
+                       (.then (fn [results]
+                                (let [rows (js->clj results :keywordize-keys true)
+                                      summary (->> rows
+                                                   (map (fn [{:keys [channelId messages]}]
+                                                          (summarize-discord-channel channelId messages)))
+                                                   (remove str/blank?)
+                                                   (str/join "\n\n"))]
+                                  (if (str/blank? summary)
+                                    (js/Promise.resolve nil)
+                                    (start-agent-run!
+                                     config
+                                     job
+                                     {:sourceKind "discord"
+                                      :eventKind "discord.snapshot.summary"
+                                      :timestamp (.toISOString (js/Date.))
+                                      :payload {:summary summary
+                                                :channelId (first channels)
+                                                :publishChannels publish-channels}}))))))
+                   (js/Promise.resolve nil)))))))
 
 (defn- execute-direct-job!
   [config job source-kind event-kind]

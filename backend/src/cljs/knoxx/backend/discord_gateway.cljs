@@ -8,7 +8,10 @@
 
    Exported: createDiscordGatewayManager — factory function returning a JS object
    with async methods. Also provides a CLJS convenience API via set-manager!."
-  (:require ["discord.js" :as discord]))
+  (:require [clojure.string :as str]
+            ["discord.js" :as discord]))
+
+(declare set-manager!)
 
 ;; ---------------------------------------------------------------------------
 ;; discord.js imports
@@ -266,14 +269,18 @@
 
 (defn- gw-send-message
   "Send a message to a channel, splitting into chunks if needed."
-  [ensure-client channel-id text reply-to]
+  [ensure-client channel-id text reply-to attachments]
   (.then (ensure-client)
          (fn [active-client]
            (-> (.fetch (.. active-client -channels) channel-id)
                (.then (fn [channel]
                         (if (or (not channel) (not (readable-text-channel? channel)))
                           (js/Promise.reject (js/Error. (str "Channel not found or not text-based: " channel-id)))
-                          (let [chunks (split-message text)]
+                          (let [base-text (str (or text ""))
+                                chunks (split-message (if (and (str/blank? base-text)
+                                                               (seq attachments))
+                                                        "[attachment]"
+                                                        base-text))]
                             (-> (.reduce chunks
                                          (fn [promise chunk index]
                                            (.then (or promise (js/Promise.resolve nil))
@@ -281,6 +288,12 @@
                                                     (let [payload (clj->js {:content chunk})]
                                                       (when (and (= index 0) reply-to)
                                                         (aset payload "reply" (clj->js {:messageReference reply-to})))
+                                                      (when (and (= index 0) (seq attachments))
+                                                        (aset payload "files"
+                                                              (clj->js (mapv (fn [attachment]
+                                                                               {:attachment (:buffer attachment)
+                                                                                :name (:name attachment)})
+                                                                             attachments))))
                                                       (.send channel payload)))))
                                          nil)
                                 (.then (fn [_]
@@ -288,7 +301,8 @@
                                               :messageId ""
                                               :sent true
                                               :timestamp (.toISOString (js/Date.))
-                                              :chunkCount (.-length chunks)})))))))))))
+                                              :chunkCount (.-length chunks)
+                                              :attachmentCount (count attachments)})))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Factory
@@ -370,7 +384,7 @@
                        :fetchChannelMessages (fn [channel-id opts] (gw-fetch-channel-messages ensure-client channel-id opts))
                        :fetchDmMessages (fn [user-id opts] (gw-fetch-dm-messages ensure-client user-id opts))
                        :searchMessages (fn [scope opts] (gw-search-messages (this-fn) scope opts))
-                       :sendMessage (fn [channel-id text reply-to] (gw-send-message ensure-client channel-id text reply-to))})
+                       :sendMessage (fn [channel-id text reply-to attachments] (gw-send-message ensure-client channel-id text reply-to attachments))})
 
           (set-manager! @this-obj)
           @this-obj)))))
@@ -468,6 +482,8 @@
 
 (defn send-message
   "Send a message to a channel. Returns a Promise."
-  [channel-id text reply-to]
-  (when-let [manager @manager*]
-    (.sendMessage manager channel-id text reply-to)))
+  ([channel-id text reply-to]
+   (send-message channel-id text reply-to nil))
+  ([channel-id text reply-to attachments]
+   (when-let [manager @manager*]
+     (.sendMessage manager channel-id text reply-to attachments))))
