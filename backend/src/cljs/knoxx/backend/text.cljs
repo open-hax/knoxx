@@ -290,12 +290,43 @@
                                              "")
     :else ""))
 
+(defn- overlap-length
+  [left right]
+  (let [left (str (or left ""))
+        right (str (or right ""))
+        limit (min (count left) (count right))]
+    (loop [n limit]
+      (cond
+        (zero? n) 0
+        (= (.slice left (- (count left) n)) (.slice right 0 n)) n
+        :else (recur (dec n))))))
+
+(defn- merge-monotonic-text
+  [acc fragment]
+  (let [acc (str (or acc ""))
+        fragment (str (or fragment ""))]
+    (cond
+      (str/blank? fragment) acc
+      (str/blank? acc) fragment
+      (= acc fragment) acc
+      (str/starts-with? fragment acc) fragment
+      (str/starts-with? acc fragment) acc
+      :else (let [overlap (overlap-length acc fragment)]
+              (str acc (.slice fragment overlap))))))
+
+(defn- merge-part-texts
+  [parts part->text]
+  (reduce (fn [acc part]
+            (merge-monotonic-text acc (part->text part)))
+          ""
+          parts))
+
 (defn assistant-message-text
   [message]
   (let [content (aget message "content")
         merged (cond
                  (string? content) content
-                 (array? content) (apply str (map content-part-text (array-seq content)))
+                 (array? content) (merge-part-texts (array-seq content) content-part-text)
                  :else "")]
     (cond
       (not (str/blank? merged)) merged
@@ -307,7 +338,7 @@
   [message]
   (let [content (aget message "content")
         merged (cond
-                 (array? content) (apply str (map reasoning-part-text (array-seq content)))
+                 (array? content) (merge-part-texts (array-seq content) reasoning-part-text)
                  :else "")]
     (cond
       (not (str/blank? merged)) merged

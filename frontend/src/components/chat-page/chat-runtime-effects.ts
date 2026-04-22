@@ -182,6 +182,12 @@ export function useChatRuntimeEffects({
                     pendingId,
                     (blocks) => finalizeTraceBlocks(blocks, runtimeEvent.type === 'run_failed' ? 'error' : 'done'),
                   );
+                  callbacksRef.current.updateMessageById(pendingId, (message) => ({
+                    ...message,
+                    runId: runtimeEvent.run_id ?? message.runId ?? null,
+                    status: runtimeEvent.type === 'run_failed' ? 'error' : 'done',
+                  }));
+                  pendingAssistantIdRef.current = null;
                 }
                 setIsSending(false);
                 void callbacksRef.current.loadRunDetail(runtimeEvent.run_id);
