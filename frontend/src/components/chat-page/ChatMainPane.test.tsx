@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ChatMainPane } from "./ChatMainPane";
+import { THINKING_OPTIONS } from "../../lib/api/contracts";
 import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, ToolCatalogResponse } from "../../lib/types";
 
 vi.mock("../ChatComposer", () => ({
@@ -146,6 +147,25 @@ function renderPane(messages: ChatMessage[]) {
 }
 
 describe("ChatMainPane auto-scroll", () => {
+  it("renders a thinking-level dropdown with all supported options", () => {
+    const onSelectedThinkingLevelChange = vi.fn();
+    render(
+      <ChatMainPane
+        {...makeProps([makeMessage("m1", "hello")])}
+        onSelectedThinkingLevelChange={onSelectedThinkingLevelChange}
+      />,
+    );
+
+    const select = screen.getByLabelText("Thinking level") as HTMLSelectElement;
+    expect(select.value).toBe("off");
+
+    fireEvent.change(select, { target: { value: "high" } });
+    expect(onSelectedThinkingLevelChange).toHaveBeenCalledWith("high");
+
+    const optionValues = Array.from(select.options).map((option) => option.value);
+    expect(optionValues).toEqual(Array.from(THINKING_OPTIONS));
+  });
+
   it("keeps following the transcript when the user is near the bottom", () => {
     const firstMessages = [makeMessage("m1", "hello")];
     const secondMessages = [makeMessage("m1", "hello there"), makeMessage("m2", "world")];

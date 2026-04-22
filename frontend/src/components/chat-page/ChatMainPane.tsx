@@ -253,24 +253,36 @@ export function ChatMainPane({
             disabled={proxxModels.length === 0}
             size="sm"
           />
-          <select
-            value={selectedThinkingLevel}
-            onChange={(event) => onSelectedThinkingLevelChange(event.target.value)}
+          <label
             style={{
-              minWidth: 110,
-              borderRadius: 6,
-              border: '1px solid var(--token-colors-border-subtle)',
-              padding: '6px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
               fontSize: 12,
-              background: 'var(--token-colors-surface-input)',
-              color: 'var(--token-colors-text-default)',
+              color: 'var(--token-colors-text-muted)',
             }}
             title="Thinking level"
           >
-            {THINKING_OPTIONS.map((value) => (
-              <option key={`thinking-${value}`} value={value}>{value}</option>
-            ))}
-          </select>
+            <span>Thinking</span>
+            <select
+              aria-label="Thinking level"
+              value={selectedThinkingLevel}
+              onChange={(event) => onSelectedThinkingLevelChange(event.target.value)}
+              style={{
+                minWidth: 110,
+                borderRadius: 6,
+                border: '1px solid var(--token-colors-border-subtle)',
+                padding: '6px 8px',
+                fontSize: 12,
+                background: 'var(--token-colors-surface-input)',
+                color: 'var(--token-colors-text-default)',
+              }}
+            >
+              {THINKING_OPTIONS.map((value) => (
+                <option key={`thinking-${value}`} value={value}>{value}</option>
+              ))}
+            </select>
+          </label>
           <Badge variant={proxxReachable ? 'success' : proxxConfigured ? 'warning' : 'error'} size="sm" dot>
             {proxxReachable ? 'online' : proxxConfigured ? 'offline' : 'not configured'}
           </Badge>
