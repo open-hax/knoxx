@@ -55,6 +55,17 @@ function tryGitTopLevel(cwd) {
   }
 }
 
+function isLocalPortBound(port) {
+  try {
+    execSync(`ss -ltn 'sport = :${port}' | grep -F '127.0.0.1:${port}'`, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
 const knoxxRoot = __dirname;
 const backendDir = path.join(knoxxRoot, 'backend');
 const frontendDir = path.join(knoxxRoot, 'frontend');
@@ -76,10 +87,22 @@ const hostEnv = loadSimpleEnv(hostEnvPath);
 const shoedelussyDir = process.env.SHOEDELUSSY_DIR || hostEnv.SHOEDELUSSY_DIR || path.join(os.homedir(), '.knoxx', 'external', 'shoedelussy');
 const shoedelussyServerDir = path.join(shoedelussyDir, 'server');
 const shoedelussyMcpPort = process.env.SHOEDELUSSY_MCP_PORT || hostEnv.SHOEDELUSSY_MCP_PORT || '8790';
-const shoedelussyMcpBaseUrl = hostEnv.SHOEDELUSSY_MCP_BASE_URL || `http://127.0.0.1:${shoedelussyMcpPort}/mcp`;
+const shoedelussyExplicitBaseUrl = process.env.SHOEDELUSSY_MCP_BASE_URL || hostEnv.SHOEDELUSSY_MCP_BASE_URL || '';
+const shoedelussyMcpBaseUrl = shoedelussyExplicitBaseUrl || `http://127.0.0.1:${shoedelussyMcpPort}/mcp`;
+// auto  = only launch a local Wrangler when no explicit base URL is configured
+//         and the target port is currently free.
+// force = always include the local PM2 sidecar.
+// off   = never include the local PM2 sidecar.
+const shoedelussyPm2Mode = process.env.SHOEDELUSSY_PM2_MODE || hostEnv.SHOEDELUSSY_PM2_MODE || 'auto';
+const shoedelussyShouldRunLocal =
+  fs.existsSync(shoedelussyServerDir)
+  && shoedelussyPm2Mode !== 'off'
+  && (
+    shoedelussyPm2Mode === 'force'
+    || (!shoedelussyExplicitBaseUrl && !isLocalPortBound(shoedelussyMcpPort))
+  );
 
-module.exports = {
-  apps: [
+const apps = [
     // ── 1. shadow-cljs watch ──────────────────────────────────────────
     {
       name: 'knoxx-shadow',
@@ -165,25 +188,6 @@ module.exports = {
       },
     },
 
-    // ── 3. Shoedelussy MCP server (Wrangler dev) ───────────────────────
-    {
-      name: 'shoedelussy-mcp',
-      cwd: shoedelussyServerDir,
-      script: 'pnpm',
-      args: `dev --port ${shoedelussyMcpPort} --ip 127.0.0.1`,
-      watch: false,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
-      env: {
-        NODE_ENV: 'development',
-        MCP_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
-        APP_URL: hostEnv.SHOEDELUSSY_APP_URL || 'http://127.0.0.1:5173',
-        OPENROUTER_API_KEY: hostEnv.SHOEDELUSSY_OPENROUTER_API_KEY || hostEnv.OPENROUTER_API_KEY || '',
-        OPENROUTER_MODEL: hostEnv.SHOEDELUSSY_OPENROUTER_MODEL || hostEnv.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
-      },
-    },
-
     // ── 4. Frontend (Vite dev server) ────────────────────────────────
     {
       name: 'knoxx-frontend',
@@ -224,5 +228,31 @@ module.exports = {
         PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
       },
     },
-  ],
+];
+
+// Run Wrangler directly so PM2 manages the real parent process instead of a pnpm wrapper.
+if (shoedelussyShouldRunLocal) {
+  apps.splice(2, 0, {
+    name: 'shoedelussy-mcp',
+    cwd: shoedelussyServerDir,
+    script: path.join(shoedelussyServerDir, 'node_modules', '.bin', 'wrangler'),
+    interpreter: 'none',
+    args: `dev --port ${shoedelussyMcpPort} --ip 127.0.0.1`,
+    watch: false,
+    autorestart: true,
+    max_restarts: 10,
+    restart_delay: 5000,
+    kill_timeout: 15000,
+    env: {
+      NODE_ENV: 'development',
+      MCP_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
+      APP_URL: hostEnv.SHOEDELUSSY_APP_URL || 'http://127.0.0.1:5173',
+      OPENROUTER_API_KEY: hostEnv.SHOEDELUSSY_OPENROUTER_API_KEY || hostEnv.OPENROUTER_API_KEY || '',
+      OPENROUTER_MODEL: hostEnv.SHOEDELUSSY_OPENROUTER_MODEL || hostEnv.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
+    },
+  });
+}
+
+module.exports = {
+  apps,
 };
