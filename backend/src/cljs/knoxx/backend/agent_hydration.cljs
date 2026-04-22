@@ -28,6 +28,46 @@
   (when (fn? f)
     (f #js {:content #js [#js {:type "text" :text text}]})))
 
+(defn- path-relative
+  [^js node-path from to]
+  (.relative node-path from to))
+
+(defn- path-basename
+  [^js node-path path]
+  (.basename node-path path))
+
+(defn- path-resolve
+  [^js node-path & parts]
+  (.apply (aget node-path "resolve") node-path (into-array parts)))
+
+(defn- path-is-absolute?
+  [^js node-path path]
+  (.isAbsolute node-path path))
+
+(defn- fs-read-file!
+  ([^js node-fs path]
+   (.readFile node-fs path))
+  ([^js node-fs path encoding]
+   (.readFile node-fs path encoding)))
+
+(defn- fs-write-file!
+  ([^js node-fs path content]
+   (.writeFile node-fs path content))
+  ([^js node-fs path content encoding]
+   (.writeFile node-fs path content encoding)))
+
+(defn- fs-mkdir!
+  [^js node-fs path opts]
+  (.mkdir node-fs path opts))
+
+(defn- fs-stat!
+  [^js node-fs path]
+  (.stat node-fs path))
+
+(defn- os-tmpdir
+  [^js node-os]
+  (.tmpdir node-os))
+
 (defn semantic-search-documents!
   ([runtime config opts] (semantic-search-documents! runtime config opts nil))
   ([runtime config {:keys [query top-k max-snippet-chars]} auth-context]
@@ -45,11 +85,11 @@
                  (.then (js/Promise.all
                          (clj->js
                           (for [abs-path paths]
-                            (let [rel-path (normalize-relative-path (.relative node-path docs-path abs-path))
-                                  name (.basename node-path abs-path)
+                            (let [rel-path (normalize-relative-path (path-relative node-path docs-path abs-path))
+                                  name (path-basename node-path abs-path)
                                   indexed-meta (indexed-meta runtime config db-id rel-path)]
                               (if (text-like-path? rel-path)
-                                (-> (.readFile node-fs abs-path "utf8")
+                                (-> (fs-read-file! node-fs abs-path "utf8")
                                     (.then (fn [content]
                                              (let [[clipped _] (clip-text content 20000)
                                                    score (semantic-score {:query query
@@ -97,12 +137,12 @@
         node-fs (aget runtime "fs")
         node-path (aget runtime "path")
         rel-path (normalize-relative-path path)
-        abs-path (.resolve node-path (:docsPath profile) rel-path)
-        rel-to-root (.relative node-path (:docsPath profile) abs-path)
+        abs-path (path-resolve node-path (:docsPath profile) rel-path)
+        rel-to-root (path-relative node-path (:docsPath profile) abs-path)
         max-chars (max 500 (min 20000 (or max-chars 6000)))]
-    (if (or (str/starts-with? rel-to-root "..") (.isAbsolute node-path rel-to-root))
+    (if (or (str/starts-with? rel-to-root "..") (path-is-absolute? node-path rel-to-root))
       (js/Promise.reject (js/Error. "Path escapes active docs root"))
-      (-> (.readFile node-fs abs-path "utf8")
+      (-> (fs-read-file! node-fs abs-path "utf8")
           (.then (fn [content]
                    (let [[clipped truncated?] (clip-text content max-chars)]
                      {:database {:id (:id profile)
@@ -285,16 +325,16 @@
 (defn- resolve-workspace-media-path
   [runtime config raw-path]
   (let [node-path (aget runtime "path")
-        workspace-root (.resolve node-path (:workspace-root config))
+        workspace-root (path-resolve node-path (:workspace-root config))
         normalized (normalize-tool-path-arg raw-path)
         safe-path (or normalized "")
-        absolute (if (.isAbsolute node-path safe-path)
-                   (.resolve node-path safe-path)
-                   (.resolve node-path workspace-root safe-path))
-        rel-to-root (.relative node-path workspace-root absolute)]
+        absolute (if (path-is-absolute? node-path safe-path)
+                   (path-resolve node-path safe-path)
+                   (path-resolve node-path workspace-root safe-path))
+        rel-to-root (path-relative node-path workspace-root absolute)]
     (when (or (str/blank? normalized)
               (str/starts-with? rel-to-root "..")
-              (.isAbsolute node-path rel-to-root))
+              (path-is-absolute? node-path rel-to-root))
       (throw (js/Error. "Path escapes workspace root")))
     {:workspace-root workspace-root
      :absolute absolute
@@ -358,8 +398,8 @@
   (let [node-fs (aget runtime "fs")
         node-path (aget runtime "path")
         node-os (aget runtime "os")
-        dir (.join node-path (.tmpdir node-os) "knoxx-media" name)]
-    (-> (.mkdir node-fs dir #js {:recursive true})
+        dir (.join node-path (os-tmpdir node-os) "knoxx-media" name)]
+    (-> (fs-mkdir! node-fs dir #js {:recursive true})
         (.then (fn [] dir)))))
 
 (defn- temp-file-path!
@@ -428,18 +468,18 @@
       :else
       (let [{:keys [absolute relative]} (resolve-workspace-media-path runtime config source)
             mime-type (sanitize-mime-type (workspace-media-mime-type relative) (workspace-media-mime-type absolute))]
-        (-> (.stat node-fs absolute)
+        (-> (fs-stat! node-fs absolute)
             (.then (fn [stat]
                      (when-not (.isFile stat)
                        (throw (js/Error. (str relative " is not a file"))))
                      (ensure-source-size! (.-size stat) max-bytes relative)
-                     (.readFile node-fs absolute)))
+                     (fs-read-file! node-fs absolute)))
             (.then (fn [buffer]
                      {:absolute-path absolute
                       :relative relative
                       :buffer buffer
                       :mime-type mime-type
-                      :filename (.basename node-path absolute)
+                      :filename (path-basename node-path absolute)
                       :size (.-length buffer)
                       :source-kind "workspace"})))))))
 
@@ -452,7 +492,7 @@
                    source
                    (-> (temp-file-path! runtime "inputs" (mime-type->extension (:mime-type source)))
                        (.then (fn [absolute-path]
-                                (-> (.writeFile node-fs absolute-path (:buffer source))
+                                (-> (fs-write-file! node-fs absolute-path (:buffer source))
                                     (.then (fn []
                                              (assoc source :absolute-path absolute-path)))))))))))))
 
@@ -502,7 +542,7 @@
                                                      output-path])]
                                   (-> (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576})
                                       (.then (fn [_]
-                                               (.readFile node-fs output-path)))
+                                               (fs-read-file! node-fs output-path)))
                                       (.then (fn [buffer]
                                                (let [filename (str base-name "-" label ".png")
                                                      part {:type "image"
@@ -580,17 +620,17 @@
                                 title (normalize-tool-path-arg (aget params "title"))
                                 {:keys [absolute relative]} (resolve-workspace-media-path runtime config raw-path)
                                 mime-type (workspace-media-mime-type relative)
-                                filename (.basename node-path absolute)]
+                                filename (path-basename node-path absolute)]
                             (when-not mime-type
                               (throw (js/Error. (str "Unsupported workspace media type for " relative ". Supported formats: images, audio, video, pdf, txt, md, csv, json."))))
                             (maybe-tool-update! on-update (str "Attaching workspace file " relative "…"))
-                            (-> (.stat node-fs absolute)
+                            (-> (fs-stat! node-fs absolute)
                                 (.then (fn [stat]
                                          (when-not (.isFile stat)
                                            (throw (js/Error. (str relative " is not a file"))))
                                          (when (> (.-size stat) workspace-media-max-bytes)
                                            (throw (js/Error. (str "File exceeds " workspace-media-max-bytes " bytes. Choose a smaller file or summarize it instead."))))
-                                         (.readFile node-fs absolute)))
+                                         (fs-read-file! node-fs absolute)))
                                 (.then (fn [buffer]
                                          (let [size (.-length buffer)
                                                data-url (str "data:" mime-type ";base64," (.toString buffer "base64"))
@@ -1429,9 +1469,9 @@
                                                              (openutau/default-project-relative-path project-name))
                                           {:keys [workspace-root absolute relative]} (resolve-workspace-media-path runtime config requested-path)
                                           output-dir (.dirname node-path absolute)
-                                          filename (.basename node-path absolute)
+                                          filename (path-basename node-path absolute)
                                           readme-absolute (.join node-path output-dir "README.md")
-                                          readme-relative (normalize-relative-path (.relative node-path workspace-root readme-absolute))
+                                          readme-relative (normalize-relative-path (path-relative node-path workspace-root readme-absolute))
                                           notes (openutau/normalize-notes (js->clj (or (aget params "notes") #js []) :keywordize-keys true))
                                           project (openutau/build-project {:project_name (aget params "project_name")
                                                                           :tempo (aget params "tempo")
@@ -1454,9 +1494,9 @@
                                       (when-not (seq notes)
                                         (throw (js/Error. "notes must contain at least one note")))
                                       (maybe-tool-update! on-update (str "Writing OpenUtau project " relative "…"))
-                                      (-> (.mkdir node-fs output-dir #js {:recursive true})
-                                          (.then (fn [] (.writeFile node-fs absolute ustx-yaml "utf8")))
-                                          (.then (fn [] (.writeFile node-fs readme-absolute readme-text "utf8")))
+                                      (-> (fs-mkdir! node-fs output-dir #js {:recursive true})
+                                          (.then (fn [] (fs-write-file! node-fs absolute ustx-yaml "utf8")))
+                                          (.then (fn [] (fs-write-file! node-fs readme-absolute readme-text "utf8")))
                                           (.then (fn []
                                                    (tool-text-result
                                                     (str "Created OpenUtau project at " relative
@@ -2035,16 +2075,16 @@
                                          profile (active-agent-profile runtime config auth-context)
                                          docs-path (:docsPath profile)
                                          rel-path (normalize-relative-path requested-path)
-                                         abs-path (.resolve node-path docs-path rel-path)
-                                         rel-to-root (.relative node-path docs-path abs-path)
+                                         abs-path (path-resolve node-path docs-path rel-path)
+                                         rel-to-root (path-relative node-path docs-path abs-path)
                                          parent (.dirname node-path abs-path)]
                                      (when (str/blank? rel-path)
                                        (throw (js/Error. "path is required for create_new_file")))
-                                     (when (or (str/starts-with? rel-to-root "..") (.isAbsolute node-path rel-to-root))
+                                     (when (or (str/starts-with? rel-to-root "..") (path-is-absolute? node-path rel-to-root))
                                        (throw (js/Error. "Path escapes active docs root")))
                                      (maybe-tool-update! on-update (str "Creating canvas file " rel-path "…"))
-                                     (-> (.mkdir node-fs parent #js {:recursive true})
-                                         (.then (fn [] (.writeFile node-fs abs-path content "utf8")))
+                                     (-> (fs-mkdir! node-fs parent #js {:recursive true})
+                                         (.then (fn [] (fs-write-file! node-fs abs-path content "utf8")))
                                          (.then (fn []
                                                   (tool-text-result (str "Created canvas file at " rel-path)
                                                                     {:path rel-path
