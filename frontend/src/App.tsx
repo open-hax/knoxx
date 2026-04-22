@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { getFrontendConfig } from "./lib/api";
-import { opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
+import { EVENT_AGENTS_ROUTE, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import AuthBoundary from "./pages/AuthContext";
 import { useAuth } from "./pages/useAuth";
 import ChatPage from "./pages/ChatPage";
@@ -9,6 +9,7 @@ import CmsPage from "./pages/CmsPage";
 import ContractsPage from "./pages/ContractsPage";
 import DataPage from "./pages/DataPage";
 import GardensPage from "./pages/GardensPage";
+import EventAgentsPage from "./pages/EventAgentsPage";
 import OpsRoot from "./pages/OpsRoot";
 import TranslationReviewPage from "./pages/TranslationReviewPage";
 
@@ -51,7 +52,7 @@ function App() {
             <NavLink to="/translations" className={navLinkClass}>
               Translations
             </NavLink>
-            <NavLink to={opsRoutes.eventAgents} className={navLinkClass}>
+            <NavLink to={EVENT_AGENTS_ROUTE} className={navLinkClass}>
               Event Agents
             </NavLink>
             <NavLink to={opsRoutes.admin} className={navLinkClass}>
@@ -74,6 +75,7 @@ function App() {
           <Route path="/gardens" element={<GardensPage />} />
           <Route path="/translations" element={<TranslationReviewPage />} />
           <Route path="/translations/:documentId/:targetLang" element={<TranslationReviewPage />} />
+          <Route path={EVENT_AGENTS_ROUTE} element={<EventAgentsPage />} />
           <Route path="/ops/*" element={<OpsRoot />} />
           <Route path="/next/*" element={<LegacyOpsRedirect />} />
           <Route path="*" element={<Navigate to="/" replace />} />

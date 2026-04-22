@@ -1,20 +1,18 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { opsRoutes, joinPath, OPS_BASE_PATH } from '../lib/app-routes';
+import { EVENT_AGENTS_ROUTE, opsRoutes } from '../lib/app-routes';
 import SettingsPage from './SettingsPage';
 import DocumentsPage from './DocumentsPage';
 import VectorsPage from './VectorsPage';
 import RawGraphExportPage from './RawGraphExportPage';
 import SourceDocPage from './SourceDocPage';
 import AgentsPage from './AgentsPage';
-import EventAgentsPage from './EventAgentsPage';
 import AdminLayout from './AdminLayout';
 import SidebarOpsStatus from '../components/SidebarOpsStatus';
 
 const navItems = [
   { label: 'Lakes', path: opsRoutes.documents },
   { label: 'Agents', path: opsRoutes.agents },
-  { label: 'Event Agents', path: opsRoutes.eventAgents },
   { label: 'Graph', path: opsRoutes.vectors },
   { label: 'Settings', path: opsRoutes.settings },
   { label: 'Admin', path: opsRoutes.admin },
@@ -76,7 +74,7 @@ export default function OpsRoot() {
             <Route path="docs/view" element={<SourceDocPage />} />
             <Route path="vectors" element={<VectorsPage />} />
             <Route path="agents" element={<AgentsPage />} />
-            <Route path="event-agents" element={<EventAgentsPage />} />
+            <Route path="event-agents" element={<Navigate to={EVENT_AGENTS_ROUTE} replace />} />
             <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="admin/*" element={<AdminLayout />} />

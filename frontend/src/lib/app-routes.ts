@@ -1,5 +1,6 @@
 export const OPS_BASE_PATH = '/ops';
 export const LEGACY_OPS_BASE_PATH = '/next';
+export const EVENT_AGENTS_ROUTE = '/event-agents';
 
 function trimSlashes(value: string): string {
   return value.replace(/^\/+|\/+$/g, '');
@@ -19,7 +20,6 @@ export const opsRoutes = {
   documents: joinPath(OPS_BASE_PATH, 'documents'),
   docsView: joinPath(OPS_BASE_PATH, 'docs/view'),
   agents: joinPath(OPS_BASE_PATH, 'agents'),
-  eventAgents: joinPath(OPS_BASE_PATH, 'event-agents'),
   vectors: joinPath(OPS_BASE_PATH, 'vectors'),
   graphExportDebug: joinPath(OPS_BASE_PATH, 'graph-export-debug'),
   settings: joinPath(OPS_BASE_PATH, 'settings'),
