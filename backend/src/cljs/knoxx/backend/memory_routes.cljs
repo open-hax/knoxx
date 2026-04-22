@@ -55,7 +55,7 @@
                            (let [next-acc (into acc actor-visible-rows)]
                              (if (and upstream-has-more (pos? fetched-count))
                                (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size next-offset next-acc)
-                               next-acc)))))))))))))
+                               next-acc))))))))))))))
 
 (defn register-memory-routes!
   [app runtime config {:keys [json-response!
@@ -308,4 +308,3 @@
                         (swap! lounge-messages* #(->> (conj (vec %) msg) (take-last 100) vec))
                         (broadcast-ws! "lounge" msg)
                         (json-response! reply 200 {:ok true :message msg})))))))
-  )
