@@ -36,6 +36,7 @@
    "music.acoustid_lookup" {:id "music.acoustid_lookup" :label "AcoustID Lookup" :description "Look up audio fingerprints via AcoustID"}
    "music.musicbrainz_recording" {:id "music.musicbrainz_recording" :label "MusicBrainz" :description "Look up recording metadata by MBID"}
    "music.copyright_check" {:id "music.copyright_check" :label "Copyright Check" :description "Check copyright status of audio"}
+   "voice.openutau_project" {:id "voice.openutau_project" :label "OpenUtau Project" :description "Create an OpenUtau .ustx singing project for human review and export"}
 
    "audio.spectrogram" {:id "audio.spectrogram" :label "Audio Spectrogram" :description "Generate spectrogram from audio"}
    "audio.waveform" {:id "audio.waveform" :label "Audio Waveform" :description "Generate waveform from audio"}

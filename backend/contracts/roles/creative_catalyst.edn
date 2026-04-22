@@ -8,4 +8,5 @@
                      :cap/workspace-media
                      :cap/audio
                      :cap/music
+                     :cap/voice-synth
                      :cap/shoedelussy]}

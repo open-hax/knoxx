@@ -1,0 +1,7 @@
+{:cap/id :cap/voice-synth
+ :cap/tools [:voice.openutau_project]
+ :cap/user-surfaces [{:surface/id :workspace/voice-synth
+                      :surface/label "Voice synthesis project handoff"
+                      :surface/kind :composer
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Humans receive OpenUtau project scaffolds and export rendered audio from the OpenUtau UI."}]}
