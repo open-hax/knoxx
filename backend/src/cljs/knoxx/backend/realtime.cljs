@@ -129,6 +129,20 @@
                      (.catch (fn [_] nil)))))
              5000))))
 
+(defn stop!
+  []
+  (when-let [interval-id @ws-stats-interval*]
+    (js/clearInterval interval-id)
+    (reset! ws-stats-interval* nil))
+  (doseq [[client-id client] @ws-clients*]
+    (let [socket (aget client "socket")]
+      (try
+        (when socket
+          (.close socket 1001 "server_shutdown"))
+        (catch :default _ nil))
+      (swap! ws-clients* dissoc client-id)))
+  true)
+
 (defn register-ws-routes!
   [runtime app active-runs-count lounge-messages*]
   (ensure-ws-stats-loop! runtime active-runs-count)

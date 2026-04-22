@@ -96,6 +96,10 @@ module.exports = {
       name: 'knoxx-backend',
       cwd: backendDir,
       script: 'src/server.mjs',
+      wait_ready: true,
+      listen_timeout: 15000,
+      kill_timeout: 35000,
+      shutdown_with_message: true,
       // Auto-restart when shadow-cljs produces new output
       watch: ['dist', 'src/server.mjs'],
       watch_delay: 800,
@@ -108,6 +112,7 @@ module.exports = {
         HOST: '0.0.0.0',
         PORT: '8000',
         WORKSPACE_ROOT: workspaceRoot,
+          DISCORD_BOT_TOKEN: hostEnv.DISCORD_BOT_TOKEN,
         KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
         KNOXX_COLLECTION_NAME: 'devel_docs',
         // Public base URL used for OAuth redirect_uri + cookie scope
@@ -117,13 +122,15 @@ module.exports = {
         KNOXX_GITHUB_OAUTH_CLIENT_SECRET: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_SECRET || '',
         // Canonical Proxx (on host via compose port-forward)
         PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
-        PROXX_DEFAULT_MODEL: 'glm-5',
+          PROXX_DEFAULT_MODEL: 'gemma4:31b',
         PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
         // OpenPlanner (on host via compose port-forward)
         OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
         OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
         // Redis + Postgres (compose services forwarded to host)
         REDIS_URL: 'redis://127.0.0.1:6379',
+        KNOXX_SHUTDOWN_GRACE_MS: '25000',
+        KNOXX_SHUTDOWN_POLL_MS: '250',
         KNOXX_POLICY_DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
         DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
         // STT (NPU service on host)

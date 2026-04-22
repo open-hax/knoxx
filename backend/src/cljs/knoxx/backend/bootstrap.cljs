@@ -11,6 +11,7 @@
             [knoxx.backend.auth-session :as auth-session]
             [knoxx.backend.core :as core]
             [knoxx.backend.discord-gateway :as discord-gateway]
+            [knoxx.backend.graceful-shutdown :as graceful-shutdown]
             [knoxx.backend.mcp-http :as mcp-http]
             [knoxx.backend.pi-session-ingester :as pi-session-ingester]
             [knoxx.backend.runtime.config :as runtime-config]
@@ -26,6 +27,12 @@
 (defn- truthy?
   [v]
   (contains? #{"1" "true" "yes" "on" "y"} (-> (str (or v "")) str/trim str/lower-case)))
+
+(defn- notify-ready!
+  []
+  (when-let [send (aget js/process "send")]
+    (when (fn? send)
+      (send "ready"))))
 
 (defn- ensure-fastify-json-empty-body-parser!
   "Allow Content-Type: application/json with empty bodies.
@@ -138,6 +145,8 @@
                           (.listen app #js {:host (:host cfg)
                                             :port (:port cfg)})))
                  (.then (fn [_]
+                          (graceful-shutdown/install! app cfg)
+                          (notify-ready!)
                           (.info (.-log app) (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))))
                  (.catch (fn [err]
                            (.error js/console "Knoxx backend CLJS failed to start" err)

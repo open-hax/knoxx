@@ -126,4 +126,13 @@
                                   (-> (ensure-redis! app config) (.catch (fn [_] nil))))
                                 (-> (attempt-recovery! runtime app config) (.catch (fn [_] nil))))
                               RECOVERY_INTERVAL_MS)))
-                   #js {:ok true :started true :interval_ms RECOVERY_INTERVAL_MS}))))))
+                    #js {:ok true :started true :interval_ms RECOVERY_INTERVAL_MS}))))))
+
+(defn stop!
+  []
+  (when-let [interval-id @interval-handle*]
+    (js/clearInterval interval-id)
+    (reset! interval-handle* nil))
+  (reset! recovery-inflight?* false)
+  (reset! started?* false)
+  true)

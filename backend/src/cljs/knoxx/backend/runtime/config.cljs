@@ -5,6 +5,14 @@
   [k default]
   (or (aget js/process.env k) default))
 
+(defn- env-int
+  [k default]
+  (let [raw (aget js/process.env k)
+        parsed (js/parseInt (str (or raw "")) 10)]
+    (if (js/Number.isFinite parsed)
+      parsed
+      default)))
+
 (defn cfg
   "Read Knoxx backend runtime configuration from environment variables.
 
@@ -78,6 +86,10 @@
 
    ;; Redis (session persistence)
    :redis-url (env "REDIS_URL" "")
+
+   ;; Graceful shutdown / PM2 drain timings
+   :shutdown-grace-ms (env-int "KNOXX_SHUTDOWN_GRACE_MS" 25000)
+   :shutdown-poll-ms (env-int "KNOXX_SHUTDOWN_POLL_MS" 250)
 
    ;; MCP integration
    :mcp-enabled (not= (env "MCP_ENABLED" "false") "false")
