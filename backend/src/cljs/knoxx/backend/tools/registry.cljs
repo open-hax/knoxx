@@ -7,6 +7,7 @@
    "edit" {:id "edit" :label "Edit" :description "Revise existing documents and drafts"}
    "bash" {:id "bash" :label "Shell" :description "Run controlled shell commands"}
    "websearch" {:id "websearch" :label "Web Search" :description "Search the live web through Proxx websearch"}
+   "web.read" {:id "web.read" :label "Web Read" :description "Fetch a web link or attachment URL and extract readable content or metadata"}
    "canvas" {:id "canvas" :label "Canvas" :description "Open long-form markdown drafting canvas"}
 
    "email.send" {:id "email.send" :label "Email" :description "Send drafts through configured email account"}
@@ -40,6 +41,7 @@
    "audio.waveform" {:id "audio.waveform" :label "Audio Waveform" :description "Generate waveform from audio"}
 
    "multimodal.upload" {:id "multimodal.upload" :label "Multimodal Upload" :description "Upload images, audio, video, and documents for multimodal AI"}
+   "workspace_media.attach" {:id "workspace_media.attach" :label "Attach Workspace Media" :description "Attach an image, audio file, video, or document from the workspace into the response"}
 
    "semantic_query" {:id "semantic_query" :label "Semantic Query" :description "Query semantic context in the active corpus"}
    "semantic_read" {:id "semantic_read" :label "Read Document" :description "Read a document by relative path from the active Knoxx corpus"}

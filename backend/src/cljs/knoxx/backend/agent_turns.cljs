@@ -236,6 +236,55 @@
            vec)
       [])))
 
+(defn- tool-result-media-type
+  [value]
+  (case (some-> value str str/lower-case)
+    ("image" "image_url" "output_image") "image"
+    ("audio" "audio_url" "output_audio") "audio"
+    ("video" "video_url" "output_video") "video"
+    ("document" "file" "output_file") "document"
+    nil))
+
+(defn- tool-result-content-part
+  [part]
+  (let [media-type (tool-result-media-type (aget part "type"))
+        data (nonblank (aget part "data"))
+        url (nonblank (aget part "url"))
+        mime-type (or (nonblank (aget part "mimeType"))
+                      (nonblank (aget part "mime_type"))
+                      (nonblank (aget part "mediaType"))
+                      (nonblank (aget part "media_type")))
+        filename (or (nonblank (aget part "filename"))
+                     (nonblank (aget part "fileName"))
+                     (nonblank (aget part "name")))
+        size (let [value (or (aget part "size")
+                             (aget part "bytes")
+                             (aget part "byteSize")
+                             (aget part "byte_size"))]
+               (when (number? value)
+                 value))]
+    (when (and media-type (or data url))
+      (cond-> {:type media-type}
+        data (assoc :data data)
+        url (assoc :url url)
+        mime-type (assoc :mimeType mime-type)
+        filename (assoc :filename filename)
+        size (assoc :size size)))))
+
+(defn- tool-result-content-parts
+  [tool-result]
+  (let [details (when tool-result (aget tool-result "details"))
+        raw-parts (or (when tool-result (aget tool-result "content_parts"))
+                      (when tool-result (aget tool-result "contentParts"))
+                      (when details (aget details "content_parts"))
+                      (when details (aget details "contentParts"))
+                      (when details (aget details "attachments")))]
+    (if (array? raw-parts)
+      (->> (array-seq raw-parts)
+           (keep tool-result-content-part)
+           vec)
+      [])))
+
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
   (let [node-crypto (aget runtime "crypto")
@@ -535,6 +584,10 @@
                                                                 (let [tool-name (or (aget event "toolName") "tool")
                                                                       tool-call-id (or (aget event "toolCallId") (.randomUUID node-crypto))
                                                                       is-error (boolean (aget event "isError"))
+                                                                      raw-result (or (aget event "result")
+                                                                                     (aget event "toolResult")
+                                                                                     (aget event "output"))
+                                                                      content-parts (tool-result-content-parts raw-result)
                                                                       result-preview (or (preview-text-nonblank (aget event "result") 20000)
                                                                                          (preview-text-nonblank (aget event "toolResult") 20000)
                                                                                          (preview-text-nonblank (aget event "output") 20000))
@@ -550,7 +603,8 @@
                                                                                                                       :status (if is-error "failed" "completed")
                                                                                                                       :ended_at (now-iso)
                                                                                                                       :is_error is-error})
-                                                                                                result-preview (assoc :result_preview result-preview))))
+                                                                                                result-preview (assoc :result_preview result-preview)
+                                                                                                (seq content-parts) (assoc :content_parts content-parts))))
                                                                   (apply-run-tool-trace-event! run-id {:type "tool_end"
                                                                                                        :tool_name tool-name
                                                                                                        :tool_call_id tool-call-id

@@ -231,6 +231,170 @@
           (:results hydration))
     []))
 
+(def ^:private workspace-media-max-bytes (* 20 1024 1024))
+
+(defn- normalize-tool-path-arg
+  [value]
+  (some-> (str (or value ""))
+          (str/replace #"^@" "")
+          str/trim
+          not-empty))
+
+(defn- workspace-media-mime-type
+  [path]
+  (let [lower (str/lower-case (str path))]
+    (cond
+      (or (str/ends-with? lower ".png")
+          (str/ends-with? lower ".apng")) "image/png"
+      (or (str/ends-with? lower ".jpg")
+          (str/ends-with? lower ".jpeg")) "image/jpeg"
+      (str/ends-with? lower ".gif") "image/gif"
+      (str/ends-with? lower ".webp") "image/webp"
+      (str/ends-with? lower ".svg") "image/svg+xml"
+      (or (str/ends-with? lower ".mp3")
+          (str/ends-with? lower ".mpeg")) "audio/mpeg"
+      (str/ends-with? lower ".wav") "audio/wav"
+      (str/ends-with? lower ".ogg") "audio/ogg"
+      (str/ends-with? lower ".m4a") "audio/mp4"
+      (str/ends-with? lower ".flac") "audio/flac"
+      (str/ends-with? lower ".aac") "audio/aac"
+      (str/ends-with? lower ".mp4") "video/mp4"
+      (str/ends-with? lower ".webm") "video/webm"
+      (or (str/ends-with? lower ".mov")
+          (str/ends-with? lower ".qt")) "video/quicktime"
+      (str/ends-with? lower ".avi") "video/x-msvideo"
+      (str/ends-with? lower ".pdf") "application/pdf"
+      (str/ends-with? lower ".md") "text/markdown"
+      (str/ends-with? lower ".txt") "text/plain"
+      (str/ends-with? lower ".csv") "text/csv"
+      (str/ends-with? lower ".json") "application/json"
+      :else nil)))
+
+(defn- workspace-media-type
+  [mime-type]
+  (cond
+    (str/starts-with? mime-type "image/") "image"
+    (str/starts-with? mime-type "audio/") "audio"
+    (str/starts-with? mime-type "video/") "video"
+    :else "document"))
+
+(defn- resolve-workspace-media-path
+  [runtime config raw-path]
+  (let [node-path (aget runtime "path")
+        workspace-root (.resolve node-path (:workspace-root config))
+        normalized (normalize-tool-path-arg raw-path)
+        safe-path (or normalized "")
+        absolute (if (.isAbsolute node-path safe-path)
+                   (.resolve node-path safe-path)
+                   (.resolve node-path workspace-root safe-path))
+        rel-to-root (.relative node-path workspace-root absolute)]
+    (when (or (str/blank? normalized)
+              (str/starts-with? rel-to-root "..")
+              (.isAbsolute node-path rel-to-root))
+      (throw (js/Error. "Path escapes workspace root")))
+    {:workspace-root workspace-root
+     :absolute absolute
+     :relative rel-to-root}))
+
+(defn create-workspace-media-custom-tools
+  ([runtime config] (create-workspace-media-custom-tools runtime config nil))
+  ([runtime config auth-context]
+   (let [Type (aget runtime "Type")
+         node-fs (aget runtime "fs")
+         node-path (aget runtime "path")
+         allowed? (fn [tool-id]
+                    (or (nil? auth-context)
+                        (ctx-tool-allowed? auth-context tool-id)))
+         attach-params (.Object Type
+                                #js {:path (.String Type #js {:description "Workspace-relative path to the image, audio file, video, or document to attach."})
+                                     :title (.Optional Type (.String Type #js {:description "Optional human-readable label for the attachment."}))})
+         attach-execute (fn [_tool-call-id params a b c]
+                          (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                raw-path (or (aget params "path") "")
+                                title (normalize-tool-path-arg (aget params "title"))
+                                {:keys [absolute relative]} (resolve-workspace-media-path runtime config raw-path)
+                                mime-type (workspace-media-mime-type relative)
+                                filename (.basename node-path absolute)]
+                            (when-not mime-type
+                              (throw (js/Error. (str "Unsupported workspace media type for " relative ". Supported formats: images, audio, video, pdf, txt, md, csv, json."))))
+                            (maybe-tool-update! on-update (str "Attaching workspace file " relative "…"))
+                            (-> (.stat node-fs absolute)
+                                (.then (fn [stat]
+                                         (when-not (.isFile stat)
+                                           (throw (js/Error. (str relative " is not a file"))))
+                                         (when (> (.-size stat) workspace-media-max-bytes)
+                                           (throw (js/Error. (str "File exceeds " workspace-media-max-bytes " bytes. Choose a smaller file or summarize it instead."))))
+                                         (.readFile node-fs absolute)))
+                                (.then (fn [buffer]
+                                         (let [size (.-length buffer)
+                                               data-url (str "data:" mime-type ";base64," (.toString buffer "base64"))
+                                               part {:type (workspace-media-type mime-type)
+                                                     :data data-url
+                                                     :mimeType mime-type
+                                                     :filename (or title filename)
+                                                     :size size}
+                                               label (case (:type part)
+                                                       "image" "image"
+                                                       "audio" "audio file"
+                                                       "video" "video"
+                                                       "document" "document"
+                                                       "file")]
+                                           #js {:content #js [#js {:type "text"
+                                                                   :text (str "Attached workspace " label " " relative " for the final reply.")}]
+                                                :details #js {:path relative
+                                                              :title (or title filename)
+                                                              :content_parts (clj->js [part])}}))))))]
+     (clj->js
+      (vec
+       (remove nil?
+               [(when (allowed? "workspace_media.attach")
+                  (doto (js-obj)
+                    (aset "name" "workspace_media.attach")
+                    (aset "label" "Attach Workspace Media")
+                    (aset "description" "Attach an image, audio file, video, or document from the workspace so the user can see or play it inline.")
+                    (aset "promptSnippet" "Attach a workspace image, audio file, video, or document directly into the reply when the user asks to show or play a file.")
+                    (aset "promptGuidelines" (clj->js ["Use workspace_media.attach when the user wants to show, display, render, play, or attach a workspace file."
+                                                       "Prefer this tool over replying with only a path when the user explicitly wants the media itself."
+                                                       "Pass a workspace-relative path when possible."
+                                                       "If the file is too large or unsupported, explain that clearly and offer the path instead."]))
+                    (aset "parameters" attach-params)
+                    (aset "execute" attach-execute)))]))))))
+
+(defn- execute-web-read!
+  [on-update params]
+  (let [url (or (aget params "url") "")
+        max-chars (max 200 (min 20000 (or (aget params "maxChars") 6000)))]
+    (when (str/blank? (str/trim url))
+      (throw (js/Error. "url is required")))
+    (maybe-tool-update! on-update (str "Fetching " url "…"))
+    (-> (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
+        (.then (fn [resp]
+                 (let [content-type (or (.get (.-headers resp) "content-type") "application/octet-stream")]
+                   (if-not (.-ok resp)
+                     (-> (.text resp)
+                         (.then (fn [text]
+                                  (throw (js/Error. (str "web.read failed " (.-status resp) ": " text))))))
+                     (if (or (str/starts-with? content-type "text/")
+                             (str/includes? content-type "json")
+                             (str/includes? content-type "xml")
+                             (str/includes? content-type "html"))
+                       (-> (.text resp)
+                           (.then (fn [text]
+                                    (let [collapsed (-> text
+                                                        (str/replace #"<[^>]+>" " ")
+                                                        (str/replace #"\s+" " ")
+                                                        str/trim)
+                                          clipped (subs collapsed 0 (min max-chars (count collapsed)))]
+                                      (tool-text-result (str "Read URL " url " (" content-type "):\n\n" clipped)
+                                                        {:url url
+                                                         :contentType content-type
+                                                         :text clipped})))))
+                       (js/Promise.resolve
+                        (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
+                                          {:url url
+                                           :contentType content-type
+                                           :binary true})))))))))
+
 (defn create-semantic-custom-tools
   ([runtime config] (create-semantic-custom-tools runtime config nil))
   ([runtime config auth-context]
@@ -579,7 +743,7 @@
                                      :sent true
                                      :timestamp (or (aget result "timestamp") "")
                                      :chunkCount (count chunks)
-                                     :attachmentCount (count file-list)})))))))))))
+                                     :attachmentCount (count file-list)}))))))))))))
 
 (defn- discord-list-guilds!
   [config]
@@ -1338,6 +1502,38 @@
    ;; is loaded together. This helper remains for composition symmetry and future extraction.
    (clj->js [])))
 
+(defn- web-read-url!
+  [url max-chars]
+  (-> (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
+      (.then
+       (fn [resp]
+         (let [content-type (or (.get (.-headers resp) "content-type") "application/octet-stream")]
+           (if-not (.-ok resp)
+             (-> (.text resp)
+                 (.then (fn [text]
+                          (throw (js/Error. (str "web.read failed " (.-status resp) ": " text))))))
+             (if (or (str/starts-with? content-type "text/")
+                     (str/includes? content-type "json")
+                     (str/includes? content-type "xml")
+                     (str/includes? content-type "html"))
+               (-> (.text resp)
+                   (.then
+                    (fn [text]
+                      (let [collapsed (-> text
+                                          (str/replace #"<[^>]+>" " ")
+                                          (str/replace #"\s+" " ")
+                                          str/trim)
+                            clipped (subs collapsed 0 (min max-chars (count collapsed)))]
+                        (tool-text-result (str "Read URL " url " (" content-type "):\n\n" clipped)
+                                          {:url url
+                                           :contentType content-type
+                                           :text clipped})))))
+               (js/Promise.resolve
+                (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
+                                  {:url url
+                                   :contentType content-type
+                                   :binary true}))))))))))
+
 (defn create-openplanner-custom-tools
   ([runtime config] (create-openplanner-custom-tools runtime config nil))
   ([runtime config auth-context]
@@ -1454,34 +1650,7 @@
                               (when (str/blank? (str/trim url))
                                 (throw (js/Error. "url is required")))
                               (maybe-tool-update! on-update (str "Fetching " url "…"))
-                              (-> (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
-                                  (.then (fn [resp]
-                                           (let [content-type (or (.get (.-headers resp) "content-type") "application/octet-stream")]
-                                             (if (.-ok resp)
-                                               (cond
-                                                 (or (str/starts-with? content-type "text/")
-                                                     (str/includes? content-type "json")
-                                                     (str/includes? content-type "xml")
-                                                     (str/includes? content-type "html"))
-                                                 (.then (.text resp)
-                                                        (fn [text]
-                                                          (let [collapsed (-> text
-                                                                              (str/replace #"<[^>]+>" " ")
-                                                                              (str/replace #"\s+" " ")
-                                                                              str/trim)
-                                                                clipped (subs collapsed 0 (min max-chars (count collapsed)))]
-                                                            (tool-text-result (str "Read URL " url " (" content-type "):\n\n" clipped)
-                                                                              {:url url
-                                                                               :contentType content-type
-                                                                               :text clipped}))))
-                                                 :else
-                                                 (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
-                                                                   {:url url
-                                                                    :contentType content-type
-                                                                    :binary true}))
-                                               (-> (.text resp)
-                                                   (.then (fn [text]
-                                                            (throw (js/Error. (str "web.read failed " (.-status resp) ": " text))))))))))))
+                              (web-read-url! url max-chars)))
          create-new-file-execute (fn [_tool-call-id params a b c]
                                    (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                          title (or (aget params "title") "Untitled Canvas")
@@ -1727,8 +1896,9 @@
   ([runtime config] (create-knoxx-custom-tools runtime config nil))
   ([runtime config auth-context]
    (sanitize-custom-tools
-    (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
-                                        (create-discord-custom-tools runtime config auth-context))
-                               (create-openplanner-custom-tools runtime config auth-context))
-                      (create-music-custom-tools runtime config auth-context))
+    (.concat (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
+                                                 (create-discord-custom-tools runtime config auth-context))
+                                        (create-openplanner-custom-tools runtime config auth-context))
+                               (create-music-custom-tools runtime config auth-context))
+                      (create-workspace-media-custom-tools runtime config auth-context))
              (create-mcp-custom-tools runtime config auth-context)))))

@@ -3,4 +3,5 @@
                      :cap/websearch
                      :cap/memory
                      :cap/semantic
+                     :cap/workspace-media
                      :cap/canvas]}

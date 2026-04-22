@@ -42,6 +42,21 @@ describe("getRun", () => {
           ],
         },
       ],
+      tool_receipts: [
+        {
+          id: "tool-1",
+          tool_name: "workspace_media.attach",
+          status: "completed",
+          content_parts: [
+            {
+              type: "audio",
+              data: "QUFBQQ==",
+              mimeType: "audio/wav",
+              filename: "receipt.wav",
+            },
+          ],
+        },
+      ],
       settings: {},
       resources: {},
     });
@@ -74,6 +89,17 @@ describe("getRun", () => {
         data: undefined,
         mimeType: "image/png",
         filename: undefined,
+        size: undefined,
+      },
+    ]);
+
+    expect(run.tool_receipts?.[0]?.contentParts).toEqual([
+      {
+        type: "audio",
+        url: undefined,
+        data: "data:audio/wav;base64,QUFBQQ==",
+        mimeType: "audio/wav",
+        filename: "receipt.wav",
         size: undefined,
       },
     ]);

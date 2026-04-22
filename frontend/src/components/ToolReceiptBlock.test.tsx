@@ -82,4 +82,37 @@ describe("ToolReceiptBlock", () => {
     expect(screen.getByText(/inputs unavailable/)).toBeInTheDocument();
     expect(screen.queryByText(/^null$/)).not.toBeInTheDocument();
   });
+
+  it("renders multimodal tool attachments", () => {
+    render(
+      <ToolReceiptBlock
+        receipt={{
+          id: "tool-5",
+          tool_name: "workspace_media.attach",
+          status: "completed",
+          input_preview: JSON.stringify({ path: "latent_space_walk_seed.wav" }),
+          result_preview: "Attached workspace audio latent_space_walk_seed.wav for the final reply.",
+          contentParts: [
+            {
+              type: "image",
+              data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+y3ioAAAAASUVORK5CYII=",
+              mimeType: "image/png",
+              filename: "preview.png",
+              size: 68,
+            },
+            {
+              type: "audio",
+              data: "data:audio/wav;base64,QUFBQQ==",
+              mimeType: "audio/wav",
+              filename: "latent_space_walk_seed.wav",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Attachments")).toBeInTheDocument();
+    expect(screen.getByText("preview.png • 68B")).toBeInTheDocument();
+    expect(screen.getAllByText("latent_space_walk_seed.wav").length).toBeGreaterThan(0);
+  });
 });

@@ -316,6 +316,13 @@
        (when-let [result (:result_preview receipt)]
          (str "\nOutput:\n" result))))
 
+(defn- sanitize-tool-receipt-for-indexing
+  [receipt]
+  (-> receipt
+      (dissoc :content_parts)
+      (dissoc :contentParts)
+      (dissoc :attachments)))
+
 (defn run-summary-text
   [run]
   (str "Run " (:run_id run)
@@ -506,7 +513,7 @@
                                                                       :role "system"
                                                                       :model (:model run)
                                                                       :text summary-text
-                                                                      :extra (merge common-extra {:receipt receipt})})]
+                                                                      :extra (merge common-extra {:receipt (sanitize-tool-receipt-for-indexing receipt)})})]
                                     true (into (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
                                                                           {:run-id run-id
                                                                            :conversation-id conversation-id

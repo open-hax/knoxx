@@ -1,0 +1,2 @@
+{:cap/id :cap/workspace-media
+ :cap/tools [:workspace_media.attach]}

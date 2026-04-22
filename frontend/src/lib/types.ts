@@ -167,6 +167,7 @@ export interface ToolReceipt {
   result_preview?: string;
   updates?: string[];
   is_error?: boolean;
+  contentParts?: ContentPart[];
   [key: string]: unknown;
 }
 

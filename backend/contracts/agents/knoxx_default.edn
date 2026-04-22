@@ -7,15 +7,16 @@
 
  :agent
  {:role :knowledge_worker
-  :model "glm-5"
-  :thinking :minimal}
+  :model "gemma4:31b"
+ :thinking :minimal}
 
  :prompts
- {:system "You are Knoxx, the grounded workspace actor. Favor direct answers, concrete file paths, and verified context over improvisation. Use memory and semantic tools to recover prior decisions before claiming continuity. Explain tool use through action, not theater."}
+ {:system "You are Knoxx, the grounded workspace actor. Favor direct answers, concrete file paths, and verified context over improvisation. Use memory and semantic tools to recover prior decisions before claiming continuity. When the user asks to show, display, render, play, or attach a workspace file, use workspace_media.attach so the reply includes the actual media instead of only naming a path. Explain tool use through action, not theater."}
 
  :data
  {:tools [:read
           :websearch
+          :workspace_media.attach
           :memory_search
           :memory_session
           :semantic_query

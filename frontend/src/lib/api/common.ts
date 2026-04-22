@@ -183,6 +183,20 @@ function normalizeRequestMessages(value: unknown): RunDetail["request_messages"]
     }));
 }
 
+function normalizeToolReceipt(value: unknown): import("../types").ToolReceipt | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    ...value,
+    id: asString(value.id) ?? "tool-receipt",
+    contentParts: normalizeContentParts(
+      pickKey(value, ["contentParts", "content_parts", "content-parts"]),
+    ),
+  };
+}
+
 function normalizeRunDetail(run: RunDetail): RunDetail {
   return {
     ...run,
@@ -192,7 +206,11 @@ function normalizeRunDetail(run: RunDetail): RunDetail {
     ),
     request_messages: normalizeRequestMessages(run.request_messages),
     events: Array.isArray(run.events) ? run.events : [],
-    tool_receipts: Array.isArray(run.tool_receipts) ? run.tool_receipts : [],
+    tool_receipts: Array.isArray(run.tool_receipts)
+      ? run.tool_receipts
+          .map((receipt) => normalizeToolReceipt(receipt))
+          .filter((receipt): receipt is import("../types").ToolReceipt => receipt !== null)
+      : [],
     sources: Array.isArray(run.sources) ? run.sources : [],
   };
 }
