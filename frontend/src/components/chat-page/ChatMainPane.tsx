@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Badge, Button, SearchableSelect } from '@open-hax/uxx';
 import ChatComposer from '../ChatComposer';
 import ConsolePanel from '../ConsolePanel';
@@ -6,6 +6,7 @@ import { ChatMessageList } from './ChatMessageList';
 import { ChatRuntimePanel } from './ChatRuntimePanel';
 import { ChatScratchpadPanel } from './ChatScratchpadPanel';
 import { ChatSettingsPanel } from './ChatSettingsPanel';
+import { useAutoConversationVoice } from './useAutoConversationVoice';
 import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, RunDetail, RunEvent, ToolCatalogResponse, ToolReceipt } from '../../lib/types';
 import { THINKING_OPTIONS } from '../../lib/api/contracts';
 import type { HydrationSource } from './types';
@@ -97,6 +98,9 @@ type ChatMainPaneProps = {
   onSaveCanvasFile: () => void | Promise<void>;
   onClearScratchpad: () => void;
   onSendCanvasEmailAction: () => void | Promise<void>;
+  sttEnabled?: boolean;
+  ttsEnabled?: boolean;
+  ttsDefaultVoiceId?: string;
 };
 
 export function ChatMainPane({
@@ -180,10 +184,14 @@ export function ChatMainPane({
   onSaveCanvasFile,
   onClearScratchpad,
   onSendCanvasEmailAction,
+  sttEnabled = false,
+  ttsEnabled = false,
+  ttsDefaultVoiceId = "",
 }: ChatMainPaneProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const [autoConversationEnabled, setAutoConversationEnabled] = useState(false);
 
   const updateAutoScrollState = useCallback((container: HTMLDivElement) => {
     const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
@@ -204,6 +212,19 @@ export function ChatMainPane({
     if (!shouldAutoScrollRef.current) return;
     scrollToBottom();
   }, [messages, latestToolReceipts, liveToolReceipts, liveToolEvents, isSending, scrollToBottom]);
+
+  const autoConversationVoice = useAutoConversationVoice({
+    enabled: autoConversationEnabled,
+    available: ttsEnabled,
+    messages,
+    defaultVoiceId: ttsDefaultVoiceId,
+  });
+
+  useEffect(() => {
+    if (!ttsEnabled && autoConversationEnabled) {
+      setAutoConversationEnabled(false);
+    }
+  }, [autoConversationEnabled, ttsEnabled]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -292,6 +313,29 @@ export function ChatMainPane({
           <Badge variant={proxxReachable ? 'success' : proxxConfigured ? 'warning' : 'error'} size="sm" dot>
             {proxxReachable ? 'online' : proxxConfigured ? 'offline' : 'not configured'}
           </Badge>
+          <Button
+            variant={autoConversationEnabled ? 'primary' : 'ghost'}
+            size="sm"
+            onClick={() => setAutoConversationEnabled((value) => !value)}
+            disabled={!ttsEnabled}
+            title={ttsEnabled
+              ? 'Auto-conversation mode speaks assistant replies through the ElevenLabs streaming websocket.'
+              : 'Configure ElevenLabs to enable auto-conversation voice mode.'}
+          >
+            {autoConversationEnabled ? 'Auto Voice On' : 'Auto Voice Off'}
+          </Button>
+          {(autoConversationEnabled || autoConversationVoice.status !== 'idle') ? (
+            <Badge
+              size="sm"
+              variant={autoConversationVoice.status === 'error'
+                ? 'error'
+                : autoConversationVoice.status === 'playing' || autoConversationVoice.status === 'streaming'
+                  ? 'success'
+                  : 'warning'}
+            >
+              {autoConversationVoice.status}
+            </Badge>
+          ) : null}
           <Button variant="ghost" size="sm" onClick={() => void onUndoMessages()} disabled={undoDisabled}>Undo Turn</Button>
           <Button variant="ghost" size="sm" onClick={onNewChat}>New Chat</Button>
         </div>
@@ -372,7 +416,12 @@ export function ChatMainPane({
         </div>
 
         <div style={{ padding: 12, borderTop: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
-          <ChatComposer onSend={onSend} isSending={composerDisabled} />
+          <ChatComposer onSend={onSend} isSending={composerDisabled} voiceInputEnabled={sttEnabled} />
+          {autoConversationEnabled && autoConversationVoice.error ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--token-colors-text-muted)' }}>
+              Auto voice error: {autoConversationVoice.error}
+            </div>
+          ) : null}
         </div>
 
         {showConsole ? (

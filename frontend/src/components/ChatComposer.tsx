@@ -1,5 +1,6 @@
 import { FormEvent, KeyboardEvent, useState, useCallback, useRef } from "react";
 import { MultimodalInput, type MultimodalAttachment } from "./chat-page/MultimodalInput";
+import { VoiceInputButton } from "./chat-page/VoiceInputButton";
 import type { ContentPart } from "../lib/types";
 
 interface ChatComposerProps {
@@ -7,6 +8,7 @@ interface ChatComposerProps {
   isSending: boolean;
   /** Enable multimodal file uploads (images, audio, video, documents) */
   multimodalEnabled?: boolean;
+  voiceInputEnabled?: boolean;
 }
 
 /**
@@ -65,7 +67,7 @@ function attachmentToContentPart(attachment: MultimodalAttachment): Promise<Cont
   });
 }
 
-function ChatComposer({ onSend, isSending, multimodalEnabled = true }: ChatComposerProps) {
+function ChatComposer({ onSend, isSending, multimodalEnabled = true, voiceInputEnabled = false }: ChatComposerProps) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<MultimodalAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -250,6 +252,16 @@ function ChatComposer({ onSend, isSending, multimodalEnabled = true }: ChatCompo
             disabled={isSending}
           />
         )}
+
+        {voiceInputEnabled ? (
+          <VoiceInputButton
+            disabled={isSending}
+            onTranscript={(text) => onSend(text)}
+            idleLabel="Speak"
+            recordingLabel="Stop"
+            transcribingLabel="Transcribing…"
+          />
+        ) : null}
 
         <textarea
           ref={textareaRef}

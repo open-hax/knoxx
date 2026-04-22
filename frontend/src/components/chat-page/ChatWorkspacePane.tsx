@@ -103,6 +103,9 @@ export function ChatWorkspacePane({
         onSaveCanvasFile={controller.saveCanvasFile}
         onClearScratchpad={controller.clearScratchpad}
         onSendCanvasEmailAction={controller.sendCanvasEmailAction}
+        sttEnabled={controller.sttEnabled}
+        ttsEnabled={controller.ttsEnabled}
+        ttsDefaultVoiceId={controller.ttsDefaultVoiceId}
       />
     </div>
   );

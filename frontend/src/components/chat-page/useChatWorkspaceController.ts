@@ -136,6 +136,9 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState("off");
   const [proxxReachable, setProxxReachable] = useState(false);
   const [proxxConfigured, setProxxConfigured] = useState(false);
+  const [sttEnabled, setSttEnabled] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsDefaultVoiceId, setTtsDefaultVoiceId] = useState("");
   const [browseData, setBrowseData] = useState<BrowseResponse | null>(null);
   const [previewData, setPreviewData] = useState<PreviewResponse | null>(null);
   const [loadingBrowse, setLoadingBrowse] = useState(false);
@@ -466,6 +469,9 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setAvailableAgents,
     setToolCatalog,
     setConsoleLines,
+    setSttEnabled,
+    setTtsEnabled,
+    setTtsDefaultVoiceId,
   });
 
   useEffect(() => {
@@ -584,6 +590,9 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setSelectedThinkingLevel,
     proxxReachable,
     proxxConfigured,
+    sttEnabled,
+    ttsEnabled,
+    ttsDefaultVoiceId,
     isRecovering,
 
     // workspace/context bar state

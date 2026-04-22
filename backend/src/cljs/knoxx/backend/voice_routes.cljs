@@ -3,8 +3,10 @@
             [knoxx.backend.http :as http]))
 
 (def ^:private elevenlabs-base-url "https://api.elevenlabs.io/v1")
+(def ^:private elevenlabs-ws-base-url "wss://api.elevenlabs.io/v1")
 (def ^:private default-elevenlabs-voice-id "21m00Tcm4TlvDq8ikWAM")
 (def ^:private default-elevenlabs-output-format "mp3_44100_128")
+(def ^:private default-elevenlabs-stream-chunk-length-schedule #js [80 120 160 220])
 
 (defn- trim-trailing-slashes
   [s]
@@ -58,6 +60,195 @@
          "?output_format="
          (js/encodeURIComponent (str fmt)))))
 
+(defn- message-data->string
+  [value]
+  (cond
+    (string? value) value
+    (instance? js/Buffer value) (.toString value "utf8")
+    (instance? js/Uint8Array value) (.toString (.from js/Buffer value) "utf8")
+    :else (str value)))
+
+(defn- ws-send-json!
+  [socket payload]
+  (when (= 1 (aget socket "readyState"))
+    (.send socket (.stringify js/JSON (clj->js payload)))))
+
+(defn- ws-close!
+  ([socket] (ws-close! socket 1000 ""))
+  ([socket code reason]
+   (when socket
+     (try
+       (.close socket code reason)
+       (catch :default _ nil)))))
+
+(defn- elevenlabs-stream-model-id
+  [config]
+  (let [configured (trim-or-empty (:elevenlabs-model-id config))]
+    (if (str/blank? configured) "eleven_multilingual_v2" configured)))
+
+(defn- elevenlabs-stream-url
+  [{:keys [voice-id model-id output-format auto-mode]}]
+  (let [url (js/URL. (str elevenlabs-ws-base-url
+                          "/text-to-speech/"
+                          (js/encodeURIComponent (str voice-id))
+                          "/stream-input"))
+        params (.-searchParams url)]
+    (.set params "model_id" (str model-id))
+    (.set params "output_format" (str output-format))
+    (.set params "auto_mode" (if auto-mode "true" "false"))
+    (.set params "sync_alignment" "false")
+    (.set params "inactivity_timeout" "180")
+    (.toString url)))
+
+(defn- normalize-elevenlabs-stream-text
+  [value]
+  (let [text (-> (str (or value ""))
+                 (str/replace #"\s+" " ")
+                 str/trim)]
+    (cond
+      (str/blank? text) ""
+      (str/ends-with? text " ") text
+      :else (str text " "))))
+
+(defn- relay-elevenlabs-stream!
+  [client payload]
+  (let [audio (aget payload "audio")
+        is-final (true? (aget payload "isFinal"))]
+    (cond
+      (string? audio)
+      (ws-send-json! client {:type "audio"
+                             :audio audio
+                             :alignment (js->clj (aget payload "alignment") :keywordize-keys true)
+                             :normalized_alignment (js->clj (aget payload "normalizedAlignment") :keywordize-keys true)})
+
+      is-final
+      (ws-send-json! client {:type "final" :isFinal true})
+
+      :else
+      (ws-send-json! client {:type "event"
+                             :payload (js->clj payload :keywordize-keys true)}))))
+
+(defn- register-voice-ws-route!
+  [app config]
+  (.route app
+          #js {:method "GET"
+               :url "/ws/voice/tts"
+               :handler (fn [_request reply]
+                          (-> (.code reply 426)
+                              (.type "application/json")
+                              (.send #js {:error "WebSocket upgrade required"})))
+               :wsHandler (fn [socket _request]
+                            (let [client (or (aget socket "socket") socket)
+                                  upstream* (atom nil)
+                                  close-upstream! (fn []
+                                                    (when-let [upstream @upstream*]
+                                                      (reset! upstream* nil)
+                                                      (when (= 1 (aget upstream "readyState"))
+                                                        (try
+                                                          (.send upstream (.stringify js/JSON #js {:text ""}))
+                                                          (catch :default _ nil)))
+                                                      (ws-close! upstream 1000 "client_reset")))]
+                              (.on client "close" (fn [] (close-upstream!)))
+                              (.on client "error" (fn [_] (close-upstream!)))
+                              (.on client "message"
+                                   (fn [data]
+                                     (try
+                                       (let [msg (.parse js/JSON (message-data->string data))
+                                             kind (trim-or-empty (aget msg "type"))]
+                                         (case kind
+                                           "start"
+                                           (let [api-key (elevenlabs-api-key config)
+                                                 voice-id-raw (trim-or-empty (or (aget msg "voice_id")
+                                                                                (aget msg "voiceId")
+                                                                                ""))
+                                                 voice-id (if (str/blank? voice-id-raw)
+                                                            (elevenlabs-default-voice-id config)
+                                                            voice-id-raw)
+                                                 model-id-raw (trim-or-empty (or (aget msg "model_id")
+                                                                                (aget msg "modelId")
+                                                                                ""))
+                                                 model-id (if (str/blank? model-id-raw)
+                                                            (elevenlabs-stream-model-id config)
+                                                            model-id-raw)
+                                                 output-format-raw (trim-or-empty (or (aget msg "output_format")
+                                                                                     (aget msg "outputFormat")
+                                                                                     ""))
+                                                 output-format (if (str/blank? output-format-raw)
+                                                                 default-elevenlabs-output-format
+                                                                 output-format-raw)
+                                                 auto-mode (not= false (aget msg "auto_mode"))]
+                                             (if (str/blank? api-key)
+                                               (ws-send-json! client {:type "error"
+                                                                      :detail "KNOXX_ELEVENLABS_API_KEY is not configured"})
+                                               (let [url (elevenlabs-stream-url {:voice-id voice-id
+                                                                                 :model-id model-id
+                                                                                 :output-format output-format
+                                                                                 :auto-mode auto-mode})
+                                                     upstream (js/WebSocket. url)
+                                                     voice-settings (or (aget msg "voice_settings")
+                                                                        (aget msg "voiceSettings"))
+                                                     generation-config (or (aget msg "generation_config")
+                                                                           (aget msg "generationConfig"))]
+                                                 (close-upstream!)
+                                                 (reset! upstream* upstream)
+                                                 (.addEventListener upstream "open"
+                                                                    (fn []
+                                                                      (let [init-payload #js {:text " "
+                                                                                              :xi_api_key api-key
+                                                                                              :generation_config (or generation-config
+                                                                                                                     #js {:chunk_length_schedule default-elevenlabs-stream-chunk-length-schedule})}]
+                                                                        (when voice-settings
+                                                                          (aset init-payload "voice_settings" voice-settings))
+                                                                        (.send upstream (.stringify js/JSON init-payload))
+                                                                        (ws-send-json! client {:type "ready"
+                                                                                               :voice_id voice-id
+                                                                                               :model_id model-id
+                                                                                               :output_format output-format}))))
+                                                 (.addEventListener upstream "message"
+                                                                    (fn [event]
+                                                                      (try
+                                                                        (relay-elevenlabs-stream! client (.parse js/JSON (message-data->string (aget event "data"))))
+                                                                        (catch :default err
+                                                                          (ws-send-json! client {:type "error"
+                                                                                                 :detail (str "Failed to parse ElevenLabs stream payload: " err)})))))
+                                                 (.addEventListener upstream "error"
+                                                                    (fn [event]
+                                                                      (ws-send-json! client {:type "error"
+                                                                                             :detail (str "ElevenLabs stream error: " event)})))
+                                                 (.addEventListener upstream "close"
+                                                                    (fn [event]
+                                                                      (when (identical? upstream @upstream*)
+                                                                        (reset! upstream* nil))
+                                                                      (ws-send-json! client {:type "upstream_closed"
+                                                                                             :code (aget event "code")
+                                                                                             :reason (aget event "reason")}))))))
+
+                                           "text"
+                                           (if-let [upstream @upstream*]
+                                             (let [text (normalize-elevenlabs-stream-text (or (aget msg "text") ""))]
+                                               (when-not (str/blank? text)
+                                                 (.send upstream
+                                                        (.stringify js/JSON
+                                                                    (clj->js
+                                                                     (cond-> {:text text}
+                                                                       (= true (aget msg "try_trigger_generation")) (assoc :try_trigger_generation true)
+                                                                       (= true (aget msg "tryTriggerGeneration")) (assoc :try_trigger_generation true)))))))
+                                             (ws-send-json! client {:type "error" :detail "No active ElevenLabs voice stream"}))
+
+                                           "flush"
+                                           (if-let [upstream @upstream*]
+                                             (.send upstream (.stringify js/JSON #js {:text " " :flush true}))
+                                             (ws-send-json! client {:type "error" :detail "No active ElevenLabs voice stream"}))
+
+                                           "close"
+                                           (close-upstream!)
+
+                                           (ws-send-json! client {:type "error"
+                                                                  :detail (str "Unknown voice stream message type: " kind)})))
+                                       (catch :default err
+                                         (ws-send-json! client {:type "error"
+                                                                :detail (str "Voice stream bridge failure: " err)})))))))}))
+
 (defn- request-parts-promise
   [^js request]
   (.fromAsync js/Array (.parts request)))
@@ -69,6 +260,8 @@
 (defn register-voice-routes!
   [app runtime config handlers]
   (let [{:keys [route! json-response! with-request-context! ensure-tool!]} handlers]
+
+    (register-voice-ws-route! app config)
 
     (route! app "GET" "/api/voice/stt/health"
             (fn [request reply]

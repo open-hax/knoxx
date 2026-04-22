@@ -15,6 +15,9 @@ type UseChatPageConfigParams = {
   setAvailableAgents: (value: AgentContractCatalogItem[]) => void;
   setToolCatalog: (value: ToolCatalogResponse | null) => void;
   setConsoleLines: (value: string[] | ((previous: string[]) => string[])) => void;
+  setSttEnabled: (value: boolean) => void;
+  setTtsEnabled: (value: boolean) => void;
+  setTtsDefaultVoiceId: (value: string) => void;
 };
 
 export function useChatPageConfig({
@@ -30,11 +33,18 @@ export function useChatPageConfig({
   setAvailableAgents,
   setToolCatalog,
   setConsoleLines,
+  setSttEnabled,
+  setTtsEnabled,
+  setTtsDefaultVoiceId,
 }: UseChatPageConfigParams) {
   useEffect(() => {
     const requestedActorId = activeActorId || defaultActorId;
     void Promise.all([getFrontendConfig(), getAgentContractsCatalog(requestedActorId)])
       .then(([config, catalog]) => {
+        setSttEnabled(Boolean(config.stt_enabled));
+        setTtsEnabled(Boolean(config.tts_enabled));
+        setTtsDefaultVoiceId(config.tts_default_voice_id || '');
+
         const resolvedActorId = catalog.actor_id || requestedActorId || config.default_actor_id || defaultActorId;
         if (resolvedActorId && resolvedActorId !== activeActorId) {
           setActiveActorId(resolvedActorId);
@@ -58,7 +68,7 @@ export function useChatPageConfig({
       .catch((error) => {
         setConsoleLines((previous) => [...previous.slice(-400), `[agents] failed: ${(error as Error).message}`]);
       });
-  }, [activeActorId, activeAgentId, defaultActorId, defaultRole, setActiveActorId, setActiveAgentId, setActiveRole, setAvailableActors, setAvailableAgents, setConsoleLines]);
+  }, [activeActorId, activeAgentId, defaultActorId, defaultRole, setActiveActorId, setActiveAgentId, setActiveRole, setAvailableActors, setAvailableAgents, setConsoleLines, setSttEnabled, setTtsDefaultVoiceId, setTtsEnabled]);
 
   useEffect(() => {
     void getToolCatalog(activeRole, activeAgentId || undefined, activeActorId || undefined)
