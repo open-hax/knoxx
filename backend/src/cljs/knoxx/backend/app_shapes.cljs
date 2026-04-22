@@ -36,6 +36,12 @@
                             str
                             str/trim
                             not-empty)
+        actor-id (some-> (or (:actor_id spec)
+                             (:actor-id spec)
+                             (:actorId spec))
+                         str
+                         str/trim
+                         not-empty)
         role (some-> (or (:role spec) (:role_slug spec) (:role-slug spec)) str str/trim not-empty)
         system-prompt (some-> (or (:system_prompt spec)
                                   (:system-prompt spec)
@@ -58,8 +64,9 @@
         resource-policies (or (:resource_policies spec)
                               (:resource-policies spec)
                               (:resourcePolicies spec))]
-    (when (or contract-id role system-prompt model thinking-level (seq tool-policies) resource-policies)
+    (when (or contract-id actor-id role system-prompt model thinking-level (seq tool-policies) resource-policies)
       {:contract-id contract-id
+       :actor-id actor-id
        :role role
        :system-prompt system-prompt
        :model model

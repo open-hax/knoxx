@@ -49,7 +49,7 @@
 (defn list-role-slugs
   "List role slugs (filenames without .edn) from contracts/roles.
 
-   Uses synchronous IO; role catalogs are small and used in request paths." 
+   Uses synchronous IO; role catalogs are small and used in request paths."
   [config]
   (try
     (->> (.readdirSync fs (role-dir config))
@@ -64,7 +64,7 @@
 (defn normalize-role
   "Normalize an incoming role slug to a role that exists in contracts/roles.
 
-   Falls back to knowledge_worker." 
+   Falls back to knowledge_worker."
   [config role]
   (let [role (str (or role ""))
         canonical (or (get role-aliases role) role)
@@ -82,42 +82,57 @@
     :else nil))
 
 (defn- cap-id->slug
-  "Map a :cap/* id to a filename slug like cap_read." 
+  "Map a :cap/* id to a filename slug like cap_read."
   [cap-id]
   (let [base (last (str/split (str cap-id) #"/"))]
     (str "cap_" (-> base
                      (str/replace #"-" "_")
                      (str/trim)))))
 
-(defn role-tool-ids
-  "Return a vector of tool ids (strings) for a role.
-
-   Reads roles/<role>.edn and its referenced capabilities/*.edn." 
+(defn role-capability-ids
+  "Return normalized capability ids (e.g. cap/read) for a role slug."
   [config role]
   (let [role (normalize-role config role)
         role-path (role-slug->file config role)
-        role-map (when role-path (read-edn-sync role-path))
-        cap-slugs (->> (or (:role/capabilities role-map)
-                           (:role/capabilities (or role-map {}))
-                           [])
-                       (keep normalize-cap-id)
-                       (map cap-id->slug)
-                       distinct
-                       vec)
-        tool-ids (->> cap-slugs
-                      (map (fn [cap-slug]
-                             (when-let [cap-path (cap-slug->file config cap-slug)]
-                               (read-edn-sync cap-path))))
-                      (mapcat (fn [cap-map]
-                                (->> (or (:cap/tools cap-map) [])
-                                     (map tools/normalize-tool-id))))
+        role-map (when role-path (read-edn-sync role-path))]
+    (->> (or (:role/capabilities role-map)
+             [])
+         (keep normalize-cap-id)
+         distinct
+         vec)))
+
+(defn capability-tool-ids
+  "Return a vector of tool ids (strings) for one capability id or slug."
+  [config cap]
+  (let [cap-slug (cond
+                   (and (string? cap) (str/starts-with? cap "cap_")) cap
+                   :else (some-> cap normalize-cap-id cap-id->slug))]
+    (if-not cap-slug
+      []
+      (->> (read-edn-sync (cap-slug->file config cap-slug))
+           :cap/tools
+           (map tools/normalize-tool-id)
+           distinct
+           sort
+           vec))))
+
+(defn role-tool-ids
+  "Return a vector of tool ids (strings) for a role.
+
+   Reads roles/<role>.edn and its referenced capabilities/*.edn."
+  [config role]
+  (let [role (normalize-role config role)
+        cap-ids (role-capability-ids config role)
+        tool-ids (->> cap-ids
+                      (mapcat (fn [cap-id]
+                                (capability-tool-ids config cap-id)))
                       distinct
                       sort
                       vec)]
     tool-ids))
 
 (defn role-tools
-  "Return vector of {:id :label :description :enabled} tool entries for a role." 
+  "Return vector of {:id :label :description :enabled} tool entries for a role."
   [config role]
   (mapv (fn [tool-id]
           (let [{:keys [label description]} (tools/get-tool tool-id)]

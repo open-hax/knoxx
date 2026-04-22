@@ -356,6 +356,7 @@ export default function ContractsPage() {
     initialShowCanvas: false,
     initialSidebarWidthPx: 420,
     defaultRole: "contract_librarian",
+    defaultActorId: "contract_librarian",
     sessionIdKey: CHAT_SESSION_ID_KEY,
     scratchpadStorageKey: CHAT_SCRATCHPAD_KEY,
     pinnedContextStorageKey: CHAT_PINNED_KEY,

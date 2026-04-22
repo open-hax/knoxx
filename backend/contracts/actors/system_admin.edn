@@ -1,0 +1,5 @@
+{:actor/id "system_admin"
+ :actor/kind :human
+ :actor/org "open-hax"
+ :actor/label "System Admin"
+ :actor/roles [:role/system-admin]}

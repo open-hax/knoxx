@@ -23,7 +23,7 @@
             [knoxx.backend.session-titles :refer [start-session-title-backfill! session-title-backfill* session-titles* get-cached-session-title! session-title-seed-text heuristic-session-title stored-session-title-entry cache-session-title-entry! resolve-session-title! cache-session-title! normalize-session-title]]
             [knoxx.backend.text :refer [count-occurrences replace-first clip-text]]
             [knoxx.backend.tool-routes :as tool-routes]
-            [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled? effective-agent-contract agent-contract-catalog default-agent-contract-id]]
+            [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled? effective-agent-contract agent-contract-catalog actor-catalog default-agent-contract-id default-actor-id]]
             [knoxx.backend.turn-control :as turn-control]
             [knoxx.backend.voice-routes :as voice-routes]
             [knoxx.backend.translation-routes :as translation-routes]))
@@ -31,12 +31,15 @@
 (defn- merged-agent-spec
   [config parsed]
   (let [requested (or (:agent-spec parsed) {})
+        requested-actor-id (or (get requested :actor-id)
+                               (default-actor-id config))
         requested-contract-id (or (get requested :contract-id)
-                                  (default-agent-contract-id config))
-        resolved (effective-agent-contract config requested-contract-id)
+                                  (default-agent-contract-id config requested-actor-id))
+        resolved (effective-agent-contract config requested-contract-id requested-actor-id)
         resolved-id (:id resolved)]
     (cond-> (merge (select-keys resolved [:role :model :system-prompt :thinking-level :tool-policies])
                    requested)
+      requested-actor-id (assoc :actor-id requested-actor-id)
       resolved-id (assoc :contract-id resolved-id))))
 
 (defn- requested-role
@@ -193,7 +196,8 @@
              :shibboleth_enabled (and (not (str/blank? (:shibboleth-base-url config)))
                                       (not (str/blank? (:shibboleth-ui-url config))))
               :default_role (:knoxx-default-role config)
-              :default_agent_contract (default-agent-contract-id config)
+              :default_actor_id (default-actor-id config)
+              :default_agent_contract (default-agent-contract-id config (default-actor-id config))
               :email_enabled (email-enabled? config)
               :rbac_enabled (policy-db-enabled? runtime)})))
 
@@ -202,15 +206,29 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (let [agents (agent-contract-catalog config)
-                      default-agent-id (default-agent-contract-id config)
+                (let [actor-id (some-> (or (aget request "query" "actorId")
+                                             (aget request "query" "actor"))
+                                        str
+                                        str/trim
+                                        not-empty)
+                      effective-actor-id (or actor-id (default-actor-id config))
+                      agents (agent-contract-catalog config effective-actor-id)
+                      default-agent-id (default-agent-contract-id config effective-actor-id)
                       default-agent (when default-agent-id
-                                      (effective-agent-contract config default-agent-id))
+                                      (effective-agent-contract config default-agent-id effective-actor-id))
                       catalog (cond-> agents
                                 (and default-agent
                                      (not (some #(= (:id %) (:id default-agent)) agents)))
                                 (conj default-agent))]
-                  (json-response! reply 200 {:agents (vec (sort-by :id catalog))
+                  (json-response! reply 200 {:actor_id effective-actor-id
+                                             :actors (mapv (fn [actor]
+                                                             {:id (:id actor)
+                                                              :kind (:kind actor)
+                                                              :defaultAgent (:default-agent actor)
+                                                              :roleSlugs (vec (or (:role-slugs actor) []))})
+                                                           (actor-catalog config))
+                                             :agents (vec (sort-by :id catalog))
+                                             :default_actor_id (default-actor-id config)
                                              :default_agent_contract default-agent-id}))))))
 
   (route! app "GET" "/api/auth/context"

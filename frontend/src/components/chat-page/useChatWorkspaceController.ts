@@ -46,6 +46,7 @@ export type ChatWorkspaceControllerOptions = {
   initialShowSettings?: boolean;
   initialSidebarWidthPx?: number;
   defaultRole?: string;
+  defaultActorId?: string;
   sessionIdKey?: string;
   scratchpadStorageKey?: string;
   pinnedContextStorageKey?: string;
@@ -61,6 +62,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     initialShowSettings = false,
     initialSidebarWidthPx = 320,
     defaultRole = DEFAULT_ROLE,
+    defaultActorId = "chat_primary",
     sessionIdKey = SESSION_ID_KEY,
     scratchpadStorageKey = SCRATCHPAD_STATE_KEY,
     pinnedContextStorageKey = PINNED_CONTEXT_KEY,
@@ -70,6 +72,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   } = options;
 
   const [activeRole, setActiveRole] = useState(defaultRole);
+  const [activeActorId, setActiveActorId] = useState(defaultActorId);
   const [activeAgentId, setActiveAgentId] = useState("");
   const [availableAgents, setAvailableAgents] = useState<AgentContractCatalogItem[]>([]);
   const [toolCatalog, setToolCatalog] = useState<ToolCatalogResponse | null>(null);
@@ -193,6 +196,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setSelectedModel,
     selectedThinkingLevel,
     setSelectedThinkingLevel,
+    activeActorId,
+    setActiveActorId,
     activeAgentId,
     setActiveAgentId,
     conversationId,
@@ -291,6 +296,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     makeId,
     systemPrompt,
     activeRole,
+    activeActorId,
     activeAgentId,
     sessionId,
     setSessionId,
@@ -374,9 +380,12 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
 
   useChatPageConfig({
     defaultRole,
+    defaultActorId,
     activeRole,
+    activeActorId,
     activeAgentId,
     setActiveRole,
+    setActiveActorId,
     setActiveAgentId,
     setAvailableAgents,
     setToolCatalog,
@@ -463,6 +472,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     // chat runtime state
     activeRole,
     setActiveRole,
+    activeActorId,
+    setActiveActorId,
     activeAgentId,
     setActiveAgentId,
     availableAgents,

@@ -290,6 +290,7 @@ export interface FrontendConfig {
   shibboleth_ui_url: string;
   shibboleth_enabled: boolean;
   default_role: string;
+  default_actor_id?: string;
   default_agent_contract?: string;
   email_enabled: boolean;
 
@@ -320,11 +321,19 @@ export interface ToolDefinition {
 
 export interface ToolCatalogResponse {
   role: string;
+  actor_id?: string | null;
   agent_id?: string | null;
   agent_label?: string | null;
   agent_trigger_kind?: string | null;
   tools: ToolDefinition[];
   email_enabled: boolean;
+}
+
+export interface ActorCatalogItem {
+  id: string;
+  kind?: string | null;
+  defaultAgent?: string | null;
+  roleSlugs?: string[];
 }
 
 export interface AgentContractCatalogItem {
@@ -336,6 +345,9 @@ export interface AgentContractCatalogItem {
 }
 
 export interface AgentContractCatalogResponse {
+  actor_id?: string | null;
+  default_actor_id?: string | null;
+  actors?: ActorCatalogItem[];
   agents: AgentContractCatalogItem[];
   default_agent_contract?: string | null;
 }

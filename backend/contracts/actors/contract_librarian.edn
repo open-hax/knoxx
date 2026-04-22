@@ -1,0 +1,7 @@
+{:actor/id "contract_librarian"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Contract Librarian"
+ :actor/default-agent "contract_librarian"
+ :actor/roles [:role/contract-librarian]
+ :prompts {:system "You are the contract editing actor. Prefer contract/actor, actor roles, role capabilities, and contract clarity over ad-hoc tool policy patches."}}

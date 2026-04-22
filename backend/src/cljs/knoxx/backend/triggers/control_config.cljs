@@ -5,6 +5,7 @@
             [knoxx.backend.runtime.contract-loader :as contract-loader]
             [knoxx.backend.runtime.models :as models]
             [knoxx.backend.runtime.roles :as roles]
+            [knoxx.backend.tooling :as tooling]
             [knoxx.backend.tools.registry :as tools]
             [knoxx.backend.util.parse :refer [parse-positive-int]]
             ["node:fs" :as fs]
@@ -81,13 +82,15 @@
 
 (defn- contract->event-agent-job
   [config contract-id contract]
-  (let [trigger-kind (keywordish->string (:trigger-kind contract))]
+  (let [trigger-kind (keywordish->string (:trigger-kind contract))
+        resolved (tooling/resolve-agent-contract config contract-id)]
     (when (and (= :agent (:contract/kind contract))
                (contains? event-agent-trigger-kinds trigger-kind))
-      (let [role (keywordish->string (get-in contract [:agent :role]))
-            model (or (some-> (get-in contract [:agent :model]) str str/trim not-empty)
+      (let [role (:role resolved)
+            model (or (:model resolved)
                       (default-discord-model config))
-            thinking-level (or (some-> (get-in contract [:agent :thinking]) keywordish->string)
+            thinking-level (or (:thinking-level resolved)
+                               (some-> (get-in contract [:agent :thinking]) keywordish->string)
                                "off")
             source-kind (or (keywordish->string (:source-kind contract))
                             "manual")
@@ -115,13 +118,17 @@
          :agentSpec {:role (if (str/blank? (str (or role ""))) (:knoxx-default-role config) role)
                      :model model
                      :thinkingLevel thinking-level
-                     :systemPrompt (or (some-> (get-in contract [:prompts :system]) str not-empty) "")
+                     :systemPrompt (or (:system-prompt resolved)
+                                       (some-> (get-in contract [:prompts :system]) str not-empty)
+                                       "")
                      :taskPrompt (or (some-> (get-in contract [:prompts :task]) str not-empty) "")
-                     :toolPolicies (tool-policies-from-contract config role contract)}
+                     :toolPolicies (vec (or (:tool-policies resolved)
+                                            (tool-policies-from-contract config role contract)))}
          :description (or (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
                           (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
                           contract-id)
-         :contractSourceId contract-id}))))
+         :contractSourceId contract-id
+         :actorId (:actor-id resolved)}))))
 
 (defn- contract-agent-jobs
   [config]

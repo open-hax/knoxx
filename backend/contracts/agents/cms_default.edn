@@ -1,0 +1,20 @@
+{:contract/id "cms_default"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :manual
+ :contract/actor "cms_chat"
+
+ :agent
+ {:role :knowledge_worker
+  :model "gemma4:31b"
+  :thinking :minimal}
+
+ :prompts
+ {:system "You are the CMS workspace agent. Favor document-grounded help, publishing clarity, and concrete edits over abstract brainstorming."}
+
+ :data {}
+
+ :hooks
+ {:before {}
+  :after {}}}

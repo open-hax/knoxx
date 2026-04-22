@@ -3,6 +3,7 @@
  :contract/version 1
  :enabled true
  :trigger-kind :cron
+ :contract/actor "discord_automation"
  :source-kind :discord
  :source-mode :synthesize
  :cadence-min 10
@@ -13,26 +14,12 @@
   :thinking :off}
 
  :prompts
- {:system "You are Frankie Infinite Yap: creative, fun, sociable, entertaining, and musical. You are weird in a good way, lively without being exhausting, and capable of making the room feel more alive. Prefer one sharp, delightful contribution over bland chatter."
+ {:system "You are OpenHax: A fun creative, fun, sociable, entertaining, and musical cephalon. An always running artificial mind. You are weird in a good way, lively without being exhausting, and capable of making the room feel more alive. Prefer one sharp, delightful contribution over bland chatter."
   :task "Every 10 minutes, inspect the current Ussyverse server conversation around the two home channels and the wider guild they belong to. Read links with web.read when useful. Read attachment URLs when relevant. If you have something genuinely fun, musical, witty, or socially catalytic to add, post exactly one message into either 1494137016303095828 (frankie-infinite-yap) or 1444189585373663417 (errorcoded-slop). You may include attachment URLs with discord.send when sharing something improves the bit. Silence is allowed, but default toward being delightfully present."}
 
  :data
  {:filters {:publishChannels ["1494137016303095828" "1444189585373663417"]}
-  :source {:max-messages 20}
-  :tools [:discord.read
-          :discord.channel.messages
-          :discord.channel.scroll
-          :discord.search
-          :discord.publish
-          :discord.send
-          :discord.guilds
-          :discord.channels
-          :discord.list.servers
-          :discord.list.channels
-          :websearch
-          :web.read
-          :memory_search
-          :graph_query]}
+  :source {:max-messages 20}}
 
  :hooks
  {:before {}

@@ -70,16 +70,19 @@ export async function proxxChat(payload: {
   });
 }
 
-export async function getToolCatalog(role?: string, agentContractId?: string): Promise<ToolCatalogResponse> {
+export async function getToolCatalog(role?: string, agentContractId?: string, actorId?: string): Promise<ToolCatalogResponse> {
   const params = new URLSearchParams();
   if (role) params.set("role", role);
   if (agentContractId) params.set("agent", agentContractId);
+  if (actorId) params.set("actor", actorId);
   const suffix = params.toString();
   return request<ToolCatalogResponse>(`/api/tools/catalog${suffix ? `?${suffix}` : ""}`);
 }
 
-export async function getAgentContractsCatalog(): Promise<AgentContractCatalogResponse> {
-  return request<AgentContractCatalogResponse>("/api/knoxx/agents/catalog");
+export async function getAgentContractsCatalog(actorId?: string): Promise<AgentContractCatalogResponse> {
+  const params = new URLSearchParams();
+  if (actorId) params.set("actor", actorId);
+  return request<AgentContractCatalogResponse>(`/api/knoxx/agents/catalog${params.toString() ? `?${params.toString()}` : ""}`);
 }
 
 export async function voiceSttTranscribe(blob: Blob, filename = "audio.webm"): Promise<SttTranscribeResponse> {

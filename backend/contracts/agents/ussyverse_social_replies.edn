@@ -3,6 +3,7 @@
  :contract/version 1
  :enabled true
  :trigger-kind :event
+ :contract/actor "discord_automation"
  :source-kind :discord
  :source-mode :respond
  :cadence-min 1
@@ -23,21 +24,7 @@
  :data
  {:filters {:channels ["1494137016303095828" "1444189585373663417"]
             :keywords ["frankie" "yap" "music" "song" "slop" "ussy"]}
-  :source {:max-messages 20}
-  :tools [:discord.read
-          :discord.channel.messages
-          :discord.channel.scroll
-          :discord.search
-          :discord.publish
-          :discord.send
-          :discord.guilds
-          :discord.channels
-          :discord.list.servers
-          :discord.list.channels
-          :websearch
-          :web.read
-          :memory_search
-          :graph_query]}
+  :source {:max-messages 20}}
 
  :hooks
  {:before {}

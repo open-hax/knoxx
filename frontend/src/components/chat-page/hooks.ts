@@ -10,6 +10,7 @@ export type ChatSessionSnapshot = {
   systemPrompt?: string;
   selectedModel?: string;
   selectedThinkingLevel?: string;
+  activeActorId?: string;
   activeAgentId?: string;
   conversationId?: string | null;
   messages?: ChatMessage[];
@@ -175,7 +176,7 @@ export function initializePersistedChatSession(
   sessionStateKey: string,
   sessionId: string,
   conversationId: string,
-  seed?: Partial<Pick<ChatSessionSnapshot, "selectedModel" | "selectedThinkingLevel" | "systemPrompt" | "activeAgentId">>,
+  seed?: Partial<Pick<ChatSessionSnapshot, "selectedModel" | "selectedThinkingLevel" | "systemPrompt" | "activeActorId" | "activeAgentId">>,
 ): void {
   persistChatSessionSnapshot(sessionStateKey, sessionId, {
     sessionId,
@@ -183,6 +184,7 @@ export function initializePersistedChatSession(
     selectedModel: seed?.selectedModel,
     selectedThinkingLevel: seed?.selectedThinkingLevel,
     systemPrompt: seed?.systemPrompt,
+    activeActorId: seed?.activeActorId,
     activeAgentId: seed?.activeAgentId,
     messages: [],
     latestRun: null,
@@ -219,6 +221,8 @@ type UseChatSessionPersistenceParams = {
   setSelectedModel: SetState<string>;
   selectedThinkingLevel: string;
   setSelectedThinkingLevel: SetState<string>;
+  activeActorId: string;
+  setActiveActorId: SetState<string>;
   activeAgentId: string;
   setActiveAgentId: SetState<string>;
   conversationId: string | null;
@@ -250,6 +254,8 @@ export function useChatSessionPersistence({
   setSelectedModel,
   selectedThinkingLevel,
   setSelectedThinkingLevel,
+  activeActorId,
+  setActiveActorId,
   activeAgentId,
   setActiveAgentId,
   conversationId,
@@ -354,6 +360,7 @@ export function useChatSessionPersistence({
       if (typeof parsed.systemPrompt === "string") setSystemPrompt(parsed.systemPrompt);
       if (typeof parsed.selectedModel === "string") setSelectedModel(parsed.selectedModel);
       if (typeof parsed.selectedThinkingLevel === "string") setSelectedThinkingLevel(parsed.selectedThinkingLevel);
+      if (typeof parsed.activeActorId === "string") setActiveActorId(parsed.activeActorId);
       if (typeof parsed.activeAgentId === "string") setActiveAgentId(parsed.activeAgentId);
       if (typeof parsed.conversationId === "string" || parsed.conversationId === null) {
         setConversationId(parsed.conversationId ?? null);
@@ -392,6 +399,7 @@ export function useChatSessionPersistence({
     setRuntimeEvents,
     setSelectedModel,
     setSelectedThinkingLevel,
+    setActiveActorId,
     setActiveAgentId,
     setSystemPrompt,
   ]);
@@ -404,6 +412,7 @@ export function useChatSessionPersistence({
         systemPrompt,
         selectedModel,
         selectedThinkingLevel,
+        activeActorId,
         activeAgentId,
         conversationId,
         messages: messages.slice(-80),
@@ -416,7 +425,7 @@ export function useChatSessionPersistence({
     } catch {
       // ignore storage failures
     }
-  }, [sessionStateKey, sessionId, systemPrompt, selectedModel, selectedThinkingLevel, activeAgentId, conversationId, messages, latestRun, runtimeEvents, isSending]);
+  }, [sessionStateKey, sessionId, systemPrompt, selectedModel, selectedThinkingLevel, activeActorId, activeAgentId, conversationId, messages, latestRun, runtimeEvents, isSending]);
 }
 
 type UseChatSessionRecoveryParams = {

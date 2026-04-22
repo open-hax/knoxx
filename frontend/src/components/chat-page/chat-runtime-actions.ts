@@ -10,6 +10,7 @@ type CreateChatRuntimeActionsParams = {
   makeId: () => string;
   systemPrompt: string;
   activeRole: string;
+  activeActorId: string;
   activeAgentId: string;
   sessionId: string;
   setSessionId: SetState<string>;
@@ -37,6 +38,7 @@ export function createChatRuntimeActions({
   makeId,
   systemPrompt,
   activeRole,
+  activeActorId,
   activeAgentId,
   sessionId,
   setSessionId,
@@ -223,6 +225,7 @@ export function createChatRuntimeActions({
         thinkingLevel: selectedThinkingLevel,
         contentParts,
         agentSpec: {
+          actor_id: activeActorId || undefined,
           contract_id: activeAgentId || undefined,
           role: activeRole,
         },
@@ -271,6 +274,7 @@ export function createChatRuntimeActions({
         selectedModel,
         selectedThinkingLevel,
         systemPrompt,
+        activeActorId,
         activeAgentId,
       });
     } catch {

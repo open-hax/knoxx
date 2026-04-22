@@ -7,6 +7,7 @@ type ChatSettingsPanelProps = {
   onSystemPromptChange: (value: string) => void;
   conversationId: string | null;
   activeRole: string;
+  activeActorId: string;
   activeAgentId: string;
   availableAgents: AgentContractCatalogItem[];
   onActiveAgentChange: (value: string) => void;
@@ -18,6 +19,7 @@ export function ChatSettingsPanel({
   onSystemPromptChange,
   conversationId,
   activeRole,
+  activeActorId,
   activeAgentId,
   availableAgents,
   onActiveAgentChange,
@@ -91,6 +93,9 @@ export function ChatSettingsPanel({
             ))}
           </select>
           <div style={{ marginTop: 6, fontSize: 11, color: "var(--token-colors-text-muted)" }}>
+            Actor: {activeActorId || "(default)"}
+          </div>
+          <div style={{ marginTop: 4, fontSize: 11, color: "var(--token-colors-text-muted)" }}>
             Role: {activeRole}
           </div>
           <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>

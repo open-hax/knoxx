@@ -50,7 +50,7 @@ function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySes
 }
 
 function CmsPage() {
-  const chat = useChatWorkspaceController({ initialShowCanvas: false });
+  const chat = useChatWorkspaceController({ initialShowCanvas: false, defaultActorId: "cms_chat" });
 
   // Editor state
   const [editorTitle, setEditorTitle] = useState("");

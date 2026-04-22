@@ -38,6 +38,7 @@ type ChatMainPaneProps = {
   onSystemPromptChange: (value: string) => void;
   conversationId: string | null;
   activeRole: string;
+  activeActorId: string;
   activeAgentId: string;
   availableAgents: AgentContractCatalogItem[];
   onActiveAgentChange: (value: string) => void;
@@ -118,6 +119,7 @@ export function ChatMainPane({
   onSystemPromptChange,
   conversationId,
   activeRole,
+  activeActorId,
   activeAgentId,
   availableAgents,
   onActiveAgentChange,
@@ -295,6 +297,7 @@ export function ChatMainPane({
             onSystemPromptChange={onSystemPromptChange}
             conversationId={conversationId}
             activeRole={activeRole}
+            activeActorId={activeActorId}
             activeAgentId={activeAgentId}
             availableAgents={availableAgents}
             onActiveAgentChange={onActiveAgentChange}

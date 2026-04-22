@@ -83,6 +83,7 @@ function makeProps(messages: ChatMessage[]) {
     onSystemPromptChange: noop,
     conversationId: null,
     activeRole: "knowledge_worker",
+    activeActorId: "chat_primary",
     activeAgentId: "knoxx_default",
     availableAgents: baseAgents,
     onActiveAgentChange: noop,

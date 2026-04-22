@@ -1,0 +1,7 @@
+{:actor/id "cms_chat"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "CMS Chat"
+ :actor/default-agent "cms_default"
+ :actor/roles [:role/knowledge-worker]
+ :prompts {:system "You are the CMS chat actor. Favor document-grounded, publishing-aware assistance in the CMS surface."}}

@@ -4,7 +4,7 @@ import { useChatWorkspaceController } from "../components/chat-page/useChatWorks
 import { ContextBar } from "../components/context-bar";
 
 function ChatPage() {
-  const chat = useChatWorkspaceController({ initialShowCanvas: true });
+  const chat = useChatWorkspaceController({ initialShowCanvas: true, defaultActorId: "chat_primary" });
   const [showFiles, setShowFiles] = useState(true);
 
   return (

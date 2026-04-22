@@ -44,6 +44,7 @@ export function ChatWorkspacePane({
         onSystemPromptChange={controller.setSystemPrompt}
         conversationId={controller.conversationId}
         activeRole={controller.activeRole}
+        activeActorId={controller.activeActorId}
         activeAgentId={controller.activeAgentId}
         availableAgents={controller.availableAgents}
         onActiveAgentChange={controller.setActiveAgentId}

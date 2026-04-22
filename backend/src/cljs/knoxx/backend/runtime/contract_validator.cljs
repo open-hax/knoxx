@@ -9,15 +9,21 @@
    [:contract/kind keyword?]
    [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
-   [:actor/id {:optional true} string?]])
+   [:contract/actor {:optional true} string?]
+   [:actor/id {:optional true} string?]
+   [:actor/roles {:optional true} [:sequential keyword?]]
+   [:actor/capabilities {:optional true} [:sequential keyword?]]])
 
 (def ActorContract
   [:map
    [:actor/id string?]
    [:actor/kind keyword?]
+   [:actor/org {:optional true} string?]
    [:actor/label {:optional true} string?]
    [:actor/contract {:optional true} string?]
-   [:actor/roles {:optional true} [:sequential keyword?]]])
+   [:actor/default-agent {:optional true} string?]
+   [:actor/roles {:optional true} [:sequential keyword?]]
+   [:actor/capabilities {:optional true} [:sequential keyword?]]])
 
 (def RoleContract
   [:map

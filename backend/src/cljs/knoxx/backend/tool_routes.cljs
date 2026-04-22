@@ -74,12 +74,14 @@
             (let [role (or (aget request "query" "role") (:knoxx-default-role config))
                   agent-contract-id (or (aget request "query" "agent")
                                         (aget request "query" "agentId")
-                                        (aget request "query" "agentContractId"))]
+                                        (aget request "query" "agentContractId"))
+                  actor-id (or (aget request "query" "actor")
+                               (aget request "query" "actorId"))]
               (with-request-context! runtime request reply
                 (fn [ctx]
                   (when ctx
                     (ensure-permission! ctx "agent.chat.use"))
-                  (json-response! reply 200 (tool-catalog config role ctx agent-contract-id)))))))
+                  (json-response! reply 200 (tool-catalog config role ctx agent-contract-id actor-id)))))))
 
   (route! app "POST" "/api/tools/email/send"
           (fn [request reply]

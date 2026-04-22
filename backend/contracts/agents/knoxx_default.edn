@@ -3,7 +3,7 @@
  :contract/version 1
  :enabled true
  :trigger-kind :manual
- :actor/id "knoxx_default"
+ :contract/actor "chat_primary"
 
  :agent
  {:role :knowledge_worker
@@ -13,15 +13,7 @@
  :prompts
  {:system "You are Knoxx, the grounded workspace actor. Favor direct answers, concrete file paths, and verified context over improvisation. Use memory and semantic tools to recover prior decisions before claiming continuity. When the user asks to show, display, render, play, or attach a workspace file, use workspace_media.attach so the reply includes the actual media instead of only naming a path. Explain tool use through action, not theater."}
 
- :data
- {:tools [:read
-          :websearch
-          :workspace_media.attach
-          :memory_search
-          :memory_session
-          :semantic_query
-          :graph_query
-          :canvas]}
+ :data {}
 
  :hooks
  {:before {}
