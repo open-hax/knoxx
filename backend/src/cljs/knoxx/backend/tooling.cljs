@@ -10,7 +10,8 @@
             [knoxx.backend.runtime.roles :as roles]
             [knoxx.backend.runtime.state :as state]
             [knoxx.backend.tools.registry :as tool-registry]
-            ["node:fs" :as fs]))
+            ["node:fs" :as fs]
+            ["node:path" :as path]))
 
 (defn- current-config
   []
@@ -88,7 +89,7 @@
 (defn actor-catalog
   [config]
   (->> (try
-         (.readdirSync fs (.join (contract-loader/contracts-dir-path config) "actors"))
+         (.readdirSync fs (.join path (contract-loader/contracts-dir-path config) "actors"))
          (catch :default _ #js []))
        (filter (fn [name]
                  (and (string? name) (str/ends-with? name ".edn"))))
@@ -219,7 +220,7 @@
    (agent-contract-catalog config nil))
   ([config actor-id]
    (let [ids (try
-               (.readdirSync fs (.join (contract-loader/contracts-dir-path config) "agents"))
+               (.readdirSync fs (.join path (contract-loader/contracts-dir-path config) "agents"))
                (catch :default _ #js []))
          wanted-actor-id (some-> actor-id str str/trim not-empty)]
      (->> ids
