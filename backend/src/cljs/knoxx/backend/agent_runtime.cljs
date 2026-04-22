@@ -268,17 +268,21 @@
                                       (.then (fn [openplanner-manager]
                                                (create-session openplanner-manager)))))))))))))))))
 
-(defn- tool-policy-signature
-  [auth-context]
-  (let [role-slugs (map str (or (:roleSlugs auth-context) []))]
-    (if (some #{"system_admin"} role-slugs)
-      "system_admin"
-      (->> (or (:toolPolicies auth-context) [])
-           (filter #(= "allow" (some-> (:effect %) str str/lower-case)))
-           (map :toolId)
-           (map str)
-           sort
-           (str/join "|")))))
+(defn- visible-tool-signature
+  [runtime config auth-context]
+  (let [name-of (fn [tool]
+                  (or (some-> tool (aget "name") str str/trim not-empty)
+                      (some-> tool (aget "id") str str/trim not-empty)
+                      (some-> tool (aget "label") str str/trim not-empty)))
+        builtin-tools (or (create-runtime-tools runtime config auth-context) [])
+        custom-tools (if-let [tools (create-knoxx-custom-tools runtime config auth-context)]
+                       (if (array? tools) (array-seq tools) [])
+                       [])]
+    (->> (concat builtin-tools custom-tools)
+         (keep name-of)
+         sort
+         distinct
+         (str/join "|"))))
 
 (defn ensure-agent-session!
   ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
@@ -290,7 +294,7 @@
                                                                         thinking-level
                                                                         (:agent-thinking-level config)
                                                                         "off"))
-        current-tool-signature (tool-policy-signature auth-context)]
+        current-tool-signature (visible-tool-signature runtime config auth-context)]
     (if-let [entry (get @agent-sessions* conversation-id)]
       (let [session (:session entry)
             active-model (:model-id entry)
