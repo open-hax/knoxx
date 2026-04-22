@@ -393,7 +393,7 @@
                         (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
                                           {:url url
                                            :contentType content-type
-                                           :binary true})))))))))
+                                           :binary true}))))))))))
 
 (defn create-semantic-custom-tools
   ([runtime config] (create-semantic-custom-tools runtime config nil))
@@ -1532,7 +1532,7 @@
                 (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
                                   {:url url
                                    :contentType content-type
-                                   :binary true}))))))))))
+                                   :binary true})))))))))
 
 (defn create-openplanner-custom-tools
   ([runtime config] (create-openplanner-custom-tools runtime config nil))
