@@ -279,9 +279,8 @@
          contract-tool-ids (some-> contract-spec :tool-ids set)
          role-tool-ids (set (roles/role-tool-ids config normalized))
          allowed (cond
-                   auth-context (cond-> (auth-tool-ids auth-context)
-                                  contract-tool-ids (set/intersection contract-tool-ids))
                    contract-tool-ids contract-tool-ids
+                   auth-context (auth-tool-ids auth-context)
                    :else role-tool-ids)]
      (when-not (contains? allowed tool-id)
        (if auth-context
@@ -298,11 +297,8 @@
         normalized (roles/normalize-role config (or (:role contract-spec) role))
         role-tool-ids (set (roles/role-tool-ids config normalized))
         allowed-tool-ids (cond
-                           auth-context (let [base (auth-tool-ids auth-context)]
-                                          (if-let [contract-ids (some-> contract-spec :tool-ids set)]
-                                            (set/intersection base contract-ids)
-                                            base))
                            contract-spec (set (:tool-ids contract-spec))
+                           auth-context (auth-tool-ids auth-context)
                            :else role-tool-ids)]
     {:contract-spec contract-spec
      :actor-spec actor-spec

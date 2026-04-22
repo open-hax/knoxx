@@ -1,6 +1,7 @@
 (ns knoxx.backend.tooling-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.runtime.models :as models]
+            [knoxx.backend.runtime.roles :as roles]
             [knoxx.backend.tooling :as tooling]))
 
 (def test-config
@@ -30,3 +31,39 @@
                           (map #(aget % "name"))
                           set)]
       (is (= #{"read"} tool-names)))))
+
+(deftest allowed-tool-id-set-prefers-selected-agent-contract-tools
+  (testing "selected manual agent contracts expose their declared tool set even when the caller's base tool policy is narrower"
+    (with-redefs [tooling/effective-agent-contract (fn
+                                                     ([_ _]
+                                                      {:role "creative_catalyst"
+                                                       :tool-ids ["mcp.shoedelussy.write_pattern"
+                                                                  "audio.spectrogram"
+                                                                  "music.identify_file"]})
+                                                     ([_ _ _]
+                                                      {:role "creative_catalyst"
+                                                       :tool-ids ["mcp.shoedelussy.write_pattern"
+                                                                  "audio.spectrogram"
+                                                                  "music.identify_file"]}))
+                  roles/role-tool-ids (fn [_ _] ["read"])]
+      (is (= #{"mcp.shoedelussy.write_pattern" "audio.spectrogram" "music.identify_file"}
+             (set (tooling/allowed-tool-id-set
+                   {}
+                   "knowledge_worker"
+                   {:toolPolicies [{:toolId "read" :effect "allow"}]}
+                   "creative_music_studio"
+                   "chat_primary")))))))
+
+(deftest allowed-tool-id-set-without-contract-still-uses-auth-policy
+  (testing "plain workspace roles still fall back to request-scoped auth tool policies when no agent contract is selected"
+    (with-redefs [tooling/effective-agent-contract (fn
+                                                     ([_ _] nil)
+                                                     ([_ _ _] nil))
+                  roles/role-tool-ids (fn [_ _] ["read" "write"])]
+      (is (= #{"read"}
+             (set (tooling/allowed-tool-id-set
+                   {}
+                   "knowledge_worker"
+                   {:toolPolicies [{:toolId "read" :effect "allow"}]}
+                   nil
+                   "chat_primary")))))))

@@ -241,6 +241,15 @@
         stream-opts (request-stream-body request)]
     (js/fetch target-url (.assign js/Object base stream-opts (clj->js extra)))))
 
+(defn- effective-tool-auth-context
+  [auth-context allowed-tool-ids]
+  (if-not auth-context
+    nil
+    (assoc auth-context
+           :toolPolicies (mapv (fn [tool-id]
+                                 {:toolId tool-id :effect "allow"})
+                               (sort (vec allowed-tool-ids))))))
+
 (defn resolve-workspace-path
   [runtime config raw-path]
   (let [node-path (aget runtime "path")
@@ -295,8 +304,7 @@
                                loader (DefaultResourceLoader.
                                        #js {:cwd (:workspace-root config)
                                             :agentDir runtime-dir
-                                            :settingsManager settings-manager
-                                            :systemPromptOverride (fn [_] (:agent-system-prompt config))})]
+                                            :settingsManager settings-manager})]
                            (-> (.reload loader)
                                (.then (fn []
                                         #js {:authStorage auth-storage
@@ -336,6 +344,7 @@
                                                       auth-context
                                                       (:contract-id agent-spec)
                                                       (:actor-id agent-spec))
+                tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
                 create-session (fn [session-manager]
                                  (-> (createAgentSession
                                       #js {:cwd (:workspace-root config)
@@ -347,8 +356,8 @@
                                            :sessionManager session-manager
                                            :model model
                                            :thinkingLevel thinking-level
-                                           :tools (clj->js (create-runtime-tools runtime config auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)))
-                                           :customTools (create-agent-custom-tools runtime config auth-context agent-spec allowed-tool-ids)})
+                                           :tools (clj->js (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)))
+                                           :customTools (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)})
                                      (.then (fn [result]
                                               (let [session (aget result "session")]
                                                 (.setThinkingLevel session thinking-level)
@@ -375,8 +384,9 @@
                                               auth-context
                                               (:contract-id agent-spec)
                                               (:actor-id agent-spec))
-        builtin-tools (or (create-runtime-tools runtime config auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)) [])
-        custom-tools (if-let [tools (create-agent-custom-tools runtime config auth-context agent-spec allowed-tool-ids)]
+        tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
+        builtin-tools (or (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)) [])
+        custom-tools (if-let [tools (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)]
                        (if (array? tools) (array-seq tools) [])
                        [])]
     (pr-str {:tools (->> (concat builtin-tools custom-tools)
