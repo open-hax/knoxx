@@ -330,18 +330,19 @@
                              #{})
          {:keys [contract-spec actor-spec normalized-role allowed-tool-ids]}
          (resolve-tool-context config role auth-context agent-contract-id actor-id)
-         tools (cond->> allowed-tool-ids
-                 true sort
-                 true (mapv (fn [tool-id]
-                              (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
-                                {:id tool-id
-                                 :label label
-                                 :description description
-                                 :enabled (cond
-                                            (= tool-id "email.send") email?
-                                            (str/starts-with? tool-id "discord.") discord?
-                                            (str/starts-with? tool-id "mcp.") (contains? live-mcp-tool-ids tool-id)
-                                            :else true)})))
+         base-tools (->> allowed-tool-ids
+                         sort
+                         (mapv (fn [tool-id]
+                                 (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
+                                   {:id tool-id
+                                    :label label
+                                    :description description
+                                    :enabled (cond
+                                               (= tool-id "email.send") email?
+                                               (str/starts-with? tool-id "discord.") discord?
+                                               (str/starts-with? tool-id "mcp.") (contains? live-mcp-tool-ids tool-id)
+                                               :else true)}))))
+         tools (cond-> base-tools
                  (contains? allowed-tool-ids "semantic_query")
                  (conj {:id "graph_query"
                         :label "Graph Query"

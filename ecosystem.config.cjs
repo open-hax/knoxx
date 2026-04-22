@@ -82,7 +82,8 @@ const workspaceRoot =
   // Fallback: assume standard repo layout: <root>/orgs/open-hax/openplanner/packages/agents/knoxx
   path.resolve(knoxxRoot, '../../../../../../..');
 
-const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env.cephalon-host');
+// const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env.cephalon-host');
+const defaultHostEnvPath = "./.env";
 const hostEnvPath = process.env.KNOXX_HOST_ENV_PATH || defaultHostEnvPath;
 const hostEnv = loadSimpleEnv(hostEnvPath);
 const sttNpuPort = process.env.KNOXX_STT_PORT || hostEnv.KNOXX_STT_PORT || '8010';
@@ -219,6 +220,7 @@ const apps = [
         OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
         KNOXX_API_KEY: hostEnv.KNOXX_API_KEY || process.env.KNOXX_API_KEY || 'change-me',
         KNOXX_API_KEY_USER_EMAIL: hostEnv.KNOXX_API_KEY_USER_EMAIL || process.env.KNOXX_API_KEY_USER_EMAIL || 'pi@open-hax.local',
+        MCP_ENABLED: hostEnv.MCP_ENABLED || process.env.MCP_ENABLED || 'true',
         SHOEDELUSSY_MCP_BASE_URL: shoedelussyMcpBaseUrl,
         SHOEDELUSSY_MCP_TOOL_NAME: hostEnv.SHOEDELUSSY_MCP_TOOL_NAME || 'shoedelussy',
         SHOEDELUSSY_MCP_SHARED_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
