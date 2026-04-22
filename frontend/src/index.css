@@ -241,6 +241,7 @@ select {
 /* Pages that need padding can add their own wrapper */
 .app-shell__main > .ops-root,
 .app-shell__main > .admin-layout,
+.app-shell__main > [data-page="event-agents"],
 .app-shell__main > [data-page="settings"] {
   padding: 1rem;
 }

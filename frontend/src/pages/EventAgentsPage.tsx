@@ -52,14 +52,14 @@ export default function EventAgentsPage() {
 
   if (!canControlEventAgents) {
     return (
-      <div className="p-6 text-sm text-slate-400">
+      <div data-page="event-agents" className="h-full overflow-y-auto p-6 text-sm text-slate-400">
         Event-agent control access required.
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 p-4">
+    <div data-page="event-agents" className="h-full overflow-y-auto space-y-4 p-4">
       <div>
         <h1 className="text-xl font-bold text-slate-100">Event Agents</h1>
         <p className="mt-1 text-sm text-slate-400">
