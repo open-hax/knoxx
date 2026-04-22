@@ -1,9 +1,14 @@
 (ns knoxx.backend.triggers.control-config
   (:require [clojure.string :as str]
+            [cljs.reader :as reader]
             [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.runtime.contract-loader :as contract-loader]
             [knoxx.backend.runtime.models :as models]
             [knoxx.backend.runtime.roles :as roles]
-            [knoxx.backend.util.parse :refer [parse-positive-int]]))
+            [knoxx.backend.tools.registry :as tools]
+            [knoxx.backend.util.parse :refer [parse-positive-int]]
+            ["node:fs" :as fs]
+            ["node:path" :as path]))
 
 (defn- env
   [k default]
@@ -15,6 +20,125 @@
        (map (fn [value] (some-> value str str/trim not-empty)))
        (remove nil?)
        vec))
+
+(declare default-discord-model clamp-max-messages event-agent-trigger-kinds)
+
+(defn- keywordish->string
+  [value]
+  (cond
+    (keyword? value) (name value)
+    (string? value) (some-> value str str/trim not-empty)
+    (nil? value) nil
+    :else (some-> value str str/trim not-empty)))
+
+(defn- keywordish->event-kind
+  [value]
+  (cond
+    (keyword? value) (let [ns (namespace value)
+                           nm (name value)]
+                       (if (and ns (not (str/blank? ns)))
+                         (str ns "." nm)
+                         nm))
+    (string? value) (some-> value str str/trim not-empty (str/replace #"/" "."))
+    :else nil))
+
+(defn- read-edn-sync
+  [file-path]
+  (try
+    (some-> (.readFileSync fs file-path "utf8") str reader/read-string)
+    (catch :default _ nil)))
+
+(defn- explicit-tool-ids
+  [contract]
+  (->> (or (get-in contract [:data :tools]) [])
+       (map tools/normalize-tool-id)
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn- tool-policies-from-contract
+  [config role contract]
+  (let [explicit (explicit-tool-ids contract)
+        role-tool-ids (if (str/blank? (str (or role "")))
+                        []
+                        (roles/role-tool-ids config role))
+        tool-ids (if (seq explicit) explicit role-tool-ids)]
+    (mapv (fn [tool-id]
+            {:toolId tool-id :effect "allow"})
+          tool-ids)))
+
+(defn- filters-from-contract
+  [contract]
+  (let [filters (or (get-in contract [:data :filters]) {})]
+    (cond-> {}
+      (seq (or (:channels filters) [])) (assoc :channels (vec (:channels filters)))
+      (seq (or (:keywords filters) [])) (assoc :keywords (vec (:keywords filters)))
+      (seq (or (:publishChannels filters) (:publish_channels filters) []))
+      (assoc :publishChannels (vec (or (:publishChannels filters) (:publish_channels filters))))
+      (seq (or (:guildIds filters) (:guild_ids filters) []))
+      (assoc :guildIds (vec (or (:guildIds filters) (:guild_ids filters))))
+      (seq (or (:repositories filters) [])) (assoc :repositories (vec (:repositories filters))))))
+
+(defn- contract->event-agent-job
+  [config contract-id contract]
+  (let [trigger-kind (keywordish->string (:trigger-kind contract))]
+    (when (and (= :agent (:contract/kind contract))
+               (contains? event-agent-trigger-kinds trigger-kind))
+      (let [role (keywordish->string (get-in contract [:agent :role]))
+            model (or (some-> (get-in contract [:agent :model]) str str/trim not-empty)
+                      (default-discord-model config))
+            thinking-level (or (some-> (get-in contract [:agent :thinking]) keywordish->string)
+                               "off")
+            source-kind (or (keywordish->string (:source-kind contract))
+                            "manual")
+            source-mode (or (keywordish->string (:source-mode contract))
+                            "respond")
+            cadence (max 1 (or (parse-positive-int (:cadence-min contract)) 5))
+            event-kinds (->> (concat (or (get-in contract [:events :always]) [])
+                                     (or (get-in contract [:events :maybe]) []))
+                             (map keywordish->event-kind)
+                             (remove nil?)
+                             distinct
+                             vec)
+            filters (filters-from-contract contract)]
+        {:id contract-id
+         :name contract-id
+         :enabled (not (false? (:enabled contract)))
+         :trigger {:kind trigger-kind
+                   :cadenceMinutes cadence
+                   :eventKinds event-kinds}
+         :source {:kind source-kind
+                  :mode source-mode
+                  :config {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
+                                                           (get-in contract [:data :source :maxMessages]))}}
+         :filters filters
+         :agentSpec {:role (if (str/blank? (str (or role ""))) (:knoxx-default-role config) role)
+                     :model model
+                     :thinkingLevel thinking-level
+                     :systemPrompt (or (some-> (get-in contract [:prompts :system]) str not-empty) "")
+                     :taskPrompt (or (some-> (get-in contract [:prompts :task]) str not-empty) "")
+                     :toolPolicies (tool-policies-from-contract config role contract)}
+         :description (or (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
+                          (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
+                          contract-id)
+         :contractSourceId contract-id}))))
+
+(defn- contract-agent-jobs
+  [config]
+  (let [agents-dir (.join path (contract-loader/contracts-dir-path config) "agents")]
+    (try
+      (->> (.readdirSync fs agents-dir)
+           (filter (fn [name]
+                     (and (string? name) (str/ends-with? name ".edn"))))
+           (map (fn [name]
+                  (let [contract-id (subs name 0 (- (count name) 4))
+                        contract (read-edn-sync (.join path agents-dir name))]
+                    (when contract
+                      (contract->event-agent-job config contract-id contract)))))
+           (remove nil?)
+           (sort-by :id)
+           vec)
+      (catch :default _ []))))
 
 (defn- default-discord-channels
   []
@@ -28,8 +152,7 @@
       ["knoxx" "cephalon"])))
 
 (def ^:private event-agent-control-redis-key "event-agent:control-config")
-
-(declare default-discord-model)
+(def ^:private event-agent-trigger-kinds #{"cron" "event"})
 
 (def ^:private max-messages-limit 100)
 
@@ -263,101 +386,13 @@
 
 (defn default-event-agent-control
   [config]
-  (let [default-model (default-discord-model config)
-        known-roles (set (roles/list-role-slugs config))
-        default-role (if (contains? known-roles "system_admin")
-                       "system_admin"
-                       (:knoxx-default-role config))
-        default-discord-source {:botUserId (or (some-> (env "DISCORD_BOT_USER_ID" "") str str/trim not-empty) "")
+  (let [default-discord-source {:botUserId (or (some-> (env "DISCORD_BOT_USER_ID" "") str str/trim not-empty) "")
                                 :defaultChannels (default-discord-channels)
                                 :targetKeywords (default-discord-keywords)}]
     {:sources {:discord default-discord-source
                :github {:webhookSecretConfigured (boolean (some-> (env "GITHUB_WEBHOOK_SECRET" "") str str/trim not-empty))}
                :cron {}}
-     :jobs [{:id "discord-patrol"
-             :name "Discord patrol"
-             :enabled false
-             :trigger {:kind "cron"
-                       :cadenceMinutes 5
-                       :eventKinds []}
-             :source {:kind "discord"
-                      :mode "patrol"
-                      :config {:maxMessages 25}}
-             :filters {:channels (default-discord-channels)
-                       :keywords (default-discord-keywords)}
-             :agentSpec {:role default-role
-                         :model default-model
-                         :thinkingLevel "off"
-                         :systemPrompt "Observe configured Discord channels, detect fresh human signals, and queue structured events without speaking publicly."
-                         :taskPrompt "Read recent channel messages, update freshness state, and dispatch normalized Discord events for worthy human signals."
-                         :toolPolicies []}}
-            {:id "discord-mention-response"
-             :name "Discord mention response"
-             :enabled true
-             :trigger {:kind "event"
-                       :cadenceMinutes 1
-                       :eventKinds ["discord.message.mention" "discord.message.keyword"]}
-             :source {:kind "discord"
-                      :mode "respond"
-                      :config {:maxMessages 12}}
-             :filters {:channels (default-discord-channels)
-                       :keywords (default-discord-keywords)}
-             :agentSpec {:role default-role
-                         :model default-model
-                         :thinkingLevel "off"
-                         :systemPrompt "You are Knoxx's targeted event-driven Discord responder. Read the room, use tools when needed, and prefer silence over filler."
-                         :taskPrompt "A normalized Discord event matched this job. Read more context if needed, then decide whether to reply with discord.publish."
-                         :toolPolicies (default-discord-tool-policies)}}
-            {:id "discord-deep-synthesis"
-             :name "Discord deep synthesis"
-             :enabled true
-             :trigger {:kind "cron"
-                       :cadenceMinutes 120
-                       :eventKinds []}
-             :source {:kind "discord"
-                      :mode "synthesize"
-                      :config {:maxMessages 12}}
-             :filters {:channels (default-discord-channels)
-                       :keywords (default-discord-keywords)}
-             :agentSpec {:role default-role
-                         :model default-model
-                         :thinkingLevel "minimal"
-                         :systemPrompt "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans."
-                         :taskPrompt "Summarize recent cross-channel Discord activity, identify meaningful opportunities or risks, and decide whether to publish a concise proactive message."
-                         :toolPolicies (default-discord-tool-policies)}}
-            {:id "ussyverse-social-creative"
-             :name "Ussyverse social creative"
-             :enabled true
-             :trigger {:kind "cron"
-                       :cadenceMinutes 10
-                       :eventKinds []}
-             :source {:kind "discord"
-                      :mode "synthesize"
-                      :config {:maxMessages 20}}
-             :filters {:publishChannels ["1494137016303095828" "1444189585373663417"]}
-             :agentSpec {:role default-role
-                         :model default-model
-                         :thinkingLevel "off"
-                         :systemPrompt "You are Frankie Infinite Yap: creative, fun, sociable, entertaining, and musical. You are weird in a good way, lively without being exhausting, and capable of making the room feel more alive. Prefer one sharp, delightful contribution over bland chatter."
-                         :taskPrompt "Every 10 minutes, inspect the current Ussyverse server conversation around the two home channels and the wider guild they belong to. Read links with web.read when useful. Read attachment URLs when relevant. If you have something genuinely fun, musical, witty, or socially catalytic to add, post exactly one message into either 1494137016303095828 (frankie-infinite-yap) or 1444189585373663417 (errorcoded-slop). You may include attachment URLs with discord.send when sharing something improves the bit. Silence is allowed, but default toward being delightfully present."
-                         :toolPolicies (default-discord-tool-policies)}}
-            {:id "ussyverse-social-replies"
-             :name "Ussyverse social replies"
-             :enabled true
-             :trigger {:kind "event"
-                       :cadenceMinutes 1
-                       :eventKinds ["discord.message.mention" "discord.message.keyword"]}
-             :source {:kind "discord"
-                      :mode "respond"
-                      :config {:maxMessages 20}}
-             :filters {:channels ["1494137016303095828" "1444189585373663417"]
-                       :keywords ["frankie" "yap" "music" "song" "slop" "ussy"]}
-             :agentSpec {:role default-role
-                         :model default-model
-                         :thinkingLevel "off"
-                         :systemPrompt "You are Frankie Infinite Yap in event mode: playful, social, entertaining, and musically inclined. Mentions and keywords are invitations, not obligations. Read the room, be fun, and never sound like a corporate helpdesk."
-                         :taskPrompt "A Discord event fired in one of your home channels. Read nearby context, inspect links or attachment URLs if useful, and decide whether to reply in-channel. Replies should feel alive, funny, musical, or socially connective."
-                         :toolPolicies (default-discord-tool-policies)}}]}))
+     :jobs (contract-agent-jobs config)}))
 
 (defn- normalize-event-agent-job
   [config default-job raw-job]
@@ -443,7 +478,7 @@
                                                                  :source {:kind "manual" :mode "respond" :config {}}
                                                                  :filters {}
                                                                  :agentSpec {:role (:knoxx-default-role config)
-                                                                             :model (:proxx-default-model config)
+                                                                             :model (default-discord-model config)
                                                                              :thinkingLevel "off"
                                                                              :systemPrompt "You are Knoxx's scheduled event agent. Respond to dispatched events, use Discord tools when needed, and emit useful actions without filler."
                                                                              :taskPrompt "A structured event matched this job. Read context, decide what action is useful, and use available tools deliberately."

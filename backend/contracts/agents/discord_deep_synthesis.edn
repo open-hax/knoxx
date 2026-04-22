@@ -1,0 +1,40 @@
+{:contract/id "discord_deep_synthesis"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :cron
+ :source-kind :discord
+ :source-mode :synthesize
+ :cadence-min 120
+
+ :agent
+ {:role :knowledge_worker
+  :model "gemma4:31b"
+  :thinking :minimal}
+
+ :prompts
+ {:system "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans."
+  :task "Summarize recent cross-channel Discord activity, identify meaningful opportunities or risks, and decide whether to publish a concise proactive message."}
+
+ :data
+ {:filters {:channels []
+            :keywords []}
+  :source {:max-messages 12}
+  :tools [:discord.read
+          :discord.channel.messages
+          :discord.channel.scroll
+          :discord.search
+          :discord.publish
+          :discord.send
+          :discord.guilds
+          :discord.channels
+          :discord.list.servers
+          :discord.list.channels
+          :websearch
+          :web.read
+          :memory_search
+          :graph_query]}
+
+ :hooks
+ {:before {}
+  :after {}}}

@@ -9,7 +9,7 @@
 
  :agent
  {:role :knowledge_worker
-  :model "glm-5"
+  :model "gemma4:31b"
   :thinking :off}
 
  :prompts
