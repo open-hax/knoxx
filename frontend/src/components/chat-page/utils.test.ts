@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { memoryRowsToMessages, novelAppendedText } from "./utils";
+import { applyToolTraceEvent, memoryRowsToMessages, novelAppendedText } from "./utils";
 import type { MemorySessionRow } from "../../lib/types";
 
 describe("novelAppendedText", () => {
@@ -9,6 +9,40 @@ describe("novelAppendedText", () => {
     expect(novelAppendedText("hello", "hello world")).toBe(" world");
     expect(novelAppendedText("hello world", "world")).toBe("");
     expect(novelAppendedText("hello world", "world again")).toBe(" again");
+  });
+});
+
+describe("applyToolTraceEvent", () => {
+  it("backfills tool input previews from append-only runtime events", () => {
+    const blocks = applyToolTraceEvent([
+      {
+        id: "tool:call-1",
+        kind: "tool_call",
+        toolName: "read",
+        toolCallId: "call-1",
+        status: "streaming",
+        updates: [],
+      },
+    ], {
+      type: "tool_input_backfill",
+      tool_name: "read",
+      tool_call_id: "call-1",
+      preview: "```yaml\npath: docs/guide.md\n```",
+      at: "2026-04-22T17:00:00.000Z",
+    });
+
+    expect(blocks).toEqual([
+      {
+        id: "tool:call-1",
+        kind: "tool_call",
+        toolName: "read",
+        toolCallId: "call-1",
+        inputPreview: "```yaml\npath: docs/guide.md\n```",
+        status: "streaming",
+        updates: [],
+        at: "2026-04-22T17:00:00.000Z",
+      },
+    ]);
   });
 });
 

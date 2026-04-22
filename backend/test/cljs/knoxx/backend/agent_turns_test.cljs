@@ -14,8 +14,8 @@
       (is (= "generated-session-id"
              (agent-turns/ensure-session-id crypto nil))))))
 
-(deftest assistant-tool-call-previews-extracts-arguments-from-assistant-message
-  (testing "tool call arguments from assistant messages can backfill missing tool receipt inputs"
+(deftest assistant-tool-call-previews-extracts-string-arguments-from-assistant-message
+  (testing "string tool call arguments from assistant messages can backfill missing tool receipt inputs"
     (let [assistant-message #js {:role "assistant"
                                  :content #js [#js {:type "toolCall"
                                                     :id "tool-123"
@@ -26,3 +26,4 @@
                :tool_name "custom_tool"
                :input_preview "path=docs/guide.md limit=20"}]
              previews)))))
+

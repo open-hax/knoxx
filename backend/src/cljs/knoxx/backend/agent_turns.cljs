@@ -51,15 +51,24 @@
                       (str/split #"[./:]")
                       last
                       str/lower-case)
-        args (when (and raw-args (not= raw-args js/undefined))
+        args (cond
+               (map? raw-args) raw-args
+               (and raw-args (not= raw-args js/undefined))
                (try
                  (js->clj raw-args :keywordize-keys true)
-                 (catch :default _ nil)))
+                 (catch :default _ nil))
+               :else nil)
         arg-value (fn [& keys]
                     (or (some (fn [k]
                                 (cond
                                   (and (map? args) (keyword? k)) (get args k)
                                   (and (map? args) (string? k)) (or (get args k) (get args (keyword k)))
+                                  :else nil))
+                              keys)
+                        (some (fn [k]
+                                (cond
+                                  (and (map? raw-args) (keyword? k)) (get raw-args k)
+                                  (and (map? raw-args) (string? k)) (or (get raw-args k) (get raw-args (keyword k)))
                                   :else nil))
                               keys)
                         (some (fn [k]
@@ -583,7 +592,14 @@
                                                                         (backfill-run-tool-input-preview! run-id
                                                                                                           (:tool_call_id preview)
                                                                                                           (:tool_name preview)
-                                                                                                          (:input_preview preview)))
+                                                                                                          (:input_preview preview))
+                                                                        (let [preview-event (tool-event-payload run-id conversation-id session-id "tool_input_backfill"
+                                                                                                              {:status "running"
+                                                                                                               :tool_name (:tool_name preview)
+                                                                                                               :tool_call_id (:tool_call_id preview)
+                                                                                                               :preview (:input_preview preview)})]
+                                                                          (append-run-event! run-id preview-event)
+                                                                          (broadcast-ws-session! session-id "events" preview-event)))
                                                                       (sync-assistant-message! (or (aget assistant-event "partial")
                                                                                                   (aget event "message"))))
 
