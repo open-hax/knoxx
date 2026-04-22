@@ -182,8 +182,10 @@ const apps = [
       cwd: backendDir,
       script: 'src/server.mjs',
       node_args: '--enable-source-maps',
-      wait_ready: true,
-      listen_timeout: 15000,
+      // Keep graceful PM2 shutdown messaging for resumable agent sessions,
+      // but do not gate startup on PM2 wait_ready: Knoxx can be fully serving
+      // before PM2 accepts the ready handshake, which caused duplicate launches
+      // and EADDRINUSE restart loops on port 8000.
       kill_timeout: 35000,
       shutdown_with_message: true,
       // Auto-restart when shadow-cljs produces new output

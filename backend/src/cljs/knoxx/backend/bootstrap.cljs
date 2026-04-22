@@ -30,10 +30,24 @@
 
 (defn- notify-ready!
   []
-  (when (true? (aget js/process "connected"))
-    (try
-      (.send js/process "ready")
-      (catch :default _ nil))))
+  (let [send-fn (aget js/process "send")
+        connected? (aget js/process "connected")]
+    (cond
+      (fn? send-fn)
+      (try
+        (.call send-fn js/process "ready")
+        (.log js/console (str "[knoxx-bootstrap] sent pm2 ready signal"
+                              (when-not connected?
+                                " (process.connected was false)")))
+        true
+        (catch :default err
+          (.warn js/console "[knoxx-bootstrap] failed to send pm2 ready signal" err)
+          false))
+
+      :else
+      (do
+        (.log js/console "[knoxx-bootstrap] process.send unavailable; skipping pm2 ready signal")
+        false))))
 
 (defn- ensure-fastify-json-empty-body-parser!
   "Allow Content-Type: application/json with empty bodies.
