@@ -2095,7 +2095,8 @@
   (let [conn-str (or (aget options "connectionString")
                      (:connectionString options)
                      "")]
-    (when-not (str/blank? conn-str)
+    (if (str/blank? conn-str)
+      (js/Promise.resolve nil)
       (js/Promise.
        (fn [resolve reject]
          (let [pool (new (.-Pool pg) (clj->js {:connectionString conn-str}))]
