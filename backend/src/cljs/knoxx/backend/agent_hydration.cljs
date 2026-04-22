@@ -194,8 +194,10 @@
       (let [multimodal-parts (mapv (fn [part]
                                      (let [type (:type part)
                                            data (or (:data part) (:url part))
-                                           mime-type (:mimeType part)]
+                                           mime-type (:mimeType part)
+                                           text (:text part)]
                                        (case type
+                                         :text {:type "text" :text (str text)}
                                          :image {:type "image" :data data :mimeType mime-type}
                                          :audio {:type "audio" :data data :mimeType mime-type}
                                          :video {:type "video" :data data :mimeType mime-type}
@@ -295,6 +297,268 @@
     {:workspace-root workspace-root
      :absolute absolute
      :relative rel-to-root}))
+
+(def ^:private multimodal-upload-max-bytes (* 25 1024 1024))
+(def ^:private audio-render-max-bytes (* 50 1024 1024))
+
+(declare infer-upload-filename)
+
+(defn- source-http-url?
+  [value]
+  (boolean (re-matches #"https?://.+" (str (or value "")))))
+
+(defn- source-data-url?
+  [value]
+  (str/starts-with? (str (or value "")) "data:"))
+
+(defn- sanitize-mime-type
+  [value fallback]
+  (let [raw (some-> value str str/trim not-empty)
+        trimmed (when raw (first (str/split raw #";")))]
+    (or trimmed fallback "application/octet-stream")))
+
+(defn- mime-type->extension
+  [mime-type]
+  (case (sanitize-mime-type mime-type nil)
+    "image/png" ".png"
+    "image/jpeg" ".jpg"
+    "image/gif" ".gif"
+    "image/webp" ".webp"
+    "image/svg+xml" ".svg"
+    "audio/mpeg" ".mp3"
+    "audio/wav" ".wav"
+    "audio/ogg" ".ogg"
+    "audio/mp4" ".m4a"
+    "audio/flac" ".flac"
+    "audio/aac" ".aac"
+    "video/mp4" ".mp4"
+    "video/webm" ".webm"
+    "video/quicktime" ".mov"
+    "video/x-msvideo" ".avi"
+    "application/pdf" ".pdf"
+    "text/plain" ".txt"
+    "text/markdown" ".md"
+    "text/csv" ".csv"
+    "application/json" ".json"
+    ".bin"))
+
+(defn- ensure-source-size!
+  [size max-bytes label]
+  (when (> size max-bytes)
+    (throw (js/Error. (str label " exceeds " max-bytes " bytes. Choose a smaller file or summarize it instead.")))))
+
+(defn- buffer->data-url
+  [buffer mime-type]
+  (str "data:" (sanitize-mime-type mime-type "application/octet-stream") ";base64," (.toString buffer "base64")))
+
+(defn- temp-media-dir!
+  [runtime name]
+  (let [node-fs (aget runtime "fs")
+        node-path (aget runtime "path")
+        node-os (aget runtime "os")
+        dir (.join node-path (.tmpdir node-os) "knoxx-media" name)]
+    (-> (.mkdir node-fs dir #js {:recursive true})
+        (.then (fn [] dir)))))
+
+(defn- temp-file-path!
+  [runtime name ext]
+  (let [node-path (aget runtime "path")
+        node-crypto (aget runtime "crypto")]
+    (-> (temp-media-dir! runtime name)
+        (.then (fn [dir]
+                 (.join node-path
+                        dir
+                        (str (.randomUUID node-crypto) (or ext ""))))))))
+
+(defn- decode-data-url-source
+  [raw-source]
+  (let [match (.match (str raw-source) #"^data:([^;,]+)?(;base64)?,(.*)$")]
+    (when-not match
+      (throw (js/Error. "Invalid data URL source")))
+    (let [mime-type (sanitize-mime-type (aget match 1) "application/octet-stream")
+          base64? (= ";base64" (or (aget match 2) ""))
+          payload (or (aget match 3) "")
+          buffer (if base64?
+                   (.from js/Buffer payload "base64")
+                   (.from js/Buffer (js/decodeURIComponent payload) "utf8"))]
+      {:buffer buffer
+       :mime-type mime-type
+       :filename (str "upload" (mime-type->extension mime-type))
+       :size (.-length buffer)
+       :source-kind "data_url"})))
+
+(defn- load-media-source!
+  [runtime config raw-source max-bytes]
+  (let [node-fs (aget runtime "fs")
+        node-path (aget runtime "path")
+        source (or (normalize-tool-path-arg raw-source) raw-source "")]
+    (cond
+      (str/blank? (str source))
+      (js/Promise.reject (js/Error. "source is required"))
+
+      (source-data-url? source)
+      (js/Promise.resolve
+       (let [decoded (decode-data-url-source source)]
+         (ensure-source-size! (:size decoded) max-bytes "Source media")
+         decoded))
+
+      (source-http-url? source)
+      (-> (js/fetch source #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
+          (.then (fn [resp]
+                   (if-not (.-ok resp)
+                     (-> (.text resp)
+                         (.then (fn [text]
+                                  (throw (js/Error. (str "Failed to fetch source " source " (" (.-status resp) "): " text))))))
+                     (let [mime-type (sanitize-mime-type (.get (.-headers resp) "content-type")
+                                                         (workspace-media-mime-type source))
+                           filename (infer-upload-filename source 0)]
+                       (-> (.arrayBuffer resp)
+                           (.then (fn [buf]
+                                    (let [buffer (.from js/Buffer buf)
+                                          size (.-length buffer)]
+                                      (ensure-source-size! size max-bytes "Source media")
+                                      {:buffer buffer
+                                       :mime-type mime-type
+                                       :filename filename
+                                       :size size
+                                       :source-kind "url"})))))))))
+
+      :else
+      (let [{:keys [absolute relative]} (resolve-workspace-media-path runtime config source)
+            mime-type (sanitize-mime-type (workspace-media-mime-type relative) (workspace-media-mime-type absolute))]
+        (-> (.stat node-fs absolute)
+            (.then (fn [stat]
+                     (when-not (.isFile stat)
+                       (throw (js/Error. (str relative " is not a file"))))
+                     (ensure-source-size! (.-size stat) max-bytes relative)
+                     (.readFile node-fs absolute)))
+            (.then (fn [buffer]
+                     {:absolute-path absolute
+                      :relative relative
+                      :buffer buffer
+                      :mime-type mime-type
+                      :filename (.basename node-path absolute)
+                      :size (.-length buffer)
+                      :source-kind "workspace"})))))))
+
+(defn- materialize-media-source!
+  [runtime config raw-source max-bytes]
+  (let [node-fs (aget runtime "fs")]
+    (-> (load-media-source! runtime config raw-source max-bytes)
+        (.then (fn [source]
+                 (if (:absolute-path source)
+                   source
+                   (-> (temp-file-path! runtime "inputs" (mime-type->extension (:mime-type source)))
+                       (.then (fn [absolute-path]
+                                (-> (.writeFile node-fs absolute-path (:buffer source))
+                                    (.then (fn []
+                                             (assoc source :absolute-path absolute-path)))))))))))))
+
+(defn- media-source->content-part!
+  [runtime config raw-source max-bytes]
+  (-> (load-media-source! runtime config raw-source max-bytes)
+      (.then (fn [source]
+               (let [mime-type (sanitize-mime-type (:mime-type source) "application/octet-stream")
+                     part-type (workspace-media-type mime-type)]
+                 {:source source
+                  :part {:type part-type
+                         :data (buffer->data-url (:buffer source) mime-type)
+                         :mimeType mime-type
+                         :filename (:filename source)
+                         :size (:size source)}})))))
+
+(defn- clamp-dimension
+  [value fallback min-value max-value]
+  (let [n (if (number? value) value fallback)]
+    (-> n (max min-value) (min max-value))))
+
+(defn- audio-visualization-result!
+  [runtime config raw-source {:keys [kind width height title]}]
+  (let [exec-file-async (aget runtime "execFileAsync")
+        node-fs (aget runtime "fs")
+        label (case kind
+                :waveform "waveform"
+                "spectrogram")
+        out-width (clamp-dimension width (if (= kind :waveform) 1200 1024) 256 4096)
+        out-height (clamp-dimension height (if (= kind :waveform) 320 640) 128 2048)]
+    (when-not exec-file-async
+      (throw (js/Error. "execFileAsync runtime dependency is not available")))
+    (-> (materialize-media-source! runtime config raw-source audio-render-max-bytes)
+        (.then (fn [source]
+                 (let [base-name (or title
+                                     (some-> (:filename source) (str/replace #"\.[^.]+$" ""))
+                                     "audio")]
+                   (-> (temp-file-path! runtime "renders" ".png")
+                       (.then (fn [output-path]
+                                (let [filter-expr (if (= kind :waveform)
+                                                    (str "showwavespic=s=" out-width "x" out-height ":colors=0x7dd3fc")
+                                                    (str "showspectrumpic=s=" out-width "x" out-height ":legend=disabled"))
+                                      args (clj->js ["-y"
+                                                     "-i" (:absolute-path source)
+                                                     "-lavfi" filter-expr
+                                                     "-frames:v" "1"
+                                                     output-path])]
+                                  (-> (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576})
+                                      (.then (fn [_]
+                                               (.readFile node-fs output-path)))
+                                      (.then (fn [buffer]
+                                               (let [filename (str base-name "-" label ".png")
+                                                     part {:type "image"
+                                                           :data (buffer->data-url buffer "image/png")
+                                                           :mimeType "image/png"
+                                                           :filename filename
+                                                           :size (.-length buffer)}]
+                                                 (tool-text-result
+                                                  (str "Rendered " label " for " (or (:filename source) (:relative source) raw-source) ".")
+                                                  {:source raw-source
+                                                   :kind label
+                                                   :content_parts [part]})))))))))))))))
+
+(defn create-multimodal-custom-tools
+  ([runtime config] (create-multimodal-custom-tools runtime config nil))
+  ([runtime config auth-context]
+   (let [Type (aget runtime "Type")
+         allowed? (fn [tool-id]
+                    (or (nil? auth-context)
+                        (ctx-tool-allowed? auth-context tool-id)))
+         upload-params (.Object Type
+                               #js {:source (.String Type #js {:description "Workspace path, URL, or data URL for the media to load."})
+                                    :title (.Optional Type (.String Type #js {:description "Optional human-readable title for the media."}))})
+         upload-execute (fn [_tool-call-id params a b c]
+                          (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                source (or (aget params "source") "")
+                                title (normalize-tool-path-arg (aget params "title"))]
+                            (maybe-tool-update! on-update "Loading multimodal media…")
+                            (-> (media-source->content-part! runtime config source multimodal-upload-max-bytes)
+                                (.then (fn [{asset :source part :part}]
+                                         (let [part* (cond-> part
+                                                       title (assoc :filename title))
+                                               label (case (:type part*)
+                                                        "image" "image"
+                                                        "audio" "audio"
+                                                        "video" "video"
+                                                        "document")]
+                                            (tool-text-result
+                                            (str "Loaded " label " " (or title (:filename part*) (:filename asset) source) " for multimodal model context.")
+                                            {:source source
+                                             :source_kind (:source-kind asset)
+                                             :mimeType (:mimeType part*)
+                                             :filename (:filename part*)
+                                             :content_parts [part*]})))))))]
+     (clj->js
+      (vec
+       (remove nil?
+               [(when (allowed? "multimodal.upload")
+                  (doto (js-obj)
+                    (aset "name" "multimodal.upload")
+                    (aset "label" "Multimodal Upload")
+                    (aset "description" "Load an image, audio file, video, or document from the workspace, a URL, or a data URL so the model can inspect it.")
+                    (aset "promptSnippet" "Load external or workspace media into the multimodal conversation context.")
+                    (aset "promptGuidelines" (clj->js ["Use multimodal.upload when the user shares a media URL or asks you to inspect audio, images, video, or documents."
+                                                       "Prefer multimodal.upload for remote or inline media; prefer workspace_media.attach when the goal is to include a workspace file in the final reply."
+                                                       "If the model contract does not support a media type directly, explain that and consider audio.spectrogram for audio analysis via vision."]))
+                    (aset "parameters" upload-params)
+                    (aset "execute" upload-execute)))]))))))
 
 (defn create-workspace-media-custom-tools
   ([runtime config] (create-workspace-media-custom-tools runtime config nil))
@@ -875,18 +1139,33 @@
 
 (defn- music-audd-lookup!
   "Identify a song from an audio file using AudD API."
-  [config file-path]
-  (let [node-fs (aget (.-env js/process) "fs" js/runtime)
-        audd-token (:audd-api-token config)]
+  [runtime config source]
+  (let [audd-token (:audd-api-token config)]
     (if (str/blank? audd-token)
       (js/Promise.resolve {:error "AUDD_API_TOKEN not configured"
-                          :hint "Set audd-api-token in Knoxx config to enable music identification"})
-      (-> (js/Promise.resolve file-path)
-          (.then (fn [_]
-                   ;; For now, return a placeholder until we wire up actual file upload
-                   {:status "ready"
-                    :message "AudD integration ready - requires file upload implementation"
-                    :token-configured (not (str/blank? audd-token))}))))))
+                           :hint "Set AUDD_API_TOKEN to enable music identification"})
+      (-> (materialize-media-source! runtime config source audio-render-max-bytes)
+          (.then (fn [media]
+                   (let [form (js/FormData.)]
+                     (.append form "api_token" audd-token)
+                     (.append form "return" "apple_music,spotify,deezer")
+                     (.append form "file"
+                              (js/Blob. #js [(:buffer media)] #js {:type (:mime-type media)})
+                              (:filename media))
+                     (-> (js/fetch "https://api.audd.io/" #js {:method "POST" :body form})
+                         (.then (fn [resp]
+                                  (if-not (.-ok resp)
+                                    (-> (.text resp)
+                                        (.then (fn [text]
+                                                 (throw (js/Error. (str "AudD HTTP " (.-status resp) ": " text))))))
+                                    (.json resp))))
+                         (.then (fn [payload]
+                                  (let [status (or (aget payload "status") "unknown")
+                                        result (aget payload "result")]
+                                    {:status status
+                                     :source source
+                                     :filename (:filename media)
+                                     :result (when result (js->clj result :keywordize-keys true))})))))))))))
 
 (defn- music-acoustid-lookup!
   "Look up audio fingerprint via AcoustID API."
@@ -933,7 +1212,7 @@
 
 (defn- music-copyright-check!
   "Check if audio is likely copyrighted based on ISRC presence."
-  [config audio-data]
+  [_config audio-data]
   (let [isrc (get audio-data :isrc)
         apple-music-isrc (get-in audio-data [:apple_music :isrc])
         spotify-isrc (get-in audio-data [:spotify :external_ids :isrc])
@@ -959,7 +1238,7 @@
 
          ;; Tool parameter schemas
          identify-file-params (.Object Type
-                                       #js {:file_path (.String Type #js {:description "Path to the audio file to identify."})})
+                                       #js {:file_path (.String Type #js {:description "Workspace path, URL, or data URL for the audio file to identify."})})
          acoustid-params (.Object Type
                                   #js {:fingerprint (.String Type #js {:description "AcoustID fingerprint string."})
                                        :duration (.Optional Type (.Number Type #js {:description "Duration in seconds (default 25)."}))})
@@ -973,7 +1252,7 @@
                                  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                        file-path (aget params "file_path")]
                                    (maybe-tool-update! on-update (str "Identifying song from file: " file-path "…"))
-                                   (-> (music-audd-lookup! config file-path)
+                                   (-> (music-audd-lookup! runtime config file-path)
                                        (.then (fn [result]
                                                 (tool-text-result
                                                  (str "Music identification result: " (:status result)
@@ -1020,31 +1299,35 @@
                                           (str "Copyright decision: " (:decision result) " - " (:reason result))
                                           result)))))
 
-         ;; Placeholder tools for audio processing (require ffmpeg)
          spectrogram-execute (fn [_tool-call-id params a b c]
                                (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                     source (aget params "source")]
+                                     source (aget params "source")
+                                     width (aget params "width")
+                                     height (aget params "height")
+                                     title (normalize-tool-path-arg (aget params "title"))]
                                  (maybe-tool-update! on-update "Audio spectrogram generation…")
-                                 (tool-text-result
-                                  (str "Audio spectrogram placeholder for: " source
-                                       " - requires ffmpeg and execa package")
-                                  {:status "placeholder"
-                                   :hint "Install with: apt install ffmpeg && pnpm add execa"})))
+                                 (audio-visualization-result! runtime config source {:kind :spectrogram
+                                                                                     :width width
+                                                                                     :height height
+                                                                                     :title title})))
 
          waveform-execute (fn [_tool-call-id params a b c]
                             (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                  source (aget params "source")]
+                                  source (aget params "source")
+                                  width (aget params "width")
+                                  height (aget params "height")
+                                  title (normalize-tool-path-arg (aget params "title"))]
                               (maybe-tool-update! on-update "Audio waveform generation…")
-                              (tool-text-result
-                               (str "Audio waveform placeholder for: " source
-                                    " - requires ffmpeg and execa package")
-                               {:status "placeholder"
-                                :hint "Install with: apt install ffmpeg && pnpm add execa"})))
+                              (audio-visualization-result! runtime config source {:kind :waveform
+                                                                                  :width width
+                                                                                  :height height
+                                                                                  :title title})))
 
          audio-params (.Object Type
                                #js {:source (.String Type #js {:description "Path or URL to the audio file."})
                                     :width (.Optional Type (.Number Type #js {:description "Output width in pixels."}))
-                                    :height (.Optional Type (.Number Type #js {:description "Output height in pixels."}))})]
+                                    :height (.Optional Type (.Number Type #js {:description "Output height in pixels."}))
+                                    :title (.Optional Type (.String Type #js {:description "Optional filename/title for the rendered image."}))})]
 
      (clj->js
       (vec
@@ -1095,20 +1378,20 @@
                    (doto (js-obj)
                      (aset "name" "audio.spectrogram")
                      (aset "label" "Audio Spectrogram")
-                     (aset "description" "Generate a spectrogram image from an audio file. (Placeholder - requires ffmpeg)")
+                     (aset "description" "Generate a spectrogram image from an audio file using ffmpeg.")
                      (aset "promptSnippet" "Visualize audio as a spectrogram to see frequencies over time.")
                      (aset "promptGuidelines" (clj->js ["Use audio.spectrogram to visualize audio frequency content."
-                                                        "Currently a placeholder until ffmpeg is integrated."]))
+                                                        "This is especially useful when the active model can see images but cannot directly accept audio input."]))
                      (aset "parameters" audio-params)
                      (aset "execute" spectrogram-execute)))
                  (when (allowed? "audio.waveform")
                    (doto (js-obj)
                      (aset "name" "audio.waveform")
                      (aset "label" "Audio Waveform")
-                     (aset "description" "Generate a waveform image from an audio file. (Placeholder - requires ffmpeg)")
+                     (aset "description" "Generate a waveform image from an audio file using ffmpeg.")
                      (aset "promptSnippet" "Visualize audio as a waveform to see amplitude over time.")
                      (aset "promptGuidelines" (clj->js ["Use audio.waveform to visualize audio amplitude."
-                                                        "Currently a placeholder until ffmpeg is integrated."]))
+                                                        "Pair with audio.spectrogram when you want both amplitude and frequency views."]))
                      (aset "parameters" audio-params)
                      (aset "execute" waveform-execute)))]))))))
 
@@ -1896,9 +2179,10 @@
   ([runtime config] (create-knoxx-custom-tools runtime config nil))
   ([runtime config auth-context]
    (sanitize-custom-tools
-    (.concat (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
-                                                 (create-discord-custom-tools runtime config auth-context))
-                                        (create-openplanner-custom-tools runtime config auth-context))
-                               (create-music-custom-tools runtime config auth-context))
+    (.concat (.concat (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
+                                                          (create-discord-custom-tools runtime config auth-context))
+                                                 (create-openplanner-custom-tools runtime config auth-context))
+                                        (create-music-custom-tools runtime config auth-context))
+                               (create-multimodal-custom-tools runtime config auth-context))
                       (create-workspace-media-custom-tools runtime config auth-context))
              (create-mcp-custom-tools runtime config auth-context)))))

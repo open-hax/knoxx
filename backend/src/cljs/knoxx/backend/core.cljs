@@ -41,13 +41,26 @@
         (.then (fn [_]
                  ;; Initialize MCP gateway if enabled
                  (when (:mcp-enabled resolved-config)
-                   (let [;; Auto-register openplanner MCP server from config if not in MCP_SERVERS env
+                   (let [;; Auto-register known MCP servers from config if not in MCP_SERVERS env
                          existing-servers (mcp/parse-mcp-servers-env (or (aget js/process.env "MCP_SERVERS") ""))
                          openplanner-url (:openplanner-mcp-base-url resolved-config)
                          openplanner-name (:openplanner-mcp-tool-name resolved-config "openplanner")
-                         merged-servers (if (contains? existing-servers openplanner-name)
-                                          existing-servers
-                                          (assoc existing-servers openplanner-name {:url openplanner-url :transport "http"}))]
+                         shoedelussy-url (:shoedelussy-mcp-base-url resolved-config)
+                         shoedelussy-name (:shoedelussy-mcp-tool-name resolved-config "shoedelussy")
+                         shoedelussy-secret (:shoedelussy-mcp-shared-secret resolved-config)
+                         merged-servers (cond-> existing-servers
+                                          (and (not (contains? existing-servers openplanner-name))
+                                               (some? openplanner-url)
+                                               (not= "" openplanner-url))
+                                          (assoc openplanner-name {:url openplanner-url
+                                                                   :transport "http"})
+
+                                          (and (not (contains? existing-servers shoedelussy-name))
+                                               (some? shoedelussy-url)
+                                               (not= "" shoedelussy-url))
+                                          (assoc shoedelussy-name {:url shoedelussy-url
+                                                                   :transport "http"
+                                                                   :shared-secret shoedelussy-secret}))]
                      (-> (mcp/initialize! {:servers merged-servers})
                          (.then (fn [_]
                                   (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))

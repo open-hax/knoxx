@@ -1,0 +1,16 @@
+{:cap/id :cap/shoedelussy
+ :cap/tools [:mcp.shoedelussy.write_pattern
+             :mcp.shoedelussy.get_pattern
+             :mcp.shoedelussy.mutate_pattern
+             :mcp.shoedelussy.inject_section
+             :mcp.shoedelussy.set_bpm
+             :mcp.shoedelussy.set_key
+             :mcp.shoedelussy.get_state
+             :mcp.shoedelussy.list_projects
+             :mcp.shoedelussy.load_project
+             :mcp.shoedelussy.save_snapshot]
+ :cap/user-surfaces [{:surface/id :workspace/shoedelussy-studio
+                      :surface/label "Shoedelussy pattern studio"
+                      :surface/kind :composer
+                      :surface/routes ["/" "/ops/documents"]
+                      :surface/description "Humans shape Strudel patterns, project tempo/key, and snapshots in the Shoedelussy studio; agents use the Shoedelussy MCP tools."}]}

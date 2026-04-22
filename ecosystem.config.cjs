@@ -73,6 +73,10 @@ const workspaceRoot =
 const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env.cephalon-host');
 const hostEnvPath = process.env.KNOXX_HOST_ENV_PATH || defaultHostEnvPath;
 const hostEnv = loadSimpleEnv(hostEnvPath);
+const shoedelussyDir = process.env.SHOEDELUSSY_DIR || hostEnv.SHOEDELUSSY_DIR || path.join(os.homedir(), '.knoxx', 'external', 'shoedelussy');
+const shoedelussyServerDir = path.join(shoedelussyDir, 'server');
+const shoedelussyMcpPort = process.env.SHOEDELUSSY_MCP_PORT || hostEnv.SHOEDELUSSY_MCP_PORT || '8790';
+const shoedelussyMcpBaseUrl = hostEnv.SHOEDELUSSY_MCP_BASE_URL || `http://127.0.0.1:${shoedelussyMcpPort}/mcp`;
 
 module.exports = {
   apps: [
@@ -118,6 +122,8 @@ module.exports = {
           DISCORD_BOT_TOKEN: hostEnv.DISCORD_BOT_TOKEN,
         KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
         KNOXX_COLLECTION_NAME: 'devel_docs',
+        AUDD_API_TOKEN: hostEnv.AUDD_API_TOKEN || '',
+        ACOUSTID_API_KEY: hostEnv.ACOUSTID_API_KEY || '',
         // Public base URL used for OAuth redirect_uri + cookie scope
         KNOXX_PUBLIC_BASE_URL: hostEnv.KNOXX_PUBLIC_BASE_URL || 'http://localhost',
         // GitHub OAuth
@@ -130,6 +136,9 @@ module.exports = {
         // OpenPlanner (on host via compose port-forward)
         OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
         OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
+        SHOEDELUSSY_MCP_BASE_URL: shoedelussyMcpBaseUrl,
+        SHOEDELUSSY_MCP_TOOL_NAME: hostEnv.SHOEDELUSSY_MCP_TOOL_NAME || 'shoedelussy',
+        SHOEDELUSSY_MCP_SHARED_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
         // Redis + Postgres (compose services forwarded to host)
         REDIS_URL: 'redis://127.0.0.1:6379',
         KNOXX_SHUTDOWN_GRACE_MS: '25000',
@@ -156,7 +165,26 @@ module.exports = {
       },
     },
 
-    // ── 3. Frontend (Vite dev server) ────────────────────────────────
+    // ── 3. Shoedelussy MCP server (Wrangler dev) ───────────────────────
+    {
+      name: 'shoedelussy-mcp',
+      cwd: shoedelussyServerDir,
+      script: 'pnpm',
+      args: `dev --port ${shoedelussyMcpPort} --ip 127.0.0.1`,
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      env: {
+        NODE_ENV: 'development',
+        MCP_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
+        APP_URL: hostEnv.SHOEDELUSSY_APP_URL || 'http://127.0.0.1:5173',
+        OPENROUTER_API_KEY: hostEnv.SHOEDELUSSY_OPENROUTER_API_KEY || hostEnv.OPENROUTER_API_KEY || '',
+        OPENROUTER_MODEL: hostEnv.SHOEDELUSSY_OPENROUTER_MODEL || hostEnv.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
+      },
+    },
+
+    // ── 4. Frontend (Vite dev server) ────────────────────────────────
     {
       name: 'knoxx-frontend',
       cwd: frontendDir,
@@ -173,7 +201,7 @@ module.exports = {
       },
     },
 
-    // ── 4. Ingestion (Clojure JVM) ──────────────────────────────────
+    // ── 5. Ingestion (Clojure JVM) ──────────────────────────────────
     {
       name: 'knoxx-ingestion',
       cwd: ingestionDir,

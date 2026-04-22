@@ -8,7 +8,7 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [store-run! append-run-event! update-run! update-run-tool-receipt! backfill-run-tool-input-preview! append-limited latest-assistant-message record-retrieval-sample! tool-event-payload append-run-trace-text! apply-run-tool-trace-event! finalize-run-trace-blocks!]]
-            [knoxx.backend.runtime.models :refer [effective-thinking-level normalize-thinking-level]]
+            [knoxx.backend.runtime.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.util.time :refer [now-iso]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
@@ -430,6 +430,49 @@
            vec)
       [])))
 
+(defn- content-part-label
+  [part]
+  (let [part-type (cond
+                    (keyword? (:type part)) (name (:type part))
+                    (string? (:type part)) (:type part)
+                    :else nil)]
+    (case part-type
+      "image" "image"
+      "audio" "audio file"
+      "video" "video"
+      "document" "document"
+      "attachment")))
+
+(defn- content-part-name
+  [part]
+  (or (:filename part)
+      (:url part)
+      (content-part-label part)))
+
+(defn- model-ready-content-parts
+  [config model-id content-parts]
+  (vec
+   (mapcat
+    (fn [part]
+      (let [part-type (cond
+                        (keyword? (:type part)) (name (:type part))
+                        (string? (:type part)) (:type part)
+                        :else nil)]
+        (cond
+          (or (nil? part-type)
+              (= part-type "text")
+              (model-supports-input? config model-id part-type))
+          [part]
+
+          (= part-type "audio")
+          [{:type :text
+            :text (str "Uploaded audio source '" (content-part-name part) "' is available, but model " model-id " does not declare audio input. Use audio.spectrogram if you need an image-friendly audio view.")}]
+
+          :else
+          [{:type :text
+            :text (str "Uploaded " (content-part-label part) " '" (content-part-name part) "' is available, but model " model-id " does not declare " part-type " input.")}]))
+    (or content-parts [])))))
+
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
   (let [node-crypto (aget runtime "crypto")
@@ -456,6 +499,7 @@
         user-message (if (seq content-parts)
                        {:role "user" :content message :content-parts content-parts}
                        {:role "user" :content message})
+        prompt-content-parts (model-ready-content-parts config model-id content-parts)
         request-messages (conj seeded-messages user-message)
         _title-prime (maybe-prime-session-title! runtime config conversation-id message)
         auth-extra (auth-snapshot auth-context)
@@ -802,8 +846,8 @@
                                                                                                            {:status "completed"}))))))]
                                 ;; Use multimodal message builder if content-parts are present
                                 (let [prompt-promise (.prompt session
-                                                              (if (seq content-parts)
-                                                                (build-agent-multimodal-message message content-parts hydration memory-hydration)
+                                                              (if (seq prompt-content-parts)
+                                                                (build-agent-multimodal-message message prompt-content-parts hydration memory-hydration)
                                                                 (build-agent-user-message message hydration memory-hydration)))]
                                   (.catch
                                    (.then prompt-promise

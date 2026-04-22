@@ -11,6 +11,9 @@
 (def ^:private thinking-levels
   #{"off" "minimal" "low" "medium" "high" "xhigh"})
 
+(def ^:private input-kinds
+  #{"text" "image" "audio" "video" "document"})
+
 (defn- parse-prefix-allowlist
   [raw]
   (-> (str (or raw ""))
@@ -23,6 +26,14 @@
   [value]
   (let [normalized (some-> value str str/trim str/lower-case not-empty)]
     (when (contains? thinking-levels normalized)
+      normalized)))
+
+(defn normalize-input-kind
+  [value]
+  (let [normalized (cond
+                     (keyword? value) (some-> value name str/trim str/lower-case not-empty)
+                     :else (some-> value str str/trim str/lower-case not-empty))]
+    (when (contains? input-kinds normalized)
       normalized)))
 
 (defn- read-edn-sync
@@ -83,6 +94,14 @@
        distinct
        vec))
 
+(defn- normalize-input-kind-seq
+  [values]
+  (->> (or values [])
+       (map normalize-input-kind)
+       (remove nil?)
+       distinct
+       vec))
+
 (defn- normalize-model-family-contract
   [contract]
   (when-let [family-id (some-> (:model-family/id contract) str str/trim not-empty)]
@@ -95,7 +114,7 @@
      :thinking-levels (normalize-thinking-level-seq (:model-family/thinking-levels contract))
      :context-window (when (number? (:model-family/context-window contract)) (:model-family/context-window contract))
      :max-tokens (when (number? (:model-family/max-tokens contract)) (:model-family/max-tokens contract))
-     :input (normalize-string-seq (:model-family/input contract))}))
+     :input (normalize-input-kind-seq (:model-family/input contract))}))
 
 (defn- normalize-model-contract
   [contract]
@@ -110,7 +129,7 @@
      :thinking-levels (normalize-thinking-level-seq (:model/thinking-levels contract))
      :context-window (when (number? (:model/context-window contract)) (:model/context-window contract))
      :max-tokens (when (number? (:model/max-tokens contract)) (:model/max-tokens contract))
-     :input (normalize-string-seq (:model/input contract))
+     :input (normalize-input-kind-seq (:model/input contract))
      :label (some-> (:model/label contract) str str/trim not-empty)}))
 
 (defn model-family-contracts
@@ -232,6 +251,25 @@
       (and normalized-model (str/starts-with? normalized-model "glm-")) "zai"
       :else nil)))
 
+(defn model-input-modes
+  [config model-id]
+  (let [model-spec (resolve-model-contract config model-id)
+        inputs (->> (or (:input model-spec) [])
+                    (map normalize-input-kind)
+                    (remove nil?)
+                    distinct
+                    vec)]
+    (if (seq inputs)
+      inputs
+      ["text"])))
+
+(defn model-supports-input?
+  [config model-id input-kind]
+  (let [wanted (or (normalize-input-kind input-kind) "text")]
+    (boolean
+     (some #(= wanted %)
+           (model-input-modes config model-id)))))
+
 (defn tool-cost
   []
   {:input 0 :output 0 :cacheRead 0 :cacheWrite 0})
@@ -247,7 +285,7 @@
      :name (or (:label model-spec) model-id)
      :api api
      :reasoning reasoning?
-     :input (vec (or (seq (:input model-spec)) ["text"]))
+     :input (model-input-modes config model-id)
      :contextWindow (or (:context-window model-spec) 128000)
      :maxTokens (or (:max-tokens model-spec) 8192)
      :cost (tool-cost)}))

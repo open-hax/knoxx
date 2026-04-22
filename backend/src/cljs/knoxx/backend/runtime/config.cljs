@@ -63,6 +63,10 @@
 
    :discord-bot-token (env "DISCORD_BOT_TOKEN" "")
 
+   ;; Music services
+   :audd-api-token (env "AUDD_API_TOKEN" "")
+   :acoustid-api-key (env "ACOUSTID_API_KEY" "")
+
    ;; Voice / speech
    :stt-base-url (env "KNOXX_STT_BASE_URL" "")
 
@@ -100,6 +104,11 @@
    :openplanner-mcp-tool-name (env "OPENPLANNER_MCP_TOOL_NAME" "openplanner")
    :openplanner-mcp-project (env "KNOXX_OPENPLANNER_PROJECT" "devel")
    :openplanner-mcp-source (env "KNOXX_OPENPLANNER_SOURCE" "knoxx")
+
+   ;; Shoedelussy MCP server config
+   :shoedelussy-mcp-base-url (env "SHOEDELUSSY_MCP_BASE_URL" "")
+   :shoedelussy-mcp-tool-name (env "SHOEDELUSSY_MCP_TOOL_NAME" "shoedelussy")
+   :shoedelussy-mcp-shared-secret (env "SHOEDELUSSY_MCP_SHARED_SECRET" "")
 
    ;; Agent system prompt (pi-coding-agent override)
    :agent-system-prompt (env

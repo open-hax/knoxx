@@ -9,7 +9,7 @@
  :cadence-min 10
 
  :agent
- {:role :knowledge_worker
+ {:role :creative_catalyst
   :model "gemma4:31b"
   :thinking :off}
 
