@@ -624,38 +624,46 @@
   [control job]
   (let [explicit-channels (job-channels control job)
         guild-ids (job-guild-ids job)
-        publish-channels (job-publish-channels job)]
-    (if (seq guild-ids)
-      (-> (or (dg/list-channels) (js/Promise.resolve #js []))
+        publish-channels (job-publish-channels job)
+        list-channels! (fn []
+                         (or (dg/list-channels)
+                             (js/Promise.resolve #js [])))]
+    (cond
+      (seq guild-ids)
+      (-> (list-channels!)
           (.then (fn [channels]
-                   (let [rows (js->clj channels :keywordize-keys true)]
+                   (let [rows (js->clj channels :keywordize-keys true)
+                         guild-id-set (set guild-ids)]
                      (->> rows
                           (filter (fn [channel]
-                                    (contains? (set guild-ids) (:guildId channel))))
+                                    (contains? guild-id-set (:guildId channel))))
                           (map :id)
                           distinct
                           vec)))))
-      (if (and (empty? explicit-channels) (seq publish-channels))
-        (-> (or (dg/list-channels) (js/Promise.resolve #js []))
-            (.then (fn [channels]
-                     (let [rows (js->clj channels :keywordize-keys true)
-                           guilds (->> rows
-                                       (filter (fn [channel]
-                                                 (contains? (set publish-channels) (:id channel))))
-                                       (map :guildId)
-                                       distinct
-                                       vec)]
-                       (if (seq guilds)
+
+      (and (empty? explicit-channels) (seq publish-channels))
+      (-> (list-channels!)
+          (.then (fn [channels]
+                   (let [rows (js->clj channels :keywordize-keys true)
+                         publish-channel-set (set publish-channels)
+                         guilds (->> rows
+                                     (filter (fn [channel]
+                                               (contains? publish-channel-set (:id channel))))
+                                     (map :guildId)
+                                     distinct
+                                     vec)]
+                     (if (seq guilds)
+                       (let [guild-set (set guilds)]
                          (->> rows
                               (filter (fn [channel]
-                                        (contains? (set guilds) (:guildId channel))))
+                                        (contains? guild-set (:guildId channel))))
                               (map :id)
                               distinct
-                              vec)
-                         (if (seq publish-channels)
-                           publish-channels
-                           explicit-channels)))))
-        (js/Promise.resolve explicit-channels))))))
+                              vec))
+                       publish-channels)))))
+
+      :else
+      (js/Promise.resolve explicit-channels))))
 
 (defn- execute-discord-patrol!
   [config control job]
