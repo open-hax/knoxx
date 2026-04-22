@@ -1,2 +1,7 @@
 {:cap/id :cap/workspace-media
- :cap/tools [:workspace_media.attach]}
+ :cap/tools [:workspace_media.attach]
+ :cap/user-surfaces [{:surface/id :workspace/media-attachment
+                      :surface/label "Workspace media picker"
+                      :surface/kind :picker
+                      :surface/routes ["/"]
+                      :surface/description "Humans attach workspace media from a picker/preview flow; agents use workspace_media.attach."}]}

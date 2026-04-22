@@ -2,9 +2,30 @@
   (:require [malli.core :as m]
             [malli.error :as me]))
 
+(def ContractId
+  [:or string? keyword?])
+
+(def UserSurface
+  [:map {:closed false}
+   [:surface/id keyword?]
+   [:surface/label string?]
+   [:surface/kind {:optional true} keyword?]
+   [:surface/routes {:optional true} [:vector string?]]
+   [:surface/endpoints {:optional true} [:vector string?]]
+   [:surface/description {:optional true} string?]])
+
+(def PolicyCheck
+  [:map {:closed false}
+   [:id ContractId]
+   [:severity [:enum :block :warn :note]]
+   [:message string?]
+   [:check [:map {:closed false}
+            [:expr {:optional true} any?]
+            [:rule {:optional true} keyword?]]]])
+
 (def AgentContract
   "Minimal agent-contract schema for EDN contracts stored on disk."
-  [:map
+  [:map {:closed false}
    [:contract/id string?]
    [:contract/kind keyword?]
    [:contract/version {:optional true} int?]
@@ -15,9 +36,9 @@
    [:actor/capabilities {:optional true} [:sequential keyword?]]])
 
 (def ActorContract
-  [:map
+  [:map {:closed false}
    [:actor/id string?]
-   [:actor/kind keyword?]
+   [:actor/kind [:enum :agent :user]]
    [:actor/org {:optional true} string?]
    [:actor/label {:optional true} string?]
    [:actor/contract {:optional true} string?]
@@ -26,17 +47,29 @@
    [:actor/capabilities {:optional true} [:sequential keyword?]]])
 
 (def RoleContract
-  [:map
+  [:map {:closed false}
    [:role/id keyword?]
    [:role/capabilities {:optional true} [:sequential keyword?]]])
 
 (def CapabilityContract
-  [:map
+  [:map {:closed false}
    [:cap/id keyword?]
-   [:cap/tools {:optional true} [:sequential any?]]])
+   [:cap/tools {:optional true} [:sequential any?]]
+   [:cap/user-surfaces {:optional true} [:vector UserSurface]]])
+
+(def PolicyContract
+  [:map {:closed false}
+   [:contract/id string?]
+   [:contract/kind [:= :policy]]
+   [:contract/doc {:optional true} string?]
+   [:contract/scope {:optional true} string?]
+   [:contract/uses {:optional true} [:vector ContractId]]
+   [:policy/invariants {:optional true} [:vector PolicyCheck]]
+   [:policy/required {:optional true} [:vector PolicyCheck]]
+   [:policy/checked-by {:optional true} keyword?]])
 
 (def ModelFamilyContract
-  [:map
+  [:map {:closed false}
    [:model-family/id string?]
    [:model-family/provider {:optional true} keyword?]
    [:model-family/prefixes [:sequential string?]]
@@ -49,7 +82,7 @@
    [:model-family/input {:optional true} [:sequential keyword?]]])
 
 (def ModelContract
-  [:map
+  [:map {:closed false}
    [:model/id string?]
    [:model-family/id {:optional true} string?]
    [:model/provider {:optional true} keyword?]
@@ -66,6 +99,8 @@
 (defn- infer-contract-class
   [value]
   (cond
+    (and (contains? value :contract/id)
+         (= :policy (:contract/kind value))) "policies"
     (contains? value :contract/id) "agents"
     (contains? value :actor/id) "actors"
     (contains? value :role/id) "roles"
@@ -81,6 +116,7 @@
     "actors" ActorContract
     "roles" RoleContract
     "capabilities" CapabilityContract
+    "policies" PolicyContract
     "model_families" ModelFamilyContract
     "models" ModelContract
     AgentContract))

@@ -1,2 +1,7 @@
 {:cap/id :cap/canvas
- :cap/tools [:canvas]}
+ :cap/tools [:canvas]
+ :cap/user-surfaces [{:surface/id :workspace/canvas-editor
+                      :surface/label "Canvas editor"
+                      :surface/kind :editor
+                      :surface/routes ["/"]
+                      :surface/description "Humans draft and refine long-form content in the canvas; agents use canvas-oriented tools."}]}

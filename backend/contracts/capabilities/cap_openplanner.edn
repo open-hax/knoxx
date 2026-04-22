@@ -5,4 +5,9 @@
              :openplanner.append-obs
              :openplanner.append-inference
              :openplanner.append-attestation
-             :openplanner.append-judgment]}
+             :openplanner.append-judgment]
+ :cap/user-surfaces [{:surface/id :workspace/openplanner-panels
+                      :surface/label "OpenPlanner panels"
+                      :surface/kind :dashboard
+                      :surface/routes ["/ops/vectors" "/ops/graph-export-debug"]
+                      :surface/description "Humans inspect graph and event-store panels in OpenPlanner surfaces; agents use OpenPlanner append/query tools."}]}

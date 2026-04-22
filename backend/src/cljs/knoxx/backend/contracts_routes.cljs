@@ -40,6 +40,7 @@
   [contract-class value]
   (case (normalize-contract-class contract-class)
     "agents" (some-> (:contract/id value) str)
+    "policies" (some-> (:contract/id value) str)
     "actors" (some-> (:actor/id value) str)
     "roles" (some-> (:role/id value) keyword->slug)
     "capabilities" (some-> (:cap/id value) keyword->slug (as-> slug (str "cap_" slug)))
@@ -51,6 +52,7 @@
   [contract-class value]
   (case (normalize-contract-class contract-class)
     "agents" (some-> (:contract/kind value) name)
+    "policies" "policy"
     "actors" (some-> (:actor/kind value) name)
     "roles" "role"
     "capabilities" "capability"
@@ -62,12 +64,14 @@
   [contract-class value]
   (case (normalize-contract-class contract-class)
     "agents" (or (:contract/version value) 1)
+    "policies" (or (:contract/version value) 1)
     1))
 
 (defn- parsed-enabled?
   [contract-class value]
   (case (normalize-contract-class contract-class)
     "agents" (not (false? (:enabled value)))
+    "policies" (not (false? (:enabled value)))
     true))
 
 (defn- validate-contract-edn
@@ -113,6 +117,11 @@
   [contract-class edn-text new-id]
   (case (normalize-contract-class contract-class)
     "agents"
+    (if (str/includes? edn-text ":contract/id")
+      (str/replace edn-text #":contract/id\s+\"[^\"]+\"" (str ":contract/id \"" new-id "\""))
+      (str ":contract/id \"" new-id "\"\n" edn-text))
+
+    "policies"
     (if (str/includes? edn-text ":contract/id")
       (str/replace edn-text #":contract/id\s+\"[^\"]+\"" (str ":contract/id \"" new-id "\""))
       (str ":contract/id \"" new-id "\"\n" edn-text))

@@ -24,7 +24,7 @@ import type { EventAgentControlResponse, EventAgentJobControl, EventAgentRuntime
 import { EdnEditor } from "../components/admin-page/EdnEditor";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
-import type { AgentSource } from "../lib/types";
+import type { AgentSource, ContractsClass } from "../lib/types";
 
 // ── Chat sidebar persistence keys (namespaced to avoid CMS collisions) ───────
 
@@ -247,7 +247,7 @@ function TagInput({ label, value, onChange, suggestions, disabled }: {
 
 interface AgentSidebarEntry {
   id: string;
-  contractClass: "agents" | "actors" | "roles" | "capabilities";
+  contractClass: ContractsClass;
   label: string;
   status: "running" | "idle" | "disabled" | "error" | "unknown";
   triggerKind: string;
@@ -293,7 +293,7 @@ export default function ContractsPage() {
   // ── Contract editor state ──────────────────────────────────────────────
   const [contracts, setContracts] = useState<ContractListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedContractClass, setSelectedContractClass] = useState<"agents" | "actors" | "roles" | "capabilities">("agents");
+  const [selectedContractClass, setSelectedContractClass] = useState<ContractsClass>("agents");
 
   const [ednDraft, setEdnDraft] = useState(DEFAULT_CONTRACT_EDN);
   const [lastSavedEdn, setLastSavedEdn] = useState<string | null>(null);
@@ -437,7 +437,7 @@ export default function ContractsPage() {
     }
   }, [selectedId]);
 
-  const loadContract = useCallback(async (contractId: string, contractClass: "agents" | "actors" | "roles" | "capabilities") => {
+  const loadContract = useCallback(async (contractId: string, contractClass: ContractsClass) => {
     setError("");
     try {
       const result = await getContract(contractId, contractClass);

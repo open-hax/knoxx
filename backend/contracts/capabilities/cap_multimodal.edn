@@ -1,2 +1,7 @@
 {:cap/id :cap/multimodal
- :cap/tools [:multimodal.upload]}
+ :cap/tools [:multimodal.upload]
+ :cap/user-surfaces [{:surface/id :workspace/upload-tray
+                      :surface/label "Multimodal upload tray"
+                      :surface/kind :uploader
+                      :surface/routes ["/" "/ops/documents"]
+                      :surface/description "Humans upload images, audio, and other multimodal files through an upload tray; agents use multimodal.upload."}]}

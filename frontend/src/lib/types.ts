@@ -358,6 +358,8 @@ export interface AgentContractCatalogResponse {
   default_agent_contract?: string | null;
 }
 
+export type ContractsClass = "agents" | "actors" | "roles" | "capabilities" | "policies";
+
 export interface EmailSendResponse {
   ok: boolean;
   role: string;

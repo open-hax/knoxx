@@ -6,7 +6,7 @@
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 
-(def contract-class-order ["agents" "actors" "roles" "capabilities" "model_families" "models"])
+(def contract-class-order ["agents" "actors" "roles" "capabilities" "policies" "model_families" "models"])
 
 (defn safe-path-segment!
   "Reject path traversal and odd unicode by constraining to a conservative charset."
@@ -25,6 +25,7 @@
       ("actor" "actors" "user" "users" "human" "humans") "actors"
       ("role" "roles") "roles"
       ("cap" "caps" "capability" "capabilities") "capabilities"
+      ("policy" "policies") "policies"
       ("model-family" "model-families" "model_family" "model_families") "model_families"
       ("model" "models") "models"
       (throw (js/Error. (str "Unknown contract class: " value))))))

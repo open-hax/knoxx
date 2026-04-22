@@ -1,2 +1,7 @@
 {:cap/id :cap/bluesky
- :cap/tools [:bluesky.publish]}
+ :cap/tools [:bluesky.publish]
+ :cap/user-surfaces [{:surface/id :workspace/social-publisher
+                      :surface/label "Social publisher"
+                      :surface/kind :composer
+                      :surface/routes ["/ops/contracts"]
+                      :surface/description "Humans prepare and publish Bluesky posts from a publishing surface; agents call bluesky.publish."}]}

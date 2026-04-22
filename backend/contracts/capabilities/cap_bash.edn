@@ -1,2 +1,7 @@
 {:cap/id :cap/bash
- :cap/tools [:bash]}
+ :cap/tools [:bash]
+ :cap/user-surfaces [{:surface/id :workspace/developer-terminal
+                      :surface/label "Developer terminal"
+                      :surface/kind :terminal
+                      :surface/routes ["/ops/settings" "/ops/documents"]
+                      :surface/description "Humans use a terminal or terminal-like admin control; agents invoke bash."}]}

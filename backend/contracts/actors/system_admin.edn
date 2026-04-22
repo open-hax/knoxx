@@ -1,5 +1,7 @@
 {:actor/id "system_admin"
- :actor/kind :human
+ :actor/kind :user
  :actor/org "open-hax"
  :actor/label "System Admin"
- :actor/roles [:role/system-admin]}
+ :actor/roles [:role/system-admin]
+ :actor/policy {:principal :actor
+                :notes "Human/system administrator actor. Policies on this actor govern the admin UI surfaces and their agent-equivalent tool access."}}

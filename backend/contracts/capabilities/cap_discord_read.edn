@@ -7,4 +7,9 @@
              :discord.guilds
              :discord.channels
              :discord.list.servers
-             :discord.list.channels]}
+             :discord.list.channels]
+ :cap/user-surfaces [{:surface/id :workspace/discord-inbox
+                      :surface/label "Discord inbox and review"
+                      :surface/kind :reader
+                      :surface/routes ["/ops/admin"]
+                      :surface/description "Humans review Discord channels, DMs, and search results in an inbox-style surface; agents use Discord read tools."}]}

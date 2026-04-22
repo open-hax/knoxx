@@ -1,4 +1,0 @@
-{:actor/id "example_human"
- :actor/kind :human
- :actor/label "Example Human"
- :actor/roles []}

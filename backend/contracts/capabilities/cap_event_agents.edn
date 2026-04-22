@@ -2,4 +2,9 @@
  :cap/tools [:event_agents.status
              :event_agents.dispatch
              :event_agents.run_job
-             :event_agents.upsert_job]}
+             :event_agents.upsert_job]
+ :cap/user-surfaces [{:surface/id :workspace/event-agent-dashboard
+                      :surface/label "Event agent dashboard"
+                      :surface/kind :dashboard
+                      :surface/routes ["/ops/admin" "/ops/contracts"]
+                      :surface/description "Humans inspect runtime state and dispatch events from the event-agent dashboard; agents use event-agent tools."}]}

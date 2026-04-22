@@ -2,4 +2,9 @@
  :cap/tools [:music.identify_file
              :music.acoustid_lookup
              :music.musicbrainz_recording
-             :music.copyright_check]}
+             :music.copyright_check]
+ :cap/user-surfaces [{:surface/id :workspace/music-analysis
+                      :surface/label "Music analysis panel"
+                      :surface/kind :inspector
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Humans identify tracks and inspect music metadata from an analysis panel; agents use music tools."}]}
