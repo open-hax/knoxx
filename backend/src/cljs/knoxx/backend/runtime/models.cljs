@@ -194,6 +194,21 @@
                         (str/starts-with? normalized-model normalized-prefix)))
                     prefixes)))))))
 
+(defn model-prefers-responses?
+  [config model-id]
+  (let [normalized-model (some-> model-id str str/trim str/lower-case)
+        prefixes (->> (str/split (or (:responses-model-prefixes config) "") #",")
+                      (map str/trim)
+                      (remove str/blank?))]
+    (boolean
+     (and normalized-model
+          (some (fn [prefix]
+                  (let [normalized-prefix (-> prefix
+                                              str/lower-case
+                                              (str/replace #"\\*$" ""))]
+                    (str/starts-with? normalized-model normalized-prefix)))
+                prefixes)))))
+
 (defn effective-thinking-level
   [config model-id requested-thinking-level]
   (let [requested (normalize-thinking-level requested-thinking-level)
@@ -224,9 +239,13 @@
 (defn provider-model-config
   [config model-id]
   (let [model-spec (resolve-model-contract config model-id)
-        reasoning? (model-supports-reasoning? config model-id)]
+        reasoning? (model-supports-reasoning? config model-id)
+        api (if (model-prefers-responses? config model-id)
+              "openai-responses"
+              "openai-completions")]
     {:id model-id
      :name (or (:label model-spec) model-id)
+     :api api
      :reasoning reasoning?
      :input (vec (or (seq (:input model-spec)) ["text"]))
      :contextWindow (or (:context-window model-spec) 128000)
@@ -314,5 +333,10 @@
     :reasoning-model-prefixes
     (or (:reasoning-model-prefixes config)
         (aget js/process.env "KNOXX_REASONING_MODEL_PREFIXES")
-        "glm-")}
+        "glm-")
+
+    :responses-model-prefixes
+    (or (:responses-model-prefixes config)
+        (aget js/process.env "KNOXX_RESPONSES_MODEL_PREFIXES")
+        "gpt-")}
    config))

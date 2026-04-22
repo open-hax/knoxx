@@ -3,7 +3,7 @@
             [knoxx.backend.admin-routes :as admin-routes]
             [knoxx.backend.agent-hydration :refer [ensure-settings! settings-state*]]
             [knoxx.backend.agent-runtime :refer [forward-knoxx-request! resolve-workspace-path active-agent-session queue-agent-control!]]
-            [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access!]]
+            [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access! ensure-session-id]]
             [knoxx.backend.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
             [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? filter-authorized-memory-hits! authorized-session-ids!]]
@@ -749,12 +749,13 @@
                       parsed0 (normalize-chat-body (or (aget request "body") #js {}))
                       parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
                       agent-ctx (effective-auth-context ctx parsed)
-                      session-id (:session-id parsed)
+                      provided-session-id (:session-id parsed)
+                      session-id (ensure-session-id node-crypto provided-session-id)
                       conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
                       run-id (or (:run-id parsed) (.randomUUID node-crypto))
-                      body (assoc parsed :conversation-id conversation-id :run-id run-id :mode "rag" :auth-context agent-ctx)]
+                      body (assoc parsed :session-id session-id :conversation-id conversation-id :run-id run-id :mode "rag" :auth-context agent-ctx)]
                   ;; Guard: check if session can accept a new turn before queueing
-                  (if-not session-id
+                  (if-not provided-session-id
                     ;; No session-id means new session, always allowed
                     (do
                       (-> (send-agent-turn! runtime config body)
@@ -844,12 +845,13 @@
                       parsed0 (normalize-chat-body (or (aget request "body") #js {}))
                       parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
                       agent-ctx (effective-auth-context ctx parsed)
-                      session-id (:session-id parsed)
+                      provided-session-id (:session-id parsed)
+                      session-id (ensure-session-id node-crypto provided-session-id)
                       conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
                       run-id (or (:run-id parsed) (.randomUUID node-crypto))
-                      body (assoc parsed :conversation-id conversation-id :run-id run-id :mode "direct" :auth-context agent-ctx)]
+                      body (assoc parsed :session-id session-id :conversation-id conversation-id :run-id run-id :mode "direct" :auth-context agent-ctx)]
                   ;; Guard: check if session can accept a new turn before queueing
-                  (if-not session-id
+                  (if-not provided-session-id
                     (do
                       (-> (send-agent-turn! runtime config body)
                           (.then (fn [_] nil))
