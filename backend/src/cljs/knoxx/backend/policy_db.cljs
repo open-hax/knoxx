@@ -185,22 +185,23 @@
     (try
       (let [actor-dir (.join path (contracts-dir) "actors")
             names (.readdirSync fs actor-dir)]
-        (some (fn [name]
-                (when (and (string? name) (str/ends-with? name ".edn"))
-                  (let [actor (safe-read-edn (.join path actor-dir name))
-                        actor-email (normalize-email (or (:actor/email actor)
-                                                         (:actor/username actor)))]
-                    (when (and (= :user (:actor/kind actor))
-                               (= normalized-email actor-email))
-                      {:id (or (:actor/id actor)
-                               (subs name 0 (- (count name) 4)))
-                       :email actor-email
-                       :org (some-> (:actor/org actor) str str/trim not-empty)
-                       :role-slugs (actor-role-slugs actor)
-                       :actor actor})))))
-              (array-seq names)))
+        (->> (array-seq names)
+             (keep (fn [name]
+                     (when (and (string? name) (str/ends-with? name ".edn"))
+                       (let [actor (safe-read-edn (.join path actor-dir name))
+                             actor-email (normalize-email (or (:actor/email actor)
+                                                              (:actor/username actor)))]
+                         (when (and (= :user (:actor/kind actor))
+                                    (= normalized-email actor-email))
+                           {:id (or (:actor/id actor)
+                                    (subs name 0 (- (count name) 4)))
+                            :email actor-email
+                            :org (some-> (:actor/org actor) str str/trim not-empty)
+                            :role-slugs (actor-role-slugs actor)
+                            :actor actor})))))
+             first))
       (catch :default _
-        nil)))
+        nil))))
 
 (defn- list-user-actor-contracts
   []
