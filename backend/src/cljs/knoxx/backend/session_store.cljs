@@ -89,8 +89,11 @@
   "Store session state in cache and Redis.
    Always resolves a promise with the stored session."
   [redis-client session]
-  (let [session-id (:session_id session)
-        conversation-id (:conversation_id session)]
+  (let [session-id (some-> (:session_id session) str)
+        conversation-id (some-> (:conversation_id session) str)
+        session (cond-> session
+                  session-id (assoc :session_id session-id)
+                  conversation-id (assoc :conversation_id conversation-id))]
     ;; Update cache immediately
     (swap! session-cache* assoc session-id session)
 

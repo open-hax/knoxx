@@ -7,6 +7,29 @@
 (defonce redis-client* (atom nil))
 (defonce redis-init-promise* (atom nil))
 
+(defn- redis-arg
+  "Coerce common CLJS/JS values into Redis-safe scalar arguments."
+  [value]
+  (cond
+    (nil? value) nil
+    (string? value) value
+    (number? value) (.toString value)
+    (boolean? value) (if value "true" "false")
+    (or (map? value) (vector? value) (set? value) (seq? value))
+    (js/JSON.stringify (clj->js value))
+    :else
+    (try
+      (let [json (when (and value
+                            (not= value js/undefined)
+                            (or (array? value)
+                                (= "object" (goog/typeOf value))))
+                   (js/JSON.stringify value))]
+        (if (string? json)
+          json
+          (str value)))
+      (catch :default _
+        (str value)))))
+
 (defn create-client
   "Create a Redis client from URL. Returns nil if URL is empty or client creation fails."
   [redis-url]
@@ -66,7 +89,7 @@
   "Get a value from Redis."
   [client key]
   (-> client
-      (.get key)
+      (.get (redis-arg key))
       (.catch (fn [err]
                 (js/console.error "Redis GET error:" err)
                 nil))))
@@ -76,11 +99,11 @@
   ([client key value]
    (set-key client key value nil))
   ([client key value ttl]
-   (let [args (if ttl
-                #js {:EX ttl}
-                #js {})]
-     (-> client
-         (.set key value args)
+   (let [key' (redis-arg key)
+         value' (redis-arg value)]
+     (-> (if ttl
+           (.set client key' value' #js {:EX ttl})
+           (.set client key' value'))
          (.catch (fn [err]
                    (js/console.error "Redis SET error:" err)))))))
 
@@ -90,10 +113,10 @@
    (set-json client key value nil))
   ([client key value ttl]
    (-> client
-       (.set key (js/JSON.stringify (clj->js value)))
+       (.set (redis-arg key) (js/JSON.stringify (clj->js value)))
        (.then (fn []
                 (when ttl
-                  (.expire client key ttl))))
+                  (.expire client (redis-arg key) ttl))))
        (.catch (fn [err]
                  (js/console.error "Redis SET JSON error:" err))))))
 
@@ -101,7 +124,7 @@
   "Get a JSON value from Redis, parsed to CLJ."
   [client key]
   (-> client
-      (.get key)
+      (.get (redis-arg key))
       (.then (fn [value]
                (when value
                  (js->clj (js/JSON.parse value) :keywordize-keys true))))
@@ -113,7 +136,7 @@
   "Delete a key from Redis."
   [client key]
   (-> client
-      (.del key)
+      (.del (redis-arg key))
       (.catch (fn [err]
                 (js/console.error "Redis DEL error:" err)))))
 
@@ -121,7 +144,7 @@
   "Add member to set."
   [client key member]
   (-> client
-      (.sAdd key member)
+      (.sAdd (redis-arg key) (redis-arg member))
       (.catch (fn [err]
                 (js/console.error "Redis SADD error:" err)))))
 
@@ -129,7 +152,7 @@
   "Remove member from set."
   [client key member]
   (-> client
-      (.sRem key member)
+      (.sRem (redis-arg key) (redis-arg member))
       (.catch (fn [err]
                 (js/console.error "Redis SREM error:" err)))))
 
@@ -137,7 +160,7 @@
   "Get all members of a set."
   [client key]
   (-> client
-      (.sMembers key)
+      (.sMembers (redis-arg key))
       (.then (fn [members]
                (js->clj members)))
       (.catch (fn [err]
@@ -148,7 +171,7 @@
   "Set TTL on a key."
   [client key ttl-seconds]
   (-> client
-      (.expire key ttl-seconds)
+      (.expire (redis-arg key) ttl-seconds)
       (.catch (fn [err]
                 (js/console.error "Redis EXPIRE error:" err)))))
 
@@ -156,7 +179,7 @@
   "Push a value to the head of a Redis list."
   [client key value]
   (-> client
-      (.lPush key value)
+      (.lPush (redis-arg key) (redis-arg value))
       (.catch (fn [err]
                 (js/console.error "Redis LPUSH error:" err)))))
 
@@ -164,7 +187,7 @@
   "Push a JSON-encoded value to the head of a Redis list."
   [client key value]
   (-> client
-      (.lPush key (js/JSON.stringify (clj->js value)))
+      (.lPush (redis-arg key) (js/JSON.stringify (clj->js value)))
       (.catch (fn [err]
                 (js/console.error "Redis LPUSH JSON error:" err)))))
 
@@ -172,7 +195,7 @@
   "Get a range of elements from a Redis list."
   [client key start stop]
   (-> client
-      (.lRange key start stop)
+      (.lRange (redis-arg key) start stop)
       (.then (fn [items]
                (if (array? items)
                  (vec (array-seq items))
@@ -185,7 +208,7 @@
   "Get a range of elements from a Redis list, parsing each as JSON."
   [client key start stop]
   (-> client
-      (.lRange key start stop)
+      (.lRange (redis-arg key) start stop)
       (.then (fn [items]
                (if (array? items)
                  (->> (array-seq items)
@@ -203,7 +226,7 @@
   "Get the length of a Redis list."
   [client key]
   (-> client
-      (.lLen key)
+      (.lLen (redis-arg key))
       (.then (fn [n] (or n 0)))
       (.catch (fn [err]
                 (js/console.error "Redis LLEN error:" err)

@@ -449,29 +449,28 @@
       (:url part)
       (content-part-label part)))
 
-(defn- model-ready-content-parts
+(defn model-ready-content-parts
   [config model-id content-parts]
-  (vec
-   (mapcat
-    (fn [part]
-      (let [part-type (cond
-                        (keyword? (:type part)) (name (:type part))
-                        (string? (:type part)) (:type part)
-                        :else nil)]
-        (cond
-          (or (nil? part-type)
-              (= part-type "text")
-              (model-supports-input? config model-id part-type))
-          [part]
+  (->> (or content-parts [])
+       (mapcat (fn [part]
+                 (let [part-type (cond
+                                   (keyword? (:type part)) (name (:type part))
+                                   (string? (:type part)) (:type part)
+                                   :else nil)]
+                   (cond
+                     (or (nil? part-type)
+                         (= part-type "text")
+                         (model-supports-input? config model-id part-type))
+                     [part]
 
-          (= part-type "audio")
-          [{:type :text
-            :text (str "Uploaded audio source '" (content-part-name part) "' is available, but model " model-id " does not declare audio input. Use audio.spectrogram if you need an image-friendly audio view.")}]
+                     (= part-type "audio")
+                     [{:type :text
+                       :text (str "Uploaded audio source '" (content-part-name part) "' is available, but model " model-id " does not declare audio input. Use audio.spectrogram if you need an image-friendly audio view.")}]
 
-          :else
-          [{:type :text
-            :text (str "Uploaded " (content-part-label part) " '" (content-part-name part) "' is available, but model " model-id " does not declare " part-type " input.")}]))
-    (or content-parts [])))))
+                     :else
+                     [{:type :text
+                       :text (str "Uploaded " (content-part-label part) " '" (content-part-name part) "' is available, but model " model-id " does not declare " part-type " input.")}]))))
+       vec))
 
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]

@@ -22,9 +22,13 @@
   (-> (.text resp)
       (.catch (fn [_] ""))))
 
+(defn- timeout-signal
+  [ms]
+  (.timeout js/AbortSignal ms))
+
 (defn register-proxy-routes!
   "Register all proxy endpoints on the fastify app."  
-  [app config]
+  [^js app config]
 
   ;; ---------------------------------------------------------------------------
   ;; Pi Session Ingestion Routes
@@ -45,7 +49,7 @@
                                        #js {:ok false :error (.-message err)})))
                 kms-p (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
                                     #js {:headers kms-headers
-                                         :signal (AbortSignal.timeout 15000)})
+                                         :signal (timeout-signal 15000)})
                           (.then (fn [r]
                                    (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
                           (.catch (fn [_] #js []))
@@ -57,7 +61,7 @@
                                  #js {:ok false :error "pi-sessions source not found" :sources sources}
                                  (-> (js/fetch (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget pi-source "source_id"))
                                                #js {:headers kms-headers
-                                                    :signal (AbortSignal.timeout 15000)})
+                                                    :signal (timeout-signal 15000)})
                                      (.then (fn [r]
                                               (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
                                      (.catch (fn [_] #js []))
@@ -105,7 +109,7 @@
                  force? (boolean (aget body "force"))]
              (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
                            #js {:headers kms-headers
-                                :signal (AbortSignal.timeout 20000)})
+                                :signal (timeout-signal 20000)})
                  (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
                  (.catch (fn [_] #js []))
                  (.then
@@ -120,7 +124,7 @@
                                            :headers kms-headers
                                            :body (js/JSON.stringify #js {:source_id (aget pi-source "source_id")
                                                                         :full_scan force?})
-                                           :signal (AbortSignal.timeout 20000)})
+                                           :signal (timeout-signal 20000)})
                             (.then (fn [r] (if (.-ok r) (.json r) (safe-json r))))
                             (.then (fn [job]
                                      (.send reply #js {:ok true :job job})))
@@ -147,17 +151,17 @@
                                :body (if (contains? #{"GET" "HEAD"} (aget req "method"))
                                        js/undefined
                                        (js/JSON.stringify (aget req "body")))
-                               :signal (AbortSignal.timeout 60000)})
+                               :signal (timeout-signal 60000)})
                 (.then (fn [resp]
                          (let [content-type (json-content-type resp)]
                            (-> (if (str/includes? content-type "application/json")
                                  (safe-json resp)
                                  (safe-text resp))
                                (.then
-                                (fn [body]
-                                  (-> (.code reply (.-status resp))
-                                      (.header "content-type" content-type)
-                                      (.send body))))))))
+                               (fn [body]
+                                  (let [reply* (.code reply (.-status resp))]
+                                    (.header reply* "content-type" content-type)
+                                    (.send reply* body))))))))
                 (.catch (fn [err]
                           (.code reply 502)
                           (.send reply #js {:ok false :error (str "Ingestion proxy error: " (.-message err))})))))))
@@ -184,17 +188,17 @@
                                :body (if (contains? #{"GET" "HEAD"} (aget req "method"))
                                        js/undefined
                                        (js/JSON.stringify (aget req "body")))
-                               :signal (AbortSignal.timeout 60000)})
+                               :signal (timeout-signal 60000)})
                 (.then (fn [resp]
                          (let [content-type (json-content-type resp)]
                            (-> (if (str/includes? content-type "application/json")
                                  (safe-json resp)
                                  (safe-text resp))
                                (.then
-                                (fn [body]
-                                  (-> (.code reply (.-status resp))
-                                      (.header "content-type" content-type)
-                                      (.send body))))))))
+                               (fn [body]
+                                  (let [reply* (.code reply (.-status resp))]
+                                    (.header reply* "content-type" content-type)
+                                    (.send reply* body))))))))
                 (.catch (fn [err]
                           (.code reply 502)
                           (.send reply #js {:ok false :error (str "OpenPlanner proxy error: " (.-message err))})))))))
