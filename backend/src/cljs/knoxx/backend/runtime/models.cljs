@@ -67,7 +67,10 @@
 (defn- normalize-string-seq
   [values]
   (->> (or values [])
-       (map (fn [value] (some-> value str str/trim not-empty)))
+       (map (fn [value]
+              (cond
+                (keyword? value) (some-> value name str/trim not-empty)
+                :else (some-> value str str/trim not-empty))))
        (remove nil?)
        distinct
        vec))
