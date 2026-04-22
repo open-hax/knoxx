@@ -25,8 +25,9 @@
                    (testing "GitHub email is used as the canonical Knoxx username and syncs user actor contracts first"
                      (is (= ctx result))
                      (is (= [[:sync {:email "foamy125@gmail.com"
-                                     :displayName "foamy125@gmail.com"
-                                     :authProvider "github"}]
+                                    :displayName "foamy"
+                                    :authProvider "github"
+                                    :externalSubject "github:gh-1"}]
                              [:resolve {:x-knoxx-user-email "foamy125@gmail.com"}]]
                             @calls*)))))
           (.catch (fn [err]

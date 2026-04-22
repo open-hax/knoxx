@@ -135,11 +135,26 @@
 
 (defn- default-contracts-dir
   []
-  (or (aget js/process.env "CONTRACTS_DIR") "contracts"))
+  (let [configured (some-> (aget js/process.env "CONTRACTS_DIR") str str/trim not-empty)
+        cwd (.cwd js/process)
+        candidates (->> [configured
+                         "contracts"
+                         "backend/contracts"
+                         "packages/agents/knoxx/backend/contracts"
+                         "orgs/open-hax/openplanner/packages/agents/knoxx/backend/contracts"]
+                        (keep identity)
+                        (map #(.resolve path cwd %))
+                        distinct
+                        vec)]
+    (or (some (fn [candidate]
+                (when (.existsSync fs candidate)
+                  candidate))
+              candidates)
+        (.resolve path cwd (or configured "contracts")))))
 
 (defn- contracts-dir
   []
-  (.resolve path (default-contracts-dir)))
+  (default-contracts-dir))
 
 (defn- safe-read-edn
   [file-path]
@@ -186,6 +201,28 @@
               (array-seq names)))
       (catch :default _
         nil)))
+
+(defn- list-user-actor-contracts
+  []
+  (try
+    (let [actor-dir (.join path (contracts-dir) "actors")
+          names (.readdirSync fs actor-dir)]
+      (->> (array-seq names)
+           (keep (fn [name]
+                   (when (and (string? name) (str/ends-with? name ".edn"))
+                     (let [actor (safe-read-edn (.join path actor-dir name))]
+                       (when (= :user (:actor/kind actor))
+                         {:id (or (:actor/id actor)
+                                  (subs name 0 (- (count name) 4)))
+                          :email (normalize-email (or (:actor/email actor)
+                                                      (:actor/username actor)))
+                          :org (some-> (:actor/org actor) str str/trim not-empty)
+                          :label (some-> (:actor/label actor) str str/trim not-empty)
+                          :role-slugs (actor-role-slugs actor)
+                          :actor actor})))))
+           vec))
+    (catch :default _
+      [])))
 
 (defn- contract-tool-ids
   "Return a set of tool ids found in contracts/capabilities/*.edn." 
@@ -428,25 +465,48 @@
     (if-not email
       (js/Promise.resolve nil)
       (if-let [actor-contract (find-user-actor-contract-by-email email)]
-        (let [role-slugs (vec (or (:role-slugs actor-contract) ["knowledge_worker"]))]
+        (let [role-slugs (vec (or (:role-slugs actor-contract) ["knowledge_worker"]))
+              effective-name (or (:label actor-contract) display-name email)]
           (-> (query-one! pool
                           "INSERT INTO users (email, display_name, auth_provider, external_subject, status) VALUES ($1, $2, $3, $4, 'active') ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, auth_provider = EXCLUDED.auth_provider, external_subject = EXCLUDED.external_subject, status = 'active', updated_at = NOW() RETURNING *"
-                          [email (or display-name email) auth-provider external-subject])
+                          [email effective-name auth-provider external-subject])
               (.then
                (fn [user]
-                 (-> (query-one! pool
-                                 "INSERT INTO memberships (user_id, org_id, actor_id, status, is_default) VALUES ($1, $2, $3, 'active', TRUE) ON CONFLICT (user_id, org_id) DO UPDATE SET actor_id = EXCLUDED.actor_id, status = 'active', is_default = TRUE, updated_at = NOW() RETURNING *"
-                                 [(aget user "id") (aget primary-org "id") (:id actor-contract)])
+                 (-> (if-let [actor-org (:org actor-contract)]
+                       (-> (find-org-by-slug pool actor-org)
+                           (.then (fn [resolved-org]
+                                    (or resolved-org primary-org))))
+                       (js/Promise.resolve primary-org))
                      (.then
-                      (fn [membership]
-                        (-> (set-membership-roles! pool (aget membership "id")
-                                                   {:org-id (aget primary-org "id")
-                                                    :role-slugs role-slugs
-                                                    :role-ids #js []
-                                                    :replace true})
-                            (.then (fn [_]
-                                     (set-membership-actor-id! pool (aget membership "id") (:id actor-contract))))))))))))
-        (js/Promise.resolve nil)))))
+                      (fn [target-org]
+                        (-> (query-one! pool
+                                        "INSERT INTO memberships (user_id, org_id, actor_id, status, is_default) VALUES ($1, $2, $3, 'active', TRUE) ON CONFLICT (user_id, org_id) DO UPDATE SET actor_id = EXCLUDED.actor_id, status = 'active', is_default = TRUE, updated_at = NOW() RETURNING *"
+                                        [(aget user "id") (aget target-org "id") (:id actor-contract)])
+                            (.then
+                             (fn [membership]
+                               (-> (set-membership-roles! pool (aget membership "id")
+                                                          {:org-id (aget target-org "id")
+                                                           :role-slugs role-slugs
+                                                           :role-ids #js []
+                                                           :replace true})
+                                   (.then (fn [_]
+                                            (set-membership-actor-id! pool (aget membership "id") (:id actor-contract))))))))))))))
+        (js/Promise.resolve nil))))))
+
+(defn- sync-user-actors-from-contracts!
+  [pool primary-org]
+  (-> (js/Promise.all
+       (clj->js
+        (mapv (fn [actor-contract]
+                (if-let [email (:email actor-contract)]
+                  (sync-user-from-actor-contract! pool primary-org
+                                                 #js {:email email
+                                                      :displayName (or (:label actor-contract) email)
+                                                      :authProvider "contract"
+                                                      :externalSubject nil})
+                  (js/Promise.resolve nil)))
+              (list-user-actor-contracts))))
+      (.then (fn [_] nil))))
 
 (defn- normalize-tool-policy
   [policy]
@@ -798,6 +858,14 @@
         (.then (fn [org]
                  (.then (query! pool "UPDATE orgs SET is_primary = CASE WHEN slug = $1 THEN TRUE ELSE FALSE END" [slug])
                         (fn [_] org)))))))
+
+(defn- find-org-by-slug
+  [pool slug]
+  (if (str/blank? (str slug))
+    (js/Promise.resolve nil)
+    (query-one! pool
+                "SELECT * FROM orgs WHERE lower(slug) = lower($1) LIMIT 1"
+                [slug])))
 
 ;; ---------------------------------------------------------------------------
 ;; Role Management
@@ -1927,6 +1995,12 @@
                                (-> (ensure-bootstrap-allowlist-users! pool primary-org options)
                                    (.catch (fn [err]
                                              (.warn js/console "[policy-db] bootstrap allowlist failed:" (.-message err))
+                                             nil))
+                                   (.then (fn [_] bootstrap)))))
+                      (.then (fn [bootstrap]
+                               (-> (sync-user-actors-from-contracts! pool primary-org)
+                                   (.catch (fn [err]
+                                             (.warn js/console "[policy-db] user actor sync failed:" (.-message err))
                                              nil))
                                    (.then (fn [_] bootstrap)))))
                       (.then (fn [bootstrap]

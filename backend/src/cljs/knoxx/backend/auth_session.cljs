@@ -379,13 +379,17 @@
    Email is the canonical username. Actor and role assignment now come from the
    persisted Knoxx user/membership records rather than being inferred from the
    OAuth callback environment."
-  [policyDb _gh-user email]
+  [policyDb gh-user email]
   (let [headers-like #js {"x-knoxx-user-email" email}
         sync-user-from-actor-contract (aget policyDb "syncUserFromActorContract")]
     (-> (if sync-user-from-actor-contract
           (sync-user-from-actor-contract #js {:email email
-                                              :displayName email
-                                              :authProvider "github"})
+                                              :displayName (or (aget gh-user "name")
+                                                               (aget gh-user "login")
+                                                               email)
+                                              :authProvider "github"
+                                              :externalSubject (when (aget gh-user "id")
+                                                                 (str "github:" (aget gh-user "id")))} )
           (js/Promise.resolve nil))
         (.then (fn [_]
                  (.resolveRequestContext policyDb headers-like))))))
