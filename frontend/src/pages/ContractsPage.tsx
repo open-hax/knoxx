@@ -424,11 +424,12 @@ export default function ContractsPage() {
         });
       }
 
-      setAgentEntries(entries);
+      const dedupedEntries = Array.from(new Map(entries.map((entry) => [`${entry.contractClass}:${entry.id}`, entry] as const)).values());
+      setAgentEntries(dedupedEntries);
 
-      if (!selectedId && entries.length > 0) {
-        setSelectedId(entries[0].id);
-        setSelectedContractClass(entries[0].contractClass);
+      if (!selectedId && dedupedEntries.length > 0) {
+        setSelectedId(dedupedEntries[0].id);
+        setSelectedContractClass(dedupedEntries[0].contractClass);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -654,7 +655,7 @@ export default function ContractsPage() {
                     const isSelected = entry.id === selectedId && entry.contractClass === selectedContractClass;
                     return (
                       <button
-                        key={entry.id}
+                        key={`${entry.contractClass}:${entry.id}`}
                         type="button"
                         onClick={() => { setSelectedId(entry.id); setSelectedContractClass(entry.contractClass); }}
                         style={{

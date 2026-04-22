@@ -29,8 +29,8 @@
                       (map :row)
                       vec))))))
 
-(defn- fetch-authorized-session-pages!
-  [config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size upstream-offset acc]
+(defn fetch-authorized-session-pages!
+  [config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size upstream-offset acc needed-count]
   (-> (openplanner-request! config "GET"
                             (str "/v1/sessions?project="
                                  (js/encodeURIComponent (:session-project-name config))
@@ -52,10 +52,20 @@
                     (-> (filter-page-actor-rows! config fetch-openplanner-session-rows! session-visible-for-page-actor? actor-id authorized-rows)
                         (.then
                          (fn [actor-visible-rows]
-                           (let [next-acc (into acc actor-visible-rows)]
-                             (if (and upstream-has-more (pos? fetched-count))
-                               (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size next-offset next-acc)
-                               next-acc))))))))))))))
+                           (let [next-acc (into acc actor-visible-rows)
+                                 reached-target? (and (number? needed-count)
+                                                      (>= (count next-acc) needed-count))]
+                             (cond
+                               reached-target?
+                               {:rows (vec (take needed-count next-acc))
+                                :has_more true}
+
+                               (and upstream-has-more (pos? fetched-count))
+                               (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size next-offset next-acc needed-count)
+
+                               :else
+                               {:rows next-acc
+                                :has_more false}))))))))))))))
 
 (defn register-memory-routes!
   [app runtime config {:keys [json-response!
@@ -103,15 +113,18 @@
                         offset-raw (aget request "query" "offset")
                         offset-parsed (js/parseInt (str (or offset-raw "0")) 10)
                         offset (if (and (js/Number.isFinite offset-parsed) (>= offset-parsed 0)) offset-parsed 0)
-                        upstream-page-size 200]
-                    (-> (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size 0 [])
-                        (.then (fn [all-rows]
-                                 (let [all-rows (vec all-rows)
-                                       total (count all-rows)
-                                       rows (->> all-rows
-                                                 (drop offset)
-                                                 (take (max 1 limit))
-                                                 vec)
+                        upstream-page-size 200
+                        needed-count (+ offset (max 1 limit) 1)]
+                    (-> (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size 0 [] needed-count)
+                        (.then (fn [{:keys [rows has_more]}]
+                                 (let [all-rows (vec rows)
+                                       visible-total (count all-rows)
+                                       page-rows (->> all-rows
+                                                      (drop offset)
+                                                      (take (max 1 limit))
+                                                      vec)
+                                       page-has-more (or has_more
+                                                         (> visible-total (+ offset (count page-rows))))
                                                     redis-client (redis/get-client)
                                                     inactive-row (fn [row]
                                                                    (assoc row
@@ -160,17 +173,18 @@
                                                                                                   (inactive-row titled-row)))))))
                                                                          (.catch (fn [_]
                                                                                    (inactive-row titled-row)))))))
-                                                    enrich-promises (mapv enrich-row rows)]
-                                           (doseq [row rows]
+                                                    enrich-promises (mapv enrich-row page-rows)]
+                                           (doseq [row page-rows]
                                              (warm-title-cache! (str (:session row))))
                                            (-> (.all js/Promise (clj->js enrich-promises))
                                                (.then (fn [enriched-rows]
-                                                        (json-response! reply 200 {:ok true
-                                                                                   :rows (vec (js->clj enriched-rows :keywordize-keys true))
-                                                                                   :total total
-                                                                                   :offset offset
-                                                                                   :limit limit
-                                                                                   :has_more (> total (+ offset (count rows)))})
+                                                        (json-response! reply 200 (cond-> {:ok true
+                                                                                           :rows (vec (js->clj enriched-rows :keywordize-keys true))
+                                                                                           :offset offset
+                                                                                           :limit limit
+                                                                                           :has_more page-has-more}
+                                                                                    (not page-has-more)
+                                                                                    (assoc :total visible-total)))
                                                         nil))
                                                (.catch (fn [err]
                                                          (error-response! reply err 502)
