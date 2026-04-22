@@ -466,6 +466,7 @@ export interface AdminRoleSummary {
 export interface AdminMembershipSummary {
   id: string;
   orgId: string;
+  actorId?: string;
   orgName?: string;
   orgSlug?: string;
   status: string;
@@ -690,9 +691,13 @@ export interface TranslationManifest {
 }
 
 export interface KnoxxAuthContext {
+  actor?: {
+    id: string;
+  };
   user: {
     id: string;
     email: string;
+    username?: string;
     displayName: string;
     status: string;
   };
@@ -706,6 +711,7 @@ export interface KnoxxAuthContext {
   };
   membership: {
     id: string;
+    actorId?: string;
     status: string;
     isDefault?: boolean;
     createdAt?: string;

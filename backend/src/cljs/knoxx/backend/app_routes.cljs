@@ -238,6 +238,7 @@
               (with-request-context! runtime request reply
                 (fn [ctx]
                   (json-response! reply 200 {:user (:user ctx)
+                                             :actor (:actor ctx)
                                              :org (:org ctx)
                                              :membership (:membership ctx)
                                              :roles (vec (or (:roles ctx) []))

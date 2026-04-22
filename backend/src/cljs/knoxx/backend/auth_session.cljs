@@ -374,27 +374,14 @@
       (js/Promise.resolve ctx))))
 
 (defn ensure-user-membership!
-  "Resolve context for email; if no membership, bootstrap+create user, then re-resolve."
-  [policyDb gh-user email]
+  "Resolve the canonical Knoxx user context by GitHub email.
+
+   Email is the canonical username. Actor and role assignment now come from the
+   persisted Knoxx user/membership records rather than being inferred from the
+   OAuth callback environment."
+  [policyDb _gh-user email]
   (let [headers-like #js {"x-knoxx-user-email" email}]
-    (-> (.resolveRequestContext policyDb headers-like)
-        (.then
-          (fn [ctx]
-            (let [mid (some-> ctx (aget "membership") (aget "id"))]
-              (if mid
-                (ensure-bootstrap-admin-role! policyDb ctx email)
-                (-> (.getBootstrapContext policyDb)
-                    (.then
-                      (fn [bc]
-                        (.createUser
-                          policyDb
-                          #js {:email           email
-                               :displayName     (or (aget gh-user "name") (aget gh-user "login") email)
-                               :orgId           (some-> bc (aget "primaryOrg") (aget "id"))
-                               :authProvider    "github"
-                               :externalSubject (str "github:" (aget gh-user "id"))
-                               :roleSlugs       (bootstrap-role-slugs-for-email email)})))
-                    (.then (fn [_] (.resolveRequestContext policyDb headers-like)))))))))))
+    (.resolveRequestContext policyDb headers-like)))
 
 (defn- create-session-and-redirect!
   "Create session from resolved context, set cookie, and redirect."
@@ -405,6 +392,8 @@
           (let [session-id   (.randomUUID crypto)
                 raw-token    (sign-token #js {:sid session-id})
                 session-data #js {:membershipId (some-> fresh-ctx (aget "membership") (aget "id"))
+                                  :actorId      (or (some-> fresh-ctx (aget "membership") (aget "actorId"))
+                                                    (some-> fresh-ctx (aget "actor") (aget "id")))
                                   :userId       (some-> fresh-ctx (aget "user") (aget "id"))
                                   :email        email
                                   :orgSlug      (some-> fresh-ctx (aget "org") (aget "slug"))

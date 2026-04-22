@@ -337,6 +337,47 @@
   [values]
   (vec (distinct (filter some? values))))
 
+(defn- normalize-actor-id
+  [value]
+  (some-> value str str/trim not-empty))
+
+(defn default-membership-actor-id
+  [role-slugs]
+  (let [normalized (into #{}
+                         (comp (map #(some-> % str str/trim not-empty))
+                               (remove nil?))
+                         (or role-slugs []))]
+    (if (contains? normalized "system_admin")
+      "system_admin"
+      "workspace_user")))
+
+(defn- set-membership-actor-id!
+  [pool membership-id actor-id]
+  (let [resolved (or (normalize-actor-id actor-id) "workspace_user")]
+    (-> (query! pool
+                "UPDATE memberships SET actor_id = $2, updated_at = NOW() WHERE id = $1::uuid"
+                [membership-id resolved])
+        (.then (fn [_] resolved)))))
+
+(defn- backfill-membership-actors!
+  [pool]
+  (-> (query! pool
+              "UPDATE memberships m
+               SET actor_id = CASE
+                 WHEN EXISTS (
+                   SELECT 1
+                   FROM membership_roles mr
+                   JOIN roles r ON r.id = mr.role_id
+                   WHERE mr.membership_id = m.id
+                     AND r.slug = 'system_admin'
+                 ) THEN 'system_admin'
+                 ELSE 'workspace_user'
+               END,
+               updated_at = NOW()
+               WHERE COALESCE(NULLIF(trim(actor_id), ''), '') = ''"
+              [])
+      (.then (fn [_] nil))))
+
 (defn- normalize-tool-policy
   [policy]
   (cond
@@ -477,6 +518,7 @@
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      actor_id TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       is_default BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -600,6 +642,9 @@
     -- Backfill for installations that created `sessions` before `token_prefix` existed.
     ALTER TABLE sessions
       ADD COLUMN IF NOT EXISTS token_prefix TEXT NOT NULL DEFAULT '';
+
+    ALTER TABLE memberships
+      ADD COLUMN IF NOT EXISTS actor_id TEXT;
 
     CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
     CREATE INDEX IF NOT EXISTS sessions_membership_idx ON sessions (membership_id);
@@ -948,6 +993,8 @@
                 (for [membership memberships]
                   {:id (aget membership "id")
                    :orgId (aget membership "org_id")
+                   :actorId (or (normalize-actor-id (aget membership "actor_id"))
+                                (default-membership-actor-id (map :slug (or (get @roles-by-m (aget membership "id")) []))))
                    :orgName (aget membership "org_name")
                    :orgSlug (aget membership "org_slug")
                    :status (aget membership "status")
@@ -1027,16 +1074,19 @@
              (-> (load-detailed-roles pool role-ids)
                  (.then
                   (fn [detailed-roles]
-                    (let [permissions (sort (unique (mapcat :permissions detailed-roles)))
+                   (let [permissions (sort (unique (mapcat :permissions detailed-roles)))
                           effective-tool-policies
                           (merge-toolPolicies
                            (mapcat :toolPolicies detailed-roles)
                            (:toolPolicies membership))
                           role-slugs (sort-by #(- (rolePriority %))
-                                              (map :slug detailed-roles))]
+                                              (map :slug detailed-roles))
+                          actor-id (or (normalize-actor-id (aget membership-row "actor_id"))
+                                       (default-membership-actor-id role-slugs))]
                       (clj->js
                        {:user {:id (aget membership-row "user_id")
                                :email (aget membership-row "email")
+                               :username (aget membership-row "email")
                                :displayName (aget membership-row "display_name")
                                :status (aget membership-row "user_status")}
                         :org {:id (aget membership-row "org_id")
@@ -1046,10 +1096,12 @@
                               :isPrimary (aget membership-row "is_primary")
                               :kind (aget membership-row "org_kind")}
                         :membership {:id (:id membership)
+                                     :actorId actor-id
                                      :status (:status membership)
                                      :isDefault (:isDefault membership)
                                      :createdAt (:createdAt membership)
                                      :updatedAt (:updatedAt membership)}
+                        :actor {:id actor-id}
                         :roles detailed-roles
                         :roleSlugs role-slugs
                         :permissions permissions
@@ -1082,11 +1134,16 @@
                   (-> (find-role pool {:slug "system_admin" :org-id nil})
                       (.then
                        (fn [system-admin]
-                         (when system-admin
-                           (query! pool
-                                   "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
-                                   [(aget membership "id") (aget system-admin "id")]))
-                         #js {:user user :membership membership})))))))))))
+                         (let [insert-role-promise (if system-admin
+                                                     (query! pool
+                                                             "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
+                                                             [(aget membership "id") (aget system-admin "id")])
+                                                     (js/Promise.resolve nil))]
+                           (-> insert-role-promise
+                               (.then (fn [_]
+                                        (set-membership-actor-id! pool (aget membership "id") "system_admin")))
+                               (.then (fn [_]
+                                        #js {:user user :membership membership})))))))))))))))
 
 (defn- parse-bootstrap-allowlist-emails
   [options]
@@ -1152,6 +1209,10 @@
                                                 "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
                                                 [(aget membership "id") (aget role "id")]))))))
                              role-slugs)))
+                          (.then (fn [_]
+                                   (set-membership-actor-id! pool
+                                                             (aget membership "id")
+                                                             (default-membership-actor-id role-slugs))))
                           (.then (fn [_] #js {:email email :ok true})))))))
              emails)))
           (.then (fn [_] nil))))))
@@ -1383,7 +1444,10 @@
       (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
       :else
       (let [dn (str/trim (str (or (aget payload "displayName")
-                                  (aget payload "display_name") email)))]
+                                  (aget payload "display_name") email)))
+            requested-role-slugs (vec (or (aget payload "roleSlugs") #js ["knowledge_worker"]))
+            requested-actor-id (or (normalize-actor-id (aget payload "actorId"))
+                                   (default-membership-actor-id requested-role-slugs))]
         (-> (query-one! pool
                         "INSERT INTO users (email, display_name, auth_provider, external_subject, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, auth_provider = EXCLUDED.auth_provider, external_subject = EXCLUDED.external_subject, status = EXCLUDED.status, updated_at = NOW() RETURNING *"
                         [email (or dn email)
@@ -1402,8 +1466,18 @@
                       (set-membership-roles! pool (aget ms "id")
                                              {:org-id org-id
                                               :role-ids (or (aget payload "roleIds") #js [])
-                                              :role-slugs (or (aget payload "roleSlugs") #js ["knowledge_worker"])
+                                              :role-slugs requested-role-slugs
                                               :replace true})))
+                   (.then
+                    (fn [_]
+                      (query-one! pool
+                                  "SELECT id FROM memberships WHERE user_id = $1::uuid AND org_id = $2::uuid"
+                                  [(aget user "id") org-id])))
+                   (.then
+                    (fn [membership-row]
+                      (set-membership-actor-id! pool
+                                                (aget membership-row "id")
+                                                requested-actor-id)))
                    (.then
                     (fn [_]
                       (append-audit! pool {:actor-user-id uid
@@ -1444,6 +1518,15 @@
                                        :role-ids (or (aget payload "roleIds") #js [])
                                        :role-slugs (or (aget payload "roleSlugs") #js [])
                                        :replace (not= (aget payload "replace") false)})
+               (.then
+                (fn [_]
+                  (let [requested-role-slugs (vec (or (aget payload "roleSlugs") #js []))
+                        requested-actor-id (or (normalize-actor-id (aget payload "actorId"))
+                                               (if (seq requested-role-slugs)
+                                                 (default-membership-actor-id requested-role-slugs)
+                                                 (or (normalize-actor-id (aget ms "actor_id"))
+                                                     "workspace_user")))]
+                    (set-membership-actor-id! pool membership-id requested-actor-id))))
                (.then
                 (fn [_]
                   (append-audit! pool {:actor-user-id uid
@@ -1775,6 +1858,9 @@
                                    (.catch (fn [err]
                                              (.warn js/console "[policy-db] bootstrap allowlist failed:" (.-message err))
                                              nil))
+                                   (.then (fn [_] bootstrap)))))
+                      (.then (fn [bootstrap]
+                               (-> (backfill-membership-actors! pool)
                                    (.then (fn [_] bootstrap)))))
                       (.then
                        (fn [bootstrap]
