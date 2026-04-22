@@ -196,20 +196,29 @@
 
 (defn rehydrate-session-manager-from-redis!
   ([config session-manager conversation-id]
-   (rehydrate-session-manager-from-redis! config session-manager conversation-id nil))
+   (rehydrate-session-manager-from-redis! config session-manager conversation-id nil nil))
   ([config session-manager conversation-id agent-spec]
-   (let [redis-client (redis/get-client)]
+   (rehydrate-session-manager-from-redis! config session-manager conversation-id nil agent-spec))
+  ([config session-manager conversation-id session-id agent-spec]
+   (let [redis-client (redis/get-client)
+         preferred-session-id (some-> session-id str str/trim not-empty)
+         fetch-session-messages!
+         (fn [target-session-id]
+           (if (or (str/blank? (str (or target-session-id "")))
+                   (nil? redis-client))
+             (js/Promise.resolve [])
+             (-> (session-store/get-session redis-client target-session-id)
+                 (.then (fn [session]
+                          (vec (or (:messages session) [])))))))]
      (-> (.all js/Promise
                #js [(fetch-openplanner-session-messages! config conversation-id)
-                    (if (or (str/blank? conversation-id) (nil? redis-client))
-                      (js/Promise.resolve [])
-                      (-> (session-store/get-conversation-active-session redis-client conversation-id)
-                          (.then (fn [session-id]
-                                   (if (str/blank? (str (or session-id "")))
-                                     []
-                                     (-> (session-store/get-session redis-client session-id)
-                                         (.then (fn [session]
-                                                  (vec (or (:messages session) []))))))))))])
+                    (if preferred-session-id
+                      (fetch-session-messages! preferred-session-id)
+                      (if (or (str/blank? conversation-id) (nil? redis-client))
+                        (js/Promise.resolve [])
+                        (-> (session-store/get-conversation-active-session redis-client conversation-id)
+                            (.then (fn [active-session-id]
+                                     (fetch-session-messages! active-session-id))))))])
          (.then (fn [parts]
                   (let [openplanner-messages (vec (or (aget parts 0) []))
                         redis-messages (vec (or (aget parts 1) []))
@@ -369,7 +378,7 @@
                   (.newSession session-manager #js {:id (str session-id)}))
                 (.appendModelChange session-manager "proxx" model-id)
                 (.appendThinkingLevelChange session-manager thinking-level)
-                (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id agent-spec)
+                (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id session-id agent-spec)
                     (.then (fn [result]
                              (create-session (aget result "sessionManager")))))))))))))
 
