@@ -55,6 +55,21 @@ export type ChatWorkspaceControllerOptions = {
   sendUiGuardTimeoutMs?: number;
 };
 
+export function shouldApplyAgentModelSelection({
+  activeAgentId,
+  previousAgentId,
+  selectedModel,
+  agentModel,
+}: {
+  activeAgentId: string;
+  previousAgentId: string | null;
+  selectedModel: string;
+  agentModel?: string | null;
+}): boolean {
+  if (!activeAgentId || !agentModel) return false;
+  return !selectedModel || previousAgentId !== activeAgentId;
+}
+
 export function useChatWorkspaceController(options: ChatWorkspaceControllerOptions = {}) {
   const {
     initialShowCanvas = true,
@@ -138,6 +153,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const sendTimeoutRef = useRef<number | null>(null);
   const pendingAssistantIdRef = useRef<string | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
+  const lastAppliedAgentIdRef = useRef<string | null>(null);
   const sidebarSplitContainerRef = useRef<HTMLDivElement | null>(null);
 
   const isRecovering = useChatSessionRecovery({
@@ -396,12 +412,19 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     if (!activeAgentId) return;
     const selectedAgent = availableAgents.find((agent) => agent.id === activeAgentId);
     if (!selectedAgent) return;
+    const agentModel = selectedAgent.model ?? undefined;
     if (selectedAgent.role && selectedAgent.role !== activeRole) {
       setActiveRole(selectedAgent.role);
     }
-    if (selectedAgent.model && selectedAgent.model !== selectedModel) {
-      setSelectedModel(selectedAgent.model);
+    if (agentModel && shouldApplyAgentModelSelection({
+      activeAgentId,
+      previousAgentId: lastAppliedAgentIdRef.current,
+      selectedModel,
+      agentModel,
+    }) && agentModel !== selectedModel) {
+      setSelectedModel(agentModel);
     }
+    lastAppliedAgentIdRef.current = activeAgentId;
   }, [activeAgentId, activeRole, availableAgents, selectedModel, setActiveRole, setSelectedModel]);
 
   useChatRuntimeEffects({
