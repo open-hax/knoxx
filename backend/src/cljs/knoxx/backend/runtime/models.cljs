@@ -14,6 +14,9 @@
 (def ^:private input-kinds
   #{"text" "image" "audio" "video" "document"})
 
+(def ^:private pi-registry-input-kinds
+  #{"text" "image"})
+
 (defn- parse-prefix-allowlist
   [raw]
   (-> (str (or raw ""))
@@ -280,12 +283,19 @@
         reasoning? (model-supports-reasoning? config model-id)
         api (if (model-prefers-responses? config model-id)
               "openai-responses"
-              "openai-completions")]
+              "openai-completions")
+        ;; pi-coding-agent 0.63.x model registry only accepts text/image input kinds.
+        ;; Keep Knoxx's richer contract input metadata for request validation, but
+        ;; down-project provider config so models.json stays loadable.
+        registry-inputs (->> (model-input-modes config model-id)
+                             (filter pi-registry-input-kinds)
+                             distinct
+                             vec)]
     {:id model-id
      :name (or (:label model-spec) model-id)
      :api api
      :reasoning reasoning?
-     :input (model-input-modes config model-id)
+     :input (if (seq registry-inputs) registry-inputs ["text"])
      :contextWindow (or (:context-window model-spec) 128000)
      :maxTokens (or (:max-tokens model-spec) 8192)
      :cost (tool-cost)}))
