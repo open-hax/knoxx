@@ -1,7 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { getMemorySession, listMemorySessions } from "../../lib/api";
 import type { ChatMessage, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
-import { findPersistedChatSessionByConversation, listPersistedChatSessions } from "./hooks";
+import { findPersistedChatSessionByConversation, listPersistedChatSessions, readPersistedChatSessionSnapshot, type ChatSessionSnapshot } from "./hooks";
 import type {
   BrowseResponse,
   IngestionSource,
@@ -86,6 +86,23 @@ function sortSessions(items: MemorySessionSummary[]): MemorySessionSummary[] {
   });
 }
 
+export function preferredSessionModelForResume(
+  snapshot: ChatSessionSnapshot | null,
+  transcript: ChatMessage[],
+): string {
+  const persisted = typeof snapshot?.selectedModel === "string" ? snapshot.selectedModel.trim() : "";
+  if (persisted) {
+    return persisted;
+  }
+
+  const transcriptModel = [...transcript]
+    .reverse()
+    .find((message) => message.role === "assistant" && typeof message.model === "string" && message.model.trim().length > 0)
+    ?.model;
+
+  return typeof transcriptModel === "string" ? transcriptModel.trim() : "";
+}
+
 type ChatWorkspaceActionParams = {
   currentPath: string;
   showFiles: boolean;
@@ -110,6 +127,7 @@ type ChatWorkspaceActionParams = {
   setLoadingMoreRecentSessions: SetState<boolean>;
   setLoadingMemorySessionId: SetState<string | null>;
   setMessages: SetState<ChatMessage[]>;
+  setSelectedModel: SetState<string>;
   setSessionId: SetState<string>;
   setConversationId: SetState<string | null>;
   setLatestRun: SetState<RunDetail | null>;
@@ -152,6 +170,7 @@ export function createChatWorkspaceActions({
   setLoadingMoreRecentSessions,
   setLoadingMemorySessionId,
   setMessages,
+  setSelectedModel,
   setSessionId,
   setConversationId,
   setLatestRun,
@@ -367,10 +386,15 @@ export function createChatWorkspaceActions({
       const localSession = findPersistedChatSessionByConversation(sessionStateKey, sessionKey);
       const remoteSession = recentSessionsRef.current.find((entry) => entry.session === sessionKey) ?? null;
       const resolvedSessionId = localSession?.active_session_id ?? remoteSession?.active_session_id ?? makeId();
+      const localSnapshot = readPersistedChatSessionSnapshot(sessionStateKey, resolvedSessionId);
+      const persistedModel = preferredSessionModelForResume(localSnapshot, []);
 
       setMessages([]);
       setConversationId(sessionKey);
       setSessionId(resolvedSessionId);
+      if (persistedModel) {
+        setSelectedModel(persistedModel);
+      }
       setLatestRun(null);
       setRuntimeEvents([]);
       setLiveControlText("");
@@ -385,8 +409,12 @@ export function createChatWorkspaceActions({
 
       const detail = await getMemorySession(sessionKey);
       const transcript = memoryRowsToMessages(detail.rows).slice(-80);
+      const resumedModel = preferredSessionModelForResume(localSnapshot, transcript);
       const lastRunId = [...detail.rows].reverse().map(memoryRowRunId).find((value): value is string => Boolean(value)) ?? null;
       setMessages(transcript);
+      if (resumedModel) {
+        setSelectedModel(resumedModel);
+      }
       setConversationId(detail.session);
       setLatestRun(null);
       setRuntimeEvents([]);

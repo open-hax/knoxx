@@ -369,6 +369,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setLoadingMoreRecentSessions,
     setLoadingMemorySessionId,
     setMessages,
+    setSelectedModel,
     setSessionId,
     setConversationId,
     setLatestRun,
