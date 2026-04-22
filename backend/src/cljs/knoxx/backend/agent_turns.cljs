@@ -377,8 +377,12 @@
                                                                   (broadcast-ws-session! session-id "events" ttft-event)
                                                                   (session-store/mark-session-streaming! (redis/get-client) session-id true)))
                                                               (if (= kind :agent_message)
-                                                                (swap! chunks conj delta)
-                                                                (swap! reasoning-chunks conj delta))
+                                                                (do
+                                                                  (swap! chunks conj delta)
+                                                                  (swap! last-assistant-text* str delta))
+                                                                (do
+                                                                  (swap! reasoning-chunks conj delta)
+                                                                  (swap! last-reasoning-text* str delta)))
                                                               (append-run-trace-text! run-id kind delta (now-iso))
                                                               (broadcast-ws-session! session-id "tokens"
                                                                                      {:run_id run-id

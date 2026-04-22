@@ -377,10 +377,22 @@
   (let [content (str/trim (str (or (:content message) "")))
         attachments (:attachments message)
         attachment-text (when (seq attachments)
-                          (str " attachments=" (str/join ", " (map :filename attachments))))
+                          (str " attachments="
+                               (str/join ", "
+                                         (map (fn [attachment]
+                                                (str (:filename attachment)
+                                                     (when-let [url (:url attachment)]
+                                                       (str " <" url ">"))))
+                                              attachments))))
         embeds (:embeds message)
         embed-text (when (seq embeds)
-                     (str " embeds=" (count embeds)))]
+                     (str " embeds="
+                          (str/join ", "
+                                    (map (fn [embed]
+                                           (str (or (:title embed) "embed")
+                                                (when-let [url (:url embed)]
+                                                  (str " <" url ">"))))
+                                         embeds))))]
     (str "<" (:authorUsername message) "> "
          (if (str/blank? content) "[no text]" content)
          (or attachment-text "")
@@ -483,48 +495,91 @@
                     :dmChannelId (:dmChannelId result)
                     :source "client_side_filter"}))))))
 
+(defn- infer-upload-filename
+  [url idx]
+  (let [pathname (try (.-pathname (js/URL. (str url))) (catch :default _ ""))
+        candidate (some-> pathname (str/split #"/") last str/trim not-empty)]
+    (or candidate (str "attachment-" idx ".bin"))))
+
+(defn- fetch-discord-upload-attachment!
+  [url idx]
+  (-> (js/fetch (str url))
+      (.then (fn [resp]
+               (if (.-ok resp)
+                 (.then (.arrayBuffer resp)
+                        (fn [buf]
+                          {:name (infer-upload-filename url idx)
+                           :mimeType (or (.get (.-headers resp) "content-type") "application/octet-stream")
+                           :buffer (.from js/Buffer buf)}))
+                 (-> (.text resp)
+                     (.then (fn [text]
+                              (throw (js/Error. (str "Attachment fetch failed " (.-status resp) ": " text)))))))))))
+
 (defn- discord-send-message!
-  [config channel-id text reply-to]
+  [config channel-id text reply-to attachment-urls]
   (let [manager (discord-gateway-manager)
-        normalized (str/trim (str (or text "")))]
+        normalized (str/trim (str (or text "")))
+        attachment-urls (->> (or attachment-urls [])
+                             (map (fn [value] (some-> value str str/trim not-empty)))
+                             (remove nil?)
+                             vec)]
     (when (str/blank? channel-id)
       (throw (js/Error. "channel_id is required")))
-    (when (str/blank? normalized)
-      (throw (js/Error. "text is required")))
-    (if (discord-gateway-started?)
-      (-> (.sendMessage manager channel-id normalized reply-to)
-          (.then (fn [result]
-                   (js->clj result :keywordize-keys true))))
-      (let [token (discord-token config)
-            chunk-size 2000
-            chunks (loop [remaining normalized acc []]
-                     (if (<= (count remaining) chunk-size)
-                       (conj acc remaining)
-                       (let [slice (.lastIndexOf remaining "\n\n" chunk-size)
-                             split-at (cond
-                                        (> slice (int (* chunk-size 0.5))) slice
-                                        :else chunk-size)]
-                         (recur (str/trim (subs remaining split-at))
-                                (conj acc (str/trim (subs remaining 0 split-at)))))))]
-        (-> (reduce (fn [promise chunk]
-                      (.then promise
-                             (fn [state]
-                               (discord-fetch-json!
-                                (str "https://discord.com/api/v10/channels/" channel-id "/messages")
-                                #js {:method "POST"
-                                     :headers (discord-rest-headers token)
-                                     :body (.stringify js/JSON
-                                                       (clj->js (cond-> {:content chunk}
-                                                                  (and reply-to (nil? (:messageId state)))
-                                                                  (assoc :message_reference {:message_id reply-to}))))}))))
-                    (js/Promise.resolve nil)
-                    chunks)
-            (.then (fn [result]
-                     {:channelId channel-id
-                      :messageId (or (aget result "id") "")
-                      :sent true
-                      :timestamp (or (aget result "timestamp") "")
-                      :chunkCount (count chunks)})))))))
+    (when (and (str/blank? normalized) (empty? attachment-urls))
+      (throw (js/Error. "text or attachment_urls is required")))
+    (-> (js/Promise.all
+         (clj->js (map-indexed (fn [idx url]
+                                 (fetch-discord-upload-attachment! url idx))
+                               attachment-urls)))
+        (.then (fn [files]
+                 (let [file-list (vec (js->clj files :keywordize-keys true))]
+                   (if (discord-gateway-started?)
+                     (-> (.sendMessage manager channel-id normalized reply-to (clj->js file-list))
+                         (.then (fn [result]
+                                  (js->clj result :keywordize-keys true))))
+                     (let [token (discord-token config)
+                           chunk-size 2000
+                           base-text (if (str/blank? normalized) "[attachment]" normalized)
+                           chunks (loop [remaining base-text acc []]
+                                    (if (<= (count remaining) chunk-size)
+                                      (conj acc remaining)
+                                      (let [slice (.lastIndexOf remaining "\n\n" chunk-size)
+                                            split-at (cond
+                                                       (> slice (int (* chunk-size 0.5))) slice
+                                                       :else chunk-size)]
+                                        (recur (str/trim (subs remaining split-at))
+                                               (conj acc (str/trim (subs remaining 0 split-at)))))))]
+                       (-> (reduce (fn [promise chunk]
+                                     (.then promise
+                                            (fn [state]
+                                              (let [form (js/FormData.)
+                                                    payload (cond-> {:content chunk}
+                                                              (and reply-to (nil? (:messageId state)))
+                                                              (assoc :message_reference {:message_id reply-to}))]
+                                                (.append form "payload_json" (.stringify js/JSON (clj->js payload)))
+                                                (doseq [[idx file] (map-indexed vector file-list)]
+                                                  (.append form (str "files[" idx "]")
+                                                           (js/Blob. #js [(:buffer file)] #js {:type (:mimeType file)})
+                                                           (:name file)))
+                                                (-> (js/fetch (str "https://discord.com/api/v10/channels/" channel-id "/messages")
+                                                              #js {:method "POST"
+                                                                   :headers #js {"Authorization" (str "Bot " token)}
+                                                                   :body form})
+                                                    (.then (fn [resp]
+                                                             (if (.-ok resp)
+                                                               (.json resp)
+                                                               (-> (.text resp)
+                                                                   (.then (fn [text]
+                                                                            (throw (js/Error. (str "Discord API error " (.-status resp) ": " text)))))))))))))
+                                   (js/Promise.resolve nil)
+                                   chunks)
+                           (.then (fn [result]
+                                    {:channelId channel-id
+                                     :messageId (or (aget result "id") "")
+                                     :sent true
+                                     :timestamp (or (aget result "timestamp") "")
+                                     :chunkCount (count chunks)
+                                     :attachmentCount (count file-list)})))))))))))
 
 (defn- discord-list-guilds!
   [config]
@@ -908,7 +963,8 @@
          send-params (.Object Type
                               #js {:channel_id (.String Type #js {:description "Discord channel ID to send the message to. Use discord.list.channels to discover IDs."})
                                    :text (.String Type #js {:description "Message content to send. Long messages will be chunked automatically."})
-                                   :reply_to (.Optional Type (.String Type #js {:description "Optional message ID to reply to."}))})
+                                   :reply_to (.Optional Type (.String Type #js {:description "Optional message ID to reply to."}))
+                                   :attachment_urls (.Optional Type (.Array Type (.String Type) #js {:description "Optional attachment URLs to fetch and upload into the Discord message."}))})
          channel-messages-params (.Object Type
                                           #js {:channel_id (.String Type #js {:description "Discord channel ID to fetch messages from."})
                                                :limit (.Optional Type (.Number Type #js {:description "Maximum number of messages to fetch (default 50, max 100)." :minimum 1 :maximum 100}))
@@ -949,9 +1005,10 @@
                                 (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                       channel-id (or (aget params "channel_id") (aget params "channelId") "")
                                       text (or (aget params "text") (aget params "content") "")
-                                      reply-to (or (aget params "reply_to") (aget params "replyTo"))]
+                                      reply-to (or (aget params "reply_to") (aget params "replyTo"))
+                                      attachment-urls (or (aget params "attachment_urls") (aget params "attachmentUrls") #js [])]
                                   (maybe-tool-update! on-update (str "Sending Discord message to " channel-id "…"))
-                                  (-> (discord-send-message! config channel-id text reply-to)
+                                  (-> (discord-send-message! config channel-id text reply-to attachment-urls)
                                       (.then (fn [result]
                                                (tool-text-result (str "Sent Discord message " (:messageId result) " to channel " channel-id)
                                                                  result))))))
@@ -1083,10 +1140,12 @@
                                                        "Provide channelId/channel_id and content/text."
                                                        "If replying in-thread, prefer discord.send with reply_to."]))
                     (aset "parameters" (.Object Type #js {:channelId (.String Type #js {:description "Discord channel ID to post the message to."})
-                                                           :content (.String Type #js {:description "Message content to post to the Discord channel."})}))
+                                                           :content (.String Type #js {:description "Message content to post to the Discord channel."})
+                                                           :attachmentUrls (.Optional Type (.Array Type (.String Type) #js {:description "Optional attachment URLs to upload with the message."}))}))
                     (aset "execute" (fn [tool-call-id params a b c]
                                        (discord-send-execute tool-call-id #js {:channel_id (aget params "channelId")
-                                                                               :text (aget params "content")}
+                                                                               :text (aget params "content")
+                                                                               :attachment_urls (aget params "attachmentUrls")}
                                                              a b c)))))
                 (when (allowed? "discord.send")
                   (doto (js-obj)
@@ -1299,6 +1358,9 @@
                                         :searchContextSize (.Optional Type (.String Type #js {:description "Search context size: low, medium, or high."}))
                                         :allowedDomains (.Optional Type (.Array Type (.String Type) #js {:description "Optional domain allowlist."}))
                                         :model (.Optional Type (.String Type #js {:description "Optional Proxx/OpenAI model override for search."}))})
+         web-read-params (.Object Type
+                                  #js {:url (.String Type #js {:description "Web link or attachment URL to fetch and read."})
+                                       :maxChars (.Optional Type (.Number Type #js {:description "Maximum number of characters to return." :minimum 200 :maximum 20000}))})
          session-params (.Object Type
                                  #js {:sessionId (.String Type #js {:description "Knoxx conversation/session id stored in OpenPlanner."})})
          ;; save_translation params
@@ -1385,6 +1447,41 @@
                                                 (tool-text-result (websearch-result-text result) result))
                                               (throw (js/Error. (str "websearch failed: "
                                                                      (pr-str (js->clj (aget resp "body") :keywordize-keys true)))))))))))
+         web-read-execute (fn [_tool-call-id params a b c]
+                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                  url (or (aget params "url") "")
+                                  max-chars (max 200 (min 20000 (or (aget params "maxChars") 6000)))]
+                              (when (str/blank? (str/trim url))
+                                (throw (js/Error. "url is required")))
+                              (maybe-tool-update! on-update (str "Fetching " url "…"))
+                              (-> (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
+                                  (.then (fn [resp]
+                                           (let [content-type (or (.get (.-headers resp) "content-type") "application/octet-stream")]
+                                             (if (.-ok resp)
+                                               (cond
+                                                 (or (str/starts-with? content-type "text/")
+                                                     (str/includes? content-type "json")
+                                                     (str/includes? content-type "xml")
+                                                     (str/includes? content-type "html"))
+                                                 (.then (.text resp)
+                                                        (fn [text]
+                                                          (let [collapsed (-> text
+                                                                              (str/replace #"<[^>]+>" " ")
+                                                                              (str/replace #"\s+" " ")
+                                                                              str/trim)
+                                                                clipped (subs collapsed 0 (min max-chars (count collapsed)))]
+                                                            (tool-text-result (str "Read URL " url " (" content-type "):\n\n" clipped)
+                                                                              {:url url
+                                                                               :contentType content-type
+                                                                               :text clipped}))))
+                                                 :else
+                                                 (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
+                                                                   {:url url
+                                                                    :contentType content-type
+                                                                    :binary true}))
+                                               (-> (.text resp)
+                                                   (.then (fn [text]
+                                                            (throw (js/Error. (str "web.read failed " (.-status resp) ": " text))))))))))))
          create-new-file-execute (fn [_tool-call-id params a b c]
                                    (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                          title (or (aget params "title") "Untitled Canvas")
@@ -1489,6 +1586,15 @@
                                                              "Use websearch to seed follow-up graph or semantic exploration, not as a substitute for graph_query when graph structure already exists."]))
                           (aset "parameters" websearch-params)
                           (aset "execute" websearch-execute))
+         web-read-tool (doto (js-obj)
+                         (aset "name" "web.read")
+                         (aset "label" "Web Read")
+                         (aset "description" "Fetch a web link or attachment URL and extract readable text or metadata.")
+                         (aset "promptSnippet" "Read a web page, text attachment, or direct file URL when you already have a concrete link.")
+                         (aset "promptGuidelines" (clj->js ["Use web.read for direct URLs from Discord messages, embeds, or attachments."
+                                                            "For image/binary URLs, web.read returns metadata so you can decide whether to forward the attachment or inspect it another way."]))
+                         (aset "parameters" web-read-params)
+                         (aset "execute" web-read-execute))
          memory-session-tool (doto (js-obj)
                                (aset "name" "memory_session")
                                (aset "label" "Memory Session")
@@ -1526,6 +1632,9 @@
                 (when (or (nil? auth-context)
                           (ctx-tool-allowed? auth-context "websearch"))
                   websearch-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "web.read"))
+                  web-read-tool)
                 (when (or (nil? auth-context)
                           (ctx-tool-allowed? auth-context "memory_search"))
                   memory-search-tool)
