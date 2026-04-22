@@ -28,6 +28,98 @@
   (or (nonblank session-id)
       (.randomUUID node-crypto)))
 
+(defn- chat-policy-constraints
+  [auth-context]
+  (let [constraints (authz/ctx-tool-constraints auth-context "agent.chat")]
+    (cond
+      (map? constraints) constraints
+      (and constraints (= "object" (goog/typeOf constraints))) (js->clj constraints :keywordize-keys true)
+      :else {})))
+
+(defn- positive-int
+  [value]
+  (cond
+    (number? value) (let [n (int value)]
+                      (when (pos? n) n))
+    (string? value) (let [parsed (js/parseInt value 10)]
+                      (when (and (not (js/isNaN parsed)) (> parsed 0))
+                        parsed))
+    :else nil))
+
+(defn- allowed-models
+  [constraints]
+  (let [raw (or (:allowedModels constraints)
+                (:allowed-models constraints)
+                (:models constraints))]
+    (->> (cond
+           (sequential? raw) raw
+           (array? raw) (array-seq raw)
+           :else [])
+         (keep nonblank)
+         set)))
+
+(defn- chat-rate-limit-principal
+  [auth-context]
+  (or (get-in auth-context [:membership :id])
+      (:membershipId auth-context)
+      (get-in auth-context [:user :id])
+      (:userId auth-context)
+      (get-in auth-context [:user :email])
+      (:userEmail auth-context)))
+
+(defn- rate-limit-error
+  [max-requests window-seconds]
+  (doto (js/Error. (str "Chat rate limit exceeded: more than " max-requests
+                        " requests in " window-seconds " seconds"))
+    (aset "statusCode" 429)
+    (aset "code" "chat_rate_limited")))
+
+(defn- model-policy-error
+  [model-id allowed]
+  (doto (js/Error. (str "Model '" model-id "' is not allowed for this account. Allowed models: "
+                        (str/join ", " (sort allowed))))
+    (aset "statusCode" 403)
+    (aset "code" "model_not_allowed")))
+
+(defn- enforce-chat-policy!
+  [auth-context model-id]
+  (let [constraints (chat-policy-constraints auth-context)
+        permitted-models (allowed-models constraints)
+        max-requests (positive-int (or (:maxRequests constraints)
+                                       (:max-requests constraints)))
+        window-seconds (positive-int (or (:windowSeconds constraints)
+                                         (:window-seconds constraints)))
+        principal (some-> (chat-rate-limit-principal auth-context) str not-empty)
+        redis-client (redis/get-client)]
+    (cond
+      (and (seq permitted-models)
+           (not (contains? permitted-models model-id)))
+      (js/Promise.reject (model-policy-error model-id permitted-models))
+
+      (and principal redis-client max-requests window-seconds)
+      (let [key (str "knoxx:chat-rate:" principal ":" window-seconds)]
+        (-> (.incr redis-client key)
+            (.then (fn [count]
+                     (if (= count 1)
+                       (-> (.expire redis-client key window-seconds)
+                           (.then (fn [_] count)))
+                       (js/Promise.resolve count))))
+            (.then (fn [count]
+                     (if (> count max-requests)
+                       (js/Promise.reject (rate-limit-error max-requests window-seconds))
+                       (js/Promise.resolve nil))))
+            (.catch (fn [err]
+                      (if (= (aget err "code") "chat_rate_limited")
+                        (js/Promise.reject err)
+                        (js/Promise.resolve nil))))))
+
+      :else
+      (js/Promise.resolve nil))))
+
+(defn validate-chat-policy!
+  [auth-context model-id]
+  (enforce-chat-policy! auth-context model-id))
+
 (defn- preview-text-nonblank
   "Like value->preview-text, but returns nil for blank previews so OR chains keep searching." 
   [value max-chars]
@@ -39,6 +131,65 @@
 (defn- fenced
   [lang text]
   (str "```" lang "\n" (or text "") "\n```"))
+
+(defn- json-preview-nonblank
+  [value max-chars]
+  (when (and value (not= value js/undefined))
+    (try
+      (let [json (.stringify js/JSON value nil 2)]
+        (when (string? json)
+          (preview-text-nonblank json max-chars)))
+      (catch :default _ nil))))
+
+;; These helpers are referenced directly from tests and recovery code. Keep
+;; small, top-level implementations available even if later runtime-heavy
+;; sections are refactored.
+
+(defn ^:export session->stored-messages
+  [session]
+  (let [messages (when (and session (array? (aget session "messages")))
+                   (array-seq (aget session "messages")))]
+    (->> messages
+         (keep (fn [message]
+                 (let [role (some-> (aget message "role") str)
+                       content (aget message "content")
+                       text (cond
+                              (string? content) (nonblank content)
+                              (array? content) (->> (array-seq content)
+                                                    (map content-part-text)
+                                                    (remove str/blank?)
+                                                    (str/join "\n\n")
+                                                    nonblank)
+                              :else (some-> (aget message "text") nonblank))]
+                   (when (and (contains? #{"user" "assistant" "system"} role)
+                              text)
+                     {:role role
+                      :content text}))))
+         vec)))
+
+(defn ^:export model-ready-content-parts
+  [config model-id content-parts]
+  (->> (or content-parts [])
+       (mapcat (fn [part]
+                 (let [part-type (cond
+                                   (keyword? (:type part)) (name (:type part))
+                                   (string? (:type part)) (:type part)
+                                   :else nil)
+                       part-name (or (:filename part) (:url part) "attachment")]
+                   (cond
+                     (or (nil? part-type)
+                         (= part-type "text")
+                         (model-supports-input? config model-id part-type))
+                     [part]
+
+                     (= part-type "audio")
+                     [{:type :text
+                       :text (str "Uploaded audio source '" part-name "' is available, but model " model-id " does not declare audio input. Use audio.spectrogram if you need an image-friendly audio view.")}]
+
+                     :else
+                     [{:type :text
+                       :text (str "Uploaded " part-type " '" part-name "' is available, but model " model-id " does not declare " part-type " input.")}]))))
+       vec))
 
 (defn- tool-args->markdown-preview
   "Tool-specific input previews that are always human readable (no raw JSON).
@@ -118,9 +269,11 @@
   [tool-name raw-args]
   (or (tool-args->markdown-preview tool-name raw-args)
       (preview-text-nonblank raw-args 20000)
+      (json-preview-nonblank raw-args 20000)
       (let [copied (copy-js-object raw-args)]
         (or (tool-args->markdown-preview tool-name copied)
-            (preview-text-nonblank copied 20000)))))
+            (preview-text-nonblank copied 20000)
+            (json-preview-nonblank copied 20000)))))
 
 (defn- tool-call-preview-from-part
   [part]
@@ -135,7 +288,7 @@
            :tool_name tool-name
            :input_preview input-preview})))))
 
-(defn assistant-tool-call-previews
+(defn ^:export assistant-tool-call-previews
   [assistant-message]
   (let [content (when assistant-message
                   (aget assistant-message "content"))]
@@ -556,10 +709,12 @@
       (js/Promise.reject (js/Error. (str "Unsupported thinking level: " thinking-level-raw ". Expected one of off, minimal, low, medium, high, xhigh.")))
 
       :else
-      (-> (.all js/Promise
-              #js [(passive-hydration! runtime config mode message auth-context)
-                   (passive-memory-hydration! config conversation-id message auth-context)])
-        (.then (fn [results]
+      (-> (enforce-chat-policy! auth-context model-id)
+          (.then (fn [_]
+                   (-> (.all js/Promise
+                              #js [(passive-hydration! runtime config mode message auth-context)
+                                   (passive-memory-hydration! config conversation-id message auth-context)])
+                       (.then (fn [results]
                  (let [hydration (aget results 0)
                        memory-hydration (aget results 1)]
                    (when hydration
@@ -964,7 +1119,7 @@
                                                                             :messages final-messages}))
                                          ;; Remove from in-memory cache to prevent stale isStreaming
                                          (remove-agent-session! conversation-id))
-                                     (throw err)))))))))))))))))
+                                     (throw err))))))))))))))))))))
 
 (defn recovered-auth-context
   [session]

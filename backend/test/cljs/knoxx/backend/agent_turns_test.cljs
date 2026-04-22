@@ -39,6 +39,21 @@
                :input_preview "path=docs/guide.md limit=20"}]
              previews)))))
 
+(deftest assistant-tool-call-previews-extracts-object-arguments-from-assistant-message
+  (testing "object tool call arguments fall back to readable JSON when they are not plain strings"
+    (let [assistant-message #js {:role "assistant"
+                                 :content #js [#js {:type "toolCall"
+                                                    :id "tool-456"
+                                                    :name "read"
+                                                    :arguments #js {:path "docs/guide.md"
+                                                                    :offset 10
+                                                                    :limit 20}}]}
+          previews (agent-turns/assistant-tool-call-previews assistant-message)]
+      (is (= [{:tool_call_id "tool-456"
+               :tool_name "read"
+               :input_preview "```yaml\npath: docs/guide.md\noffset: 10\nlimit: 20\n```"}]
+             previews)))))
+
 (deftest session->stored-messages-preserves-prior-transcript
   (testing "live session snapshots keep existing user and assistant turns for restart recovery"
     (let [session #js {:messages #js [#js {:role "system"
