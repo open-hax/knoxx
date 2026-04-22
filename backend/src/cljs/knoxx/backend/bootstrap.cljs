@@ -30,10 +30,10 @@
 
 (defn- notify-ready!
   []
-  (when-let [send (aget js/process "send")]
-    (when (and (fn? send)
-               (true? (aget js/process "connected")))
-      (send "ready"))))
+  (when (true? (aget js/process "connected"))
+    (try
+      (.send js/process "ready")
+      (catch :default _ nil))))
 
 (defn- ensure-fastify-json-empty-body-parser!
   "Allow Content-Type: application/json with empty bodies.
