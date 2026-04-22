@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { getAgentContractsCatalog, getFrontendConfig, getToolCatalog } from '../../lib/api';
-import type { AgentContractCatalogItem, ToolCatalogResponse } from '../../lib/types';
+import type { ActorCatalogItem, AgentContractCatalogItem, ToolCatalogResponse } from '../../lib/types';
 
 type UseChatPageConfigParams = {
   defaultRole: string;
@@ -10,6 +10,7 @@ type UseChatPageConfigParams = {
   activeAgentId: string;
   setActiveRole: (value: string) => void;
   setActiveActorId: (value: string) => void;
+  setAvailableActors: (value: ActorCatalogItem[]) => void;
   setActiveAgentId: (value: string) => void;
   setAvailableAgents: (value: AgentContractCatalogItem[]) => void;
   setToolCatalog: (value: ToolCatalogResponse | null) => void;
@@ -24,6 +25,7 @@ export function useChatPageConfig({
   activeAgentId,
   setActiveRole,
   setActiveActorId,
+  setAvailableActors,
   setActiveAgentId,
   setAvailableAgents,
   setToolCatalog,
@@ -39,6 +41,7 @@ export function useChatPageConfig({
         }
 
         const agents = catalog.agents ?? [];
+        setAvailableActors(catalog.actors ?? []);
         const defaultAgentId = catalog.default_agent_contract || config.default_agent_contract || agents[0]?.id || '';
         setAvailableAgents(agents);
 
@@ -55,7 +58,7 @@ export function useChatPageConfig({
       .catch((error) => {
         setConsoleLines((previous) => [...previous.slice(-400), `[agents] failed: ${(error as Error).message}`]);
       });
-  }, [activeActorId, activeAgentId, defaultActorId, defaultRole, setActiveActorId, setActiveAgentId, setActiveRole, setAvailableAgents, setConsoleLines]);
+  }, [activeActorId, activeAgentId, defaultActorId, defaultRole, setActiveActorId, setActiveAgentId, setActiveRole, setAvailableActors, setAvailableAgents, setConsoleLines]);
 
   useEffect(() => {
     void getToolCatalog(activeRole, activeAgentId || undefined, activeActorId || undefined)

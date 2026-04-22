@@ -8,9 +8,27 @@
   [session-id]
   (not (str/starts-with? (str session-id) "translation-")))
 
+(defn- normalized-actor-id
+  [value]
+  (some-> value str str/trim not-empty))
+
+(defn- normalized-actor-ids
+  [value]
+  (let [items (cond
+                (nil? value) []
+                (string? value) (str/split value #",")
+                (array? value) (js->clj value)
+                (sequential? value) value
+                :else [value])]
+    (->> items
+         (keep normalized-actor-id)
+         distinct
+         vec)))
+
 (defn- filter-page-actor-rows!
-  [config fetch-openplanner-session-rows! session-visible-for-page-actor? actor-id page-rows]
-  (if-not actor-id
+  [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids page-rows]
+  (if (and (str/blank? (str (or actor-id "")))
+           (empty? exclude-actor-ids))
     (js/Promise.resolve (vec page-rows))
     (-> (.all js/Promise
               (clj->js
@@ -18,7 +36,7 @@
                        (-> (fetch-openplanner-session-rows! config (:session row))
                            (.then (fn [rows]
                                     {:row row
-                                     :visible (session-visible-for-page-actor? config rows actor-id)}))
+                                     :visible (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)}))
                            (.catch (fn [_]
                                      {:row row
                                       :visible false}))))
@@ -30,7 +48,7 @@
                       vec))))))
 
 (defn fetch-authorized-session-pages!
-  [config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size upstream-offset acc needed-count]
+  [config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
   (-> (openplanner-request! config "GET"
                             (str "/v1/sessions?project="
                                  (js/encodeURIComponent (:session-project-name config))
@@ -49,7 +67,7 @@
                                              (filter #(contains? allowed (str (:session %))))
                                              (filter #(interactive-session-id? (:session %)))
                                              vec)]
-                    (-> (filter-page-actor-rows! config fetch-openplanner-session-rows! session-visible-for-page-actor? actor-id authorized-rows)
+                    (-> (filter-page-actor-rows! config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids authorized-rows)
                         (.then
                          (fn [actor-visible-rows]
                            (let [next-acc (into acc actor-visible-rows)
@@ -61,11 +79,53 @@
                                 :has_more true}
 
                                (and upstream-has-more (pos? fetched-count))
-                               (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size next-offset next-acc needed-count)
+                               (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size next-offset next-acc needed-count)
 
                                :else
                                {:rows next-acc
                                 :has_more false}))))))))))))))
+
+(defn- hit-session-id
+  [hit]
+  (or (:session hit)
+      (get-in hit [:metadata :session])
+      (get-in hit [:extra :session])))
+
+(defn- filter-search-hits-by-actor!
+  [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids hits]
+  (let [actor-id (normalized-actor-id actor-id)
+        exclude-actor-ids (normalized-actor-ids exclude-actor-ids)
+        hits (vec hits)]
+    (if (and (str/blank? (str (or actor-id "")))
+             (empty? exclude-actor-ids))
+      (js/Promise.resolve hits)
+      (let [session-ids (->> hits
+                             (keep hit-session-id)
+                             (map str)
+                             (remove str/blank?)
+                             distinct
+                             vec)]
+        (-> (.all js/Promise
+                  (clj->js
+                   (mapv (fn [session-id]
+                           (-> (fetch-openplanner-session-rows! config session-id)
+                               (.then (fn [rows]
+                                        {:session session-id
+                                         :visible (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)}))
+                               (.catch (fn [_]
+                                         {:session session-id
+                                          :visible false}))))
+                         session-ids)))
+            (.then (fn [results]
+                     (let [allowed-sessions (->> (js->clj results :keywordize-keys true)
+                                                 (filter :visible)
+                                                 (map (comp str :session))
+                                                 set)]
+                       (->> hits
+                            (filter (fn [hit]
+                                      (contains? allowed-sessions (str (or (hit-session-id hit) ""))))
+                              )
+                            vec)))))))))
 
 (defn register-memory-routes!
   [app runtime config {:keys [json-response!
@@ -86,7 +146,7 @@
                               cache-session-title!
                               normalize-session-title
                               session-visible?
-                              session-visible-for-page-actor?
+                              session-matches-page-actor-filter?
                               openplanner-memory-search!
                               filter-authorized-memory-hits!
                               ctx-permitted?
@@ -107,15 +167,17 @@
                         limit (or (parse-positive-int limit-raw) 12)
                         actor-id (some-> (or (aget request "query" "actorId")
                                              (aget request "query" "actor"))
-                                          str
-                                          str/trim
-                                          not-empty)
+                                          normalized-actor-id)
+                        exclude-actor-ids (normalized-actor-ids
+                                           (or (aget request "query" "excludeActorIds")
+                                               (aget request "query" "excludeActorId")
+                                               (aget request "query" "excludeActors")))
                         offset-raw (aget request "query" "offset")
                         offset-parsed (js/parseInt (str (or offset-raw "0")) 10)
                         offset (if (and (js/Number.isFinite offset-parsed) (>= offset-parsed 0)) offset-parsed 0)
                         upstream-page-size 200
                         needed-count (+ offset (max 1 limit) 1)]
-                    (-> (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size 0 [] needed-count)
+                    (-> (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)
                         (.then (fn [{:keys [rows has_more]}]
                                  (let [all-rows (vec rows)
                                        visible-total (count all-rows)
@@ -285,6 +347,14 @@
                   (let [body (or (aget request "body") #js {})
                         query (or (aget body "query") "")
                         k (aget body "k")
+                        actor-id (normalized-actor-id (or (aget body "actorId")
+                                                          (aget body "actor_id")
+                                                          (aget body "actor")))
+                        exclude-actor-ids (normalized-actor-ids
+                                           (or (aget body "excludeActorIds")
+                                               (aget body "exclude_actor_ids")
+                                               (aget body "excludeActorId")
+                                               (aget body "exclude_actor_id")))
                         session-id (or (aget body "sessionId") (aget body "session_id") "")]
                     (ensure-permission! ctx "agent.memory.read")
                     (when (and (str/blank? (str session-id))
@@ -297,7 +367,9 @@
                         (.then (fn [result]
                                  (-> (filter-authorized-memory-hits! config ctx (:hits result))
                                      (.then (fn [hits]
-                                              (json-response! reply 200 (assoc result :ok true :hits hits)))))))
+                                              (-> (filter-search-hits-by-actor! config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids hits)
+                                                  (.then (fn [filtered-hits]
+                                                           (json-response! reply 200 (assoc result :ok true :hits filtered-hits))))))))))
                         (.catch (fn [err]
                                   (error-response! reply err 502))))))))))
 

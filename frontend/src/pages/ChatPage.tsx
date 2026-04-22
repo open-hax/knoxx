@@ -34,6 +34,8 @@ function ChatPage() {
           semanticResults={chat.semanticResults}
           semanticProjects={chat.semanticProjects}
           semanticSearching={chat.semanticSearching}
+          sessionSearchHits={chat.sessionSearchHits}
+          sessionSearchMode={chat.sessionSearchMode}
           semanticMode={chat.semanticMode}
           filteredEntries={chat.filteredEntries}
           activeEntryCount={chat.activeEntryCount}
@@ -49,6 +51,9 @@ function ChatPage() {
           loadingMemorySessionId={chat.loadingMemorySessionId}
           sessionId={chat.sessionId}
           conversationId={chat.conversationId}
+          availableActors={chat.availableActors}
+          sessionActorFilter={chat.sessionActorFilter}
+          excludePiSessions={chat.excludePiSessions}
           visibilityFilter={chat.visibilityFilter}
           kindFilter={chat.kindFilter}
           statsTotal={chat.statsTotal}
@@ -62,6 +67,7 @@ function ChatPage() {
             chat.setSemanticQuery("");
             chat.setSemanticResults([]);
             chat.setSemanticProjects([]);
+            chat.setSessionSearchMode("none");
           }}
           onRefreshRecentSessions={chat.refreshRecentSessions}
           onLoadMoreRecentSessions={chat.loadMoreRecentSessions}
@@ -78,6 +84,8 @@ function ChatPage() {
           onStartSidebarWidthResize={chat.startSidebarWidthResize}
           onVisibilityFilterChange={chat.setVisibilityFilter}
           onKindFilterChange={chat.setKindFilter}
+          onSessionActorFilterChange={chat.setSessionActorFilter}
+          onExcludePiSessionsChange={chat.setExcludePiSessions}
         />
       ) : null}
 

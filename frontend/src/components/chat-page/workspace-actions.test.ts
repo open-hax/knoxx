@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { persistedSessionVisibleForActor, preferredSessionModelForResume } from "./workspace-actions";
+import { persistedSessionVisibleForActor, persistedSessionVisibleForFilter, preferredSessionModelForResume } from "./workspace-actions";
 import { persistChatSessionSnapshot, type ChatSessionSnapshot } from "./hooks";
 import type { ChatMessage } from "../../lib/types";
 
@@ -73,6 +73,27 @@ describe("persistedSessionVisibleForActor", () => {
         "workspace",
         { session: "conversation-legacy", active_session_id: "session-legacy", local_only: true },
         "cms_chat",
+        new Set(),
+      ),
+    ).toBe(false);
+  });
+
+  it("can exclude pi-authored local sessions while showing all other actors", () => {
+    persistChatSessionSnapshot("workspace", "session-pi", {
+      sessionId: "session-pi",
+      conversationId: "conversation-pi",
+      activeActorId: "pi",
+      messages: [],
+      runtimeEvents: [],
+      isSending: false,
+    });
+
+    expect(
+      persistedSessionVisibleForFilter(
+        "workspace",
+        { session: "conversation-pi", active_session_id: "session-pi", local_only: true },
+        "all",
+        true,
         new Set(),
       ),
     ).toBe(false);

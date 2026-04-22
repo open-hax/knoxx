@@ -1,6 +1,6 @@
 import type { ChangeEvent, MouseEvent as ReactMouseEvent, UIEvent, Ref } from "react";
 import { Badge, Button, Card, Input } from "@open-hax/uxx";
-import type { MemorySessionSummary } from "../../lib/types";
+import type { ActorCatalogItem, MemorySearchHit, MemorySessionSummary } from "../../lib/types";
 import { ContextBarExplorer } from "./ContextBarExplorer";
 import type {
   BrowseEntry,
@@ -64,6 +64,8 @@ type ContextBarProps = {
   semanticResults?: SemanticSearchMatch[];
   semanticProjects?: string[];
   semanticSearching?: boolean;
+  sessionSearchHits?: MemorySearchHit[];
+  sessionSearchMode?: string;
   semanticMode?: boolean;
   filteredEntries?: BrowseEntry[];
   activeEntryCount?: number;
@@ -79,11 +81,16 @@ type ContextBarProps = {
   loadingMemorySessionId?: string | null;
   sessionId?: string;
   conversationId?: string | null;
+  availableActors?: ActorCatalogItem[];
+  sessionActorFilter?: string;
+  excludePiSessions?: boolean;
   onLoadDirectory?: (path?: string) => void | Promise<void>;
   onEntryFilterChange?: (value: string) => void;
   onSemanticQueryChange?: (value: string) => void;
   onSemanticSearch?: () => void | Promise<void>;
   onClearSemanticSearch?: () => void;
+  onSessionActorFilterChange?: (value: string) => void;
+  onExcludePiSessionsChange?: (value: boolean) => void;
   onRefreshRecentSessions?: () => void | Promise<void>;
   onLoadMoreRecentSessions?: () => void | Promise<void>;
   onResumeMemorySession?: (sessionId: string) => void | Promise<void>;
@@ -133,6 +140,8 @@ export function ContextBar({
   semanticResults,
   semanticProjects,
   semanticSearching,
+  sessionSearchHits,
+  sessionSearchMode,
   semanticMode,
   filteredEntries,
   activeEntryCount,
@@ -148,11 +157,16 @@ export function ContextBar({
   loadingMemorySessionId,
   sessionId,
   conversationId,
+  availableActors,
+  sessionActorFilter,
+  excludePiSessions,
   onLoadDirectory,
   onEntryFilterChange,
   onSemanticQueryChange,
   onSemanticSearch,
   onClearSemanticSearch,
+  onSessionActorFilterChange,
+  onExcludePiSessionsChange,
   onRefreshRecentSessions,
   onLoadMoreRecentSessions,
   onResumeMemorySession,
@@ -177,6 +191,38 @@ export function ContextBar({
   // Determine if we're in chat mode (has sessions/files) or CMS mode
   const hasChatFeatures = recentSessions && recentSessions.length > 0 || browseData || filteredEntries && filteredEntries.length > 0;
   const hasFileExplorer = browseData || (filteredEntries && filteredEntries.length > 0);
+  const sessionSearchActive = Boolean((semanticQuery ?? "").trim());
+  const actorOptions = [
+    { id: "all", label: "All actors" },
+    ...((availableActors ?? []).map((actor) => ({ id: actor.id, label: actor.id }))),
+  ].filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index);
+  const groupedSessionHits = (() => {
+    const bySession = new Map<string, { session: string; snippet: string; hitCount: number; title?: string }>();
+    for (const hit of sessionSearchHits ?? []) {
+      const session = typeof hit.session === "string"
+        ? hit.session
+        : typeof hit.metadata?.session === "string"
+          ? hit.metadata.session
+          : "";
+      if (!session) continue;
+      const snippet = typeof hit.snippet === "string"
+        ? hit.snippet
+        : typeof hit.text === "string"
+          ? hit.text
+          : typeof hit.document === "string"
+            ? hit.document
+            : "";
+      const title = recentSessions?.find((item) => item.session === session)?.title ?? undefined;
+      const existing = bySession.get(session);
+      if (existing) {
+        existing.hitCount += 1;
+        if (!existing.snippet && snippet) existing.snippet = snippet;
+      } else {
+        bySession.set(session, { session, snippet, hitCount: 1, title });
+      }
+    }
+    return [...bySession.values()];
+  })();
 
   const handleRecentSessionsScroll = (event: UIEvent<HTMLDivElement>) => {
     if (!recentSessionsHasMore || loadingMoreRecentSessions || loadingRecentSessions || !onLoadMoreRecentSessions) return;
@@ -267,6 +313,38 @@ export function ContextBar({
                     ⚲
                   </Button>
                 )}
+              </div>
+            )}
+
+            {onSessionActorFilterChange && (
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <select
+                  value={sessionActorFilter ?? "all"}
+                  onChange={(event) => onSessionActorFilterChange(event.target.value)}
+                  style={{
+                    flex: 1,
+                    fontSize: 11,
+                    padding: "4px 6px",
+                    borderRadius: 4,
+                    border: "1px solid var(--token-colors-border-default)",
+                    background: "var(--token-colors-background-canvas)",
+                    color: "var(--token-colors-text-default)",
+                  }}
+                >
+                  {actorOptions.map((actor) => (
+                    <option key={actor.id} value={actor.id}>{actor.label}</option>
+                  ))}
+                </select>
+                {onExcludePiSessionsChange ? (
+                  <Button
+                    variant={excludePiSessions ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => onExcludePiSessionsChange(!excludePiSessions)}
+                    title={excludePiSessions ? "Show π sessions" : "Hide π sessions"}
+                  >
+                    {excludePiSessions ? "π off" : "π on"}
+                  </Button>
+                ) : null}
               </div>
             )}
 
@@ -367,9 +445,20 @@ export function ContextBar({
                 {/* Recent Sessions - compact */}
                 <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--token-colors-border-default)", flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, flexShrink: 0 }}>
-                    <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", color: "var(--token-colors-text-muted)" }}>Sessions</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", color: "var(--token-colors-text-muted)" }}>
+                      {sessionSearchActive ? "Session matches" : "Sessions"}
+                    </span>
                     <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                      <Badge size="sm" variant="default">{(recentSessionsTotal ?? 0) > 0 ? `${recentSessions.length}/${recentSessionsTotal}` : recentSessions.length}</Badge>
+                      <Badge size="sm" variant="default">
+                        {sessionSearchActive
+                          ? groupedSessionHits.length
+                          : (recentSessionsTotal ?? 0) > 0
+                            ? `${recentSessions.length}/${recentSessionsTotal}`
+                            : recentSessions.length}
+                      </Badge>
+                      {sessionSearchActive && sessionSearchMode && sessionSearchMode !== "none" ? (
+                        <Badge size="sm" variant="info">{sessionSearchMode}</Badge>
+                      ) : null}
                       {onRefreshRecentSessions && (
                         <Button variant="ghost" size="sm" loading={loadingRecentSessions} onClick={() => void onRefreshRecentSessions()}>
                           ↻
@@ -377,7 +466,51 @@ export function ContextBar({
                       )}
                     </div>
                   </div>
-                  {recentSessions.length === 0 ? (
+                  {sessionSearchActive ? (
+                    groupedSessionHits.length === 0 ? (
+                      <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)" }}>No session matches</div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+                        {groupedSessionHits.map((item) => {
+                          const isCurrent = (sessionId && recentSessions?.find((row) => row.session === item.session)?.active_session_id === sessionId)
+                            || (conversationId && conversationId === item.session);
+                          return (
+                            <button
+                              key={item.session}
+                              type="button"
+                              onClick={() => onResumeMemorySession && void onResumeMemorySession(item.session)}
+                              style={{
+                                width: "100%",
+                                textAlign: "left",
+                                padding: "6px",
+                                border: "none",
+                                borderRadius: 4,
+                                background: isCurrent ? "var(--token-colors-alpha-blue-_15)" : "transparent",
+                                cursor: "pointer",
+                                display: "grid",
+                                gap: 2,
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4 }}>
+                                <div style={{ minWidth: 0, fontSize: 11, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {item.title || item.session.slice(0, 8)}
+                                </div>
+                                <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                                  {isCurrent ? <Badge size="sm" variant="info">Current</Badge> : null}
+                                  <Badge size="sm" variant="default">{item.hitCount}</Badge>
+                                </div>
+                              </div>
+                              {item.snippet ? (
+                                <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>
+                                  {item.snippet}
+                                </div>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )
+                  ) : recentSessions.length === 0 ? (
                     <div style={{ fontSize: 10, color: "var(--token-colors-text-muted)" }}>No sessions</div>
                   ) : (
                     <div

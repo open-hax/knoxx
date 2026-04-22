@@ -1,6 +1,6 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getMemorySession, listMemorySessions } from "../../lib/api";
-import type { ChatMessage, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
+import { getMemorySession, listMemorySessions, searchMemory } from "../../lib/api";
+import type { ChatMessage, MemorySearchHit, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
 import { findPersistedChatSessionByConversation, listPersistedChatSessions, readPersistedChatSessionSnapshot, type ChatSessionSnapshot } from "./hooks";
 import type {
   BrowseResponse,
@@ -15,6 +15,7 @@ import { isWorkspaceSource, memoryRowRunId, memoryRowsToMessages, selectWorkspac
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
 const RECENT_SESSION_PAGE_SIZE = 20;
+const DEFAULT_EXCLUDED_SESSION_ACTOR = "pi";
 
 function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
   const statusScore = (item: MemorySessionSummary): number => {
@@ -109,27 +110,59 @@ export function persistedSessionVisibleForActor(
   activeActorId: string,
   visibleAgentIds: ReadonlySet<string>,
 ): boolean {
+  return persistedSessionVisibleForFilter(sessionStateKey, summary, activeActorId, false, visibleAgentIds);
+}
+
+function normalizedSessionActorFilter(actorId: string): string | null {
+  const trimmed = actorId.trim();
+  return trimmed.length > 0 && trimmed !== "all" ? trimmed : null;
+}
+
+function excludedSessionActorIds(actorFilter: string, excludePiSessions: boolean): string[] {
+  if (!excludePiSessions) return [];
+  return normalizedSessionActorFilter(actorFilter) === DEFAULT_EXCLUDED_SESSION_ACTOR
+    ? []
+    : [DEFAULT_EXCLUDED_SESSION_ACTOR];
+}
+
+export function persistedSessionVisibleForFilter(
+  sessionStateKey: string,
+  summary: MemorySessionSummary,
+  actorFilter: string,
+  excludePiSessions: boolean,
+  visibleAgentIds: ReadonlySet<string>,
+): boolean {
   const snapshot = summary.active_session_id
     ? readPersistedChatSessionSnapshot(sessionStateKey, summary.active_session_id)
     : null;
-  const normalizedActiveActorId = activeActorId.trim();
+  const normalizedActiveActorId = normalizedSessionActorFilter(actorFilter);
   const sessionAgentId = typeof snapshot?.activeAgentId === "string" ? snapshot.activeAgentId.trim() : "";
-  if (sessionAgentId && visibleAgentIds.size > 0) {
-    return visibleAgentIds.has(sessionAgentId);
-  }
   const sessionActorId = typeof snapshot?.activeActorId === "string" && snapshot.activeActorId.trim().length > 0
     ? snapshot.activeActorId.trim()
     : "chat_primary";
+
+  if (excludePiSessions && normalizedActiveActorId !== DEFAULT_EXCLUDED_SESSION_ACTOR && sessionActorId === DEFAULT_EXCLUDED_SESSION_ACTOR) {
+    return false;
+  }
+
+  if (!normalizedActiveActorId) {
+    return true;
+  }
+
+  if (sessionAgentId && visibleAgentIds.size > 0) {
+    return visibleAgentIds.has(sessionAgentId);
+  }
   return sessionActorId === normalizedActiveActorId;
 }
 
 type ChatWorkspaceActionParams = {
-  activeActorId: string;
   visibleAgentIds: ReadonlySet<string>;
   currentPath: string;
   showFiles: boolean;
   browseData: BrowseResponse | null;
   semanticQuery: string;
+  sessionActorFilter: string;
+  excludePiSessions: boolean;
   setBrowseData: SetState<BrowseResponse | null>;
   setPreviewData: SetState<PreviewResponse | null>;
   setLoadingBrowse: SetState<boolean>;
@@ -137,6 +170,8 @@ type ChatWorkspaceActionParams = {
   setSemanticResults: SetState<SemanticSearchMatch[]>;
   setSemanticProjects: SetState<string[]>;
   setSemanticSearching: SetState<boolean>;
+  setSessionSearchHits: SetState<MemorySearchHit[]>;
+  setSessionSearchMode: SetState<string>;
   setSyncingWorkspace: SetState<boolean>;
   setWorkspaceSourceId: SetState<string | null>;
   setWorkspaceJob: SetState<WorkspaceJob | null>;
@@ -169,12 +204,13 @@ type ChatWorkspaceActionParams = {
 };
 
 export function createChatWorkspaceActions({
-  activeActorId,
   visibleAgentIds,
   currentPath,
   showFiles,
   browseData,
   semanticQuery,
+  sessionActorFilter,
+  excludePiSessions,
   setBrowseData,
   setPreviewData,
   setLoadingBrowse,
@@ -182,6 +218,8 @@ export function createChatWorkspaceActions({
   setSemanticResults,
   setSemanticProjects,
   setSemanticSearching,
+  setSessionSearchHits,
+  setSessionSearchMode,
   setSyncingWorkspace,
   setWorkspaceSourceId,
   setWorkspaceJob,
@@ -262,20 +300,36 @@ export function createChatWorkspaceActions({
     if (!trimmed) {
       setSemanticResults([]);
       setSemanticProjects([]);
+      setSessionSearchHits([]);
+      setSessionSearchMode("none");
       return;
     }
 
     setSemanticSearching(true);
+    const actorId = normalizedSessionActorFilter(sessionActorFilter) ?? undefined;
+    const excludeActorIds = excludedSessionActorIds(sessionActorFilter, excludePiSessions);
     try {
-      const response = await fetch("/api/ingestion/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: trimmed, role: "workspace", path, limit: 30 }),
-      });
-      if (!response.ok) throw new Error(`Semantic search failed: ${response.status}`);
-      const data = (await response.json()) as SemanticSearchResponse;
-      setSemanticResults(data.rows);
-      setSemanticProjects(data.projects);
+      const [fileResult, sessionResult] = await Promise.all([
+        (async () => {
+          const response = await fetch("/api/ingestion/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ q: trimmed, role: "workspace", path, limit: 30 }),
+          });
+          if (!response.ok) throw new Error(`Semantic search failed: ${response.status}`);
+          return (await response.json()) as SemanticSearchResponse;
+        })(),
+        searchMemory({
+          query: trimmed,
+          k: 8,
+          actorId,
+          excludeActorIds,
+        }),
+      ]);
+      setSemanticResults(fileResult.rows);
+      setSemanticProjects(fileResult.projects);
+      setSessionSearchHits(sessionResult.hits);
+      setSessionSearchMode(sessionResult.mode);
     } catch (error) {
       appendConsoleLine(`[semantic] failed: ${(error as Error).message}`);
     } finally {
@@ -360,12 +414,17 @@ export function createChatWorkspaceActions({
   const refreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
     try {
-      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: 0, actorId: activeActorId });
+      const page = await listMemorySessions({
+        limit: RECENT_SESSION_PAGE_SIZE,
+        offset: 0,
+        actorId: normalizedSessionActorFilter(sessionActorFilter) ?? undefined,
+        excludeActorIds: excludedSessionActorIds(sessionActorFilter, excludePiSessions),
+      });
       const preservedTail = remoteRecentSessionsRef.current.filter((item) => !page.rows.some((row) => row.session === item.session));
       const remoteMerged = mergeSessionPages(page.rows, preservedTail);
       remoteRecentSessionsRef.current = remoteMerged;
       const localVisible = listPersistedChatSessions(sessionStateKey)
-        .filter((item) => persistedSessionVisibleForActor(sessionStateKey, item, activeActorId, visibleAgentIds));
+        .filter((item) => persistedSessionVisibleForFilter(sessionStateKey, item, sessionActorFilter, excludePiSessions, visibleAgentIds));
       const merged = sortSessions(mergeSessionPages(remoteMerged, localVisible));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
@@ -389,12 +448,13 @@ export function createChatWorkspaceActions({
       const page = await listMemorySessions({
         limit: RECENT_SESSION_PAGE_SIZE,
         offset: remoteRecentSessionsRef.current.length,
-        actorId: activeActorId,
+        actorId: normalizedSessionActorFilter(sessionActorFilter) ?? undefined,
+        excludeActorIds: excludedSessionActorIds(sessionActorFilter, excludePiSessions),
       });
       const remoteMerged = mergeSessionPages(remoteRecentSessionsRef.current, page.rows);
       remoteRecentSessionsRef.current = remoteMerged;
       const localVisible = listPersistedChatSessions(sessionStateKey)
-        .filter((item) => persistedSessionVisibleForActor(sessionStateKey, item, activeActorId, visibleAgentIds));
+        .filter((item) => persistedSessionVisibleForFilter(sessionStateKey, item, sessionActorFilter, excludePiSessions, visibleAgentIds));
       const merged = sortSessions(mergeSessionPages(remoteMerged, localVisible));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);

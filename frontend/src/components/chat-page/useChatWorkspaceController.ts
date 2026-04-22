@@ -16,8 +16,10 @@ import {
 } from "./workspace-sync-constants";
 import { useChatSessionRecovery } from "./hooks";
 import type {
+  ActorCatalogItem,
   AgentContractCatalogItem,
   ChatMessage,
+  MemorySearchHit,
   MemorySessionSummary,
   ProxxModelInfo,
   RunDetail,
@@ -37,8 +39,30 @@ const SCRATCHPAD_STATE_KEY = "knoxx_scratchpad_state";
 const PINNED_CONTEXT_KEY = "knoxx_pinned_context";
 const CHAT_SESSION_STATE_KEY = "knoxx_chat_session_state";
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_chat_sidebar_width_px";
+const SESSION_ACTOR_FILTER_KEY = "knoxx_session_actor_filter";
+const EXCLUDE_PI_SESSIONS_KEY = "knoxx_exclude_pi_sessions";
 const DEFAULT_ROLE = "executive";
 const SEND_UI_GUARD_TIMEOUT_MS = 30 * 60 * 1000;
+
+function readStoredString(key: string, fallback: string): string {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value && value.trim().length > 0 ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  try {
+    const value = window.localStorage.getItem(key);
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export type ChatWorkspaceControllerOptions = {
   initialShowCanvas?: boolean;
@@ -88,6 +112,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
 
   const [activeRole, setActiveRole] = useState(defaultRole);
   const [activeActorId, setActiveActorId] = useState(defaultActorId);
+  const [availableActors, setAvailableActors] = useState<ActorCatalogItem[]>([]);
   const [activeAgentId, setActiveAgentId] = useState("");
   const [availableAgents, setAvailableAgents] = useState<AgentContractCatalogItem[]>([]);
   const [toolCatalog, setToolCatalog] = useState<ToolCatalogResponse | null>(null);
@@ -120,6 +145,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [semanticResults, setSemanticResults] = useState<SemanticSearchMatch[]>([]);
   const [semanticProjects, setSemanticProjects] = useState<string[]>([]);
   const [semanticSearching, setSemanticSearching] = useState(false);
+  const [sessionSearchHits, setSessionSearchHits] = useState<MemorySearchHit[]>([]);
+  const [sessionSearchMode, setSessionSearchMode] = useState("none");
   const [syncingWorkspace, setSyncingWorkspace] = useState(false);
   const [workspaceSourceId, setWorkspaceSourceId] = useState<string | null>(null);
   const [workspaceJob, setWorkspaceJob] = useState<WorkspaceJob | null>(null);
@@ -148,6 +175,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [sidebarWidthPx, setSidebarWidthPx] = useState(initialSidebarWidthPx);
   const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState("docs");
+  const [sessionActorFilter, setSessionActorFilter] = useState(() => readStoredString(SESSION_ACTOR_FILTER_KEY, "all"));
+  const [excludePiSessions, setExcludePiSessions] = useState(() => readStoredBoolean(EXCLUDE_PI_SESSIONS_KEY, true));
   const [statsTotal, setStatsTotal] = useState(0);
   const [statsByVisibility, setStatsByVisibility] = useState<Record<string, number>>({});
   const sendTimeoutRef = useRef<number | null>(null);
@@ -347,12 +376,13 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     resumeMemorySession,
     runSemanticSearch,
   } = createChatWorkspaceActions({
-    activeActorId,
     visibleAgentIds: new Set(availableAgents.map((agent) => agent.id)),
     currentPath,
     showFiles: true,
     browseData,
     semanticQuery,
+    sessionActorFilter,
+    excludePiSessions,
     setBrowseData,
     setPreviewData,
     setLoadingBrowse,
@@ -360,6 +390,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setSemanticResults,
     setSemanticProjects,
     setSemanticSearching,
+    setSessionSearchHits,
+    setSessionSearchMode,
     setSyncingWorkspace,
     setWorkspaceSourceId,
     setWorkspaceJob,
@@ -396,7 +428,30 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     void refreshRecentSessions();
     // refreshRecentSessions is recreated each render; session/actor/agent catalog changes are the intended triggers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, activeActorId, availableAgents]);
+  }, [sessionId, activeActorId, availableAgents, sessionActorFilter, excludePiSessions]);
+
+  useEffect(() => {
+    if (!semanticQuery.trim()) {
+      setSessionSearchHits([]);
+      setSessionSearchMode("none");
+    }
+  }, [semanticQuery]);
+
+  useEffect(() => {
+    if (!semanticQuery.trim()) return;
+    void runSemanticSearch(semanticQuery);
+    // runSemanticSearch is recreated each render; actor filter changes are the intentional retrigger here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionActorFilter, excludePiSessions]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SESSION_ACTOR_FILTER_KEY, sessionActorFilter);
+      window.localStorage.setItem(EXCLUDE_PI_SESSIONS_KEY, String(excludePiSessions));
+    } catch {
+      // ignore storage failures
+    }
+  }, [excludePiSessions, sessionActorFilter]);
 
   useChatPageConfig({
     defaultRole,
@@ -406,6 +461,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     activeAgentId,
     setActiveRole,
     setActiveActorId,
+    setAvailableActors,
     setActiveAgentId,
     setAvailableAgents,
     setToolCatalog,
@@ -501,6 +557,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setActiveRole,
     activeActorId,
     setActiveActorId,
+    availableActors,
     activeAgentId,
     setActiveAgentId,
     availableAgents,
@@ -543,6 +600,10 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     semanticProjects,
     setSemanticProjects,
     semanticSearching,
+    sessionSearchHits,
+    setSessionSearchHits,
+    sessionSearchMode,
+    setSessionSearchMode,
     workspaceSourceId,
     workspaceJob,
     recentSessions,
@@ -558,6 +619,10 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setVisibilityFilter,
     kindFilter,
     setKindFilter,
+    sessionActorFilter,
+    setSessionActorFilter,
+    excludePiSessions,
+    setExcludePiSessions,
     statsTotal,
     statsByVisibility,
     syncingWorkspace,

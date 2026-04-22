@@ -11,3 +11,9 @@
   (let [rows [{:extra "{}"}]]
     (is (true? (core-memory/session-visible-for-page-actor? {} rows "chat_primary")))
     (is (false? (core-memory/session-visible-for-page-actor? {} rows "cms_chat")))))
+
+(deftest session-matches-page-actor-filter-prefers-recorded-actor-id
+  (let [rows [{:extra "{\"actor_id\":\"pi\",\"contract_actors\":[\"chat_primary\",\"cms_chat\"]}"}]]
+    (is (true? (core-memory/session-matches-page-actor-filter? {} rows "pi" [])))
+    (is (false? (core-memory/session-matches-page-actor-filter? {} rows "cms_chat" [])))
+    (is (false? (core-memory/session-matches-page-actor-filter? {} rows nil ["pi"])))))

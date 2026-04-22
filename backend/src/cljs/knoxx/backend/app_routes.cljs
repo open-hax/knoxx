@@ -6,7 +6,7 @@
             [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access! ensure-session-id resume-recovered-session!]]
             [knoxx.backend.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
             [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
-            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-visible-for-page-actor? filter-authorized-memory-hits! authorized-session-ids!]]
+            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.contracts-routes :as contracts-routes]
             [knoxx.backend.document-routes :as document-routes]
             [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers require-openai-key! fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
@@ -332,7 +332,7 @@
                                           :cache-session-title! cache-session-title!
                                           :normalize-session-title normalize-session-title
                                           :session-visible? session-visible?
-                                          :session-visible-for-page-actor? session-visible-for-page-actor?
+                                          :session-matches-page-actor-filter? session-matches-page-actor-filter?
                                           :openplanner-memory-search! openplanner-memory-search!
                                           :filter-authorized-memory-hits! filter-authorized-memory-hits!
                                           :ctx-permitted? ctx-permitted?

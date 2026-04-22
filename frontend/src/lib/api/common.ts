@@ -242,7 +242,7 @@ export async function listActiveAgents(limit = 25): Promise<ActiveAgentSummary[]
   return data.runs;
 }
 
-export async function listMemorySessions(params: { limit?: number; offset?: number; actorId?: string } = {}): Promise<MemorySessionListResponse> {
+export async function listMemorySessions(params: { limit?: number; offset?: number; actorId?: string; excludeActorIds?: string[] } = {}): Promise<MemorySessionListResponse> {
   const query = new URLSearchParams();
   query.set("limit", String(params.limit ?? 12));
   if (typeof params.offset === "number" && params.offset > 0) {
@@ -250,6 +250,9 @@ export async function listMemorySessions(params: { limit?: number; offset?: numb
   }
   if (params.actorId) {
     query.set("actorId", params.actorId);
+  }
+  if (params.excludeActorIds && params.excludeActorIds.length > 0) {
+    query.set("excludeActorIds", params.excludeActorIds.join(","));
   }
   return request<MemorySessionListResponse>(`/api/memory/sessions?${query.toString()}`);
 }
@@ -272,7 +275,7 @@ export async function getAgentHistorySession(sessionId: string): Promise<{ sessi
   return request<{ session: string; rows: MemorySessionRow[] }>(`/api/openplanner/v1/sessions/${encodeURIComponent(sessionId)}?project=knoxx-session&mode=full`);
 }
 
-export async function searchMemory(payload: { query: string; k?: number; sessionId?: string }): Promise<{ query: string; mode: string; hits: MemorySearchHit[] }> {
+export async function searchMemory(payload: { query: string; k?: number; sessionId?: string; actorId?: string; excludeActorIds?: string[] }): Promise<{ query: string; mode: string; hits: MemorySearchHit[] }> {
   return request<{ query: string; mode: string; hits: MemorySearchHit[] }>("/api/memory/search", {
     method: "POST",
     body: JSON.stringify(payload),

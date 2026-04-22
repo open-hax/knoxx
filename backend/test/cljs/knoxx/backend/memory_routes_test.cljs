@@ -25,12 +25,13 @@
           fetch-openplanner-session-rows! (fn [_config session-id]
                                             (swap! session-row-fetches* conj session-id)
                                             (js/Promise.resolve [{:extra "{}"}]))
-          session-visible-for-page-actor? (fn [_config _rows _actor-id] true)]
+          session-matches-page-actor-filter? (fn [_config _rows _actor-id _exclude-actor-ids] true)]
       (-> (memory-routes/fetch-authorized-session-pages! {} {} "chat_primary"
+                                                         []
                                                          openplanner-request!
                                                          authorized-session-ids!
                                                          fetch-openplanner-session-rows!
-                                                         session-visible-for-page-actor?
+                                                         session-matches-page-actor-filter?
                                                          1
                                                          0
                                                          []
@@ -41,6 +42,38 @@
                      (is (= ["s1" "s2" "s3"] @session-row-fetches*))
                      (is (= ["s1" "s2" "s3"] (mapv :session (:rows result))))
                      (is (true? (:has_more result))))))
+          (.catch (fn [err]
+                    (is nil (str "unexpected rejection: " err))))
+          (.finally (fn [] (done)))))))
+
+(deftest fetch-authorized-session-pages-honors-excluded-actors
+  (async done
+    (let [pages {0 {:rows [{:session "s1"} {:session "s2"}] :has_more false}}
+          openplanner-request! (fn [_config _method _path]
+                                 (js/Promise.resolve (get pages 0)))
+          authorized-session-ids! (fn [_config _ctx session-ids]
+                                    (js/Promise.resolve (set (map str session-ids))))
+          fetch-openplanner-session-rows! (fn [_config session-id]
+                                            (js/Promise.resolve [{:extra (if (= session-id "s1")
+                                                                           "{\"actor_id\":\"pi\"}"
+                                                                           "{\"actor_id\":\"chat_primary\"}")}]))
+          session-matches-page-actor-filter? (fn [_config rows _actor-id exclude-actor-ids]
+                                               (not-any? #(= "pi" %) exclude-actor-ids)
+                                               (not= "pi"
+                                                     (some-> rows first :extra js/JSON.parse (aget "actor_id"))))]
+      (-> (memory-routes/fetch-authorized-session-pages! {} {} nil
+                                                         ["pi"]
+                                                         openplanner-request!
+                                                         authorized-session-ids!
+                                                         fetch-openplanner-session-rows!
+                                                         session-matches-page-actor-filter?
+                                                         10
+                                                         0
+                                                         []
+                                                         10)
+          (.then (fn [result]
+                   (let [result (js->clj result :keywordize-keys true)]
+                     (is (= ["s2"] (mapv :session (:rows result)))))))
           (.catch (fn [err]
                     (is nil (str "unexpected rejection: " err))))
           (.finally (fn [] (done)))))))
