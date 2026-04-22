@@ -42,6 +42,7 @@ describe("chat session persistence helpers", () => {
     initializePersistedChatSession(SESSION_STATE_KEY, "session-new", "conversation-new", {
       selectedModel: "gemma4:e4b",
       systemPrompt: "stay grounded",
+      activeAgentId: "knoxx_default",
     });
 
     const [entry] = listPersistedChatSessions(SESSION_STATE_KEY);
@@ -50,6 +51,14 @@ describe("chat session persistence helpers", () => {
     expect(entry.local_only).toBe(true);
     expect(entry.title).toBe("New chat");
     expect(entry.active_status).toBe("inactive");
+  });
+
+  it("persists the active agent id with the chat session", () => {
+    initializePersistedChatSession(SESSION_STATE_KEY, "session-agent", "conversation-agent", {
+      activeAgentId: "knoxx_default",
+    });
+
+    expect(readPersistedChatSessionSnapshot(SESSION_STATE_KEY, "session-agent")?.activeAgentId).toBe("knoxx_default");
   });
 
   it("derives a readable title from the first user message", () => {

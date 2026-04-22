@@ -190,6 +190,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setSystemPrompt,
     selectedModel,
     setSelectedModel,
+    activeAgentId,
+    setActiveAgentId,
     conversationId,
     setConversationId,
     messages,

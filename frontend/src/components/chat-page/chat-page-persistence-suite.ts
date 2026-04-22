@@ -18,6 +18,8 @@ type UseChatPagePersistenceSuiteParams = {
   setSystemPrompt: SetState<string>;
   selectedModel: string;
   setSelectedModel: SetState<string>;
+  activeAgentId: string;
+  setActiveAgentId: SetState<string>;
   conversationId: string | null;
   setConversationId: SetState<string | null>;
   messages: ChatMessage[];
@@ -64,6 +66,8 @@ export function useChatPagePersistenceSuite({
   setSystemPrompt,
   selectedModel,
   setSelectedModel,
+  activeAgentId,
+  setActiveAgentId,
   conversationId,
   setConversationId,
   messages,
@@ -109,6 +113,8 @@ export function useChatPagePersistenceSuite({
     setSystemPrompt,
     selectedModel,
     setSelectedModel,
+    activeAgentId,
+    setActiveAgentId,
     conversationId,
     setConversationId,
     messages,

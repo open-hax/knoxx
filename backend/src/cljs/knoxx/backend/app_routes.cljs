@@ -23,7 +23,7 @@
             [knoxx.backend.session-titles :refer [start-session-title-backfill! session-title-backfill* session-titles* get-cached-session-title! session-title-seed-text heuristic-session-title stored-session-title-entry cache-session-title-entry! resolve-session-title! cache-session-title! normalize-session-title]]
             [knoxx.backend.text :refer [count-occurrences replace-first clip-text]]
             [knoxx.backend.tool-routes :as tool-routes]
-            [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled? resolve-agent-contract agent-contract-catalog]]
+            [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled? effective-agent-contract agent-contract-catalog default-agent-contract-id]]
             [knoxx.backend.turn-control :as turn-control]
             [knoxx.backend.voice-routes :as voice-routes]
             [knoxx.backend.translation-routes :as translation-routes]))
@@ -31,12 +31,13 @@
 (defn- merged-agent-spec
   [config parsed]
   (let [requested (or (:agent-spec parsed) {})
-        contract-id (get requested :contract-id)
-        resolved (when contract-id
-                   (resolve-agent-contract config contract-id))]
+        requested-contract-id (or (get requested :contract-id)
+                                  (default-agent-contract-id config))
+        resolved (effective-agent-contract config requested-contract-id)
+        resolved-id (:id resolved)]
     (cond-> (merge (select-keys resolved [:role :model :system-prompt :thinking-level :tool-policies])
                    requested)
-      contract-id (assoc :contract-id contract-id))))
+      resolved-id (assoc :contract-id resolved-id))))
 
 (defn- requested-role
   [parsed]
@@ -192,7 +193,7 @@
              :shibboleth_enabled (and (not (str/blank? (:shibboleth-base-url config)))
                                       (not (str/blank? (:shibboleth-ui-url config))))
               :default_role (:knoxx-default-role config)
-              :default_agent_contract (:knoxx-default-agent-contract config)
+              :default_agent_contract (default-agent-contract-id config)
               :email_enabled (email-enabled? config)
               :rbac_enabled (policy-db-enabled? runtime)})))
 
@@ -202,7 +203,7 @@
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (json-response! reply 200 {:agents (agent-contract-catalog config)
-                                           :default_agent_contract (:knoxx-default-agent-contract config)})))))
+                                           :default_agent_contract (default-agent-contract-id config)})))))
 
   (route! app "GET" "/api/auth/context"
           (fn [request reply]

@@ -266,6 +266,7 @@ export function createChatRuntimeActions({
       initializePersistedChatSession(sessionStateKey, nextSessionId, nextConversationId, {
         selectedModel,
         systemPrompt,
+        activeAgentId,
       });
     } catch {
       // ignore storage failures

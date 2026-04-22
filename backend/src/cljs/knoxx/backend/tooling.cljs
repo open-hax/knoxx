@@ -111,6 +111,18 @@
          (sort-by (fn [entry] [(:trigger-kind entry) (:id entry)]))
          vec)))
 
+(defn default-agent-contract-id
+  [config]
+  (let [configured (some-> (:knoxx-default-agent-contract config) str str/trim not-empty)]
+    (cond
+      (and configured (resolve-agent-contract config configured)) configured
+      :else (some-> (agent-contract-catalog config) first :id))))
+
+(defn effective-agent-contract
+  [config requested-contract-id]
+  (or (some-> requested-contract-id (resolve-agent-contract config))
+      (some-> (default-agent-contract-id config) (resolve-agent-contract config))))
+
 (defn ensure-role-can-use!
   ([role tool-id]
    (ensure-role-can-use! nil role tool-id nil))
@@ -118,8 +130,7 @@
    (ensure-role-can-use! auth-context role tool-id nil))
   ([auth-context role tool-id agent-contract-id]
    (let [config (current-config)
-         contract-spec (when agent-contract-id
-                         (resolve-agent-contract config agent-contract-id))
+         contract-spec (effective-agent-contract config agent-contract-id)
          normalized (roles/normalize-role config (or (:role contract-spec) role))
          contract-tool-ids (some-> contract-spec :tool-ids set)
          role-tool-ids (set (roles/role-tool-ids config normalized))
@@ -142,8 +153,7 @@
   ([config role auth-context agent-contract-id]
    (let [email? (email-enabled? config)
          discord? (discord-enabled? config)
-         contract-spec (when agent-contract-id
-                         (resolve-agent-contract config agent-contract-id))
+         contract-spec (effective-agent-contract config agent-contract-id)
          normalized (roles/normalize-role config (or (:role contract-spec) role))
          allowed-tool-ids (cond
                             auth-context (let [base (auth-tool-ids auth-context)]

@@ -75,6 +75,7 @@ export type SessionStateSnapshot = {
   sessionId?: string;
   systemPrompt?: string;
   selectedModel?: string;
+  activeAgentId?: string;
   conversationId?: string | null;
   messages?: RunDetail["request_messages"] | unknown;
   latestRun?: RunDetail | null;
