@@ -219,7 +219,7 @@ export function ChatMainPane({
 
   return (
     <>
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--token-monokai-bg-default)' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden', background: 'var(--token-monokai-bg-default)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
           {!showFiles ? <Button variant="ghost" size="sm" onClick={onShowFiles}>Files</Button> : null}
           <Button variant="ghost" size="sm" onClick={onToggleSettings}>Settings</Button>
