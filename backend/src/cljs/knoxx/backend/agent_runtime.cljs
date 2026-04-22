@@ -195,7 +195,7 @@
                      (when-let [agent-message (stored-session-message->agent-message message)]
                        (.appendMessage session-manager agent-message)))
                    #js {:sessionManager session-manager
-                        :restored (boolean (seq merged-messages))})))))
+                        :restored (boolean (seq merged-messages))}))))))
 
 (defn request-stream-body
   [request]
@@ -290,31 +290,31 @@
    (create-agent-session! runtime config conversation-id model-id auth-context thinking-level nil))
   ([runtime config conversation-id model-id auth-context thinking-level session-id]
    (-> (ensure-sdk-runtime! runtime config)
-      (.then
-       (fn [sdk-runtime]
-         (let [sdk (aget runtime "sdk")
-               SessionManager (aget sdk "SessionManager")
-               createAgentSession (aget sdk "createAgentSession")
+       (.then
+        (fn [sdk-runtime]
+          (let [sdk (aget runtime "sdk")
+                SessionManager (aget sdk "SessionManager")
+                createAgentSession (aget sdk "createAgentSession")
                 model-registry (aget sdk-runtime "modelRegistry")
                 auth-storage (aget sdk-runtime "authStorage")
                 loader (aget sdk-runtime "loader")
                 settings-manager (aget sdk-runtime "settingsManager")
                 thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
-                                                                                 thinking-level
-                                                                                 (:agent-thinking-level config)
-                                                                                 "off"))
+                                                                            thinking-level
+                                                                            (:agent-thinking-level config)
+                                                                            "off"))
                 model (or (.find model-registry "proxx" model-id)
                           (.find model-registry "proxx" (:proxx-default-model config)))
                 create-session (fn [session-manager]
                                  (-> (createAgentSession
                                       #js {:cwd (:workspace-root config)
-                                          :agentDir (aget sdk-runtime "runtimeDir")
-                                          :authStorage auth-storage
-                                          :modelRegistry model-registry
-                                          :resourceLoader loader
-                                          :settingsManager settings-manager
-                                          :sessionManager session-manager
-                                          :model model
+                                           :agentDir (aget sdk-runtime "runtimeDir")
+                                           :authStorage auth-storage
+                                           :modelRegistry model-registry
+                                           :resourceLoader loader
+                                           :settingsManager settings-manager
+                                           :sessionManager session-manager
+                                           :model model
                                            :thinkingLevel thinking-level
                                            :tools (clj->js (create-runtime-tools runtime config auth-context))
                                            :customTools (create-knoxx-custom-tools runtime config auth-context)})
@@ -322,16 +322,16 @@
                                               (let [session (aget result "session")]
                                                 (.setThinkingLevel session thinking-level)
                                                 session)))))]
-             (if (no-content? model)
-               (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))
-               (let [session-manager (.inMemory SessionManager (:workspace-root config))]
-                 (when-not (str/blank? (str (or session-id "")))
-                   (.newSession session-manager #js {:id (str session-id)}))
-                 (.appendModelChange session-manager "proxx" model-id)
-                 (.appendThinkingLevelChange session-manager thinking-level)
-                 (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id)
-                     (.then (fn [result]
-                              (create-session (aget result "sessionManager"))))))))))))))
+            (if (no-content? model)
+              (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))
+              (let [session-manager (.inMemory SessionManager (:workspace-root config))]
+                (when-not (str/blank? (str (or session-id "")))
+                  (.newSession session-manager #js {:id (str session-id)}))
+                (.appendModelChange session-manager "proxx" model-id)
+                (.appendThinkingLevelChange session-manager thinking-level)
+                (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id)
+                    (.then (fn [result]
+                             (create-session (aget result "sessionManager")))))))))))))
 
 (defn- visible-tool-signature
   [runtime config auth-context]
