@@ -1,7 +1,7 @@
 (ns knoxx.backend.agent-turns
   (:require [clojure.string :as str]
             [knoxx.backend.agent-hydration :refer [settings-state* ensure-settings! passive-hydration! passive-memory-hydration! build-agent-user-message build-agent-multimodal-message hydration-sources]]
-            [knoxx.backend.agent-runtime :refer [ensure-agent-session! remove-agent-session!]]
+            [knoxx.backend.agent-runtime :refer [ensure-agent-session! remove-agent-session! sync-system-message]]
             [knoxx.backend.authz :as authz :refer [auth-snapshot auth-snapshot-has-principal?]]
             [knoxx.backend.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
             [knoxx.backend.openplanner-memory :as openplanner-memory]
@@ -171,11 +171,7 @@
 
 (defn- ensure-system-message
   [messages agent-spec]
-  (let [system-prompt (requested-system-prompt agent-spec)
-        has-system? (boolean (some #(= "system" (some-> (:role %) str str/lower-case)) messages))]
-    (if (or (str/blank? system-prompt) has-system?)
-      (vec messages)
-      (into [{:role "system" :content system-prompt}] messages))))
+  (sync-system-message messages (requested-system-prompt agent-spec)))
 
 (defn- agent-spec-summary
   [agent-spec]
@@ -590,7 +586,7 @@
                                           (assoc :updated_at (now-iso)))))
                        (append-run-event! run-id memory-event)
                        (broadcast-ws-session! session-id "events" memory-event)))
-                   (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
+                   (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
                      (.then (fn [session]
                               (let [persisted-request-messages (transcript-before-prompt session user-message agent-spec)
                                     _ (session-store/update-session! (redis/get-client)
@@ -1037,7 +1033,7 @@
                            :reason "missing session or conversation id"})
 
       (str/blank? message)
-      (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
+      (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
           (.then (fn [_]
                    (-> (session-store/update-session! (redis/get-client) session-id
                                                      {:status "waiting_input"

@@ -2199,7 +2199,16 @@
   ([runtime config] (create-mcp-custom-tools runtime config nil))
   ([runtime config auth-context]
    (if (and (:mcp-enabled config) (mcp/available?) (mcp/enabled?))
-     (or (mcp/mcp-tools-for-agent) #js [])
+     (let [tools (if-let [items (mcp/mcp-tools-for-agent)]
+                   (if (array? items) (array-seq items) [])
+                   [])]
+       (into-array
+        (if (nil? auth-context)
+          tools
+          (filter (fn [tool]
+                    (when-let [tool-id (some-> tool (aget "name") str str/trim not-empty)]
+                      (ctx-tool-allowed? auth-context tool-id)))
+                  tools))))
      #js [])))
 
 (defn create-contract-custom-tools

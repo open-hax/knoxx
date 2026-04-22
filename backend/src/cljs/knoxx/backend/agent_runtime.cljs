@@ -173,29 +173,53 @@
                     :else (recur (dec n))))]
     (into base (subvec overlay overlap))))
 
+(defn sync-system-message
+  [messages system-prompt]
+  (let [items (vec (or messages []))
+        prompt (some-> system-prompt str str/trim not-empty)]
+    (if-not prompt
+      items
+      (let [system-index (reduce-kv (fn [_ idx entry]
+                                      (when (= "system" (some-> (:role entry) str str/lower-case))
+                                        (reduced idx)))
+                                    nil
+                                    items)]
+        (if (some? system-index)
+          (let [updated (assoc items system-index {:role "system" :content prompt})]
+            (->> updated
+                 (keep-indexed (fn [idx entry]
+                                 (when (or (not= "system" (some-> (:role entry) str str/lower-case))
+                                           (= idx system-index))
+                                   entry)))
+                 vec))
+          (into [{:role "system" :content prompt}] items))))))
+
 (defn rehydrate-session-manager-from-redis!
-  [config session-manager conversation-id]
-  (let [redis-client (redis/get-client)]
-    (-> (.all js/Promise
-              #js [(fetch-openplanner-session-messages! config conversation-id)
-                   (if (or (str/blank? conversation-id) (nil? redis-client))
-                     (js/Promise.resolve [])
-                     (-> (session-store/get-conversation-active-session redis-client conversation-id)
-                         (.then (fn [session-id]
-                                  (if (str/blank? (str (or session-id "")))
-                                    []
-                                    (-> (session-store/get-session redis-client session-id)
-                                        (.then (fn [session]
-                                                 (vec (or (:messages session) []))))))))))])
-        (.then (fn [parts]
-                 (let [openplanner-messages (vec (or (aget parts 0) []))
-                       redis-messages (vec (or (aget parts 1) []))
-                       merged-messages (merge-restored-session-messages openplanner-messages redis-messages)]
-                   (doseq [message merged-messages]
-                     (when-let [agent-message (stored-session-message->agent-message message)]
-                       (.appendMessage session-manager agent-message)))
-                   #js {:sessionManager session-manager
-                        :restored (boolean (seq merged-messages))}))))))
+  ([config session-manager conversation-id]
+   (rehydrate-session-manager-from-redis! config session-manager conversation-id nil))
+  ([config session-manager conversation-id agent-spec]
+   (let [redis-client (redis/get-client)]
+     (-> (.all js/Promise
+               #js [(fetch-openplanner-session-messages! config conversation-id)
+                    (if (or (str/blank? conversation-id) (nil? redis-client))
+                      (js/Promise.resolve [])
+                      (-> (session-store/get-conversation-active-session redis-client conversation-id)
+                          (.then (fn [session-id]
+                                   (if (str/blank? (str (or session-id "")))
+                                     []
+                                     (-> (session-store/get-session redis-client session-id)
+                                         (.then (fn [session]
+                                                  (vec (or (:messages session) []))))))))))])
+         (.then (fn [parts]
+                  (let [openplanner-messages (vec (or (aget parts 0) []))
+                        redis-messages (vec (or (aget parts 1) []))
+                        merged-messages (-> (merge-restored-session-messages openplanner-messages redis-messages)
+                                            (sync-system-message (:system-prompt agent-spec)))]
+                    (doseq [message merged-messages]
+                      (when-let [agent-message (stored-session-message->agent-message message)]
+                        (.appendMessage session-manager agent-message)))
+                    #js {:sessionManager session-manager
+                         :restored (boolean (seq merged-messages))})))))))
 
 (defn request-stream-body
   [request]
@@ -289,6 +313,8 @@
   ([runtime config conversation-id model-id auth-context thinking-level]
    (create-agent-session! runtime config conversation-id model-id auth-context thinking-level nil))
   ([runtime config conversation-id model-id auth-context thinking-level session-id]
+   (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id nil))
+  ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec]
    (-> (ensure-sdk-runtime! runtime config)
        (.then
         (fn [sdk-runtime]
@@ -329,12 +355,12 @@
                   (.newSession session-manager #js {:id (str session-id)}))
                 (.appendModelChange session-manager "proxx" model-id)
                 (.appendThinkingLevelChange session-manager thinking-level)
-                (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id)
+                (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id agent-spec)
                     (.then (fn [result]
                              (create-session (aget result "sessionManager")))))))))))))
 
-(defn- visible-tool-signature
-  [runtime config auth-context]
+(defn- visible-session-signature
+  [runtime config auth-context agent-spec]
   (let [name-of (fn [tool]
                   (or (some-> tool (aget "name") str str/trim not-empty)
                       (some-> tool (aget "id") str str/trim not-empty)
@@ -343,11 +369,16 @@
         custom-tools (if-let [tools (create-knoxx-custom-tools runtime config auth-context)]
                        (if (array? tools) (array-seq tools) [])
                        [])]
-    (->> (concat builtin-tools custom-tools)
-         (keep name-of)
-         sort
-         distinct
-         (str/join "|"))))
+    (pr-str {:tools (->> (concat builtin-tools custom-tools)
+                         (keep name-of)
+                         sort
+                         distinct
+                         vec)
+             :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
+             :actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)
+             :role (some-> (:role agent-spec) str str/trim not-empty)
+             :system-prompt (some-> (:system-prompt agent-spec) str str/trim not-empty)
+             :task-prompt (some-> (:task-prompt agent-spec) str str/trim not-empty)})))
 
 (defn ensure-agent-session!
   ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
@@ -355,34 +386,36 @@
   ([runtime config conversation-id model-id auth-context thinking-level]
    (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level nil))
   ([runtime config conversation-id model-id auth-context thinking-level session-id]
-  (let [thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
-                                                                        thinking-level
-                                                                        (:agent-thinking-level config)
-                                                                        "off"))
-        current-tool-signature (visible-tool-signature runtime config auth-context)]
-    (if-let [entry (get @agent-sessions* conversation-id)]
-      (let [session (:session entry)
-            active-model (:model-id entry)
-            active-tool-signature (:tool-signature entry)]
-        (if (and (some? session)
-                 (= (str active-model) (str model-id))
-                 (= (str (or active-tool-signature "")) (str (or current-tool-signature ""))))
-          (do
-            (.setThinkingLevel session thinking-level)
-            (js/Promise.resolve session))
-          ;; Model or tool access changed mid-conversation: rebuild session so the requested runtime is respected.
-          (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
-              (.then (fn [next-session]
-                       (swap! agent-sessions* assoc conversation-id {:session next-session
-                                                                     :model-id model-id
-                                                                     :tool-signature current-tool-signature})
-                       next-session)))))
-      (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
-          (.then (fn [session]
-                   (swap! agent-sessions* assoc conversation-id {:session session
-                                                                 :model-id model-id
-                                                                 :tool-signature current-tool-signature})
-                   session)))))))
+   (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id nil))
+  ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec]
+   (let [thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
+                                                                      thinking-level
+                                                                      (:agent-thinking-level config)
+                                                                      "off"))
+         current-tool-signature (visible-session-signature runtime config auth-context agent-spec)]
+     (if-let [entry (get @agent-sessions* conversation-id)]
+       (let [session (:session entry)
+             active-model (:model-id entry)
+             active-tool-signature (:tool-signature entry)]
+         (if (and (some? session)
+                  (= (str active-model) (str model-id))
+                  (= (str (or active-tool-signature "")) (str (or current-tool-signature ""))))
+           (do
+             (.setThinkingLevel session thinking-level)
+             (js/Promise.resolve session))
+           ;; Model or tool access changed mid-conversation: rebuild session so the requested runtime is respected.
+           (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
+               (.then (fn [next-session]
+                        (swap! agent-sessions* assoc conversation-id {:session next-session
+                                                                      :model-id model-id
+                                                                      :tool-signature current-tool-signature})
+                        next-session)))))
+       (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
+           (.then (fn [session]
+                    (swap! agent-sessions* assoc conversation-id {:session session
+                                                                  :model-id model-id
+                                                                  :tool-signature current-tool-signature})
+                    session)))))))
 
 (defn active-agent-session
   [conversation-id]

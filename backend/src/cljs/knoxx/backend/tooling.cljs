@@ -4,6 +4,7 @@
             [cljs.reader :as reader]
             [knoxx.backend.authz :as authz]
             [knoxx.backend.http :as backend-http]
+            [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.contract-loader :as contract-loader]
@@ -298,6 +299,9 @@
   ([config role auth-context agent-contract-id actor-id]
    (let [email? (email-enabled? config)
          discord? (discord-enabled? config)
+         live-mcp-tool-ids (if (and (:mcp-enabled config) (mcp/available?) (mcp/enabled?))
+                             (into #{} (map :id) (mcp/catalog))
+                             #{})
          contract-spec (effective-agent-contract config agent-contract-id actor-id)
          actor-spec (or (when actor-id (resolve-actor config actor-id))
                         (when-let [resolved-actor-id (:actor-id contract-spec)]
@@ -320,6 +324,7 @@
                                  :enabled (cond
                                             (= tool-id "email.send") email?
                                             (str/starts-with? tool-id "discord.") discord?
+                                            (str/starts-with? tool-id "mcp.") (contains? live-mcp-tool-ids tool-id)
                                             :else true)})))
                  (contains? allowed-tool-ids "semantic_query")
                  (conj {:id "graph_query"
