@@ -14,7 +14,19 @@
       (is (true? (:reasoning model))))))
 
 (deftest provider-model-config-keeps-gemma-on-chat-completions
-  (testing "non-responses families stay on OpenAI-compatible chat completions"
+  (testing "gemma-family models stay on OpenAI-compatible chat completions while exposing reasoning"
     (let [model (models/provider-model-config test-config "gemma4:31b")]
       (is (= "openai-completions" (:api model)))
-      (is (false? (:reasoning model))))))
+      (is (true? (:reasoning model))))))
+
+(deftest gemma-family-contract-enables-thinking-levels
+  (testing "family contracts allow gemma4 variants to request Knoxx thinking levels"
+    (let [model (models/provider-model-config test-config "gemma4:e4b")]
+      (is (= "openai-completions" (:api model)))
+      (is (true? (:reasoning model)))
+      (is (= {:supportsDeveloperRole false
+              :supportsReasoningEffort true}
+             (models/per-model-compat test-config "gemma4:e4b")))
+      (is (= "off" (models/effective-thinking-level test-config "gemma4:e4b" nil)))
+      (is (= "minimal" (models/effective-thinking-level test-config "gemma4:e4b" "minimal")))
+      (is (= "xhigh" (models/effective-thinking-level test-config "gemma4:e4b" "xhigh"))))))
