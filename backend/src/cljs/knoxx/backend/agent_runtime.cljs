@@ -268,6 +268,18 @@
                                       (.then (fn [openplanner-manager]
                                                (create-session openplanner-manager)))))))))))))))))
 
+(defn- tool-policy-signature
+  [auth-context]
+  (let [role-slugs (map str (or (:roleSlugs auth-context) []))]
+    (if (some #{"system_admin"} role-slugs)
+      "system_admin"
+      (->> (or (:toolPolicies auth-context) [])
+           (filter #(= "allow" (some-> (:effect %) str str/lower-case)))
+           (map :toolId)
+           (map str)
+           sort
+           (str/join "|")))))
+
 (defn ensure-agent-session!
   ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context] (ensure-agent-session! runtime config conversation-id model-id auth-context (:agent-thinking-level config)))
@@ -277,23 +289,30 @@
   (let [thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
                                                                         thinking-level
                                                                         (:agent-thinking-level config)
-                                                                        "off"))]
+                                                                        "off"))
+        current-tool-signature (tool-policy-signature auth-context)]
     (if-let [entry (get @agent-sessions* conversation-id)]
       (let [session (:session entry)
-            active-model (:model-id entry)]
+            active-model (:model-id entry)
+            active-tool-signature (:tool-signature entry)]
         (if (and (some? session)
-                 (= (str active-model) (str model-id)))
+                 (= (str active-model) (str model-id))
+                 (= (str (or active-tool-signature "")) (str (or current-tool-signature ""))))
           (do
             (.setThinkingLevel session thinking-level)
             (js/Promise.resolve session))
-          ;; Model changed mid-conversation: rebuild session so the requested model is respected.
+          ;; Model or tool access changed mid-conversation: rebuild session so the requested runtime is respected.
           (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
               (.then (fn [next-session]
-                       (swap! agent-sessions* assoc conversation-id {:session next-session :model-id model-id})
+                       (swap! agent-sessions* assoc conversation-id {:session next-session
+                                                                     :model-id model-id
+                                                                     :tool-signature current-tool-signature})
                        next-session)))))
       (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
           (.then (fn [session]
-                   (swap! agent-sessions* assoc conversation-id {:session session :model-id model-id})
+                   (swap! agent-sessions* assoc conversation-id {:session session
+                                                                 :model-id model-id
+                                                                 :tool-signature current-tool-signature})
                    session)))))))
 
 (defn active-agent-session
