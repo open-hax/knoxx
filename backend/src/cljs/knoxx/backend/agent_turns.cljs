@@ -114,6 +114,15 @@
       (seq (:tool-policies agent-spec)) (assoc :toolPolicies (vec (:tool-policies agent-spec)))
       (:resource-policies agent-spec) (assoc :resourcePolicies (:resource-policies agent-spec)))))
 
+(defn- diff-appended-text
+  [previous current]
+  (let [previous (str (or previous ""))
+        current (str (or current ""))]
+    (cond
+      (str/blank? current) ""
+      (str/starts-with? current previous) (.slice current (count previous))
+      :else current)))
+
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
   (let [node-crypto (aget runtime "crypto")
@@ -235,9 +244,45 @@
                    (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
                      (.then (fn [session]
                               (let [ttft-recorded? (atom false)
+                                    last-assistant-text* (atom "")
+                                    last-reasoning-text* (atom "")
                                     aborting? (atom false)
                                     abort-reason* (atom nil)
                                     tool-loop* (atom {:last nil :streak 0 :counts {}})
+                                    emit-streaming-delta! (fn [kind delta]
+                                                            (when (seq delta)
+                                                              (when (and (= kind :agent_message)
+                                                                         (not @ttft-recorded?))
+                                                                (reset! ttft-recorded? true)
+                                                                (let [ttft-ms (- (.now js/Date) started-ms)
+                                                                      ttft-event (tool-event-payload run-id conversation-id session-id "assistant_first_token"
+                                                                                                     {:status "streaming"
+                                                                                                      :ttft_ms ttft-ms})]
+                                                                  (update-run! run-id #(assoc % :ttft_ms ttft-ms))
+                                                                  (append-run-event! run-id ttft-event)
+                                                                  (broadcast-ws-session! session-id "events" ttft-event)
+                                                                  (session-store/mark-session-streaming! (redis/get-client) session-id true)))
+                                                              (if (= kind :agent_message)
+                                                                (swap! chunks conj delta)
+                                                                (swap! reasoning-chunks conj delta))
+                                                              (append-run-trace-text! run-id kind delta (now-iso))
+                                                              (broadcast-ws-session! session-id "tokens"
+                                                                                     {:run_id run-id
+                                                                                      :conversation_id conversation-id
+                                                                                      :session_id session-id
+                                                                                      :kind (if (= kind :agent_message) "assistant_message" "reasoning")
+                                                                                      :token delta})))
+                                    sync-assistant-message! (fn [assistant-message]
+                                                             (when (and assistant-message
+                                                                        (= (aget assistant-message "role") "assistant"))
+                                                               (let [full-text (assistant-message-text assistant-message)
+                                                                     full-reasoning (assistant-message-reasoning-text assistant-message)
+                                                                     text-delta (diff-appended-text @last-assistant-text* full-text)
+                                                                     reasoning-delta (diff-appended-text @last-reasoning-text* full-reasoning)]
+                                                                 (reset! last-assistant-text* (str (or full-text "")))
+                                                                 (reset! last-reasoning-text* (str (or full-reasoning "")))
+                                                                 (emit-streaming-delta! :agent_message text-delta)
+                                                                 (emit-streaming-delta! :reasoning reasoning-delta))))
                                     request-abort! (fn [reason]
                                                      (let [reason (str (or reason "aborted"))]
                                                        (if @aborting?
@@ -269,26 +314,7 @@
                                                                   (cond
                                                                     (= assistant-event-type "text_delta")
                                                                     (let [delta (or (aget assistant-event "delta") "")]
-                                                                      (when-not @ttft-recorded?
-                                                                        (reset! ttft-recorded? true)
-                                                                        (let [ttft-ms (- (.now js/Date) started-ms)
-                                                                              ttft-event (tool-event-payload run-id conversation-id session-id "assistant_first_token"
-                                                                                                             {:status "streaming"
-                                                                                                              :ttft_ms ttft-ms})]
-                                                                          (update-run! run-id #(assoc % :ttft_ms ttft-ms))
-                                                                          (append-run-event! run-id ttft-event)
-                                                                          (broadcast-ws-session! session-id "events" ttft-event)
-                                                                          ;; Mark session as actively streaming in Redis
-                                                                          (session-store/mark-session-streaming! (redis/get-client) session-id true)))
-                                                                      (swap! chunks conj delta)
-                                                                      (when (seq delta)
-                                                                        (append-run-trace-text! run-id :agent_message delta (now-iso))
-                                                                        (broadcast-ws-session! session-id "tokens"
-                                                                                               {:run_id run-id
-                                                                                                :conversation_id conversation-id
-                                                                                                :session_id session-id
-                                                                                                :kind "assistant_message"
-                                                                                                :token delta})))
+                                                                      (emit-streaming-delta! :agent_message delta))
 
                                                                     (contains? #{"reasoning_delta" "reasoning" "reasoning_content_delta" "thinking_delta" "thinking"} assistant-event-type)
                                                                     (let [delta (or (aget assistant-event "delta")
@@ -296,17 +322,12 @@
                                                                                     (aget assistant-event "reasoning")
                                                                                     (aget assistant-event "thinking")
                                                                                     "")]
-                                                                      (when (seq delta)
-                                                                        (swap! reasoning-chunks conj delta)
-                                                                        (append-run-trace-text! run-id :reasoning delta (now-iso))
-                                                                        (broadcast-ws-session! session-id "tokens"
-                                                                                               {:run_id run-id
-                                                                                                :conversation_id conversation-id
-                                                                                                :session_id session-id
-                                                                                                :kind "reasoning"
-                                                                                                :token delta})))
+                                                                      (emit-streaming-delta! :reasoning delta))
 
-                                                                    :else nil))
+                                                                    :else (sync-assistant-message! (aget event "message"))))
+
+                                                                (= event-type "message_end")
+                                                                (sync-assistant-message! (aget event "message"))
 
                                                                 (= event-type "tool_execution_start")
                                                                 (let [tool-name (or (aget event "toolName") "tool")
