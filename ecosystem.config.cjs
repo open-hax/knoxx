@@ -2,8 +2,8 @@
  * Knoxx PM2 ecosystem
  *
  * Runs all three Knoxx services on the host for source-mapped debugging:
- *   1. knoxx-shadow    — shadow-cljs watch (compiles CLJS → dist/)
- *   2. knoxx-backend   — node src/server.mjs (auto-restarts on dist/ changes)
+ *   1. knoxx-shadow    — shadow-cljs watch with source maps (compiles CLJS → dist/)
+ *   2. knoxx-backend   — node src/server.mjs with source-map stack traces
  *   3. knoxx-frontend  — vite dev server with HMR + API proxy to backend
  *   4. knoxx-ingestion — clojure -M:run (kms-ingestion on port 3003)
  *
@@ -81,7 +81,9 @@ module.exports = {
       name: 'knoxx-shadow',
       cwd: backendDir,
       script: 'pnpm',
-      args: 'watch',
+      // Force source maps in the watch build so dist/*.map stays available
+      // even if the underlying shadow config drifts.
+      args: 'exec shadow-cljs --source-maps watch app',
       watch: false,
       autorestart: true,
       max_restarts: 10,
@@ -96,6 +98,7 @@ module.exports = {
       name: 'knoxx-backend',
       cwd: backendDir,
       script: 'src/server.mjs',
+      node_args: '--enable-source-maps',
       wait_ready: true,
       listen_timeout: 15000,
       kill_timeout: 35000,
