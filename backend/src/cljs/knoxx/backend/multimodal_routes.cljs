@@ -8,6 +8,8 @@
             [knoxx.backend.http :refer [json-response! error-response! js-array-seq]]
             [knoxx.backend.util.time :refer [now-iso]]))
 
+(declare fs-mkdir!)
+
 (def ^:private upload-dir "uploads/multimodal")
 (def ^:private max-file-size-bytes (* 100 1024 1024)) ;; 100MB
 
@@ -55,7 +57,7 @@
         node-path (aget runtime "path")
         upload-path (.join node-path upload-dir)]
     (.then
-     (.mkdir node-fs upload-path #js {:recursive true})
+     (fs-mkdir! node-fs upload-path #js {:recursive true})
      (fn [] upload-path))))
 
 (defn- fs-readdir!
@@ -69,6 +71,10 @@
 (defn- fs-read-file!
   [^js node-fs path]
   (.readFile node-fs path))
+
+(defn- fs-write-buffer!
+  [^js node-fs path content]
+  (.writeFile node-fs path content))
 
 (defn- reply-header!
   [^js reply name value]
@@ -92,13 +98,13 @@
                    (let [dot-idx (str/last-index-of safe-name ".")]
                      (subs safe-name dot-idx))
                    "")
-             stored-name (str file-id ext)
-             abs-path (.join node-path upload-path stored-name)]
+            stored-name (str file-id ext)
+            abs-path (.join node-path upload-path stored-name)]
          (.then
           (.arrayBuffer (js/Response. (aget file-part "file")))
           (fn [buf]
             (.then
-             (.writeFile node-fs abs-path (.from js/Buffer buf))
+             (fs-write-buffer! node-fs abs-path (.from js/Buffer buf))
              (fn []
                {:file_id file-id
                 :filename safe-name

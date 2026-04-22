@@ -1,6 +1,6 @@
 (ns knoxx.backend.agent-runtime
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-hydration :refer [create-knoxx-custom-tools]]
+            [knoxx.backend.agent-hydration :refer [create-agent-custom-tools]]
             [knoxx.backend.http :as http]
             [knoxx.backend.http :refer [no-content? request-query-string request-forward-headers request-forward-body]]
             [knoxx.backend.redis-client :as redis]
@@ -8,7 +8,7 @@
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
             [knoxx.backend.runtime.models :refer [normalize-thinking-level effective-thinking-level models-config allowlisted-model-id?]]
             [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.tooling :refer [create-runtime-tools]]))
+            [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]))
 
 (defonce sdk-runtime* (atom nil))
 (defonce agent-sessions* (atom {}))
@@ -331,6 +331,11 @@
                                                                             "off"))
                 model (or (.find model-registry "proxx" model-id)
                           (.find model-registry "proxx" (:proxx-default-model config)))
+                allowed-tool-ids (allowed-tool-id-set config
+                                                      (:role agent-spec)
+                                                      auth-context
+                                                      (:contract-id agent-spec)
+                                                      (:actor-id agent-spec))
                 create-session (fn [session-manager]
                                  (-> (createAgentSession
                                       #js {:cwd (:workspace-root config)
@@ -342,8 +347,8 @@
                                            :sessionManager session-manager
                                            :model model
                                            :thinkingLevel thinking-level
-                                           :tools (clj->js (create-runtime-tools runtime config auth-context))
-                                           :customTools (create-knoxx-custom-tools runtime config auth-context)})
+                                           :tools (clj->js (create-runtime-tools runtime config auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)))
+                                           :customTools (create-agent-custom-tools runtime config auth-context agent-spec allowed-tool-ids)})
                                      (.then (fn [result]
                                               (let [session (aget result "session")]
                                                 (.setThinkingLevel session thinking-level)
@@ -365,8 +370,13 @@
                   (or (some-> tool (aget "name") str str/trim not-empty)
                       (some-> tool (aget "id") str str/trim not-empty)
                       (some-> tool (aget "label") str str/trim not-empty)))
-        builtin-tools (or (create-runtime-tools runtime config auth-context) [])
-        custom-tools (if-let [tools (create-knoxx-custom-tools runtime config auth-context)]
+        allowed-tool-ids (allowed-tool-id-set config
+                                              (:role agent-spec)
+                                              auth-context
+                                              (:contract-id agent-spec)
+                                              (:actor-id agent-spec))
+        builtin-tools (or (create-runtime-tools runtime config auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)) [])
+        custom-tools (if-let [tools (create-agent-custom-tools runtime config auth-context agent-spec allowed-tool-ids)]
                        (if (array? tools) (array-seq tools) [])
                        [])]
     (pr-str {:tools (->> (concat builtin-tools custom-tools)

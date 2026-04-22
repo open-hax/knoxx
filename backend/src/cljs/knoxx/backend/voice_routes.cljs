@@ -60,6 +60,8 @@
          "?output_format="
          (js/encodeURIComponent (str fmt)))))
 
+(declare ws-on! app-route!)
+
 (defn- message-data->string
   [value]
   (cond
@@ -130,7 +132,7 @@
 
 (defn- register-voice-ws-route!
   [app config]
-  (.route app
+  (app-route! app
           #js {:method "GET"
                :url "/ws/voice/tts"
                :handler (fn [_request reply]
@@ -148,9 +150,9 @@
                                                           (.send upstream (.stringify js/JSON #js {:text ""}))
                                                           (catch :default _ nil)))
                                                       (ws-close! upstream 1000 "client_reset")))]
-                              (.on client "close" (fn [] (close-upstream!)))
-                              (.on client "error" (fn [_] (close-upstream!)))
-                              (.on client "message"
+                              (ws-on! client "close" (fn [] (close-upstream!)))
+                              (ws-on! client "error" (fn [_] (close-upstream!)))
+                              (ws-on! client "message"
                                    (fn [data]
                                      (try
                                        (let [msg (.parse js/JSON (message-data->string data))
@@ -256,6 +258,14 @@
 (defn- reply-header!
   [^js reply name value]
   (.header reply name value))
+
+(defn- ws-on!
+  [^js socket event-name handler]
+  (.on socket event-name handler))
+
+(defn- app-route!
+  [^js app opts]
+  (.route app opts))
 
 (defn register-voice-routes!
   [app runtime config handlers]
