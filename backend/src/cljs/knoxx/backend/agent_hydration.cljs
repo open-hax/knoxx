@@ -64,6 +64,10 @@
   [^js node-fs path]
   (.stat node-fs path))
 
+(defn- type-optional
+  [^js Type schema]
+  (.Optional Type schema))
+
 (defn- os-tmpdir
   [^js node-os]
   (.tmpdir node-os))
@@ -257,7 +261,9 @@
                           (str/replace #"_+" "_"))]
     (when (and sanitized (not= sanitized name))
       (aset tool "name" sanitized)
-      (aset tool "originalName" name))
+      (aset tool "originalName" name)
+      (when-let [description (some-> (aget tool "description") str)]
+        (aset tool "description" (str description " Original tool id: " name "."))))
     tool))
 
 (defn- sanitize-custom-tools
@@ -565,7 +571,7 @@
                         (ctx-tool-allowed? auth-context tool-id)))
          upload-params (.Object Type
                                #js {:source (.String Type #js {:description "Workspace path, URL, or data URL for the media to load."})
-                                    :title (.Optional Type (.String Type #js {:description "Optional human-readable title for the media."}))})
+                                    :title (type-optional Type (.String Type #js {:description "Optional human-readable title for the media."}))})
          upload-execute (fn [_tool-call-id params a b c]
                           (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                 source (or (aget params "source") "")
@@ -613,7 +619,7 @@
                         (ctx-tool-allowed? auth-context tool-id)))
          attach-params (.Object Type
                                 #js {:path (.String Type #js {:description "Workspace-relative path to the image, audio file, video, or document to attach."})
-                                     :title (.Optional Type (.String Type #js {:description "Optional human-readable label for the attachment."}))})
+                                     :title (type-optional Type (.String Type #js {:description "Optional human-readable label for the attachment."}))})
          attach-execute (fn [_tool-call-id params a b c]
                           (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                 raw-path (or (aget params "path") "")
@@ -707,11 +713,11 @@
    (let [Type (aget runtime "Type")
          query-params (.Object Type
                                #js {:query (.String Type #js {:description "Natural-language semantic search query for the active Knoxx corpus."})
-                                    :topK (.Optional Type (.Number Type #js {:description "Maximum number of matches to return." :minimum 1 :maximum 10}))
-                                    :maxSnippetChars (.Optional Type (.Number Type #js {:description "Maximum snippet length per hit." :minimum 160 :maximum 1200}))})
+                                    :topK (type-optional Type (.Number Type #js {:description "Maximum number of matches to return." :minimum 1 :maximum 10}))
+                                    :maxSnippetChars (type-optional Type (.Number Type #js {:description "Maximum snippet length per hit." :minimum 160 :maximum 1200}))})
          read-params (.Object Type
                               #js {:path (.String Type #js {:description "Relative document path returned by semantic_query or visible in the active corpus."})
-                                   :maxChars (.Optional Type (.Number Type #js {:description "Maximum characters of document content to return." :minimum 500 :maximum 20000}))})
+                                   :maxChars (type-optional Type (.Number Type #js {:description "Maximum characters of document content to return." :minimum 500 :maximum 20000}))})
          semantic-query-tool #js {:name "semantic_query"
                                   :label "Semantic Query"
                                   :description "Search the active Knoxx knowledge corpus for semantically relevant documents and snippets."
@@ -1279,7 +1285,7 @@
                                        #js {:file_path (.String Type #js {:description "Workspace path, URL, or data URL for the audio file to identify."})})
          acoustid-params (.Object Type
                                   #js {:fingerprint (.String Type #js {:description "AcoustID fingerprint string."})
-                                       :duration (.Optional Type (.Number Type #js {:description "Duration in seconds (default 25)."}))})
+                                       :duration (type-optional Type (.Number Type #js {:description "Duration in seconds (default 25)."}))})
          musicbrainz-params (.Object Type
                                      #js {:mbid (.String Type #js {:description "MusicBrainz recording ID (MBID)."})})
          copyright-params (.Object Type
@@ -1363,9 +1369,9 @@
 
          audio-params (.Object Type
                                #js {:source (.String Type #js {:description "Path or URL to the audio file."})
-                                    :width (.Optional Type (.Number Type #js {:description "Output width in pixels."}))
-                                    :height (.Optional Type (.Number Type #js {:description "Output height in pixels."}))
-                                    :title (.Optional Type (.String Type #js {:description "Optional filename/title for the rendered image."}))})]
+                                    :width (type-optional Type (.Number Type #js {:description "Output width in pixels."}))
+                                    :height (type-optional Type (.Number Type #js {:description "Output height in pixels."}))
+                                    :title (type-optional Type (.String Type #js {:description "Optional filename/title for the rendered image."}))})]
 
      (clj->js
       (vec
@@ -1443,25 +1449,25 @@
                     (or (nil? auth-context)
                         (ctx-tool-allowed? auth-context tool-id)))
          openutau-note-params (.Object Type
-                                      #js {:lyric (.Optional Type (.String Type #js {:description "Lyric to place on the note. Use + or +~ for slurs when needed."}))
-                                           :phonetic_hint (.Optional Type (.String Type #js {:description "Optional OpenUtau phonetic hint without brackets, e.g. 'l aa'."}))
+                                      #js {:lyric (type-optional Type (.String Type #js {:description "Lyric to place on the note. Use + or +~ for slurs when needed."}))
+                                           :phonetic_hint (type-optional Type (.String Type #js {:description "Optional OpenUtau phonetic hint without brackets, e.g. 'l aa'."}))
                                            :tone (.Number Type #js {:description "MIDI note number, where C4 = 60."})
                                            :duration (.Number Type #js {:description "Note duration in ticks. OpenUtau uses 480 ticks per quarter note."})
-                                           :position (.Optional Type (.Number Type #js {:description "Optional start tick. If omitted, notes are placed sequentially."}))})
+                                           :position (type-optional Type (.Number Type #js {:description "Optional start tick. If omitted, notes are placed sequentially."}))})
          time-signature-params (.Object Type
-                                       #js {:beat_per_bar (.Optional Type (.Number Type #js {:description "Time signature numerator."}))
-                                            :beat_unit (.Optional Type (.Number Type #js {:description "Time signature denominator."}))})
+                                       #js {:beat_per_bar (type-optional Type (.Number Type #js {:description "Time signature numerator."}))
+                                            :beat_unit (type-optional Type (.Number Type #js {:description "Time signature denominator."}))})
          openutau-project-params (.Object Type
                                          #js {:project_name (.String Type #js {:description "Human-readable OpenUtau project name."})
                                               :notes (.Array Type openutau-note-params #js {:description "Ordered note plan for the OpenUtau vocal part."})
-                                              :tempo (.Optional Type (.Number Type #js {:description "Tempo in BPM. Defaults to 120."}))
-                                              :time_signature (.Optional Type time-signature-params)
-                                              :singer_id (.Optional Type (.String Type #js {:description "Optional OpenUtau singer id/folder name. Leave blank to choose in the UI later."}))
-                                              :phonemizer (.Optional Type (.String Type #js {:description "Optional OpenUtau phonemizer class/tag. Leave blank to choose in the UI later."}))
-                                              :track_name (.Optional Type (.String Type #js {:description "Optional vocal track name."}))
-                                              :part_name (.Optional Type (.String Type #js {:description "Optional voice part name."}))
-                                              :output_path (.Optional Type (.String Type #js {:description "Optional workspace-relative output path for the .ustx file."}))
-                                              :comment (.Optional Type (.String Type #js {:description "Optional project comment embedded in the .ustx file."}))})
+                                              :tempo (type-optional Type (.Number Type #js {:description "Tempo in BPM. Defaults to 120."}))
+                                              :time_signature (type-optional Type time-signature-params)
+                                              :singer_id (type-optional Type (.String Type #js {:description "Optional OpenUtau singer id/folder name. Leave blank to choose in the UI later."}))
+                                              :phonemizer (type-optional Type (.String Type #js {:description "Optional OpenUtau phonemizer class/tag. Leave blank to choose in the UI later."}))
+                                              :track_name (type-optional Type (.String Type #js {:description "Optional vocal track name."}))
+                                              :part_name (type-optional Type (.String Type #js {:description "Optional voice part name."}))
+                                              :output_path (type-optional Type (.String Type #js {:description "Optional workspace-relative output path for the .ustx file."}))
+                                              :comment (type-optional Type (.String Type #js {:description "Optional project comment embedded in the .ustx file."}))})
          openutau-project-execute (fn [_tool-call-id params a b c]
                                     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                                           project-name (or (normalize-tool-path-arg (aget params "project_name")) "Knoxx OpenUtau Project")
@@ -1543,32 +1549,32 @@
          send-params (.Object Type
                               #js {:channel_id (.String Type #js {:description "Discord channel ID to send the message to. Use discord.list.channels to discover IDs."})
                                    :text (.String Type #js {:description "Message content to send. Long messages will be chunked automatically."})
-                                   :reply_to (.Optional Type (.String Type #js {:description "Optional message ID to reply to."}))
-                                   :attachment_urls (.Optional Type (.Array Type (.String Type) #js {:description "Optional attachment URLs to fetch and upload into the Discord message."}))})
+                                   :reply_to (type-optional Type (.String Type #js {:description "Optional message ID to reply to."}))
+                                   :attachment_urls (type-optional Type (.Array Type (.String Type) #js {:description "Optional attachment URLs to fetch and upload into the Discord message."}))})
          channel-messages-params (.Object Type
                                           #js {:channel_id (.String Type #js {:description "Discord channel ID to fetch messages from."})
-                                               :limit (.Optional Type (.Number Type #js {:description "Maximum number of messages to fetch (default 50, max 100)." :minimum 1 :maximum 100}))
-                                               :before (.Optional Type (.String Type #js {:description "Fetch messages before this message ID."}))
-                                               :after (.Optional Type (.String Type #js {:description "Fetch messages after this message ID."}))
-                                               :around (.Optional Type (.String Type #js {:description "Fetch messages around this message ID."}))})
+                                               :limit (type-optional Type (.Number Type #js {:description "Maximum number of messages to fetch (default 50, max 100)." :minimum 1 :maximum 100}))
+                                               :before (type-optional Type (.String Type #js {:description "Fetch messages before this message ID."}))
+                                               :after (type-optional Type (.String Type #js {:description "Fetch messages after this message ID."}))
+                                               :around (type-optional Type (.String Type #js {:description "Fetch messages around this message ID."}))})
          channel-scroll-params (.Object Type
                                         #js {:channel_id (.String Type #js {:description "Discord channel ID to fetch older messages from."})
                                              :oldest_seen_id (.String Type #js {:description "Oldest message ID already seen; fetch messages before this."})
-                                             :limit (.Optional Type (.Number Type #js {:description "Maximum number of older messages to fetch." :minimum 1 :maximum 100}))})
+                                             :limit (type-optional Type (.Number Type #js {:description "Maximum number of older messages to fetch." :minimum 1 :maximum 100}))})
          dm-messages-params (.Object Type
                                      #js {:user_id (.String Type #js {:description "Discord user ID whose DM channel should be read."})
-                                          :limit (.Optional Type (.Number Type #js {:description "Maximum number of DM messages to fetch." :minimum 1 :maximum 100}))
-                                          :before (.Optional Type (.String Type #js {:description "Fetch DM messages before this message ID."}))})
+                                          :limit (type-optional Type (.Number Type #js {:description "Maximum number of DM messages to fetch." :minimum 1 :maximum 100}))
+                                          :before (type-optional Type (.String Type #js {:description "Fetch DM messages before this message ID."}))})
          search-params (.Object Type
                                 #js {:scope (.String Type #js {:description "Search scope: channel or dm."})
-                                     :channel_id (.Optional Type (.String Type #js {:description "Discord channel ID to search when scope=channel."}))
-                                     :user_id (.Optional Type (.String Type #js {:description "Discord user ID to search against when scope=dm or to filter author."}))
-                                     :query (.Optional Type (.String Type #js {:description "Optional substring query to filter messages by content."}))
-                                     :limit (.Optional Type (.Number Type #js {:description "Maximum number of matching messages to return." :minimum 1 :maximum 100}))
-                                     :before (.Optional Type (.String Type #js {:description "Fetch messages before this message ID."}))
-                                     :after (.Optional Type (.String Type #js {:description "Fetch messages after this message ID."}))})
+                                     :channel_id (type-optional Type (.String Type #js {:description "Discord channel ID to search when scope=channel."}))
+                                     :user_id (type-optional Type (.String Type #js {:description "Discord user ID to search against when scope=dm or to filter author."}))
+                                     :query (type-optional Type (.String Type #js {:description "Optional substring query to filter messages by content."}))
+                                     :limit (type-optional Type (.Number Type #js {:description "Maximum number of matching messages to return." :minimum 1 :maximum 100}))
+                                     :before (type-optional Type (.String Type #js {:description "Fetch messages before this message ID."}))
+                                     :after (type-optional Type (.String Type #js {:description "Fetch messages after this message ID."}))})
          list-channels-params (.Object Type
-                                       #js {:guild_id (.Optional Type (.String Type #js {:description "Optional guild/server ID. If omitted, returns channels across all visible guilds."}))})
+                                       #js {:guild_id (type-optional Type (.String Type #js {:description "Optional guild/server ID. If omitted, returns channels across all visible guilds."}))})
          empty-params (.Object Type #js {})
          status-params (.Object Type #js {})
          run-job-params (.Object Type
@@ -1576,7 +1582,7 @@
          dispatch-params (.Object Type
                                   #js {:source_kind (.String Type #js {:description "Event source kind such as manual, discord, github, or cron."})
                                        :event_kind (.String Type #js {:description "Event kind string such as manual.note or discord.message.keyword."})
-                                       :payload_json (.Optional Type (.String Type #js {:description "Optional JSON object payload for the event."}))})
+                                       :payload_json (type-optional Type (.String Type #js {:description "Optional JSON object payload for the event."}))})
          upsert-job-params (.Object Type
                                     #js {:job_id (.String Type #js {:description "Unique event-agent job id."})
                                          :job_json (.String Type #js {:description "JSON object describing the event-agent job. Fields may include name, description, enabled, trigger, source, filters, and agentSpec."})})
@@ -1721,7 +1727,7 @@
                                                        "If replying in-thread, prefer discord.send with reply_to."]))
                     (aset "parameters" (.Object Type #js {:channelId (.String Type #js {:description "Discord channel ID to post the message to."})
                                                            :content (.String Type #js {:description "Message content to post to the Discord channel."})
-                                                           :attachmentUrls (.Optional Type (.Array Type (.String Type) #js {:description "Optional attachment URLs to upload with the message."}))}))
+                                                           :attachmentUrls (type-optional Type (.Array Type (.String Type) #js {:description "Optional attachment URLs to upload with the message."}))}))
                     (aset "execute" (fn [tool-call-id params a b c]
                                        (discord-send-execute tool-call-id #js {:channel_id (aget params "channelId")
                                                                                :text (aget params "content")
@@ -1746,7 +1752,7 @@
                     (aset "promptGuidelines" (clj->js ["Use discord.read as a simple alias for discord.channel.messages."
                                                        "For pagination or cursors, use discord.channel.messages or discord.channel.scroll directly."]))
                     (aset "parameters" (.Object Type #js {:channelId (.String Type #js {:description "Discord channel ID to read messages from."})
-                                                           :limit (.Optional Type (.Number Type #js {:description "Maximum number of messages to return." :minimum 1 :maximum 100}))}))
+                                                           :limit (type-optional Type (.Number Type #js {:description "Maximum number of messages to return." :minimum 1 :maximum 100}))}))
                     (aset "execute" (fn [tool-call-id params a b c]
                                        (discord-channel-messages-execute tool-call-id #js {:channel_id (aget params "channelId")
                                                                                            :limit (aget params "limit")}
@@ -1956,23 +1962,23 @@
    (let [Type (aget runtime "Type")
          search-params (.Object Type
                                 #js {:query (.String Type #js {:description "Semantic memory search across prior Knoxx sessions and actions indexed in OpenPlanner."})
-                                     :k (.Optional Type (.Number Type #js {:description "Maximum number of memory hits to return." :minimum 1 :maximum 8}))
-                                     :sessionId (.Optional Type (.String Type #js {:description "Optional conversation/session id to scope the search."}))})
+                                     :k (type-optional Type (.Number Type #js {:description "Maximum number of memory hits to return." :minimum 1 :maximum 8}))
+                                     :sessionId (type-optional Type (.String Type #js {:description "Optional conversation/session id to scope the search."}))})
          graph-params (.Object Type
                                #js {:query (.String Type #js {:description "Search text for canonical graph nodes across OpenPlanner lakes."})
-                                    :lake (.Optional Type (.String Type #js {:description "Optional lake/project filter such as devel, web, bluesky, or knoxx-session."}))
-                                    :nodeType (.Optional Type (.String Type #js {:description "Optional node_type filter such as docs, code, visited, assistant_message, tool_result, or reasoning."}))
-                                    :limit (.Optional Type (.Number Type #js {:description "Maximum number of graph nodes to return." :minimum 1 :maximum 20}))
-                                    :edgeLimit (.Optional Type (.Number Type #js {:description "Maximum number of incident edges to include." :minimum 0 :maximum 60}))})
+                                    :lake (type-optional Type (.String Type #js {:description "Optional lake/project filter such as devel, web, bluesky, or knoxx-session."}))
+                                    :nodeType (type-optional Type (.String Type #js {:description "Optional node_type filter such as docs, code, visited, assistant_message, tool_result, or reasoning."}))
+                                    :limit (type-optional Type (.Number Type #js {:description "Maximum number of graph nodes to return." :minimum 1 :maximum 20}))
+                                    :edgeLimit (type-optional Type (.Number Type #js {:description "Maximum number of incident edges to include." :minimum 0 :maximum 60}))})
          websearch-params (.Object Type
                                    #js {:query (.String Type #js {:description "Live web search query routed through Proxx websearch."})
-                                        :numResults (.Optional Type (.Number Type #js {:description "Maximum number of results to return." :minimum 1 :maximum 20}))
-                                        :searchContextSize (.Optional Type (.String Type #js {:description "Search context size: low, medium, or high."}))
-                                        :allowedDomains (.Optional Type (.Array Type (.String Type) #js {:description "Optional domain allowlist."}))
-                                        :model (.Optional Type (.String Type #js {:description "Optional Proxx/OpenAI model override for search."}))})
+                                        :numResults (type-optional Type (.Number Type #js {:description "Maximum number of results to return." :minimum 1 :maximum 20}))
+                                        :searchContextSize (type-optional Type (.String Type #js {:description "Search context size: low, medium, or high."}))
+                                        :allowedDomains (type-optional Type (.Array Type (.String Type) #js {:description "Optional domain allowlist."}))
+                                        :model (type-optional Type (.String Type #js {:description "Optional Proxx/OpenAI model override for search."}))})
          web-read-params (.Object Type
                                   #js {:url (.String Type #js {:description "Web link or attachment URL to fetch and read."})
-                                       :maxChars (.Optional Type (.Number Type #js {:description "Maximum number of characters to return." :minimum 200 :maximum 20000}))})
+                                       :maxChars (type-optional Type (.Number Type #js {:description "Maximum number of characters to return." :minimum 200 :maximum 20000}))})
          session-params (.Object Type
                                  #js {:sessionId (.String Type #js {:description "Knoxx conversation/session id stored in OpenPlanner."})})
          ;; save_translation params
@@ -1982,13 +1988,13 @@
                                           :source_lang (.String Type #js {:description "Source language code (e.g. 'en')"})
                                           :target_lang (.String Type #js {:description "Target language code (e.g. 'es')"})
                                           :document_id (.String Type #js {:description "Document ID being translated"})
-                                          :garden_id (.Optional Type (.String Type #js {:description "Garden ID"}))
-                                          :project (.Optional Type (.String Type #js {:description "Project name"}))
+                                          :garden_id (type-optional Type (.String Type #js {:description "Garden ID"}))
+                                          :project (type-optional Type (.String Type #js {:description "Project name"}))
                                           :segment_index (.Number Type #js {:description "0-based segment index"})})
          create-file-params (.Object Type
-                                    #js {:title (.Optional Type (.String Type #js {:description "Human-readable title for the new artifact."}))
-                                         :path (.Optional Type (.String Type #js {:description "Relative path for the new file inside the active docs root."}))
-                                         :content (.Optional Type (.String Type #js {:description "Initial markdown content to write into the new file."}))})
+                                    #js {:title (type-optional Type (.String Type #js {:description "Human-readable title for the new artifact."}))
+                                         :path (type-optional Type (.String Type #js {:description "Relative path for the new file inside the active docs root."}))
+                                         :content (type-optional Type (.String Type #js {:description "Initial markdown content to write into the new file."}))})
          node-fs (aget runtime "fs")
          node-path (aget runtime "path")
          slugify (fn [value]
@@ -2257,8 +2263,10 @@
     tools
     (into-array
      (filter (fn [tool]
-               (when-let [tool-id (some-> tool (aget "name") str str/trim not-empty)]
-                 (contains? allowed-tool-ids tool-id)))
+               (let [runtime-id (some-> tool (aget "name") str str/trim not-empty)
+                     original-id (some-> tool (aget "originalName") str str/trim not-empty)]
+                 (or (and runtime-id (contains? allowed-tool-ids runtime-id))
+                     (and original-id (contains? allowed-tool-ids original-id)))))
              (js-array-seq tools)))))
 
 (defn agent-custom-tool-suite
@@ -2362,4 +2370,4 @@
   ([runtime config auth-context agent-spec allowed-tool-ids]
    (case (agent-custom-tool-suite agent-spec)
      :contract-librarian (create-contract-librarian-tools runtime config auth-context allowed-tool-ids)
-     (create-knoxx-custom-tools runtime config auth-context allowed-tool-ids))))
+     (apply create-knoxx-custom-tools [runtime config auth-context allowed-tool-ids]))))
