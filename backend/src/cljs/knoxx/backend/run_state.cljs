@@ -191,6 +191,65 @@
                                (append-limited items (f base) 40)
                                (assoc items idx (f (merge base (nth items idx)))))))))))
 
+(defn- preview-present?
+  [value]
+  (when (string? value)
+    (let [trimmed (str/trim value)
+          lowered (str/lower-case trimmed)]
+      (and (not (str/blank? trimmed))
+           (not= lowered "null")
+           (not= lowered "undefined")))))
+
+(defn backfill-run-tool-input-preview!
+  [run-id receipt-id tool-name input-preview]
+  (when (and (string? receipt-id) (seq receipt-id) (preview-present? input-preview))
+    (update-run! run-id
+                 (fn [run]
+                   (let [receipt-items (vec (:tool_receipts run))
+                         receipt-idx (first (keep-indexed (fn [i receipt]
+                                                            (when (= (:id receipt) receipt-id)
+                                                              i))
+                                                          receipt-items))
+                         next-receipt (if (number? receipt-idx)
+                                        (cond-> (nth receipt-items receipt-idx)
+                                          (not (preview-present? (:input_preview (nth receipt-items receipt-idx))))
+                                          (assoc :input_preview input-preview)
+                                          (and (not (seq (:tool_name (nth receipt-items receipt-idx)))) (seq tool-name))
+                                          (assoc :tool_name tool-name))
+                                        {:id receipt-id
+                                         :tool_name tool-name
+                                         :status "running"
+                                         :input_preview input-preview})
+                         next-receipts (if (number? receipt-idx)
+                                         (assoc receipt-items receipt-idx next-receipt)
+                                         (append-limited receipt-items next-receipt 40))
+                         block-items (vec (:trace_blocks run))
+                         block-idx (first (keep-indexed (fn [i block]
+                                                          (when (and (= (:kind block) :tool_call)
+                                                                     (or (= (:toolCallId block) receipt-id)
+                                                                         (= (:id block) (str "tool:" receipt-id))))
+                                                            i))
+                                                        block-items))
+                         next-block (if (number? block-idx)
+                                      (cond-> (nth block-items block-idx)
+                                        (not (preview-present? (:inputPreview (nth block-items block-idx))))
+                                        (assoc :inputPreview input-preview)
+                                        (and (not (seq (:toolName (nth block-items block-idx)))) (seq tool-name))
+                                        (assoc :toolName tool-name))
+                                      {:id (str "tool:" receipt-id)
+                                       :kind :tool_call
+                                       :toolName tool-name
+                                       :toolCallId receipt-id
+                                       :status "streaming"
+                                       :inputPreview input-preview
+                                       :updates []})
+                         next-blocks (if (number? block-idx)
+                                       (assoc block-items block-idx next-block)
+                                       (conj block-items next-block))]
+                     (assoc run
+                            :tool_receipts next-receipts
+                            :trace_blocks next-blocks))))))
+
 (defn tool-event-payload
   [run-id conversation-id session-id type extra]
   (merge {:run_id run-id
@@ -237,18 +296,17 @@
   "Get run events from Redis that occurred after the given timestamp.
    Returns a promise resolving to a vector of events.
    Events are stored newest-first in Redis (LPUSH), so we reverse for chronological order."
-  [run-id since-timestamp]
-  (let [redis-client (redis/get-client)]
-    (if (nil? redis-client)
-      (js/Promise.resolve [])
-      (-> (redis/lrange-json redis-client (run-events-key run-id) 0 -1)
+  [redis-client run-id since-timestamp]
+  (if-not redis-client
+    (js/Promise.resolve [])
+    (let [key (run-events-key run-id)]
+      (-> (redis/lrange-json redis-client key 0 (dec RUN_EVENTS_MAX))
           (.then (fn [events]
-                   (if (str/blank? since-timestamp)
-                     (vec (reverse events))
-                     (->> (reverse events)
-                          (filter (fn [event]
-                                    (let [at (:at event)]
-                                      (and (string? at)
-                                           (> (compare at since-timestamp) 0)))))
-                          vec))))
-          (.catch (fn [_] []))))))
+                   (vec
+                    (filter (fn [event]
+                              (let [at (or (:at event) (aget event "at"))]
+                                (and at
+                                     (> (compare at since-timestamp) 0))))
+                            (reverse events)))))
+          (.catch (fn [_]
+                    []))))))

@@ -7,7 +7,7 @@
             [knoxx.backend.openplanner-memory :as openplanner-memory]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.run-state :refer [store-run! append-run-event! update-run! update-run-tool-receipt! append-limited latest-assistant-message record-retrieval-sample! tool-event-payload append-run-trace-text! apply-run-tool-trace-event! finalize-run-trace-blocks!]]
+            [knoxx.backend.run-state :refer [store-run! append-run-event! update-run! update-run-tool-receipt! backfill-run-tool-input-preview! append-limited latest-assistant-message record-retrieval-sample! tool-event-payload append-run-trace-text! apply-run-tool-trace-event! finalize-run-trace-blocks!]]
             [knoxx.backend.runtime.models :refer [effective-thinking-level normalize-thinking-level]]
             [knoxx.backend.util.time :refer [now-iso]]
             [knoxx.backend.session-store :as session-store]
@@ -31,7 +31,10 @@
 (defn- preview-text-nonblank
   "Like value->preview-text, but returns nil for blank previews so OR chains keep searching." 
   [value max-chars]
-  (some-> (value->preview-text value max-chars) nonblank))
+  (let [preview (some-> (value->preview-text value max-chars) nonblank)
+        lowered (some-> preview str/lower-case)]
+    (when-not (contains? #{"null" "undefined"} lowered)
+      preview)))
 
 (defn- fenced
   [lang text]
@@ -51,11 +54,24 @@
         args (when (and raw-args (not= raw-args js/undefined))
                (try
                  (js->clj raw-args :keywordize-keys true)
-                 (catch :default _ nil)))]
+                 (catch :default _ nil)))
+        arg-value (fn [& keys]
+                    (or (some (fn [k]
+                                (cond
+                                  (and (map? args) (keyword? k)) (get args k)
+                                  (and (map? args) (string? k)) (or (get args k) (get args (keyword k)))
+                                  :else nil))
+                              keys)
+                        (some (fn [k]
+                                (when (and raw-args
+                                           (not= raw-args js/undefined)
+                                           (or (object? raw-args) (fn? raw-args)))
+                                  (aget raw-args (if (keyword? k) (name k) (str k)))))
+                              keys)))]
     (cond
       (and (= tool-name "bash") (map? args))
-      (let [cmd (or (get args :command) (get args :cmd))
-            timeout (or (get args :timeout) (get args :timeoutSeconds) (get args :timeoutMs))]
+      (let [cmd (arg-value :command :cmd)
+            timeout (arg-value :timeout :timeoutSeconds :timeoutMs)]
         (when (and (string? cmd) (not (str/blank? cmd)))
           (let [[cmd clipped?] (clip-text cmd 20000)]
             (str
@@ -64,10 +80,10 @@
            (when (some? timeout)
              (str "\n\n- timeout: " timeout)))))
 
-      (and (= tool-name "read") (map? args))
-      (let [path (or (get args :path) (get args "path"))
-            offset (or (get args :offset) (get args "offset"))
-            limit (or (get args :limit) (get args "limit"))]
+      (= tool-name "read")
+      (let [path (arg-value :path "path")
+            offset (arg-value :offset "offset")
+            limit (arg-value :limit "limit")]
         (when (and (string? path) (not (str/blank? path)))
           (fenced "yaml"
                   (str "path: " path
@@ -75,6 +91,50 @@
                        "\nlimit: " (if (some? limit) limit "(default)"))))))
 
       :else nil)))
+
+(defn- copy-js-object
+  [value]
+  (when (and value
+             (not= value js/undefined)
+             (not (array? value))
+             (= "object" (goog/typeOf value)))
+    (let [copy (js-obj)
+          own-keys (distinct (concat (array-seq (.keys js/Object value))
+                                     (array-seq (.getOwnPropertyNames js/Object value))))]
+      (doseq [k own-keys]
+        (aset copy k (aget value k)))
+      copy)))
+
+(defn- tool-call-input-preview
+  [tool-name raw-args]
+  (or (tool-args->markdown-preview tool-name raw-args)
+      (preview-text-nonblank raw-args 20000)
+      (let [copied (copy-js-object raw-args)]
+        (or (tool-args->markdown-preview tool-name copied)
+            (preview-text-nonblank copied 20000)))))
+
+(defn- tool-call-preview-from-part
+  [part]
+  (let [part-type (some-> (aget part "type") str str/lower-case)]
+    (when (contains? #{"toolcall" "tool_call"} part-type)
+      (let [tool-call-id (some-> (aget part "id") str nonblank)
+            tool-name (some-> (aget part "name") str nonblank)
+            arguments (aget part "arguments")
+            input-preview (tool-call-input-preview tool-name arguments)]
+        (when (and tool-call-id input-preview)
+          {:tool_call_id tool-call-id
+           :tool_name tool-name
+           :input_preview input-preview})))))
+
+(defn assistant-tool-call-previews
+  [assistant-message]
+  (let [content (when assistant-message
+                  (aget assistant-message "content"))]
+    (if (array? content)
+      (->> (array-seq content)
+           (keep tool-call-preview-from-part)
+           vec)
+      [])))
 
 ;; Death-spiral guardrails: if the agent repeatedly calls the same tool with the same
 ;; input signature, abort the turn to prevent infinite loops.
@@ -463,10 +523,13 @@
                                                                         (= (aget assistant-message "role") "assistant"))
                                                                (let [full-text (assistant-message-text assistant-message)
                                                                      full-reasoning (assistant-message-reasoning-text assistant-message)
+                                                                     tool-previews (assistant-tool-call-previews assistant-message)
                                                                      text-delta (diff-appended-text @last-assistant-text* full-text)
                                                                      reasoning-delta (diff-appended-text @last-reasoning-text* full-reasoning)]
                                                                  (reset! last-assistant-text* (str (or full-text "")))
                                                                  (reset! last-reasoning-text* (str (or full-reasoning "")))
+                                                                 (doseq [{:keys [tool_call_id tool_name input_preview]} tool-previews]
+                                                                   (backfill-run-tool-input-preview! run-id tool_call_id tool_name input_preview))
                                                                  (emit-streaming-delta! :agent_message text-delta)
                                                                  (emit-streaming-delta! :reasoning reasoning-delta))))
                                     request-abort! (fn [reason]
@@ -510,6 +573,20 @@
                                                                                     "")]
                                                                       (emit-streaming-delta! :reasoning delta))
 
+                                                                    (contains? #{"toolcall_delta" "tool_call_delta"} assistant-event-type)
+                                                                    (sync-assistant-message! (or (aget assistant-event "partial")
+                                                                                                (aget event "message")))
+
+                                                                    (contains? #{"toolcall_end" "tool_call_end"} assistant-event-type)
+                                                                    (do
+                                                                      (when-let [preview (tool-call-preview-from-part (aget assistant-event "toolCall"))]
+                                                                        (backfill-run-tool-input-preview! run-id
+                                                                                                          (:tool_call_id preview)
+                                                                                                          (:tool_name preview)
+                                                                                                          (:input_preview preview)))
+                                                                      (sync-assistant-message! (or (aget assistant-event "partial")
+                                                                                                  (aget event "message"))))
+
                                                                     :else (sync-assistant-message! (aget event "message"))))
 
                                                                 (= event-type "message_end")
@@ -524,14 +601,13 @@
                                                                                    (aget event "arguments")
                                                                                    (aget event "input")
                                                                                    (aget event "parameters"))
-                                                                      input-preview (or (tool-args->markdown-preview tool-name raw-args)
-                                                                                        (preview-text-nonblank (aget event "params") 20000)
-                                                                                        (preview-text-nonblank (aget event "toolArgs") 20000)
-                                                                                        (preview-text-nonblank (aget event "args") 20000)
-                                                                                        (preview-text-nonblank (aget event "arguments") 20000)
-                                                                                        (preview-text-nonblank (aget event "input") 20000)
-                                                                                        (preview-text-nonblank (aget event "parameters") 20000)
-                                                                                        (preview-text-nonblank raw-args 20000))
+                                                                      input-preview (or (tool-call-input-preview tool-name (aget event "params"))
+                                                                                        (tool-call-input-preview tool-name (aget event "toolArgs"))
+                                                                                        (tool-call-input-preview tool-name (aget event "args"))
+                                                                                        (tool-call-input-preview tool-name (aget event "arguments"))
+                                                                                        (tool-call-input-preview tool-name (aget event "input"))
+                                                                                        (tool-call-input-preview tool-name (aget event "parameters"))
+                                                                                        (tool-call-input-preview tool-name raw-args))
                                                                       signature (str tool-name "::" (or input-preview ""))
                                                                       _death-spiral
                                                                       (let [{:keys [last streak counts]} @tool-loop*
