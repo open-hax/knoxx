@@ -4,6 +4,7 @@
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
+            [knoxx.backend.agent-templates :as templates]
             [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? http-error js-array-seq]]
             [knoxx.backend.mcp-bridge :as mcp]
@@ -1122,16 +1123,12 @@
         ;; Normalize for persistence (ensures thinking-level, timestamps, etc.)
         normalized-job (templates/normalize-job-for-persistence next-job)]
 
-    ;; Write to Redis (hot store) - this is the canonical persistence path
-    (event-agents/update-job-spec! job-id normalized-job)
-
-    ;; Reload runtime to pick up the change
-    (event-agents/reload!)
-
-    {:job normalized-job
-     :message (str "Upserted job " job-id " to Redis (dirty queue for SQL flush)")
-     :templateId template-id
-     :thinkingLevel (get-in normalized-job [:agentSpec :thinkingLevel])}))
+    (-> (event-agents/upsert-job! job-id normalized-job)
+        (.then (fn [saved-job]
+                 {:job saved-job
+                  :message (str "Upserted job " job-id " to Redis (dirty queue for SQL flush)")
+                  :templateId template-id
+                  :thinkingLevel (get-in saved-job [:agentSpec :thinkingLevel])})))))
 
 ;;; ========================================================================
 ;;; Music/Audio Tools

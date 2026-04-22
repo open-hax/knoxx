@@ -40,7 +40,7 @@
 
    Fastify's default parser throws FST_ERR_CTP_EMPTY_JSON_BODY, but some
    endpoints are intentionally POST-without-body."  
-  [app]
+  [^js app]
   (.addContentTypeParser app
                          "application/json"
                          #js {:parseAs "string"}
@@ -48,7 +48,15 @@
                            (try
                              (done nil (if (= body "") #js {} (js/JSON.parse body)))
                              (catch :default err
-                               (done err))))))
+                              (done err))))))
+
+(defn- app-add-hook!
+  [^js app hook-name handler]
+  (.addHook app hook-name handler))
+
+(defn- app-listen!
+  [^js app host port]
+  (.listen app #js {:host host :port port}))
 
 (defn- make-runtime
   "Build the runtime dependency bundle CLJS code expects.
@@ -82,7 +90,7 @@
    deps: JS object containing all imported Node/Fastify/MCP dependencies."  
   [deps]
   (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
-        Fastify (aget deps "Fastify")
+        ^js Fastify (aget deps "Fastify")
         app (Fastify #js {:logger true})
         policy-options #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
                                                  (aget js/process.env "DATABASE_URL")
@@ -122,7 +130,7 @@
                  ;; Optional legacy session hook
                  (.then (fn []
                           (when cookie-hook?
-                            (.addHook app "onRequest" (auth-session/create-session-hook policyDb)))))
+                            (app-add-hook! app "onRequest" (auth-session/create-session-hook policyDb)))))
 
                  ;; GitHub OAuth + cookie session auth routes
                  (.then (fn []
@@ -143,12 +151,12 @@
 
                  ;; Start listening
                  (.then (fn []
-                          (.listen app #js {:host (:host cfg)
-                                            :port (:port cfg)})))
+                          (app-listen! app (:host cfg) (:port cfg))))
                  (.then (fn [_]
                           (graceful-shutdown/install! app cfg)
                           (notify-ready!)
-                          (.info (.-log app) (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))))
+                          (let [^js log (.-log app)]
+                            (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg))))))
                  (.catch (fn [err]
                            (.error js/console "Knoxx backend CLJS failed to start" err)
                            (js/process.exit 1)))))))

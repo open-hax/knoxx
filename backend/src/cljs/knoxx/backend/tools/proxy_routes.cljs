@@ -26,6 +26,12 @@
   [ms]
   (.timeout js/AbortSignal ms))
 
+(defn- reply-send-with-content-type!
+  [^js reply status content-type body]
+  (let [reply* (.code reply status)]
+    (.header reply* "content-type" content-type)
+    (.send reply* body)))
+
 (defn register-proxy-routes!
   "Register all proxy endpoints on the fastify app."  
   [^js app config]
@@ -159,12 +165,10 @@
                                  (safe-text resp))
                                (.then
                                (fn [body]
-                                  (let [reply* (.code reply (.-status resp))]
-                                    (.header reply* "content-type" content-type)
-                                    (.send reply* body))))))))
+                                  (reply-send-with-content-type! reply (.-status resp) content-type body))))))))
                 (.catch (fn [err]
                           (.code reply 502)
-                          (.send reply #js {:ok false :error (str "Ingestion proxy error: " (.-message err))})))))))
+                          (.send reply #js {:ok false :error (str "Ingestion proxy error: " (.-message err))}))))))
 
   ;; ---------------------------------------------------------------------------
   ;; OpenPlanner Proxy
@@ -196,11 +200,9 @@
                                  (safe-text resp))
                                (.then
                                (fn [body]
-                                  (let [reply* (.code reply (.-status resp))]
-                                    (.header reply* "content-type" content-type)
-                                    (.send reply* body))))))))
+                                  (reply-send-with-content-type! reply (.-status resp) content-type body))))))))
                 (.catch (fn [err]
                           (.code reply 502)
-                          (.send reply #js {:ok false :error (str "OpenPlanner proxy error: " (.-message err))})))))))
+                          (.send reply #js {:ok false :error (str "OpenPlanner proxy error: " (.-message err))}))))))
 
   nil)

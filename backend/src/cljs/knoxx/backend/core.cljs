@@ -17,6 +17,20 @@
 
 (defonce server* (atom nil))
 
+(defn- app-log-info!
+  [app message]
+  (let [^js log (.-log app)]
+    (.info log message)))
+
+(defn- app-log-error!
+  [app message err]
+  (let [^js log (.-log app)]
+    (.error log message err)))
+
+(defn- app-listen!
+  [^js app host port]
+  (.listen app #js {:host host :port port}))
+
 (defn register-ws-routes!
   [runtime app]
   (realtime/register-ws-routes! runtime app active-runs-count lounge-messages*))
@@ -63,9 +77,9 @@
                                                                    :shared-secret shoedelussy-secret}))]
                      (-> (mcp/initialize! {:servers merged-servers})
                          (.then (fn [_]
-                                  (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
+                                  (app-log-info! app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
                          (.catch (fn [err]
-                                   (.log.error app "MCP gateway initialization failed" err))))))
+                                   (app-log-error! app "MCP gateway initialization failed" err))))))
                  (clj->js resolved-config))))))
 
 (defn start!
@@ -82,16 +96,16 @@
                               (.then (fn [redis-client]
                                        (if redis-client
                                          (do
-                                           (.log.info app "Redis client initialized for session persistence")
+                                           (app-log-info! app "Redis client initialized for session persistence")
                                            (-> (recover-active-agent-sessions! runtime config redis-client)
                                                (.then (fn [results]
                                                         (let [resumed (count (filter :resumed results))]
                                                           (when (seq results)
-                                                            (.log.info app (str "Recovered " (count results) " active sessions from Redis; resumed " resumed))))
+                                                            (app-log-info! app (str "Recovered " (count results) " active sessions from Redis; resumed " resumed))))
                                                         nil))))
                                          nil)))
                               (.catch (fn [err]
-                                        (.log.error app "Failed to initialize Redis-backed session recovery" err)
+                                        (app-log-error! app "Failed to initialize Redis-backed session recovery" err)
                                         nil)))]
         (-> redis-startup
             (.then (fn []
@@ -113,11 +127,10 @@
                      (event-agents/start! config)
                      ;; Sync filesystem contracts → Redis index (write-through cache).
                      (contracts-routes/sync-contract-index! config)
-                     (.listen app #js {:host (:host config)
-                                       :port (:port config)})))
+                     (app-listen! app (:host config) (:port config))))
             (.then (fn [_]
                      (reset! server* app)
-                     (.log.info app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))))
+                     (app-log-info! app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))))
             (.catch (fn [err]
                       (.error js/console "Knoxx backend CLJS failed to start" err)
                       (js/process.exit 1))))))))

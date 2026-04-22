@@ -16,6 +16,21 @@
 
 (def RECOVERY_INTERVAL_MS 15000)
 
+(defn- app-log-info!
+  [app message]
+  (let [^js log (.-log app)]
+    (.info log message)))
+
+(defn- app-log-warn!
+  [app message]
+  (let [^js log (.-log app)]
+    (.warn log message)))
+
+(defn- app-log-error!
+  [app message err]
+  (let [^js log (.-log app)]
+    (.error log message err)))
+
 (defn- proxx-configured?
   [config]
   (and (not (str/blank? (:proxx-base-url config)))
@@ -77,7 +92,7 @@
                    (let [items (vec (js->clj results :keywordize-keys true))
                          resumed (count (filter :resumed items))]
                      (reset! last-recovery-at* (.toISOString (js/Date.)))
-                     (.log.info app (str "[knoxx] session recovery tick: found " (count resumable) ", resumed " resumed))
+                     (app-log-info! app (str "[knoxx] session recovery tick: found " (count resumable) ", resumed " resumed))
                      #js {:ok true :found (count resumable) :resumed resumed}))))
       (js/Promise.resolve #js {:ok true :found 0 :resumed 0}))))
 
@@ -99,7 +114,7 @@
                      (-> (session-store/recover-sessions! (redis/get-client))
                          (.then (fn [sessions] (resume-sessions! runtime app config sessions)))
                          (.catch (fn [err]
-                                   (.log.error app "[knoxx] session recovery tick failed" err)
+                                   (app-log-error! app "[knoxx] session recovery tick failed" err)
                                    #js {:ok false :error (str err)})))
                      #js {:ok false :skipped true :reason "deps_unhealthy"})))
           (.catch (fn [err]
@@ -115,11 +130,11 @@
         (.then (fn [client]
                  (if client
                    (do
-                     (.log.info app "[knoxx] Redis connected; session persistence enabled")
+                     (app-log-info! app "[knoxx] Redis connected; session persistence enabled")
                      client)
                    (do
                      (when-not (str/blank? (str redis-url))
-                       (.log.warn app "[knoxx] Redis not connected; session persistence disabled"))
+                       (app-log-warn! app "[knoxx] Redis not connected; session persistence disabled"))
                      nil)))))))
 
 (defn start!

@@ -15,6 +15,9 @@
             [knoxx.backend.redis-client :as redis])
   (:require-macros [knoxx.backend.macros :refer [defroute]]))
 
+(declare typebox->zod-shape
+         reply-header!)
+
 (defonce ^:private mcp-sessions* (atom {}))
 
 (def ^:private RegisterClientBody
@@ -73,7 +76,7 @@
   (.toString (js/Buffer.from buf) "base64url"))
 
 (defn- pkce-challenge
-  [crypto verifier]
+  [^js crypto verifier]
   (base64url (-> (.createHash crypto "sha256")
                  (.update (str verifier))
                  (.digest))))
@@ -131,10 +134,48 @@
        "\""))
 
 (defn- challenge-unauthorized!
-  [reply base]
-  (-> (.header reply "WWW-Authenticate" (www-authenticate-challenge base))
+  [^js reply base]
+  (-> (reply-header! reply "WWW-Authenticate" (www-authenticate-challenge base))
       (.code 401)
       (.send "Unauthorized")))
+
+(defn- redis-set!
+  [^js client key value opts]
+  (.set client key value opts))
+
+(defn- redis-get!
+  [^js client key]
+  (.get client key))
+
+(defn- redis-del!
+  [^js client key]
+  (.del client key))
+
+(defn- redis-sadd!
+  [^js client key value]
+  (.sAdd client key value))
+
+(defn- redis-smembers!
+  [^js client key]
+  (.sMembers client key))
+
+(defn- redis-srem!
+  [^js client key value]
+  (.sRem client key value))
+
+(defn- transport-handle-request!
+  ([^js transport req reply]
+   (.handleRequest transport req reply))
+  ([^js transport req reply body]
+   (.handleRequest transport req reply body)))
+
+(defn- tool-execute!
+  [^js tool params]
+  (.execute tool "mcp" params nil nil nil))
+
+(defn- reply-header!
+  [^js reply name value]
+  (.header reply name value))
 
 (defn- ensure-streamable-accept!
   [req]
@@ -361,7 +402,7 @@
   [redis-client client-id]
   (if (str/blank? (str client-id))
     (js/Promise.resolve nil)
-    (-> (.get redis-client (str "knoxx:mcp:client:" client-id))
+    (-> (redis-get! redis-client (str "knoxx:mcp:client:" client-id))
         (.then (fn [raw]
                  (when raw
                    (try
@@ -504,7 +545,7 @@
   [redis-client access-token]
   (if (str/blank? (str access-token))
     (js/Promise.resolve nil)
-    (-> (.get redis-client (str "knoxx:mcp:token:" access-token))
+    (-> (redis-get! redis-client (str "knoxx:mcp:token:" access-token))
         (.then (fn [raw]
                  (when raw
                    (try
@@ -525,14 +566,14 @@
     (.call resolver policy-db headers-like)))
 
 (defn- apply-zod-description
-  [schema-node schema-json]
+  [^js schema-node ^js schema-json]
   (let [description (some-> (aget schema-json "description") str str/trim not-empty)]
     (if description
       (.describe schema-node description)
       schema-node)))
 
 (defn- typebox->zod-node
-  [z schema-json]
+  [^js z ^js schema-json]
   (let [schema-type (aget schema-json "type")
         node (case schema-type
                "string" (.string z)
@@ -557,7 +598,7 @@
              n))))))
 
 (defn- typebox->zod-shape
-  [z schema-json]
+  [^js z ^js schema-json]
   (let [properties (or (aget schema-json "properties") #js {})
         required-set (into #{} (map str) (array-seq (or (aget schema-json "required") #js [])))
         entries (.entries js/Object properties)]
@@ -609,7 +650,7 @@
                     :grant_types #js ["authorization_code"]
                     :response_types #js ["code"]
                     :created_at (.toISOString (js/Date.))}]
-    (-> (.set redis (str "knoxx:mcp:client:" client-id) (js/JSON.stringify client))
+    (-> (redis-set! redis (str "knoxx:mcp:client:" client-id) (js/JSON.stringify client) js/undefined)
         (.then (fn [_]
                  (-> (.code reply 201)
                      (.send client))))
@@ -623,23 +664,23 @@
     (-> (get-registered-client redis client-id)
         (.then (fn [client]
                  (ensure-redirect-uri-allowed! client redirect-uri "invalid_request")
-                 (let [tools (available-tools runtime config auth-context)
-                       tool-names (tool-name-set tools)
-                       selected (let [explicit (selected-tools-from-scope tools scope)]
-                                  (if (seq explicit)
-                                    explicit
-                                    (default-selected-tools tool-names)))
-                       html (authorization-consent-html {:base base
-                                                         :auth-context auth-context
-                                                         :client-id client-id
-                                                         :redirect-uri redirect-uri
-                                                         :state state
-                                                         :code-challenge code-challenge
-                                                         :requested-scope (or scope "")
-                                                         :tools tools
-                                                         :selected selected})]
-                   (-> (.header reply "content-type" "text/html; charset=utf-8")
-                       (.send html))))))))
+                  (let [tools (available-tools runtime config auth-context)
+                        tool-names (tool-name-set tools)
+                        selected (let [explicit (selected-tools-from-scope tools scope)]
+                                   (if (seq explicit)
+                                     explicit
+                                     (default-selected-tools tool-names)))
+                        html (authorization-consent-html {:base base
+                                                          :auth-context auth-context
+                                                          :client-id client-id
+                                                          :redirect-uri redirect-uri
+                                                          :state state
+                                                          :code-challenge code-challenge
+                                                          :requested-scope (or scope "")
+                                                          :tools tools
+                                                          :selected selected})]
+                    (let [reply* (reply-header! reply "content-type" "text/html; charset=utf-8")]
+                      (.send reply* html))))))))
 
 (defn- authorize-confirm!
   [{:keys [req reply redis runtime config auth-context crypto code-ttl]}]
@@ -673,10 +714,10 @@
                                       :userEmail user-email
                                       :orgSlug org-slug
                                       :createdAt (.toISOString (js/Date.))}]
-                     (-> (.set redis code-key (js/JSON.stringify payload) #js {:EX code-ttl})
-                         (.then (fn [_]
-                                  (let [redirect (js/URL. redirect-uri)]
-                                    (.set (.-searchParams redirect) "code" code)
+                      (-> (redis-set! redis code-key (js/JSON.stringify payload) #js {:EX code-ttl})
+                          (.then (fn [_]
+                                   (let [redirect (js/URL. redirect-uri)]
+                                     (.set (.-searchParams redirect) "code" code)
                                     (when state
                                       (.set (.-searchParams redirect) "state" state))
                                     (.redirect reply (.toString redirect) 302))))))))))))
@@ -694,10 +735,10 @@
                          :createdAt (.toISOString (js/Date.))
                          :expiresAt (.toISOString (js/Date. (+ (.now js/Date)
                                                                (* token-ttl 1000))))}]
-    (-> (.set redis token-key (js/JSON.stringify token-value) #js {:EX token-ttl})
+    (-> (redis-set! redis token-key (js/JSON.stringify token-value) #js {:EX token-ttl})
         (.then (fn [_]
                  (if-let [membership-id (aget record "membershipId")]
-                   (.sAdd redis (str "knoxx:mcp:user:" membership-id ":tokens") access-token)
+                   (redis-sadd! redis (str "knoxx:mcp:user:" membership-id ":tokens") access-token)
                    (js/Promise.resolve nil))))
         (.then (fn [_]
                  #js {:access_token access-token
@@ -718,7 +759,7 @@
     (-> (get-registered-client redis client-id)
         (.then (fn [client]
                  (ensure-redirect-uri-allowed! client redirect-uri "invalid_grant")
-                 (.get redis (str "knoxx:mcp:code:" code))))
+                 (redis-get! redis (str "knoxx:mcp:code:" code))))
         (.then (fn [raw]
                  (when-not raw
                    (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
@@ -731,7 +772,7 @@
                    (when (or (str/blank? expected)
                              (not= expected actual))
                      (throw (http-error 400 "invalid_grant" "PKCE verification failed")))
-                   (-> (.del redis (str "knoxx:mcp:code:" code))
+                   (-> (redis-del! redis (str "knoxx:mcp:code:" code))
                        (.then (fn [_]
                                 (persist-access-token! redis crypto token-ttl client-id record)))))))
         (.then (fn [token-response]
@@ -744,12 +785,12 @@
                                ""))]
     (when (str/blank? membership-id)
       (throw (http-error 400 "missing_membership" "No membership available for this session")))
-    (-> (.sMembers redis (str "knoxx:mcp:user:" membership-id ":tokens"))
+    (-> (redis-smembers! redis (str "knoxx:mcp:user:" membership-id ":tokens"))
         (.then (fn [token-ids]
                  (js/Promise.all
                   (clj->js
                    (for [token-id (array-seq token-ids)]
-                     (-> (.get redis (str "knoxx:mcp:token:" token-id))
+                     (-> (redis-get! redis (str "knoxx:mcp:token:" token-id))
                          (.then (fn [raw]
                                   (when raw
                                     (try
@@ -770,9 +811,9 @@
     (when (or (str/blank? membership-id)
               (str/blank? token-id))
       (throw (http-error 400 "invalid_request" "membership and tokenId are required")))
-    (-> (.del redis (str "knoxx:mcp:token:" token-id))
+    (-> (redis-del! redis (str "knoxx:mcp:token:" token-id))
         (.then (fn [_]
-                 (.sRem redis (str "knoxx:mcp:user:" membership-id ":tokens") token-id)))
+                 (redis-srem! redis (str "knoxx:mcp:user:" membership-id ":tokens") token-id)))
         (.then (fn [_]
                  (.send reply #js {:ok true}))))))
 
@@ -795,7 +836,7 @@
           :else
           (do
             (ensure-streamable-accept! req)
-            (.handleRequest transport (aget req "raw") (aget reply "raw"))))))))
+            (transport-handle-request! transport (aget req "raw") (aget reply "raw"))))))))
 
 (defn- handle-mcp-post!
   [{:keys [req reply redis bearer-token policy-db runtime config crypto McpServer StreamableHTTPServerTransport isInitializeRequest z base]}]
@@ -807,7 +848,7 @@
         (challenge-unauthorized! reply base)
         (do
           (ensure-streamable-accept! req)
-          (.handleRequest (:transport existing) (aget req "raw") (aget reply "raw") (aget req "body"))))
+          (transport-handle-request! (:transport existing) (aget req "raw") (aget reply "raw") (aget req "body"))))
 
       (not (and isInitializeRequest (isInitializeRequest (aget req "body"))))
       (do
@@ -859,7 +900,7 @@
                                                                               tool-name))
                                                         :inputSchema input-schema}
                                                    (fn [params]
-                                                     (.execute tool "mcp" params nil nil nil))))))
+                                                     (tool-execute! tool params))))))
                               (set! (.-onclose transport)
                                     (fn []
                                       (when-let [sid (.-sessionId transport)]
@@ -867,10 +908,10 @@
                               (-> (.connect server transport)
                                   (.then (fn [_]
                                            (ensure-streamable-accept! req)
-                                           (.handleRequest transport
-                                                           (aget req "raw")
-                                                           (aget reply "raw")
-                                                           (aget req "body")))))))))))))]
+                                           (transport-handle-request! transport
+                                                                      (aget req "raw")
+                                                                      (aget reply "raw")
+                                                                      (aget req "body")))))))))))))]
         (-> init-promise
             (.catch (fn [err]
                       (.error js/console "[knoxx-mcp] initialize failed" err)

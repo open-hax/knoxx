@@ -1158,7 +1158,7 @@
                       since (or (aget request "query" "since") "")]
                   (if (str/blank? run-id)
                     (json-response! reply 400 {:error "runId is required"})
-                    (-> (run-state/get-run-events-since run-id since)
+                    (-> (run-state/get-run-events-since (redis/get-client) run-id since)
                         (.then (fn [events]
                                  (json-response! reply 200 {:run_id run-id
                                                             :events events
