@@ -52,6 +52,10 @@
   [value]
   (js/Promise.resolve value))
 
+(defn- now-iso
+  []
+  (.toISOString (js/Date.)))
+
 ;; In-memory cache for fast access during active streaming
 (defonce session-cache* (atom {}))
 
@@ -116,6 +120,44 @@
   (let [current (or (get @session-cache* session-id) {})
         updated (merge current updates {:updated_at (js/Date.now)})]
     (put-session! redis-client updated)))
+
+(defn rewind-messages
+  "Remove the last N user turns plus everything that followed them.
+   Preserves any leading system messages that predate the removed turn(s)."
+  [messages turns]
+  (loop [remaining (vec (or messages []))
+         turns-left (max 1 (or turns 1))]
+    (if (or (zero? turns-left) (empty? remaining))
+      remaining
+      (if-let [last-user-index (->> remaining
+                                    (keep-indexed (fn [index message]
+                                                    (when (= "user" (:role message))
+                                                      index)))
+                                    last)]
+        (recur (subvec remaining 0 last-user-index) (dec turns-left))
+        remaining))))
+
+(defn undo-session-turns!
+  "Rewind the session by removing the last N user turns.
+   Resolves nil when no session exists, or the updated session when successful."
+  [redis-client session-id turns]
+  (-> (get-session redis-client session-id)
+      (.then
+       (fn [session]
+         (if-not session
+           nil
+           (let [current-messages (vec (or (:messages session) []))
+                 rewound-messages (rewind-messages current-messages turns)]
+             (if (= rewound-messages current-messages)
+               session
+               (put-session! redis-client
+                             (-> session
+                                 (assoc :messages rewound-messages
+                                        :status "waiting_input"
+                                        :has_active_stream false
+                                        :updated_at (now-iso)
+                                        :answer nil
+                                        :error nil))))))))))
 
 (defn remove-session!
   "Remove session from cache and Redis."

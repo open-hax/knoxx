@@ -79,6 +79,8 @@ function makeProps(messages: ChatMessage[]) {
     proxxReachable: true,
     proxxConfigured: true,
     onNewChat: noop,
+    onUndoMessages: noopAsync,
+    undoDisabled: false,
     systemPrompt: "",
     onSystemPromptChange: noop,
     conversationId: null,
@@ -165,6 +167,19 @@ describe("ChatMainPane auto-scroll", () => {
 
     const optionValues = Array.from(select.options).map((option) => option.value);
     expect(optionValues).toEqual(Array.from(THINKING_OPTIONS));
+  });
+
+  it("wires the undo-turn action from the header", () => {
+    const onUndoMessages = vi.fn();
+    render(
+      <ChatMainPane
+        {...makeProps([makeMessage("m1", "hello")])}
+        onUndoMessages={onUndoMessages}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo Turn" }));
+    expect(onUndoMessages).toHaveBeenCalledTimes(1);
   });
 
   it("keeps following the transcript when the user is near the bottom", () => {

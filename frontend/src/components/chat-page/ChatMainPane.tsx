@@ -34,6 +34,8 @@ type ChatMainPaneProps = {
   proxxReachable: boolean;
   proxxConfigured: boolean;
   onNewChat: () => void;
+  onUndoMessages: () => void | Promise<void>;
+  undoDisabled: boolean;
   systemPrompt: string;
   onSystemPromptChange: (value: string) => void;
   conversationId: string | null;
@@ -115,6 +117,8 @@ export function ChatMainPane({
   proxxReachable,
   proxxConfigured,
   onNewChat,
+  onUndoMessages,
+  undoDisabled,
   systemPrompt,
   onSystemPromptChange,
   conversationId,
@@ -288,6 +292,7 @@ export function ChatMainPane({
           <Badge variant={proxxReachable ? 'success' : proxxConfigured ? 'warning' : 'error'} size="sm" dot>
             {proxxReachable ? 'online' : proxxConfigured ? 'offline' : 'not configured'}
           </Badge>
+          <Button variant="ghost" size="sm" onClick={() => void onUndoMessages()} disabled={undoDisabled}>Undo Turn</Button>
           <Button variant="ghost" size="sm" onClick={onNewChat}>New Chat</Button>
         </div>
 

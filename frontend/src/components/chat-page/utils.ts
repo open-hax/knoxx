@@ -273,6 +273,27 @@ export function memoryRowsToMessages(rows: MemorySessionRow[]): ChatMessage[] {
   });
 }
 
+export function rewindTranscriptTurns(messages: ChatMessage[], turns = 1): ChatMessage[] {
+  let remaining = [...messages];
+  let turnsLeft = Math.max(1, turns);
+
+  while (turnsLeft > 0 && remaining.length > 0) {
+    const lastUserIndex = [...remaining]
+      .map((message, index) => ({ message, index }))
+      .reverse()
+      .find(({ message }) => message.role === "user")?.index;
+
+    if (lastUserIndex == null) {
+      break;
+    }
+
+    remaining = remaining.slice(0, lastUserIndex);
+    turnsLeft -= 1;
+  }
+
+  return remaining;
+}
+
 export function controlTimelineMessageFromEvent(
   event: RunEvent & { type?: string; preview?: string; run_id?: string; error?: string },
 ): ChatMessage | null {

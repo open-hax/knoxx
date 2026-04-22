@@ -1008,6 +1008,54 @@
                           (.catch (fn [err]
                                     (error-response! reply err 409)))))))))))
 
+  (route! app "POST" "/api/knoxx/session/undo"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "agent.chat.use"))
+                (let [raw (or (aget request "body") #js {})
+                      session-id (str (or (aget raw "session_id")
+                                          (aget raw "sessionId")
+                                          ""))
+                      provided-conversation-id (str (or (aget raw "conversation_id")
+                                                        (aget raw "conversationId")
+                                                        ""))
+                      turns-raw (or (aget raw "turns") 1)
+                      turns (let [parsed (js/parseInt (str turns-raw) 10)]
+                              (if (js/isNaN parsed) 1 (max 1 parsed)))]
+                  (if (str/blank? session-id)
+                    (json-response! reply 400 {:ok false :error "session_id is required"})
+                    (-> (session-store/get-session (redis/get-client) session-id)
+                        (.then
+                         (fn [session]
+                           (cond
+                             (nil? session)
+                             (json-response! reply 404 {:ok false :error "Session not found or expired"})
+
+                             (= "running" (:status session))
+                             (json-response! reply 409 {:ok false :error "Cannot undo while a turn is still running"})
+
+                             :else
+                             (let [conversation-id (str (or (:conversation_id session) provided-conversation-id ""))
+                                   current-messages (vec (or (:messages session) []))
+                                   rewound-messages (session-store/rewind-messages current-messages turns)
+                                   removed-count (- (count current-messages) (count rewound-messages))]
+                               (when (and ctx (not (str/blank? conversation-id)))
+                                 (ensure-conversation-access! ctx conversation-id))
+                               (if (zero? removed-count)
+                                 (json-response! reply 409 {:ok false :error "No user turns available to undo"})
+                                 (-> (session-store/undo-session-turns! (redis/get-client) session-id turns)
+                                     (.then
+                                      (fn [_]
+                                        (json-response! reply 200 {:ok true
+                                                                   :session_id session-id
+                                                                   :conversation_id conversation-id
+                                                                   :removed_count removed-count
+                                                                   :remaining_messages (count rewound-messages)})))))))))
+                        (.catch
+                         (fn [err]
+                           (json-response! reply 500 {:ok false :error (str err)}))))))))))
+
   (route! app "GET" "/api/knoxx/agents/active"
           (fn [request reply]
             (with-request-context! runtime request reply

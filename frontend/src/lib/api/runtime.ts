@@ -364,6 +364,28 @@ export async function knoxxAbort(payload: {
   }));
 }
 
+export async function knoxxUndoSessionTurn(payload: {
+  session_id: string;
+  conversation_id?: string | null;
+  turns?: number;
+}): Promise<{ ok: boolean; session_id?: string | null; conversation_id?: string | null; removed_count?: number; remaining_messages?: number; error?: string | null }> {
+  return request<Record<string, unknown>>("/api/knoxx/session/undo", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: payload.session_id,
+      conversation_id: payload.conversation_id,
+      turns: payload.turns,
+    }),
+  }).then((response) => ({
+    ok: Boolean(response.ok),
+    session_id: typeof response.session_id === "string" ? response.session_id : null,
+    conversation_id: typeof response.conversation_id === "string" ? response.conversation_id : null,
+    removed_count: typeof response.removed_count === "number" ? response.removed_count : undefined,
+    remaining_messages: typeof response.remaining_messages === "number" ? response.remaining_messages : undefined,
+    error: typeof response.error === "string" ? response.error : null,
+  }));
+}
+
 export async function knoxxChatStart(payload: {
   message: string;
   conversation_id?: string | null;

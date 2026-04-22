@@ -40,6 +40,8 @@ export function ChatWorkspacePane({
         proxxReachable={controller.proxxReachable}
         proxxConfigured={controller.proxxConfigured}
         onNewChat={controller.handleNewChat}
+        onUndoMessages={controller.handleUndoLastTurn}
+        undoDisabled={controller.isSending || controller.isRecovering || !controller.messages.some((message) => message.role === "user")}
         systemPrompt={controller.systemPrompt}
         onSystemPromptChange={controller.setSystemPrompt}
         conversationId={controller.conversationId}

@@ -303,6 +303,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     appendMessageIfMissing,
     handleNewChat,
     handleSend,
+    handleUndoLastTurn,
     loadRunDetail,
     queueLiveControl,
     abortTurn,
@@ -608,6 +609,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     // chat actions
     handleNewChat,
     handleSend,
+    handleUndoLastTurn,
     queueLiveControl,
     abortTurn,
     openHydrationSource,

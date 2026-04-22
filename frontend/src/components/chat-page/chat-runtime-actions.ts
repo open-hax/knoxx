@@ -1,8 +1,8 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import { getRun, knoxxAbort, knoxxChatStart, knoxxControl } from '../../lib/api';
+import { getRun, knoxxAbort, knoxxChatStart, knoxxControl, knoxxUndoSessionTurn } from '../../lib/api';
 import type { ChatMessage, ChatTraceBlock, ContentPart, RunDetail, RunEvent } from '../../lib/types';
 import { getChatStorage, initializePersistedChatSession } from './hooks';
-import { controlTimelineMessageFromEvent, truncateText } from './utils';
+import { controlTimelineMessageFromEvent, rewindTranscriptTurns, truncateText } from './utils';
 
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
@@ -179,6 +179,41 @@ export function createChatRuntimeActions({
     }
   };
 
+  const handleUndoLastTurn = async () => {
+    if (!sessionId) {
+      appendConsoleLine('[undo] session not ready');
+      return;
+    }
+
+    if (pendingAssistantIdRef.current) {
+      appendConsoleLine('[undo] wait for the active turn to finish or abort it first');
+      return;
+    }
+
+    try {
+      const response = await knoxxUndoSessionTurn({
+        session_id: sessionId,
+        conversation_id: conversationId,
+        turns: 1,
+      });
+      if (!response.ok) {
+        throw new Error(response.error || 'Undo failed');
+      }
+
+      setMessages((prev) => rewindTranscriptTurns(prev, 1));
+      setLatestRun(null);
+      setRuntimeEvents([]);
+      setLiveControlText('');
+      setIsSending(false);
+      setConversationId(response.conversation_id ?? conversationId ?? null);
+      pendingAssistantIdRef.current = null;
+      activeRunIdRef.current = null;
+      appendConsoleLine(`[undo] removed ${response.removed_count ?? 0} message(s) from the latest turn`);
+    } catch (error) {
+      appendConsoleLine(`[undo] failed: ${(error as Error).message}`);
+    }
+  };
+
   const handleSend = async (text: string, contentParts?: ContentPart[]) => {
     if (!sessionId) {
       appendConsoleLine('[chat] session not ready, retry in a second');
@@ -295,6 +330,7 @@ export function createChatRuntimeActions({
     appendMessageIfMissing,
     handleNewChat,
     handleSend,
+    handleUndoLastTurn,
     loadRunDetail,
     queueLiveControl,
     abortTurn,
