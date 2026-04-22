@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Button } from "@open-hax/uxx";
 
 import { voiceSttTranscribe } from "../../lib/api";
@@ -152,7 +152,10 @@ export function VoiceInputButton({
     }
   }, [cleanup]);
 
-  const handleClick = useCallback(() => {
+  const handleClick = useCallback((event: MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
     if (state.status === "recording") {
       stopRecording();
       return;
@@ -166,6 +169,7 @@ export function VoiceInputButton({
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       <Button
+        type="button"
         variant="ghost"
         size="sm"
         onClick={handleClick}
