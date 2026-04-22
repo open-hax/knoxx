@@ -47,8 +47,28 @@ export function ChatSettingsPanel({
   } as const;
 
   return (
-    <Card variant="default" padding="sm" style={{ margin: 8, flexShrink: 0 }}>
-      <div style={{ display: "grid", gap: 16 }}>
+    <Card
+      variant="default"
+      padding="sm"
+      style={{
+        margin: 8,
+        flexShrink: 0,
+        maxHeight: "min(70vh, 40rem)",
+        overflow: "hidden",
+        minHeight: 0,
+      }}
+    >
+      <div
+        data-testid="chat-settings-scroll-region"
+        style={{
+          display: "grid",
+          gap: 16,
+          maxHeight: "min(70vh, 40rem)",
+          overflowY: "auto",
+          overflowX: "hidden",
+          paddingRight: 4,
+        }}
+      >
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>Runtime prompt</div>
           <div style={{ fontSize: 12, color: "var(--token-colors-text-muted)" }}>

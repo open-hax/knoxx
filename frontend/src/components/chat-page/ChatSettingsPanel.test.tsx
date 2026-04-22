@@ -48,6 +48,13 @@ describe("ChatSettingsPanel", () => {
     expect(screen.getByText("Disabled (1)")).toBeInTheDocument();
     expect(screen.getByText("Search")).toBeInTheDocument();
     expect(screen.getByText("Write")).toBeInTheDocument();
+
+    const scrollRegion = screen.getByTestId("chat-settings-scroll-region");
+    expect(scrollRegion).toBeInTheDocument();
+    expect(scrollRegion).toHaveStyle({
+      maxHeight: "min(70vh, 40rem)",
+      overflowY: "auto",
+    });
   });
 
   it("propagates steering note and active agent changes", () => {
