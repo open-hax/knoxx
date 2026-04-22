@@ -94,6 +94,7 @@ export function createChatRuntimeActions({
                 : run.status === 'failed' && typeof run.error === 'string' && run.error.length > 0
                   ? `Agent request failed.\n\n${run.error}`
                   : message.content,
+            contentParts: run.contentParts ?? message.contentParts,
             model: run.model ?? message.model,
             sources: Array.isArray(run.sources) ? run.sources : message.sources,
             runId,

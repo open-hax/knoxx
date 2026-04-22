@@ -186,7 +186,8 @@ export interface RunDetail extends RunSummary {
   session_id?: string | null;
   conversation_id?: string | null;
   answer?: string | null;
-  request_messages: Array<{ role: string; content: string }>;
+  contentParts?: ContentPart[];
+  request_messages: Array<{ role: string; content: string; contentParts?: ContentPart[] }>;
   settings: Record<string, unknown>;
   resources: Record<string, unknown>;
   events?: RunEvent[];

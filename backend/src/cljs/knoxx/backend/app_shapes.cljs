@@ -67,6 +67,70 @@
        :tool-policies tool-policies
        :resource-policies resource-policies})))
 
+(defn- normalize-content-part-type
+  [value]
+  (case (some-> value str str/trim str/lower-case)
+    ("text" "input_text" "output_text" "refusal") :text
+    ("image" "image_url" "input_image" "output_image") :image
+    ("audio" "audio_url" "input_audio" "output_audio") :audio
+    ("video" "video_url" "input_video" "output_video") :video
+    ("document" "file" "input_file" "output_file") :document
+    nil))
+
+(defn- normalize-content-part
+  [part]
+  (cond
+    (string? part)
+    {:type :text
+     :text part}
+
+    (map? part)
+    (let [type (normalize-content-part-type (or (:type part)
+                                                (:partType part)
+                                                (:part-type part)
+                                                (:part_type part)))
+          text (some-> (or (:text part)
+                           (:refusal part))
+                       str)
+          url (some-> (or (:url part)
+                          (:file_url part)
+                          (:file-url part)
+                          (:fileUrl part))
+                      str)
+          data (some-> (:data part) str)
+          mime-type (some-> (or (:mimeType part)
+                                (:mime_type part)
+                                (:mime-type part)
+                                (:mediaType part)
+                                (:media_type part)
+                                (:media-type part))
+                          str)
+          filename (some-> (:filename part) str)
+          size (let [value (or (:size part)
+                               (:bytes part)
+                               (:byteSize part)
+                               (:byte_size part)
+                               (:byte-size part))]
+                 (when (number? value) value))]
+      (when (or type text url data filename)
+        (cond-> {:type (or type :text)}
+          (and (= (or type :text) :text) (some? text)) (assoc :text text)
+          url (assoc :url url)
+          data (assoc :data data)
+          mime-type (assoc :mimeType mime-type)
+          filename (assoc :filename filename)
+          size (assoc :size size))))
+
+    :else nil))
+
+(defn- normalize-content-parts
+  [value]
+  (let [parts (some-> value (js->clj :keywordize-keys true))]
+    (cond
+      (sequential? parts) (vec (keep normalize-content-part parts))
+      (map? parts) (vec (keep normalize-content-part [parts]))
+      :else [])))
+
 (defn normalize-chat-body
   [body]
   {:message (or (aget body "message") "")
@@ -81,6 +145,9 @@
                        (aget body "thinking_level")
                        (aget body "reasoningEffort")
                        (aget body "reasoning_effort"))
+   :content-parts (normalize-content-parts (or (aget body "contentParts")
+                                               (aget body "content_parts")
+                                               (aget body "content-parts")))
    :mode (or (aget body "mode") "direct")
    :agent-spec (normalize-agent-spec (or (aget body "agentSpec")
                                          (aget body "agent_spec")))

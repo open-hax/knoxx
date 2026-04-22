@@ -123,6 +123,119 @@
       (str/starts-with? current previous) (.slice current (count previous))
       :else current)))
 
+(defn- media-part-url
+  [part]
+  (or (nonblank (aget part "url"))
+      (nonblank (aget part "file_url"))
+      (nonblank (aget part "fileUrl"))
+      (let [image-url (aget part "image_url")]
+        (cond
+          (string? image-url) (nonblank image-url)
+          image-url (nonblank (aget image-url "url"))
+          :else nil))
+      (let [video-url (aget part "video_url")]
+        (cond
+          (string? video-url) (nonblank video-url)
+          video-url (nonblank (aget video-url "url"))
+          :else nil))
+      (let [audio-url (aget part "audio_url")]
+        (cond
+          (string? audio-url) (nonblank audio-url)
+          audio-url (nonblank (aget audio-url "url"))
+          :else nil))
+      (let [source (aget part "source")]
+        (when (= "url" (some-> (aget source "type") str str/lower-case))
+          (nonblank (aget source "url"))))))
+
+(defn- media-part-data
+  [part]
+  (or (nonblank (aget part "data"))
+      (nonblank (aget part "b64_json"))
+      (nonblank (aget part "result"))
+      (let [input-audio (aget part "input_audio")]
+        (nonblank (aget input-audio "data")))
+      (let [output-audio (aget part "output_audio")]
+        (nonblank (aget output-audio "data")))
+      (let [source (aget part "source")]
+        (when (= "base64" (some-> (aget source "type") str str/lower-case))
+          (nonblank (aget source "data"))))))
+
+(defn- media-part-mime-type
+  [part media-kind]
+  (or (nonblank (aget part "mimeType"))
+      (nonblank (aget part "mime_type"))
+      (nonblank (aget part "mediaType"))
+      (nonblank (aget part "media_type"))
+      (let [source (aget part "source")]
+        (or (nonblank (aget source "media_type"))
+            (nonblank (aget source "mime_type"))))
+      (let [input-audio (aget part "input_audio")
+            format (nonblank (aget input-audio "format"))]
+        (when format
+          (str "audio/" format)))
+      (let [output-audio (aget part "output_audio")
+            format (nonblank (aget output-audio "format"))]
+        (when format
+          (str "audio/" format)))
+      (case media-kind
+        "image" "image/png"
+        "audio" "audio/wav"
+        "video" "video/mp4"
+        "document" "application/octet-stream"
+        nil)))
+
+(defn- media-part-filename
+  [part]
+  (or (nonblank (aget part "filename"))
+      (nonblank (aget part "file_name"))
+      (nonblank (aget part "fileName"))
+      (nonblank (aget part "name"))))
+
+(defn- media-part-size
+  [part]
+  (let [value (or (aget part "size")
+                  (aget part "bytes")
+                  (aget part "byte_size")
+                  (aget part "byteSize"))]
+    (when (number? value)
+      value)))
+
+(defn- assistant-media-part
+  [part]
+  (let [raw-type (some-> (aget part "type") str str/lower-case)
+        media-kind (cond
+                     (contains? #{"image" "image_url" "input_image" "output_image"} raw-type) "image"
+                     (contains? #{"audio" "audio_url" "input_audio" "output_audio"} raw-type) "audio"
+                     (contains? #{"video" "video_url" "input_video" "output_video"} raw-type) "video"
+                     (contains? #{"document" "file" "input_file" "output_file"} raw-type) "document"
+                     :else nil)
+        url (media-part-url part)
+        raw-data (media-part-data part)
+        mime-type (media-part-mime-type part media-kind)
+        data (when raw-data
+               (if (str/starts-with? raw-data "data:")
+                 raw-data
+                 (str "data:" mime-type ";base64," raw-data)))
+        filename (media-part-filename part)
+        size (media-part-size part)]
+    (when (and media-kind (or url data))
+      (cond-> {:type media-kind}
+        url (assoc :url url)
+        data (assoc :data data)
+        mime-type (assoc :mimeType mime-type)
+        filename (assoc :filename filename)
+        size (assoc :size size)))))
+
+(defn- assistant-content-parts
+  [assistant-message]
+  (let [content (when assistant-message
+                  (aget assistant-message "content"))]
+    (if (array? content)
+      (->> (array-seq content)
+           (keep assistant-media-part)
+           vec)
+      [])))
+
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
   (let [node-crypto (aget runtime "crypto")
@@ -164,6 +277,7 @@
                          :tokens_per_s nil
                          :error nil
                          :answer nil
+                         :content_parts []
                          :events []
                          :trace_blocks []
                          :tool_receipts []
@@ -455,10 +569,10 @@
                                                                                        (tool-event-payload run-id conversation-id session-id "agent_end"
                                                                                                            {:status "completed"}))))))]
                                 ;; Use multimodal message builder if content-parts are present
-                                (let [prompt-args (if (seq content-parts)
-                                                    (build-agent-multimodal-message message content-parts hydration memory-hydration)
-                                                    (build-agent-user-message message hydration memory-hydration))
-                                      prompt-promise (.prompt session prompt-args)]
+                                (let [prompt-promise (.prompt session
+                                                              (if (seq content-parts)
+                                                                (build-agent-multimodal-message message content-parts hydration memory-hydration)
+                                                                (build-agent-user-message message hydration memory-hydration)))]
                                   (.catch
                                    (.then prompt-promise
                                           (fn []
@@ -469,6 +583,7 @@
                                                            (if (str/blank? chunked)
                                                              (assistant-message-text assistant-message)
                                                              chunked))
+                                                  assistant-content-parts (assistant-content-parts assistant-message)
                                                   usage (or (aget assistant-message "usage") #js {})
                                                   reasoning-text (let [streamed (apply str @reasoning-chunks)
                                                                        final-reasoning (assistant-message-reasoning-text assistant-message)]
@@ -497,6 +612,7 @@
                                                             :conversationId conversation-id
                                                             :session_id session-id
                                                             :model model-id
+                                                            :content_parts assistant-content-parts
                                                             :sources sources
                                                             :message_parts message-parts
                                                             :compare nil}
@@ -517,11 +633,12 @@
                                                                                               :status "completed"
                                                                                               :total_time_ms elapsed
                                                                                               :input_tokens (or (aget usage "input") 0)
-                                                                                              :output_tokens output-tokens
-                                                                                              :tokens_per_s tokens-per-second
-                                                                                              :answer answer
-                                                                                              :reasoning reasoning-text
-                                                                                              :sources sources)
+                                                                                            :output_tokens output-tokens
+                                                                                            :tokens_per_s tokens-per-second
+                                                                                            :answer answer
+                                                                                            :content_parts assistant-content-parts
+                                                                                            :reasoning reasoning-text
+                                                                                            :sources sources)
                                                                                        (update :resources merge resource-patch)))))
                                                     _ (when completed-run
                                                         (index-run-memory! config completed-run))]
@@ -533,7 +650,9 @@
                                                                                   conversation-id
                                                                                   {:status "completed"
                                                                                    :answer answer
-                                                                                   :messages (conj request-messages {:role "assistant" :content answer})})
+                                                                                   :messages (conj request-messages (cond-> {:role "assistant"
+                                                                                                                             :content answer}
+                                                                                                                      (seq assistant-content-parts) (assoc :content-parts assistant-content-parts)))})
                                                 ;; Remove from in-memory cache to prevent stale isStreaming
                                                 (remove-agent-session! conversation-id)
                                                 response)))

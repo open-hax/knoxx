@@ -1,5 +1,6 @@
 import type {
   ChatRequest,
+  ContentPart,
   FrontendConfig,
   GroundedAnswerResponse,
   LoungeMessage,
@@ -24,6 +25,178 @@ import type {
 } from "../types";
 import { buildKnoxxAuthHeaders, request } from "./core";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function pickKey(record: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (record[key] !== undefined) {
+      return record[key];
+    }
+  }
+  return undefined;
+}
+
+function normalizeContentPart(part: unknown): ContentPart | null {
+  if (typeof part === "string") {
+    return { type: "text", text: part };
+  }
+
+  if (!isRecord(part)) {
+    return null;
+  }
+
+  const rawType = asString(pickKey(part, ["type", "partType", "part_type", "part-type"]))?.toLowerCase();
+  const filename = asString(pickKey(part, ["filename", "fileName", "file_name", "file-name", "name"]));
+  const size = asNumber(pickKey(part, ["size", "bytes", "byteSize", "byte_size", "byte-size"]));
+
+  const imageUrlValue = pickKey(part, ["image_url", "imageUrl"]);
+  const videoUrlValue = pickKey(part, ["video_url", "videoUrl"]);
+  const audioUrlValue = pickKey(part, ["audio_url", "audioUrl"]);
+  const source = isRecord(part.source) ? part.source : null;
+  const inputAudio = isRecord(part.input_audio) ? part.input_audio : null;
+  const outputAudio = isRecord(part.output_audio) ? part.output_audio : null;
+
+  const url = asString(pickKey(part, ["url", "file_url", "fileUrl"]))
+    ?? (isRecord(imageUrlValue) ? asString(imageUrlValue.url) : asString(imageUrlValue))
+    ?? (isRecord(videoUrlValue) ? asString(videoUrlValue.url) : asString(videoUrlValue))
+    ?? (isRecord(audioUrlValue) ? asString(audioUrlValue.url) : asString(audioUrlValue))
+    ?? (source && typeof source.type === "string" && source.type.toLowerCase() === "url" ? asString(source.url) : undefined);
+
+  const rawData = asString(pickKey(part, ["data", "b64_json", "result"]))
+    ?? asString(inputAudio?.data)
+    ?? asString(outputAudio?.data)
+    ?? (source && typeof source.type === "string" && source.type.toLowerCase() === "base64" ? asString(source.data) : undefined);
+
+  const mimeType = asString(pickKey(part, ["mimeType", "mime_type", "mime-type", "mediaType", "media_type", "media-type"]))
+    ?? asString(source?.media_type)
+    ?? asString(source?.mime_type)
+    ?? (typeof inputAudio?.format === "string" ? `audio/${inputAudio.format}` : undefined)
+    ?? (typeof outputAudio?.format === "string" ? `audio/${outputAudio.format}` : undefined);
+
+  const type = (() => {
+    if (!rawType && typeof mimeType === "string") {
+      if (mimeType.startsWith("image/")) return "image" as const;
+      if (mimeType.startsWith("audio/")) return "audio" as const;
+      if (mimeType.startsWith("video/")) return "video" as const;
+      return "document" as const;
+    }
+
+    switch (rawType) {
+      case "text":
+      case "input_text":
+      case "output_text":
+      case "refusal":
+      case "summary_text":
+        return "text" as const;
+      case "image":
+      case "image_url":
+      case "input_image":
+      case "output_image":
+        return "image" as const;
+      case "audio":
+      case "audio_url":
+      case "input_audio":
+      case "output_audio":
+        return "audio" as const;
+      case "video":
+      case "video_url":
+      case "input_video":
+      case "output_video":
+        return "video" as const;
+      case "document":
+      case "file":
+      case "input_file":
+      case "output_file":
+        return "document" as const;
+      default:
+        return null;
+    }
+  })();
+
+  if (type === "text") {
+    const text = asString(pickKey(part, ["text", "refusal", "content"]));
+    return text !== undefined ? { type, text, filename, size } : null;
+  }
+
+  if (!type) {
+    return null;
+  }
+
+  const data = rawData
+    ? rawData.startsWith("data:")
+      ? rawData
+      : mimeType
+        ? `data:${mimeType};base64,${rawData}`
+        : rawData
+    : undefined;
+
+  if (!url && !data) {
+    return null;
+  }
+
+  return {
+    type,
+    url,
+    data,
+    mimeType,
+    filename,
+    size,
+  };
+}
+
+function normalizeContentParts(value: unknown): ContentPart[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const parts = value
+    .map((part) => normalizeContentPart(part))
+    .filter((part): part is ContentPart => part !== null)
+    .filter((part) => part.type !== "text");
+
+  return parts;
+}
+
+function normalizeRequestMessages(value: unknown): RunDetail["request_messages"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isRecord)
+    .map((message) => ({
+      role: asString(message.role) ?? "user",
+      content: asString(message.content) ?? "",
+      contentParts: normalizeContentParts(
+        pickKey(message, ["contentParts", "content_parts", "content-parts"]),
+      ),
+    }));
+}
+
+function normalizeRunDetail(run: RunDetail): RunDetail {
+  return {
+    ...run,
+    answer: typeof run.answer === "string" ? run.answer : null,
+    contentParts: normalizeContentParts(
+      pickKey(run as unknown as Record<string, unknown>, ["contentParts", "content_parts", "content-parts"]),
+    ),
+    request_messages: normalizeRequestMessages(run.request_messages),
+    events: Array.isArray(run.events) ? run.events : [],
+    tool_receipts: Array.isArray(run.tool_receipts) ? run.tool_receipts : [],
+    sources: Array.isArray(run.sources) ? run.sources : [],
+  };
+}
+
 export async function listModels(): Promise<ModelInfo[]> {
   const data = await request<{ models: ModelInfo[] }>("/api/models");
   return data.models;
@@ -42,7 +215,8 @@ export async function listRuns(limit = 100): Promise<RunSummary[]> {
 }
 
 export async function getRun(runId: string): Promise<RunDetail> {
-  return request<RunDetail>(`/api/runs/${runId}`);
+  const run = await request<RunDetail>(`/api/runs/${runId}`);
+  return normalizeRunDetail(run);
 }
 
 export async function listActiveAgents(limit = 25): Promise<ActiveAgentSummary[]> {
