@@ -13,5 +13,5 @@
  :cap/user-surfaces [{:surface/id :workspace/discord-ops
                       :surface/label "Discord operations"
                       :surface/kind :admin-console
-                      :surface/routes ["/ops/admin" "/ops/contracts"]
+                      :surface/routes ["/ops/event-agents"]
                       :surface/description "Humans manage Discord publishing, reading, and routing from admin/integration surfaces; agents use Discord tools."}]}

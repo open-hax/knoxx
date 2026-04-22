@@ -354,7 +354,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (ensure-permission! ctx "platform.org.read")
+                (ensure-permission! ctx "org.event_agents.control")
                 (let [live-config (or @runtime-state/config* config)
                       token (:discord-bot-token live-config)
                       configured (not (str/blank? token))
@@ -367,7 +367,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [body (or (aget request "body") #js {})
                         new-token (str/trim (str (or (aget body "discordBotToken") "")))]
                     (if (str/blank? new-token)
@@ -391,7 +391,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (ensure-permission! ctx "platform.org.read")
+                (ensure-permission! ctx "org.event_agents.control")
                 (json-response! reply 200 (event-agents-control-response config))))))
 
   (route! app "PUT" "/api/admin/config/event-agents"
@@ -399,7 +399,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
                         live-config (or @runtime-state/config* config)
                         next-control (control-config/event-agent-control-config
@@ -418,7 +418,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [job-id (or (aget request "params" "jobId") "")]
                     (if (str/blank? job-id)
                       (json-response! reply 400 {:detail "jobId is required"})
@@ -436,7 +436,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
                     (-> (event-agents/dispatch-event! body)
                         (.then (fn [result]
@@ -453,7 +453,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (ensure-permission! ctx "platform.org.read")
+                (ensure-permission! ctx "org.event_agents.control")
                 (json-response! reply 200 (event-agents-control-response config))))))
 
   (route! app "PUT" "/api/admin/config/discord/control"
@@ -461,7 +461,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
                         live-config (or @runtime-state/config* config)
                         next-control (control-config/event-agent-control-config
@@ -480,7 +480,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [job-id (or (aget request "params" "jobId") "")]
                     (if (str/blank? job-id)
                       (json-response! reply 400 {:detail "jobId is required"})
@@ -498,7 +498,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (ensure-permission! ctx "platform.org.read")
+                (ensure-permission! ctx "org.event_agents.control")
                 (json-response! reply 200 (:runtime (event-agents-control-response config)))))))
 
   ;; MCP (Model Context Protocol) routes

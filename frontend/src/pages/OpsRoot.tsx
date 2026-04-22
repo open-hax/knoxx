@@ -7,12 +7,14 @@ import VectorsPage from './VectorsPage';
 import RawGraphExportPage from './RawGraphExportPage';
 import SourceDocPage from './SourceDocPage';
 import AgentsPage from './AgentsPage';
+import EventAgentsPage from './EventAgentsPage';
 import AdminLayout from './AdminLayout';
 import SidebarOpsStatus from '../components/SidebarOpsStatus';
 
 const navItems = [
   { label: 'Lakes', path: opsRoutes.documents },
   { label: 'Agents', path: opsRoutes.agents },
+  { label: 'Event Agents', path: opsRoutes.eventAgents },
   { label: 'Graph', path: opsRoutes.vectors },
   { label: 'Settings', path: opsRoutes.settings },
   { label: 'Admin', path: opsRoutes.admin },
@@ -74,6 +76,7 @@ export default function OpsRoot() {
             <Route path="docs/view" element={<SourceDocPage />} />
             <Route path="vectors" element={<VectorsPage />} />
             <Route path="agents" element={<AgentsPage />} />
+            <Route path="event-agents" element={<EventAgentsPage />} />
             <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="admin/*" element={<AdminLayout />} />

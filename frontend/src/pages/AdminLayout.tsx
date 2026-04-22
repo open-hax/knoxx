@@ -33,7 +33,6 @@ import { SelectedOrgSection } from '../components/admin-page/SelectedOrgSection'
 import { UsersMembershipsSection } from '../components/admin-page/UsersMembershipsSection';
 import { RolesSection } from '../components/admin-page/RolesSection';
 import { DataLakesSection } from '../components/admin-page/DataLakesSection';
-import { DiscordSection } from '../components/admin-page/DiscordSection';
 import { ProxxObservabilitySection } from '../components/admin-page/ProxxObservabilitySection';
 import { CatalogSection } from '../components/admin-page/CatalogSection';
 import { Badge } from '../components/admin-page/common';
@@ -343,7 +342,6 @@ function AdminLakesPage({ ctx }: { ctx: AdminCtx }) {
 function AdminIntegrationsPage({ ctx }: { ctx: AdminCtx }) {
   return (
     <div className="space-y-4">
-      <DiscordSection canManage={ctx.hasPermission('platform.org.create')} tools={ctx.tools} />
       <ProxxObservabilitySection canView={ctx.hasPermission('org.proxx.observability.read')} />
     </div>
   );

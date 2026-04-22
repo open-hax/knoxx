@@ -6,5 +6,5 @@
  :cap/user-surfaces [{:surface/id :workspace/event-agent-dashboard
                       :surface/label "Event agent dashboard"
                       :surface/kind :dashboard
-                      :surface/routes ["/ops/admin" "/ops/contracts"]
+                      :surface/routes ["/ops/event-agents"]
                       :surface/description "Humans inspect runtime state and dispatch events from the event-agent dashboard; agents use event-agent tools."}]}

@@ -7,6 +7,7 @@ describe('app routes', () => {
     expect(joinPath('/ops', '')).toBe('/ops');
     expect(opsRoutes.documents).toBe('/ops/documents');
     expect(opsRoutes.docsView).toBe('/ops/docs/view');
+    expect(opsRoutes.eventAgents).toBe('/ops/event-agents');
   });
 
   it('remaps legacy next routes to ops routes', () => {

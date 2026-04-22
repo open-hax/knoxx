@@ -101,6 +101,7 @@
    ["org.translations.review" "org_translations" "review" "Review and label translations"]
    ["org.translations.export" "org_translations" "export" "Export translation training data"]
    ["org.translations.manage" "org_translations" "manage" "Manage translation pipeline config"]
+   ["org.event_agents.control" "org_event_agents" "control" "Access and manage the Knoxx event-agents control plane"]
    ["org.proxx.observability.read" "org_proxx_observability" "read" "Read Proxx analytics and request logs"]])
 
 (def ^:private TOOL-DEFINITIONS
@@ -347,6 +348,7 @@
                   "tool.bluesky.publish" "tool.semantic_query.use"
                   "tool.memory_search.use" "tool.memory_session.use" "tool.websearch.use" "tool.graph_query.use"
                   "org.translations.read" "org.translations.review" "org.translations.export" "org.translations.manage"
+                  "org.event_agents.control"
                   "org.proxx.observability.read"]
     :tool-policies (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS)}
    {:slug "knowledge_worker"

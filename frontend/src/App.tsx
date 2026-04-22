@@ -51,6 +51,9 @@ function App() {
             <NavLink to="/translations" className={navLinkClass}>
               Translations
             </NavLink>
+            <NavLink to={opsRoutes.eventAgents} className={navLinkClass}>
+              Event Agents
+            </NavLink>
             <NavLink to={opsRoutes.admin} className={navLinkClass}>
               Admin
             </NavLink>
