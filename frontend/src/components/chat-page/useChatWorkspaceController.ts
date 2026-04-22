@@ -180,8 +180,6 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [kindFilter, setKindFilter] = useState("docs");
   const [sessionActorFilter, setSessionActorFilter] = useState(() => readStoredString(SESSION_ACTOR_FILTER_KEY, "all"));
   const [excludePiSessions, setExcludePiSessions] = useState(() => readStoredBoolean(EXCLUDE_PI_SESSIONS_KEY, true));
-  const [statsTotal, setStatsTotal] = useState(0);
-  const [statsByVisibility, setStatsByVisibility] = useState<Record<string, number>>({});
   const sendTimeoutRef = useRef<number | null>(null);
   const pendingAssistantIdRef = useRef<string | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
@@ -213,10 +211,14 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     liveToolEvents,
     liveToolReceipts,
     semanticMode,
+    statsByVisibility,
+    statsTotal,
     workspaceProgressPercent,
   } = useChatPageDerivedState({
     browseData,
     entryFilter,
+    visibilityFilter,
+    kindFilter,
     semanticQuery,
     semanticResults,
     workspaceJob,
@@ -427,7 +429,6 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   });
 
   useEffect(() => {
-    if (!sessionId) return;
     void refreshRecentSessions();
     // refreshRecentSessions is recreated each render; session/actor/agent catalog changes are the intended triggers.
     // eslint-disable-next-line react-hooks/exhaustive-deps

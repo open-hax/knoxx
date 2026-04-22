@@ -11,6 +11,7 @@ export type BrowseEntry = {
   failed_count?: number;
   last_ingested_at?: string | null;
   last_error?: string | null;
+  visibility?: "internal" | "review" | "public" | "archived";
 };
 
 export type BrowseResponse = {
