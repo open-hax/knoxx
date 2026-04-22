@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [cljs.reader :as reader]
             [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.runtime.contract-loader :as loader]
             [knoxx.backend.runtime.contract-validator :as validator]
             [knoxx.backend.util.time :refer [now-iso]]
@@ -83,7 +84,10 @@
        :errors [{:path [] :message "EDN text is empty"}]
        :warnings []}
       (try
-        (let [contract (reader/read-string trimmed)
+        (let [raw-contract (reader/read-string trimmed)
+              contract (if (= (normalize-contract-class contract-class) "agents")
+                         (actor-scope/normalize-agent-contract raw-contract)
+                         raw-contract)
               base (validator/validate contract-class contract)]
           {:ok (:ok base)
            :contract contract

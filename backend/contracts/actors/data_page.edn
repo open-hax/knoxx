@@ -1,0 +1,7 @@
+{:actor/id "data_page"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Data"
+ :actor/default-agent "knoxx_default"
+ :actor/roles [:role/knowledge-worker]
+ :prompts {:system "You are the Data workspace actor. Favor query-grounded answers, schema-aware reasoning, and concrete job operations."}}

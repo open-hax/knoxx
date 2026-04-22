@@ -1,5 +1,6 @@
 (ns knoxx.backend.contract-validator-test
   (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.runtime.contract-loader :as loader]
             [knoxx.backend.runtime.contract-validator :as validator]))
 
@@ -45,6 +46,25 @@
                                                          :surface/endpoints ["/api/documents/content/:path"]
                                                          :surface/description "Humans browse files; agents call read."}]})]
     (is (:ok result) (pr-str result))))
+
+(deftest agent-contract-schema-accepts-multi-actor-claims
+  (let [result (validator/validate "agents"
+                                   {:contract/id "multi_surface_agent"
+                                    :contract/kind :agent
+                                    :trigger-kind :manual
+                                    :contract/actors #{"chat_primary" "cms_chat"}
+                                    :agent {:role :knowledge_worker}})]
+    (is (:ok result) (pr-str result))))
+
+(deftest normalize-agent-contract-promotes-legacy-and-knoxx-default-claims
+  (is (= #{"cms_chat"}
+         (:contract/actors
+          (actor-scope/normalize-agent-contract {:contract/id "cms_default"
+                                                 :contract/actor "cms_chat"}))))
+  (is (= #{actor-scope/wildcard-actor "chat_primary"}
+         (:contract/actors
+          (actor-scope/normalize-agent-contract {:contract/id "knoxx_default"
+                                                 :contract/actor "chat_primary"})))))
 
 (deftest loader-normalizes-policy-class
   (is (= "policies" (loader/normalize-contract-class "policy")))

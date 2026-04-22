@@ -346,6 +346,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     resumeMemorySession,
     runSemanticSearch,
   } = createChatWorkspaceActions({
+    activeActorId,
+    visibleAgentIds: new Set(availableAgents.map((agent) => agent.id)),
     currentPath,
     showFiles: true,
     browseData,
@@ -391,9 +393,9 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   useEffect(() => {
     if (!sessionId) return;
     void refreshRecentSessions();
-    // refreshRecentSessions is recreated each render; sessionId is the intended trigger.
+    // refreshRecentSessions is recreated each render; session/actor/agent catalog changes are the intended triggers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, activeActorId, availableAgents]);
 
   useChatPageConfig({
     defaultRole,

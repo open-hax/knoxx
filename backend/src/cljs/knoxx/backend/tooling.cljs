@@ -4,6 +4,7 @@
             [cljs.reader :as reader]
             [knoxx.backend.authz :as authz]
             [knoxx.backend.http :as backend-http]
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.contract-loader :as contract-loader]
             [knoxx.backend.runtime.roles :as roles]
@@ -142,64 +143,73 @@
        vec))
 
 (defn resolve-agent-contract
-  [config contract-id]
-  (when-let [id (some-> contract-id str str/trim not-empty)]
-    (let [file-path (contract-loader/contract-file-path config "agents" id)
-          contract (read-edn-sync file-path)]
-      (when contract
-        (let [enabled? (not (false? (:enabled contract)))
-              actor-id (or (some-> (:contract/actor contract) str str/trim not-empty)
-                           (some-> (:actor/id contract) str str/trim not-empty))
-              actor-spec (or (when actor-id (resolve-actor config actor-id))
-                             (when-let [default-id (default-actor-id config)]
-                               (resolve-actor config default-id)))
-              contract-role-slugs (->> (concat (or (:actor/roles contract) [])
-                                               [(get-in contract [:agent :role])])
-                                       (map keywordish->slug)
-                                       (remove nil?)
-                                       distinct
-                                       vec)
-              actor-role-slugs (vec (or (:role-slugs actor-spec) []))
-              role-slugs (vec (distinct (concat actor-role-slugs contract-role-slugs)))
-              actor-capability-ids (vec (or (:capability-ids actor-spec) []))
-              contract-capability-ids (->> (or (:actor/capabilities contract) [])
-                                           (map keywordish->slug)
-                                           (remove nil?)
-                                           distinct
-                                           vec)
-              capability-ids (vec (distinct (concat actor-capability-ids contract-capability-ids)))
-              role-tool-ids (collect-role-tool-ids config role-slugs)
-              capability-tool-ids (collect-capability-tool-ids config capability-ids)
-              explicit-tool-ids (legacy-explicit-tool-ids contract)
-              tool-ids (->> (concat role-tool-ids capability-tool-ids explicit-tool-ids)
-                            distinct
-                            sort
-                            vec)
-              tool-policies (mapv (fn [tool-id]
-                                    {:toolId tool-id :effect "allow"})
-                                  tool-ids)]
-          {:id id
-           :enabled enabled?
-           :contract contract
-           :actor-id (:id actor-spec)
-           :actor-kind (:kind actor-spec)
-           :actor-role-slugs actor-role-slugs
-           :role-slugs role-slugs
-           :capability-ids capability-ids
-           :role (or (first contract-role-slugs)
-                     (first actor-role-slugs)
-                     (:knoxx-default-role config))
-           :model (some-> (get-in contract [:agent :model]) str str/trim not-empty)
-           :thinking-level (some-> (get-in contract [:agent :thinking]) keywordish->slug)
-           :actor-system-prompt (:system-prompt actor-spec)
-           :agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
-           :system-prompt (combine-system-prompts
-                           (:system-prompt actor-spec)
-                           (some-> (get-in contract [:prompts :system]) str str/trim not-empty))
-           :task-prompt (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
-           :trigger-kind (some-> (:trigger-kind contract) keywordish->slug)
-           :tool-ids tool-ids
-           :tool-policies tool-policies})))))
+  ([config contract-id]
+   (resolve-agent-contract config contract-id nil))
+  ([config contract-id actor-id]
+   (when-let [id (some-> contract-id str str/trim not-empty)]
+     (let [file-path (contract-loader/contract-file-path config "agents" id)
+           contract0 (read-edn-sync file-path)
+           contract (some-> contract0 actor-scope/normalize-agent-contract)]
+       (when contract
+         (let [enabled? (not (false? (:enabled contract)))
+               contract-actors (actor-scope/normalized-contract-actors contract)
+               requested-actor-id (some-> actor-id str str/trim not-empty)
+               allowed-for-request? (or (nil? requested-actor-id)
+                                        (actor-scope/actor-allowed? contract-actors requested-actor-id))
+               effective-actor-id (actor-scope/effective-actor-id contract-actors requested-actor-id (default-actor-id config))]
+           (when allowed-for-request?
+             (let [actor-spec (or (when effective-actor-id (resolve-actor config effective-actor-id))
+                                  (when-let [default-id (default-actor-id config)]
+                                    (resolve-actor config default-id)))
+                   contract-role-slugs (->> (concat (or (:actor/roles contract) [])
+                                                    [(get-in contract [:agent :role])])
+                                            (map keywordish->slug)
+                                            (remove nil?)
+                                            distinct
+                                            vec)
+                   actor-role-slugs (vec (or (:role-slugs actor-spec) []))
+                   role-slugs (vec (distinct (concat actor-role-slugs contract-role-slugs)))
+                   actor-capability-ids (vec (or (:capability-ids actor-spec) []))
+                   contract-capability-ids (->> (or (:actor/capabilities contract) [])
+                                                (map keywordish->slug)
+                                                (remove nil?)
+                                                distinct
+                                                vec)
+                   capability-ids (vec (distinct (concat actor-capability-ids contract-capability-ids)))
+                   role-tool-ids (collect-role-tool-ids config role-slugs)
+                   capability-tool-ids (collect-capability-tool-ids config capability-ids)
+                   explicit-tool-ids (legacy-explicit-tool-ids contract)
+                   tool-ids (->> (concat role-tool-ids capability-tool-ids explicit-tool-ids)
+                                 distinct
+                                 sort
+                                 vec)
+                   tool-policies (mapv (fn [tool-id]
+                                         {:toolId tool-id :effect "allow"})
+                                       tool-ids)]
+               {:id id
+                :enabled enabled?
+                :contract contract
+                :contract-actors contract-actors
+                :contract-actor-ids (actor-scope/actor-claims->wire contract-actors)
+                :actor-id (:id actor-spec)
+                :actor-kind (:kind actor-spec)
+                :actor-role-slugs actor-role-slugs
+                :role-slugs role-slugs
+                :capability-ids capability-ids
+                :role (or (first contract-role-slugs)
+                          (first actor-role-slugs)
+                          (:knoxx-default-role config))
+                :model (some-> (get-in contract [:agent :model]) str str/trim not-empty)
+                :thinking-level (some-> (get-in contract [:agent :thinking]) keywordish->slug)
+                :actor-system-prompt (:system-prompt actor-spec)
+                :agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
+                :system-prompt (combine-system-prompts
+                                (:system-prompt actor-spec)
+                                (some-> (get-in contract [:prompts :system]) str str/trim not-empty))
+                :task-prompt (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
+                :trigger-kind (some-> (:trigger-kind contract) keywordish->slug)
+                :tool-ids tool-ids
+                :tool-policies tool-policies}))))))))
 (defn- manual-agent-contract?
   [entry]
   (= "manual" (some-> (:trigger-kind entry) str str/trim str/lower-case)))
@@ -217,14 +227,10 @@
                     (and (string? name)
                          (str/ends-with? name ".edn"))))
           (map (fn [name]
-                 (resolve-agent-contract config (subs name 0 (- (count name) 4)))))
+                 (resolve-agent-contract config (subs name 0 (- (count name) 4)) wanted-actor-id)))
           (remove nil?)
           (filter :enabled)
           (filter manual-agent-contract?)
-          (filter (fn [entry]
-                    (if wanted-actor-id
-                      (= wanted-actor-id (:actor-id entry))
-                      true)))
           (sort-by :id)
           vec))))
 
@@ -237,8 +243,8 @@
                           (resolve-actor config default-id)))
          actor-default (some-> (:default-agent actor-spec) str str/trim not-empty)
          configured (some-> (:knoxx-default-agent-contract config) str str/trim not-empty)
-         configured-manual (when configured (resolve-agent-contract config configured))
-         actor-default-manual (when actor-default (resolve-agent-contract config actor-default))
+         configured-manual (when configured (resolve-agent-contract config configured (:id actor-spec)))
+         actor-default-manual (when actor-default (resolve-agent-contract config actor-default (:id actor-spec)))
          actor-catalog (agent-contract-catalog config (:id actor-spec))]
      (cond
        (and actor-default-manual (manual-agent-contract? actor-default-manual)) actor-default
@@ -251,11 +257,11 @@
   ([config requested-contract-id]
    (effective-agent-contract config requested-contract-id nil))
   ([config requested-contract-id actor-id]
-   (or (when requested-contract-id (resolve-agent-contract config requested-contract-id))
+   (or (when requested-contract-id (resolve-agent-contract config requested-contract-id actor-id))
        (when-let [actor-default-id (default-agent-contract-id config actor-id)]
-         (resolve-agent-contract config actor-default-id))
+         (resolve-agent-contract config actor-default-id actor-id))
        (when-let [global-default-id (default-agent-contract-id config nil)]
-         (resolve-agent-contract config global-default-id)))))
+         (resolve-agent-contract config global-default-id actor-id)))))
 
 (defn ensure-role-can-use!
   ([role tool-id]

@@ -1,0 +1,7 @@
+{:actor/id "translations_page"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Translations"
+ :actor/default-agent "knoxx_default"
+ :actor/roles [:role/knowledge-worker]
+ :prompts {:system "You are the Translations workspace actor. Favor key-aware, locale-grounded, and diff-precise translation assistance."}}

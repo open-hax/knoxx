@@ -1,6 +1,7 @@
 (ns knoxx.backend.openplanner-memory
   (:require [clojure.string :as str]
             [knoxx.backend.http :as backend-http]
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.util.time :as time]))
 
 (defn js-array-seq
@@ -336,7 +337,26 @@
 
 (defn run-scope-extra
   [run]
-  (select-keys run [:org_id :org_slug :user_id :user_email :membership_id]))
+  (let [base (select-keys run [:org_id :org_slug :user_id :user_email :membership_id])
+        agent-spec (or (get-in run [:settings :agentSpec])
+                       (:agent_spec run))
+        contract-id (some-> (or (:contractId agent-spec)
+                                (:contract-id agent-spec))
+                            str
+                            str/trim
+                            not-empty)
+        actor-id (some-> (or (:actorId agent-spec)
+                             (:actor-id agent-spec))
+                         str
+                         str/trim
+                         not-empty)
+        contract-actors (actor-scope/actor-claims->wire
+                         (or (:contractActors agent-spec)
+                             (:contract-actors agent-spec)))]
+    (cond-> base
+      contract-id (assoc :contract_id contract-id)
+      actor-id (assoc :actor_id actor-id)
+      (seq contract-actors) (assoc :contract_actors contract-actors))))
 
 (defn session-node-kind
   [node-type]

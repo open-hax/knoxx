@@ -8,6 +8,55 @@
   [session-id]
   (not (str/starts-with? (str session-id) "translation-")))
 
+(defn- filter-page-actor-rows!
+  [config fetch-openplanner-session-rows! session-visible-for-page-actor? actor-id page-rows]
+  (if-not actor-id
+    (js/Promise.resolve (vec page-rows))
+    (-> (.all js/Promise
+              (clj->js
+               (mapv (fn [row]
+                       (-> (fetch-openplanner-session-rows! config (:session row))
+                           (.then (fn [rows]
+                                    {:row row
+                                     :visible (session-visible-for-page-actor? config rows actor-id)}))
+                           (.catch (fn [_]
+                                     {:row row
+                                      :visible false}))))
+                     page-rows)))
+        (.then (fn [results]
+                 (->> (js->clj results :keywordize-keys true)
+                      (filter :visible)
+                      (map :row)
+                      vec))))))
+
+(defn- fetch-authorized-session-pages!
+  [config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size upstream-offset acc]
+  (-> (openplanner-request! config "GET"
+                            (str "/v1/sessions?project="
+                                 (js/encodeURIComponent (:session-project-name config))
+                                 "&limit=" upstream-page-size
+                                 "&offset=" upstream-offset))
+      (.then
+       (fn [body]
+         (let [page-rows (vec (or (:rows body) []))
+               fetched-count (count page-rows)
+               next-offset (+ upstream-offset fetched-count)
+               upstream-has-more (boolean (:has_more body))]
+           (-> (authorized-session-ids! config ctx (map :session page-rows))
+               (.then
+                (fn [allowed]
+                  (let [authorized-rows (->> page-rows
+                                             (filter #(contains? allowed (str (:session %))))
+                                             (filter #(interactive-session-id? (:session %)))
+                                             vec)]
+                    (-> (filter-page-actor-rows! config fetch-openplanner-session-rows! session-visible-for-page-actor? actor-id authorized-rows)
+                        (.then
+                         (fn [actor-visible-rows]
+                           (let [next-acc (into acc actor-visible-rows)]
+                             (if (and upstream-has-more (pos? fetched-count))
+                               (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size next-offset next-acc)
+                               next-acc)))))))))))))
+
 (defn register-memory-routes!
   [app runtime config {:keys [json-response!
                               error-response!
@@ -27,6 +76,7 @@
                               cache-session-title!
                               normalize-session-title
                               session-visible?
+                              session-visible-for-page-actor?
                               openplanner-memory-search!
                               filter-authorized-memory-hits!
                               ctx-permitted?
@@ -45,33 +95,16 @@
                   (ensure-permission! ctx "agent.memory.cross_session")
                   (let [limit-raw (aget request "query" "limit")
                         limit (or (parse-positive-int limit-raw) 12)
+                        actor-id (some-> (or (aget request "query" "actorId")
+                                             (aget request "query" "actor"))
+                                          str
+                                          str/trim
+                                          not-empty)
                         offset-raw (aget request "query" "offset")
                         offset-parsed (js/parseInt (str (or offset-raw "0")) 10)
                         offset (if (and (js/Number.isFinite offset-parsed) (>= offset-parsed 0)) offset-parsed 0)
-                        upstream-page-size 200
-                        fetch-authorized-pages!
-                        (fn fetch-authorized-pages! [upstream-offset acc]
-                          (-> (openplanner-request! config "GET"
-                                                    (str "/v1/sessions?project="
-                                                         (js/encodeURIComponent (:session-project-name config))
-                                                         "&limit=" upstream-page-size
-                                                         "&offset=" upstream-offset))
-                              (.then (fn [body]
-                                       (let [page-rows (vec (or (:rows body) []))
-                                             fetched-count (count page-rows)
-                                             next-offset (+ upstream-offset fetched-count)
-                                             upstream-has-more (boolean (:has_more body))]
-                                         (-> (authorized-session-ids! config ctx (map :session page-rows))
-                                             (.then (fn [allowed]
-                                                      (let [authorized-rows (->> page-rows
-                                                                                 (filter #(contains? allowed (str (:session %))))
-                                                                                 (filter #(interactive-session-id? (:session %)))
-                                                                                 vec)
-                                                            next-acc (into acc authorized-rows)]
-                                                        (if (and upstream-has-more (pos? fetched-count))
-                                                          (fetch-authorized-pages! next-offset next-acc)
-                                                          next-acc))))))))))]
-                    (-> (fetch-authorized-pages! 0 [])
+                        upstream-page-size 200]
+                    (-> (fetch-authorized-session-pages! config ctx actor-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-visible-for-page-actor? upstream-page-size 0 [])
                         (.then (fn [all-rows]
                                  (let [all-rows (vec all-rows)
                                        total (count all-rows)
@@ -275,3 +308,4 @@
                         (swap! lounge-messages* #(->> (conj (vec %) msg) (take-last 100) vec))
                         (broadcast-ws! "lounge" msg)
                         (json-response! reply 200 {:ok true :message msg})))))))
+  )

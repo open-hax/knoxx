@@ -3,7 +3,9 @@
             [knoxx.backend.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
             [knoxx.backend.document-state :refer [normalize-relative-path]]
             [knoxx.backend.http :as backend-http :refer [js-array-seq]]
-            [knoxx.backend.runtime.config :refer [cfg]]))
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
+            [knoxx.backend.runtime.config :refer [cfg]]
+            [knoxx.backend.tooling :as tooling]))
 
 (defn parse-json-object
   [value]
@@ -126,6 +128,40 @@
         (ctx-permitted? ctx "agent.memory.cross_session") true
         :else (or (contains? membership-ids (str (ctx-membership-id ctx)))
                   (contains? user-ids (str (ctx-user-id ctx))))))))
+
+(defn session-contract-id-from-rows
+  [rows]
+  (some (fn [row]
+          (some-> (or (:contract_id (row-extra-map row))
+                      (:contract-id (row-extra-map row)))
+                  str
+                  str/trim
+                  not-empty))
+        (reverse (vec (or rows [])))))
+
+(defn session-contract-actors-from-rows
+  [rows]
+  (some (fn [row]
+          (let [extra (row-extra-map row)
+                actors (actor-scope/normalize-actor-claims
+                        (or (:contract_actors extra)
+                            (:contract-actors extra)))]
+            (when (seq actors)
+              actors)))
+        (reverse (vec (or rows [])))))
+
+(defn session-visible-for-page-actor?
+  [config rows page-actor-id]
+  (let [page-actor-id (some-> page-actor-id str str/trim not-empty)
+        legacy-fallback #{actor-scope/legacy-chat-actor-id}]
+    (cond
+      (str/blank? (str (or page-actor-id ""))) true
+      :else (let [actors (or (session-contract-actors-from-rows rows)
+                             (some-> (session-contract-id-from-rows rows)
+                                     (tooling/resolve-agent-contract config)
+                                     :contract-actors)
+                             legacy-fallback)]
+              (actor-scope/actor-allowed? actors page-actor-id)))))
 
 (defn fetch-openplanner-session-rows!
   [config session-id]

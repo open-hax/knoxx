@@ -6,7 +6,7 @@
             [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access! ensure-session-id resume-recovered-session!]]
             [knoxx.backend.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
             [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
-            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? filter-authorized-memory-hits! authorized-session-ids!]]
+            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-visible-for-page-actor? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.contracts-routes :as contracts-routes]
             [knoxx.backend.document-routes :as document-routes]
             [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers require-openai-key! fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
@@ -37,9 +37,10 @@
                                   (default-agent-contract-id config requested-actor-id))
         resolved (effective-agent-contract config requested-contract-id requested-actor-id)
         resolved-id (:id resolved)]
-    (cond-> (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies])
+    (cond-> (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies :contract-actor-ids])
                    requested)
       requested-actor-id (assoc :actor-id requested-actor-id)
+      (seq (:contract-actor-ids resolved)) (assoc :contract-actors (:contract-actor-ids resolved))
       resolved-id (assoc :contract-id resolved-id))))
 
 (defn- requested-role
@@ -331,6 +332,7 @@
                                           :cache-session-title! cache-session-title!
                                           :normalize-session-title normalize-session-title
                                           :session-visible? session-visible?
+                                          :session-visible-for-page-actor? session-visible-for-page-actor?
                                           :openplanner-memory-search! openplanner-memory-search!
                                           :filter-authorized-memory-hits! filter-authorized-memory-hits!
                                           :ctx-permitted? ctx-permitted?

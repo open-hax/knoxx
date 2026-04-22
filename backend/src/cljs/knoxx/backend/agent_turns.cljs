@@ -181,6 +181,9 @@
   [agent-spec]
   (when agent-spec
     (cond-> {}
+      (:contract-id agent-spec) (assoc :contractId (:contract-id agent-spec))
+      (:actor-id agent-spec) (assoc :actorId (:actor-id agent-spec))
+      (seq (:contract-actors agent-spec)) (assoc :contractActors (vec (:contract-actors agent-spec)))
       (:role agent-spec) (assoc :role (:role agent-spec))
       (:model agent-spec) (assoc :model (:model agent-spec))
       (:thinking-level agent-spec) (assoc :thinkingLevel (:thinking-level agent-spec))

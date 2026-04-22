@@ -1,5 +1,6 @@
 (ns knoxx.backend.runtime.contract-validator
-  (:require [malli.core :as m]
+  (:require [knoxx.backend.runtime.actor-scope :as actor-scope]
+            [malli.core :as m]
             [malli.error :as me]))
 
 (def ContractId
@@ -31,6 +32,7 @@
    [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
    [:contract/actor {:optional true} string?]
+   [:contract/actors {:optional true} [:set [:or string? [:= actor-scope/wildcard-actor]]]]
    [:actor/id {:optional true} string?]
    [:actor/roles {:optional true} [:sequential keyword?]]
    [:actor/capabilities {:optional true} [:sequential keyword?]]])

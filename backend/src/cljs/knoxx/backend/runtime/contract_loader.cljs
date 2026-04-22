@@ -1,6 +1,7 @@
 (ns knoxx.backend.runtime.contract-loader
   (:require [clojure.string :as str]
             [cljs.reader :as reader]
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.runtime.contract-validator :as v]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
@@ -138,7 +139,10 @@
                  :contract nil
                  :validation {:ok false :errors [{:path [] :message "EDN text is empty"}]}}
                 (try
-                  (let [contract (reader/read-string trimmed)
+                  (let [raw-contract (reader/read-string trimmed)
+                        contract (if (= klass "agents")
+                                   (actor-scope/normalize-agent-contract raw-contract)
+                                   raw-contract)
                         validation (v/validate klass contract)]
                     {:ok? (:ok validation)
                      :edn-text (str edn-text)

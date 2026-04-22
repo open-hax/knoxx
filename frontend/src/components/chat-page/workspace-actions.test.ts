@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import { preferredSessionModelForResume } from "./workspace-actions";
-import type { ChatSessionSnapshot } from "./hooks";
+import { persistedSessionVisibleForActor, preferredSessionModelForResume } from "./workspace-actions";
+import { persistChatSessionSnapshot, type ChatSessionSnapshot } from "./hooks";
 import type { ChatMessage } from "../../lib/types";
+
+beforeEach(() => {
+  localStorage.clear();
+});
 
 describe("preferredSessionModelForResume", () => {
   it("prefers the persisted session model when available", () => {
@@ -22,5 +26,55 @@ describe("preferredSessionModelForResume", () => {
     ];
 
     expect(preferredSessionModelForResume(null, transcript)).toBe("gpt-5");
+  });
+});
+
+describe("persistedSessionVisibleForActor", () => {
+  it("uses the current actor catalog for wildcard-capable local sessions", () => {
+    persistChatSessionSnapshot("workspace", "session-1", {
+      sessionId: "session-1",
+      conversationId: "conversation-1",
+      activeActorId: "chat_primary",
+      activeAgentId: "knoxx_default",
+      messages: [],
+      runtimeEvents: [],
+      isSending: false,
+    });
+
+    expect(
+      persistedSessionVisibleForActor(
+        "workspace",
+        { session: "conversation-1", active_session_id: "session-1", local_only: true },
+        "cms_chat",
+        new Set(["knoxx_default"]),
+      ),
+    ).toBe(true);
+  });
+
+  it("falls back to chat_primary for legacy local sessions without agent metadata", () => {
+    persistChatSessionSnapshot("workspace", "session-legacy", {
+      sessionId: "session-legacy",
+      conversationId: "conversation-legacy",
+      messages: [],
+      runtimeEvents: [],
+      isSending: false,
+    });
+
+    expect(
+      persistedSessionVisibleForActor(
+        "workspace",
+        { session: "conversation-legacy", active_session_id: "session-legacy", local_only: true },
+        "chat_primary",
+        new Set(),
+      ),
+    ).toBe(true);
+    expect(
+      persistedSessionVisibleForActor(
+        "workspace",
+        { session: "conversation-legacy", active_session_id: "session-legacy", local_only: true },
+        "cms_chat",
+        new Set(),
+      ),
+    ).toBe(false);
   });
 });

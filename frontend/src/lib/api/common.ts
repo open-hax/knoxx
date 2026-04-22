@@ -242,11 +242,14 @@ export async function listActiveAgents(limit = 25): Promise<ActiveAgentSummary[]
   return data.runs;
 }
 
-export async function listMemorySessions(params: { limit?: number; offset?: number } = {}): Promise<MemorySessionListResponse> {
+export async function listMemorySessions(params: { limit?: number; offset?: number; actorId?: string } = {}): Promise<MemorySessionListResponse> {
   const query = new URLSearchParams();
   query.set("limit", String(params.limit ?? 12));
   if (typeof params.offset === "number" && params.offset > 0) {
     query.set("offset", String(params.offset));
+  }
+  if (params.actorId) {
+    query.set("actorId", params.actorId);
   }
   return request<MemorySessionListResponse>(`/api/memory/sessions?${query.toString()}`);
 }

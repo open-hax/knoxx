@@ -103,7 +103,29 @@ export function preferredSessionModelForResume(
   return typeof transcriptModel === "string" ? transcriptModel.trim() : "";
 }
 
+export function persistedSessionVisibleForActor(
+  sessionStateKey: string,
+  summary: MemorySessionSummary,
+  activeActorId: string,
+  visibleAgentIds: ReadonlySet<string>,
+): boolean {
+  const snapshot = summary.active_session_id
+    ? readPersistedChatSessionSnapshot(sessionStateKey, summary.active_session_id)
+    : null;
+  const normalizedActiveActorId = activeActorId.trim();
+  const sessionAgentId = typeof snapshot?.activeAgentId === "string" ? snapshot.activeAgentId.trim() : "";
+  if (sessionAgentId && visibleAgentIds.size > 0) {
+    return visibleAgentIds.has(sessionAgentId);
+  }
+  const sessionActorId = typeof snapshot?.activeActorId === "string" && snapshot.activeActorId.trim().length > 0
+    ? snapshot.activeActorId.trim()
+    : "chat_primary";
+  return sessionActorId === normalizedActiveActorId;
+}
+
 type ChatWorkspaceActionParams = {
+  activeActorId: string;
+  visibleAgentIds: ReadonlySet<string>;
   currentPath: string;
   showFiles: boolean;
   browseData: BrowseResponse | null;
@@ -147,6 +169,8 @@ type ChatWorkspaceActionParams = {
 };
 
 export function createChatWorkspaceActions({
+  activeActorId,
+  visibleAgentIds,
   currentPath,
   showFiles,
   browseData,
@@ -336,11 +360,13 @@ export function createChatWorkspaceActions({
   const refreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
     try {
-      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: 0 });
+      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: 0, actorId: activeActorId });
       const preservedTail = remoteRecentSessionsRef.current.filter((item) => !page.rows.some((row) => row.session === item.session));
       const remoteMerged = mergeSessionPages(page.rows, preservedTail);
       remoteRecentSessionsRef.current = remoteMerged;
-      const merged = sortSessions(mergeSessionPages(remoteMerged, listPersistedChatSessions(sessionStateKey)));
+      const localVisible = listPersistedChatSessions(sessionStateKey)
+        .filter((item) => persistedSessionVisibleForActor(sessionStateKey, item, activeActorId, visibleAgentIds));
+      const merged = sortSessions(mergeSessionPages(remoteMerged, localVisible));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
       const remoteTotal = typeof page.total === "number" ? page.total : remoteMerged.length;
@@ -360,10 +386,16 @@ export function createChatWorkspaceActions({
   const loadMoreRecentSessions = async () => {
     setLoadingMoreRecentSessions(true);
     try {
-      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: remoteRecentSessionsRef.current.length });
+      const page = await listMemorySessions({
+        limit: RECENT_SESSION_PAGE_SIZE,
+        offset: remoteRecentSessionsRef.current.length,
+        actorId: activeActorId,
+      });
       const remoteMerged = mergeSessionPages(remoteRecentSessionsRef.current, page.rows);
       remoteRecentSessionsRef.current = remoteMerged;
-      const merged = sortSessions(mergeSessionPages(remoteMerged, listPersistedChatSessions(sessionStateKey)));
+      const localVisible = listPersistedChatSessions(sessionStateKey)
+        .filter((item) => persistedSessionVisibleForActor(sessionStateKey, item, activeActorId, visibleAgentIds));
+      const merged = sortSessions(mergeSessionPages(remoteMerged, localVisible));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
       const remoteTotal = typeof page.total === "number" ? page.total : remoteMerged.length;
