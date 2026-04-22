@@ -7,6 +7,9 @@
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.triggers.control-config :as control-config]))
 
+(declare nodemailer-create-transport!
+         transporter-send-mail!)
+
 (defn send-email!
   "Send an email via Gmail SMTP using nodemailer.
    Returns a promise that resolves with the result on success or rejects on failure."
@@ -16,13 +19,13 @@
         nodemailer (aget runtime "nodemailer")]
     (if (or (str/blank? email) (str/blank? password))
       (js/Promise.reject (js/Error. "Gmail credentials not configured"))
-      (let [transporter (.createTransport nodemailer
+      (let [transporter (nodemailer-create-transport! nodemailer
                                            #js {:host "smtp.gmail.com"
                                                 :port 587
                                                 :secure false
                                                 :auth #js {:user email
                                                            :pass password}})]
-        (.sendMail transporter
+        (transporter-send-mail! transporter
                    #js {:from email
                         :to (str/join ", " to)
                         :cc (when (seq cc) (str/join ", " cc))
@@ -56,6 +59,30 @@
   (when (dg/started?)
     (-> (dg/restart! token)
         (.catch (fn [_] nil)))))
+
+(defn- fs-read-file!
+  [^js node-fs path encoding]
+  (.readFile node-fs path encoding))
+
+(defn- fs-write-file!
+  [^js node-fs path content encoding]
+  (.writeFile node-fs path content encoding))
+
+(defn- fs-readdir!
+  [^js node-fs path opts]
+  (.readdir node-fs path opts))
+
+(defn- fs-mkdir!
+  [^js node-fs path opts]
+  (.mkdir node-fs path opts))
+
+(defn- nodemailer-create-transport!
+  [^js nodemailer opts]
+  (.createTransport nodemailer opts))
+
+(defn- transporter-send-mail!
+  [^js transporter message]
+  (.sendMail transporter message))
 
 (defn register-tool-routes!
   [app runtime config {:keys [route!
@@ -160,7 +187,7 @@
                     (-> (.stat node-fs path-str)
                         (.then (fn [stat]
                                  (if (.isDirectory stat)
-                                   (-> (.readdir node-fs path-str #js {:withFileTypes true})
+                                    (-> (fs-readdir! node-fs path-str #js {:withFileTypes true})
                                        (.then (fn [entries]
                                                 (let [content-lines (map (fn [entry]
                                                                            (str (aget entry "name")
@@ -172,7 +199,7 @@
                                                                              :path path-str
                                                                              :content content
                                                                              :truncated truncated})))))
-                                   (-> (.readFile node-fs path-str "utf8")
+                                   (-> (fs-read-file! node-fs path-str "utf8")
                                        (.then (fn [text]
                                                 (let [lines (str/split-lines text)
                                                       start (dec offset)
@@ -217,10 +244,10 @@
                     (-> check-promise
                         (.then (fn []
                                  (if create-parents
-                                   (.mkdir node-fs parent #js {:recursive true})
+                                    (fs-mkdir! node-fs parent #js {:recursive true})
                                    (js/Promise.resolve nil))))
                         (.then (fn []
-                                 (.writeFile node-fs path-str content "utf8")))
+                                 (fs-write-file! node-fs path-str content "utf8")))
                         (.then (fn []
                                  (json-response! reply 200 {:ok true
                                                             :role role
@@ -245,7 +272,7 @@
                         old-string (str (or (aget body "old_string") ""))
                         new-string (str (or (aget body "new_string") ""))
                         replace-all (true? (aget body "replace_all"))]
-                    (-> (.readFile node-fs path-str "utf8")
+                    (-> (fs-read-file! node-fs path-str "utf8")
                         (.then (fn [current]
                                  (if (= (.indexOf current old-string) -1)
                                    (js/Promise.reject (js/Error. "old_string not found in file"))
@@ -255,7 +282,7 @@
                                          updated (if replace-all
                                                    (str/replace current old-string new-string)
                                                    (replace-first current old-string new-string))]
-                                     (-> (.writeFile node-fs path-str updated "utf8")
+                                     (-> (fs-write-file! node-fs path-str updated "utf8")
                                          (.then (fn []
                                                   (json-response! reply 200 {:ok true
                                                                              :role role

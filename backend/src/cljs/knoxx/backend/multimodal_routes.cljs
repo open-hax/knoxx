@@ -58,6 +58,26 @@
      (.mkdir node-fs upload-path #js {:recursive true})
      (fn [] upload-path))))
 
+(defn- fs-readdir!
+  [^js node-fs path]
+  (.readdir node-fs path))
+
+(defn- fs-rm!
+  [^js node-fs path]
+  (.rm node-fs path))
+
+(defn- fs-read-file!
+  [^js node-fs path]
+  (.readFile node-fs path))
+
+(defn- reply-header!
+  [^js reply name value]
+  (.header reply name value))
+
+(defn- request-parts-promise
+  [^js request]
+  (.fromAsync js/Array (.parts request)))
+
 (defn- save-upload-file!
   "Save an uploaded file and return its metadata."
   [runtime config file-part filename]
@@ -98,7 +118,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-tool! ctx "multimodal.upload"))
-                (-> (.fromAsync js/Array (.parts request))
+                (-> (request-parts-promise request)
                     (.then
                      (fn [parts]
                        (let [part-seq (js-array-seq parts)
@@ -146,13 +166,13 @@
             (let [node-fs (aget runtime "fs")
                   node-path (aget runtime "path")
                   file-id (aget request "params" "fileId")]
-              (-> (.readdir node-fs (.join node-path upload-dir))
+              (-> (fs-readdir! node-fs (.join node-path upload-dir))
                   (.then
                    (fn [files]
                      (let [matching (first (filter #(str/starts-with? % file-id) (js-array-seq files)))]
                        (if matching
                          (let [abs-path (.join node-path upload-dir matching)]
-                           (-> (.readFile node-fs abs-path)
+                           (-> (fs-read-file! node-fs abs-path)
                                (.then
                                 (fn [buf]
                                   (let [ext (if (str/includes? matching ".")
@@ -171,8 +191,8 @@
                                                       (contains? #{".webm"} ext) "video/webm"
                                                       (contains? #{".pdf"} ext) "application/pdf"
                                                       :else "application/octet-stream")]
-                                    (.header reply "Content-Type" content-type)
-                                    (.header reply "Cache-Control" "public, max-age=31536000")
+                                    (reply-header! reply "Content-Type" content-type)
+                                    (reply-header! reply "Cache-Control" "public, max-age=31536000")
                                     (.send reply buf))))))
                          (json-response! reply 404 {:detail "File not found"})))))
                   (.catch
@@ -189,13 +209,13 @@
                 (let [node-fs (aget runtime "fs")
                       node-path (aget runtime "path")
                       file-id (aget request "params" "fileId")]
-                  (-> (.readdir node-fs (.join node-path upload-dir))
+                  (-> (fs-readdir! node-fs (.join node-path upload-dir))
                       (.then
                        (fn [files]
                          (let [matching (first (filter #(str/starts-with? % file-id) (js-array-seq files)))]
                            (if matching
                              (let [abs-path (.join node-path upload-dir matching)]
-                               (-> (.rm node-fs abs-path)
+                               (-> (fs-rm! node-fs abs-path)
                                    (.then
                                     (fn []
                                       (json-response! reply 200

@@ -23,6 +23,12 @@
             ["node:path" :as path]
             ["node:crypto" :as crypto]))
 
+(declare contracts-config
+         query!
+         query-one!
+         find-org-by-slug
+         set-membership-roles!)
+
 ;; ---------------------------------------------------------------------------
 ;; Data Constants
 ;; ---------------------------------------------------------------------------

@@ -58,6 +58,14 @@
          "?output_format="
          (js/encodeURIComponent (str fmt)))))
 
+(defn- request-parts-promise
+  [^js request]
+  (.fromAsync js/Array (.parts request)))
+
+(defn- reply-header!
+  [^js reply name value]
+  (.header reply name value))
+
 (defn register-voice-routes!
   [app runtime config handlers]
   (let [{:keys [route! json-response! with-request-context! ensure-tool!]} handlers]
@@ -87,7 +95,7 @@
                     (if (str/blank? base)
                       (json-response! reply 503 {:detail "KNOXX_STT_BASE_URL is not configured"})
                       (let [promise
-                            (-> (.fromAsync js/Array (.parts request))
+                            (-> (request-parts-promise request)
                                 (.then
                                  (fn [parts]
                                    (let [part-seq (http/js-array-seq parts)
@@ -193,7 +201,7 @@
                                (if (.-ok resp)
                                  (do
                                    ;; Ensure client caches are not poisoned by identical text across contexts.
-                                   (.header reply "Cache-Control" "no-store")
+                                   (reply-header! reply "Cache-Control" "no-store")
                                    (http/send-fetch-response! reply resp))
                                  (-> (.text resp)
                                      (.then (fn [detail]
