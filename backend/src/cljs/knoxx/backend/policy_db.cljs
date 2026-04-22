@@ -148,6 +148,45 @@
     (catch :default _
       nil)))
 
+(defn- normalize-email
+  [value]
+  (some-> value str str/trim str/lower-case not-empty))
+
+(defn- actor-role-slugs
+  [actor]
+  (->> (or (:actor/roles actor) [])
+       (map (fn [value]
+              (cond
+                (keyword? value) (name value)
+                (string? value) (some-> value str str/trim not-empty)
+                :else (some-> value str str/trim not-empty))))
+       (remove nil?)
+       distinct
+       vec))
+
+(defn- find-user-actor-contract-by-email
+  [email]
+  (when-let [normalized-email (normalize-email email)]
+    (try
+      (let [actor-dir (.join path (contracts-dir) "actors")
+            names (.readdirSync fs actor-dir)]
+        (some (fn [name]
+                (when (and (string? name) (str/ends-with? name ".edn"))
+                  (let [actor (safe-read-edn (.join path actor-dir name))
+                        actor-email (normalize-email (or (:actor/email actor)
+                                                         (:actor/username actor)))]
+                    (when (and (= :user (:actor/kind actor))
+                               (= normalized-email actor-email))
+                      {:id (or (:actor/id actor)
+                               (subs name 0 (- (count name) 4)))
+                       :email actor-email
+                       :org (some-> (:actor/org actor) str str/trim not-empty)
+                       :role-slugs (actor-role-slugs actor)
+                       :actor actor})))))
+              (array-seq names)))
+      (catch :default _
+        nil)))
+
 (defn- contract-tool-ids
   "Return a set of tool ids found in contracts/capabilities/*.edn." 
   []
@@ -377,6 +416,37 @@
                WHERE COALESCE(NULLIF(trim(actor_id), ''), '') = ''"
               [])
       (.then (fn [_] nil))))
+
+(defn- sync-user-from-actor-contract!
+  [pool primary-org payload]
+  (let [email (normalize-email (aget payload "email"))
+        display-name (str/trim (str (or (aget payload "displayName")
+                                        (aget payload "display_name")
+                                        email)))
+        auth-provider (str (or (aget payload "authProvider") "github"))
+        external-subject (or (aget payload "externalSubject") nil)]
+    (if-not email
+      (js/Promise.resolve nil)
+      (if-let [actor-contract (find-user-actor-contract-by-email email)]
+        (let [role-slugs (vec (or (:role-slugs actor-contract) ["knowledge_worker"]))]
+          (-> (query-one! pool
+                          "INSERT INTO users (email, display_name, auth_provider, external_subject, status) VALUES ($1, $2, $3, $4, 'active') ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, auth_provider = EXCLUDED.auth_provider, external_subject = EXCLUDED.external_subject, status = 'active', updated_at = NOW() RETURNING *"
+                          [email (or display-name email) auth-provider external-subject])
+              (.then
+               (fn [user]
+                 (-> (query-one! pool
+                                 "INSERT INTO memberships (user_id, org_id, actor_id, status, is_default) VALUES ($1, $2, $3, 'active', TRUE) ON CONFLICT (user_id, org_id) DO UPDATE SET actor_id = EXCLUDED.actor_id, status = 'active', is_default = TRUE, updated_at = NOW() RETURNING *"
+                                 [(aget user "id") (aget primary-org "id") (:id actor-contract)])
+                     (.then
+                      (fn [membership]
+                        (-> (set-membership-roles! pool (aget membership "id")
+                                                   {:org-id (aget primary-org "id")
+                                                    :role-slugs role-slugs
+                                                    :role-ids #js []
+                                                    :replace true})
+                            (.then (fn [_]
+                                     (set-membership-actor-id! pool (aget membership "id") (:id actor-contract))))))))))))
+        (js/Promise.resolve nil)))))
 
 (defn- normalize-tool-policy
   [policy]
@@ -1971,6 +2041,10 @@
                                  :listInvites
                                  (fn [opts]
                                    (factory-list-invites pool opts))
+
+                                 :syncUserFromActorContract
+                                 (fn [payload]
+                                   (sync-user-from-actor-contract! pool primary-org payload))
 
                                  :query
                                  (fn [sql params]

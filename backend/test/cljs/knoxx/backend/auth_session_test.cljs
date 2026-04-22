@@ -2,25 +2,32 @@
   (:require [cljs.test :refer [async deftest is testing]]
             [knoxx.backend.auth-session :as auth-session]))
 
-(deftest ensure-user-membership-resolves-context-by-canonical-email
+(deftest ensure-user-membership-syncs-user-contract-before-resolve
   (async done
     (let [calls* (atom [])
           ctx #js {"user" #js {"id" "user-1"
                                "email" "foamy125@gmail.com"
                                "username" "foamy125@gmail.com"}
-                   "actor" #js {"id" "system_admin"}
+                   "actor" #js {"id" "foamy125_gmail_com"}
                    "membership" #js {"id" "membership-1"
-                                     "actorId" "system_admin"}
+                                     "actorId" "foamy125_gmail_com"}
                    "roleSlugs" #js ["system_admin"]}
-          policy-db #js {"resolveRequestContext"
+          policy-db #js {"syncUserFromActorContract"
+                         (fn [payload]
+                           (swap! calls* conj [:sync (js->clj payload :keywordize-keys true)])
+                           (js/Promise.resolve #js {:ok true}))
+                         "resolveRequestContext"
                          (fn [headers]
-                           (swap! calls* conj (js->clj headers :keywordize-keys true))
+                           (swap! calls* conj [:resolve (js->clj headers :keywordize-keys true)])
                            (js/Promise.resolve ctx))}]
-      (-> (auth-session/ensure-user-membership! policy-db #js {"id" "gh-1" "login" "foamy"} "Foamy125@gmail.com")
+      (-> (auth-session/ensure-user-membership! policy-db #js {"id" "gh-1" "login" "foamy"} "foamy125@gmail.com")
           (.then (fn [result]
-                   (testing "GitHub email is used as the canonical Knoxx username"
+                   (testing "GitHub email is used as the canonical Knoxx username and syncs user actor contracts first"
                      (is (= ctx result))
-                     (is (= [{:x-knoxx-user-email "Foamy125@gmail.com"}]
+                     (is (= [[:sync {:email "foamy125@gmail.com"
+                                     :displayName "foamy125@gmail.com"
+                                     :authProvider "github"}]
+                             [:resolve {:x-knoxx-user-email "foamy125@gmail.com"}]]
                             @calls*)))))
           (.catch (fn [err]
                     (is nil (str "unexpected promise rejection: " err))))

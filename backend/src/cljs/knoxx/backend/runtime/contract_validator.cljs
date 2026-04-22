@@ -39,6 +39,8 @@
   [:map {:closed false}
    [:actor/id string?]
    [:actor/kind [:enum :agent :user]]
+   [:actor/email {:optional true} string?]
+   [:actor/username {:optional true} string?]
    [:actor/org {:optional true} string?]
    [:actor/label {:optional true} string?]
    [:actor/contract {:optional true} string?]

@@ -380,8 +380,15 @@
    persisted Knoxx user/membership records rather than being inferred from the
    OAuth callback environment."
   [policyDb _gh-user email]
-  (let [headers-like #js {"x-knoxx-user-email" email}]
-    (.resolveRequestContext policyDb headers-like)))
+  (let [headers-like #js {"x-knoxx-user-email" email}
+        sync-user-from-actor-contract (aget policyDb "syncUserFromActorContract")]
+    (-> (if sync-user-from-actor-contract
+          (sync-user-from-actor-contract #js {:email email
+                                              :displayName email
+                                              :authProvider "github"})
+          (js/Promise.resolve nil))
+        (.then (fn [_]
+                 (.resolveRequestContext policyDb headers-like))))))
 
 (defn- create-session-and-redirect!
   "Create session from resolved context, set cookie, and redirect."
@@ -416,22 +423,21 @@
 (defn- check-whitelist-and-session!
   "Check if email is whitelisted; if so, create session and redirect, otherwise redirect to invite page."
   [policyDb reply gh-user email state-entry public-base-url]
-  (let [headers-like #js {"x-knoxx-user-email" email}]
-    (-> (.resolveRequestContext policyDb headers-like)
-        (.then (fn [_] true))
-        (.catch (fn [_] false))
-        (.then
-          (fn [whitelisted]
-            (if (not whitelisted)
-              ;; Not whitelisted — redirect to invite page
-              (let [invite-url (js/URL. "/login" public-base-url)]
-                (.set (.-searchParams invite-url) "error" "not_whitelisted")
-                (.set (.-searchParams invite-url) "email" email)
-                (.set (.-searchParams invite-url) "github_login" (or (aget gh-user "login") ""))
-                (.redirect reply (.toString invite-url)))
-              ;; Whitelisted — upsert and create session
-              (create-session-and-redirect!
-                policyDb reply gh-user email state-entry public-base-url)))))))
+  (-> (ensure-user-membership! policyDb gh-user email)
+      (.then (fn [_] true))
+      (.catch (fn [_] false))
+      (.then
+       (fn [whitelisted]
+         (if (not whitelisted)
+           ;; Not whitelisted — redirect to invite page
+           (let [invite-url (js/URL. "/login" public-base-url)]
+             (.set (.-searchParams invite-url) "error" "not_whitelisted")
+             (.set (.-searchParams invite-url) "email" email)
+             (.set (.-searchParams invite-url) "github_login" (or (aget gh-user "login") ""))
+             (.redirect reply (.toString invite-url)))
+           ;; Whitelisted — upsert and create session
+           (create-session-and-redirect!
+            policyDb reply gh-user email state-entry public-base-url))))))
 
 ;; --- Main callback handler -------------------------------------------------
 
