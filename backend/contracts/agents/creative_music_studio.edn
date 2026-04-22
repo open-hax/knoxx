@@ -1,9 +1,9 @@
 {:contract/id "creative_music_studio"
  :contract/kind :agent
- :contract/version 2
+ :contract/version 3
  :enabled true
  :trigger-kind :manual
- :contract/actor "chat_primary"
+ :contract/actors ["chat_primary" "knoxx_default"]
 
  :agent
  {:role :creative_catalyst
