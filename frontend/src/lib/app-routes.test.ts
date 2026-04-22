@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EVENT_AGENTS_ROUTE, joinPath, opsRoutes, remapLegacyOpsPath } from './app-routes';
+import { BASIC_USER_ROLE, EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, joinPath, opsRoutes, remapLegacyOpsPath } from './app-routes';
 
 describe('app routes', () => {
   it('builds canonical ops routes without duplicate slashes', () => {
@@ -19,5 +19,13 @@ describe('app routes', () => {
   it('leaves non-legacy routes untouched', () => {
     expect(remapLegacyOpsPath('/')).toBe('/');
     expect(remapLegacyOpsPath('/translations', '?q=test')).toBe('/translations?q=test');
+  });
+
+  it('marks basic users and limits them to the chat surface', () => {
+    expect(isBasicUserRole([BASIC_USER_ROLE])).toBe(true);
+    expect(canAccessPath('/', [BASIC_USER_ROLE])).toBe(true);
+    expect(canAccessPath('/signup', [BASIC_USER_ROLE])).toBe(true);
+    expect(canAccessPath('/contracts', [BASIC_USER_ROLE])).toBe(false);
+    expect(canAccessPath('/ops/admin', [BASIC_USER_ROLE])).toBe(false);
   });
 });

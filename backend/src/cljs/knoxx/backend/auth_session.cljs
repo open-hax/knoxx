@@ -57,6 +57,8 @@
 
 (def ^:private db-session-store (atom nil))
 
+(declare recover-or-persist-session-secret!)
+
 (defn set-db-session-store!
   [policyDb]
   (reset! db-session-store policyDb)
@@ -321,7 +323,7 @@
                                 (map str/trim)
                                 (remove str/blank?)
                                 (map str/lower-case)
-                                set)
+                                clojure.core/set)
         allowlist-role-slugs (->> (str/split (str (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS") "")) #"[\s,]+")
                                   (map str/trim)
                                   (remove str/blank?)
@@ -467,21 +469,21 @@
   (-> (ensure-user-membership! policyDb gh-user email)
       (.then
         (fn [fresh-ctx]
-          (let [session-id   (.randomUUID crypto)
-                raw-token    (sign-token #js {:sid session-id})
+          (let [session-id (.randomUUID crypto)
+                raw-token (sign-token #js {:sid session-id})
                 session-data #js {:membershipId (some-> fresh-ctx (aget "membership") (aget "id"))
-                                  :actorId      (or (some-> fresh-ctx (aget "membership") (aget "actorId"))
-                                                    (some-> fresh-ctx (aget "actor") (aget "id")))
-                                  :userId       (some-> fresh-ctx (aget "user") (aget "id"))
-                                  :email        email
-                                  :orgSlug      (some-> fresh-ctx (aget "org") (aget "slug"))
-                                  :orgId        (some-> fresh-ctx (aget "org") (aget "id"))
-                                  :displayName  (or (aget gh-user "name") (aget gh-user "login") email)
-                                  :githubLogin  (aget gh-user "login")
-                                  :githubId     (aget gh-user "id")
+                                  :actorId (or (some-> fresh-ctx (aget "membership") (aget "actorId"))
+                                               (some-> fresh-ctx (aget "actor") (aget "id")))
+                                  :userId (some-> fresh-ctx (aget "user") (aget "id"))
+                                  :email email
+                                  :orgSlug (some-> fresh-ctx (aget "org") (aget "slug"))
+                                  :orgId (some-> fresh-ctx (aget "org") (aget "id"))
+                                  :displayName (or (aget gh-user "name") (aget gh-user "login") email)
+                                  :githubLogin (aget gh-user "login")
+                                  :githubId (aget gh-user "id")
                                   :authProvider "github"
-                                  :_rawToken    raw-token
-                                  :createdAt    (.toISOString (js/Date.))}]
+                                  :_rawToken raw-token
+                                  :createdAt (.toISOString (js/Date.))}]
             (-> (store-session session-id session-data)
                 (.then (fn [_] raw-token))
                 (.then
@@ -490,6 +492,36 @@
                     (.log js/console (str "[knoxx-session] GitHub login: " email))
                     (.redirect reply
                       (.toString (js/URL. (:redirect state-entry) public-base-url)))))))))))
+
+(defn- create-session-from-context!
+  [reply public-base-url ctx session-options]
+  (let [session-id (.randomUUID crypto)
+        raw-token (sign-token #js {:sid session-id})
+        session-data #js {:membershipId (some-> ctx (aget "membership") (aget "id"))
+                          :actorId (or (some-> ctx (aget "membership") (aget "actorId"))
+                                       (some-> ctx (aget "actor") (aget "id")))
+                          :userId (some-> ctx (aget "user") (aget "id"))
+                          :email (or (aget session-options "email")
+                                     (some-> ctx (aget "user") (aget "email"))
+                                     "")
+                          :orgSlug (some-> ctx (aget "org") (aget "slug"))
+                          :orgId (some-> ctx (aget "org") (aget "id"))
+                          :displayName (or (aget session-options "displayName")
+                                           (some-> ctx (aget "user") (aget "displayName"))
+                                           (some-> ctx (aget "user") (aget "email"))
+                                           "")
+                          :authProvider (or (aget session-options "authProvider") "local")
+                          :_rawToken raw-token
+                          :createdAt (.toISOString (js/Date.))}]
+    (-> (store-session session-id session-data)
+        (.then (fn [_]
+                 (set-session-cookie reply raw-token public-base-url)
+                 #js {:ok true
+                      :sessionId session-id
+                      :user (aget ctx "user")
+                      :actor (aget ctx "actor")
+                      :org (aget ctx "org")
+                      :membership (aget ctx "membership")})))))
 
 (defn- check-whitelist-and-session!
   "Check if email is whitelisted; if so, create session and redirect, otherwise redirect to invite page."
@@ -611,6 +643,46 @@
             (.send reply (clj->js {:githubEnabled github-enabled
                                    :publicBaseUrl public-base-url
                                    :loginUrl (when github-enabled "/api/auth/login")}))))
+
+    (.post app "/api/auth/signup"
+           (fn [req reply]
+             (if-not policyDb
+               (.send (.code reply 503) (clj->js {:error "Knoxx policy database is not configured"}))
+               (let [body (or (aget req "body") #js {})
+                     email (str/lower-case (str/trim (str (or (aget body "email") ""))))
+                     display-name (str/trim (str (or (aget body "displayName")
+                                                     (aget body "display_name")
+                                                     email)))]
+                 (if (str/blank? email)
+                   (.send (.code reply 400) (clj->js {:error "email is required"}))
+                   (-> (.getBootstrapContext policyDb)
+                       (.then (fn [bootstrap]
+                                (let [primary-org (aget bootstrap "primaryOrg")
+                                      org-id (aget primary-org "id")
+                                      org-slug (aget primary-org "slug")]
+                                  (-> (.createUser policyDb
+                                                   #js {:email email
+                                                        :displayName (or display-name email)
+                                                        :orgId org-id
+                                                        :roleSlugs #js ["basic_user"]
+                                                        :authProvider "signup"
+                                                        :status "active"
+                                                        :membershipStatus "active"
+                                                        :isDefault true})
+                                      (.then (fn [_]
+                                               (.resolveRequestContext policyDb
+                                                                       #js {"x-knoxx-user-email" email
+                                                                            "x-knoxx-org-slug" org-slug})))
+                                      (.then (fn [ctx]
+                                               (create-session-from-context! reply public-base-url ctx
+                                                                             #js {:email email
+                                                                                  :displayName (or display-name email)
+                                                                                  :authProvider "signup"}))))))
+                       (.then (fn [result]
+                                (.send reply result)))
+                       (.catch (fn [err]
+                                 (.send (.code reply (or (.-statusCode err) (.-status err) 500))
+                                        (clj->js {:error (or (.-message err) "Signup failed")})))))))))
 
     (.get app "/api/auth/login"
           (fn [req reply]
@@ -747,7 +819,7 @@
                                (aset (.-headers req) "x-knoxx-org-slug" (aget session-data "orgSlug")))
                              (when (aget session-data "membershipId")
                                (aset (.-headers req) "x-knoxx-membership-id" (aget session-data "membershipId")))))))
-                      (.catch (fn [_]))))))))))))
+                      (.catch (fn [_]))))))))))))))
 
 
 (defn resolve-auth-context

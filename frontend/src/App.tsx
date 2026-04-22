@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { getFrontendConfig } from "./lib/api";
-import { EVENT_AGENTS_ROUTE, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import AuthBoundary from "./pages/AuthContext";
 import { useAuth } from "./pages/useAuth";
 import ChatPage from "./pages/ChatPage";
@@ -15,9 +14,16 @@ import TranslationReviewPage from "./pages/TranslationReviewPage";
 
 
 function App() {
-  const [knoxxAdminUrl] = useState<string>("");
-  let auth: ReturnType<typeof useAuth> | null = null;
-  try { auth = useAuth(); } catch { /* not inside AuthBoundary yet */ }
+  return (
+    <AuthBoundary>
+      <AppShell />
+    </AuthBoundary>
+  );
+}
+
+function AppShell() {
+  const auth = useAuth();
+  const basicUser = isBasicUserRole(auth.roleSlugs);
 
   const navLinkClass = ({ isActive }: { isActive: boolean }): string =>
     `app-shell__nav-link${isActive ? " app-shell__nav-link--active" : ""}`;
@@ -27,7 +33,6 @@ function App() {
   }, []);
 
   return (
-    <AuthBoundary>
     <div className="app-shell">
       {/* Main navbar - always visible across all workplaces */}
       <header className="app-shell__header">
@@ -37,27 +42,31 @@ function App() {
             <NavLink to="/" className={navLinkClass}>
               Chat
             </NavLink>
-            <NavLink to="/cms" className={navLinkClass}>
-              CMS
-            </NavLink>
-            <NavLink to="/contracts" className={navLinkClass}>
-              Contracts
-            </NavLink>
-            <NavLink to="/data" className={navLinkClass}>
-              Data
-            </NavLink>
-            <NavLink to="/gardens" className={navLinkClass}>
-              Gardens
-            </NavLink>
-            <NavLink to="/translations" className={navLinkClass}>
-              Translations
-            </NavLink>
-            <NavLink to={EVENT_AGENTS_ROUTE} className={navLinkClass}>
-              Event Agents
-            </NavLink>
-            <NavLink to={opsRoutes.admin} className={navLinkClass}>
-              Admin
-            </NavLink>
+            {!basicUser ? (
+              <>
+                <NavLink to="/cms" className={navLinkClass}>
+                  CMS
+                </NavLink>
+                <NavLink to="/contracts" className={navLinkClass}>
+                  Contracts
+                </NavLink>
+                <NavLink to="/data" className={navLinkClass}>
+                  Data
+                </NavLink>
+                <NavLink to="/gardens" className={navLinkClass}>
+                  Gardens
+                </NavLink>
+                <NavLink to="/translations" className={navLinkClass}>
+                  Translations
+                </NavLink>
+                <NavLink to={EVENT_AGENTS_ROUTE} className={navLinkClass}>
+                  Event Agents
+                </NavLink>
+                <NavLink to={opsRoutes.admin} className={navLinkClass}>
+                  Admin
+                </NavLink>
+              </>
+            ) : null}
           </nav>
           {/* User menu */}
           <UserMenu />
@@ -69,21 +78,31 @@ function App() {
         <Routes>
           {/* Regular pages */}
           <Route path="/" element={<ChatPage />} />
-          <Route path="/cms" element={<CmsPage />} />
-          <Route path="/contracts" element={<ContractsPage />} />
-          <Route path="/data" element={<DataPage />} />
-          <Route path="/gardens" element={<GardensPage />} />
-          <Route path="/translations" element={<TranslationReviewPage />} />
-          <Route path="/translations/:documentId/:targetLang" element={<TranslationReviewPage />} />
-          <Route path={EVENT_AGENTS_ROUTE} element={<EventAgentsPage />} />
-          <Route path="/ops/*" element={<OpsRoot />} />
+          <Route path="/cms" element={<ProtectedSurface><CmsPage /></ProtectedSurface>} />
+          <Route path="/contracts" element={<ProtectedSurface><ContractsPage /></ProtectedSurface>} />
+          <Route path="/data" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />
+          <Route path="/gardens" element={<ProtectedSurface><GardensPage /></ProtectedSurface>} />
+          <Route path="/translations" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />
+          <Route path="/translations/:documentId/:targetLang" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />
+          <Route path={EVENT_AGENTS_ROUTE} element={<ProtectedSurface><EventAgentsPage /></ProtectedSurface>} />
+          <Route path="/ops/*" element={<ProtectedSurface><OpsRoot /></ProtectedSurface>} />
           <Route path="/next/*" element={<LegacyOpsRedirect />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
     </div>
-    </AuthBoundary>
   );
+}
+
+function ProtectedSurface({ children }: { children: JSX.Element }) {
+  const auth = useAuth();
+  const location = useLocation();
+
+  if (!canAccessPath(location.pathname, auth.roleSlugs)) {
+    return <Navigate to="/" replace />;
+  }
+
+  return children;
 }
 
 function LegacyOpsRedirect() {

@@ -228,19 +228,20 @@
                                            (or (object? raw-args) (fn? raw-args)))
                                   (aget raw-args (if (keyword? k) (name k) (str k)))))
                               keys)))]
-    (cond
-      (and (= tool-name "bash") (map? args))
-      (let [cmd (arg-value :command :cmd)
-            timeout (arg-value :timeout :timeoutSeconds :timeoutMs)]
-        (when (and (string? cmd) (not (str/blank? cmd)))
-          (let [[cmd clipped?] (clip-text cmd 20000)]
-            (str
-             (fenced "bash" (if clipped? (str cmd "…") cmd))
-             (when clipped? "\n\n_(truncated)_")
-           (when (some? timeout)
-             (str "\n\n- timeout: " timeout)))))
+    (case tool-name
+      "bash"
+      (when (map? args)
+        (let [cmd (arg-value :command :cmd)
+              timeout (arg-value :timeout :timeoutSeconds :timeoutMs)]
+          (when (and (string? cmd) (not (str/blank? cmd)))
+            (let [[clipped-cmd clipped?] (clip-text cmd 20000)]
+              (str
+               (fenced "bash" (if clipped? (str clipped-cmd "…") clipped-cmd))
+               (when clipped? "\n\n_(truncated)_")
+               (when (some? timeout)
+                 (str "\n\n- timeout: " timeout)))))))
 
-      (= tool-name "read")
+      "read"
       (let [path (arg-value :path "path")
             offset (arg-value :offset "offset")
             limit (arg-value :limit "limit")]
@@ -248,9 +249,9 @@
           (fenced "yaml"
                   (str "path: " path
                        "\noffset: " (if (some? offset) offset "(default)")
-                       "\nlimit: " (if (some? limit) limit "(default)"))))))
+                       "\nlimit: " (if (some? limit) limit "(default)")))))
 
-      :else nil)))
+      nil)))
 
 (defn- copy-js-object
   [value]

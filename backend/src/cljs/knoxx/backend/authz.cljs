@@ -117,6 +117,18 @@
             (:effect policy)))
         (:toolPolicies ctx)))
 
+(defn ctx-tool-policy
+  [ctx tool-id]
+  (some (fn [policy]
+          (when (= (str (:toolId policy)) (str tool-id))
+            policy))
+        (:toolPolicies ctx)))
+
+(defn ctx-tool-constraints
+  [ctx tool-id]
+  (or (:constraints (ctx-tool-policy ctx tool-id))
+      {}))
+
 (defn ctx-tool-allowed?
   [ctx tool-id]
   (or (system-admin? ctx)

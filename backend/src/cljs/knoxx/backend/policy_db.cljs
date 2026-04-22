@@ -27,6 +27,7 @@
          query!
          query-one!
          find-org-by-slug
+         normalize-actor-id
          set-membership-roles!)
 
 ;; ---------------------------------------------------------------------------
@@ -173,6 +174,71 @@
 (defn- normalize-email
   [value]
   (some-> value str str/trim str/lower-case not-empty))
+
+(defn- role-slug->contract-keyword
+  [value]
+  (when-let [slug (some-> value str str/trim not-empty)]
+    (keyword "role" (str/replace slug #"_" "-"))))
+
+(defn- user-actor-id-from-email
+  [email]
+  (some-> email
+          normalize-email
+          (str/replace #"[^a-z0-9]+" "_")
+          (str/replace #"^_+|_+$" "")
+          not-empty))
+
+(defn- user-actor-file-path
+  [email]
+  (when-let [actor-id (user-actor-id-from-email email)]
+    (.join path (contracts-dir) "actors" (str actor-id ".edn"))))
+
+(defn- ensure-contract-dir!
+  [dir]
+  (.mkdirSync fs dir #js {:recursive true}))
+
+(defn- upsert-user-actor-contract!
+  [{:keys [actor-id email display-name org-slug role-slugs]}]
+  (let [normalized-email (normalize-email email)
+        resolved-actor-id (or (normalize-actor-id actor-id)
+                              (user-actor-id-from-email normalized-email))
+        file-path (user-actor-file-path normalized-email)]
+    (if (or (str/blank? (str (or normalized-email "")))
+            (str/blank? (str (or resolved-actor-id "")))
+            (str/blank? (str (or file-path ""))))
+      (js/Promise.resolve nil)
+      (try
+        (let [existing (when (.existsSync fs file-path)
+                         (safe-read-edn file-path))
+              contract (merge
+                        {:actor/id resolved-actor-id
+                         :actor/kind :user
+                         :actor/email normalized-email
+                         :actor/username normalized-email
+                         :actor/org (or (some-> org-slug str str/trim not-empty) "open-hax")
+                         :actor/label (or (some-> display-name str str/trim not-empty)
+                                          normalized-email)
+                         :actor/roles (->> (or role-slugs ["knowledge_worker"])
+                                           (keep role-slug->contract-keyword)
+                                           distinct
+                                           vec)
+                         :actor/policy {:principal :actor
+                                        :source-of-truth :contract
+                                        :notes (str "Canonical human actor contract for " normalized-email ". Created or updated by Knoxx onboarding flows.")}}
+                        (when (map? existing)
+                          (select-keys existing [:actor/contract :actor/policy])))]
+          (ensure-contract-dir! (.dirname path file-path))
+          (.writeFileSync fs file-path (str (pr-str contract) "\n") "utf8")
+          (js/Promise.resolve {:actor-id resolved-actor-id
+                               :path file-path}))
+        (catch :default err
+          (js/Promise.reject err))))))
+
+(defn- find-org-by-id
+  [pool org-id]
+  (if (str/blank? (str org-id))
+    (js/Promise.resolve nil)
+    (query-one! pool "SELECT * FROM orgs WHERE id = $1::uuid" [org-id])))
 
 (defn- actor-role-slugs
   [actor]
@@ -331,6 +397,12 @@
     :permissions ALL-PERMISSION-CODES
     :tool-policies (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS)}])
 
+(defn- basic-user-chat-policy-constraints
+  []
+  {:allowedModels ["gemma4:31b"]
+   :maxRequests 20
+   :windowSeconds 600})
+
 (def ^:private ORG-ROLE-SEEDS
   [{:slug "org_admin"
     :name "Org Admin"
@@ -369,6 +441,19 @@
                     {:toolId "semantic_query" :effect "allow"}
                     {:toolId "memory_search" :effect "allow"}
                     {:toolId "memory_session" :effect "allow"}]}
+   {:slug "basic_user"
+    :name "Basic User"
+    :permissions ["org.datalakes.read" "datalake.read" "datalake.query"
+                  "agent.chat.use" "agent.memory.read"
+                  "agent.runs.read_own" "agent.controls.steer" "agent.controls.follow_up"
+                  "tool.read.use" "tool.semantic_query.use"
+                  "tool.memory_search.use" "tool.memory_session.use"]
+    :tool-policies [{:toolId "read" :effect "allow"}
+                    {:toolId "canvas" :effect "allow"}
+                    {:toolId "semantic_query" :effect "allow"}
+                    {:toolId "memory_search" :effect "allow"}
+                    {:toolId "memory_session" :effect "allow"}
+                    {:toolId "agent.chat" :effect "allow" :constraints (basic-user-chat-policy-constraints)}]}
    {:slug "data_analyst"
     :name "Data Analyst"
     :permissions ["org.datalakes.read" "datalake.read" "datalake.query"
@@ -1597,6 +1682,8 @@
                                   (aget payload "display_name") email)))
             requested-role-slugs (vec (or (aget payload "roleSlugs") #js ["knowledge_worker"]))
             requested-actor-id (or (normalize-actor-id (aget payload "actorId"))
+                                   (some-> (find-user-actor-contract-by-email email) :id)
+                                   (user-actor-id-from-email email)
                                    (default-membership-actor-id requested-role-slugs))]
         (-> (query-one! pool
                         "INSERT INTO users (email, display_name, auth_provider, external_subject, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, auth_provider = EXCLUDED.auth_provider, external_subject = EXCLUDED.external_subject, status = EXCLUDED.status, updated_at = NOW() RETURNING *"
@@ -1625,9 +1712,18 @@
                                   [(aget user "id") org-id])))
                    (.then
                     (fn [membership-row]
-                      (set-membership-actor-id! pool
-                                                (aget membership-row "id")
-                                                requested-actor-id)))
+                      (-> (set-membership-actor-id! pool
+                                                    (aget membership-row "id")
+                                                    requested-actor-id)
+                          (.then (fn [_]
+                                   (find-org-by-id pool org-id)))
+                          (.then (fn [org-row]
+                                   (upsert-user-actor-contract!
+                                    {:actor-id requested-actor-id
+                                     :email email
+                                     :display-name dn
+                                     :org-slug (aget org-row "slug")
+                                     :role-slugs requested-role-slugs}))))))
                    (.then
                     (fn [_]
                       (append-audit! pool {:actor-user-id uid
@@ -1669,14 +1765,25 @@
                                        :role-slugs (or (aget payload "roleSlugs") #js [])
                                        :replace (not= (aget payload "replace") false)})
                (.then
-                (fn [_]
+               (fn [_]
                   (let [requested-role-slugs (vec (or (aget payload "roleSlugs") #js []))
                         requested-actor-id (or (normalize-actor-id (aget payload "actorId"))
+                                               (normalize-actor-id (aget ms "actor_id"))
                                                (if (seq requested-role-slugs)
                                                  (default-membership-actor-id requested-role-slugs)
-                                                 (or (normalize-actor-id (aget ms "actor_id"))
-                                                     "workspace_user")))]
-                    (set-membership-actor-id! pool membership-id requested-actor-id))))
+                                                 "workspace_user"))]
+                    (-> (set-membership-actor-id! pool membership-id requested-actor-id)
+                        (.then (fn [_]
+                                 (query-one! pool
+                                             "SELECT m.id, u.email, u.display_name, o.slug AS org_slug FROM memberships m JOIN users u ON u.id = m.user_id JOIN orgs o ON o.id = m.org_id WHERE m.id = $1::uuid"
+                                             [membership-id])))
+                        (.then (fn [membership-row]
+                                 (upsert-user-actor-contract!
+                                  {:actor-id requested-actor-id
+                                   :email (aget membership-row "email")
+                                   :display-name (aget membership-row "display_name")
+                                   :org-slug (aget membership-row "org_slug")
+                                   :role-slugs requested-role-slugs}))))))
                (.then
                 (fn [_]
                   (append-audit! pool {:actor-user-id uid
@@ -1685,7 +1792,7 @@
                                        :action "membership.roles.update"
                                        :resource-kind "membership"
                                        :resource-id membership-id})))
-               (.then (fn [_] #js {:membership nil}))))))))
+               (.then (fn [_] #js {:membership nil})))))))))
 
 (defn- factory-set-membership-tool-policies
   [pool uid mid membership-id payload]
