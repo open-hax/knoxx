@@ -24,7 +24,9 @@
 
    :proxx-base-url (env "PROXX_BASE_URL" "http://proxx:8789")
    :proxx-auth-token (env "PROXX_AUTH_TOKEN" "")
-   :proxx-default-model (env "PROXX_DEFAULT_MODEL" "glm-5")
+   :proxx-default-model (let [value (aget js/process.env "PROXX_DEFAULT_MODEL")]
+                          (when (and (string? value) (not (str/blank? value)))
+                            value))
    :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")
 
    :knoxx-admin-url (env "KNOXX_ADMIN_URL" "http://localhost")

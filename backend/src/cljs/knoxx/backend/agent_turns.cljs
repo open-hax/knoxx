@@ -8,7 +8,7 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [store-run! append-run-event! update-run! update-run-tool-receipt! append-limited latest-assistant-message record-retrieval-sample! tool-event-payload append-run-trace-text! apply-run-tool-trace-event! finalize-run-trace-blocks!]]
-            [knoxx.backend.runtime.models :refer [model-supports-reasoning? normalize-thinking-level]]
+            [knoxx.backend.runtime.models :refer [effective-thinking-level normalize-thinking-level]]
             [knoxx.backend.util.time :refer [now-iso]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
@@ -297,9 +297,10 @@
         thinking-level-raw (or thinking-level (:thinking-level agent-spec))
         parsed-thinking-level (when thinking-level-raw
                                 (normalize-thinking-level thinking-level-raw))
-        thinking-level (or parsed-thinking-level
-                           (:agent-thinking-level config)
-                           "off")
+        thinking-level (effective-thinking-level config model-id (or parsed-thinking-level
+                                                                    thinking-level-raw
+                                                                    (:agent-thinking-level config)
+                                                                    "off"))
         run-id (or run-id (.randomUUID node-crypto))
         started-at (now-iso)
         started-ms (.now js/Date)
@@ -368,10 +369,6 @@
     (cond
       (and thinking-level-raw (nil? parsed-thinking-level))
       (js/Promise.reject (js/Error. (str "Unsupported thinking level: " thinking-level-raw ". Expected one of off, minimal, low, medium, high, xhigh.")))
-
-      (and (not= thinking-level "off")
-           (not (model-supports-reasoning? config model-id)))
-      (js/Promise.reject (js/Error. (str "Model " model-id " is not marked reasoning-capable in Knoxx/Proxx configuration. Set thinkingLevel to off or extend KNOXX_REASONING_MODEL_PREFIXES if this model truly supports reasoning.")))
 
       :else
       (-> (.all js/Promise

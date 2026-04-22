@@ -6,7 +6,7 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
-            [knoxx.backend.runtime.models :refer [normalize-thinking-level models-config allowlisted-model-id?]]
+            [knoxx.backend.runtime.models :refer [normalize-thinking-level effective-thinking-level models-config allowlisted-model-id?]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [create-runtime-tools]]))
 
@@ -228,9 +228,10 @@
                 auth-storage (aget sdk-runtime "authStorage")
                 loader (aget sdk-runtime "loader")
                 settings-manager (aget sdk-runtime "settingsManager")
-                thinking-level (or (normalize-thinking-level thinking-level)
-                                   (:agent-thinking-level config)
-                                   "off")
+                thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
+                                                                                 thinking-level
+                                                                                 (:agent-thinking-level config)
+                                                                                 "off"))
                 model (or (.find model-registry "proxx" model-id)
                           (.find model-registry "proxx" (:proxx-default-model config)))
                 create-session (fn [session-manager]
@@ -273,9 +274,10 @@
   ([runtime config conversation-id model-id auth-context thinking-level]
    (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level nil))
   ([runtime config conversation-id model-id auth-context thinking-level session-id]
-  (let [thinking-level (or (normalize-thinking-level thinking-level)
-                           (:agent-thinking-level config)
-                           "off")]
+  (let [thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
+                                                                        thinking-level
+                                                                        (:agent-thinking-level config)
+                                                                        "off"))]
     (if-let [entry (get @agent-sessions* conversation-id)]
       (let [session (:session entry)
             active-model (:model-id entry)]

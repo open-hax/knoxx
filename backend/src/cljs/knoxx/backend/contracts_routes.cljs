@@ -29,6 +29,13 @@
   [contract-class contract-id]
   (str (normalize-contract-class contract-class) "/" contract-id))
 
+(defn- model-id->slug
+  [model-id]
+  (some-> model-id
+          str
+          (str/replace #"[^A-Za-z0-9._-]+" "_")
+          (str/replace #"_+" "_")))
+
 (defn- parsed-record-id
   [contract-class value]
   (case (normalize-contract-class contract-class)
@@ -36,6 +43,8 @@
     "actors" (some-> (:actor/id value) str)
     "roles" (some-> (:role/id value) keyword->slug)
     "capabilities" (some-> (:cap/id value) keyword->slug (as-> slug (str "cap_" slug)))
+    "model_families" (some-> (:model-family/id value) str)
+    "models" (some-> (:model/id value) model-id->slug)
     nil))
 
 (defn- parsed-kind-label
@@ -45,6 +54,8 @@
     "actors" (some-> (:actor/kind value) name)
     "roles" "role"
     "capabilities" "capability"
+    "model_families" "model-family"
+    "models" "model"
     "unknown"))
 
 (defn- parsed-version
@@ -123,6 +134,17 @@
       (if (str/includes? edn-text ":cap/id")
         (str/replace edn-text #":cap/id\s+:[^\s\]}]+" (str ":cap/id " keyword-id))
         (str ":cap/id " keyword-id "\n" edn-text)))
+
+    "model_families"
+    (if (str/includes? edn-text ":model-family/id")
+      (str/replace edn-text #":model-family/id\s+\"[^\"]+\"" (str ":model-family/id \"" new-id "\""))
+      (str ":model-family/id \"" new-id "\"\n" edn-text))
+
+    "models"
+    (let [model-id (str/replace (str new-id) #"_" ":")]
+      (if (str/includes? edn-text ":model/id")
+        (str/replace edn-text #":model/id\s+\"[^\"]+\"" (str ":model/id \"" model-id "\""))
+        (str ":model/id \"" model-id "\"\n" edn-text)))
 
     edn-text))
 

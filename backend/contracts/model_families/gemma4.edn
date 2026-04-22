@@ -1,0 +1,10 @@
+{:model-family/id "gemma4"
+ :model-family/provider :proxx
+ :model-family/prefixes ["gemma4:"]
+ :model-family/allowlisted true
+ :model-family/reasoning false
+ :model-family/default-thinking :off
+ :model-family/thinking-levels [:off]
+ :model-family/context-window 128000
+ :model-family/max-tokens 8192
+ :model-family/input [:text]}
