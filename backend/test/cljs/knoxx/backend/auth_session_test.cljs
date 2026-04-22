@@ -2,6 +2,20 @@
   (:require [cljs.test :refer [async deftest is testing]]
             [knoxx.backend.auth-session :as auth-session]))
 
+(defn- with-env!
+  [bindings f]
+  (let [env (.-env js/process)
+        previous (into {}
+                       (map (fn [[k _]] [k (aget env k)]))
+                       bindings)]
+    (doseq [[k v] bindings]
+      (aset env k v))
+    (try
+      (f)
+      (finally
+        (doseq [[k old-value] previous]
+          (aset env k (or old-value "")))))))
+
 (deftest ensure-user-membership-syncs-user-contract-before-resolve
   (async done
     (let [calls* (atom [])
@@ -43,5 +57,42 @@
           (.then (fn [_]
                    (is nil "expected rejection when no canonical user exists")))
           (.catch (fn [err]
-                    (is (= "not whitelisted" (.-message err)))))
+                   (is (= "not whitelisted" (.-message err)))))
           (.finally (fn [] (done)))))))
+
+(deftest resolve-auth-context-allows-configured-api-key-identity
+  (async done
+    (with-env! {"KNOXX_API_KEY" "dev-secret"
+                "KNOXX_API_KEY_USER_EMAIL" "pi@open-hax.local"
+                "NODE_ENV" "development"}
+      (fn []
+        (let [calls* (atom [])
+              ctx #js {"user" #js {"id" "user-pi"
+                                    "email" "pi@open-hax.local"}
+                       "actor" #js {"id" "pi"}
+                       "membership" #js {"id" "membership-pi"
+                                          "actorId" "pi"}
+                       "roleSlugs" #js ["system_admin"]}
+              req #js {"headers" #js {"x-api-key" "dev-secret"}
+                       "cookies" #js {}}
+              policy-db #js {"syncUserFromActorContract"
+                             (fn [payload]
+                               (swap! calls* conj [:sync (js->clj payload :keywordize-keys true)])
+                               (js/Promise.resolve #js {:ok true}))
+                             "resolveRequestContext"
+                             (fn [headers]
+                               (swap! calls* conj [:resolve (js->clj headers :keywordize-keys true)])
+                               (js/Promise.resolve ctx))}]
+          (-> (auth-session/resolve-auth-context req policy-db)
+              (.then (fn [result]
+                       (testing "API-key auth resolves the configured pi actor as a real user membership"
+                         (is (= ctx result))
+                         (is (= [[:sync {:email "pi@open-hax.local"
+                                         :displayName "Pi"
+                                         :authProvider "api-key"
+                                         :externalSubject "api-key:pi@open-hax.local"}]
+                                 [:resolve {:x-knoxx-user-email "pi@open-hax.local"}]]
+                                @calls*)))))
+              (.catch (fn [err]
+                        (is nil (str "unexpected promise rejection: " err))))
+              (.finally (fn [] (done)))))))))

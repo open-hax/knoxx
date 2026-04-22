@@ -193,6 +193,35 @@ KNOXX_API_KEY=xxx
 MODELS_DIR=/path/to/gguf/models
 ```
 
+## Pi development actor
+
+Knoxx now carries a dedicated contract-backed development actor for Pi at:
+
+- `backend/contracts/actors/pi.edn`
+
+How it works:
+
+- the actor is declared as `:actor/kind :user`
+- its canonical username/email is `pi@open-hax.local`
+- its role set is `[:role/system-admin]`
+- startup sync copies user actor contracts into the policy DB as real users + memberships
+- if a request arrives with `X-API-Key` matching `KNOXX_API_KEY` and no cookie session, Knoxx resolves it as `KNOXX_API_KEY_USER_EMAIL` or `pi@open-hax.local` outside production, then reapplies the actor contract before serving the request
+
+That means Pi can hit Knoxx during development as a normal contract-backed user instead of a special-case bypass.
+
+Example:
+
+```bash
+curl http://localhost:8000/api/auth/context \
+  -H "X-API-Key: $KNOXX_API_KEY"
+```
+
+Optional override if you want the API key to resolve to a different contract-backed dev user:
+
+```bash
+KNOXX_API_KEY_USER_EMAIL=pi@open-hax.local
+```
+
 ## License
 
 GPL-3.0-only

@@ -373,6 +373,23 @@
                    (.resolveRequestContext policyDb #js {"x-knoxx-membership-id" membership-id}))))
       (js/Promise.resolve ctx))))
 
+(defn- ensure-email-membership!
+  [policyDb {:keys [email display-name auth-provider external-subject]}]
+  (let [normalized-email (some-> email str str/trim not-empty)
+        headers-like (when normalized-email
+                       #js {"x-knoxx-user-email" normalized-email})
+        sync-user-from-actor-contract (aget policyDb "syncUserFromActorContract")]
+    (if-not normalized-email
+      (js/Promise.reject (http-error 401 "Not authenticated" "no_email"))
+      (-> (if sync-user-from-actor-contract
+            (sync-user-from-actor-contract #js {:email normalized-email
+                                                :displayName (or display-name normalized-email)
+                                                :authProvider (or auth-provider "github")
+                                                :externalSubject external-subject})
+            (js/Promise.resolve nil))
+          (.then (fn [_]
+                   (.resolveRequestContext policyDb headers-like)))))))
+
 (defn ensure-user-membership!
   "Resolve the canonical Knoxx user context by GitHub email.
 
@@ -380,19 +397,69 @@
    persisted Knoxx user/membership records rather than being inferred from the
    OAuth callback environment."
   [policyDb gh-user email]
-  (let [headers-like #js {"x-knoxx-user-email" email}
-        sync-user-from-actor-contract (aget policyDb "syncUserFromActorContract")]
-    (-> (if sync-user-from-actor-contract
-          (sync-user-from-actor-contract #js {:email email
-                                              :displayName (or (aget gh-user "name")
-                                                               (aget gh-user "login")
-                                                               email)
-                                              :authProvider "github"
-                                              :externalSubject (when (aget gh-user "id")
-                                                                 (str "github:" (aget gh-user "id")))} )
-          (js/Promise.resolve nil))
-        (.then (fn [_]
-                 (.resolveRequestContext policyDb headers-like))))))
+  (ensure-email-membership! policyDb {:email email
+                                      :display-name (or (aget gh-user "name")
+                                                        (aget gh-user "login")
+                                                        email)
+                                      :auth-provider "github"
+                                      :external-subject (when (aget gh-user "id")
+                                                          (str "github:" (aget gh-user "id")))}))
+
+(defn- configured-api-key
+  []
+  (some-> (aget (.-env js/process) "KNOXX_API_KEY") str str/trim not-empty))
+
+(defn- request-api-key
+  [req]
+  (some-> (or (aget (.-headers req) "x-api-key")
+              (aget (.-headers req) "X-API-Key"))
+          str
+          str/trim
+          not-empty))
+
+(defn- api-key-auth-email
+  []
+  (let [node-env (some-> (aget (.-env js/process) "NODE_ENV") str str/trim str/lower-case)]
+    (some-> (or (aget (.-env js/process) "KNOXX_API_KEY_USER_EMAIL")
+                (when (not= node-env "production")
+                  "pi@open-hax.local"))
+            str
+            str/trim
+            not-empty)))
+
+(defn- valid-api-key-request?
+  [req]
+  (let [expected (configured-api-key)
+        provided (request-api-key req)]
+    (and expected provided (= expected provided))))
+
+(defn- ensure-api-key-membership!
+  [policyDb]
+  (if-let [email (api-key-auth-email)]
+    (ensure-email-membership! policyDb {:email email
+                                        :display-name "Pi"
+                                        :auth-provider "api-key"
+                                        :external-subject (str "api-key:" email)})
+    (js/Promise.reject (http-error 401 "Knoxx API key user email is not configured" "api_key_identity_missing"))))
+
+(defn- resolve-cookie-auth-context
+  [req policyDb]
+  (let [cookie-token (some-> req (aget "cookies") (aget COOKIE-NAME))]
+    (if-not cookie-token
+      (js/Promise.reject (http-error 401 "Not authenticated" "no_session"))
+      (let [payload (verify-token cookie-token)]
+        (if-not (and payload (aget payload "sid"))
+          (js/Promise.reject (http-error 401 "Invalid session token" "invalid_token"))
+          (-> (load-session (aget payload "sid") cookie-token)
+              (.then
+               (fn [session-data]
+                 (if-not session-data
+                   (js/Promise.reject (http-error 401 "Session expired" "session_expired"))
+                   (let [headers #js {"x-knoxx-user-email" (aget session-data "email")
+                                      "x-knoxx-org-slug" (aget session-data "orgSlug")}]
+                     (when (aget session-data "membershipId")
+                       (aset headers "x-knoxx-membership-id" (aget session-data "membershipId")))
+                     (.resolveRequestContext policyDb headers)))))))))))
 
 (defn- create-session-and-redirect!
   "Create session from resolved context, set cookie, and redirect."
@@ -687,21 +754,12 @@
   [req policyDb]
   (let [header-email (str/trim (or (aget (.-headers req) "x-knoxx-user-email") ""))
         header-mid (str/trim (or (aget (.-headers req) "x-knoxx-membership-id") ""))]
-    (if (or (not (str/blank? header-email)) (not (str/blank? header-mid)))
+    (cond
+      (or (not (str/blank? header-email)) (not (str/blank? header-mid)))
       (.resolveRequestContext policyDb (.-headers req))
-      (let [cookie-token (some-> req (aget "cookies") (aget COOKIE-NAME))]
-        (if-not cookie-token
-          (js/Promise.reject (http-error 401 "Not authenticated" "no_session"))
-          (let [payload (verify-token cookie-token)]
-            (if-not (and payload (aget payload "sid"))
-              (js/Promise.reject (http-error 401 "Invalid session token" "invalid_token"))
-              (-> (load-session (aget payload "sid") cookie-token)
-                  (.then
-                   (fn [session-data]
-                     (if-not session-data
-                       (js/Promise.reject (http-error 401 "Session expired" "session_expired"))
-                       (let [headers #js {"x-knoxx-user-email" (aget session-data "email")
-                                          "x-knoxx-org-slug" (aget session-data "orgSlug")}]
-                         (when (aget session-data "membershipId")
-                           (aset headers "x-knoxx-membership-id" (aget session-data "membershipId")))
-                         (.resolveRequestContext policyDb headers)))))))))))))
+
+      (valid-api-key-request? req)
+      (ensure-api-key-membership! policyDb)
+
+      :else
+      (resolve-cookie-auth-context req policyDb))))
