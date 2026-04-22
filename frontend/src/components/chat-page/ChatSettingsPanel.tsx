@@ -25,6 +25,8 @@ export function ChatSettingsPanel({
   onActiveAgentChange,
   toolCatalog,
 }: ChatSettingsPanelProps) {
+  const tools = Array.isArray(toolCatalog?.tools) ? toolCatalog.tools : [];
+
   return (
     <Card variant="default" padding="sm" style={{ margin: 8, flexShrink: 0 }}>
       <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0,1fr) 140px 220px" }}>
@@ -109,7 +111,7 @@ export function ChatSettingsPanel({
             </div>
           ) : null}
           <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {toolCatalog?.tools.map((tool) => (
+            {tools.map((tool) => (
               <Badge key={tool.id} size="sm" variant={tool.enabled ? "default" : "warning"}>
                 {tool.label}
               </Badge>

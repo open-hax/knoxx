@@ -17,6 +17,87 @@ import type {
 } from "../types";
 import { API_BASE, buildKnoxxAuthHeaders, request } from "./core";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function normalizeToolDefinition(value: unknown, fallbackId?: string) {
+  if (!isRecord(value)) {
+    return typeof fallbackId === "string"
+      ? {
+          id: fallbackId,
+          label: fallbackId,
+          description: "",
+          enabled: true,
+        }
+      : null;
+  }
+
+  const id = asString(value.id) ?? fallbackId;
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    label: asString(value.label) ?? id,
+    description: asString(value.description) ?? "",
+    enabled: asBoolean(value.enabled) ?? true,
+  };
+}
+
+function normalizeToolDefinitions(value: unknown): ToolCatalogResponse["tools"] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => normalizeToolDefinition(entry))
+      .filter((entry): entry is ToolCatalogResponse["tools"][number] => entry !== null);
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  return Object.entries(value)
+    .map(([fallbackId, entry]) => normalizeToolDefinition(entry, fallbackId))
+    .filter((entry): entry is ToolCatalogResponse["tools"][number] => entry !== null);
+}
+
+function normalizeToolCatalogResponse(value: unknown): ToolCatalogResponse {
+  const record = isRecord(value) ? value : {};
+
+  return {
+    role: asString(record.role) ?? "",
+    actor_id: asString(record.actor_id) ?? asString(record.actorId) ?? null,
+    agent_id: asString(record.agent_id) ?? asString(record.agentId) ?? null,
+    agent_label: asString(record.agent_label) ?? asString(record.agentLabel) ?? null,
+    agent_trigger_kind: asString(record.agent_trigger_kind) ?? asString(record.agentTriggerKind) ?? null,
+    role_slugs: normalizeStringArray(record.role_slugs) ?? normalizeStringArray(record.roleSlugs),
+    capability_ids: normalizeStringArray(record.capability_ids) ?? normalizeStringArray(record.capabilityIds),
+    system_prompt: asString(record.system_prompt) ?? asString(record.systemPrompt) ?? null,
+    actor_system_prompt: asString(record.actor_system_prompt) ?? asString(record.actorSystemPrompt) ?? null,
+    agent_system_prompt: asString(record.agent_system_prompt) ?? asString(record.agentSystemPrompt) ?? null,
+    task_prompt: asString(record.task_prompt) ?? asString(record.taskPrompt) ?? null,
+    tools: normalizeToolDefinitions(record.tools),
+    email_enabled: asBoolean(record.email_enabled) ?? asBoolean(record.emailEnabled) ?? false,
+  };
+}
+
 function normalizeConversationResponse(response: Record<string, unknown>) {
   return {
     answer: typeof response.answer === "string" ? response.answer : "",
@@ -76,7 +157,8 @@ export async function getToolCatalog(role?: string, agentContractId?: string, ac
   if (agentContractId) params.set("agent", agentContractId);
   if (actorId) params.set("actor", actorId);
   const suffix = params.toString();
-  return request<ToolCatalogResponse>(`/api/tools/catalog${suffix ? `?${suffix}` : ""}`);
+  const response = await request<unknown>(`/api/tools/catalog${suffix ? `?${suffix}` : ""}`);
+  return normalizeToolCatalogResponse(response);
 }
 
 export async function getAgentContractsCatalog(actorId?: string): Promise<AgentContractCatalogResponse> {
