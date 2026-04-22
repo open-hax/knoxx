@@ -338,7 +338,42 @@
       :else
       #js ["knowledge_worker"])))
 
-(defn- ensure-user-membership!
+(defn- bootstrap-admin-email?
+  [email]
+  (let [normalized-email (str/lower-case (str/trim (str (or email ""))))
+        bootstrap-admin-email (some-> (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL")
+                                          "system-admin@open-hax.local")
+                                      str
+                                      str/trim
+                                      str/lower-case)]
+    (= normalized-email bootstrap-admin-email)))
+
+(defn- has-system-admin-role?
+  [ctx]
+  (boolean
+   (some #(= (str %) "system_admin")
+         (or (some-> ctx (aget "roleSlugs") array-seq)
+             []))))
+
+(defn- ensure-bootstrap-admin-role!
+  "Repair an existing bootstrap admin account that was created before the
+   bootstrap email config was set correctly. If the authenticating GitHub email
+   now matches the configured bootstrap admin email, guarantee the membership
+   carries the global system_admin role before building the session context."
+  [policyDb ctx email]
+  (let [membership-id (some-> ctx (aget "membership") (aget "id"))
+        org-id (some-> ctx (aget "org") (aget "id"))]
+    (if (and membership-id
+             (bootstrap-admin-email? email)
+             (not (has-system-admin-role? ctx)))
+      (-> (.setMembershipRoles policyDb membership-id
+                               #js {:orgId org-id
+                                    :roleSlugs #js ["system_admin"]})
+          (.then (fn [_]
+                   (.resolveRequestContext policyDb #js {"x-knoxx-membership-id" membership-id}))))
+      (js/Promise.resolve ctx))))
+
+(defn ensure-user-membership!
   "Resolve context for email; if no membership, bootstrap+create user, then re-resolve."
   [policyDb gh-user email]
   (let [headers-like #js {"x-knoxx-user-email" email}]
@@ -347,7 +382,7 @@
           (fn [ctx]
             (let [mid (some-> ctx (aget "membership") (aget "id"))]
               (if mid
-                (js/Promise.resolve ctx)
+                (ensure-bootstrap-admin-role! policyDb ctx email)
                 (-> (.getBootstrapContext policyDb)
                     (.then
                       (fn [bc]
