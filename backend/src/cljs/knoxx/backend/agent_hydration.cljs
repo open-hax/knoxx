@@ -205,6 +205,22 @@
         (clj->js (into base-parts multimodal-parts)))
       (clj->js base-parts))))
 
+(defn- sanitize-custom-tool-name
+  [tool]
+  (let [name (some-> (aget tool "name") str)
+        sanitized (some-> name
+                          (str/replace #"[^A-Za-z0-9_-]" "_")
+                          (str/replace #"_+" "_"))]
+    (when (and sanitized (not= sanitized name))
+      (aset tool "name" sanitized)
+      (aset tool "originalName" name))
+    tool))
+
+(defn- sanitize-custom-tools
+  [tools]
+  (let [items (if (array? tools) (array-seq tools) [])]
+    (into-array (map sanitize-custom-tool-name items))))
+
 (defn hydration-sources
   [hydration]
   (if (seq (:results hydration))
@@ -1596,13 +1612,14 @@
          memory-tools (create-openplanner-custom-tools runtime config auth-context)]
      ;; Contract write + read/semantic tools + memory tools
      ;; No discord, no music, no MCP, no bash, no general write/edit
-     (.concat (.concat contract-tools read-tools) memory-tools))))
+     (sanitize-custom-tools (.concat (.concat contract-tools read-tools) memory-tools)))))
 
 (defn create-knoxx-custom-tools
   ([runtime config] (create-knoxx-custom-tools runtime config nil))
   ([runtime config auth-context]
-   (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
-                                       (create-discord-custom-tools runtime config auth-context))
-                              (create-openplanner-custom-tools runtime config auth-context))
-                     (create-music-custom-tools runtime config auth-context))
-            (create-mcp-custom-tools runtime config auth-context))))
+   (sanitize-custom-tools
+    (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
+                                        (create-discord-custom-tools runtime config auth-context))
+                               (create-openplanner-custom-tools runtime config auth-context))
+                      (create-music-custom-tools runtime config auth-context))
+             (create-mcp-custom-tools runtime config auth-context)))))
