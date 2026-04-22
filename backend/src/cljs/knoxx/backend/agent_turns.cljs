@@ -152,7 +152,8 @@
           audio-url (nonblank (aget audio-url "url"))
           :else nil))
       (let [source (aget part "source")]
-        (when (= "url" (some-> (aget source "type") str str/lower-case))
+        (when (and source
+                   (= "url" (some-> (aget source "type") str str/lower-case)))
           (nonblank (aget source "url"))))))
 
 (defn- media-part-data
@@ -161,11 +162,14 @@
       (nonblank (aget part "b64_json"))
       (nonblank (aget part "result"))
       (let [input-audio (aget part "input_audio")]
-        (nonblank (aget input-audio "data")))
+        (when input-audio
+          (nonblank (aget input-audio "data"))))
       (let [output-audio (aget part "output_audio")]
-        (nonblank (aget output-audio "data")))
+        (when output-audio
+          (nonblank (aget output-audio "data"))))
       (let [source (aget part "source")]
-        (when (= "base64" (some-> (aget source "type") str str/lower-case))
+        (when (and source
+                   (= "base64" (some-> (aget source "type") str str/lower-case)))
           (nonblank (aget source "data"))))))
 
 (defn- media-part-mime-type
@@ -175,14 +179,17 @@
       (nonblank (aget part "mediaType"))
       (nonblank (aget part "media_type"))
       (let [source (aget part "source")]
-        (or (nonblank (aget source "media_type"))
-            (nonblank (aget source "mime_type"))))
+        (when source
+          (or (nonblank (aget source "media_type"))
+              (nonblank (aget source "mime_type")))))
       (let [input-audio (aget part "input_audio")
-            format (nonblank (aget input-audio "format"))]
+            format (when input-audio
+                     (nonblank (aget input-audio "format")))]
         (when format
           (str "audio/" format)))
       (let [output-audio (aget part "output_audio")
-            format (nonblank (aget output-audio "format"))]
+            format (when output-audio
+                     (nonblank (aget output-audio "format")))]
         (when format
           (str "audio/" format)))
       (case media-kind
