@@ -203,9 +203,10 @@
     {:can-send true :reason "No existing session. Ready for new conversation."}
 
     (= "running" (:status session))
-    (if (:has_active_stream session)
-      {:can-send false :reason "Session is actively streaming. Use steer or wait."}
-      {:can-send true :reason nil})
+    {:can-send false
+     :reason (if (:has_active_stream session)
+               "Session is actively streaming. Use steer or wait."
+               "Session is already processing. Use steer, follow-up, abort, or wait.")}
 
     (= "waiting_input" (:status session))
     {:can-send true :reason nil}

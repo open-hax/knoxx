@@ -34,13 +34,15 @@
   [config]
   (let [proxx? (proxx-configured? config)
         openplanner? (openplanner-configured? config)]
-    (if (or (not proxx?) (not openplanner?))
+    (if-not proxx?
       (js/Promise.resolve false)
       (-> (.all js/Promise
                 #js [(check-url-ok! (str (:proxx-base-url config) "/health")
                                     #js {:headers (http/bearer-headers (:proxx-auth-token config))})
-                     (check-url-ok! (http/openplanner-url config "/v1/health")
-                                    #js {:headers (http/openplanner-headers config)})])
+                     (if openplanner?
+                       (check-url-ok! (http/openplanner-url config "/v1/health")
+                                      #js {:headers (http/openplanner-headers config)})
+                       (js/Promise.resolve true))])
           (.then (fn [parts]
                    (and (boolean (aget parts 0))
                         (boolean (aget parts 1)))))))))

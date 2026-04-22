@@ -456,7 +456,7 @@ export function useChatSessionRecovery({
 
     const parsed = readPersistedChatSessionSnapshot(sessionStateKey, sessionId);
     if (!parsed) return;
-    if (!parsed.isSending || !parsed.conversationId) return;
+    if (!parsed.conversationId) return;
 
     let cancelled = false;
 
@@ -480,10 +480,10 @@ export function useChatSessionRecovery({
           return;
         }
 
-        if (status.status === "running" && !status.has_active_stream) {
+        if (status.status === "running") {
           setConversationId(status.conversation_id ?? null);
           setIsSending(true);
-          appendConsoleLine(setConsoleLines, "[session] agent waiting for input, enable controls");
+          appendConsoleLine(setConsoleLines, "[session] agent still processing; waiting for resume or first token");
           return;
         }
 

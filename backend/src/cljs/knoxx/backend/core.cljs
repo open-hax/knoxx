@@ -110,12 +110,3 @@
                       (js/process.exit 1))))))))
 
 ;; Handle graceful shutdown
-(.on js/process "SIGINT" (fn []
-                           (println "\nShutting down...")
-                           (event-agents/stop!)
-                           (js/process.exit 0)))
-
-(.on js/process "SIGTERM" (fn []
-                            (println "\nShutting down...")
-                            (event-agents/stop!)
-                            (js/process.exit 0)))

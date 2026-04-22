@@ -132,7 +132,6 @@ export function useChatRuntimeEffects({
                 });
               }
             }
-            if (status !== 'connected') setIsSending(false);
           },
           onToken: (token, meta) => {
             const pendingId = pendingAssistantIdRef.current;
