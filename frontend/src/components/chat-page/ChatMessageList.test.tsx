@@ -49,6 +49,10 @@ describe("ChatMessageList", () => {
     expect(screen.getByText("Reasoning summary")).toBeInTheDocument();
     expect(screen.getAllByText("Final answer")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Reply by voice" })).toBeInTheDocument();
+
+    const renderedAnswer = screen.getByText("Final answer");
+    const actionGroup = screen.getByRole("group", { name: "Assistant message actions" });
+    expect(renderedAnswer.compareDocumentPosition(actionGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("only shows voice reply on the latest assistant message", () => {

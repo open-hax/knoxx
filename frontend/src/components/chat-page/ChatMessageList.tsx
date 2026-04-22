@@ -53,6 +53,33 @@ export function ChatMessageList({
     .reverse()
     .find((message) => message.role === "assistant" && message.status === "done" && Boolean(message.content?.trim()))?.id;
 
+  const renderAssistantActions = (message: ChatMessage, showVoiceReply: boolean) => (
+    <div
+      role="group"
+      aria-label="Assistant message actions"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+        marginTop: 12,
+        paddingTop: 10,
+        borderTop: "1px solid var(--token-colors-border-subtle, var(--token-colors-border-default))",
+      }}
+    >
+      {showVoiceReply ? (
+        <VoiceReplyButton
+          disabled={voiceReplyDisabled}
+          onTranscript={(text) => onSend(text)}
+        />
+      ) : null}
+      {message.status === "done" && Boolean(message.content?.trim()) ? (
+        <SpeakAssistantButton text={message.content || ""} />
+      ) : null}
+      <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
+    </div>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
       {messages.map((message) => {
@@ -108,20 +135,6 @@ export function ChatMessageList({
                 </Badge>
               ) : null}
             </div>
-            {message.role === "assistant" ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                {showVoiceReply ? (
-                  <VoiceReplyButton
-                    disabled={voiceReplyDisabled}
-                    onTranscript={(text) => onSend(text)}
-                  />
-                ) : null}
-                {message.status === "done" && Boolean(message.content?.trim()) ? (
-                  <SpeakAssistantButton text={message.content || ""} />
-                ) : null}
-                <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
-              </div>
-            ) : null}
           </div>
           {message.role === "assistant" && visibleTraceBlocks.length > 0 ? (
             <AgentTraceTimeline blocks={visibleTraceBlocks} />
@@ -152,6 +165,7 @@ export function ChatMessageList({
               {message.contentParts && message.contentParts.length > 0 && (
                 <MultimodalContent parts={message.contentParts} />
               )}
+              {renderAssistantActions(message, showVoiceReply)}
             </div>
           ) : message.role === "assistant" || message.role === "system" ? (
             <>
@@ -160,6 +174,7 @@ export function ChatMessageList({
               {message.contentParts && message.contentParts.length > 0 && (
                 <MultimodalContent parts={message.contentParts} />
               )}
+              {message.role === "assistant" ? renderAssistantActions(message, showVoiceReply) : null}
             </>
           ) : (
             <>
