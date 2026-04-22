@@ -171,10 +171,12 @@
   [actor]
   (->> (or (:actor/roles actor) [])
        (map (fn [value]
-              (cond
-                (keyword? value) (name value)
-                (string? value) (some-> value str str/trim not-empty)
-                :else (some-> value str str/trim not-empty))))
+              (let [raw (cond
+                          (keyword? value) (name value)
+                          (string? value) (some-> value str str/trim not-empty)
+                          :else (some-> value str str/trim not-empty))]
+                (when raw
+                  (runtime-roles/normalize-role (contracts-config) raw)))))
        (remove nil?)
        distinct
        vec))
@@ -422,6 +424,7 @@
   [role-slugs]
   (let [normalized (into #{}
                          (comp (map #(some-> % str str/trim not-empty))
+                               (map #(when % (runtime-roles/normalize-role (contracts-config) %)))
                                (remove nil?))
                          (or role-slugs []))]
     (if (contains? normalized "system_admin")
