@@ -8,6 +8,7 @@ import {
   applyToolTraceEvent,
   controlTimelineMessageFromEvent,
   finalizeTraceBlocks,
+  novelAppendedText,
   truncateText,
 } from './utils';
 
@@ -140,12 +141,17 @@ export function useChatRuntimeEffects({
             if (runId) activeRunIdRef.current = runId;
             const blockKind = meta?.kind === 'reasoning' ? 'reasoning' : 'agent_message';
             callbacksRef.current.updateTraceBlocksByMessageId(pendingId, (blocks) => appendTraceTextDelta(blocks, blockKind, token));
-            callbacksRef.current.updateMessageById(pendingId, (message) => ({
-              ...message,
-              runId: runId ?? message.runId ?? null,
-              status: 'streaming',
-              content: blockKind === 'agent_message' ? `${message.content}${token}` : message.content,
-            }));
+            callbacksRef.current.updateMessageById(pendingId, (message) => {
+              const novelDelta = blockKind === 'agent_message'
+                ? novelAppendedText(message.content, token)
+                : '';
+              return {
+                ...message,
+                runId: runId ?? message.runId ?? null,
+                status: 'streaming',
+                content: blockKind === 'agent_message' ? `${message.content}${novelDelta}` : message.content,
+              };
+            });
           },
           onEvent: (event) => {
             const runtimeEvent = event as RunEvent & {

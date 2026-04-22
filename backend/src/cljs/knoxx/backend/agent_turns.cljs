@@ -117,11 +117,19 @@
 (defn- diff-appended-text
   [previous current]
   (let [previous (str (or previous ""))
-        current (str (or current ""))]
+        current (str (or current ""))
+        max-overlap (fn [left right]
+                      (loop [n (min (count left) (count right))]
+                        (cond
+                          (zero? n) 0
+                          (str/ends-with? left (.slice right 0 n)) n
+                          :else (recur (dec n)))))]
     (cond
       (str/blank? current) ""
+      (str/blank? previous) current
+      (= current previous) ""
       (str/starts-with? current previous) (.slice current (count previous))
-      :else current)))
+      :else (.slice current (max-overlap previous current)))))
 
 (defn- media-part-url
   [part]

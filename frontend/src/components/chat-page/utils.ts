@@ -312,6 +312,22 @@ function traceToolBlockId(event: RunEvent & { tool_call_id?: string; tool_name?:
   return `tool:${toolName}:${event.at ?? ""}`;
 }
 
+export function novelAppendedText(previous: string, incoming: string): string {
+  if (incoming.length === 0) return "";
+  if (previous.length === 0) return incoming;
+  if (incoming === previous) return "";
+  if (incoming.startsWith(previous)) return incoming.slice(previous.length);
+
+  const max = Math.min(previous.length, incoming.length);
+  for (let overlap = max; overlap > 0; overlap -= 1) {
+    if (previous.endsWith(incoming.slice(0, overlap))) {
+      return incoming.slice(overlap);
+    }
+  }
+
+  return incoming;
+}
+
 export function appendTraceTextDelta(
   blocks: ChatTraceBlock[],
   kind: "agent_message" | "reasoning",
@@ -324,9 +340,11 @@ export function appendTraceTextDelta(
   const last = next[next.length - 1];
 
   if (last && last.kind === kind && last.status === "streaming") {
+    const novelDelta = novelAppendedText(last.content ?? "", delta);
+    if (novelDelta.length === 0) return next;
     next[next.length - 1] = {
       ...last,
-      content: `${last.content ?? ""}${delta}`,
+      content: `${last.content ?? ""}${novelDelta}`,
       at: at ?? last.at,
     };
     return next;

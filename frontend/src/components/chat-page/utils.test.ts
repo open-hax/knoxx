@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { memoryRowsToMessages } from "./utils";
+import { memoryRowsToMessages, novelAppendedText } from "./utils";
 import type { MemorySessionRow } from "../../lib/types";
+
+describe("novelAppendedText", () => {
+  it("collapses repeated cumulative assistant text into only the novel suffix", () => {
+    expect(novelAppendedText("", "hello")).toBe("hello");
+    expect(novelAppendedText("hello", "hello")).toBe("");
+    expect(novelAppendedText("hello", "hello world")).toBe(" world");
+    expect(novelAppendedText("hello world", "world")).toBe("");
+    expect(novelAppendedText("hello world", "world again")).toBe(" again");
+  });
+});
 
 describe("memoryRowsToMessages", () => {
   it("preserves persisted assistant trace blocks from session memory", () => {
