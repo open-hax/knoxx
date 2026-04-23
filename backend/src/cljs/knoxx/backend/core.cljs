@@ -1,5 +1,6 @@
 (ns knoxx.backend.core
   (:require [knoxx.backend.agent-hydration :refer [ensure-settings!]]
+            [knoxx.backend.agent-runtime :as agent-runtime]
             [knoxx.backend.agent-turns :as agent-turns :refer [recover-active-agent-sessions! lounge-messages*]]
             [knoxx.backend.app-routes :as app-routes]
             [knoxx.backend.contracts-routes :as contracts-routes]
@@ -34,6 +35,15 @@
 (defn register-ws-routes!
   [runtime app]
   (realtime/register-ws-routes! runtime app active-runs-count lounge-messages*))
+
+(defn- prewarm-sdk-runtime!
+  [runtime app resolved-config]
+  (-> (agent-runtime/ensure-sdk-runtime! runtime resolved-config)
+      (.then (fn [_]
+               (app-log-info! app "Knoxx SDK runtime prewarmed")))
+      (.catch (fn [err]
+                (app-log-error! app "Knoxx SDK runtime prewarm failed" err)
+                (js/Promise.reject err)))))
 
 (defn config-js
   []
@@ -86,7 +96,9 @@
     (ensure-settings! resolved-config)
     (reset! runtime-state/config* resolved-config)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
-    (-> (session-recovery/start! runtime app resolved-config)
+    (-> (prewarm-sdk-runtime! runtime app resolved-config)
+        (.then (fn [_]
+                 (session-recovery/start! runtime app resolved-config)))
         (.then (fn [_]
                  (start-background-services! app resolved-config)
                  (clj->js resolved-config))))))

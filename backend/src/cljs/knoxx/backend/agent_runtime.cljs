@@ -391,7 +391,10 @@
                                              :modelRegistry model-registry
                                              :settingsManager settings-manager
                                              :loader loader
-                                             :runtimeDir runtime-dir})))))))]
+                                             :runtimeDir runtime-dir}))))))
+                (.catch (fn [err]
+                          (reset! sdk-runtime* nil)
+                          (js/Promise.reject err))))]
       (reset! sdk-runtime* p)
       p)))
 
