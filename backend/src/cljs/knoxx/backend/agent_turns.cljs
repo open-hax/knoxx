@@ -28,6 +28,9 @@
   (or (nonblank session-id)
       (.randomUUID node-crypto)))
 
+(def ^:private RECOVERED-SESSION-KICKOFF-TIMEOUT-MS 5000)
+(def ^:private RECOVERED-SESSION-KICKOFF-POLL-MS 25)
+
 (defn- chat-policy-constraints
   [auth-context]
   (let [constraints (authz/ctx-tool-constraints auth-context "agent.chat")]
@@ -580,6 +583,24 @@
            vec)
       [])))
 
+(defn merge-content-parts
+  [& groups]
+  (->> groups
+       (mapcat #(or % []))
+       (reduce (fn [acc part]
+                 (if (some #(= % part) acc)
+                   acc
+                   (conj acc part)))
+               [])
+       vec))
+
+(defn reply-attachment-content-parts
+  [tool-receipts]
+  (->> (or tool-receipts [])
+       (filter #(= "workspace_media.attach" (:tool_name %)))
+       (mapcat #(or (:content_parts %) (:contentParts %) []))
+       vec))
+
 (defn- content-part-label
   [part]
   (let [part-type (cond
@@ -1032,17 +1053,6 @@
                                                                (not (str/blank? answer))
                                                                (conj {:role "assistant"
                                                                       :content answer}))
-                                                  response {:answer answer
-                                                            :run_id run-id
-                                                            :runId run-id
-                                                            :conversation_id conversation-id
-                                                            :conversationId conversation-id
-                                                            :session_id session-id
-                                                            :model model-id
-                                                            :content_parts assistant-content-parts
-                                                            :sources sources
-                                                            :message_parts message-parts
-                                                            :compare nil}
                                                   completed-event (tool-event-payload run-id conversation-id session-id "run_completed"
                                                                                       {:status "completed"
                                                                                        :model model-id
@@ -1054,19 +1064,33 @@
                                                                                (fn [run]
                                                                                  (let [resource-patch (cond-> {:sources sources}
                                                                                                         hydration (assoc :passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results]))
-                                                                                                        memory-hydration (assoc :memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])))]
+                                                                                                        memory-hydration (assoc :memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])))
+                                                                                       merged-content-parts (merge-content-parts assistant-content-parts
+                                                                                                                                (reply-attachment-content-parts (:tool_receipts run)))]
                                                                                    (-> run
                                                                                        (assoc :updated_at (now-iso)
                                                                                               :status "completed"
                                                                                               :total_time_ms elapsed
                                                                                               :input_tokens (or (aget usage "input") 0)
-                                                                                            :output_tokens output-tokens
-                                                                                            :tokens_per_s tokens-per-second
-                                                                                            :answer answer
-                                                                                            :content_parts assistant-content-parts
-                                                                                            :reasoning reasoning-text
-                                                                                            :sources sources)
+                                                                                              :output_tokens output-tokens
+                                                                                              :tokens_per_s tokens-per-second
+                                                                                              :answer answer
+                                                                                              :content_parts merged-content-parts
+                                                                                              :reasoning reasoning-text
+                                                                                              :sources sources)
                                                                                        (update :resources merge resource-patch)))))
+                                                    merged-content-parts (vec (or (:content_parts completed-run) assistant-content-parts))
+                                                    response {:answer answer
+                                                              :run_id run-id
+                                                              :runId run-id
+                                                              :conversation_id conversation-id
+                                                              :conversationId conversation-id
+                                                              :session_id session-id
+                                                              :model model-id
+                                                              :content_parts merged-content-parts
+                                                              :sources sources
+                                                              :message_parts message-parts
+                                                              :compare nil}
                                                     _ (when completed-run
                                                         (index-run-memory! config completed-run))]
                                                 (append-run-event! run-id completed-event)
@@ -1076,13 +1100,13 @@
                                                                                            (conj persisted-request-messages
                                                                                                  (cond-> {:role "assistant"
                                                                                                           :content answer}
-                                                                                                   (seq assistant-content-parts) (assoc :content-parts assistant-content-parts))))]
-                                                (session-store/complete-session! (redis/get-client)
-                                                                                  session-id
-                                                                                  conversation-id
-                                                                                  {:status "completed"
-                                                                                   :answer answer
-                                                                                   :messages final-messages}))
+                                                                                                   (seq merged-content-parts) (assoc :content-parts merged-content-parts))))]
+                                                  (session-store/complete-session! (redis/get-client)
+                                                                                   session-id
+                                                                                   conversation-id
+                                                                                   {:status "completed"
+                                                                                    :answer answer
+                                                                                    :messages final-messages}))
                                                 ;; Remove from in-memory cache to prevent stale isStreaming
                                                 (remove-agent-session! conversation-id)
                                                 response)))
@@ -1166,76 +1190,127 @@
               content)))
         (reverse (vec (or (:messages session) [])))))
 
+(defn- wait-for-recovered-turn-kickoff!
+  [conversation-id launch-promise]
+  (if (some? (turn-control/active-turn conversation-id))
+    (js/Promise.resolve true)
+    (js/Promise.
+     (fn [resolve reject]
+       (let [done? (atom false)
+             started-ms (.now js/Date)
+             check! (fn check! []
+                      (cond
+                        @done? nil
+                        (some? (turn-control/active-turn conversation-id))
+                        (do
+                          (reset! done? true)
+                          (resolve true))
+
+                        (> (- (.now js/Date) started-ms) RECOVERED-SESSION-KICKOFF-TIMEOUT-MS)
+                        (do
+                          (reset! done? true)
+                          (reject (js/Error. (str "Timed out waiting for recovered session kickoff: " conversation-id))))
+
+                        :else
+                        (js/setTimeout check! RECOVERED-SESSION-KICKOFF-POLL-MS)))]
+         (.catch launch-promise
+                 (fn [err]
+                   (when-not @done?
+                     (reset! done? true)
+                     (reject err))))
+         (check!))))))
+
 (defn resume-recovered-session!
-  [runtime config session]
-  (let [conversation-id (str (or (:conversation_id session) ""))
-        session-id (str (or (:session_id session) ""))
-        run-id (or (:run_id session) nil)
-        model-id (or (:model session) nil)
-        mode (or (:mode session) "direct")
-        thinking-level (or (:thinking_level session)
-                           (:agent-thinking-level config)
-                           "off")
-        auth-context (recovered-auth-context session)
-        agent-spec (recovered-agent-spec session)
-        message (last-session-user-message session)]
-    (restore-recovered-conversation-access! session)
-    (cond
-      (or (str/blank? conversation-id)
-          (str/blank? session-id))
-      (js/Promise.resolve {:session_id session-id
-                           :conversation_id conversation-id
-                           :resumed false
-                           :reason "missing session or conversation id"})
+  ([runtime config session]
+   (resume-recovered-session! runtime config session nil))
+  ([runtime config session opts]
+   (let [conversation-id (str (or (:conversation_id session) ""))
+         session-id (str (or (:session_id session) ""))
+         run-id (or (:run_id session) nil)
+         model-id (or (:model session) nil)
+         mode (or (:mode session) "direct")
+         wait-for (or (:wait-for opts) :completion)
+         thinking-level (or (:thinking_level session)
+                            (:agent-thinking-level config)
+                            "off")
+         auth-context (recovered-auth-context session)
+         agent-spec (recovered-agent-spec session)
+         message (last-session-user-message session)
+         resume-failed! (fn [err]
+                          (js/console.error "[knoxx] failed to resume recovered session"
+                                            #js {:sessionId session-id
+                                                 :conversationId conversation-id
+                                                 :error (str err)})
+                          (-> (session-store/complete-session! (redis/get-client)
+                                                               session-id
+                                                               conversation-id
+                                                               {:status "failed"
+                                                                :error (str "Session recovery failed: " err)
+                                                                :messages (:messages session)})
+                              (.then (fn [_]
+                                       {:session_id session-id
+                                        :conversation_id conversation-id
+                                        :resumed false
+                                        :error (str err)}))))]
+     (restore-recovered-conversation-access! session)
+     (cond
+       (or (str/blank? conversation-id)
+           (str/blank? session-id))
+       (js/Promise.resolve {:session_id session-id
+                            :conversation_id conversation-id
+                            :resumed false
+                            :reason "missing session or conversation id"})
 
-      (str/blank? message)
-      (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
-          (.then (fn [_]
-                   (-> (session-store/update-session! (redis/get-client) session-id
-                                                     {:status "waiting_input"
-                                                      :has_active_stream false
-                                                      :recovered_at (now-iso)})
-                       (.then (fn [_]
-                                {:session_id session-id
-                                 :conversation_id conversation-id
-                                 :resumed false
-                                 :reason "no pending user message to resume"}))))))
-
-      :else
-      (-> (session-store/update-session! (redis/get-client) session-id
-                                         {:status "running"
-                                          :has_active_stream false
-                                          :recovered_at (now-iso)})
-          (.then (fn [_]
-                   (send-agent-turn! runtime config {:conversation-id conversation-id
-                                                     :session-id session-id
-                                                     :run-id run-id
-                                                     :message message
-                                                     :model model-id
-                                                     :mode mode
-                                                     :thinking-level thinking-level
-                                                     :auth-context auth-context
-                                                     :agent-spec agent-spec})))
-          (.then (fn [_]
-                   {:session_id session-id
-                    :conversation_id conversation-id
-                    :resumed true}))
-          (.catch (fn [err]
-                    (js/console.error "[knoxx] failed to resume recovered session"
-                                      #js {:sessionId session-id
-                                           :conversationId conversation-id
-                                           :error (str err)})
-                    (-> (session-store/complete-session! (redis/get-client)
-                                                         session-id
-                                                         conversation-id
-                                                         {:status "failed"
-                                                          :error (str "Session recovery failed: " err)
-                                                          :messages (:messages session)})
+       (str/blank? message)
+       (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
+           (.then (fn [_]
+                    (-> (session-store/update-session! (redis/get-client) session-id
+                                                      {:status "waiting_input"
+                                                       :has_active_stream false
+                                                       :recovered_at (now-iso)})
                         (.then (fn [_]
                                  {:session_id session-id
                                   :conversation_id conversation-id
                                   :resumed false
-                                  :error (str err)})))))))))
+                                  :reason "no pending user message to resume"}))))))
+
+       :else
+       (-> (session-store/update-session! (redis/get-client) session-id
+                                          {:status "running"
+                                           :has_active_stream false
+                                           :recovered_at (now-iso)})
+           (.then (fn [_]
+                    (let [send-promise (send-agent-turn! runtime config {:conversation-id conversation-id
+                                                                         :session-id session-id
+                                                                         :run-id run-id
+                                                                         :message message
+                                                                         :model model-id
+                                                                         :mode mode
+                                                                         :thinking-level thinking-level
+                                                                         :auth-context auth-context
+                                                                         :agent-spec agent-spec})]
+                      (if (= wait-for :kickoff)
+                        (do
+                          (.catch send-promise
+                                  (fn [err]
+                                    (js/console.error "[knoxx] recovered session failed after kickoff"
+                                                      #js {:sessionId session-id
+                                                           :conversationId conversation-id
+                                                           :error (str err)})
+                                    nil))
+                          (-> (wait-for-recovered-turn-kickoff! conversation-id send-promise)
+                              (.then (fn [_]
+                                       {:session_id session-id
+                                        :conversation_id conversation-id
+                                        :resumed true
+                                        :wait_for "kickoff"}))
+                              (.catch resume-failed!)))
+                        (-> send-promise
+                            (.then (fn [_]
+                                     {:session_id session-id
+                                      :conversation_id conversation-id
+                                      :resumed true}))
+                            (.catch resume-failed!)))))))))))
 
 (defn recover-active-agent-sessions!
   [runtime config redis-client]

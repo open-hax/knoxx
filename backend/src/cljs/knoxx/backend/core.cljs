@@ -69,14 +69,11 @@
                     (app-log-error! app "MCP gateway initialization failed" err)))))))
 
 (defn- start-background-services!
-  [runtime app resolved-config]
-  ;; Boot routes should not block on resumable-session replay, event-agent warmup,
-  ;; or MCP discovery. A single stuck recovered run previously prevented Fastify
-  ;; from ever binding port 8000 even though PM2 showed the process as healthy.
-  (-> (session-recovery/start! runtime app resolved-config)
+  [app resolved-config]
+  ;; Session recovery is awaited separately only until recovered turns are
+  ;; kicked off again. Event agents and MCP discovery remain background work.
+  (-> (js/Promise.resolve nil)
       (.then (fn [_]
-               ;; Redis is now connected — safe to start event agents
-               ;; with persisted control config recovery.
                (event-agents/start! resolved-config)))
       (.then (fn [_]
                (initialize-mcp-gateway! app resolved-config)))
@@ -89,8 +86,10 @@
     (ensure-settings! resolved-config)
     (reset! runtime-state/config* resolved-config)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
-    (start-background-services! runtime app resolved-config)
-    (clj->js resolved-config)))
+    (-> (session-recovery/start! runtime app resolved-config)
+        (.then (fn [_]
+                 (start-background-services! app resolved-config)
+                 (clj->js resolved-config))))))
 
 (defn start!
   [runtime]

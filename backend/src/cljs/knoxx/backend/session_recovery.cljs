@@ -87,12 +87,12 @@
                        vec)]
     (if (seq resumable)
       (-> (.all js/Promise
-                (clj->js (mapv #(agent-turns/resume-recovered-session! runtime config %) resumable)))
+                (clj->js (mapv #(agent-turns/resume-recovered-session! runtime config % {:wait-for :kickoff}) resumable)))
           (.then (fn [results]
                    (let [items (vec (js->clj results :keywordize-keys true))
                          resumed (count (filter :resumed items))]
                      (reset! last-recovery-at* (.toISOString (js/Date.)))
-                     (app-log-info! app (str "[knoxx] session recovery tick: found " (count resumable) ", resumed " resumed))
+                     (app-log-info! app (str "[knoxx] session recovery tick: found " (count resumable) ", resumed " resumed " (kickoff)"))
                      #js {:ok true :found (count resumable) :resumed resumed}))))
       (js/Promise.resolve #js {:ok true :found 0 :resumed 0}))))
 
