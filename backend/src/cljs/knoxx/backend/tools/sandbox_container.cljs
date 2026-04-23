@@ -44,6 +44,8 @@
   [sandbox-id]
   (str "knoxx-sandbox-" sandbox-id))
 
+(declare sandbox-host-dir)
+
 (defn- sandbox-metadata-path
   [runtime config sandbox-id]
   (let [node-path (aget runtime "path")]
@@ -149,11 +151,14 @@
                    (if (or (str/includes? stderr "No such image")
                            (str/includes? stderr "No such object")
                            (str/includes? (str error) "No such image"))
-                     (-> (docker-command! runtime config ["build" "-t" image "-f" dockerfile build-context] {:timeout 1800000})
-                         (.then (fn [{build-ok :ok build-stderr :stderr build-error :error}]
-                                  (when-not build-ok
-                                    (throw (js/Error. (str "docker build failed: " (or build-error build-stderr)))))
-                                  true)))
+                     (if (= (str image) (str (:sandbox-image config)))
+                       (-> (docker-command! runtime config ["build" "-t" image "-f" dockerfile build-context] {:timeout 1800000})
+                           (.then (fn [{build-ok :ok build-stderr :stderr build-error :error}]
+                                    (when-not build-ok
+                                      (throw (js/Error. (str "docker build failed: " (or build-error build-stderr)))))
+                                    true)))
+                       ;; Non-default images should be pulled by `docker run`.
+                       true)
                      (throw (js/Error. (str "docker image inspect failed: " (or error stderr)))))))))))
 
 (defn- sandbox-inspect!
@@ -187,7 +192,8 @@
                                      :expiresAt expires-at
                                      :ttlSeconds (if (pos? expires-at)
                                                    (max 0 (int (/ (- expires-at (.now js/Date)) 1000)))
-                                                   0)}))))))))))
+                                                   0)})))))))))))
+
 
 (defn- sandbox-destroy!
   [runtime config sandbox-id]

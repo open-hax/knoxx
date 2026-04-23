@@ -110,7 +110,7 @@
    :sandbox-workdir (env "KNOXX_SANDBOX_WORKDIR" "/workspace")
    :sandbox-root-dir (env "KNOXX_SANDBOX_ROOT_DIR" "/tmp/knoxx-agent/sandboxes")
    :sandbox-dockerfile (env "KNOXX_SANDBOX_DOCKERFILE" "docker/sandbox/Dockerfile")
-   :sandbox-build-context (env "KNOXX_SANDBOX_BUILD_CONTEXT" ".")
+   :sandbox-build-context (env "KNOXX_SANDBOX_BUILD_CONTEXT" "docker/sandbox")
    :sandbox-default-ttl-seconds (env-int "KNOXX_SANDBOX_TTL_SECONDS" 1800)
    :sandbox-max-ttl-seconds (env-int "KNOXX_SANDBOX_MAX_TTL_SECONDS" 86400)
 

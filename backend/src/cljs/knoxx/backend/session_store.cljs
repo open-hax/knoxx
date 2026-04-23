@@ -204,14 +204,19 @@
                                                        (filter (fn [[_ session]] (nil? session)))
                                                        (map first)
                                                        vec)
-                                        running (->> pairs
-                                                     (keep (fn [[_ session]]
-                                                             (when (= "running" (:status session))
-                                                               session)))
+                                        cacheable (->> pairs
+                                                       (keep (fn [[session-id session]]
+                                                               (when (and session
+                                                                          (or (= "running" (:status session))
+                                                                              (str/includes? (str session-id) "-sticky")))
+                                                                 session)))
+                                                       vec)
+                                        running (->> cacheable
+                                                     (filter #(= "running" (:status %)))
                                                      vec)]
                                     (doseq [stale-id stale-ids]
                                       (redis/srem redis-client ACTIVE_SESSIONS_SET stale-id))
-                                    (doseq [session running]
+                                    (doseq [session cacheable]
                                       (swap! session-cache* assoc (:session_id session) session))
                                     running))))
                      (resolved []))))))))
@@ -233,10 +238,15 @@
                           :error error
                           :messages messages})
         (.then (fn [session]
-                 ;; Keep in Redis briefly for resume, then cleanup
-                 (js/setTimeout
-                  #(remove-session! redis-client session-id conversation-id)
-                  60000)
+                 ;; Default behavior: keep in Redis briefly for resume, then cleanup.
+                 ;; Sticky event-agent sessions are long-lived across scheduled runs, so keep them
+                 ;; in Redis+cache (and in the active set so they recover after restart).
+                 (let [sticky? (str/includes? (str session-id) "-sticky")]
+                   (if sticky?
+                     nil
+                     (js/setTimeout
+                      #(remove-session! redis-client session-id conversation-id)
+                      60000)))
                  session)))))
 
 (defn session-can-send?
