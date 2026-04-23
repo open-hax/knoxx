@@ -9,4 +9,4 @@
  :model/thinking-levels [:off :minimal :low :medium :high :xhigh]
  :model/context-window 128000
  :model/max-tokens 8192
- :model/input [:text]}
+ :model/input [:text :image]}

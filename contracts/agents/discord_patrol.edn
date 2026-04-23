@@ -1,7 +1,7 @@
 {:contract/id "discord_patrol"
  :contract/kind :agent
  :contract/version 1
- :enabled true
+ :enabled false
  :trigger-kind :cron
  :contract/actor "discord_automation"
  :source-kind :discord

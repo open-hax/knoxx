@@ -1,7 +1,7 @@
 {:contract/id "discord_mention_response"
  :contract/kind :agent
  :contract/version 1
- :enabled true
+ :enabled false
  :trigger-kind :event
  :contract/actor "discord_automation"
  :source-kind :discord

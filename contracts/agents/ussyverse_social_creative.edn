@@ -19,7 +19,9 @@
 
  :data
  {:filters {:publishChannels ["1494137016303095828" "1444189585373663417"]}
-  :source {:max-messages 20}}
+  :source {:max-messages 20
+           :stickySession true
+           :sessionMaxMessages 120}}
 
  :hooks
  {:before {}
