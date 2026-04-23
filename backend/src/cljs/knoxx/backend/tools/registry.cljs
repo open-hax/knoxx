@@ -62,16 +62,18 @@
    "openplanner.append-attestation" {:id "openplanner.append-attestation" :label "OpenPlanner Append Attestation" :description "Append an Attestation to the epistemic kernel"}
    "openplanner.append-judgment" {:id "openplanner.append-judgment" :label "OpenPlanner Append Judgment" :description "Append a Judgment to the epistemic kernel"}
 
-   "mcp.shoedelussy.write_pattern" {:id "mcp.shoedelussy.write_pattern" :label "Shoedelussy Write Pattern" :description "Write the current Shoedelussy Strudel pattern buffer"}
-   "mcp.shoedelussy.get_pattern" {:id "mcp.shoedelussy.get_pattern" :label "Shoedelussy Get Pattern" :description "Read the current Shoedelussy Strudel pattern buffer"}
-   "mcp.shoedelussy.mutate_pattern" {:id "mcp.shoedelussy.mutate_pattern" :label "Shoedelussy Mutate Pattern" :description "Apply a built-in mutation to the current Shoedelussy pattern"}
-   "mcp.shoedelussy.inject_section" {:id "mcp.shoedelussy.inject_section" :label "Shoedelussy Inject Section" :description "Append or replace a named section in the current Shoedelussy pattern"}
-   "mcp.shoedelussy.set_bpm" {:id "mcp.shoedelussy.set_bpm" :label "Shoedelussy Set BPM" :description "Set BPM metadata and project tempo in Shoedelussy"}
-   "mcp.shoedelussy.set_key" {:id "mcp.shoedelussy.set_key" :label "Shoedelussy Set Key" :description "Set the musical key for a Shoedelussy project"}
-   "mcp.shoedelussy.get_state" {:id "mcp.shoedelussy.get_state" :label "Shoedelussy Get State" :description "Read BPM, key, code, and section summary for a Shoedelussy project"}
-   "mcp.shoedelussy.list_projects" {:id "mcp.shoedelussy.list_projects" :label "Shoedelussy List Projects" :description "List Shoedelussy projects available through the MCP server"}
-   "mcp.shoedelussy.load_project" {:id "mcp.shoedelussy.load_project" :label "Shoedelussy Load Project" :description "Load a Shoedelussy project by id"}
-   "mcp.shoedelussy.save_snapshot" {:id "mcp.shoedelussy.save_snapshot" :label "Shoedelussy Save Snapshot" :description "Save a new snapshot/version of a Shoedelussy project"}})
+   "mcp.shoedelussy.write_pattern" {:id "mcp.shoedelussy.write_pattern" :label "Shoedelussy Write Pattern" :description "Write Strudel code to the Shoedelussy MCP scratch buffer and mirror it into a durable project when project_id already exists"}
+   "mcp.shoedelussy.get_pattern" {:id "mcp.shoedelussy.get_pattern" :label "Shoedelussy Get Pattern" :description "Read the Shoedelussy MCP scratch buffer, or fall back to durable project code when available"}
+   "mcp.shoedelussy.mutate_pattern" {:id "mcp.shoedelussy.mutate_pattern" :label "Shoedelussy Mutate Pattern" :description "Apply a built-in mutation to the current Shoedelussy scratch or project-backed pattern"}
+   "mcp.shoedelussy.inject_section" {:id "mcp.shoedelussy.inject_section" :label "Shoedelussy Inject Section" :description "Append or replace a named section in the current Shoedelussy scratch or project-backed pattern"}
+   "mcp.shoedelussy.create_project" {:id "mcp.shoedelussy.create_project" :label "Shoedelussy Create Project" :description "Create or update a durable Shoedelussy project from inline code or the current scratch pattern"}
+   "mcp.shoedelussy.set_bpm" {:id "mcp.shoedelussy.set_bpm" :label "Shoedelussy Set BPM" :description "Set BPM metadata and project tempo for a durable Shoedelussy project"}
+   "mcp.shoedelussy.set_key" {:id "mcp.shoedelussy.set_key" :label "Shoedelussy Set Key" :description "Set the musical key for a durable Shoedelussy project"}
+   "mcp.shoedelussy.get_state" {:id "mcp.shoedelussy.get_state" :label "Shoedelussy Get State" :description "Read BPM, key, code, and section summary for a durable Shoedelussy project"}
+   "mcp.shoedelussy.list_projects" {:id "mcp.shoedelussy.list_projects" :label "Shoedelussy List Projects" :description "List durable Shoedelussy projects available through the MCP server"}
+   "mcp.shoedelussy.load_project" {:id "mcp.shoedelussy.load_project" :label "Shoedelussy Load Project" :description "Load a durable Shoedelussy project by id"}
+   "mcp.shoedelussy.save_snapshot" {:id "mcp.shoedelussy.save_snapshot" :label "Shoedelussy Save Snapshot" :description "Save a new snapshot/version of a durable Shoedelussy project"}
+   "mcp.shoedelussy.render_loop" {:id "mcp.shoedelussy.render_loop" :label "Shoedelussy Render Loop" :description "Create a share-backed browser playback/render URL for Strudel code; this is a browser render link, not a server wav/mp3 export"}})
 
 (defn get-tool
   [tool-id]
