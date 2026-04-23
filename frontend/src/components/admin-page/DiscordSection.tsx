@@ -110,36 +110,49 @@ function SidebarJobButton({
   active: boolean;
   onSelect: () => void;
 }) {
+  const meta = [job.source.kind, job.trigger.kind, job.contractSourceId ? "contract" : "custom"];
+  const runtimeLabel = runtime?.running ? "running" : (runtime?.lastStatus ?? "idle");
+
   return (
     <button
       type="button"
       onClick={onSelect}
       className={classNames(
-        "w-full rounded-xl border px-3 py-3 text-left transition",
+        "w-full rounded-lg border px-2.5 py-2 text-left transition",
         active
-          ? "border-sky-500/60 bg-sky-500/10 shadow-[inset_0_0_0_1px_rgba(56,189,248,0.25)]"
-          : "border-slate-800 bg-slate-950/50 hover:border-slate-700 hover:bg-slate-950",
+          ? "border-sky-500/60 bg-sky-500/10 shadow-[inset_2px_0_0_0_rgba(56,189,248,0.9)]"
+          : "border-slate-800 bg-slate-950/35 hover:border-slate-700 hover:bg-slate-950/70",
       )}
       aria-pressed={active}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-slate-100">{job.name}</div>
-          <div className="mt-1 text-xs text-slate-400">{compactText(job.description, 96)}</div>
-        </div>
-        <Badge tone={job.enabled ? "success" : "warn"}>{job.enabled ? "on" : "off"}</Badge>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 truncate text-sm font-medium text-slate-100">{job.name}</div>
+        <span
+          className={classNames(
+            "h-2 w-2 shrink-0 rounded-full",
+            job.enabled ? "bg-emerald-400" : "bg-amber-400",
+          )}
+          aria-hidden="true"
+        />
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-1">
-        <Badge tone="info">{job.source.kind}</Badge>
-        <Badge>{job.trigger.kind}</Badge>
-        {job.contractSourceId ? <Badge>contract</Badge> : <Badge>custom</Badge>}
-        {runtime?.running ? <Badge tone="info">running</Badge> : null}
+      <div className="mt-1 flex items-center justify-between gap-2 text-[11px] leading-4 text-slate-500">
+        <span className="min-w-0 truncate">{meta.join(" · ")}</span>
+        <span className="shrink-0">{runtime?.runCount ?? 0}r</span>
       </div>
 
-      <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-        <span>{runtime?.runCount ?? 0} runs</span>
-        <span>{runtime?.lastStatus ?? "idle"}</span>
+      <div className="mt-1 flex items-center justify-between gap-2 text-[11px] leading-4">
+        <span className="min-w-0 truncate font-mono text-slate-400">{compactText(job.id, 28)}</span>
+        <span className={classNames(
+          "shrink-0 uppercase tracking-wide",
+          runtime?.lastStatus === "ok"
+            ? "text-emerald-300"
+            : runtime?.lastStatus === "error"
+              ? "text-rose-300"
+              : runtime?.running
+                ? "text-sky-300"
+                : "text-slate-500",
+        )}>{runtimeLabel}</span>
       </div>
     </button>
   );
@@ -476,29 +489,25 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[19rem_minmax(0,1fr)]">
-            <aside className="space-y-4 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-              <div>
+          <div className="grid gap-4 xl:grid-cols-[14rem_minmax(0,1fr)]">
+            <aside className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3 xl:sticky xl:top-4 xl:self-start">
+              <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold text-slate-100">Agents</div>
-                <div className="mt-1 text-xs text-slate-500">Search by name, source, trigger, model, or contract id.</div>
+                <div className="text-[11px] text-slate-500">{filteredJobs.length}/{draft.jobs.length}</div>
               </div>
 
               <label className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Search</div>
+                <div className="sr-only">Search</div>
                 <input
+                  aria-label="Search"
                   value={jobSearch}
                   onChange={(event) => setJobSearch(event.target.value)}
-                  placeholder="Search agents…"
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
+                  placeholder="Search…"
+                  className="w-full rounded-md border border-slate-800 bg-slate-950/80 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
                 />
               </label>
 
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>{filteredJobs.length} shown</span>
-                {jobSearch.trim() ? <span>{draft.jobs.length} total</span> : null}
-              </div>
-
-              <div className="max-h-[70vh] space-y-2 overflow-y-auto pr-1">
+              <div className="max-h-[72vh] space-y-1.5 overflow-y-auto pr-1">
                 {filteredJobs.length > 0 ? filteredJobs.map((job) => (
                   <SidebarJobButton
                     key={job.id}
@@ -523,10 +532,8 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-lg font-semibold text-slate-100">{selectedJob.name}</h3>
                         <Badge tone={selectedJob.enabled ? "success" : "warn"}>{selectedJob.enabled ? "Enabled" : "Disabled"}</Badge>
-                        <Badge tone="info">{selectedJob.source.kind}</Badge>
-                        <Badge>{selectedJob.trigger.kind}</Badge>
+                        <span className="text-xs text-slate-500">{selectedJob.source.kind} · {selectedJob.trigger.kind} · {selectedJob.contractSourceId ? "contract" : "custom"}</span>
                         {selectedRuntime?.running ? <Badge tone="info">Running now</Badge> : null}
-                        {selectedJob.contractSourceId ? <Badge>contract</Badge> : <Badge>custom</Badge>}
                       </div>
                       <p className="mt-2 text-sm text-slate-400">{selectedJob.description || "No description provided."}</p>
                       {selectedJob.contractSourceId ? (
