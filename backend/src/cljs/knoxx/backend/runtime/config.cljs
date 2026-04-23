@@ -103,6 +103,15 @@
    ;; Pi / agent runtime dir
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
 
+   ;; Sandbox container runtime
+   :sandbox-docker-bin (env "KNOXX_SANDBOX_DOCKER_BIN" "docker")
+   :sandbox-image (env "KNOXX_SANDBOX_IMAGE" "nikolaik/python-nodejs:python3.12-nodejs22-bookworm")
+   :sandbox-user (env "DOCKER_USER" "1000:1000")
+   :sandbox-workdir (env "KNOXX_SANDBOX_WORKDIR" "/workspace")
+   :sandbox-root-dir (env "KNOXX_SANDBOX_ROOT_DIR" "/tmp/knoxx-agent/sandboxes")
+   :sandbox-default-ttl-seconds (env-int "KNOXX_SANDBOX_TTL_SECONDS" 1800)
+   :sandbox-max-ttl-seconds (env-int "KNOXX_SANDBOX_MAX_TTL_SECONDS" 86400)
+
    ;; Redis (session persistence)
    :redis-url (env "REDIS_URL" "")
 

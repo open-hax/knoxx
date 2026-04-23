@@ -98,6 +98,13 @@
    ["tool.event_agents.run_job" "tool" "event_agents_run_job" "Trigger event-agent jobs from Knoxx"]
    ["tool.event_agents.upsert_job" "tool" "event_agents_upsert_job" "Create/update event-agent jobs from Knoxx"]
    ["tool.schedule_event_agent" "tool" "schedule_event_agent" "Schedule event-agent jobs from Knoxx"]
+   ["tool.sandbox_container.create" "tool" "sandbox_container_create" "Create TTL-bound sandbox containers from Knoxx"]
+   ["tool.sandbox_container.status" "tool" "sandbox_container_status" "Inspect sandbox containers from Knoxx"]
+   ["tool.sandbox_container.exec" "tool" "sandbox_container_exec" "Execute shell commands in sandbox containers from Knoxx"]
+   ["tool.sandbox_container.read" "tool" "sandbox_container_read" "Read files from sandbox containers from Knoxx"]
+   ["tool.sandbox_container.write" "tool" "sandbox_container_write" "Write files into sandbox containers from Knoxx"]
+   ["tool.sandbox_container.commit" "tool" "sandbox_container_commit" "Create git commits inside sandbox containers from Knoxx"]
+   ["tool.sandbox_container.destroy" "tool" "sandbox_container_destroy" "Destroy sandbox containers from Knoxx"]
    ["tool.bluesky.publish" "tool" "bluesky_publish" "Publish to Bluesky from Knoxx"]
    ["tool.bluesky.profile" "tool" "bluesky_profile" "Read Bluesky profiles from Knoxx"]
    ["tool.bluesky.search" "tool" "bluesky_search" "Search public Bluesky content from Knoxx"]
@@ -138,6 +145,13 @@
    ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately" "medium"]
    ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job" "high"]
    ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config" "high"]
+   ["sandbox_container.create" "Sandbox Create" "Create a TTL-bound sandbox container for isolated development work" "high"]
+   ["sandbox_container.status" "Sandbox Status" "Inspect sandbox container runtime status and remaining TTL" "low"]
+   ["sandbox_container.exec" "Sandbox Exec" "Execute a shell command inside a sandbox container" "high"]
+   ["sandbox_container.read" "Sandbox Read" "Read a text file from the sandbox workdir" "low"]
+   ["sandbox_container.write" "Sandbox Write" "Write a text file into the sandbox workdir" "high"]
+   ["sandbox_container.commit" "Sandbox Commit" "Create a git commit inside the sandbox workdir" "high"]
+   ["sandbox_container.destroy" "Sandbox Destroy" "Destroy a sandbox container and its temporary workspace" "medium"]
    ["bluesky.publish" "Bluesky Publish" "Publish updates to Bluesky" "medium"]
    ["bluesky.profile" "Bluesky Profile" "Read a Bluesky profile by handle or DID" "low"]
    ["bluesky.search" "Bluesky Search" "Search public Bluesky posts or actors" "low"]
@@ -431,6 +445,8 @@
                   "tool.discord.list.servers" "tool.discord.list.channels"
                   "tool.event_agents.status" "tool.event_agents.dispatch"
                   "tool.event_agents.run_job" "tool.event_agents.upsert_job" "tool.schedule_event_agent"
+                  "tool.sandbox_container.create" "tool.sandbox_container.status" "tool.sandbox_container.exec"
+                  "tool.sandbox_container.read" "tool.sandbox_container.write" "tool.sandbox_container.commit" "tool.sandbox_container.destroy"
                   "tool.bluesky.publish" "tool.bluesky.profile" "tool.bluesky.search"
                   "tool.bluesky.author.feed" "tool.bluesky.timeline" "tool.semantic_query.use"
                   "tool.memory_search.use" "tool.memory_session.use" "tool.websearch.use" "tool.graph_query.use"

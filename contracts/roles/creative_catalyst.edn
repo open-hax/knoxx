@@ -2,6 +2,7 @@
  :role/capabilities [:cap/read
                      :cap/websearch
                      :cap/bluesky
+                     :cap/sandbox-container
                      :cap/memory
                      :cap/semantic
                      :cap/canvas

@@ -12,6 +12,7 @@
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-semantic-search!]]
             [knoxx.backend.runtime.defaults :refer [default-settings]]
             [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.tools.sandbox-container :refer [create-sandbox-custom-tools]]
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-memory-search-text openplanner-semantic-search-text openplanner-session-text graph-query-result-text websearch-result-text]]))
 
@@ -2611,13 +2612,14 @@
    (create-knoxx-custom-tools runtime config auth-context nil))
   ([runtime config auth-context allowed-tool-ids]
    (-> (sanitize-custom-tools
-        (.concat (.concat (.concat (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
-                                                                        (create-discord-custom-tools runtime config auth-context))
-                                                               (create-openplanner-custom-tools runtime config auth-context))
-                                                      (create-music-custom-tools runtime config auth-context))
-                                             (create-voice-synth-custom-tools runtime config auth-context))
-                                    (create-multimodal-custom-tools runtime config auth-context))
-                           (create-workspace-media-custom-tools runtime config auth-context))
+        (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (create-semantic-custom-tools runtime config auth-context)
+                                                                                (create-discord-custom-tools runtime config auth-context))
+                                                                       (create-openplanner-custom-tools runtime config auth-context))
+                                                              (create-music-custom-tools runtime config auth-context))
+                                                     (create-voice-synth-custom-tools runtime config auth-context))
+                                            (create-multimodal-custom-tools runtime config auth-context))
+                                   (create-workspace-media-custom-tools runtime config auth-context))
+                          (create-sandbox-custom-tools runtime config auth-context))
                  (create-mcp-custom-tools runtime config auth-context)))
        (filter-custom-tools-by-allow-set allowed-tool-ids))))
 

@@ -30,6 +30,14 @@
    "event_agents.upsert_job" {:id "event_agents.upsert_job" :label "Event Agent Upsert Job" :description "Create or update a scheduled event-agent job"}
    "schedule_event_agent" {:id "schedule_event_agent" :label "Schedule Event Agent" :description "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"}
 
+   "sandbox_container.create" {:id "sandbox_container.create" :label "Sandbox Create" :description "Create a TTL-bound sandbox container for isolated development work"}
+   "sandbox_container.status" {:id "sandbox_container.status" :label "Sandbox Status" :description "Inspect sandbox container runtime status and remaining TTL"}
+   "sandbox_container.exec" {:id "sandbox_container.exec" :label "Sandbox Exec" :description "Execute a shell command inside a sandbox container"}
+   "sandbox_container.read" {:id "sandbox_container.read" :label "Sandbox Read" :description "Read a text file from the sandbox workdir"}
+   "sandbox_container.write" {:id "sandbox_container.write" :label "Sandbox Write" :description "Write a text file into the sandbox workdir"}
+   "sandbox_container.commit" {:id "sandbox_container.commit" :label "Sandbox Commit" :description "Create a git commit inside the sandbox workdir"}
+   "sandbox_container.destroy" {:id "sandbox_container.destroy" :label "Sandbox Destroy" :description "Destroy a sandbox container and its temporary workspace"}
+
    "bluesky.publish" {:id "bluesky.publish" :label "Bluesky Publish" :description "Publish updates to Bluesky"}
    "bluesky.profile" {:id "bluesky.profile" :label "Bluesky Profile" :description "Read a Bluesky profile by handle or DID"}
    "bluesky.search" {:id "bluesky.search" :label "Bluesky Search" :description "Search public Bluesky posts or actors"}
