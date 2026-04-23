@@ -425,10 +425,7 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
   }, [canManage, eventKind, eventPayloadDraft, eventSourceKind, load]);
 
   return (
-    <SectionCard
-      title="Event agents"
-      description="Compact control plane with a searchable agent sidebar. Select one event agent at a time, inspect runtime state, and edit only the active job."
-    >
+    <SectionCard>
       {loading || !draft || !status ? (
         <div className="text-sm text-slate-300">Loading event-agent control plane…</div>
       ) : (
@@ -698,17 +695,6 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                         <textarea
                           value={selectedJob.agentSpec.systemPrompt}
                           onChange={(event) => updateJob(selectedJob.id, { agentSpec: { ...selectedJob.agentSpec, systemPrompt: event.target.value } })}
-                          disabled={!canManage || savingControl}
-                          rows={4}
-                          className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                        />
-                      </label>
-
-                      <label className="space-y-1">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Task prompt</div>
-                        <textarea
-                          value={selectedJob.agentSpec.taskPrompt}
-                          onChange={(event) => updateJob(selectedJob.id, { agentSpec: { ...selectedJob.agentSpec, taskPrompt: event.target.value } })}
                           disabled={!canManage || savingControl}
                           rows={4}
                           className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"

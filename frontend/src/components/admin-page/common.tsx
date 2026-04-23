@@ -10,20 +10,24 @@ export function SectionCard({
   actions,
   children,
 }: {
-  title: string;
+  title?: string;
   description?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const hasHeader = Boolean(title || description || actions);
+
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-5 shadow-xl">
-      <div className="mb-4 flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-100">{title}</h2>
-          {description ? <p className="mt-1 text-sm text-slate-400">{description}</p> : null}
+      {hasHeader ? (
+        <div className="mb-4 flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            {title ? <h2 className="text-lg font-semibold text-slate-100">{title}</h2> : null}
+            {description ? <p className="mt-1 text-sm text-slate-400">{description}</p> : null}
+          </div>
+          {actions ? <div className="shrink-0">{actions}</div> : null}
         </div>
-        {actions ? <div className="shrink-0">{actions}</div> : null}
-      </div>
+      ) : null}
       {children}
     </section>
   );
