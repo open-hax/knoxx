@@ -73,7 +73,8 @@
    "mcp.shoedelussy.list_projects" {:id "mcp.shoedelussy.list_projects" :label "Shoedelussy List Projects" :description "List durable Shoedelussy projects available through the MCP server"}
    "mcp.shoedelussy.load_project" {:id "mcp.shoedelussy.load_project" :label "Shoedelussy Load Project" :description "Load a durable Shoedelussy project by id"}
    "mcp.shoedelussy.save_snapshot" {:id "mcp.shoedelussy.save_snapshot" :label "Shoedelussy Save Snapshot" :description "Save a new snapshot/version of a durable Shoedelussy project"}
-   "mcp.shoedelussy.render_loop" {:id "mcp.shoedelussy.render_loop" :label "Shoedelussy Render Loop" :description "Create a share-backed browser playback/render URL for Strudel code; this is a browser render link, not a server wav/mp3 export"}})
+   "mcp.shoedelussy.render_loop" {:id "mcp.shoedelussy.render_loop" :label "Shoedelussy Render Loop" :description "Create a share-backed browser playback/render URL for Strudel code; this is a browser render link, not a server wav/mp3 export"}
+   "mcp.shoedelussy.render_wav" {:id "mcp.shoedelussy.render_wav" :label "Shoedelussy Render WAV" :description "Create a browser URL that attempts WAV capture/download from the Shoedelussy frontend shell; this is browser-side export, not a headless server renderer"}})
 
 (defn get-tool
   [tool-id]

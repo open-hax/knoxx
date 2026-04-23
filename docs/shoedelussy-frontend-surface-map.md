@@ -37,7 +37,9 @@ Important query parameters already used by the frontend:
 - `?template=empty` — open blank project
 - `?share=<id>` — load a shared code snapshot into a local copy
 - `?autoplay=1` — after the project/share loads and the editor is initialized, the page attempts playback automatically
-- `?render=1` — currently just a semantic flag for render/playback links; no dedicated render-only page exists yet
+- `?render=1` — currently a semantic flag for render/playback links; no dedicated render-only page exists yet
+- `?export=wav` — when combined with active playback, the frontend attempts browser-side WAV capture/download
+- `?duration_ms=<ms>` — approximate browser-side WAV capture duration for export links
 
 ### `/projects`
 
@@ -59,6 +61,7 @@ Key facts:
 - `StrudelEditor` exposes imperative bridge methods like `play`, `stop`, `evaluate`, `setCode`, and `getCode`
 - `useChatOrchestrator` owns the editor bridge and drives most project/chat behavior
 - the current `render_loop` MCP tool is honest browser-render plumbing: it creates a share URL with autoplay/render query params so a human can open the loop in the frontend and hear it
+- the new `render_wav` MCP tool returns a browser URL that attempts WAV capture/download in this same shell; it is still frontend-coupled, not a headless worker export
 - there is no true server-side wav/mp3 export path yet
 
 ## Export/share surface
@@ -88,6 +91,7 @@ Until components are imported directly into Knoxx, the safest mental model is:
 1. Shoedelussy MCP manipulates code/project state.
 2. Shoedelussy frontend is the human-facing playback/render shell.
 3. `render_loop` returns a browser route into that shell, not a server audio file.
+4. `render_wav` returns a browser route that attempts WAV capture/download inside that shell, but it still depends on frontend playback/browser permissions.
 
 ## Candidate future decomposition
 

@@ -10,11 +10,12 @@
              :mcp.shoedelussy.list_projects
              :mcp.shoedelussy.load_project
              :mcp.shoedelussy.save_snapshot
-             :mcp.shoedelussy.render_loop]
+             :mcp.shoedelussy.render_loop
+             :mcp.shoedelussy.render_wav]
  :cap/user-surfaces [{:surface/id :shoedelussy/studio-shell
                       :surface/label "Shoedelussy studio shell"
                       :surface/kind :composer
-                      :surface/routes ["/" "/?project=<id>" "/?share=<id>" "/?share=<id>&autoplay=1&render=1"]
+                      :surface/routes ["/" "/?project=<id>" "/?share=<id>" "/?share=<id>&autoplay=1&render=1" "/?share=<id>&autoplay=1&render=1&export=wav&duration_ms=<ms>"]
                       :surface/components ["HomePage" "DAWShell" "EditorPanel" "ChatPanel" "ProjectTopbar" "TransportBar" "VisualizationSurface"]
                       :surface/description "Main Shoedelussy DAW route. Humans edit Strudel code, chat, play loops, visualize output, and open share/render links here. Browser playback is currently coupled to this shell."}
                      {:surface/id :shoedelussy/project-browser
@@ -28,4 +29,4 @@
                       :surface/kind :publisher
                       :surface/routes ["/"]
                       :surface/components ["ProjectTopbar"]
-                      :surface/description "UI tab for share links, project export, and browser render/playback handoff. Current MCP render_loop links target this frontend rather than a server wav exporter."}]}
+                      :surface/description "UI tab for share links, project export, and browser render/playback handoff. Current MCP render_loop and render_wav links target this frontend shell; render_wav performs browser-side capture rather than headless server export."}]}
