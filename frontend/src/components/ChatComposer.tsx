@@ -1,6 +1,9 @@
-import { FormEvent, KeyboardEvent, useState, useCallback, useRef } from "react";
+import { FormEvent, KeyboardEvent, useState, useCallback, useRef, useEffect } from "react";
+import { Badge } from "@open-hax/uxx";
 import { MultimodalInput, type MultimodalAttachment } from "./chat-page/MultimodalInput";
 import { VoiceInputButton } from "./chat-page/VoiceInputButton";
+import { ConversationVoiceButton } from "./chat-page/ConversationVoiceButton";
+import { SpeakAssistantButton } from "./chat-page/SpeakAssistantButton";
 import type { ContentPart } from "../lib/types";
 
 interface ChatComposerProps {
@@ -9,6 +12,29 @@ interface ChatComposerProps {
   /** Enable multimodal file uploads (images, audio, video, documents) */
   multimodalEnabled?: boolean;
   voiceInputEnabled?: boolean;
+  liveControlEnabled?: boolean;
+  liveControlText?: string;
+  onLiveControlTextChange?: (value: string) => void;
+  queueingControl?: "steer" | "follow_up" | null;
+  onQueueLiveControl?: (kind: "steer" | "follow_up") => void | Promise<void>;
+  onVoiceSteer?: (text: string) => void | Promise<void>;
+  abortingTurn?: boolean;
+  onAbortTurn?: () => void | Promise<void>;
+  /** Latest assistant message content for the speak button */
+  latestAssistantContent?: string;
+  /** Auto-conversation voice toggle */
+  autoConversationEnabled?: boolean;
+  onToggleAutoConversation?: () => void;
+  ttsEnabled?: boolean;
+  ttsStatus?: string;
+  ttsError?: string | null;
+  /** Auto-recording is active (hands-free mic loop) */
+  autoRecording?: boolean;
+  /** Undo last turn */
+  onUndoMessages?: () => void | Promise<void>;
+  undoDisabled?: boolean;
+  /** Start a new chat */
+  onNewChat?: () => void;
 }
 
 /**
@@ -67,7 +93,78 @@ function attachmentToContentPart(attachment: MultimodalAttachment): Promise<Cont
   });
 }
 
-function ChatComposer({ onSend, isSending, multimodalEnabled = true, voiceInputEnabled = false }: ChatComposerProps) {
+function GlyphButton({
+  glyph,
+  title,
+  onClick,
+  disabled,
+  active,
+  type = "button",
+}: {
+  glyph: string;
+  title: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  type?: "button" | "submit";
+}) {
+  return (
+    <button
+      type={type}
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: 6,
+        border: "1px solid var(--token-colors-border-default)",
+        background: active
+          ? "var(--token-colors-alpha-green-_20)"
+          : "var(--token-colors-button-ghost-bg)",
+        color: active
+          ? "var(--token-colors-accent-green)"
+          : "var(--token-colors-text-muted)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.4 : 1,
+        fontSize: 14,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 0,
+        lineHeight: 1,
+        transition: "background-color 120ms, color 120ms, opacity 120ms",
+      }}
+    >
+      {glyph}
+    </button>
+  );
+}
+
+function ChatComposer({
+  onSend,
+  isSending,
+  multimodalEnabled = true,
+  voiceInputEnabled = false,
+  liveControlEnabled = false,
+  liveControlText = "",
+  onLiveControlTextChange,
+  queueingControl = null,
+  onQueueLiveControl,
+  abortingTurn = false,
+  onAbortTurn,
+  onVoiceSteer,
+  latestAssistantContent,
+  autoConversationEnabled = false,
+  onToggleAutoConversation,
+  ttsEnabled = false,
+  ttsStatus = "idle",
+  ttsError = null,
+  autoRecording = false,
+  onUndoMessages,
+  undoDisabled = false,
+  onNewChat,
+}: ChatComposerProps) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<MultimodalAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -97,30 +194,40 @@ function ChatComposer({ onSend, isSending, multimodalEnabled = true, voiceInputE
   const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      if (liveControlEnabled) {
+        const trimmed = liveControlText.trim();
+        if (!trimmed || queueingControl !== null) return;
+        if (event.ctrlKey) {
+          void onQueueLiveControl?.("follow_up");
+        } else {
+          void onQueueLiveControl?.("steer");
+        }
+        return;
+      }
       const trimmed = value.trim();
       if ((trimmed || attachments.length > 0) && !isSending) {
         handleSubmit(event as unknown as FormEvent);
       }
     }
-  }, [value, attachments, isSending, handleSubmit]);
-
-  const handlePaste = useCallback((e: ClipboardEvent) => {
-    // Focus textarea after paste to continue typing
-    setTimeout(() => textareaRef.current?.focus(), 0);
-  }, []);
+  }, [liveControlEnabled, liveControlText, queueingControl, onQueueLiveControl, value, attachments, isSending, handleSubmit]);
 
   // Register global paste handler
-  useState(() => {
-    if (typeof window !== "undefined" && multimodalEnabled) {
-      window.addEventListener("paste", handlePaste);
-      return () => window.removeEventListener("paste", handlePaste);
-    }
-  });
+  useEffect(() => {
+    if (typeof window === "undefined" || !multimodalEnabled) return;
+    const handlePaste = () => {
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [multimodalEnabled]);
+
+  const canSendNormal = (value.trim() || attachments.length > 0) && !isSending;
+  const canSteer = liveControlText.trim().length > 0 && queueingControl === null;
 
   return (
-    <form className="mt-3" onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit}>
       {/* Attachment previews */}
-      {attachments.length > 0 && (
+      {attachments.length > 0 && !liveControlEnabled && (
         <div
           style={{
             display: "flex",
@@ -243,42 +350,162 @@ function ChatComposer({ onSend, isSending, multimodalEnabled = true, voiceInputE
         </div>
       )}
 
-      <div className="flex gap-2 items-end">
-        {/* Multimodal input button */}
-        {multimodalEnabled && (
+      {/* Textarea */}
+      <textarea
+        ref={textareaRef}
+        rows={liveControlEnabled ? 2 : 3}
+        className={`input resize-y w-full ${liveControlEnabled ? "min-h-14" : "min-h-20"}`}
+        value={liveControlEnabled ? liveControlText : value}
+        onChange={(event) => {
+          if (liveControlEnabled) {
+            onLiveControlTextChange?.(event.target.value);
+          } else {
+            setValue(event.target.value);
+          }
+        }}
+        onKeyDown={handleKeyDown}
+        disabled={liveControlEnabled ? queueingControl !== null : isSending}
+        placeholder={
+          liveControlEnabled
+            ? "Steer the current turn (Enter) or queue a follow-up (Ctrl+Enter)..."
+            : multimodalEnabled
+              ? "Send a message, or drag/paste images, audio, video..."
+              : "Send a prompt, test edge cases, compare behavior..."
+        }
+      />
+
+      {/* Bottom toolbar — ALL buttons */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flexWrap: "wrap",
+          marginTop: 8,
+        }}
+      >
+        {/* Left-side actions */}
+        {!liveControlEnabled && multimodalEnabled && (
           <MultimodalInput
             attachments={attachments}
             onAttachmentsChange={setAttachments}
             disabled={isSending}
+            hidePreviews
           />
         )}
 
-        {voiceInputEnabled ? (
-          <VoiceInputButton
-            disabled={isSending}
-            onTranscript={(text) => onSend(text)}
-            idleLabel="Speak"
-            recordingLabel="Stop"
-            transcribingLabel="Transcribing…"
+        {/* Voice input */}
+        {voiceInputEnabled && (
+          liveControlEnabled ? (
+            <ConversationVoiceButton
+              disabled={queueingControl !== null}
+              onTranscript={(text) => void onVoiceSteer?.(text)}
+              title="Voice steer (auto-send on pause)"
+            />
+          ) : autoConversationEnabled ? (
+            <ConversationVoiceButton
+              disabled={isSending || autoRecording}
+              onTranscript={(text) => onSend(text)}
+              title="Voice reply (auto-send on pause)"
+            />
+          ) : (
+            <VoiceInputButton
+              disabled={isSending}
+              onTranscript={(text) => onSend(text)}
+              idleLabel="Speak"
+              recordingLabel="Stop"
+              transcribingLabel="Transcribing…"
+              iconOnly
+              title="Voice input (sends immediately)"
+            />
+          )
+        )}
+
+        {latestAssistantContent && latestAssistantContent.trim().length > 0 && (
+          <SpeakAssistantButton
+            text={latestAssistantContent}
+            iconOnly
+            title="Speak latest assistant reply"
           />
+        )}
+
+        <GlyphButton
+          glyph="↩️"
+          title="Undo last turn"
+          onClick={() => void onUndoMessages?.()}
+          disabled={undoDisabled}
+        />
+
+        <GlyphButton
+          glyph="🗑️"
+          title="New chat"
+          onClick={() => onNewChat?.()}
+        />
+
+        <div style={{ flex: 1 }} />
+
+        {/* Right-side actions */}
+        {ttsEnabled && (
+          <GlyphButton
+            glyph="🔊"
+            title={autoConversationEnabled ? "Auto voice on" : "Auto voice off"}
+            onClick={() => onToggleAutoConversation?.()}
+            active={autoConversationEnabled}
+          />
+        )}
+
+        {autoRecording ? (
+          <Badge size="sm" variant="warning">Listening…</Badge>
         ) : null}
 
-        <textarea
-          ref={textareaRef}
-          rows={3}
-          className="input min-h-20 flex-1 resize-y"
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            multimodalEnabled
-              ? "Send a message, or drag/paste images, audio, video..."
-              : "Send a prompt, test edge cases, compare behavior..."
-          }
-        />
-        <button type="submit" className="btn-primary h-fit" disabled={isSending}>
-          {isSending ? "Sending..." : "Send"}
-        </button>
+        {(autoConversationEnabled || ttsStatus !== "idle") ? (
+          <Badge
+            size="sm"
+            variant={ttsStatus === "error"
+              ? "error"
+              : ttsStatus === "playing" || ttsStatus === "streaming"
+                ? "success"
+                : "warning"}
+          >
+            {ttsStatus}
+          </Badge>
+        ) : null}
+
+        {ttsError ? (
+          <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>
+            {ttsError}
+          </div>
+        ) : null}
+
+        {liveControlEnabled ? (
+          <>
+            <GlyphButton
+              glyph="➤"
+              title="Steer (Enter)"
+              onClick={() => void onQueueLiveControl?.("steer")}
+              disabled={!canSteer}
+            />
+            <GlyphButton
+              glyph="⏭"
+              title="Queue follow-up (Ctrl+Enter)"
+              onClick={() => void onQueueLiveControl?.("follow_up")}
+              disabled={!canSteer}
+            />
+            <GlyphButton
+              glyph="✕"
+              title="Abort turn"
+              onClick={() => void onAbortTurn?.()}
+              disabled={abortingTurn || queueingControl !== null}
+            />
+          </>
+        ) : (
+          <GlyphButton
+            glyph="➤"
+            title="Send"
+            type="submit"
+            disabled={!canSendNormal}
+          />
+        )}
       </div>
     </form>
   );

@@ -6,6 +6,10 @@ import { voiceTtsSynthesize } from "../../lib/api";
 type SpeakAssistantButtonProps = {
   text: string;
   disabled?: boolean;
+  /** Render as a compact icon button instead of a text button */
+  iconOnly?: boolean;
+  /** Optional title/tooltip for the button */
+  title?: string;
 };
 
 type SpeakState =
@@ -14,7 +18,7 @@ type SpeakState =
   | { status: "playing" }
   | { status: "error"; message: string };
 
-export function SpeakAssistantButton({ text, disabled }: SpeakAssistantButtonProps) {
+export function SpeakAssistantButton({ text, disabled, iconOnly = false, title: buttonTitle }: SpeakAssistantButtonProps) {
   const [state, setState] = useState<SpeakState>({ status: "idle" });
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
@@ -87,6 +91,44 @@ export function SpeakAssistantButton({ text, disabled }: SpeakAssistantButtonPro
     }
   }, [disabled, state.status, stop, text]);
 
+  const glyph = state.status === "playing" ? "🔇" : state.status === "loading" ? "⏳" : "🔊";
+  const label = state.status === "playing" ? "Stop" : state.status === "loading" ? "Speaking…" : "Speak";
+
+  if (iconOnly) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <button
+          type="button"
+          title={buttonTitle || label}
+          onClick={() => void speak()}
+          disabled={disabled || state.status === "loading"}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 6,
+            border: "1px solid var(--token-colors-border-default)",
+            background: state.status === "playing"
+              ? "var(--token-colors-alpha-green-_20)"
+              : "var(--token-colors-button-ghost-bg)",
+            color: state.status === "playing"
+              ? "var(--token-colors-accent-green)"
+              : "var(--token-colors-text-muted)",
+            cursor: "pointer",
+            fontSize: 14,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+            lineHeight: 1,
+          }}
+        >
+          {glyph}
+        </button>
+        {state.status === "error" ? <Badge size="sm" variant="error">{state.message}</Badge> : null}
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       <Button
@@ -95,7 +137,7 @@ export function SpeakAssistantButton({ text, disabled }: SpeakAssistantButtonPro
         onClick={() => void speak()}
         disabled={disabled || state.status === "loading"}
       >
-        {state.status === "playing" ? "Stop" : state.status === "loading" ? "Speaking…" : "Speak"}
+        {label}
       </Button>
       {state.status === "error" ? <Badge size="sm" variant="error">{state.message}</Badge> : null}
     </div>

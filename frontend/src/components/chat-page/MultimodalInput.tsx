@@ -23,6 +23,8 @@ interface MultimodalInputProps {
   maxSizeBytes?: number;
   accept?: Record<string, string[]>;
   disabled?: boolean;
+  /** Hide inline attachment previews (useful when parent manages previews) */
+  hidePreviews?: boolean;
 }
 
 const DEFAULT_MAX_SIZE = 50 * 1024 * 1024; // 50MB
@@ -67,6 +69,7 @@ export function MultimodalInput({
   maxSizeBytes = DEFAULT_MAX_SIZE,
   accept = DEFAULT_ACCEPT,
   disabled = false,
+  hidePreviews = false,
 }: MultimodalInputProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragCounter, setDragCounter] = useState(0);
@@ -256,7 +259,7 @@ export function MultimodalInput({
       </Button>
 
       {/* Attachment previews */}
-      {attachments.length > 0 && (
+      {!hidePreviews && attachments.length > 0 && (
         <div
           style={{
             display: "flex",

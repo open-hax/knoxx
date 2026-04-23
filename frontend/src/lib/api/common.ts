@@ -167,6 +167,37 @@ function normalizeContentParts(value: unknown): ContentPart[] | undefined {
   return parts;
 }
 
+function mergeContentParts(...groups: Array<ContentPart[] | undefined>): ContentPart[] | undefined {
+  const merged: ContentPart[] = [];
+  const seen = new Set<string>();
+
+  for (const group of groups) {
+    if (!Array.isArray(group)) {
+      continue;
+    }
+
+    for (const part of group) {
+      const key = JSON.stringify([
+        part.type,
+        part.url ?? null,
+        part.data ?? null,
+        part.mimeType ?? null,
+        part.filename ?? null,
+        part.size ?? null,
+      ]);
+
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      merged.push(part);
+    }
+  }
+
+  return merged.length > 0 ? merged : undefined;
+}
+
 function normalizeRequestMessages(value: unknown): RunDetail["request_messages"] {
   if (!Array.isArray(value)) {
     return [];
@@ -198,19 +229,28 @@ function normalizeToolReceipt(value: unknown): import("../types").ToolReceipt | 
 }
 
 function normalizeRunDetail(run: RunDetail): RunDetail {
+  const toolReceipts = Array.isArray(run.tool_receipts)
+    ? run.tool_receipts
+        .map((receipt) => normalizeToolReceipt(receipt))
+        .filter((receipt): receipt is import("../types").ToolReceipt => receipt !== null)
+    : [];
+
+  const replyAttachmentParts = toolReceipts
+    .filter((receipt) => receipt.tool_name === "workspace_media.attach")
+    .flatMap((receipt) => receipt.contentParts ?? []);
+
   return {
     ...run,
     answer: typeof run.answer === "string" ? run.answer : null,
-    contentParts: normalizeContentParts(
-      pickKey(run as unknown as Record<string, unknown>, ["contentParts", "content_parts", "content-parts"]),
+    contentParts: mergeContentParts(
+      normalizeContentParts(
+        pickKey(run as unknown as Record<string, unknown>, ["contentParts", "content_parts", "content-parts"]),
+      ),
+      replyAttachmentParts,
     ),
     request_messages: normalizeRequestMessages(run.request_messages),
     events: Array.isArray(run.events) ? run.events : [],
-    tool_receipts: Array.isArray(run.tool_receipts)
-      ? run.tool_receipts
-          .map((receipt) => normalizeToolReceipt(receipt))
-          .filter((receipt): receipt is import("../types").ToolReceipt => receipt !== null)
-      : [],
+    tool_receipts: toolReceipts,
     sources: Array.isArray(run.sources) ? run.sources : [],
   };
 }

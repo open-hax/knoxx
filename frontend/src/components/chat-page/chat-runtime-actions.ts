@@ -157,6 +157,49 @@ export function createChatRuntimeActions({
     }
   };
 
+  const voiceSteer = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || !conversationId || !liveControlEnabled) {
+      return;
+    }
+
+    setQueueingControl("steer");
+    try {
+      const response = await knoxxControl({
+        kind: "steer",
+        message: trimmed,
+        conversation_id: conversationId,
+        session_id: sessionId,
+        run_id: activeRunIdRef.current,
+      });
+      const optimisticTimelineMessage = controlTimelineMessageFromEvent({
+        type: "steer_queued",
+        preview: truncateText(trimmed, 240),
+        run_id: response.run_id ?? activeRunIdRef.current ?? undefined,
+      });
+      if (optimisticTimelineMessage) {
+        appendMessageIfMissing(optimisticTimelineMessage);
+      }
+      setLiveControlText("");
+      appendConsoleLine(
+        `[agent:steer] queued for conversation=${response.conversation_id ?? conversationId} run=${response.run_id ?? activeRunIdRef.current ?? "pending"}`,
+      );
+    } catch (error) {
+      const failedTimelineMessage = controlTimelineMessageFromEvent({
+        type: "steer_failed",
+        preview: truncateText(trimmed, 240),
+        run_id: activeRunIdRef.current ?? undefined,
+        error: (error as Error).message,
+      });
+      if (failedTimelineMessage) {
+        appendMessageIfMissing(failedTimelineMessage);
+      }
+      appendConsoleLine(`[agent:steer] failed: ${(error as Error).message}`);
+    } finally {
+      setQueueingControl(null);
+    }
+  };
+
   const abortTurn = async () => {
     if (!conversationId) {
       appendConsoleLine('[abort] missing conversation id');
@@ -333,6 +376,7 @@ export function createChatRuntimeActions({
     handleUndoLastTurn,
     loadRunDetail,
     queueLiveControl,
+    voiceSteer,
     abortTurn,
     updateMessageById,
     updateTraceBlocksByMessageId,

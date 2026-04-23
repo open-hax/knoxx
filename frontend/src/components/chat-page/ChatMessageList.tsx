@@ -1,8 +1,6 @@
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import { AgentTraceTimeline, ToolReceiptGroup } from "../ToolReceiptBlock";
 import { MultimodalContent } from "./MultimodalContent";
-import { SpeakAssistantButton } from "./SpeakAssistantButton";
-import { VoiceReplyButton } from "./VoiceReplyButton";
 import type {
   AgentSource,
   ChatMessage,
@@ -23,8 +21,6 @@ type ChatMessageListProps = {
   assistantSurfaceBackground: string;
   assistantSurfaceBorder: string;
   assistantSurfaceText: string;
-  onSend: (text: string) => void;
-  voiceReplyDisabled?: boolean;
   onOpenMessageInCanvas: (message: ChatMessage) => void;
   onOpenSourceInPreview: (source: AgentSource) => void | Promise<void>;
   onPinAssistantSource: (source: AgentSource) => void;
@@ -41,19 +37,13 @@ export function ChatMessageList({
   assistantSurfaceBackground,
   assistantSurfaceBorder,
   assistantSurfaceText,
-  onSend,
-  voiceReplyDisabled,
   onOpenMessageInCanvas,
   onOpenSourceInPreview,
   onPinAssistantSource,
   onAppendToScratchpad,
   onPinMessageContext,
 }: ChatMessageListProps) {
-  const latestAssistantMessageId = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant" && message.status === "done" && Boolean(message.content?.trim()))?.id;
-
-  const renderAssistantActions = (message: ChatMessage, showVoiceReply: boolean) => (
+  const renderAssistantActions = (message: ChatMessage) => (
     <div
       role="group"
       aria-label="Assistant message actions"
@@ -67,15 +57,6 @@ export function ChatMessageList({
         borderTop: "1px solid var(--token-colors-border-subtle, var(--token-colors-border-default))",
       }}
     >
-      {showVoiceReply ? (
-        <VoiceReplyButton
-          disabled={voiceReplyDisabled}
-          onTranscript={(text) => onSend(text)}
-        />
-      ) : null}
-      {message.status === "done" && Boolean(message.content?.trim()) ? (
-        <SpeakAssistantButton text={message.content || ""} />
-      ) : null}
       <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
     </div>
   );
@@ -95,8 +76,6 @@ export function ChatMessageList({
           && message.status === "done"
           && rawTraceBlocks.length > 0
           && Boolean(message.content?.trim());
-
-        const showVoiceReply = message.id === latestAssistantMessageId;
 
         return <Card
           key={message.id}
@@ -165,7 +144,7 @@ export function ChatMessageList({
               {message.contentParts && message.contentParts.length > 0 && (
                 <MultimodalContent parts={message.contentParts} />
               )}
-              {renderAssistantActions(message, showVoiceReply)}
+              {renderAssistantActions(message)}
             </div>
           ) : message.role === "assistant" || message.role === "system" ? (
             <>
@@ -174,7 +153,7 @@ export function ChatMessageList({
               {message.contentParts && message.contentParts.length > 0 && (
                 <MultimodalContent parts={message.contentParts} />
               )}
-              {message.role === "assistant" ? renderAssistantActions(message, showVoiceReply) : null}
+              {message.role === "assistant" ? renderAssistantActions(message) : null}
             </>
           ) : (
             <>

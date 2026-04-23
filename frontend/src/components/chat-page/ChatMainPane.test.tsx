@@ -6,8 +6,12 @@ import { THINKING_OPTIONS } from "../../lib/api/contracts";
 import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, ToolCatalogResponse } from "../../lib/types";
 
 vi.mock("../ChatComposer", () => ({
-  default: ({ onSend, isSending }: { onSend: (value: string) => void; isSending: boolean }) => (
-    <button disabled={isSending} onClick={() => onSend("hello")}>send</button>
+  default: ({ onSend, isSending, onUndoMessages, onNewChat }: { onSend: (value: string) => void; isSending: boolean; onUndoMessages?: () => void; onNewChat?: () => void; [key: string]: unknown }) => (
+    <div>
+      <button disabled={isSending} onClick={() => onSend("hello")}>send</button>
+      {onUndoMessages ? <button onClick={() => onUndoMessages()}>Undo Turn</button> : null}
+      {onNewChat ? <button onClick={() => onNewChat()}>New Chat</button> : null}
+    </div>
   ),
 }));
 
@@ -99,6 +103,7 @@ function makeProps(messages: ChatMessage[]) {
     onLiveControlTextChange: noop,
     queueingControl: null,
     onQueueLiveControl: noopAsync,
+    onVoiceSteer: noopAsync,
     abortingTurn: false,
     onAbortTurn: noopAsync,
     activeRunId: null,

@@ -60,6 +60,7 @@ export function ChatWorkspacePane({
         onLiveControlTextChange={controller.setLiveControlText}
         queueingControl={controller.queueingControl}
         onQueueLiveControl={controller.queueLiveControl}
+        onVoiceSteer={controller.voiceSteer}
         abortingTurn={controller.abortingTurn}
         onAbortTurn={controller.abortTurn}
         activeRunId={controller.activeRunId}

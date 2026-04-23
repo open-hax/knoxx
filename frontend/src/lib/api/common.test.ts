@@ -80,6 +80,14 @@ describe("getRun", () => {
         filename: "clip.wav",
         size: undefined,
       },
+      {
+        type: "audio",
+        url: undefined,
+        data: "data:audio/wav;base64,QUFBQQ==",
+        mimeType: "audio/wav",
+        filename: "receipt.wav",
+        size: undefined,
+      },
     ]);
 
     expect(run.request_messages[0]?.contentParts).toEqual([

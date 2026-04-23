@@ -7,6 +7,7 @@ import { ChatRuntimePanel } from './ChatRuntimePanel';
 import { ChatScratchpadPanel } from './ChatScratchpadPanel';
 import { ChatSettingsPanel } from './ChatSettingsPanel';
 import { useAutoConversationVoice } from './useAutoConversationVoice';
+import { useVoiceRecorder } from './useVoiceRecorder';
 import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, RunDetail, RunEvent, ToolCatalogResponse, ToolReceipt } from '../../lib/types';
 import { THINKING_OPTIONS } from '../../lib/api/contracts';
 import type { HydrationSource } from './types';
@@ -55,6 +56,7 @@ type ChatMainPaneProps = {
   onLiveControlTextChange: (value: string) => void;
   queueingControl: 'steer' | 'follow_up' | null;
   onQueueLiveControl: (kind: 'steer' | 'follow_up') => void | Promise<void>;
+  onVoiceSteer: (text: string) => void | Promise<void>;
   abortingTurn: boolean;
   onAbortTurn: () => void | Promise<void>;
   activeRunId: string | null;
@@ -141,6 +143,7 @@ export function ChatMainPane({
   onLiveControlTextChange,
   queueingControl,
   onQueueLiveControl,
+  onVoiceSteer,
   abortingTurn,
   onAbortTurn,
   activeRunId,
@@ -192,6 +195,7 @@ export function ChatMainPane({
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const [autoConversationEnabled, setAutoConversationEnabled] = useState(false);
+  const [autoRecording, setAutoRecording] = useState(false);
 
   const updateAutoScrollState = useCallback((container: HTMLDivElement) => {
     const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
@@ -218,6 +222,11 @@ export function ChatMainPane({
     available: ttsEnabled,
     messages,
     defaultVoiceId: ttsDefaultVoiceId,
+    onPlaybackEnded: () => {
+      if (sttEnabled) {
+        setAutoRecording(true);
+      }
+    },
   });
 
   useEffect(() => {
@@ -225,6 +234,50 @@ export function ChatMainPane({
       setAutoConversationEnabled(false);
     }
   }, [autoConversationEnabled, ttsEnabled]);
+
+  useEffect(() => {
+    if (!autoConversationEnabled && autoRecording) {
+      setAutoRecording(false);
+    }
+  }, [autoConversationEnabled, autoRecording]);
+
+  const prevAutoConversationEnabledRef = useRef(false);
+
+  const { state: autoRecorderState, startRecording: startAutoRecording, stopRecording: stopAutoRecording } = useVoiceRecorder({
+    onTranscript: (text) => {
+      setAutoRecording(false);
+      onSend(text);
+    },
+    conversationMode: true,
+  });
+
+  // Start recording immediately when user toggles auto-conversation ON
+  useEffect(() => {
+    if (!prevAutoConversationEnabledRef.current && autoConversationEnabled && sttEnabled && !isSending) {
+      setAutoRecording(true);
+    }
+    prevAutoConversationEnabledRef.current = autoConversationEnabled;
+  }, [autoConversationEnabled, sttEnabled, isSending]);
+
+  // Stop recording when assistant starts generating
+  useEffect(() => {
+    if (isSending && autoRecording) {
+      setAutoRecording(false);
+    }
+  }, [isSending, autoRecording]);
+
+  // Start/stop the actual recorder based on autoRecording state
+  useEffect(() => {
+    if (autoRecording && autoRecorderState.status === "idle") {
+      void startAutoRecording();
+    }
+  }, [autoRecording, autoRecorderState.status, startAutoRecording]);
+
+  useEffect(() => {
+    if (!autoRecording && autoRecorderState.status === "recording") {
+      stopAutoRecording();
+    }
+  }, [autoRecording, autoRecorderState.status, stopAutoRecording]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -243,101 +296,43 @@ export function ChatMainPane({
   }, [scrollToBottom]);
 
   return (
-    <>
+    <div style={{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
+      {/* Left stash tab for Files */}
+      {!showFiles ? (
+        <button
+          onClick={onShowFiles}
+          title="Show files sidebar"
+          style={{
+            width: 28,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRight: '1px solid var(--token-colors-border-default)',
+            background: 'var(--token-monokai-bg-default)',
+            color: 'var(--token-colors-text-muted)',
+            fontSize: 12,
+            cursor: 'pointer',
+            padding: 0,
+          }}
+        >
+          <span style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>Files</span>
+        </button>
+      ) : null}
+
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden', background: 'var(--token-monokai-bg-default)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
-          {!showFiles ? <Button variant="ghost" size="sm" onClick={onShowFiles}>Files</Button> : null}
-          <Button variant="ghost" size="sm" onClick={onToggleSettings}>Settings</Button>
-          {showCanvasToggle ? <Button variant="ghost" size="sm" onClick={onToggleCanvas}>Canvas</Button> : null}
-          <Button variant="ghost" size="sm" onClick={onToggleConsole}>Console</Button>
+        {/* Row 1: global status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
           <div style={{ flex: 1 }} />
-          <select
-            value={activeAgentId}
-            onChange={(event) => onActiveAgentChange(event.target.value)}
-            style={{
-              minWidth: 170,
-              borderRadius: 6,
-              border: '1px solid var(--token-colors-border-subtle)',
-              padding: '6px 8px',
-              fontSize: 12,
-              background: 'var(--token-colors-surface-input)',
-              color: 'var(--token-colors-text-default)',
-            }}
-            title="Active agent contract"
-          >
-            {availableAgents.length === 0 ? <option value="">No agents</option> : null}
-            {availableAgents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.id}
-              </option>
-            ))}
-          </select>
-          <SearchableSelect
-            options={proxxModels.map(m => m.id)}
-            value={selectedModel}
-            onChange={onSelectedModelChange}
-            placeholder={proxxModels.length === 0 ? "No models" : "Select model"}
-            disabled={proxxModels.length === 0}
-            size="sm"
-          />
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              fontSize: 12,
-              color: 'var(--token-colors-text-muted)',
-            }}
-            title="Thinking level"
-          >
-            <span>Thinking</span>
-            <select
-              aria-label="Thinking level"
-              value={selectedThinkingLevel}
-              onChange={(event) => onSelectedThinkingLevelChange(event.target.value)}
-              style={{
-                minWidth: 110,
-                borderRadius: 6,
-                border: '1px solid var(--token-colors-border-subtle)',
-                padding: '6px 8px',
-                fontSize: 12,
-                background: 'var(--token-colors-surface-input)',
-                color: 'var(--token-colors-text-default)',
-              }}
-            >
-              {THINKING_OPTIONS.map((value) => (
-                <option key={`thinking-${value}`} value={value}>{value}</option>
-              ))}
-            </select>
-          </label>
           <Badge variant={proxxReachable ? 'success' : proxxConfigured ? 'warning' : 'error'} size="sm" dot>
             {proxxReachable ? 'online' : proxxConfigured ? 'offline' : 'not configured'}
           </Badge>
-          <Button
-            variant={autoConversationEnabled ? 'primary' : 'ghost'}
-            size="sm"
-            onClick={() => setAutoConversationEnabled((value) => !value)}
-            disabled={!ttsEnabled}
-            title={ttsEnabled
-              ? 'Auto-conversation mode speaks assistant replies through the ElevenLabs streaming websocket.'
-              : 'Configure ElevenLabs to enable auto-conversation voice mode.'}
-          >
-            {autoConversationEnabled ? 'Auto Voice On' : 'Auto Voice Off'}
-          </Button>
-          {(autoConversationEnabled || autoConversationVoice.status !== 'idle') ? (
-            <Badge
-              size="sm"
-              variant={autoConversationVoice.status === 'error'
-                ? 'error'
-                : autoConversationVoice.status === 'playing' || autoConversationVoice.status === 'streaming'
-                  ? 'success'
-                  : 'warning'}
-            >
-              {autoConversationVoice.status}
-            </Badge>
-          ) : null}
-          <Button variant="ghost" size="sm" onClick={() => void onUndoMessages()} disabled={undoDisabled}>Undo Turn</Button>
-          <Button variant="ghost" size="sm" onClick={onNewChat}>New Chat</Button>
+        </div>
+
+        {/* Row 2: Settings & Console */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
+          <Button variant={showSettings ? 'primary' : 'ghost'} size="sm" onClick={onToggleSettings}>Settings</Button>
+          <Button variant={showConsole ? 'primary' : 'ghost'} size="sm" onClick={onToggleConsole}>Console</Button>
         </div>
 
         {showSettings ? (
@@ -367,13 +362,6 @@ export function ChatMainPane({
               latestRun={latestRun}
               isSending={isSending}
               selectedModel={selectedModel}
-              liveControlEnabled={liveControlEnabled}
-              liveControlText={liveControlText}
-              onLiveControlTextChange={onLiveControlTextChange}
-              queueingControl={queueingControl}
-              onQueueLiveControl={onQueueLiveControl}
-              abortingTurn={abortingTurn}
-              onAbortTurn={onAbortTurn}
               conversationId={conversationId}
               activeRunId={activeRunId}
               hydrationSources={hydrationSources}
@@ -403,8 +391,6 @@ export function ChatMainPane({
                 assistantSurfaceBackground={assistantSurfaceBackground}
                 assistantSurfaceBorder={assistantSurfaceBorder}
                 assistantSurfaceText={assistantSurfaceText}
-                onSend={onSend}
-                voiceReplyDisabled={composerDisabled}
                 onOpenMessageInCanvas={onOpenMessageInCanvas}
                 onOpenSourceInPreview={onOpenSourceInPreview}
                 onPinAssistantSource={onPinAssistantSource}
@@ -415,8 +401,95 @@ export function ChatMainPane({
           </div>
         </div>
 
+        {/* Bottom conversation controls */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '8px 12px', borderTop: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
+          <select
+            value={activeAgentId}
+            onChange={(event) => onActiveAgentChange(event.target.value)}
+            style={{
+              minWidth: 140,
+              borderRadius: 6,
+              border: '1px solid var(--token-colors-border-subtle)',
+              padding: '6px 8px',
+              fontSize: 12,
+              background: 'var(--token-colors-surface-input)',
+              color: 'var(--token-colors-text-default)',
+            }}
+            title="Active agent contract"
+          >
+            {availableAgents.length === 0 ? <option value="">No agents</option> : null}
+            {availableAgents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.id}
+              </option>
+            ))}
+          </select>
+          <div style={{ minWidth: 160, position: 'relative', zIndex: 20 }}>
+            <SearchableSelect
+              options={proxxModels.map(m => m.id)}
+              value={selectedModel}
+              onChange={onSelectedModelChange}
+              placeholder={proxxModels.length === 0 ? "No models" : "Select model"}
+              disabled={proxxModels.length === 0}
+              size="sm"
+            />
+          </div>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: 'var(--token-colors-text-muted)',
+            }}
+            title="Thinking level"
+          >
+            <span>Thinking</span>
+            <select
+              aria-label="Thinking level"
+              value={selectedThinkingLevel}
+              onChange={(event) => onSelectedThinkingLevelChange(event.target.value)}
+              style={{
+                minWidth: 90,
+                borderRadius: 6,
+                border: '1px solid var(--token-colors-border-subtle)',
+                padding: '6px 8px',
+                fontSize: 12,
+                background: 'var(--token-colors-surface-input)',
+                color: 'var(--token-colors-text-default)',
+              }}
+            >
+              {THINKING_OPTIONS.map((value) => (
+                <option key={`thinking-${value}`} value={value}>{value}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         <div style={{ padding: 12, borderTop: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
-          <ChatComposer onSend={onSend} isSending={composerDisabled} voiceInputEnabled={sttEnabled} />
+          <ChatComposer
+            onSend={onSend}
+            isSending={composerDisabled}
+            voiceInputEnabled={sttEnabled}
+            liveControlEnabled={liveControlEnabled}
+            liveControlText={liveControlText}
+            onLiveControlTextChange={onLiveControlTextChange}
+            queueingControl={queueingControl}
+            onQueueLiveControl={onQueueLiveControl}
+            onVoiceSteer={onVoiceSteer}
+            abortingTurn={abortingTurn}
+            onAbortTurn={onAbortTurn}
+            latestAssistantContent={messages.filter((m) => m.role === "assistant" && m.status === "done").slice(-1)[0]?.content}
+            autoConversationEnabled={autoConversationEnabled}
+            onToggleAutoConversation={() => setAutoConversationEnabled((v) => !v)}
+            ttsEnabled={ttsEnabled}
+            ttsStatus={autoConversationVoice.status}
+            ttsError={autoConversationVoice.error}
+            onUndoMessages={onUndoMessages}
+            undoDisabled={undoDisabled}
+            onNewChat={onNewChat}
+            autoRecording={autoRecording}
+          />
           {autoConversationEnabled && autoConversationVoice.error ? (
             <div style={{ marginTop: 8, fontSize: 12, color: 'var(--token-colors-text-muted)' }}>
               Auto voice error: {autoConversationVoice.error}
@@ -434,6 +507,28 @@ export function ChatMainPane({
         ) : null}
       </div>
 
+      {/* Right stash tab or Canvas panel */}
+      {showCanvasToggle && !showCanvas ? (
+        <button
+          onClick={onToggleCanvas}
+          title="Show canvas sidebar"
+          style={{
+            width: 28,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderLeft: '1px solid var(--token-colors-border-default)',
+            background: 'var(--token-monokai-bg-default)',
+            color: 'var(--token-colors-text-muted)',
+            fontSize: 12,
+            cursor: 'pointer',
+            padding: 0,
+          }}
+        >
+          <span style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>Canvas</span>
+        </button>
+      ) : null}
       {showCanvasToggle && showCanvas ? (
         <ChatScratchpadPanel
           canvasTitle={canvasTitle}
@@ -461,6 +556,6 @@ export function ChatMainPane({
           onSendCanvasEmailAction={onSendCanvasEmailAction}
         />
       ) : null}
-    </>
+    </div>
   );
 }
