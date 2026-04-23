@@ -1,6 +1,6 @@
 (ns knoxx.backend.authz
   (:require [clojure.string :as str]
-            [knoxx.backend.auth-session :as auth-session]
+            [knoxx.backend.auth.session :as auth-session]
             [knoxx.backend.http :as http]))
 
 (defn policy-db

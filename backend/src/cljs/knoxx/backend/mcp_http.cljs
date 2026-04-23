@@ -10,7 +10,7 @@
             [malli.core :as m]
             [malli.error :as me]
             [knoxx.backend.app-shapes :refer [route!]]
-            [knoxx.backend.auth-session :as auth-session]
+            [knoxx.backend.auth.session :as auth-session]
             [knoxx.backend.mcp-expose :as mcp-expose]
             [knoxx.backend.redis-client :as redis])
   (:require-macros [knoxx.backend.macros :refer [defroute]]))

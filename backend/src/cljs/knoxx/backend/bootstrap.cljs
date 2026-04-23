@@ -8,7 +8,7 @@
    - Dependencies are passed in as a single JS object (deps) and then threaded
      through request/runtime contexts."  
   (:require [clojure.string :as str]
-            [knoxx.backend.auth-session :as auth-session]
+            [knoxx.backend.auth.session :as auth-session]
             [knoxx.backend.core :as core]
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.graceful-shutdown :as graceful-shutdown]
@@ -16,6 +16,7 @@
             [knoxx.backend.pi-session-ingester :as pi-session-ingester]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
+            [knoxx.backend.routes.auth :as auth-routes]
             [knoxx.backend.tools.proxy-routes :as proxy-routes]
             [knoxx.backend.agent-turns :refer [lounge-messages*]]
             [knoxx.backend.policy-db :as policy-db]))
@@ -148,8 +149,8 @@
 
                  ;; GitHub OAuth + cookie session auth routes
                  (.then (fn []
-                          (auth-session/register-auth-routes app #js {:policyDb policyDb
-                                                                      :runtime runtime})))
+                          (auth-routes/register-auth-routes app #js {:policyDb policyDb
+                                                                     :runtime runtime})))
 
                  ;; Core CLJS routes (/api/*, etc.)
                  (.then (fn []
