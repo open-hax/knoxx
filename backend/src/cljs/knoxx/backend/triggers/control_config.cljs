@@ -132,20 +132,16 @@
 
 (defn- contract-agent-jobs
   [config]
-  (let [agents-dir (.join path (contract-loader/contracts-dir-path config) "agents")]
-    (try
-      (->> (.readdirSync fs agents-dir)
-           (filter (fn [name]
-                     (and (string? name) (str/ends-with? name ".edn"))))
-           (map (fn [name]
-                  (let [contract-id (subs name 0 (- (count name) 4))
-                        contract (read-edn-sync (.join path agents-dir name))]
-                    (when contract
-                      (contract->event-agent-job config contract-id contract)))))
-           (remove nil?)
-           (sort-by :id)
-           vec)
-      (catch :default _ []))))
+  (try
+    (->> (contract-loader/list-contract-ids-sync config "agents")
+         (map (fn [contract-id]
+                (let [contract (read-edn-sync (contract-loader/contract-file-path config "agents" contract-id))]
+                  (when contract
+                    (contract->event-agent-job config contract-id contract)))))
+         (remove nil?)
+         (sort-by :id)
+         vec)
+    (catch :default _ [])))
 
 (defn- default-discord-channels
   []

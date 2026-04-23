@@ -1,6 +1,7 @@
 (ns knoxx.backend.runtime.roles
   (:require [clojure.string :as str]
             [cljs.reader :as reader]
+            [knoxx.backend.runtime.contract-loader :as contract-loader]
             [knoxx.backend.tools.registry :as tools]
             ["node:fs" :as fs]
             ["node:path" :as path]))
@@ -16,18 +17,6 @@
              (re-matches #"[A-Za-z0-9._-]+" s))
     s))
 
-(defn- contracts-dir
-  [config]
-  (.resolve path (or (:contracts-dir config) "contracts")))
-
-(defn- role-dir
-  [config]
-  (.join path (contracts-dir config) "roles"))
-
-(defn- cap-dir
-  [config]
-  (.join path (contracts-dir config) "capabilities"))
-
 (defn- read-edn-sync
   [file-path]
   (try
@@ -39,25 +28,20 @@
 (defn role-slug->file
   [config role-slug]
   (when-let [slug (safe-segment role-slug)]
-    (.join path (role-dir config) (str slug ".edn"))))
+    (contract-loader/role-file-path config slug)))
 
 (defn cap-slug->file
   [config cap-slug]
   (when-let [slug (safe-segment cap-slug)]
-    (.join path (cap-dir config) (str slug ".edn"))))
+    (contract-loader/capability-file-path config slug)))
 
 (defn list-role-slugs
   "List role slugs (filenames without .edn) from contracts/roles.
 
-   Uses synchronous IO; role catalogs are small and used in request paths."
+  Uses synchronous IO; role catalogs are small and used in request paths."
   [config]
   (try
-    (->> (.readdirSync fs (role-dir config))
-         (filter (fn [name]
-                   (and (string? name) (str/ends-with? name ".edn"))))
-         (map (fn [name] (subs name 0 (- (count name) 4))))
-         sort
-         vec)
+    (contract-loader/list-contract-ids-sync config "roles")
     (catch :default _
       ["knowledge_worker"])))
 

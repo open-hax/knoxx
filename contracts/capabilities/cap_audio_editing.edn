@@ -1,0 +1,14 @@
+{:cap/id :cap/audio-editing
+ :cap/tools [:bash
+             :read
+             :write
+             :edit
+             :audio.spectrogram
+             :audio.waveform
+             :multimodal.upload
+             :workspace_media.attach]
+ :cap/user-surfaces [{:surface/id :music/audio-editing
+                      :surface/label "Audio editing workbench"
+                      :surface/kind :editor
+                      :surface/routes ["/" "/ops/documents"]
+                      :surface/description "Humans review generated stems, edits, and diagnostics; agents can inspect audio visually and drive ffmpeg-style non-destructive edits through the shell toolchain."}]}

@@ -95,13 +95,9 @@
 
 (defn actor-catalog
   [config]
-  (->> (try
-         (.readdirSync fs (.join path (contract-loader/contracts-dir-path config) "actors"))
-         (catch :default _ #js []))
-       (filter contract-edn-file?)
-       (map (fn [name]
-              (let [actor-id (subs name 0 (- (count name) 4))]
-                (resolve-actor config actor-id))))
+  (->> (contract-loader/list-contract-ids-sync config "actors")
+       (map (fn [actor-id]
+              (resolve-actor config actor-id)))
        (remove nil?)
        (sort-by :id)
        vec))
@@ -224,14 +220,11 @@
   ([config]
    (agent-contract-catalog config nil))
   ([config actor-id]
-   (let [ids (try
-               (.readdirSync fs (.join path (contract-loader/contracts-dir-path config) "agents"))
-               (catch :default _ #js []))
+   (let [ids (contract-loader/list-contract-ids-sync config "agents")
          wanted-actor-id (some-> actor-id str str/trim not-empty)]
      (->> ids
-          (filter contract-edn-file?)
-          (map (fn [name]
-                 (resolve-agent-contract config (subs name 0 (- (count name) 4)) wanted-actor-id)))
+          (map (fn [id]
+                 (resolve-agent-contract config id wanted-actor-id)))
           (remove nil?)
           (filter :enabled)
           (filter manual-agent-contract?)

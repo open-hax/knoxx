@@ -259,16 +259,87 @@
                                  {:toolId tool-id :effect "allow"})
                                (sort (vec allowed-tool-ids))))))
 
+(defn- configured-extra-root-records
+  [node-path config]
+  (let [music-root (some-> (:music-library-root config) str str/trim not-empty)
+        extra-roots (->> (or (:extra-workspace-roots config) [])
+                         (map (fn [raw]
+                                (some-> raw str str/trim not-empty)))
+                         (remove nil?))]
+    (->> (concat
+          (when music-root
+            [{:alias "Music"
+              :root (path-resolve node-path music-root)}])
+          (map (fn [raw-root]
+                 {:alias nil
+                  :root (path-resolve node-path raw-root)})
+               extra-roots))
+         (reduce (fn [acc entry]
+                   (if (some #(= (:root %) (:root entry)) acc)
+                     acc
+                     (conj acc entry)))
+                 [])
+         vec)))
+
+(defn- path-resolve
+  [^js node-path & parts]
+  (case (count parts)
+    0 (.resolve node-path)
+    1 (.resolve node-path (nth parts 0))
+    2 (.resolve node-path (nth parts 0) (nth parts 1))
+    3 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2))
+    4 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3))
+    5 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4))
+    6 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5))
+    7 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5) (nth parts 6))
+    (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5) (nth parts 6) (nth parts 7))))
+
+(defn- path-relative
+  [^js node-path from to]
+  (.relative node-path from to))
+
+(defn- path-is-absolute?
+  [^js node-path value]
+  (.isAbsolute node-path value))
+
+(defn- allowed-root-records
+  [node-path config]
+  (vec (cons {:alias nil
+              :root (path-resolve node-path (:workspace-root config))}
+             (configured-extra-root-records node-path config))))
+
+(defn- root-relative-path
+  [node-path root candidate]
+  (let [rel (path-relative node-path root candidate)]
+    (when-not (or (str/starts-with? rel "..")
+                  (path-is-absolute? node-path rel))
+      rel)))
+
 (defn resolve-workspace-path
   [runtime config raw-path]
   (let [node-path (aget runtime "path")
-        workspace-root (.resolve node-path (:workspace-root config))
-        candidate (if (.isAbsolute node-path raw-path)
-                    (.resolve node-path raw-path)
-                    (.resolve node-path workspace-root raw-path))
-        rel (.relative node-path workspace-root candidate)]
-    (when (or (str/starts-with? rel "..") (.isAbsolute node-path rel))
-      (throw (js/Error. "Path escapes workspace root")))
+        requested (some-> raw-path str str/trim not-empty)
+        roots (allowed-root-records node-path config)
+        music-root (some #(when (= "Music" (:alias %)) %) roots)
+        candidate (cond
+                    (path-is-absolute? node-path (or requested ""))
+                    (path-resolve node-path requested)
+
+                    (and requested
+                         music-root
+                         (or (= requested "Music")
+                             (str/starts-with? requested "Music/")))
+                    (let [suffix (subs requested (min (count requested) (count "Music/")))]
+                      (path-resolve node-path (:root music-root) suffix))
+
+                    :else
+                    (path-resolve node-path (:workspace-root config) (or requested "")))
+        matched-root (some (fn [root-record]
+                             (when (root-relative-path node-path (:root root-record) candidate)
+                               root-record))
+                           roots)]
+    (when-not matched-root
+      (throw (js/Error. "Path escapes allowed workspace roots")))
     candidate))
 
 (defn ensure-sdk-runtime!

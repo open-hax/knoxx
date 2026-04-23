@@ -328,23 +328,81 @@
     (str/starts-with? mime-type "video/") "video"
     :else "document"))
 
+(defn- configured-media-root-records
+  [node-path config]
+  (let [music-root (some-> (:music-library-root config) str str/trim not-empty)
+        extra-roots (->> (or (:extra-workspace-roots config) [])
+                         (map (fn [raw]
+                                (some-> raw str str/trim not-empty)))
+                         (remove nil?))]
+    (->> (concat
+          (when music-root
+            [{:alias "Music"
+              :root (path-resolve node-path music-root)}])
+          (map (fn [raw-root]
+                 {:alias nil
+                  :root (path-resolve node-path raw-root)})
+               extra-roots))
+         (reduce (fn [acc entry]
+                   (if (some #(= (:root %) (:root entry)) acc)
+                     acc
+                     (conj acc entry)))
+                 [])
+         vec)))
+
+(defn- allowed-media-root-records
+  [node-path config]
+  (vec (cons {:alias nil
+              :root (path-resolve node-path (:workspace-root config))}
+             (configured-media-root-records node-path config))))
+
+(defn- media-root-relative-path
+  [node-path root absolute]
+  (let [rel (path-relative node-path root absolute)]
+    (when-not (or (str/starts-with? rel "..")
+                  (path-is-absolute? node-path rel))
+      rel)))
+
 (defn- resolve-workspace-media-path
   [runtime config raw-path]
   (let [node-path (aget runtime "path")
-        workspace-root (path-resolve node-path (:workspace-root config))
         normalized (normalize-tool-path-arg raw-path)
         safe-path (or normalized "")
-        absolute (if (path-is-absolute? node-path safe-path)
+        roots (allowed-media-root-records node-path config)
+        music-root (some #(when (= "Music" (:alias %)) %) roots)
+        absolute (cond
+                   (path-is-absolute? node-path safe-path)
                    (path-resolve node-path safe-path)
-                   (path-resolve node-path workspace-root safe-path))
-        rel-to-root (path-relative node-path workspace-root absolute)]
+
+                   (and normalized
+                        music-root
+                        (or (= normalized "Music")
+                            (str/starts-with? normalized "Music/")))
+                   (let [suffix (subs normalized (min (count normalized) (count "Music/")))]
+                     (path-resolve node-path (:root music-root) suffix))
+
+                   :else
+                   (path-resolve node-path (:workspace-root config) safe-path))
+        matched-root (some (fn [root-record]
+                             (when-let [rel (media-root-relative-path node-path (:root root-record) absolute)]
+                               {:root-record root-record
+                                :rel rel}))
+                           roots)
+        root-record (:root-record matched-root)
+        rel-to-root (:rel matched-root)
+        relative (when root-record
+                   (if-let [alias (:alias root-record)]
+                     (if (str/blank? rel-to-root)
+                       alias
+                       (str alias "/" rel-to-root))
+                     rel-to-root))]
     (when (or (str/blank? normalized)
-              (str/starts-with? rel-to-root "..")
-              (path-is-absolute? node-path rel-to-root))
-      (throw (js/Error. "Path escapes workspace root")))
-    {:workspace-root workspace-root
+              (nil? matched-root)
+              (str/blank? relative))
+      (throw (js/Error. "Path escapes allowed workspace roots")))
+    {:workspace-root (:root root-record)
      :absolute absolute
-     :relative rel-to-root}))
+     :relative relative}))
 
 (def ^:private multimodal-upload-max-bytes (* 25 1024 1024))
 (def ^:private audio-render-max-bytes (* 50 1024 1024))

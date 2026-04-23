@@ -9,6 +9,39 @@
 
 (def contract-class-order ["agents" "actors" "roles" "capabilities" "policies" "model_families" "models"])
 
+(defn- configured-contracts-dir
+  [config]
+  (some-> (:contracts-dir config) str str/trim not-empty))
+
+(defn- default-configured-contracts-dir?
+  [value]
+  (or (nil? value)
+      (= value "contracts")))
+
+(defn- contract-root-candidates
+  [config]
+  (let [configured (configured-contracts-dir config)
+        preferred (if (default-configured-contracts-dir? configured)
+                    ["../contracts"
+                     "contracts"
+                     "packages/agents/knoxx/contracts"
+                     "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"
+                     "backend/contracts"
+                     "packages/agents/knoxx/backend/contracts"
+                     "orgs/open-hax/openplanner/packages/agents/knoxx/backend/contracts"]
+                    [configured
+                     "../contracts"
+                     "contracts"
+                     "packages/agents/knoxx/contracts"
+                     "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"
+                     "backend/contracts"
+                     "packages/agents/knoxx/backend/contracts"
+                     "orgs/open-hax/openplanner/packages/agents/knoxx/backend/contracts"]) ]
+    (->> preferred
+         (keep identity)
+         distinct
+         vec)))
+
 (defn safe-path-segment!
   "Reject path traversal and odd unicode by constraining to a conservative charset."
   [segment kind]
@@ -33,14 +66,9 @@
 
 (defn- resolve-contracts-dir
   [config]
-  (let [configured (some-> (:contracts-dir config) str str/trim not-empty)
+  (let [configured (configured-contracts-dir config)
         cwd (.cwd js/process)
-        candidates (->> [configured
-                         "contracts"
-                         "backend/contracts"
-                         "packages/agents/knoxx/backend/contracts"
-                         "orgs/open-hax/openplanner/packages/agents/knoxx/backend/contracts"]
-                        (keep identity)
+        candidates (->> (contract-root-candidates config)
                         (map #(.resolve path cwd %))
                         distinct
                         vec)]
@@ -48,11 +76,33 @@
                 (when (.existsSync node-fs candidate)
                   candidate))
               candidates)
-        (.resolve path cwd (or configured "contracts")))))
+        (.resolve path cwd (or configured "../contracts")))))
+
+(defn contract-root-paths
+  [config]
+  (let [cwd (.cwd js/process)
+        configured (configured-contracts-dir config)
+        resolved (->> (contract-root-candidates config)
+                      (map #(.resolve path cwd %))
+                      distinct
+                      vec)
+        existing (->> resolved
+                      (filter #(.existsSync node-fs %))
+                      vec)]
+    (if (seq existing)
+      existing
+      [(.resolve path cwd (or configured "../contracts"))])))
 
 (defn contracts-dir-path
   [config]
   (resolve-contracts-dir config))
+
+(defn contract-class-dir-paths
+  [config contract-class]
+  (let [klass (normalize-contract-class contract-class)]
+    (mapv (fn [root]
+            (.join path root klass))
+          (contract-root-paths config))))
 
 (defn contract-file-path
   "Resolve a contract file path.
@@ -62,10 +112,16 @@
   ([config contract-id]
    (contract-file-path config "agents" contract-id))
   ([config contract-class contract-id]
-   (let [dir (resolve-contracts-dir config)
-         klass (normalize-contract-class contract-class)
-         id (safe-path-segment! contract-id "contract-id")]
-     (.join path dir klass (str id ".edn")))))
+   (let [klass (normalize-contract-class contract-class)
+         id (safe-path-segment! contract-id "contract-id")
+         filename (str id ".edn")
+         existing-path (some (fn [root]
+                               (let [candidate (.join path root klass filename)]
+                                 (when (.existsSync node-fs candidate)
+                                   candidate)))
+                             (contract-root-paths config))]
+     (or existing-path
+         (.join path (contracts-dir-path config) klass filename)))))
 
 (defn role-file-path
   [config role-slug]
@@ -102,18 +158,43 @@
   ([config]
    (list-contract-ids! config "agents"))
   ([config contract-class]
-   (let [dir (.join path (resolve-contracts-dir config) (normalize-contract-class contract-class))]
-     (-> (.readdir fs dir #js {:withFileTypes true})
-         (.then (fn [entries]
-                  (->> (array-seq entries)
-                       (keep (fn [ent]
-                               (when (and (.isFile ent)
-                                          (str/ends-with? (.-name ent) ".edn"))
-                                 (subs (.-name ent) 0 (- (count (.-name ent)) 4)))))
+   (let [dirs (contract-class-dir-paths config contract-class)]
+     (-> (js/Promise.all
+          (clj->js
+           (mapv (fn [dir]
+                   (-> (.readdir fs dir #js {:withFileTypes true})
+                       (.then (fn [entries]
+                                (->> (array-seq entries)
+                                     (keep (fn [ent]
+                                             (when (and (.isFile ent)
+                                                        (str/ends-with? (.-name ent) ".edn"))
+                                               (subs (.-name ent) 0 (- (count (.-name ent)) 4)))))
+                                     vec)))
+                       (.catch (fn [_]
+                                 (js/Promise.resolve []))))
+                 dirs)))
+         (.then (fn [results]
+                  (->> (js->clj results)
+                       (mapcat identity)
+                       distinct
                        sort
-                       vec)))
-         (.catch (fn [_]
-                   (js/Promise.resolve [])))))))
+                       vec))))))))
+
+(defn list-contract-ids-sync
+  [config contract-class]
+  (->> (contract-class-dir-paths config contract-class)
+       (mapcat (fn [dir]
+                 (try
+                   (->> (.readdirSync node-fs dir)
+                        (keep (fn [name]
+                                (when (and (string? name)
+                                           (str/ends-with? name ".edn"))
+                                  (subs name 0 (- (count name) 4))))))
+                   (catch :default _
+                     []))))
+       distinct
+       sort
+       vec))
 
 (defn list-agent-contract-ids!
   [config]

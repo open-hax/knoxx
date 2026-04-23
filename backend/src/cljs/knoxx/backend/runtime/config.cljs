@@ -1,6 +1,17 @@
 (ns knoxx.backend.runtime.config
   (:require [clojure.string :as str]))
 
+(defn- env-path-list
+  [k]
+  (let [raw (some-> (aget js/process.env k) str str/trim)]
+    (if (str/blank? (or raw ""))
+      []
+      (->> (str/split raw #":")
+           (map (fn [value]
+                  (some-> value str str/trim not-empty)))
+           (remove nil?)
+           vec))))
+
 (defn- env
   [k default]
   (or (aget js/process.env k) default))
@@ -24,6 +35,10 @@
    :port (js/parseInt (env "PORT" "8000") 10)
 
    :workspace-root (env "WORKSPACE_ROOT" "/app/workspace/devel")
+   :extra-workspace-roots (env-path-list "KNOXX_EXTRA_WORKSPACE_ROOTS")
+   :music-library-root (let [value (some-> (aget js/process.env "KNOXX_MUSIC_LIBRARY_ROOT") str str/trim)]
+                         (when-not (str/blank? (or value ""))
+                           value))
    :project-name (env "WORKSPACE_PROJECT_NAME" "devel")
    :session-project-name (env "KNOXX_SESSION_PROJECT_NAME" "knoxx-session")
    :collection-name (env "KNOXX_COLLECTION_NAME" "devel_docs")

@@ -2,7 +2,23 @@
   (:require [cljs.test :refer [async deftest is testing]]
             [knoxx.backend.agent-runtime :as agent-runtime]
             [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]))
+            [knoxx.backend.session-store :as session-store]
+            ["node:path" :as node-path]))
+
+(deftest resolve-workspace-path-allows-configured-music-library-alias
+  (let [runtime #js {:path node-path}
+        config {:workspace-root "/tmp/knoxx-workspace"
+                :music-library-root "/tmp/music-library"
+                :extra-workspace-roots ["/tmp/extra-root"]}]
+    (testing "Music/... resolves into the configured music library root"
+      (is (= (.resolve node-path "/tmp/music-library" "playlists/ritual.m3u")
+             (agent-runtime/resolve-workspace-path runtime config "Music/playlists/ritual.m3u"))))
+    (testing "absolute paths under extra allowed roots are accepted"
+      (is (= (.resolve node-path "/tmp/extra-root" "stems/take.wav")
+             (agent-runtime/resolve-workspace-path runtime config "/tmp/extra-root/stems/take.wav"))))
+    (testing "paths outside the allowed roots are rejected"
+      (is (thrown-with-msg? js/Error #"Path escapes allowed workspace roots"
+                            (agent-runtime/resolve-workspace-path runtime config "../../etc/passwd"))))))
 
 (deftest rehydrate-session-manager-prefers-explicit-session-id-before-conversation-lookup
   (async done

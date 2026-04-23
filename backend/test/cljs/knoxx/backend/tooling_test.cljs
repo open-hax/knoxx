@@ -67,3 +67,20 @@
                    {:toolPolicies [{:toolId "read" :effect "allow"}]}
                    nil
                    "chat_primary")))))))
+
+(deftest creative-music-studio-overlay-adds-library-and-editing-tools
+  (testing "the canonical root creative_music_studio contract augments the legacy role surface with library browsing and DAW-style editing tools"
+    (let [tool-ids (set (tooling/allowed-tool-id-set
+                         test-config
+                         "knowledge_worker"
+                         nil
+                         "creative_music_studio"
+                         "chat_primary"))]
+      (is (contains? tool-ids "read"))
+      (is (contains? tool-ids "write"))
+      (is (contains? tool-ids "edit"))
+      (is (contains? tool-ids "bash"))
+      (is (contains? tool-ids "audio.spectrogram"))
+      (is (contains? tool-ids "audio.waveform"))
+      (is (contains? tool-ids "workspace_media.attach"))
+      (is (contains? tool-ids "music.identify_file")))))

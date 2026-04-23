@@ -1,0 +1,10 @@
+{:cap/id :cap/playlist-curation
+ :cap/tools [:read
+             :write
+             :edit
+             :workspace_media.attach]
+ :cap/user-surfaces [{:surface/id :music/playlists
+                      :surface/label "Playlist workbench"
+                      :surface/kind :editor
+                      :surface/routes ["/" "/ops/documents"]
+                      :surface/description "Humans inspect and curate playlist artifacts; agents create or revise .m3u, .m3u8, and JSON playlist files and can attach the result back into the reply."}]}

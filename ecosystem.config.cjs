@@ -71,6 +71,7 @@ const backendDir = path.join(knoxxRoot, 'backend');
 const frontendDir = path.join(knoxxRoot, 'frontend');
 const ingestionDir = path.join(knoxxRoot, 'ingestion');
 const sttNpuDir = path.join(knoxxRoot, 'voice', 'stt-npu');
+const contractsDir = path.join(knoxxRoot, 'contracts');
 
 // Workspace root is where Knoxx is allowed to read/write files.
 // DO NOT hard-code /home/err/devel: other machines/users check out elsewhere.
@@ -86,6 +87,9 @@ const workspaceRoot =
 const defaultHostEnvPath = "./.env";
 const hostEnvPath = process.env.KNOXX_HOST_ENV_PATH || defaultHostEnvPath;
 const hostEnv = loadSimpleEnv(hostEnvPath);
+const musicLibraryRoot = process.env.KNOXX_MUSIC_LIBRARY_ROOT
+  || hostEnv.KNOXX_MUSIC_LIBRARY_ROOT
+  || path.join(os.homedir(), 'Music');
 const sttNpuPort = process.env.KNOXX_STT_PORT || hostEnv.KNOXX_STT_PORT || '8010';
 // Voice STT for the local Knoxx stack is pinned to the repo-local sidecar by default.
 // Only a process-level override should redirect it somewhere else.
@@ -201,6 +205,9 @@ const apps = [
         HOST: '0.0.0.0',
         PORT: '8000',
         WORKSPACE_ROOT: workspaceRoot,
+        CONTRACTS_DIR: contractsDir,
+        KNOXX_MUSIC_LIBRARY_ROOT: musicLibraryRoot,
+        KNOXX_EXTRA_WORKSPACE_ROOTS: musicLibraryRoot,
           DISCORD_BOT_TOKEN: hostEnv.DISCORD_BOT_TOKEN,
         KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
         KNOXX_COLLECTION_NAME: 'devel_docs',

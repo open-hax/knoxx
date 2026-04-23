@@ -1,0 +1,7 @@
+{:cap/id :cap/read-directory
+ :cap/tools [:read]
+ :cap/user-surfaces [{:surface/id :workspace/directory-browser
+                      :surface/label "Directory browser"
+                      :surface/kind :reader
+                      :surface/routes ["/" "/ops/documents"]
+                      :surface/description "Humans browse folder listings and descend into subdirectories; agents use read on directories to inspect the workspace or Music library tree."}]}

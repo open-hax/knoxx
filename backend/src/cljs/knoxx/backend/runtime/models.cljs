@@ -46,18 +46,6 @@
     (catch :default _
       nil)))
 
-(defn- contracts-dir
-  [config]
-  (contract-loader/contracts-dir-path config))
-
-(defn- model-families-dir
-  [config]
-  (.join path (contracts-dir config) "model_families"))
-
-(defn- models-dir
-  [config]
-  (.join path (contracts-dir config) "models"))
-
 (defn- read-contract-dir
   [dir]
   (try
@@ -70,6 +58,12 @@
          vec)
     (catch :default _
       [])))
+
+(defn- read-contract-dirs
+  [dirs]
+  (->> dirs
+       (mapcat read-contract-dir)
+       vec))
 
 (defn- normalize-boolean
   [value]
@@ -137,16 +131,26 @@
 
 (defn model-family-contracts
   [config]
-  (->> (read-contract-dir (model-families-dir config))
+  (->> (read-contract-dirs (contract-loader/contract-class-dir-paths config "model_families"))
        (map normalize-model-family-contract)
        (remove nil?)
+       (reverse)
+       (reduce (fn [acc contract]
+                 (assoc acc (:id contract) contract))
+               {})
+       vals
        vec))
 
 (defn model-contracts
   [config]
-  (->> (read-contract-dir (models-dir config))
+  (->> (read-contract-dirs (contract-loader/contract-class-dir-paths config "models"))
        (map normalize-model-contract)
        (remove nil?)
+       (reverse)
+       (reduce (fn [acc contract]
+                 (assoc acc (:id contract) contract))
+               {})
+       vals
        vec))
 
 (defn resolve-model-family
