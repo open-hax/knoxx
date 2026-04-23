@@ -2,14 +2,21 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cljs.reader :as reader]
+            [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.runtime.contract-loader :as loader]
             [knoxx.backend.runtime.contract-validator :as validator]
             [knoxx.backend.util.time :refer [now-iso]]
+            ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]))
 
 (def ^:private contracts-index-key "contracts:index")
+(def ^:private contract-watch-debounce-ms 350)
+
+(defonce ^:private contract-watchers* (atom []))
+(defonce ^:private contract-watch-timer* (atom nil))
+(defonce ^:private contract-watch-running?* (atom false))
 
 (defn- keyword->slug
   [value]
@@ -218,6 +225,79 @@
                   (println "[contracts] sync-contract-index! failed:" (.-message err))
                   {:ok false :error (.-message err)})))
     (js/Promise.resolve {:ok false :error "Redis not connected"})))
+
+(defn- clear-contract-watch-timer!
+  []
+  (when-let [timer @contract-watch-timer*]
+    (js/clearTimeout timer)
+    (reset! contract-watch-timer* nil)))
+
+(defn stop-contract-watcher!
+  []
+  (clear-contract-watch-timer!)
+  (doseq [watcher @contract-watchers*]
+    (when watcher
+      (try
+        (.close watcher)
+        (catch :default _ nil))))
+  (reset! contract-watchers* [])
+  (reset! contract-watch-running?* false)
+  nil)
+
+(defn- watchable-contract-change?
+  [filename]
+  (or (nil? filename)
+      (str/ends-with? (str/lower-case (str filename)) ".edn")))
+
+(defn- schedule-contract-refresh!
+  [config reason]
+  (clear-contract-watch-timer!)
+  (reset! contract-watch-timer*
+          (js/setTimeout
+           (fn []
+             (reset! contract-watch-timer* nil)
+             (println "[contracts] watcher refresh triggered by" reason)
+             (-> (sync-contract-index! config)
+                 (.catch (fn [err]
+                           (println "[contracts] watcher sync failed:" (.-message err))
+                           nil))
+                 (.then (fn [_]
+                          (event-agents/reload!)
+                          (println "[contracts] event-agent runtime reloaded after contract change")
+                          nil))
+                 (.catch (fn [err]
+                           (println "[contracts] watcher reload failed:" (.-message err))
+                           nil))))
+           contract-watch-debounce-ms)))
+
+(defn start-contract-watcher!
+  [config]
+  (when-not @contract-watch-running?*
+    (let [roots (->> (loader/contract-root-paths config)
+                     (filter #(.existsSync node-fs %))
+                     distinct
+                     vec)
+          watch-root (fn [root]
+                       (try
+                         (.watch node-fs
+                                 root
+                                 #js {:recursive true}
+                                 (fn [event-type filename]
+                                   (let [filename-str (some-> filename str)]
+                                     (when (watchable-contract-change? filename-str)
+                                       (schedule-contract-refresh! config
+                                                                  (str root " :: " event-type " :: " (or filename-str "<unknown>")))))))
+                         (catch :default err
+                           (println "[contracts] failed to watch" root ":" (.-message err))
+                           nil)))
+          watchers (->> roots
+                        (map watch-root)
+                        (remove nil?)
+                        vec)]
+      (when (seq watchers)
+        (reset! contract-watchers* watchers)
+        (reset! contract-watch-running?* true)
+        (println "[contracts] watching" (count watchers) "contract roots for live reload")))))
 
 (defn- handle-list-contracts
   [do-json config contract-class]

@@ -86,6 +86,8 @@
       (.then (fn [_]
                (event-agents/start! resolved-config)))
       (.then (fn [_]
+               (contracts-routes/start-contract-watcher! resolved-config)))
+      (.then (fn [_]
                (initialize-mcp-gateway! app resolved-config)))
       (.catch (fn [err]
                 (app-log-error! app "Background startup services failed" err)))))
@@ -148,6 +150,7 @@
                      (event-agents/start! config)
                      ;; Sync filesystem contracts → Redis index (write-through cache).
                      (contracts-routes/sync-contract-index! config)
+                     (contracts-routes/start-contract-watcher! config)
                      (app-listen! app (:host config) (:port config))))
             (.then (fn [_]
                      (reset! server* app)

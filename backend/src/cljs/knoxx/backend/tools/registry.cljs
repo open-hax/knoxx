@@ -30,7 +30,11 @@
    "event_agents.upsert_job" {:id "event_agents.upsert_job" :label "Event Agent Upsert Job" :description "Create or update a scheduled event-agent job"}
    "schedule_event_agent" {:id "schedule_event_agent" :label "Schedule Event Agent" :description "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"}
 
-   "bluesky.publish" {:id "bluesky.publish" :label "Bluesky" :description "Publish updates to Bluesky"}
+   "bluesky.publish" {:id "bluesky.publish" :label "Bluesky Publish" :description "Publish updates to Bluesky"}
+   "bluesky.profile" {:id "bluesky.profile" :label "Bluesky Profile" :description "Read a Bluesky profile by handle or DID"}
+   "bluesky.search" {:id "bluesky.search" :label "Bluesky Search" :description "Search public Bluesky posts or actors"}
+   "bluesky.author.feed" {:id "bluesky.author.feed" :label "Bluesky Author Feed" :description "Read recent posts from a specific Bluesky author"}
+   "bluesky.timeline" {:id "bluesky.timeline" :label "Bluesky Timeline" :description "Read the authenticated Bluesky timeline"}
 
    "music.identify_file" {:id "music.identify_file" :label "Music Identify" :description "Identify songs from audio files using AudD API"}
    "music.acoustid_lookup" {:id "music.acoustid_lookup" :label "AcoustID Lookup" :description "Look up audio fingerprints via AcoustID"}

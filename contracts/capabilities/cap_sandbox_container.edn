@@ -1,0 +1,13 @@
+{:cap/id :cap/sandbox-container
+ :cap/tools [:sandbox_container.create
+             :sandbox_container.status
+             :sandbox_container.exec
+             :sandbox_container.read
+             :sandbox_container.write
+             :sandbox_container.commit
+             :sandbox_container.destroy]
+ :cap/user-surfaces [{:surface/id :workspace/sandbox-container
+                      :surface/label "Sandbox container"
+                      :surface/kind :terminal
+                      :surface/routes ["/ops/contracts" "/ops/settings"]
+                      :surface/description "Ephemeral, TTL-bound container workspace with git, node, python, and media/tooling libraries. Mirrors developer-style file/shell capabilities but stays isolated from the Knoxx source tree until an explicit handoff or commit/export step."}]}

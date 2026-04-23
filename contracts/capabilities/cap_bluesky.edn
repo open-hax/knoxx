@@ -1,7 +1,11 @@
 {:cap/id :cap/bluesky
- :cap/tools [:bluesky.publish]
+ :cap/tools [:bluesky.publish
+             :bluesky.profile
+             :bluesky.search
+             :bluesky.author.feed
+             :bluesky.timeline]
  :cap/user-surfaces [{:surface/id :workspace/social-publisher
                       :surface/label "Social publisher"
                       :surface/kind :composer
                       :surface/routes ["/ops/contracts"]
-                      :surface/description "Humans prepare and publish Bluesky posts from a publishing surface; agents call bluesky.publish."}]}
+                      :surface/description "Humans prepare and publish Bluesky posts from a publishing surface; agents can publish, inspect profiles, search public posts, and read feeds/timeline."}]}

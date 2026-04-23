@@ -99,6 +99,10 @@
    ["tool.event_agents.upsert_job" "tool" "event_agents_upsert_job" "Create/update event-agent jobs from Knoxx"]
    ["tool.schedule_event_agent" "tool" "schedule_event_agent" "Schedule event-agent jobs from Knoxx"]
    ["tool.bluesky.publish" "tool" "bluesky_publish" "Publish to Bluesky from Knoxx"]
+   ["tool.bluesky.profile" "tool" "bluesky_profile" "Read Bluesky profiles from Knoxx"]
+   ["tool.bluesky.search" "tool" "bluesky_search" "Search public Bluesky content from Knoxx"]
+   ["tool.bluesky.author.feed" "tool" "bluesky_author_feed" "Read a Bluesky author feed from Knoxx"]
+   ["tool.bluesky.timeline" "tool" "bluesky_timeline" "Read the authenticated Bluesky timeline from Knoxx"]
    ["tool.semantic_query.use" "tool" "semantic_query" "Use semantic query tool"]
    ["tool.memory_search.use" "tool" "memory_search" "Use memory search tool"]
    ["tool.memory_session.use" "tool" "memory_session" "Use memory session tool"]
@@ -134,7 +138,11 @@
    ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately" "medium"]
    ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job" "high"]
    ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config" "high"]
-   ["bluesky.publish" "Bluesky" "Publish updates to Bluesky" "medium"]
+   ["bluesky.publish" "Bluesky Publish" "Publish updates to Bluesky" "medium"]
+   ["bluesky.profile" "Bluesky Profile" "Read a Bluesky profile by handle or DID" "low"]
+   ["bluesky.search" "Bluesky Search" "Search public Bluesky posts or actors" "low"]
+   ["bluesky.author.feed" "Bluesky Author Feed" "Read recent posts from a specific Bluesky author" "low"]
+   ["bluesky.timeline" "Bluesky Timeline" "Read the authenticated Bluesky timeline" "low"]
    ["semantic_query" "Semantic Query" "Query semantic context in the active corpus" "low"]
    ["memory_search" "Memory Search" "Search prior Knoxx sessions in OpenPlanner" "low"]
    ["memory_session" "Memory Session" "Load a specific Knoxx session from OpenPlanner" "low"]
@@ -423,7 +431,8 @@
                   "tool.discord.list.servers" "tool.discord.list.channels"
                   "tool.event_agents.status" "tool.event_agents.dispatch"
                   "tool.event_agents.run_job" "tool.event_agents.upsert_job" "tool.schedule_event_agent"
-                  "tool.bluesky.publish" "tool.semantic_query.use"
+                  "tool.bluesky.publish" "tool.bluesky.profile" "tool.bluesky.search"
+                  "tool.bluesky.author.feed" "tool.bluesky.timeline" "tool.semantic_query.use"
                   "tool.memory_search.use" "tool.memory_session.use" "tool.websearch.use" "tool.graph_query.use"
                   "org.translations.read" "org.translations.review" "org.translations.export" "org.translations.manage"
                   "org.event_agents.control"
