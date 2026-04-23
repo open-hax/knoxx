@@ -9,6 +9,7 @@
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.session-store :as session-store]
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
@@ -71,6 +72,12 @@
       (boolean (or (aget status "ready")
                    (aget status "started"))))))
 
+(defn- discord-gateway-user-id
+  []
+  (when-let [manager (discord-gateway-manager)]
+    (let [status (.status manager)]
+      (some-> (aget status "userId") str str/trim not-empty))))
+
 (defn- discord-headers
   [token]
   #js {"Authorization" (str "Bot " token)
@@ -94,7 +101,19 @@
    :authorId (or (aget msg "author" "id") "")
    :authorUsername (or (aget msg "author" "username") "unknown")
    :authorIsBot (boolean (aget msg "author" "bot"))
-   :timestamp (or (aget msg "timestamp") "")})
+   :timestamp (or (aget msg "timestamp") "")
+   :attachments (->> (if (array? (aget msg "attachments")) (array-seq (aget msg "attachments")) [])
+                     (mapv (fn [attachment]
+                             {:id (or (aget attachment "id") "")
+                              :filename (or (aget attachment "filename") "")
+                              :contentType (or (aget attachment "content_type") (aget attachment "contentType"))
+                              :size (or (aget attachment "size") 0)
+                              :url (or (aget attachment "url") "")})))
+   :embeds (->> (if (array? (aget msg "embeds")) (array-seq (aget msg "embeds")) [])
+               (mapv (fn [embed]
+                       {:title (or (aget embed "title") nil)
+                        :description (or (aget embed "description") nil)
+                        :url (or (aget embed "url") nil)})))})
 
 (defn- sort-newest-first
   [messages]
@@ -125,15 +144,29 @@
   [control]
   (or (get-in control [:sources :discord]) {}))
 
+(defn- filter-string-list
+  [values]
+  (->> (or values [])
+       (map (fn [value] (some-> value str str/trim not-empty)))
+       (remove nil?)
+       vec))
+
 (defn- job-channels
   [control job]
-  (let [channels (->> (or (get-in job [:filters :channels]) [])
-                      (map (fn [value] (some-> value str str/trim not-empty)))
-                      (remove nil?)
-                      vec)]
+  (let [channels (filter-string-list (get-in job [:filters :channels]))]
     (if (seq channels)
       channels
       (vec (or (:defaultChannels (discord-source-config control)) [])))))
+
+(defn- job-publish-channels
+  [job]
+  (filter-string-list (or (get-in job [:filters :publishChannels])
+                          (get-in job [:filters :publish_channels]))))
+
+(defn- job-guild-ids
+  [job]
+  (filter-string-list (or (get-in job [:filters :guildIds])
+                          (get-in job [:filters :guild_ids]))))
 
 (defn- job-keywords
   [control job]
@@ -258,11 +291,21 @@
 
 (defn- update-job-state!
   [job-id f]
-  (let [new-state (swap! job-state* update job-id (fn [current] (f (or current {}))))]
+  (let [new-state (get (swap! job-state* update job-id (fn [current] (f (or current {})))) job-id)]
     ;; Persistence: Mirror to Redis
     (when-let [client (redis/get-client)]
       (redis/set-json client (str "event-agent:job-state:" job-id) new-state))
     new-state))
+
+(defn- normalize-job-state
+  [job-id state]
+  (let [candidate (cond
+                    (and (map? state) (map? (get state job-id))) (get state job-id)
+                    (map? state) state
+                    :else {})]
+    (if (map? candidate)
+      candidate
+      {})))
 
 (defn- record-job-run-start!
   [job]
@@ -271,7 +314,7 @@
         cadence-ms (* 60 1000 (max 1 (or (get-in job [:trigger :cadenceMinutes]) 1)))]
     (update-job-state! job-id
                        (fn [state]
-                         (assoc state
+                         (assoc (normalize-job-state job-id state)
                                 :id job-id
                                 :name (:name job)
                                 :enabled (:enabled job)
@@ -287,7 +330,7 @@
         job-id (:id job)]
     (update-job-state! job-id
                        (fn [state]
-                         (-> state
+                         (-> (normalize-job-state job-id state)
                              (assoc :id job-id
                                     :name (:name job)
                                     :enabled (:enabled job)
@@ -310,11 +353,12 @@
 
 (defn- direct-start-headers
   [config]
-  (let [api-key (:knoxx-api-key config)]
-    (cond-> #js {"Content-Type" "application/json"
-                 "x-knoxx-user-email" "system-admin@open-hax.local"}
-      (not (str/blank? api-key))
-      (aset "X-API-Key" api-key))))
+  (let [api-key (:knoxx-api-key config)
+        headers #js {"Content-Type" "application/json"
+                     "x-knoxx-user-email" "system-admin@open-hax.local"}]
+    (when-not (str/blank? api-key)
+      (aset headers "X-API-Key" api-key))
+    headers))
 
 (defn- tool-policies->js
   [policies]
@@ -326,7 +370,18 @@
 
 (defn event-summary-text
   [event]
-  (let [payload (or (:payload event) {})]
+  (let [payload (or (:payload event) {})
+        attachments (or (:attachments payload) [])
+        attachment-lines (when (seq attachments)
+                           (str "Attachments:\n"
+                                (str/join "\n"
+                                          (map (fn [attachment]
+                                                 (str "- " (:filename attachment)
+                                                      (when-let [url (:url attachment)]
+                                                        (str " <" url ">"))))
+                                               attachments))
+                                "\n"))
+        publish-channels (or (:publishChannels payload) [])]
     (str "Event source: " (:sourceKind event) "\n"
          "Event kind: " (:eventKind event) "\n"
          "Event id: " (:id event) "\n"
@@ -339,32 +394,150 @@
            (str "Repository: " repository "\n"))
          (when-let [content (:content payload)]
            (str "Content: " content "\n"))
+         attachment-lines
+         (when (seq publish-channels)
+           (str "Publish channels: " (str/join ", " publish-channels) "\n"))
          (when-let [summary (:summary payload)]
            (str "Summary: " summary "\n"))
          (when-let [payload-preview (:payloadPreview payload)]
            (str "Payload preview: " payload-preview "\n")))))
+
+(defn- event-content-parts
+  [event]
+  (->> (or (get-in event [:payload :attachments]) [])
+       (keep (fn [attachment]
+               (let [url (:url attachment)
+                     content-type (some-> (:contentType attachment) str str/lower-case)]
+                 (cond
+                   (and url (some-> content-type (str/starts-with? "image/")))
+                   {:type "image"
+                    :url url
+                    :mimeType (:contentType attachment)
+                    :filename (:filename attachment)}
+
+                   (and url (or (some-> content-type (str/starts-with? "text/"))
+                                (some-> content-type (str/includes? "json"))
+                                (some-> content-type (str/includes? "html"))
+                                (some-> content-type (str/includes? "pdf"))))
+                   {:type "document"
+                    :url url
+                    :mimeType (:contentType attachment)
+                    :filename (:filename attachment)}
+
+                   :else nil))))
+       vec))
+
+(defn- sticky-session-enabled?
+  [job]
+  (true? (get-in job [:source :config :stickySession])))
+
+(defn- sticky-session-max-messages
+  [job]
+  (parse-positive-int (get-in job [:source :config :sessionMaxMessages])))
+
+(defn- sticky-session-base-conversation-id
+  [job event]
+  (str "event-agent-" (:id job) "-" (str/lower-case (str (:sourceKind event))) "-sticky"))
+
+(defn- sticky-session-base-session-id
+  [job]
+  (str "event-agent-session-" (:id job) "-sticky"))
+
+(defn- sticky-session-summary
+  [session]
+  (let [messages (->> (or (:messages session) [])
+                      (filter map?)
+                      (take-last 8)
+                      vec)]
+    (when (seq messages)
+      (str "Previous sticky session summary:\n"
+           (str/join "\n"
+                     (map (fn [message]
+                            (let [role (or (:role message) "message")
+                                  content (str (or (:content message) ""))]
+                              (str "- " role ": " (subs content 0 (min 240 (count content))))))
+                          messages))))))
+
+(defn- sticky-session-target
+  [job event]
+  (let [job-id (:id job)]
+    (if-not (sticky-session-enabled? job)
+      {:conversation-id (str "event-agent-" job-id "-" (str/lower-case (str (:sourceKind event))) "-" (.now js/Date))
+       :session-id (str "event-agent-session-" job-id "-" (.now js/Date))
+       :summary nil}
+      (let [state (get @job-state* job-id {})
+            generation (or (:stickyGeneration state) 0)
+            base-conversation-id (sticky-session-base-conversation-id job event)
+            base-session-id (sticky-session-base-session-id job)
+            current-conversation-id (or (:stickyConversationId state)
+                                        (if (zero? generation)
+                                          base-conversation-id
+                                          (str base-conversation-id "-r" generation)))
+            current-session-id (or (:stickySessionId state)
+                                   (if (zero? generation)
+                                     base-session-id
+                                     (str base-session-id "-r" generation)))
+            existing-session (session-store/get-session-sync current-session-id)
+            message-limit (sticky-session-max-messages job)
+            message-count (count (or (:messages existing-session) []))
+            rollover? (and existing-session message-limit (>= message-count message-limit))]
+        (if rollover?
+          (let [next-generation (inc generation)
+                next-conversation-id (str base-conversation-id "-r" next-generation)
+                next-session-id (str base-session-id "-r" next-generation)
+                summary (sticky-session-summary existing-session)]
+            (update-job-state! job-id
+                               (fn [current]
+                                 (assoc (or current {})
+                                        :stickyGeneration next-generation
+                                        :stickyConversationId next-conversation-id
+                                        :stickySessionId next-session-id)))
+            {:conversation-id next-conversation-id
+             :session-id next-session-id
+             :summary summary})
+          (do
+            (update-job-state! job-id
+                               (fn [current]
+                                 (assoc (or current {})
+                                        :stickyGeneration generation
+                                        :stickyConversationId current-conversation-id
+                                        :stickySessionId current-session-id)))
+            {:conversation-id current-conversation-id
+             :session-id current-session-id
+             :summary nil}))))))
 
 (defn build-agent-run-payload
   [config job event]
   (let [agent-spec (:agentSpec job)
         now (.now js/Date)
         run-id (str "event-agent-" (:id job) "-" now)
-        conversation-id (str "event-agent-" (:id job) "-" (str/lower-case (str (:sourceKind event))) "-" now)
-        session-id (str "event-agent-session-" (:id job) "-" now)
+        {:keys [conversation-id session-id summary]} (sticky-session-target job event)
+        contract-id (or (:contract-id agent-spec)
+                        (:contractSourceId job))
+        actor-id (or (:actor-id agent-spec)
+                     (:actorId job))
         user-message (str "An event matched this job.\n\n"
                           (or (:taskPrompt agent-spec) "")
                           (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
-                          (event-summary-text event))]
+                          (when-not (str/blank? (or summary ""))
+                            (str summary "\n\n"))
+                          (event-summary-text event))
+        content-parts (event-content-parts event)
+        model-id (or (:model agent-spec) "gemma4:31b")]
     {:conversation_id conversation-id
      :session_id session-id
      :run_id run-id
      :message user-message
-     :agent_spec {:role (or (:role agent-spec) "knowledge_worker")
-                  :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
-                  :model (or (:model agent-spec) (:proxx-default-model config) "glm-5")
-                  :thinking_level (or (:thinkingLevel agent-spec) "off")
-                  :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
-     :model (or (:model agent-spec) (:proxx-default-model config) "glm-5")}))
+     :content_parts content-parts
+     :agent_spec (cond-> {:role (or (:role agent-spec) "knowledge_worker")
+                          :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
+                          :task_prompt (or (:taskPrompt agent-spec) "")
+                          :model model-id
+                          :thinking_level (or (:thinkingLevel agent-spec) "off")
+                          :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
+                   contract-id (assoc :contract_id contract-id)
+                   actor-id (assoc :actor_id actor-id))
+     :model model-id}))
 
 (defn- start-agent-run!
   [config job event]
@@ -378,7 +551,7 @@
                  result))
         (.catch (fn [err]
                   (println "[event-agents] failed to queue run for job" (:id job) ":" (.-message err))
-                  nil)))))
+                  (js/Promise.reject err))))))
 
 (defn- matches-event-kind?
   [job event-kind]
@@ -462,7 +635,8 @@
 
 (defn- discord-bot-user-id
   [control]
-  (some-> (get-in control [:sources :discord :botUserId]) str str/trim not-empty))
+  (or (some-> (get-in control [:sources :discord :botUserId]) str str/trim not-empty)
+      (discord-gateway-user-id)))
 
 (defn- discord-event-jobs
   [control]
@@ -495,7 +669,9 @@
                  :authorUsername (:authorUsername message)
                  :authorIsBot (:authorIsBot message)
                  :content (:content message)
-                 :messageId (:id message)}]
+                 :messageId (:id message)
+                 :attachments (vec (or (:attachments message) []))
+                 :embeds (vec (or (:embeds message) []))}]
     (when-not (:authorIsBot message)
       (remember-discord-latest! (:channelId message) [message])
       (dispatch-event! {:sourceKind "discord"
@@ -550,30 +726,76 @@
       keyword? "discord.message.keyword"
       :else nil)))
 
+(defn- resolve-job-channel-ids!
+  [control job]
+  (let [explicit-channels (job-channels control job)
+        guild-ids (job-guild-ids job)
+        publish-channels (job-publish-channels job)
+        list-channels! (fn []
+                         (or (dg/list-channels)
+                             (js/Promise.resolve #js [])))]
+    (cond
+      (seq guild-ids)
+      (-> (list-channels!)
+          (.then (fn [channels]
+                   (let [rows (js->clj channels :keywordize-keys true)
+                         guild-id-set (set guild-ids)]
+                     (->> rows
+                          (filter (fn [channel]
+                                    (contains? guild-id-set (:guildId channel))))
+                          (map :id)
+                          distinct
+                          vec)))))
+
+      (and (empty? explicit-channels) (seq publish-channels))
+      (-> (list-channels!)
+          (.then (fn [channels]
+                   (let [rows (js->clj channels :keywordize-keys true)
+                         publish-channel-set (set publish-channels)
+                         guilds (->> rows
+                                     (filter (fn [channel]
+                                               (contains? publish-channel-set (:id channel))))
+                                     (map :guildId)
+                                     distinct
+                                     vec)]
+                     (if (seq guilds)
+                       (let [guild-set (set guilds)]
+                         (->> rows
+                              (filter (fn [channel]
+                                        (contains? guild-set (:guildId channel))))
+                              (map :id)
+                              distinct
+                              vec))
+                       publish-channels)))))
+
+      :else
+      (js/Promise.resolve explicit-channels))))
+
 (defn- execute-discord-patrol!
   [config control job]
-  (let [channels (job-channels control job)
-        limit (job-max-messages job 25)]
-    (if (seq channels)
-      (js/Promise.all
-       (clj->js
-        (mapv (fn [channel-id]
-                (-> (read-discord-channel! channel-id limit)
-                    (.then (fn [messages]
-                             (let [fresh (unseen-discord-messages channel-id messages)]
-                               (doseq [message fresh]
-                                 (when-let [match-kind (discord-message-match-kind control job message)]
-                                   (dispatch-discord-message-event! control job message match-kind)))
-                               (remember-discord-latest! channel-id messages)
-                               {:channelId channel-id
-                                :fetched (count messages)
-                                :fresh (count fresh)})))
-                    (.catch (fn [err]
-                              (println "[event-agents] discord patrol failed for" channel-id ":" (.-message err))
-                              {:channelId channel-id
-                               :error true}))))
-              channels)))
-      (js/Promise.resolve nil))))
+  (let [limit (job-max-messages job 25)]
+    (-> (resolve-job-channel-ids! control job)
+        (.then (fn [channels]
+                 (if (seq channels)
+                   (js/Promise.all
+                    (clj->js
+                     (mapv (fn [channel-id]
+                             (-> (read-discord-channel! channel-id limit)
+                                 (.then (fn [messages]
+                                          (let [fresh (unseen-discord-messages channel-id messages)]
+                                            (doseq [message fresh]
+                                              (when-let [match-kind (discord-message-match-kind control job message)]
+                                                (dispatch-discord-message-event! control job message match-kind)))
+                                            (remember-discord-latest! channel-id messages)
+                                            {:channelId channel-id
+                                             :fetched (count messages)
+                                             :fresh (count fresh)})))
+                                 (.catch (fn [err]
+                                           (println "[event-agents] discord patrol failed for" channel-id ":" (.-message err))
+                                           {:channelId channel-id
+                                            :error true}))))
+                           channels)))
+                   (js/Promise.resolve nil)))))))
 
 (defn- summarize-discord-channel
   [channel-id messages]
@@ -581,44 +803,52 @@
        (remove :authorIsBot)
        (take 8)
        (map (fn [message]
-              (str "[" channel-id "] <" (:authorUsername message) "> "
-                   (subs (:content message) 0 (min 180 (count (:content message)))))))
+              (let [attachments (:attachments message)
+                    attachment-text (when (seq attachments)
+                                      (str " attachments="
+                                           (str/join ", " (map :filename attachments))))]
+                (str "[" channel-id "] <" (:authorUsername message) "> "
+                     (subs (:content message) 0 (min 180 (count (:content message))))
+                     (or attachment-text "")))))
        (str/join "\n")))
 
 (defn- execute-discord-synthesis!
   [config control job]
-  (let [channels (job-channels control job)
-        limit (job-max-messages job 12)]
-    (if (seq channels)
-      (-> (js/Promise.all
-           (clj->js
-            (mapv (fn [channel-id]
-                    (-> (read-discord-channel! channel-id limit)
-                        (.then (fn [messages]
-                                 {:channelId channel-id
-                                  :messages messages}))
-                        (.catch (fn [_]
-                                  {:channelId channel-id
-                                   :messages []}))))
-                  channels)))
-          (.then (fn [results]
-                   (let [rows (js->clj results :keywordize-keys true)
-                         summary (->> rows
-                                      (map (fn [{:keys [channelId messages]}]
-                                             (summarize-discord-channel channelId messages)))
-                                      (remove str/blank?)
-                                      (str/join "\n\n"))]
-                     (if (str/blank? summary)
-                       (js/Promise.resolve nil)
-                       (start-agent-run!
-                        config
-                        job
-                        {:sourceKind "discord"
-                         :eventKind "discord.snapshot.summary"
-                         :timestamp (.toISOString (js/Date.))
-                         :payload {:summary summary
-                                   :channelId (first channels)}}))))))
-      (js/Promise.resolve nil))))
+  (let [limit (job-max-messages job 12)
+        publish-channels (job-publish-channels job)]
+    (-> (resolve-job-channel-ids! control job)
+        (.then (fn [channels]
+                 (if (seq channels)
+                   (-> (js/Promise.all
+                        (clj->js
+                         (mapv (fn [channel-id]
+                                 (-> (read-discord-channel! channel-id limit)
+                                     (.then (fn [messages]
+                                              {:channelId channel-id
+                                               :messages messages}))
+                                     (.catch (fn [_]
+                                               {:channelId channel-id
+                                                :messages []}))))
+                               channels)))
+                       (.then (fn [results]
+                                (let [rows (js->clj results :keywordize-keys true)
+                                      summary (->> rows
+                                                   (map (fn [{:keys [channelId messages]}]
+                                                          (summarize-discord-channel channelId messages)))
+                                                   (remove str/blank?)
+                                                   (str/join "\n\n"))]
+                                  (if (str/blank? summary)
+                                    (js/Promise.resolve nil)
+                                    (start-agent-run!
+                                     config
+                                     job
+                                     {:sourceKind "discord"
+                                      :eventKind "discord.snapshot.summary"
+                                      :timestamp (.toISOString (js/Date.))
+                                      :payload {:summary summary
+                                                :channelId (first channels)
+                                                :publishChannels publish-channels}}))))))
+                   (js/Promise.resolve nil)))))))
 
 (defn- execute-direct-job!
   [config job source-kind event-kind]
@@ -767,7 +997,7 @@
                            (-> (redis/get-json client (str "event-agent:job-state:" id))
                                (.then (fn [state]
                                         (when state
-                                          (swap! job-state* assoc id state)
+                                          (swap! job-state* assoc id (normalize-job-state id state))
                                           (println "[event-agents] recovered state for" id)))))
 
                            ;; Recover Job Spec Overrides from Redis

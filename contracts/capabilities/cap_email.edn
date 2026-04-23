@@ -1,0 +1,7 @@
+{:cap/id :cap/email
+ :cap/tools [:email.send]
+ :cap/user-surfaces [{:surface/id :workspace/email-composer
+                      :surface/label "Email composer"
+                      :surface/kind :composer
+                      :surface/routes ["/"]
+                      :surface/description "Humans review and send drafts from an email composer; agents call email.send."}]}

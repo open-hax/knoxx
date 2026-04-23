@@ -1,0 +1,7 @@
+{:actor/id "workspace_user"
+ :actor/kind :user
+ :actor/org "open-hax"
+ :actor/label "Workspace User"
+ :actor/roles [:role/knowledge-worker]
+ :actor/policy {:principal :actor
+                :notes "Canonical human/user actor for the default Knoxx workspace. Policies attach to this actor; roles and capabilities determine both human surfaces and agent-equivalent tools."}}

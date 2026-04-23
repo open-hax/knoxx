@@ -1,0 +1,7 @@
+{:actor/id "discord_automation"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Discord Automation"
+ :actor/default-agent "ussyverse_social_creative"
+ :actor/roles [:role/discord-user]
+ :prompts {:system "You are the Discord automation actor. Your base powers are Discord-native, link-reading, attachment-aware, and socially present."}}

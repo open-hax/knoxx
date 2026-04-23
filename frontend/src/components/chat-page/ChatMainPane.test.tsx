@@ -2,11 +2,16 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ChatMainPane } from "./ChatMainPane";
-import type { ChatMessage, ProxxModelInfo, ToolCatalogResponse } from "../../lib/types";
+import { THINKING_OPTIONS } from "../../lib/api/contracts";
+import type { AgentContractCatalogItem, ChatMessage, ProxxModelInfo, ToolCatalogResponse } from "../../lib/types";
 
 vi.mock("../ChatComposer", () => ({
-  default: ({ onSend, isSending }: { onSend: (value: string) => void; isSending: boolean }) => (
-    <button disabled={isSending} onClick={() => onSend("hello")}>send</button>
+  default: ({ onSend, isSending, onUndoMessages, onNewChat }: { onSend: (value: string) => void; isSending: boolean; onUndoMessages?: () => void; onNewChat?: () => void; [key: string]: unknown }) => (
+    <div>
+      <button disabled={isSending} onClick={() => onSend("hello")}>send</button>
+      {onUndoMessages ? <button onClick={() => onUndoMessages()}>Undo Turn</button> : null}
+      {onNewChat ? <button onClick={() => onNewChat()}>New Chat</button> : null}
+    </div>
   ),
 }));
 
@@ -48,6 +53,7 @@ const noop = () => {};
 const noopAsync = async () => {};
 
 const baseModels: ProxxModelInfo[] = [{ id: "gemma4:31b", name: "gemma4:31b" }];
+const baseAgents: AgentContractCatalogItem[] = [{ id: "knoxx_default", role: "knowledge_worker", model: "gemma4:31b" }];
 const baseToolCatalog: ToolCatalogResponse | null = null;
 
 function makeMessage(id: string, content: string): ChatMessage {
@@ -71,15 +77,22 @@ function makeProps(messages: ChatMessage[]) {
     onToggleConsole: noop,
     selectedModel: "gemma4:31b",
     onSelectedModelChange: noop,
+    selectedThinkingLevel: "off",
+    onSelectedThinkingLevelChange: noop,
     proxxModels: baseModels,
     proxxReachable: true,
     proxxConfigured: true,
     onNewChat: noop,
+    onUndoMessages: noopAsync,
+    undoDisabled: false,
     systemPrompt: "",
     onSystemPromptChange: noop,
     conversationId: null,
-    activeRole: "developer",
-    onActiveRoleChange: noop,
+    activeRole: "knowledge_worker",
+    activeActorId: "chat_primary",
+    activeAgentId: "knoxx_default",
+    availableAgents: baseAgents,
+    onActiveAgentChange: noop,
     toolCatalog: baseToolCatalog,
     wsStatus: "connected" as const,
     isRecovering: false,
@@ -90,6 +103,7 @@ function makeProps(messages: ChatMessage[]) {
     onLiveControlTextChange: noop,
     queueingControl: null,
     onQueueLiveControl: noopAsync,
+    onVoiceSteer: noopAsync,
     abortingTurn: false,
     onAbortTurn: noopAsync,
     activeRunId: null,
@@ -141,6 +155,38 @@ function renderPane(messages: ChatMessage[]) {
 }
 
 describe("ChatMainPane auto-scroll", () => {
+  it("renders a thinking-level dropdown with all supported options", () => {
+    const onSelectedThinkingLevelChange = vi.fn();
+    render(
+      <ChatMainPane
+        {...makeProps([makeMessage("m1", "hello")])}
+        onSelectedThinkingLevelChange={onSelectedThinkingLevelChange}
+      />,
+    );
+
+    const select = screen.getByLabelText("Thinking level") as HTMLSelectElement;
+    expect(select.value).toBe("off");
+
+    fireEvent.change(select, { target: { value: "high" } });
+    expect(onSelectedThinkingLevelChange).toHaveBeenCalledWith("high");
+
+    const optionValues = Array.from(select.options).map((option) => option.value);
+    expect(optionValues).toEqual(Array.from(THINKING_OPTIONS));
+  });
+
+  it("wires the undo-turn action from the header", () => {
+    const onUndoMessages = vi.fn();
+    render(
+      <ChatMainPane
+        {...makeProps([makeMessage("m1", "hello")])}
+        onUndoMessages={onUndoMessages}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo Turn" }));
+    expect(onUndoMessages).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps following the transcript when the user is near the bottom", () => {
     const firstMessages = [makeMessage("m1", "hello")];
     const secondMessages = [makeMessage("m1", "hello there"), makeMessage("m2", "world")];

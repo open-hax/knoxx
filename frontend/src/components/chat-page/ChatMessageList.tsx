@@ -1,7 +1,6 @@
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import { AgentTraceTimeline, ToolReceiptGroup } from "../ToolReceiptBlock";
 import { MultimodalContent } from "./MultimodalContent";
-import { VoiceReplyButton } from "./VoiceReplyButton";
 import type {
   AgentSource,
   ChatMessage,
@@ -22,8 +21,6 @@ type ChatMessageListProps = {
   assistantSurfaceBackground: string;
   assistantSurfaceBorder: string;
   assistantSurfaceText: string;
-  onSend: (text: string) => void;
-  voiceReplyDisabled?: boolean;
   onOpenMessageInCanvas: (message: ChatMessage) => void;
   onOpenSourceInPreview: (source: AgentSource) => void | Promise<void>;
   onPinAssistantSource: (source: AgentSource) => void;
@@ -40,17 +37,29 @@ export function ChatMessageList({
   assistantSurfaceBackground,
   assistantSurfaceBorder,
   assistantSurfaceText,
-  onSend,
-  voiceReplyDisabled,
   onOpenMessageInCanvas,
   onOpenSourceInPreview,
   onPinAssistantSource,
   onAppendToScratchpad,
   onPinMessageContext,
 }: ChatMessageListProps) {
-  const latestAssistantMessageId = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant" && message.status === "done" && Boolean(message.content?.trim()))?.id;
+  const renderAssistantActions = (message: ChatMessage) => (
+    <div
+      role="group"
+      aria-label="Assistant message actions"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+        marginTop: 12,
+        paddingTop: 10,
+        borderTop: "1px solid var(--token-colors-border-subtle, var(--token-colors-border-default))",
+      }}
+    >
+      <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
+    </div>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
@@ -67,8 +76,6 @@ export function ChatMessageList({
           && message.status === "done"
           && rawTraceBlocks.length > 0
           && Boolean(message.content?.trim());
-
-        const showVoiceReply = message.id === latestAssistantMessageId;
 
         return <Card
           key={message.id}
@@ -107,17 +114,6 @@ export function ChatMessageList({
                 </Badge>
               ) : null}
             </div>
-            {message.role === "assistant" ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                {showVoiceReply ? (
-                  <VoiceReplyButton
-                    disabled={voiceReplyDisabled}
-                    onTranscript={(text) => onSend(text)}
-                  />
-                ) : null}
-                <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(message)}>Open in Scratchpad</Button>
-              </div>
-            ) : null}
           </div>
           {message.role === "assistant" && visibleTraceBlocks.length > 0 ? (
             <AgentTraceTimeline blocks={visibleTraceBlocks} />
@@ -148,6 +144,7 @@ export function ChatMessageList({
               {message.contentParts && message.contentParts.length > 0 && (
                 <MultimodalContent parts={message.contentParts} />
               )}
+              {renderAssistantActions(message)}
             </div>
           ) : message.role === "assistant" || message.role === "system" ? (
             <>
@@ -156,6 +153,7 @@ export function ChatMessageList({
               {message.contentParts && message.contentParts.length > 0 && (
                 <MultimodalContent parts={message.contentParts} />
               )}
+              {message.role === "assistant" ? renderAssistantActions(message) : null}
             </>
           ) : (
             <>

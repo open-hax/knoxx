@@ -3,7 +3,9 @@
             [knoxx.backend.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
             [knoxx.backend.document-state :refer [normalize-relative-path]]
             [knoxx.backend.http :as backend-http :refer [js-array-seq]]
-            [knoxx.backend.runtime.config :refer [cfg]]))
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
+            [knoxx.backend.runtime.config :refer [cfg]]
+            [knoxx.backend.tooling :as tooling]))
 
 (defn parse-json-object
   [value]
@@ -63,11 +65,45 @@
        distinct
        vec))
 
+(defn- basename
+  [path]
+  (let [s (-> (str path)
+              (str/replace #"\\\\" "/")
+              (str/replace #"/+" "/"))
+        parts (->> (str/split s #"/")
+                   (remove str/blank?))]
+    (or (last parts) s)))
+
+(def ^:private known-extensionless-files
+  #{"Dockerfile" "Makefile" "Justfile" "Brewfile" "Procfile" "Caddyfile"})
+
+(defn- likely-file-path?
+  "Heuristic: treat devel mentions as file nodes when the token looks like a file.
+
+  Everything else is treated as a directory structural node (devel:dir:*)."
+  [path]
+  (let [b (basename path)]
+    (or (contains? known-extensionless-files b)
+        (str/starts-with? b ".")
+        (re-find #"\\." b))))
+
+(defn- devel-target-node
+  [path]
+  (let [path (normalize-devel-path path)]
+    (when-not (str/blank? path)
+      (if (likely-file-path? path)
+        {:path path
+         :target_kind "file"
+         :target_node_id (str "devel:file:" path)}
+        {:path path
+         :target_kind "dir"
+         :target_node_id (str "devel:dir:" path)}))))
+
 (defn extract-mentioned-devel-paths
   [text]
   (->> (re-seq devel-path-pattern (or text ""))
        (map second)
-       (map normalize-devel-path)
+       (map devel-target-node)
        (remove nil?)
        distinct
        vec))
@@ -92,6 +128,67 @@
         (ctx-permitted? ctx "agent.memory.cross_session") true
         :else (or (contains? membership-ids (str (ctx-membership-id ctx)))
                   (contains? user-ids (str (ctx-user-id ctx))))))))
+
+(defn session-contract-id-from-rows
+  [rows]
+  (some (fn [row]
+          (some-> (or (:contract_id (row-extra-map row))
+                      (:contract-id (row-extra-map row)))
+                  str
+                  str/trim
+                  not-empty))
+        (reverse (vec (or rows [])))))
+
+(defn session-contract-actors-from-rows
+  [rows]
+  (some (fn [row]
+          (let [extra (row-extra-map row)
+                actors (actor-scope/normalize-actor-claims
+                        (or (:contract_actors extra)
+                            (:contract-actors extra)))]
+            (when (seq actors)
+              actors)))
+        (reverse (vec (or rows [])))))
+
+(defn session-actor-id-from-rows
+  [rows]
+  (some (fn [row]
+          (some-> (or (:actor_id (row-extra-map row))
+                      (:actor-id (row-extra-map row))
+                      (:actorId (row-extra-map row)))
+                  str
+                  str/trim
+                  not-empty))
+        (reverse (vec (or rows [])))))
+
+(defn session-actor-claims-from-rows
+  [config rows]
+  (let [legacy-fallback #{actor-scope/legacy-chat-actor-id}]
+    (or (some-> (session-actor-id-from-rows rows)
+                vector
+                actor-scope/normalize-actor-claims)
+        (session-contract-actors-from-rows rows)
+        (some-> (session-contract-id-from-rows rows)
+                (tooling/resolve-agent-contract config)
+                :contract-actors
+                actor-scope/normalize-actor-claims)
+        legacy-fallback)))
+
+(defn session-matches-page-actor-filter?
+  [config rows include-actor-id exclude-actor-ids]
+  (let [include-actor-id (some-> include-actor-id str str/trim not-empty)
+        exclude-actor-ids (->> (or exclude-actor-ids [])
+                               (keep #(some-> % str str/trim not-empty))
+                               distinct
+                               vec)
+        actors (session-actor-claims-from-rows config rows)]
+    (and (or (str/blank? (str (or include-actor-id "")))
+             (actor-scope/actor-allowed? actors include-actor-id))
+         (not-any? #(actor-scope/actor-allowed? actors %) exclude-actor-ids))))
+
+(defn session-visible-for-page-actor?
+  [config rows page-actor-id]
+  (session-matches-page-actor-filter? config rows page-actor-id []))
 
 (defn fetch-openplanner-session-rows!
   [config session-id]

@@ -1,0 +1,7 @@
+{:cap/id :cap/read
+ :cap/tools [:read]
+ :cap/user-surfaces [{:surface/id :workspace/file-browser
+                      :surface/label "Workspace file browser"
+                      :surface/kind :reader
+                      :surface/routes ["/"]
+                      :surface/description "Humans browse and preview workspace files through the context bar; agents use read."}]}

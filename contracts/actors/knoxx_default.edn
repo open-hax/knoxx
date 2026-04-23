@@ -1,0 +1,5 @@
+{:actor/id "knoxx_default"
+ :actor/kind :agent
+ :actor/label "Knoxx Default"
+ :actor/contract "knoxx_default"
+ :actor/roles [:role/knowledge-worker :role/discord-user]}

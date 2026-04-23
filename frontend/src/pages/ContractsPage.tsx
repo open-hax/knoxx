@@ -24,7 +24,7 @@ import type { EventAgentControlResponse, EventAgentJobControl, EventAgentRuntime
 import { EdnEditor } from "../components/admin-page/EdnEditor";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
-import type { AgentSource } from "../lib/types";
+import type { AgentSource, ContractsClass } from "../lib/types";
 
 // ── Chat sidebar persistence keys (namespaced to avoid CMS collisions) ───────
 
@@ -247,6 +247,7 @@ function TagInput({ label, value, onChange, suggestions, disabled }: {
 
 interface AgentSidebarEntry {
   id: string;
+  contractClass: ContractsClass;
   label: string;
   status: "running" | "idle" | "disabled" | "error" | "unknown";
   triggerKind: string;
@@ -292,6 +293,7 @@ export default function ContractsPage() {
   // ── Contract editor state ──────────────────────────────────────────────
   const [contracts, setContracts] = useState<ContractListItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedContractClass, setSelectedContractClass] = useState<ContractsClass>("agents");
 
   const [ednDraft, setEdnDraft] = useState(DEFAULT_CONTRACT_EDN);
   const [lastSavedEdn, setLastSavedEdn] = useState<string | null>(null);
@@ -354,6 +356,7 @@ export default function ContractsPage() {
     initialShowCanvas: false,
     initialSidebarWidthPx: 420,
     defaultRole: "contract_librarian",
+    defaultActorId: "contract_librarian",
     sessionIdKey: CHAT_SESSION_ID_KEY,
     scratchpadStorageKey: CHAT_SCRATCHPAD_KEY,
     pinnedContextStorageKey: CHAT_PINNED_KEY,
@@ -384,21 +387,22 @@ export default function ContractsPage() {
 
       // From stored contracts
       for (const c of contractsResult.contracts) {
-        const runtimeJob = runtimeJobs.find((j) => j.id === c.id);
-        const controlJob = controlJobs.find((j) => j.id === c.id);
+        const runtimeJob = c.contractClass === "agents" ? runtimeJobs.find((j) => j.id === c.id) : undefined;
+        const controlJob = c.contractClass === "agents" ? controlJobs.find((j) => j.id === c.id) : undefined;
         const isRunning = runtimeJob?.running ?? false;
         const isEnabled = controlJob?.enabled ?? c.enabled;
 
         entries.push({
           id: c.id,
+          contractClass: c.contractClass,
           label: c.id,
           status: isEnabled ? (isRunning ? "running" : "idle") : "disabled",
-          triggerKind: controlJob?.trigger?.kind ?? "event",
-          sourceKind: controlJob?.source?.kind ?? "unknown",
-          model: undefined,  // runtime job doesn't expose model
+          triggerKind: controlJob?.trigger?.kind ?? c.contractClass.slice(0, -1),
+          sourceKind: controlJob?.source?.kind ?? c.contractClass,
+          model: undefined,
           lastStatus: runtimeJob?.lastStatus,
           isContract: true,
-          isRuntimeJob: !!runtimeJob,
+          isRuntimeJob: Boolean(runtimeJob),
           enabled: isEnabled,
         });
       }
@@ -408,6 +412,7 @@ export default function ContractsPage() {
         if (entries.some((e) => e.id === j.id)) continue;
         entries.push({
           id: j.id,
+          contractClass: "agents",
           label: j.id,
           status: j.running ? "running" : "idle",
           triggerKind: "event",
@@ -419,10 +424,12 @@ export default function ContractsPage() {
         });
       }
 
-      setAgentEntries(entries);
+      const dedupedEntries = Array.from(new Map(entries.map((entry) => [`${entry.contractClass}:${entry.id}`, entry] as const)).values());
+      setAgentEntries(dedupedEntries);
 
-      if (!selectedId && entries.length > 0) {
-        setSelectedId(entries[0].id);
+      if (!selectedId && dedupedEntries.length > 0) {
+        setSelectedId(dedupedEntries[0].id);
+        setSelectedContractClass(dedupedEntries[0].contractClass);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -431,10 +438,10 @@ export default function ContractsPage() {
     }
   }, [selectedId]);
 
-  const loadContract = useCallback(async (contractId: string) => {
+  const loadContract = useCallback(async (contractId: string, contractClass: ContractsClass) => {
     setError("");
     try {
-      const result = await getContract(contractId);
+      const result = await getContract(contractId, contractClass);
       setEdnDraft(result.ednText);
       setLastSavedEdn(result.ednText);
       setValidation({ ...result.validation, contract: result.contract });
@@ -443,7 +450,7 @@ export default function ContractsPage() {
       chat.pinContextItem({
         id: `contract:${contractId}`,
         title: contractId,
-        path: `/ops/contracts/${contractId}`,
+        path: `/ops/contracts/${contractClass}/${contractId}`,
         snippet: result.ednText.slice(0, 240),
         kind: "file",
       });
@@ -460,21 +467,21 @@ export default function ContractsPage() {
 
   useEffect(() => {
     if (selectedId) {
-      void loadContract(selectedId);
+      void loadContract(selectedId, selectedContractClass);
     } else {
       setEdnDraft(DEFAULT_CONTRACT_EDN);
       setLastSavedEdn(null);
       setValidation(null);
       setNormalizedView(null);
     }
-  }, [selectedId, loadContract]);
+  }, [selectedId, selectedContractClass, loadContract]);
 
   // ── Actions ────────────────────────────────────────────────────────────
 
   const handleValidate = useCallback(async () => {
     setValidating(true); setNotice(null); setError("");
     try {
-      const result = await validateContract(ednDraft) as ValidationWithContract;
+      const result = await validateContract(ednDraft, selectedContractClass) as ValidationWithContract;
       setValidation(result);
       if (result.contract) setNormalizedView(result.contract);
       setNotice(result.ok ? { tone: "success", text: "Validation passed." } : { tone: "error", text: `Validation failed: ${result.errors.length} error(s).` });
@@ -491,8 +498,9 @@ export default function ContractsPage() {
 
     setSaving(true); setNotice(null); setError("");
     try {
-      const result = await saveContract(contractId, ednDraft);
+      const result = await saveContract(contractId, ednDraft, selectedContractClass);
       setSelectedId(contractId);
+      setSelectedContractClass(selectedContractClass);
       setEdnDraft(result.ednText);
       setLastSavedEdn(result.ednText);
       setValidation({ ...result.validation, contract: result.contract });
@@ -510,7 +518,7 @@ export default function ContractsPage() {
     if (!nextId) return;
     setSaving(true); setNotice(null); setError("");
     try {
-      const result = await copyContract(selectedId, nextId);
+      const result = await copyContract(selectedId, nextId, selectedContractClass);
       setNotice({ tone: "success", text: `Copied ${selectedId} → ${nextId}.` });
       setSelectedId(nextId);
       setEdnDraft(result.ednText);
@@ -541,7 +549,7 @@ export default function ContractsPage() {
 
   // ── Selected agent entry ───────────────────────────────────────────────
 
-  const selectedEntry = useMemo(() => agentEntries.find((e) => e.id === selectedId) ?? null, [agentEntries, selectedId]);
+  const selectedEntry = useMemo(() => agentEntries.find((e) => e.id === selectedId && e.contractClass === selectedContractClass) ?? null, [agentEntries, selectedContractClass, selectedId]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -644,12 +652,12 @@ export default function ContractsPage() {
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {agentEntries.map((entry) => {
-                    const isSelected = entry.id === selectedId;
+                    const isSelected = entry.id === selectedId && entry.contractClass === selectedContractClass;
                     return (
                       <button
-                        key={entry.id}
+                        key={`${entry.contractClass}:${entry.id}`}
                         type="button"
-                        onClick={() => setSelectedId(entry.id)}
+                        onClick={() => { setSelectedId(entry.id); setSelectedContractClass(entry.contractClass); }}
                         style={{
                           width: "100%", padding: "10px 12px", textAlign: "left",
                           borderRadius: tokens.radius.md,
@@ -685,6 +693,8 @@ export default function ContractsPage() {
                           </span>
                         </div>
                         <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
+                          <span>{entry.contractClass}</span>
+                          <span>·</span>
                           <span>{entry.triggerKind}</span>
                           <span>·</span>
                           <span>{entry.sourceKind}</span>
@@ -702,7 +712,7 @@ export default function ContractsPage() {
                   {/* New contract button */}
                   <button
                     type="button"
-                    onClick={() => { setSelectedId(null); setEdnDraft(DEFAULT_CONTRACT_EDN); setLastSavedEdn(null); setLeftTab("metadata"); }}
+                    onClick={() => { setSelectedId(null); setSelectedContractClass("agents"); setEdnDraft(DEFAULT_CONTRACT_EDN); setLastSavedEdn(null); setLeftTab("metadata"); }}
                     style={{
                       width: "100%", padding: "10px 12px", textAlign: "center",
                       borderRadius: tokens.radius.md,
@@ -716,6 +726,12 @@ export default function ContractsPage() {
                 </div>
               )}
             </>
+          ) : selectedContractClass !== "agents" ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "8px 4px", color: palette.fg.muted, fontSize: tokens.fontSize.sm }}>
+              <div>Selected class: <code>{selectedContractClass}</code></div>
+              <div>Raw EDN editing is enabled for this contract class.</div>
+              <div>The structured metadata controls currently target agent contracts.</div>
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "2px 4px" }}>
               <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted, marginBottom: 4 }}>
@@ -822,7 +838,7 @@ export default function ContractsPage() {
                 <span style={{ color: statusColor(selectedEntry.status, palette), fontSize: 14 }}>{statusDot(selectedEntry.status)}</span>
                 <span style={{ fontSize: tokens.fontSize.base, fontWeight: 600, color: palette.fg.default }}>{selectedEntry.label}</span>
                 <span style={{ fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
-                  {selectedEntry.triggerKind} · {selectedEntry.sourceKind}
+                  {selectedEntry.contractClass} · {selectedEntry.triggerKind} · {selectedEntry.sourceKind}
                 </span>
               </>
             ) : (
@@ -1039,13 +1055,13 @@ export default function ContractsPage() {
               onOpenHydrationSource={(source) => {
                 if (autoFocusContract) {
                   const contractId = source.path.split("/").pop() ?? source.path;
-                  if (contractId) setSelectedId(contractId);
+                  if (contractId) { setSelectedId(contractId); setSelectedContractClass("agents"); }
                 }
               }}
               onOpenSourceInPreview={(source: AgentSource) => {
                 if (autoFocusContract) {
                   const contractId = source.url.split("/").pop() ?? source.url;
-                  if (contractId) setSelectedId(contractId);
+                  if (contractId) { setSelectedId(contractId); setSelectedContractClass("agents"); }
                 }
               }}
             />
@@ -1094,13 +1110,13 @@ export default function ContractsPage() {
             onOpenHydrationSource={(source) => {
               if (autoFocusContract) {
                 const contractId = source.path.split("/").pop() ?? source.path;
-                if (contractId) setSelectedId(contractId);
+                if (contractId) { setSelectedId(contractId); setSelectedContractClass("agents"); }
               }
             }}
             onOpenSourceInPreview={(source: AgentSource) => {
               if (autoFocusContract) {
                 const contractId = source.url.split("/").pop() ?? source.url;
-                if (contractId) setSelectedId(contractId);
+                if (contractId) { setSelectedId(contractId); setSelectedContractClass("agents"); }
               }
             }}
           />

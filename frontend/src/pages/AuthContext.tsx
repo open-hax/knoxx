@@ -1,15 +1,20 @@
 import { useEffect, useState, useCallback, Suspense, lazy, type ReactNode } from "react";
 import { API_BASE } from "../lib/api/core";
 import { AuthContextInstance } from "./auth-context-instance";
+import { useLocation } from "react-router-dom";
 
 // ---------------------------------------------------------------------------
 // Types (re-exported for consumers)
 // ---------------------------------------------------------------------------
 
 export interface AuthContext {
+  actor: {
+    id: string;
+  } | null;
   user: {
     id: string;
     email: string;
+    username?: string;
     displayName: string;
     status: string;
   } | null;
@@ -21,6 +26,7 @@ export interface AuthContext {
   } | null;
   membership: {
     id: string;
+    actorId?: string;
     status: string;
     isDefault: boolean;
   } | null;
@@ -58,9 +64,15 @@ const LazyLoginPage = lazy(() =>
   import("./LoginPage").then((mod) => ({ default: mod.default }))
 );
 
+const LazySignupPage = lazy(() =>
+  import("./SignupPage").then((mod) => ({ default: mod.default }))
+);
+
 export default function AuthBoundary({ children }: { children: ReactNode }) {
+  const location = useLocation();
   const [auth, setAuth] = useState<AuthContext>({
     user: null,
+    actor: null,
     org: null,
     membership: null,
     roleSlugs: [],
@@ -78,6 +90,7 @@ export default function AuthBoundary({ children }: { children: ReactNode }) {
     try {
       const data = await fetchAuthContext();
       const user = data.user as AuthContext["user"];
+      const actor = (data.actor as AuthContext["actor"]) ?? null;
       const org = data.org as AuthContext["org"];
       const membership = data.membership as AuthContext["membership"];
       const roleSlugs = (data.roleSlugs as string[]) ?? [];
@@ -85,6 +98,7 @@ export default function AuthBoundary({ children }: { children: ReactNode }) {
       const isSystemAdmin = (data.isSystemAdmin as boolean) ?? false;
       setAuth({
         user,
+        actor,
         org,
         membership,
         roleSlugs,
@@ -117,6 +131,7 @@ export default function AuthBoundary({ children }: { children: ReactNode }) {
     }
     setAuth({
       user: null,
+      actor: null,
       org: null,
       membership: null,
       roleSlugs: [],
@@ -146,10 +161,13 @@ export default function AuthBoundary({ children }: { children: ReactNode }) {
   }
 
   if (!auth.user) {
+    const showingSignup = location.pathname === "/signup";
     return (
       <AuthContextInstance.Provider value={{ ...auth, refresh, logout }}>
         <Suspense fallback={<div className="flex h-screen items-center justify-center bg-slate-950 text-slate-400"><p>Loading…</p></div>}>
-          <LazyLoginPage error={auth.error} onLoginSuccess={refresh} />
+          {showingSignup
+            ? <LazySignupPage error={auth.error} onSignupSuccess={refresh} />
+            : <LazyLoginPage error={auth.error} onLoginSuccess={refresh} />}
         </Suspense>
       </AuthContextInstance.Provider>
     );

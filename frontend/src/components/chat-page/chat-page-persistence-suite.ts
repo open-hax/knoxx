@@ -18,6 +18,12 @@ type UseChatPagePersistenceSuiteParams = {
   setSystemPrompt: SetState<string>;
   selectedModel: string;
   setSelectedModel: SetState<string>;
+  selectedThinkingLevel: string;
+  setSelectedThinkingLevel: SetState<string>;
+  activeActorId: string;
+  setActiveActorId: SetState<string>;
+  activeAgentId: string;
+  setActiveAgentId: SetState<string>;
   conversationId: string | null;
   setConversationId: SetState<string | null>;
   messages: ChatMessage[];
@@ -64,6 +70,12 @@ export function useChatPagePersistenceSuite({
   setSystemPrompt,
   selectedModel,
   setSelectedModel,
+  selectedThinkingLevel,
+  setSelectedThinkingLevel,
+  activeActorId,
+  setActiveActorId,
+  activeAgentId,
+  setActiveAgentId,
   conversationId,
   setConversationId,
   messages,
@@ -109,6 +121,12 @@ export function useChatPagePersistenceSuite({
     setSystemPrompt,
     selectedModel,
     setSelectedModel,
+    selectedThinkingLevel,
+    setSelectedThinkingLevel,
+    activeActorId,
+    setActiveActorId,
+    activeAgentId,
+    setActiveAgentId,
     conversationId,
     setConversationId,
     messages,

@@ -14,9 +14,21 @@
 
    See: https://github.com/thheller/shadow-cljs/issues/1219"
   (:require [clojure.string :as str]
+            [cljs.reader :as reader]
             [honey.sql :as sql]
+            [knoxx.backend.runtime.roles :as runtime-roles]
+            [knoxx.backend.tools.registry :as tool-registry]
             ["pg" :as pg]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
             ["node:crypto" :as crypto]))
+
+(declare contracts-config
+         query!
+         query-one!
+         find-org-by-slug
+         normalize-actor-id
+         set-membership-roles!)
 
 ;; ---------------------------------------------------------------------------
 ;; Data Constants
@@ -86,7 +98,18 @@
    ["tool.event_agents.run_job" "tool" "event_agents_run_job" "Trigger event-agent jobs from Knoxx"]
    ["tool.event_agents.upsert_job" "tool" "event_agents_upsert_job" "Create/update event-agent jobs from Knoxx"]
    ["tool.schedule_event_agent" "tool" "schedule_event_agent" "Schedule event-agent jobs from Knoxx"]
+   ["tool.sandbox_container.create" "tool" "sandbox_container_create" "Create TTL-bound sandbox containers from Knoxx"]
+   ["tool.sandbox_container.status" "tool" "sandbox_container_status" "Inspect sandbox containers from Knoxx"]
+   ["tool.sandbox_container.exec" "tool" "sandbox_container_exec" "Execute shell commands in sandbox containers from Knoxx"]
+   ["tool.sandbox_container.read" "tool" "sandbox_container_read" "Read files from sandbox containers from Knoxx"]
+   ["tool.sandbox_container.write" "tool" "sandbox_container_write" "Write files into sandbox containers from Knoxx"]
+   ["tool.sandbox_container.commit" "tool" "sandbox_container_commit" "Create git commits inside sandbox containers from Knoxx"]
+   ["tool.sandbox_container.destroy" "tool" "sandbox_container_destroy" "Destroy sandbox containers from Knoxx"]
    ["tool.bluesky.publish" "tool" "bluesky_publish" "Publish to Bluesky from Knoxx"]
+   ["tool.bluesky.profile" "tool" "bluesky_profile" "Read Bluesky profiles from Knoxx"]
+   ["tool.bluesky.search" "tool" "bluesky_search" "Search public Bluesky content from Knoxx"]
+   ["tool.bluesky.author.feed" "tool" "bluesky_author_feed" "Read a Bluesky author feed from Knoxx"]
+   ["tool.bluesky.timeline" "tool" "bluesky_timeline" "Read the authenticated Bluesky timeline from Knoxx"]
    ["tool.semantic_query.use" "tool" "semantic_query" "Use semantic query tool"]
    ["tool.memory_search.use" "tool" "memory_search" "Use memory search tool"]
    ["tool.memory_session.use" "tool" "memory_session" "Use memory session tool"]
@@ -96,6 +119,7 @@
    ["org.translations.review" "org_translations" "review" "Review and label translations"]
    ["org.translations.export" "org_translations" "export" "Export translation training data"]
    ["org.translations.manage" "org_translations" "manage" "Manage translation pipeline config"]
+   ["org.event_agents.control" "org_event_agents" "control" "Access and manage the Knoxx event-agents control plane"]
    ["org.proxx.observability.read" "org_proxx_observability" "read" "Read Proxx analytics and request logs"]])
 
 (def ^:private TOOL-DEFINITIONS
@@ -121,22 +145,285 @@
    ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately" "medium"]
    ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job" "high"]
    ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config" "high"]
-   ["bluesky.publish" "Bluesky" "Publish updates to Bluesky" "medium"]
+   ["sandbox_container.create" "Sandbox Create" "Create a TTL-bound sandbox container for isolated development work" "high"]
+   ["sandbox_container.status" "Sandbox Status" "Inspect sandbox container runtime status and remaining TTL" "low"]
+   ["sandbox_container.exec" "Sandbox Exec" "Execute a shell command inside a sandbox container" "high"]
+   ["sandbox_container.read" "Sandbox Read" "Read a text file from the sandbox workdir" "low"]
+   ["sandbox_container.write" "Sandbox Write" "Write a text file into the sandbox workdir" "high"]
+   ["sandbox_container.commit" "Sandbox Commit" "Create a git commit inside the sandbox workdir" "high"]
+   ["sandbox_container.destroy" "Sandbox Destroy" "Destroy a sandbox container and its temporary workspace" "medium"]
+   ["bluesky.publish" "Bluesky Publish" "Publish updates to Bluesky" "medium"]
+   ["bluesky.profile" "Bluesky Profile" "Read a Bluesky profile by handle or DID" "low"]
+   ["bluesky.search" "Bluesky Search" "Search public Bluesky posts or actors" "low"]
+   ["bluesky.author.feed" "Bluesky Author Feed" "Read recent posts from a specific Bluesky author" "low"]
+   ["bluesky.timeline" "Bluesky Timeline" "Read the authenticated Bluesky timeline" "low"]
    ["semantic_query" "Semantic Query" "Query semantic context in the active corpus" "low"]
    ["memory_search" "Memory Search" "Search prior Knoxx sessions in OpenPlanner" "low"]
    ["memory_session" "Memory Session" "Load a specific Knoxx session from OpenPlanner" "low"]
    ["websearch" "Web Search" "Search the live web through Proxx websearch" "low"]
    ["graph_query" "Graph Query" "Query the canonical knowledge graph" "low"]])
 
+(defn- default-contracts-dir
+  []
+  (let [configured (some-> (aget js/process.env "CONTRACTS_DIR") str str/trim not-empty)
+        cwd (.cwd js/process)
+        candidates (->> [configured
+                         "contracts"
+                         "../contracts"
+                         "packages/agents/knoxx/contracts"
+                         "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
+                        (keep identity)
+                        (map #(.resolve path cwd %))
+                        distinct
+                        vec)]
+    (or (some (fn [candidate]
+                (when (.existsSync fs candidate)
+                  candidate))
+              candidates)
+        (.resolve path cwd (or configured "contracts")))))
+
+(defn- contracts-dir
+  []
+  (default-contracts-dir))
+
+(defn- safe-read-edn
+  [file-path]
+  (try
+    (reader/read-string (str (.readFileSync fs file-path "utf8")))
+    (catch :default _
+      nil)))
+
+(defn- normalize-email
+  [value]
+  (some-> value str str/trim str/lower-case not-empty))
+
+(defn- role-slug->contract-keyword
+  [value]
+  (when-let [slug (some-> value str str/trim not-empty)]
+    (keyword "role" (str/replace slug #"_" "-"))))
+
+(defn- user-actor-id-from-email
+  [email]
+  (some-> email
+          normalize-email
+          (str/replace #"[^a-z0-9]+" "_")
+          (str/replace #"^_+|_+$" "")
+          not-empty))
+
+(defn- user-actor-file-path
+  [email]
+  (when-let [actor-id (user-actor-id-from-email email)]
+    (.join path (contracts-dir) "actors" (str actor-id ".edn"))))
+
+(defn- ensure-contract-dir!
+  [dir]
+  (.mkdirSync fs dir #js {:recursive true}))
+
+(defn- upsert-user-actor-contract!
+  [{:keys [actor-id email display-name org-slug role-slugs]}]
+  (let [normalized-email (normalize-email email)
+        resolved-actor-id (or (normalize-actor-id actor-id)
+                              (user-actor-id-from-email normalized-email))
+        file-path (user-actor-file-path normalized-email)]
+    (if (or (str/blank? (str (or normalized-email "")))
+            (str/blank? (str (or resolved-actor-id "")))
+            (str/blank? (str (or file-path ""))))
+      (js/Promise.resolve nil)
+      (try
+        (let [existing (when (.existsSync fs file-path)
+                         (safe-read-edn file-path))
+              contract (merge
+                        {:actor/id resolved-actor-id
+                         :actor/kind :user
+                         :actor/email normalized-email
+                         :actor/username normalized-email
+                         :actor/org (or (some-> org-slug str str/trim not-empty) "open-hax")
+                         :actor/label (or (some-> display-name str str/trim not-empty)
+                                          normalized-email)
+                         :actor/roles (->> (or role-slugs ["knowledge_worker"])
+                                           (keep role-slug->contract-keyword)
+                                           distinct
+                                           vec)
+                         :actor/policy {:principal :actor
+                                        :source-of-truth :contract
+                                        :notes (str "Canonical human actor contract for " normalized-email ". Created or updated by Knoxx onboarding flows.")}}
+                        (when (map? existing)
+                          (select-keys existing [:actor/contract :actor/policy])))]
+          (ensure-contract-dir! (.dirname path file-path))
+          (.writeFileSync fs file-path (str (pr-str contract) "\n") "utf8")
+          (js/Promise.resolve {:actor-id resolved-actor-id
+                               :path file-path}))
+        (catch :default err
+          (js/Promise.reject err))))))
+
+(defn- find-org-by-id
+  [pool org-id]
+  (if (str/blank? (str org-id))
+    (js/Promise.resolve nil)
+    (query-one! pool "SELECT * FROM orgs WHERE id = $1::uuid" [org-id])))
+
+(defn- actor-role-slugs
+  [actor]
+  (->> (or (:actor/roles actor) [])
+       (map (fn [value]
+              (let [raw (cond
+                          (keyword? value) (name value)
+                          (string? value) (some-> value str str/trim not-empty)
+                          :else (some-> value str str/trim not-empty))]
+                (when raw
+                  (runtime-roles/normalize-role (contracts-config) raw)))))
+       (remove nil?)
+       distinct
+       vec))
+
+(defn- find-user-actor-contract-by-email
+  [email]
+  (when-let [normalized-email (normalize-email email)]
+    (try
+      (let [actor-dir (.join path (contracts-dir) "actors")
+            names (.readdirSync fs actor-dir)]
+        (->> (array-seq names)
+             (keep (fn [name]
+                     (when (and (string? name) (str/ends-with? name ".edn"))
+                       (let [actor (safe-read-edn (.join path actor-dir name))
+                             actor-email (normalize-email (or (:actor/email actor)
+                                                              (:actor/username actor)))]
+                         (when (and (= :user (:actor/kind actor))
+                                    (= normalized-email actor-email))
+                           {:id (or (:actor/id actor)
+                                    (subs name 0 (- (count name) 4)))
+                            :email actor-email
+                            :org (some-> (:actor/org actor) str str/trim not-empty)
+                            :role-slugs (actor-role-slugs actor)
+                            :actor actor})))))
+             first))
+      (catch :default _
+        nil))))
+
+(defn- list-user-actor-contracts
+  []
+  (try
+    (let [actor-dir (.join path (contracts-dir) "actors")
+          names (.readdirSync fs actor-dir)]
+      (->> (array-seq names)
+           (keep (fn [name]
+                   (when (and (string? name) (str/ends-with? name ".edn"))
+                     (let [actor (safe-read-edn (.join path actor-dir name))]
+                       (when (= :user (:actor/kind actor))
+                         {:id (or (:actor/id actor)
+                                  (subs name 0 (- (count name) 4)))
+                          :email (normalize-email (or (:actor/email actor)
+                                                      (:actor/username actor)))
+                          :org (some-> (:actor/org actor) str str/trim not-empty)
+                          :label (some-> (:actor/label actor) str str/trim not-empty)
+                          :role-slugs (actor-role-slugs actor)
+                          :actor actor})))))
+           vec))
+    (catch :default _
+      [])))
+
+(defn- contract-tool-ids
+  "Return a set of tool ids found in contracts/capabilities/*.edn." 
+  []
+  (try
+    (let [cap-dir (.join path (contracts-dir) "capabilities")
+          names (.readdirSync fs cap-dir)
+          tool-ids (atom #{})]
+      (doseq [name (array-seq names)]
+        (when (and (string? name) (str/ends-with? name ".edn"))
+          (when-let [cap (safe-read-edn (.join path cap-dir name))]
+            (doseq [tool (or (:cap/tools cap) [])]
+              (when-let [id (tool-registry/normalize-tool-id tool)]
+                (swap! tool-ids conj id))))))
+      @tool-ids)
+    (catch :default _
+      #{})))
+
+(defn- tool-risk-level
+  [tool-id]
+  (let [id (str tool-id)]
+    (cond
+      (= id "bash") "high"
+      (= id "edit") "medium"
+      (= id "write") "medium"
+      (= id "contract.write") "high"
+      (or (= id "event_agents.upsert_job") (= id "schedule_event_agent")) "high"
+      (or (str/starts-with? id "openplanner.")
+          (str/starts-with? id "discord.")
+          (str/starts-with? id "music.")
+          (str/starts-with? id "audio.")) "medium"
+      :else "low")))
+
+(defn- tool-seeds-from-contracts
+  []
+  (->> (contract-tool-ids)
+       (map (fn [tool-id]
+              (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
+                [tool-id
+                 (or label tool-id)
+                 (or description "")
+                 (tool-risk-level tool-id)])))
+       vec))
+
+(defn- tool-seeds-from-registry
+  []
+  (->> (tool-registry/known-tool-ids)
+       (map (fn [tool-id]
+              (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
+                [tool-id
+                 (or label tool-id)
+                 (or description "")
+                 (tool-risk-level tool-id)])))
+       vec))
+
+(defn- merged-tool-seeds
+  "Return tool definition seed rows, merging built-in TOOL-DEFINITIONS with
+   registry-known tools and any additional tools referenced by contract
+   capabilities." 
+  []
+  (let [base (into {} (map (fn [[id label description risk-level]]
+                             [id [id label description risk-level]])
+                           TOOL-DEFINITIONS))
+        from-registry (into {} (map (fn [[id label description risk-level]]
+                                      [id [id label description risk-level]])
+                                    (tool-seeds-from-registry)))
+        from-contracts (into {} (map (fn [[id label description risk-level]]
+                                       [id [id label description risk-level]])
+                                     (tool-seeds-from-contracts)))]
+    ;; Prefer explicit base metadata when it exists.
+    (->> (merge from-registry from-contracts base)
+         vals
+         (sort-by first)
+         vec)))
+
+(defn- contracts-config
+  []
+  {:contracts-dir (default-contracts-dir)})
+
+(defn- role-tool-policies-from-contracts
+  "Return [{:toolId <id> :effect \"allow\"} ...] for the given role slug.
+
+   Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools." 
+  [role-slug]
+  (let [tool-ids (runtime-roles/role-tool-ids (contracts-config) role-slug)]
+    (when (seq tool-ids)
+      (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) tool-ids))))
+
 (def ^:private ALL-PERMISSION-CODES (map first PERMISSIONS))
 
-(def ^:private ALL-TOOL-IDS (map first TOOL-DEFINITIONS))
+(def ^:private ALL-TOOL-IDS (map first (merged-tool-seeds)))
 
 (def ^:private PLATFORM-ROLE-SEEDS
   [{:slug "system_admin"
     :name "System Admin"
     :permissions ALL-PERMISSION-CODES
     :tool-policies (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS)}])
+
+(defn- basic-user-chat-policy-constraints
+  []
+  {:allowedModels ["gemma4:31b"]
+   :maxRequests 20
+   :windowSeconds 600})
 
 (def ^:private ORG-ROLE-SEEDS
   [{:slug "org_admin"
@@ -158,9 +445,13 @@
                   "tool.discord.list.servers" "tool.discord.list.channels"
                   "tool.event_agents.status" "tool.event_agents.dispatch"
                   "tool.event_agents.run_job" "tool.event_agents.upsert_job" "tool.schedule_event_agent"
-                  "tool.bluesky.publish" "tool.semantic_query.use"
+                  "tool.sandbox_container.create" "tool.sandbox_container.status" "tool.sandbox_container.exec"
+                  "tool.sandbox_container.read" "tool.sandbox_container.write" "tool.sandbox_container.commit" "tool.sandbox_container.destroy"
+                  "tool.bluesky.publish" "tool.bluesky.profile" "tool.bluesky.search"
+                  "tool.bluesky.author.feed" "tool.bluesky.timeline" "tool.semantic_query.use"
                   "tool.memory_search.use" "tool.memory_session.use" "tool.websearch.use" "tool.graph_query.use"
                   "org.translations.read" "org.translations.review" "org.translations.export" "org.translations.manage"
+                  "org.event_agents.control"
                   "org.proxx.observability.read"]
     :tool-policies (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS)}
    {:slug "knowledge_worker"
@@ -175,6 +466,19 @@
                     {:toolId "semantic_query" :effect "allow"}
                     {:toolId "memory_search" :effect "allow"}
                     {:toolId "memory_session" :effect "allow"}]}
+   {:slug "basic_user"
+    :name "Basic User"
+    :permissions ["org.datalakes.read" "datalake.read" "datalake.query"
+                  "agent.chat.use" "agent.memory.read"
+                  "agent.runs.read_own" "agent.controls.steer" "agent.controls.follow_up"
+                  "tool.read.use" "tool.semantic_query.use"
+                  "tool.memory_search.use" "tool.memory_session.use"]
+    :tool-policies [{:toolId "read" :effect "allow"}
+                    {:toolId "canvas" :effect "allow"}
+                    {:toolId "semantic_query" :effect "allow"}
+                    {:toolId "memory_search" :effect "allow"}
+                    {:toolId "memory_session" :effect "allow"}
+                    {:toolId "agent.chat" :effect "allow" :constraints (basic-user-chat-policy-constraints)}]}
    {:slug "data_analyst"
     :name "Data Analyst"
     :permissions ["org.datalakes.read" "datalake.read" "datalake.query"
@@ -229,6 +533,102 @@
 (defn- unique
   [values]
   (vec (distinct (filter some? values))))
+
+(defn- normalize-actor-id
+  [value]
+  (some-> value str str/trim not-empty))
+
+(defn default-membership-actor-id
+  [role-slugs]
+  (let [normalized (into #{}
+                         (comp (map #(some-> % str str/trim not-empty))
+                               (map #(when % (runtime-roles/normalize-role (contracts-config) %)))
+                               (remove nil?))
+                         (or role-slugs []))]
+    (if (contains? normalized "system_admin")
+      "system_admin"
+      "workspace_user")))
+
+(defn- set-membership-actor-id!
+  [pool membership-id actor-id]
+  (let [resolved (or (normalize-actor-id actor-id) "workspace_user")]
+    (-> (query! pool
+                "UPDATE memberships SET actor_id = $2, updated_at = NOW() WHERE id = $1::uuid"
+                [membership-id resolved])
+        (.then (fn [_] resolved)))))
+
+(defn- backfill-membership-actors!
+  [pool]
+  (-> (query! pool
+              "UPDATE memberships m
+               SET actor_id = CASE
+                 WHEN EXISTS (
+                   SELECT 1
+                   FROM membership_roles mr
+                   JOIN roles r ON r.id = mr.role_id
+                   WHERE mr.membership_id = m.id
+                     AND r.slug = 'system_admin'
+                 ) THEN 'system_admin'
+                 ELSE 'workspace_user'
+               END,
+               updated_at = NOW()
+               WHERE COALESCE(NULLIF(trim(actor_id), ''), '') = ''"
+              [])
+      (.then (fn [_] nil))))
+
+(defn- sync-user-from-actor-contract!
+  [pool primary-org payload]
+  (let [email (normalize-email (aget payload "email"))
+        display-name (str/trim (str (or (aget payload "displayName")
+                                        (aget payload "display_name")
+                                        email)))
+        auth-provider (str (or (aget payload "authProvider") "github"))
+        external-subject (or (aget payload "externalSubject") nil)]
+    (if-not email
+      (js/Promise.resolve nil)
+      (if-let [actor-contract (find-user-actor-contract-by-email email)]
+        (let [role-slugs (vec (or (:role-slugs actor-contract) ["knowledge_worker"]))
+              effective-name (or (:label actor-contract) display-name email)]
+          (-> (query-one! pool
+                          "INSERT INTO users (email, display_name, auth_provider, external_subject, status) VALUES ($1, $2, $3, $4, 'active') ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, auth_provider = EXCLUDED.auth_provider, external_subject = EXCLUDED.external_subject, status = 'active', updated_at = NOW() RETURNING *"
+                          [email effective-name auth-provider external-subject])
+              (.then
+               (fn [user]
+                 (-> (if-let [actor-org (:org actor-contract)]
+                       (-> (find-org-by-slug pool actor-org)
+                           (.then (fn [resolved-org]
+                                    (or resolved-org primary-org))))
+                       (js/Promise.resolve primary-org))
+                     (.then
+                      (fn [target-org]
+                        (-> (query-one! pool
+                                        "INSERT INTO memberships (user_id, org_id, actor_id, status, is_default) VALUES ($1, $2, $3, 'active', TRUE) ON CONFLICT (user_id, org_id) DO UPDATE SET actor_id = EXCLUDED.actor_id, status = 'active', is_default = TRUE, updated_at = NOW() RETURNING *"
+                                        [(aget user "id") (aget target-org "id") (:id actor-contract)])
+                            (.then
+                             (fn [membership]
+                               (-> (set-membership-roles! pool (aget membership "id")
+                                                          {:org-id (aget target-org "id")
+                                                           :role-slugs role-slugs
+                                                           :role-ids #js []
+                                                           :replace true})
+                                   (.then (fn [_]
+                                            (set-membership-actor-id! pool (aget membership "id") (:id actor-contract))))))))))))))
+        (js/Promise.resolve nil))))))
+
+(defn- sync-user-actors-from-contracts!
+  [pool primary-org]
+  (-> (js/Promise.all
+       (clj->js
+        (mapv (fn [actor-contract]
+                (if-let [email (:email actor-contract)]
+                  (sync-user-from-actor-contract! pool primary-org
+                                                 #js {:email email
+                                                      :displayName (or (:label actor-contract) email)
+                                                      :authProvider "contract"
+                                                      :externalSubject nil})
+                  (js/Promise.resolve nil)))
+              (list-user-actor-contracts))))
+      (.then (fn [_] nil))))
 
 (defn- normalize-tool-policy
   [policy]
@@ -370,6 +770,7 @@
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      actor_id TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       is_default BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -494,6 +895,9 @@
     ALTER TABLE sessions
       ADD COLUMN IF NOT EXISTS token_prefix TEXT NOT NULL DEFAULT '';
 
+    ALTER TABLE memberships
+      ADD COLUMN IF NOT EXISTS actor_id TEXT;
+
     CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
     CREATE INDEX IF NOT EXISTS sessions_membership_idx ON sessions (membership_id);
     CREATE INDEX IF NOT EXISTS sessions_token_prefix_idx ON sessions (token_prefix);
@@ -543,7 +947,7 @@
   [pool]
   (-> (js/Promise.all
        (into-array
-        (for [[id label description risk-level] TOOL-DEFINITIONS]
+        (for [[id label description risk-level] (merged-tool-seeds)]
           (query! pool
                   "INSERT INTO tool_definitions (id, label, description, risk_level)
                    VALUES ($1, $2, $3, $4)
@@ -576,6 +980,14 @@
         (.then (fn [org]
                  (.then (query! pool "UPDATE orgs SET is_primary = CASE WHEN slug = $1 THEN TRUE ELSE FALSE END" [slug])
                         (fn [_] org)))))))
+
+(defn- find-org-by-slug
+  [pool slug]
+  (if (str/blank? (str slug))
+    (js/Promise.resolve nil)
+    (query-one! pool
+                "SELECT * FROM orgs WHERE lower(slug) = lower($1) LIMIT 1"
+                [slug])))
 
 ;; ---------------------------------------------------------------------------
 ;; Role Management
@@ -677,8 +1089,11 @@
                (fn [role]
                  (-> (set-role-permissions! pool (aget role "id") (:permissions seed))
                      (.then (fn [_]
-                              (set-role-tool-policies! pool (aget role "id")
-                                                       (:tool-policies seed)))))))))))
+                              (let [policies (or (role-tool-policies-from-contracts (:slug seed))
+                                                 (:tool-policies seed)
+                                                 (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS))]
+                                (set-role-tool-policies! pool (aget role "id")
+                                                         policies)))))))))))
       (.then (fn [_] nil))))
 
 (defn- ensure-builtin-platform-roles!
@@ -696,8 +1111,11 @@
                (fn [role]
                  (-> (set-role-permissions! pool (aget role "id") (:permissions seed))
                      (.then (fn [_]
-                              (set-role-tool-policies! pool (aget role "id")
-                                                       (:tool-policies seed)))))))))))
+                              (let [policies (or (role-tool-policies-from-contracts (:slug seed))
+                                                 (:tool-policies seed)
+                                                 (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS))]
+                                (set-role-tool-policies! pool (aget role "id")
+                                                         policies)))))))))))
       (.then (fn [_] nil))))
 
 (defn- tool-allowed
@@ -835,6 +1253,8 @@
                 (for [membership memberships]
                   {:id (aget membership "id")
                    :orgId (aget membership "org_id")
+                   :actorId (or (normalize-actor-id (aget membership "actor_id"))
+                                (default-membership-actor-id (map :slug (or (get @roles-by-m (aget membership "id")) []))))
                    :orgName (aget membership "org_name")
                    :orgSlug (aget membership "org_slug")
                    :status (aget membership "status")
@@ -914,16 +1334,19 @@
              (-> (load-detailed-roles pool role-ids)
                  (.then
                   (fn [detailed-roles]
-                    (let [permissions (sort (unique (mapcat :permissions detailed-roles)))
+                   (let [permissions (sort (unique (mapcat :permissions detailed-roles)))
                           effective-tool-policies
                           (merge-toolPolicies
                            (mapcat :toolPolicies detailed-roles)
                            (:toolPolicies membership))
                           role-slugs (sort-by #(- (rolePriority %))
-                                              (map :slug detailed-roles))]
+                                              (map :slug detailed-roles))
+                          actor-id (or (normalize-actor-id (aget membership-row "actor_id"))
+                                       (default-membership-actor-id role-slugs))]
                       (clj->js
                        {:user {:id (aget membership-row "user_id")
                                :email (aget membership-row "email")
+                               :username (aget membership-row "email")
                                :displayName (aget membership-row "display_name")
                                :status (aget membership-row "user_status")}
                         :org {:id (aget membership-row "org_id")
@@ -933,10 +1356,12 @@
                               :isPrimary (aget membership-row "is_primary")
                               :kind (aget membership-row "org_kind")}
                         :membership {:id (:id membership)
+                                     :actorId actor-id
                                      :status (:status membership)
                                      :isDefault (:isDefault membership)
                                      :createdAt (:createdAt membership)
                                      :updatedAt (:updatedAt membership)}
+                        :actor {:id actor-id}
                         :roles detailed-roles
                         :roleSlugs role-slugs
                         :permissions permissions
@@ -969,11 +1394,16 @@
                   (-> (find-role pool {:slug "system_admin" :org-id nil})
                       (.then
                        (fn [system-admin]
-                         (when system-admin
-                           (query! pool
-                                   "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
-                                   [(aget membership "id") (aget system-admin "id")]))
-                         #js {:user user :membership membership})))))))))))
+                         (let [insert-role-promise (if system-admin
+                                                     (query! pool
+                                                             "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
+                                                             [(aget membership "id") (aget system-admin "id")])
+                                                     (js/Promise.resolve nil))]
+                           (-> insert-role-promise
+                               (.then (fn [_]
+                                        (set-membership-actor-id! pool (aget membership "id") "system_admin")))
+                               (.then (fn [_]
+                                        #js {:user user :membership membership})))))))))))))))
 
 (defn- parse-bootstrap-allowlist-emails
   [options]
@@ -1039,6 +1469,10 @@
                                                 "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
                                                 [(aget membership "id") (aget role "id")]))))))
                              role-slugs)))
+                          (.then (fn [_]
+                                   (set-membership-actor-id! pool
+                                                             (aget membership "id")
+                                                             (default-membership-actor-id role-slugs))))
                           (.then (fn [_] #js {:email email :ok true})))))))
              emails)))
           (.then (fn [_] nil))))))
@@ -1270,7 +1704,12 @@
       (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
       :else
       (let [dn (str/trim (str (or (aget payload "displayName")
-                                  (aget payload "display_name") email)))]
+                                  (aget payload "display_name") email)))
+            requested-role-slugs (vec (or (aget payload "roleSlugs") #js ["knowledge_worker"]))
+            requested-actor-id (or (normalize-actor-id (aget payload "actorId"))
+                                   (some-> (find-user-actor-contract-by-email email) :id)
+                                   (user-actor-id-from-email email)
+                                   (default-membership-actor-id requested-role-slugs))]
         (-> (query-one! pool
                         "INSERT INTO users (email, display_name, auth_provider, external_subject, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name, auth_provider = EXCLUDED.auth_provider, external_subject = EXCLUDED.external_subject, status = EXCLUDED.status, updated_at = NOW() RETURNING *"
                         [email (or dn email)
@@ -1289,8 +1728,27 @@
                       (set-membership-roles! pool (aget ms "id")
                                              {:org-id org-id
                                               :role-ids (or (aget payload "roleIds") #js [])
-                                              :role-slugs (or (aget payload "roleSlugs") #js ["knowledge_worker"])
+                                              :role-slugs requested-role-slugs
                                               :replace true})))
+                   (.then
+                    (fn [_]
+                      (query-one! pool
+                                  "SELECT id FROM memberships WHERE user_id = $1::uuid AND org_id = $2::uuid"
+                                  [(aget user "id") org-id])))
+                   (.then
+                    (fn [membership-row]
+                      (-> (set-membership-actor-id! pool
+                                                    (aget membership-row "id")
+                                                    requested-actor-id)
+                          (.then (fn [_]
+                                   (find-org-by-id pool org-id)))
+                          (.then (fn [org-row]
+                                   (upsert-user-actor-contract!
+                                    {:actor-id requested-actor-id
+                                     :email email
+                                     :display-name dn
+                                     :org-slug (aget org-row "slug")
+                                     :role-slugs requested-role-slugs}))))))
                    (.then
                     (fn [_]
                       (append-audit! pool {:actor-user-id uid
@@ -1332,6 +1790,26 @@
                                        :role-slugs (or (aget payload "roleSlugs") #js [])
                                        :replace (not= (aget payload "replace") false)})
                (.then
+               (fn [_]
+                  (let [requested-role-slugs (vec (or (aget payload "roleSlugs") #js []))
+                        requested-actor-id (or (normalize-actor-id (aget payload "actorId"))
+                                               (normalize-actor-id (aget ms "actor_id"))
+                                               (if (seq requested-role-slugs)
+                                                 (default-membership-actor-id requested-role-slugs)
+                                                 "workspace_user"))]
+                    (-> (set-membership-actor-id! pool membership-id requested-actor-id)
+                        (.then (fn [_]
+                                 (query-one! pool
+                                             "SELECT m.id, u.email, u.display_name, o.slug AS org_slug FROM memberships m JOIN users u ON u.id = m.user_id JOIN orgs o ON o.id = m.org_id WHERE m.id = $1::uuid"
+                                             [membership-id])))
+                        (.then (fn [membership-row]
+                                 (upsert-user-actor-contract!
+                                  {:actor-id requested-actor-id
+                                   :email (aget membership-row "email")
+                                   :display-name (aget membership-row "display_name")
+                                   :org-slug (aget membership-row "org_slug")
+                                   :role-slugs requested-role-slugs}))))))
+               (.then
                 (fn [_]
                   (append-audit! pool {:actor-user-id uid
                                        :actor-membership-id mid
@@ -1339,7 +1817,7 @@
                                        :action "membership.roles.update"
                                        :resource-kind "membership"
                                        :resource-id membership-id})))
-               (.then (fn [_] #js {:membership nil}))))))))
+               (.then (fn [_] #js {:membership nil})))))))))
 
 (defn- factory-set-membership-tool-policies
   [pool uid mid membership-id payload]
@@ -1642,7 +2120,8 @@
   (let [conn-str (or (aget options "connectionString")
                      (:connectionString options)
                      "")]
-    (when-not (str/blank? conn-str)
+    (if (str/blank? conn-str)
+      (js/Promise.resolve nil)
       (js/Promise.
        (fn [resolve reject]
          (let [pool (new (.-Pool pg) (clj->js {:connectionString conn-str}))]
@@ -1662,6 +2141,15 @@
                                    (.catch (fn [err]
                                              (.warn js/console "[policy-db] bootstrap allowlist failed:" (.-message err))
                                              nil))
+                                   (.then (fn [_] bootstrap)))))
+                      (.then (fn [bootstrap]
+                               (-> (sync-user-actors-from-contracts! pool primary-org)
+                                   (.catch (fn [err]
+                                             (.warn js/console "[policy-db] user actor sync failed:" (.-message err))
+                                             nil))
+                                   (.then (fn [_] bootstrap)))))
+                      (.then (fn [bootstrap]
+                               (-> (backfill-membership-actors! pool)
                                    (.then (fn [_] bootstrap)))))
                       (.then
                        (fn [bootstrap]
@@ -1772,6 +2260,10 @@
                                  :listInvites
                                  (fn [opts]
                                    (factory-list-invites pool opts))
+
+                                 :syncUserFromActorContract
+                                 (fn [payload]
+                                   (sync-user-from-actor-contract! pool primary-org payload))
 
                                  :query
                                  (fn [sql params]

@@ -1,9 +1,14 @@
 (ns knoxx.backend.triggers.control-config
   (:require [clojure.string :as str]
+            [cljs.reader :as reader]
             [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.runtime.contract-loader :as contract-loader]
             [knoxx.backend.runtime.models :as models]
             [knoxx.backend.runtime.roles :as roles]
-            [knoxx.backend.util.parse :refer [parse-positive-int]]))
+            [knoxx.backend.tooling :as tooling]
+            [knoxx.backend.tools.registry :as tools]
+            [knoxx.backend.util.parse :refer [parse-positive-int]]
+            ["node:fs" :as fs]))
 
 (defn- env
   [k default]
@@ -15,6 +20,131 @@
        (map (fn [value] (some-> value str str/trim not-empty)))
        (remove nil?)
        vec))
+
+(declare default-discord-model clamp-max-messages event-agent-trigger-kinds)
+
+(defn- keywordish->string
+  [value]
+  (cond
+    (keyword? value) (name value)
+    (string? value) (some-> value str str/trim not-empty)
+    (nil? value) nil
+    :else (some-> value str str/trim not-empty)))
+
+(defn- keywordish->event-kind
+  [value]
+  (cond
+    (keyword? value) (let [ns (namespace value)
+                           nm (name value)]
+                       (if (and ns (not (str/blank? ns)))
+                         (str ns "." nm)
+                         nm))
+    (string? value) (some-> value str str/trim not-empty (str/replace #"/" "."))
+    :else nil))
+
+(defn- read-edn-with-hash-sync
+  [file-path]
+  (try
+    (let [edn-text (some-> (.readFileSync fs file-path "utf8") str)]
+      (when edn-text
+        {:edn (reader/read-string edn-text)
+         :hash (hash edn-text)}))
+    (catch :default _ nil)))
+
+(defn- explicit-tool-ids
+  [contract]
+  (->> (or (get-in contract [:data :tools]) [])
+       (map tools/normalize-tool-id)
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn- tool-policies-from-contract
+  [config role contract]
+  (let [explicit (explicit-tool-ids contract)
+        role-tool-ids (if (str/blank? (str (or role "")))
+                        []
+                        (roles/role-tool-ids config role))
+        tool-ids (if (seq explicit) explicit role-tool-ids)]
+    (mapv (fn [tool-id]
+            {:toolId tool-id :effect "allow"})
+          tool-ids)))
+
+(defn- filters-from-contract
+  [contract]
+  (let [filters (or (get-in contract [:data :filters]) {})]
+    (cond-> {}
+      (seq (or (:channels filters) [])) (assoc :channels (vec (:channels filters)))
+      (seq (or (:keywords filters) [])) (assoc :keywords (vec (:keywords filters)))
+      (seq (or (:publishChannels filters) (:publish_channels filters) []))
+      (assoc :publishChannels (vec (or (:publishChannels filters) (:publish_channels filters))))
+      (seq (or (:guildIds filters) (:guild_ids filters) []))
+      (assoc :guildIds (vec (or (:guildIds filters) (:guild_ids filters))))
+      (seq (or (:repositories filters) [])) (assoc :repositories (vec (:repositories filters))))))
+
+(defn- contract->event-agent-job
+  [config contract-id contract contract-hash]
+  (let [trigger-kind (keywordish->string (:trigger-kind contract))
+        resolved (tooling/resolve-agent-contract config contract-id)]
+    (when (and (= :agent (:contract/kind contract))
+               (contains? event-agent-trigger-kinds trigger-kind))
+      (let [role (:role resolved)
+            model (or (:model resolved)
+                      (default-discord-model config))
+            thinking-level (or (:thinking-level resolved)
+                               (some-> (get-in contract [:agent :thinking]) keywordish->string)
+                               "off")
+            source-kind (or (keywordish->string (:source-kind contract))
+                            "manual")
+            source-mode (or (keywordish->string (:source-mode contract))
+                            "respond")
+            cadence (max 1 (or (parse-positive-int (:cadence-min contract)) 5))
+            event-kinds (->> (concat (or (get-in contract [:events :always]) [])
+                                     (or (get-in contract [:events :maybe]) []))
+                             (map keywordish->event-kind)
+                             (remove nil?)
+                             distinct
+                             vec)
+            filters (filters-from-contract contract)]
+        {:id contract-id
+         :name contract-id
+         :enabled (not (false? (:enabled contract)))
+         :trigger {:kind trigger-kind
+                   :cadenceMinutes cadence
+                   :eventKinds event-kinds}
+         :source {:kind source-kind
+                  :mode source-mode
+                  :config {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
+                                                           (get-in contract [:data :source :maxMessages]))}}
+         :filters filters
+         :agentSpec {:role (if (str/blank? (str (or role ""))) (:knoxx-default-role config) role)
+                     :model model
+                     :thinkingLevel thinking-level
+                     :systemPrompt (or (:system-prompt resolved)
+                                       (some-> (get-in contract [:prompts :system]) str not-empty)
+                                       "")
+                     :taskPrompt (or (some-> (get-in contract [:prompts :task]) str not-empty) "")
+                     :toolPolicies (vec (or (:tool-policies resolved)
+                                            (tool-policies-from-contract config role contract)))}
+         :description (or (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
+                          (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
+                          contract-id)
+         :contractSourceId contract-id
+         :contractHash contract-hash
+         :actorId (:actor-id resolved)}))))
+
+(defn- contract-agent-jobs
+  [config]
+  (try
+    (->> (contract-loader/list-contract-ids-sync config "agents")
+         (map (fn [contract-id]
+                (let [{:keys [edn hash]} (read-edn-with-hash-sync (contract-loader/contract-file-path config "agents" contract-id))]
+                  (when edn
+                    (contract->event-agent-job config contract-id edn hash)))))
+         (remove nil?)
+         (sort-by :id)
+         vec)
+    (catch :default _ [])))
 
 (defn- default-discord-channels
   []
@@ -28,6 +158,7 @@
       ["knoxx" "cephalon"])))
 
 (def ^:private event-agent-control-redis-key "event-agent:control-config")
+(def ^:private event-agent-trigger-kinds #{"cron" "event"})
 
 (def ^:private max-messages-limit 100)
 
@@ -41,8 +172,13 @@
 (defn- clamp-source-config
   [source-config default-config]
   (let [cfg (or source-config {})]
-    (assoc cfg :maxMessages (clamp-max-messages (:maxMessages cfg)
-                                                (:maxMessages (or default-config {}))))))
+    (cond-> (assoc cfg :maxMessages (clamp-max-messages (:maxMessages cfg)
+                                                        (:maxMessages (or default-config {}))))
+      (contains? cfg :stickySession)
+      (assoc :stickySession (boolean (:stickySession cfg)))
+
+      (parse-positive-int (:sessionMaxMessages cfg))
+      (assoc :sessionMaxMessages (parse-positive-int (:sessionMaxMessages cfg))))))
 
 (defn persist-event-agent-control!
   "Persist the event-agent-control overrides to Redis so they survive restarts." 
@@ -80,7 +216,7 @@
 
 (defn- default-discord-agent-jobs
   [config]
-  (let [default-model (or (:proxx-default-model config) "glm-5")
+  (let [default-model (default-discord-model config)
         known-roles (set (roles/list-role-slugs config))
         default-role (if (contains? known-roles "system_admin")
                        "system_admin"
@@ -251,78 +387,53 @@
    {:toolId "discord.list.servers" :effect "allow"}
    {:toolId "discord.list.channels" :effect "allow"}
    {:toolId "websearch" :effect "allow"}
+   {:toolId "web.read" :effect "allow"}
    {:toolId "memory_search" :effect "allow"}
    {:toolId "graph_query" :effect "allow"}])
 
+(defn- derive-default-discord-channels
+  [jobs]
+  (->> (or jobs [])
+       (mapcat (fn [job]
+                 (concat (or (get-in job [:filters :channels]) [])
+                         (or (get-in job [:filters :publishChannels]) [])
+                         (or (get-in job [:filters :publish_channels]) []))))
+       (map (fn [value] (some-> value str str/trim not-empty)))
+       (remove nil?)
+       distinct
+       vec))
+
+(defn- default-discord-model
+  [_config]
+  "gemma4:31b")
+
 (defn default-event-agent-control
   [config]
-  (let [default-model (or (:proxx-default-model config) "glm-5")
-        known-roles (set (roles/list-role-slugs config))
-        default-role (if (contains? known-roles "system_admin")
-                       "system_admin"
-                       (:knoxx-default-role config))
+  (let [jobs (contract-agent-jobs config)
+        inferred-default-channels (derive-default-discord-channels jobs)
+        configured-default-channels (default-discord-channels)
         default-discord-source {:botUserId (or (some-> (env "DISCORD_BOT_USER_ID" "") str str/trim not-empty) "")
-                                :defaultChannels (default-discord-channels)
+                                :defaultChannels (if (seq configured-default-channels)
+                                                   configured-default-channels
+                                                   inferred-default-channels)
                                 :targetKeywords (default-discord-keywords)}]
     {:sources {:discord default-discord-source
                :github {:webhookSecretConfigured (boolean (some-> (env "GITHUB_WEBHOOK_SECRET" "") str str/trim not-empty))}
                :cron {}}
-     :jobs [{:id "discord-patrol"
-             :name "Discord patrol"
-             :enabled false
-             :trigger {:kind "cron"
-                       :cadenceMinutes 5
-                       :eventKinds []}
-             :source {:kind "discord"
-                      :mode "patrol"
-                      :config {:maxMessages 25}}
-             :filters {:channels (default-discord-channels)
-                       :keywords (default-discord-keywords)}
-             :agentSpec {:role default-role
-                         :model default-model
-                         :thinkingLevel "off"
-                         :systemPrompt "Observe configured Discord channels, detect fresh human signals, and queue structured events without speaking publicly."
-                         :taskPrompt "Read recent channel messages, update freshness state, and dispatch normalized Discord events for worthy human signals."
-                         :toolPolicies []}}
-            {:id "discord-mention-response"
-             :name "Discord mention response"
-             :enabled true
-             :trigger {:kind "event"
-                       :cadenceMinutes 1
-                       :eventKinds ["discord.message.mention" "discord.message.keyword"]}
-             :source {:kind "discord"
-                      :mode "respond"
-                      :config {:maxMessages 12}}
-             :filters {:channels (default-discord-channels)
-                       :keywords (default-discord-keywords)}
-             :agentSpec {:role default-role
-                         :model default-model
-                         :thinkingLevel "off"
-                         :systemPrompt "You are Knoxx's targeted event-driven Discord responder. Read the room, use tools when needed, and prefer silence over filler."
-                         :taskPrompt "A normalized Discord event matched this job. Read more context if needed, then decide whether to reply with discord.publish."
-                         :toolPolicies (default-discord-tool-policies)}}
-            {:id "discord-deep-synthesis"
-             :name "Discord deep synthesis"
-             :enabled true
-             :trigger {:kind "cron"
-                       :cadenceMinutes 120
-                       :eventKinds []}
-             :source {:kind "discord"
-                      :mode "synthesize"
-                      :config {:maxMessages 12}}
-             :filters {:channels (default-discord-channels)
-                       :keywords (default-discord-keywords)}
-             :agentSpec {:role default-role
-                         :model default-model
-                         :thinkingLevel "minimal"
-                         :systemPrompt "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans."
-                         :taskPrompt "Summarize recent cross-channel Discord activity, identify meaningful opportunities or risks, and decide whether to publish a concise proactive message."
-                         :toolPolicies (default-discord-tool-policies)}}]}))
+     :jobs jobs}))
 
 (defn- normalize-event-agent-job
   [config default-job raw-job]
   (let [allowed-roles (set (event-agent-role-options config))
-        source (merge default-job (or raw-job {}))
+        contract-sourced? (some-> (:contractSourceId default-job) str str/trim not-empty)
+        saved-contract-hash (:contractHash raw-job)
+        current-contract-hash (:contractHash default-job)
+        saved-job-current? (or (not contract-sourced?)
+                               (and (= (:contractSourceId raw-job) (:contractSourceId default-job))
+                                    current-contract-hash
+                                    saved-contract-hash
+                                    (= saved-contract-hash current-contract-hash)))
+        source (merge default-job (if saved-job-current? (or raw-job {}) {}))
         trigger-source (merge (:trigger default-job) (or (:trigger source) {}))
         source-config (merge (:source default-job) (or (:source source) {}))
         agent-source (merge (:agentSpec default-job) (or (:agentSpec source) {}))
@@ -365,7 +476,7 @@
      :agentSpec {:role role
                  :model (or (some-> (:model agent-source) str str/trim not-empty)
                             (:model (:agentSpec default-job))
-                            (:proxx-default-model config))
+                            (default-discord-model config))
                  :thinkingLevel thinking-level
                  :systemPrompt (or (some-> (:systemPrompt agent-source) str not-empty)
                                    (:systemPrompt (:agentSpec default-job))
@@ -377,6 +488,12 @@
                                  (if (seq normalized)
                                    normalized
                                    (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job))))) }
+     :contractSourceId (or (:contractSourceId source)
+                           (:contractSourceId default-job))
+     :contractHash (or (:contractHash default-job)
+                       (:contractHash source))
+     :actorId (or (:actorId source)
+                  (:actorId default-job))
      :description (or (some-> (:description source) str str/trim not-empty)
                       (:description default-job))}))
 
@@ -386,6 +503,16 @@
         defaults (default-event-agent-control config)
         default-sources (:sources defaults)
         saved-sources (or (:sources saved) {})
+        saved-discord-source (or (:discord saved-sources) {})
+        saved-discord-channels (->> (or (:defaultChannels saved-discord-source) [])
+                                    (map (fn [value] (some-> value str str/trim not-empty)))
+                                    (remove nil?)
+                                    vec)
+        saved-discord-keywords (->> (or (:targetKeywords saved-discord-source) [])
+                                    (map (fn [value] (some-> value str str/trim str/lower-case not-empty)))
+                                    (remove nil?)
+                                    distinct
+                                    vec)
         github-webhook-secret-configured (get-in default-sources [:github :webhookSecretConfigured])
         default-jobs (:jobs defaults)
         saved-jobs (vec (or (:jobs saved) []))
@@ -403,7 +530,7 @@
                                                                  :source {:kind "manual" :mode "respond" :config {}}
                                                                  :filters {}
                                                                  :agentSpec {:role (:knoxx-default-role config)
-                                                                             :model (:proxx-default-model config)
+                                                                             :model (default-discord-model config)
                                                                              :thinkingLevel "off"
                                                                              :systemPrompt "You are Knoxx's scheduled event agent. Respond to dispatched events, use Discord tools when needed, and emit useful actions without filler."
                                                                              :taskPrompt "A structured event matched this job. Read context, decide what action is useful, and use available tools deliberately."
@@ -411,7 +538,18 @@
                                                                  :description "Custom scheduled event-agent job"}
                                                                 job)))))
                          vec)]
-    {:sources (-> {:discord (merge (:discord default-sources) (or (:discord saved-sources) {}))
+    {:sources (-> {:discord (cond-> (merge (:discord default-sources) saved-discord-source)
+                              (empty? saved-discord-channels)
+                              (assoc :defaultChannels (get-in default-sources [:discord :defaultChannels]))
+
+                              (seq saved-discord-channels)
+                              (assoc :defaultChannels saved-discord-channels)
+
+                              (empty? saved-discord-keywords)
+                              (assoc :targetKeywords (get-in default-sources [:discord :targetKeywords]))
+
+                              (seq saved-discord-keywords)
+                              (assoc :targetKeywords saved-discord-keywords))
                    :github (merge (:github default-sources) (or (:github saved-sources) {}))
                    :cron (merge (:cron default-sources) (or (:cron saved-sources) {}))}
                  ;; Never let persisted Redis overrides lie about secret configuration.

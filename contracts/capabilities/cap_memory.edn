@@ -1,0 +1,8 @@
+{:cap/id :cap/memory
+ :cap/tools [:memory_search
+             :memory_session]
+ :cap/user-surfaces [{:surface/id :workspace/session-memory
+                      :surface/label "Session memory explorer"
+                      :surface/kind :reader
+                      :surface/routes ["/"]
+                      :surface/description "Humans browse prior sessions and memory context from the workspace sidebars; agents use memory tools."}]}

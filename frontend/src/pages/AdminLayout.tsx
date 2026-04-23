@@ -33,7 +33,6 @@ import { SelectedOrgSection } from '../components/admin-page/SelectedOrgSection'
 import { UsersMembershipsSection } from '../components/admin-page/UsersMembershipsSection';
 import { RolesSection } from '../components/admin-page/RolesSection';
 import { DataLakesSection } from '../components/admin-page/DataLakesSection';
-import { DiscordSection } from '../components/admin-page/DiscordSection';
 import { ProxxObservabilitySection } from '../components/admin-page/ProxxObservabilitySection';
 import { CatalogSection } from '../components/admin-page/CatalogSection';
 import { Badge } from '../components/admin-page/common';
@@ -119,7 +118,7 @@ function useAdminContext(): AdminCtx {
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
 
   const [orgForm, setOrgForm] = useState<OrgFormState>({ name: '', slug: '', kind: 'customer' });
-  const [userForm, setUserForm] = useState<UserFormState>({ email: '', displayName: '', roleSlugs: ['knowledge_worker'] });
+  const [userForm, setUserForm] = useState<UserFormState>({ email: '', displayName: '', roleSlugs: ['basic_user'] });
   const [roleForm, setRoleForm] = useState<RoleFormState>({ name: '', slug: '', permissionCodes: [], toolIds: ['read', 'canvas'] });
   const [lakeForm, setLakeForm] = useState<LakeFormState>({ name: '', slug: '', kind: 'workspace_docs', workspaceRoot: '' });
 
@@ -258,8 +257,8 @@ function AdminUsersPage({ ctx }: { ctx: AdminCtx }) {
     e.preventDefault(); if (!ctx.selectedOrgId) return;
     ctx.setCreatingUser(true); ctx.setNotice(null);
     try {
-      await (await import('../lib/nextApi')).createOrgUser(ctx.selectedOrgId, { email: ctx.userForm.email.trim(), displayName: ctx.userForm.displayName.trim() || ctx.userForm.email.trim(), roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['knowledge_worker'] });
-      ctx.setUserForm({ email: '', displayName: '', roleSlugs: ['knowledge_worker'] });
+      await (await import('../lib/nextApi')).createOrgUser(ctx.selectedOrgId, { email: ctx.userForm.email.trim(), displayName: ctx.userForm.displayName.trim() || ctx.userForm.email.trim(), roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic_user'] });
+      ctx.setUserForm({ email: '', displayName: '', roleSlugs: ['basic_user'] });
       ctx.setNotice({ tone: 'success', text: 'User created.' }); await ctx.refresh();
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingUser(false); }
   };
@@ -343,7 +342,6 @@ function AdminLakesPage({ ctx }: { ctx: AdminCtx }) {
 function AdminIntegrationsPage({ ctx }: { ctx: AdminCtx }) {
   return (
     <div className="space-y-4">
-      <DiscordSection canManage={ctx.hasPermission('platform.org.create')} tools={ctx.tools} />
       <ProxxObservabilitySection canView={ctx.hasPermission('org.proxx.observability.read')} />
     </div>
   );

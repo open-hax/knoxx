@@ -23,6 +23,10 @@
   #{"session" "message" "compaction" "model_change"
     "thinking_level_change" "custom_message" "branch_summary"})
 
+(defn- obj-get
+  [obj key]
+  (aget obj key))
+
 
 (defn- ensure-state-dir
   []
@@ -61,7 +65,7 @@
                                 (-> (.stat fs file-path)
                                     (.then
                                      (fn [s]
-                                       (when (> (.-mtimeMs s) since-ts)
+                                       (when (> (obj-get s "mtimeMs") since-ts)
                                          (let [match (.match entry #"^[\dT:-]+_(.+)\.jsonl$")
                                                session-id (if match
                                                             (aget match 1)
@@ -69,8 +73,8 @@
                                            #js {:dir dir
                                                 :path file-path
                                                 :sessionId session-id
-                                                :mtime (.-mtimeMs s)
-                                                :size (.-size s)}))))
+                                                :mtime (obj-get s "mtimeMs")
+                                                :size (obj-get s "size")}))))
                                     (.catch (fn [_] nil))))))
                           entries))))
                      (.catch (fn [_] #js [])))))
@@ -80,7 +84,7 @@
            (let [flat (->> (js/Array.from dir-results)
                            (reduce (fn [acc r] (if (array? r) (into acc (js/Array.from r)) (conj acc r))) [])
                            (filterv some?))]
-             (.sort flat (fn [a b] (- (.-mtime a) (.-mtime b)))))))
+             (.sort flat (fn [a b] (- (obj-get a "mtime") (obj-get b "mtime")))))))
         (.catch (fn [_] #js [])))))
 
 
@@ -95,22 +99,22 @@
   [content]
   (when (array? content)
     (->> (js/Array.from content)
-         (filter (fn [c] (and (= (.-type c) "text") (.-text c))))
-         (map (fn [c] (.-text c)))
+         (filter (fn [c] (and (= (obj-get c "type") "text") (obj-get c "text"))))
+         (map (fn [c] (obj-get c "text")))
          (clojure.string/join "\n"))))
 
 (defn- extract-tool-calls
   [content]
   (when (array? content)
     (->> (js/Array.from content)
-         (filter (fn [c] (= (.-type c) "toolCall"))))))
+         (filter (fn [c] (= (obj-get c "type") "toolCall"))))))
 
 (defn- extract-thinking
   [content]
   (when (array? content)
     (->> (js/Array.from content)
-         (filter (fn [c] (and (= (.-type c) "thinking") (.-text c))))
-         (map (fn [c] (.-text c)))
+         (filter (fn [c] (and (= (obj-get c "type") "thinking") (obj-get c "text"))))
+         (map (fn [c] (obj-get c "text")))
          (clojure.string/join "\n"))))
 
 
@@ -156,12 +160,12 @@
 
 (defn- map-model-change-event
   [pi-event session-id]
-  #js [(make-event session-id "model_change" (.-timestamp pi-event)
-                   (str "Model: " (or (.-provider pi-event) "") "/" (or (.-modelId pi-event) ""))
+  #js [(make-event session-id "model_change" (obj-get pi-event "timestamp")
+                   (str "Model: " (or (obj-get pi-event "provider") "") "/" (or (obj-get pi-event "modelId") ""))
                    #js {:role "system" :author "pi"}
-                   #js {:id (.-id pi-event)
-                        :provider (.-provider pi-event)
-                        :model_id (.-modelId pi-event)})])
+                   #js {:id (obj-get pi-event "id")
+                        :provider (obj-get pi-event "provider")
+                        :model_id (obj-get pi-event "modelId")})])
 
 
 (defn- map-compaction-event
@@ -179,80 +183,80 @@
 
 (defn- map-custom-message-event
   [pi-event session-id cwd]
-  (let [content (.-content pi-event)]
-    (if (or (not content) (= (.-display pi-event) false))
+  (let [content (obj-get pi-event "content")]
+    (if (or (not content) (= (obj-get pi-event "display") false))
       #js []
-      #js [(make-event session-id (str "custom." (or (.-customType pi-event) "unknown"))
-                       (.-timestamp pi-event)
+      #js [(make-event session-id (str "custom." (or (obj-get pi-event "customType") "unknown"))
+                       (obj-get pi-event "timestamp")
                        (if (string? content) content (js/JSON.stringify content))
                        #js {:role "system" :author "pi"}
-                       #js {:id (.-id pi-event)
-                            :custom_type (.-customType pi-event)
+                       #js {:id (obj-get pi-event "id")
+                            :custom_type (obj-get pi-event "customType")
                             :pi_workspace_project (cwd-to-project cwd)})])))
 
 
 (defn- map-user-message
   [pi-event session-id msg cwd]
-  (let [text (extract-text-from-content (.-content msg))]
+  (let [text (extract-text-from-content (obj-get msg "content"))]
     (if (str/blank? text)
       #js []
-      #js [(make-event session-id "message" (.-timestamp pi-event)
+      #js [(make-event session-id "message" (obj-get pi-event "timestamp")
                        text
                        #js {:role "user" :author "user"}
-                       #js {:id (.-id pi-event)
-                            :pi_message_id (.-id pi-event)
-                            :pi_parent_id (.-parentId pi-event)
+                       #js {:id (obj-get pi-event "id")
+                            :pi_message_id (obj-get pi-event "id")
+                            :pi_parent_id (obj-get pi-event "parentId")
                             :pi_workspace_project (cwd-to-project cwd)})])))
 
 
 (defn- map-assistant-message
   [pi-event session-id msg cwd]
-  (let [text (extract-text-from-content (.-content msg))
-        thinking (extract-thinking (.-content msg))
-        tool-calls (extract-tool-calls (.-content msg))
-        model (or (.-model msg) (.-provider msg) "unknown")
+  (let [text (extract-text-from-content (obj-get msg "content"))
+        thinking (extract-thinking (obj-get msg "content"))
+        tool-calls (extract-tool-calls (obj-get msg "content"))
+        model (or (obj-get msg "model") (obj-get msg "provider") "unknown")
         events #js []]
     ;; Assistant text
     (when (not (str/blank? text))
-      (.push events (make-event session-id "message" (.-timestamp pi-event)
+      (.push events (make-event session-id "message" (obj-get pi-event "timestamp")
                                 text
                                 #js {:role "assistant" :author "pi" :model model}
-                                #js {:id (.-id pi-event)
-                                     :pi_message_id (.-id pi-event)
-                                     :pi_parent_id (.-parentId pi-event)
-                                     :provider (.-provider msg)
-                                     :model (.-model msg)
-                                     :usage (or (.-usage msg) nil)
-                                     :stop_reason (or (.-stopReason msg) nil)
+                                #js {:id (obj-get pi-event "id")
+                                     :pi_message_id (obj-get pi-event "id")
+                                     :pi_parent_id (obj-get pi-event "parentId")
+                                     :provider (obj-get msg "provider")
+                                     :model (obj-get msg "model")
+                                     :usage (or (obj-get msg "usage") nil)
+                                     :stop_reason (or (obj-get msg "stopReason") nil)
                                      :pi_workspace_project (cwd-to-project cwd)})))
     ;; Thinking
     (when (not (str/blank? thinking))
-      (.push events (make-event session-id "reasoning" (.-timestamp pi-event)
+      (.push events (make-event session-id "reasoning" (obj-get pi-event "timestamp")
                                 thinking
                                 #js {:role "system" :author "pi" :model model}
-                                #js {:id (str (.-id pi-event) "-thinking")
-                                     :pi_message_id (.-id pi-event)})))
+                                #js {:id (str (obj-get pi-event "id") "-thinking")
+                                     :pi_message_id (obj-get pi-event "id")})))
     ;; Tool calls
     (doseq [tc (js/Array.from tool-calls)]
-      (let [tool-name (or (.-name tc) "unknown")
-            args-preview (when (.-arguments tc)
-                           (truncate-text (js/JSON.stringify (.-arguments tc)) 2000))]
-        (.push events (make-event session-id "tool_call" (.-timestamp pi-event)
+      (let [tool-name (or (obj-get tc "name") "unknown")
+            args-preview (when (obj-get tc "arguments")
+                           (truncate-text (js/JSON.stringify (obj-get tc "arguments")) 2000))]
+        (.push events (make-event session-id "tool_call" (obj-get pi-event "timestamp")
                                   (truncate-text (str "Tool: " tool-name "\n" (or args-preview "")) nil)
                                   #js {:role "system" :author "pi" :model model}
-                                  #js {:id (or (.-id tc) (.-id pi-event))
-                                       :pi_message_id (.-id pi-event)
+                                  #js {:id (or (obj-get tc "id") (obj-get pi-event "id"))
+                                       :pi_message_id (obj-get pi-event "id")
                                        :tool_name tool-name
-                                       :tool_call_id (.-id tc)
+                                       :tool_call_id (obj-get tc "id")
                                        :tool_arguments_preview args-preview}))))
     events))
 
 
 (defn- map-pi-event-to-events
   [pi-event session-meta]
-  (let [event-type (.-type pi-event)
+  (let [event-type (obj-get pi-event "type")
         session-id (.-sessionId session-meta)
-        cwd (.-cwd session-meta)]
+        cwd (obj-get session-meta "cwd")]
     (cond
       (not (contains? SUPPORTED-EVENT-TYPES event-type))
       #js []
@@ -273,8 +277,8 @@
       (map-custom-message-event pi-event session-id cwd)
 
       (= event-type "message")
-      (let [msg (or (.-message pi-event) #js {})
-            role (.-role msg)]
+      (let [msg (or (obj-get pi-event "message") #js {})
+            role (obj-get msg "role")]
         (cond
           (= role "user")
           (map-user-message pi-event session-id msg cwd)
@@ -533,4 +537,3 @@
                          :offset offset
                          :limit limit
                          :has_more (< (+ offset (.-length valid)) total)})))))))))
-

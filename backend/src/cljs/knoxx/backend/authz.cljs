@@ -11,16 +11,39 @@
   [runtime]
   (some? (policy-db runtime)))
 
+(defn- fastify-handler-result
+  "Fastify treats a resolved promise value as a response payload.
+
+   CLJS `nil` becomes JS `null`, which makes Fastify try to send a second
+   response after we've already used reply.send/reply.code in async handlers.
+   Normalize `nil` to `undefined` so promise-returning handlers can safely do
+   side-effectful replies and resolve to 'no payload'."
+  [value]
+  (cond
+    (instance? js/Promise value)
+    (.then value (fn [resolved]
+                   (if (nil? resolved)
+                     js/undefined
+                     resolved)))
+
+    (nil? value)
+    js/undefined
+
+    :else
+    value))
+
 (defn policy-db-promise
   [runtime reply status promise]
   (if-not (policy-db-enabled? runtime)
-    (http/json-response! reply 503 {:detail "Knoxx policy database is not configured"})
-    (.then promise
-           (fn [result]
-             (http/json-response! reply status (js->clj result :keywordize-keys true)))
-           (fn [err]
-             (http/error-response! reply err)
-             reply))))
+    (fastify-handler-result
+     (http/json-response! reply 503 {:detail "Knoxx policy database is not configured"}))
+    (-> promise
+        (.then (fn [result]
+                 (http/json-response! reply status (js->clj result :keywordize-keys true))
+                 js/undefined))
+        (.catch (fn [err]
+                  (http/error-response! reply err)
+                  js/undefined)))))
 
 (defn resolve-request-context!
   [runtime request]
@@ -45,12 +68,13 @@
 (defn with-request-context!
   [runtime request reply f]
   (if-not (policy-db-enabled? runtime)
-    (f nil)
-    (.then (resolve-request-context! runtime request)
-           f
-           (fn [err]
-             (http/error-response! reply err)
-             reply))))
+    (fastify-handler-result (f nil))
+    (-> (resolve-request-context! runtime request)
+        (.then (fn [ctx]
+                 (fastify-handler-result (f ctx))))
+        (.catch (fn [err]
+                  (http/error-response! reply err)
+                  js/undefined)))))
 
 (defn ctx-org-id [ctx] (or (:orgId ctx) (get-in ctx [:org :id])))
 (defn ctx-org-slug [ctx] (or (:orgSlug ctx) (get-in ctx [:org :slug])))
@@ -93,15 +117,41 @@
             (:effect policy)))
         (:toolPolicies ctx)))
 
+(defn ctx-tool-policy
+  [ctx tool-id]
+  (some (fn [policy]
+          (when (= (str (:toolId policy)) (str tool-id))
+            policy))
+        (:toolPolicies ctx)))
+
+(defn ctx-tool-constraints
+  [ctx tool-id]
+  (or (:constraints (ctx-tool-policy ctx tool-id))
+      {}))
+
 (defn ctx-tool-allowed?
   [ctx tool-id]
-  (= "allow" (ctx-tool-effect ctx tool-id)))
+  (or (system-admin? ctx)
+      (= "allow" (ctx-tool-effect ctx tool-id))))
 
 (defn ensure-permission!
   [ctx permission]
   (when-not (or (system-admin? ctx)
                 (ctx-permitted? ctx permission))
     (throw (http/http-error 403 "permission_denied" (str "Permission '" permission "' is required"))))
+  ctx)
+
+(defn ensure-tool!
+  "Enforce tool access for request-scoped endpoints.
+
+   Prefer this over ensure-permission! for endpoints that gate on tool ids
+   like `multimodal.upload`.
+
+   NOTE: system_admin bypasses tool policy checks." 
+  [ctx tool-id]
+  (when-not (or (system-admin? ctx)
+                (ctx-tool-allowed? ctx tool-id))
+    (throw (http/http-error 403 "tool_denied" (str "Tool '" tool-id "' is required"))))
   ctx)
 
 (defn ensure-any-permission!

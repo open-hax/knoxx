@@ -8,6 +8,7 @@ import {
   applyToolTraceEvent,
   controlTimelineMessageFromEvent,
   finalizeTraceBlocks,
+  novelAppendedText,
   truncateText,
 } from './utils';
 
@@ -131,7 +132,6 @@ export function useChatRuntimeEffects({
                 });
               }
             }
-            if (status !== 'connected') setIsSending(false);
           },
           onToken: (token, meta) => {
             const pendingId = pendingAssistantIdRef.current;
@@ -140,12 +140,17 @@ export function useChatRuntimeEffects({
             if (runId) activeRunIdRef.current = runId;
             const blockKind = meta?.kind === 'reasoning' ? 'reasoning' : 'agent_message';
             callbacksRef.current.updateTraceBlocksByMessageId(pendingId, (blocks) => appendTraceTextDelta(blocks, blockKind, token));
-            callbacksRef.current.updateMessageById(pendingId, (message) => ({
-              ...message,
-              runId: runId ?? message.runId ?? null,
-              status: 'streaming',
-              content: blockKind === 'agent_message' ? `${message.content}${token}` : message.content,
-            }));
+            callbacksRef.current.updateMessageById(pendingId, (message) => {
+              const novelDelta = blockKind === 'agent_message'
+                ? novelAppendedText(message.content, token)
+                : '';
+              return {
+                ...message,
+                runId: runId ?? message.runId ?? null,
+                status: 'streaming',
+                content: blockKind === 'agent_message' ? `${message.content}${novelDelta}` : message.content,
+              };
+            });
           },
           onEvent: (event) => {
             const runtimeEvent = event as RunEvent & {
@@ -182,6 +187,12 @@ export function useChatRuntimeEffects({
                     pendingId,
                     (blocks) => finalizeTraceBlocks(blocks, runtimeEvent.type === 'run_failed' ? 'error' : 'done'),
                   );
+                  callbacksRef.current.updateMessageById(pendingId, (message) => ({
+                    ...message,
+                    runId: runtimeEvent.run_id ?? message.runId ?? null,
+                    status: runtimeEvent.type === 'run_failed' ? 'error' : 'done',
+                  }));
+                  pendingAssistantIdRef.current = null;
                 }
                 setIsSending(false);
                 void callbacksRef.current.loadRunDetail(runtimeEvent.run_id);

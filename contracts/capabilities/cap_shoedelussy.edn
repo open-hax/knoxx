@@ -1,0 +1,32 @@
+{:cap/id :cap/shoedelussy
+ :cap/tools [:mcp.shoedelussy.write_pattern
+             :mcp.shoedelussy.get_pattern
+             :mcp.shoedelussy.mutate_pattern
+             :mcp.shoedelussy.inject_section
+             :mcp.shoedelussy.create_project
+             :mcp.shoedelussy.set_bpm
+             :mcp.shoedelussy.set_key
+             :mcp.shoedelussy.get_state
+             :mcp.shoedelussy.list_projects
+             :mcp.shoedelussy.load_project
+             :mcp.shoedelussy.save_snapshot
+             :mcp.shoedelussy.render_loop
+             :mcp.shoedelussy.render_wav]
+ :cap/user-surfaces [{:surface/id :shoedelussy/studio-shell
+                      :surface/label "Shoedelussy studio shell"
+                      :surface/kind :composer
+                      :surface/routes ["/" "/?project=<id>" "/?share=<id>" "/?share=<id>&autoplay=1&render=1" "/?share=<id>&autoplay=1&render=1&export=wav&duration_ms=<ms>"]
+                      :surface/components ["HomePage" "DAWShell" "EditorPanel" "ChatPanel" "ProjectTopbar" "TransportBar" "VisualizationSurface"]
+                      :surface/description "Main Shoedelussy DAW route. Humans edit Strudel code, chat, play loops, visualize output, and open share/render links here. Browser playback and current WAV export are currently coupled to this shell."}
+                     {:surface/id :shoedelussy/project-browser
+                      :surface/label "Shoedelussy project browser"
+                      :surface/kind :reader
+                      :surface/routes ["/projects"]
+                      :surface/components ["ProjectsPage"]
+                      :surface/description "Durable project browser for opening, searching, and managing Shoedelussy sessions."}
+                     {:surface/id :shoedelussy/export-share
+                      :surface/label "Shoedelussy export/share controls"
+                      :surface/kind :publisher
+                      :surface/routes ["/"]
+                      :surface/components ["ProjectTopbar"]
+                      :surface/description "UI tab for share links, project export, and browser render/playback handoff. Current MCP render_loop and render_wav links target this frontend shell; render_wav performs browser-side capture rather than headless server export."}]}

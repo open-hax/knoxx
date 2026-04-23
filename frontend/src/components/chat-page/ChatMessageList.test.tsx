@@ -37,7 +37,6 @@ describe("ChatMessageList", () => {
         assistantSurfaceBackground="black"
         assistantSurfaceBorder="gray"
         assistantSurfaceText="white"
-        onSend={vi.fn()}
         onOpenMessageInCanvas={vi.fn()}
         onOpenSourceInPreview={vi.fn()}
         onPinAssistantSource={vi.fn()}
@@ -48,10 +47,13 @@ describe("ChatMessageList", () => {
 
     expect(screen.getByText("Reasoning summary")).toBeInTheDocument();
     expect(screen.getAllByText("Final answer")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Reply by voice" })).toBeInTheDocument();
+
+    const renderedAnswer = screen.getByText("Final answer");
+    const actionGroup = screen.getByRole("group", { name: "Assistant message actions" });
+    expect(renderedAnswer.compareDocumentPosition(actionGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("only shows voice reply on the latest assistant message", () => {
+  it("renders assistant actions on every assistant message", () => {
     const messages: ChatMessage[] = [
       { id: "assistant-1", role: "assistant", content: "First", status: "done" },
       { id: "assistant-2", role: "assistant", content: "Second", status: "done" },
@@ -67,7 +69,6 @@ describe("ChatMessageList", () => {
         assistantSurfaceBackground="black"
         assistantSurfaceBorder="gray"
         assistantSurfaceText="white"
-        onSend={vi.fn()}
         onOpenMessageInCanvas={vi.fn()}
         onOpenSourceInPreview={vi.fn()}
         onPinAssistantSource={vi.fn()}
@@ -76,6 +77,6 @@ describe("ChatMessageList", () => {
       />,
     );
 
-    expect(screen.getAllByRole("button", { name: "Reply by voice" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open in Scratchpad" })).toHaveLength(2);
   });
 });

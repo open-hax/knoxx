@@ -1,3 +1,0 @@
-{:role/id :role/knowledge-worker
- :role/capabilities [:cap/read
-                     :cap/canvas]}

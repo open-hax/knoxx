@@ -16,24 +16,60 @@
     ".json" ".jsonl" ".yaml" ".yml" ".toml" ".ini" ".cfg" ".conf" ".env" ".properties"
     ".html" ".css" ".xml" ".csv" ".tsv"})
 
-(defn workspace-root-file []
-  (let [base (.getCanonicalFile (io/file (config/workspace-path)))
-        base-packages (.getCanonicalFile (io/file base "packages"))
-        devel-root (.getCanonicalFile (io/file base "devel"))
-        devel-packages (.getCanonicalFile (io/file devel-root "packages"))]
-    (cond
-      (.exists ^File base-packages)
-      base
+(defn- workspace-root-path-from-sources
+  "Best-effort lookup of the workspace root for a tenant.
 
-      (.exists ^File devel-packages)
-      devel-root
+  Prefer the contract-driven source with contract_source_id == \"workspace\".
+  Fall back to the first enabled local source that has a root_path.
 
-      :else
-      base)))
+  Returns an absolute path string or nil."
+  [tenant-id]
+  (try
+    (let [sources (db/list-sources tenant-id)
+          enabled (filter :enabled sources)
+          local-sources (filter #(= "local" (:driver_type %)) enabled)
+          with-config (map (fn [s]
+                             (assoc s :config_map (or (common/json->clj (:config s)) {})))
+                           local-sources)
+          preferred (or (first (filter #(= "workspace" (get-in % [:config_map :contract_source_id])) with-config))
+                        (first with-config))
+          root-path (or (get-in preferred [:config_map :root_path])
+                        (get-in preferred [:config_map :root-path]))]
+      (when (and (string? root-path) (not (str/blank? root-path)))
+        root-path))
+    (catch Exception _
+      nil)))
+
+(defn workspace-root-file
+  "Return the canonical File representing the root of the browsable workspace.
+
+  This is *not* the ingestion package root; it should match the active tenant's
+  contract-backed workspace source (e.g. contracts/devel/sources/workspace.edn).
+  "
+  ([tenant-id]
+   (let [root-from-contract (workspace-root-path-from-sources (or tenant-id "devel"))]
+     (if root-from-contract
+       (.getCanonicalFile (io/file root-from-contract))
+       ;; Fallback heuristic (legacy env-based behavior)
+       (let [base (.getCanonicalFile (io/file (config/workspace-path)))
+             base-packages (.getCanonicalFile (io/file base "packages"))
+             devel-root (.getCanonicalFile (io/file base "devel"))
+             devel-packages (.getCanonicalFile (io/file devel-root "packages"))]
+         (cond
+           (.exists ^File base-packages)
+           base
+
+           (.exists ^File devel-packages)
+           devel-root
+
+           :else
+           base)))))
+  ([]
+   (workspace-root-file "devel")))
 
 (defn resolve-workspace-file
-  [path]
-  (let [root (workspace-root-file)
+  [tenant-id path]
+  (let [root (workspace-root-file tenant-id)
         candidate (if (or (nil? path) (str/blank? path))
                     root
                     (let [p (str path)]
@@ -48,8 +84,8 @@
       canonical)))
 
 (defn rel-workspace-path
-  [^File file]
-  (let [root (workspace-root-file)
+  [tenant-id ^File file]
+  (let [root (workspace-root-file tenant-id)
         root-path (.toPath root)
         file-path (.toPath (.getCanonicalFile file))]
     (if (= (.toString root-path) (.toString file-path))
@@ -123,7 +159,7 @@
   (let [requested (or (-> request :query-params :path)
                       (get (:query-params request) "path"))
         tenant-id (common/get-tenant-id request)
-        target (resolve-workspace-file requested)]
+        target (resolve-workspace-file tenant-id requested)]
     (println "[BROWSE] requested=" requested "query-params=" (:query-params request) "target=" (some-> target .getPath))
     (cond
       (nil? target)
@@ -140,12 +176,12 @@
                          (sort-by (fn [^File f] [(if (.isDirectory f) 0 1) (.toLowerCase (.getName f))]))
                          (map (fn [^File f]
                                 {:name (.getName f)
-                                 :path (rel-workspace-path f)
+                                 :path (rel-workspace-path tenant-id f)
                                  :type (if (.isDirectory f) "dir" "file")
                                  :size (when (.isFile f) (.length f))
                                  :previewable (and (.isFile f) (text-previewable? f))}))
                          vec)
-            state-by-path (summarize-entry-states tenant-id (rel-workspace-path target) entries)
+            state-by-path (summarize-entry-states tenant-id (rel-workspace-path tenant-id target) entries)
             entries (mapv (fn [entry]
                             (merge entry (get state-by-path (:path entry)
                                               {:ingestion_status "not_ingested"
@@ -155,8 +191,8 @@
                                                :last_error nil})))
                           entries)]
         {:status 200
-         :body {:workspace_root (str (workspace-root-file))
-                :current_path (rel-workspace-path target)
+         :body {:workspace_root (str (workspace-root-file tenant-id))
+                :current_path (rel-workspace-path tenant-id target)
                 :entries entries}}))))
 
 (defn semantic-file-search-handler
@@ -184,7 +220,8 @@
   [request]
   (let [requested (or (-> request :query-params :path)
                       (get (:query-params request) "path"))
-        target (resolve-workspace-file requested)]
+        tenant-id (common/get-tenant-id request)
+        target (resolve-workspace-file tenant-id requested)]
     (cond
       (nil? target)
       {:status 400 :body {:error "path must stay within workspace root"}}
@@ -203,7 +240,7 @@
             limit 12000
             truncated (> (count content) limit)]
         {:status 200
-         :body {:path (rel-workspace-path target)
+         :body {:path (rel-workspace-path tenant-id target)
                 :size (.length ^File target)
                 :truncated truncated
                 :content (if truncated (subs content 0 limit) content)}}))))
@@ -214,9 +251,10 @@
         requested (:path body)
         old-requested (:old_path body)
         content (str (or (:content body) ""))
-        target (resolve-workspace-file requested)
+        tenant-id (common/get-tenant-id request)
+        target (resolve-workspace-file tenant-id requested)
         old-target (when (some? old-requested)
-                     (resolve-workspace-file old-requested))]
+                     (resolve-workspace-file tenant-id old-requested))]
     (cond
       (str/blank? (str requested))
       {:status 400 :body {:error "path is required"}}

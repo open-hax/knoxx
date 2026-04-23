@@ -4,7 +4,7 @@ import {
   fetchIngestionSources, fetchIngestionJobs, fetchSourceAudit,
   triggerIngestionJob, fetchGraphExport, fetchServiceHealth,
   fetchDataMongoCollections, fetchDataMongoList, queryDataMongo, fetchDataPgTables, buildSemanticEdges, browseFiles, fetchFileContent,
-  fetchOpenPlannerProxy,
+  fetchOpenPlannerProxy, postOpenPlannerProxy,
 } from '../lib/nextApi';
 import type { IngestionSource, IngestionJob, SourceAudit, ServiceHealth } from '../lib/nextApi';
 import type { GraphExportNode, GraphExportEdge } from '../lib/types';
@@ -67,6 +67,17 @@ function edgeLabel(et: string): string {
   return et.replace(/_/g, ' ').replace(/^(.)/, c => c.toUpperCase());
 }
 
+const OPENPLANNER_JOB_TRIGGERS: Array<{ id: string; title: string; path: string; defaultBody: any; desc: string }> = [
+  { id: 'semantic_edges_full', title: 'Build Semantic Edges (full)', path: 'jobs/build-semantic-edges', defaultBody: { k: 8, minSimilarity: 0.3 }, desc: 'Mongot-native kNN semantic edge builder' },
+  { id: 'semantic_edges_incremental', title: 'Build Semantic Edges (incremental)', path: 'jobs/build-semantic-edges/incremental', defaultBody: {}, desc: 'Incremental semantic edge build (experimental)' },
+  { id: 'strip_chunk_content', title: 'Strip Chunk Content', path: 'jobs/strip-chunk-content', defaultBody: {}, desc: 'Reduce stored chunk payloads (space/safety)' },
+  { id: 'seed_layout', title: 'Seed Layout', path: 'jobs/seed-layout', defaultBody: {}, desc: 'Seed graph layout overrides for stability' },
+  { id: 'backfill_embeddings', title: 'Backfill Embeddings', path: 'jobs/backfill/embeddings', defaultBody: {}, desc: 'Rebuild embeddings across events' },
+  { id: 'backfill_graph_node_embeddings', title: 'Backfill Graph Node Embeddings', path: 'jobs/backfill/graph-node-embeddings', defaultBody: {}, desc: 'Populate graph_node_embeddings for graph.node events' },
+  { id: 'backfill_graph_edges', title: 'Backfill Graph Edges', path: 'jobs/backfill/graph-edges', defaultBody: {}, desc: 'Reproject historical graph.edge events into graph_edges' },
+  { id: 'compact_semantic', title: 'Semantic Compaction', path: 'jobs/compact/semantic', defaultBody: {}, desc: 'Semantic compaction job (async)' },
+];
+
 // ── Small Components ──────────────────────────────────────────────────────
 
 function Badge({ children, color }: { children: React.ReactNode; color?: string }) {
@@ -103,27 +114,30 @@ function OverviewTab({ sources, jobs, health, graphStats, onBuildEdges }: {
   graphStats: any; onBuildEdges: () => void;
 }) {
   const activeJobs = jobs.filter(j => j.status === 'running' || j.status === 'pending');
-  const failedJobs = jobs.filter(j => j.status === 'failed');
   const totalDocs = graphStats?.total || 0;
-  const svc = health?.services;
+  const svc = health?.services || null;
 
   return (
     <div className="space-y-4">
       {/* Service health */}
       <div className="grid grid-cols-3 gap-3">
         {svc && [
-          { name: 'OpenPlanner', s: svc.openplanner },
-          { name: 'Proxx', s: svc.proxx },
-          { name: 'Ingestion', s: svc.ingestion },
-        ].map(({ name, s }) => (
-          <div key={name} className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-4 py-3 flex items-center gap-3">
-            <HealthDot ok={s.ok} />
-            <div>
-              <div className="text-sm text-slate-200">{name}</div>
-              <div className="text-xs text-slate-500">{s.ok ? 'healthy' : s.error || 'down'}</div>
+          { name: 'OpenPlanner', key: 'openplanner' },
+          { name: 'Proxx', key: 'proxx' },
+          { name: 'Ingestion', key: 'ingestion' },
+        ].map(({ name, key }) => {
+          const s: any = (svc as any)[key];
+          if (!s) return null;
+          return (
+            <div key={name} className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-4 py-3 flex items-center gap-3">
+              <HealthDot ok={s.ok} />
+              <div>
+                <div className="text-sm text-slate-200">{name}</div>
+                <div className="text-xs text-slate-500">{s.ok ? 'healthy' : s.error || 'down'}</div>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Stats */}
@@ -606,9 +620,62 @@ function GraphTab({ graphData, onSelectNode, selectedNodeId }: {
   );
 }
 
-function ServicesTab({ health, onBuildEdges }: { health: ServiceHealth | null; onBuildEdges: () => void }) {
+function ServicesTab({
+  health,
+  sources,
+  syncing,
+  onSync,
+  onBuildEdges,
+}: {
+  health: ServiceHealth | null;
+  sources: IngestionSource[];
+  syncing: Record<string, boolean>;
+  onSync: (id: string) => void;
+  onBuildEdges: () => void;
+}) {
   const [buildResult, setBuildResult] = useState<any>(null);
   const [building, setBuilding] = useState(false);
+
+  const [openPlannerJobs, setOpenPlannerJobs] = useState<any[] | null>(null);
+  const [openPlannerJobsError, setOpenPlannerJobsError] = useState('');
+  const [runningJob, setRunningJob] = useState<string | null>(null);
+  const [jobResults, setJobResults] = useState<Record<string, any>>({});
+  const [jobBodies, setJobBodies] = useState<Record<string, string>>(() => (
+    Object.fromEntries(
+      OPENPLANNER_JOB_TRIGGERS.map((j) => [j.id, JSON.stringify(j.defaultBody ?? {}, null, 2)]),
+    ) as Record<string, string>
+  ));
+
+  const loadOpenPlannerJobs = useCallback(async () => {
+    setOpenPlannerJobsError('');
+    try {
+      const res = await fetchOpenPlannerProxy('jobs');
+      setOpenPlannerJobs((res as any)?.jobs || []);
+    } catch (e: any) {
+      setOpenPlannerJobs(null);
+      setOpenPlannerJobsError(e?.message || String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadOpenPlannerJobs();
+  }, [loadOpenPlannerJobs]);
+
+  const runOpenPlannerJob = async (job: { id: string; path: string }) => {
+    setRunningJob(job.id);
+    try {
+      const raw = (jobBodies[job.id] ?? '').trim();
+      const body = raw ? JSON.parse(raw) : {};
+      const res = await postOpenPlannerProxy(job.path, body);
+      setJobResults((prev) => ({ ...prev, [job.id]: res }));
+      void loadOpenPlannerJobs();
+      onBuildEdges();
+    } catch (e: any) {
+      setJobResults((prev) => ({ ...prev, [job.id]: { error: e?.message || String(e) } }));
+    } finally {
+      setRunningJob(null);
+    }
+  };
 
   const handleBuild = async () => {
     setBuilding(true);
@@ -620,49 +687,187 @@ function ServicesTab({ health, onBuildEdges }: { health: ServiceHealth | null; o
     finally { setBuilding(false); }
   };
 
-  const svc = health?.services;
+  const svc = health?.services || {};
+  const serviceRows = [
+    { id: 'openplanner', name: 'OpenPlanner', desc: 'Document store, graph, embeddings' },
+    { id: 'proxx', name: 'Proxx', desc: 'LLM proxy, embedding provider' },
+    { id: 'ingestion', name: 'Ingestion', desc: 'File discovery, chunking, ingestion' },
+    { id: 'graph-weaver', name: 'Graph Weaver', desc: 'GraphQL + focusedGraphView + WebGL vendor' },
+    { id: 'eros-eris-field-app', name: 'Eros-Eris Field App', desc: 'Graph layout + semantic worker (always-on)' },
+    { id: 'shuvcrawl', name: 'ShuvCrawl', desc: 'Browser crawler (web ingestion)' },
+    { id: 'myrmex', name: 'Myrmex', desc: 'Crawler scheduler + ingestion into OpenPlanner' },
+    { id: 'vexx', name: 'Vexx', desc: 'Optional acceleration service (NPU/GPU)' },
+  ];
   return (
     <div className="space-y-4">
       <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Service Health</h3>
-      {svc && [
-        { name: 'OpenPlanner', s: svc.openplanner, desc: 'Document store, graph, embeddings' },
-        { name: 'Proxx', s: svc.proxx, desc: 'LLM proxy, embedding provider' },
-        { name: 'Ingestion', s: svc.ingestion, desc: 'File discovery, chunking, ingestion' },
-      ].map(({ name, s, desc }) => (
-        <div key={name} className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <HealthDot ok={s.ok} />
-            <div>
-              <div className="text-sm text-slate-200">{name}</div>
-              <div className="text-xs text-slate-500">{desc}</div>
+      <div className="space-y-2">
+        {serviceRows.map((row) => {
+          const s: any = (svc as any)[row.id];
+          const ok = Boolean(s?.ok);
+          const url = typeof s?.url === 'string' ? s.url : null;
+          const detail = s?.detail;
+          return (
+            <div key={row.id} className="rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden">
+              <div className="px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <HealthDot ok={ok} />
+                  <div>
+                    <div className="text-sm text-slate-200">{row.name}</div>
+                    <div className="text-xs text-slate-500">{row.desc}</div>
+                    {url && <div className="text-[10px] text-slate-600 font-mono">{url}</div>}
+                  </div>
+                </div>
+                <div className="text-xs text-slate-500">{s ? (ok ? 'healthy' : s.error || `status ${s.status}`) : 'unknown'}</div>
+              </div>
+              {detail != null && (
+                <details className="border-t border-slate-700/30 bg-slate-900/20">
+                  <summary className="cursor-pointer select-none px-4 py-2 text-xs text-slate-500 hover:text-slate-300">details</summary>
+                  <pre className="px-4 pb-3 text-xs text-slate-300 font-mono whitespace-pre-wrap break-words">{JSON.stringify(detail, null, 2)}</pre>
+                </details>
+              )}
             </div>
-          </div>
-          <div className="text-xs text-slate-500">{s.ok ? 'healthy' : s.error || `status ${s.status}`}</div>
-        </div>
-      ))}
+          );
+        })}
+      </div>
 
-      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-6">Job Triggers</h3>
+      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-6">Ingestion Jobs</h3>
+      <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden">
+        <table className="w-full text-xs">
+          <thead className="border-b border-slate-700/30">
+            <tr>
+              <th className="text-left px-3 py-2 text-slate-500">Source</th>
+              <th className="text-left px-3 py-2 text-slate-500">Lake</th>
+              <th className="text-left px-3 py-2 text-slate-500">Enabled</th>
+              <th className="text-right px-3 py-2 text-slate-500">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sources.map((s) => (
+              <tr key={s.source_id} className="border-b border-slate-700/20 hover:bg-slate-700/10">
+                <td className="px-3 py-2 text-slate-200">{s.name}</td>
+                <td className="px-3 py-2 text-slate-400">{(s.config as any)?.target_lake || (s.config as any)?.['target-lake'] || '—'}</td>
+                <td className="px-3 py-2 text-slate-400">{s.enabled ? 'yes' : 'no'}</td>
+                <td className="px-3 py-2 text-right">
+                  <button
+                    onClick={() => onSync(s.source_id)}
+                    disabled={!s.enabled || Boolean(syncing[s.source_id])}
+                    className="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 disabled:opacity-50"
+                  >
+                    {syncing[s.source_id] ? 'Running…' : 'Run'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-6">OpenPlanner Job Triggers</h3>
+      <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-4 py-3 space-y-3">
+        {OPENPLANNER_JOB_TRIGGERS.map((job) => {
+          const last = jobResults[job.id];
+          const isRunning = runningJob === job.id;
+
+          return (
+            <div key={job.id} className="rounded border border-slate-700/30 bg-slate-900/20 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm text-slate-200">{job.title}</div>
+                  <div className="text-xs text-slate-500">{job.desc}</div>
+                  <div className="text-[10px] text-slate-600 font-mono">POST /v1/{job.path}</div>
+                </div>
+                <button
+                  onClick={() => void runOpenPlannerJob(job)}
+                  disabled={isRunning}
+                  className="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 disabled:opacity-50"
+                >
+                  {isRunning ? 'Running…' : 'Run'}
+                </button>
+              </div>
+              <textarea
+                value={jobBodies[job.id] ?? ''}
+                onChange={(e) => setJobBodies((prev) => ({ ...prev, [job.id]: e.target.value }))}
+                className="w-full bg-slate-950/40 border border-slate-700/40 rounded p-2 text-xs text-slate-200 font-mono resize-y h-20"
+                spellCheck={false}
+              />
+              {last && (
+                <div className="text-xs bg-slate-950/40 rounded p-2 font-mono whitespace-pre-wrap">
+                  {last.error ? <span className="text-rose-400">{String(last.error)}</span> : JSON.stringify(last, null, 2)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Back-compat: keep existing semantic edges button for muscle memory */}
+        <details>
+          <summary className="cursor-pointer text-xs text-slate-500">Legacy trigger: Build Semantic Edges (UI wrapper)</summary>
+          <div className="mt-2 flex items-center justify-between">
+            <div>
+              <div className="text-sm text-slate-200">Build Semantic Edges</div>
+              <div className="text-xs text-slate-500">UI wrapper around /v1/jobs/build-semantic-edges</div>
+            </div>
+            <button onClick={handleBuild} disabled={building}
+              className="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 disabled:opacity-50">
+              {building ? 'Building...' : 'Run'}
+            </button>
+          </div>
+          {buildResult && (
+            <div className="mt-2 text-xs bg-slate-900/50 rounded p-2 font-mono">
+              {buildResult.error ? (
+                <span className="text-rose-400">{buildResult.error}</span>
+              ) : (
+                <div className="space-y-0.5">
+                  <div className="text-emerald-400">OK — {buildResult.nodes} nodes, {buildResult.cappedEdges || buildResult.undirectedEdges} edges (capped)</div>
+                  <div className="text-slate-500">k={buildResult.k}, minSimilarity={buildResult.minSimilarity}, maxDegree={buildResult.maxDegree}</div>
+                </div>
+              )}
+            </div>
+          )}
+        </details>
+      </div>
+
+      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mt-6">OpenPlanner Job Queue</h3>
       <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-4 py-3 space-y-3">
         <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm text-slate-200">Build Semantic Edges</div>
-            <div className="text-xs text-slate-500">Full rebuild — find similar documents via vector search</div>
-          </div>
-          <button onClick={handleBuild} disabled={building}
-            className="rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-300 hover:bg-blue-500/20 disabled:opacity-50">
-            {building ? 'Building...' : 'Run'}
+          <div className="text-xs text-slate-500">/v1/jobs (live queue)</div>
+          <button
+            onClick={() => void loadOpenPlannerJobs()}
+            className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700"
+          >
+            refresh
           </button>
         </div>
-        {buildResult && (
-          <div className="text-xs bg-slate-900/50 rounded p-2 font-mono">
-            {buildResult.error ? (
-              <span className="text-rose-400">{buildResult.error}</span>
-            ) : (
-              <div className="space-y-0.5">
-                <div className="text-emerald-400">OK — {buildResult.nodes} nodes, {buildResult.cappedEdges || buildResult.undirectedEdges} edges (capped)</div>
-                <div className="text-slate-500">k={buildResult.k}, minSimilarity={buildResult.minSimilarity}, maxDegree={buildResult.maxDegree}</div>
-              </div>
-            )}
+        {openPlannerJobsError && (
+          <div className="rounded bg-rose-500/10 border border-rose-500/20 px-3 py-2 text-xs text-rose-300">{openPlannerJobsError}</div>
+        )}
+        {!openPlannerJobs ? (
+          <div className="text-xs text-slate-600">Loading…</div>
+        ) : openPlannerJobs.length === 0 ? (
+          <div className="text-xs text-slate-600">No jobs in queue</div>
+        ) : (
+          <div className="overflow-auto rounded border border-slate-700/30">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-900/40 text-slate-500">
+                <tr>
+                  <th className="text-left px-2 py-1">id</th>
+                  <th className="text-left px-2 py-1">kind</th>
+                  <th className="text-left px-2 py-1">status</th>
+                  <th className="text-left px-2 py-1">updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {openPlannerJobs.slice(0, 50).map((j: any) => (
+                  <tr key={String(j.id)} className="border-t border-slate-700/20 hover:bg-slate-700/10">
+                    <td className="px-2 py-1 font-mono text-slate-300 truncate max-w-[160px]">{String(j.id)}</td>
+                    <td className="px-2 py-1 text-slate-300">{String(j.kind || '')}</td>
+                    <td className="px-2 py-1 text-slate-400">{String(j.status || '')}</td>
+                    <td className="px-2 py-1 text-slate-600">{String(j.updated_at || j.updatedAt || '')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -1092,14 +1297,22 @@ export default function DataPage() {
         </div>
       )}
 
-      <main className="flex-1 overflow-y-auto p-6">
+      <main className={tab === 'graph' ? 'flex-1 overflow-hidden p-0' : 'flex-1 overflow-y-auto p-6'}>
         {tab === 'overview' && <OverviewTab sources={sources} jobs={jobs} health={health} graphStats={graphStats} onBuildEdges={handleBuildEdges} />}
         {tab === 'sources' && <SourcesTab sources={sources} jobs={jobs} onSync={handleSync} />}
         {tab === 'files' && <FileExplorerTab />}
         {tab === 'documents' && <DocumentsTab />}
         {tab === 'graph' && <GraphExplorer nodes={graphData?.nodes || []} />}
         {tab === 'database' && <DatabaseTab />}
-        {tab === 'services' && <ServicesTab health={health} onBuildEdges={handleBuildEdges} />}
+        {tab === 'services' && (
+          <ServicesTab
+            health={health}
+            sources={sources}
+            syncing={syncing}
+            onSync={handleSync}
+            onBuildEdges={handleBuildEdges}
+          />
+        )}
       </main>
     </div>
   );

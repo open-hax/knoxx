@@ -1,19 +1,23 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
-import { getRun, knoxxAbort, knoxxChatStart, knoxxControl } from '../../lib/api';
+import { getRun, knoxxAbort, knoxxChatStart, knoxxControl, knoxxUndoSessionTurn } from '../../lib/api';
 import type { ChatMessage, ChatTraceBlock, ContentPart, RunDetail, RunEvent } from '../../lib/types';
 import { getChatStorage, initializePersistedChatSession } from './hooks';
-import { controlTimelineMessageFromEvent, truncateText } from './utils';
+import { controlTimelineMessageFromEvent, rewindTranscriptTurns, truncateText } from './utils';
 
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
 type CreateChatRuntimeActionsParams = {
   makeId: () => string;
   systemPrompt: string;
+  activeRole: string;
+  activeActorId: string;
+  activeAgentId: string;
   sessionId: string;
   setSessionId: SetState<string>;
   conversationId: string | null;
   setConversationId: SetState<string | null>;
   selectedModel: string;
+  selectedThinkingLevel: string;
   liveControlEnabled: boolean;
   liveControlText: string;
   setLiveControlText: SetState<string>;
@@ -33,11 +37,15 @@ type CreateChatRuntimeActionsParams = {
 export function createChatRuntimeActions({
   makeId,
   systemPrompt,
+  activeRole,
+  activeActorId,
+  activeAgentId,
   sessionId,
   setSessionId,
   conversationId,
   setConversationId,
   selectedModel,
+  selectedThinkingLevel,
   liveControlEnabled,
   liveControlText,
   setLiveControlText,
@@ -90,6 +98,7 @@ export function createChatRuntimeActions({
                 : run.status === 'failed' && typeof run.error === 'string' && run.error.length > 0
                   ? `Agent request failed.\n\n${run.error}`
                   : message.content,
+            contentParts: run.contentParts ?? message.contentParts,
             model: run.model ?? message.model,
             sources: Array.isArray(run.sources) ? run.sources : message.sources,
             runId,
@@ -148,6 +157,49 @@ export function createChatRuntimeActions({
     }
   };
 
+  const voiceSteer = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || !conversationId || !liveControlEnabled) {
+      return;
+    }
+
+    setQueueingControl("steer");
+    try {
+      const response = await knoxxControl({
+        kind: "steer",
+        message: trimmed,
+        conversation_id: conversationId,
+        session_id: sessionId,
+        run_id: activeRunIdRef.current,
+      });
+      const optimisticTimelineMessage = controlTimelineMessageFromEvent({
+        type: "steer_queued",
+        preview: truncateText(trimmed, 240),
+        run_id: response.run_id ?? activeRunIdRef.current ?? undefined,
+      });
+      if (optimisticTimelineMessage) {
+        appendMessageIfMissing(optimisticTimelineMessage);
+      }
+      setLiveControlText("");
+      appendConsoleLine(
+        `[agent:steer] queued for conversation=${response.conversation_id ?? conversationId} run=${response.run_id ?? activeRunIdRef.current ?? "pending"}`,
+      );
+    } catch (error) {
+      const failedTimelineMessage = controlTimelineMessageFromEvent({
+        type: "steer_failed",
+        preview: truncateText(trimmed, 240),
+        run_id: activeRunIdRef.current ?? undefined,
+        error: (error as Error).message,
+      });
+      if (failedTimelineMessage) {
+        appendMessageIfMissing(failedTimelineMessage);
+      }
+      appendConsoleLine(`[agent:steer] failed: ${(error as Error).message}`);
+    } finally {
+      setQueueingControl(null);
+    }
+  };
+
   const abortTurn = async () => {
     if (!conversationId) {
       appendConsoleLine('[abort] missing conversation id');
@@ -167,6 +219,41 @@ export function createChatRuntimeActions({
       appendConsoleLine(`[abort] failed: ${(error as Error).message}`);
     } finally {
       setAbortingTurn(false);
+    }
+  };
+
+  const handleUndoLastTurn = async () => {
+    if (!sessionId) {
+      appendConsoleLine('[undo] session not ready');
+      return;
+    }
+
+    if (pendingAssistantIdRef.current) {
+      appendConsoleLine('[undo] wait for the active turn to finish or abort it first');
+      return;
+    }
+
+    try {
+      const response = await knoxxUndoSessionTurn({
+        session_id: sessionId,
+        conversation_id: conversationId,
+        turns: 1,
+      });
+      if (!response.ok) {
+        throw new Error(response.error || 'Undo failed');
+      }
+
+      setMessages((prev) => rewindTranscriptTurns(prev, 1));
+      setLatestRun(null);
+      setRuntimeEvents([]);
+      setLiveControlText('');
+      setIsSending(false);
+      setConversationId(response.conversation_id ?? conversationId ?? null);
+      pendingAssistantIdRef.current = null;
+      activeRunIdRef.current = null;
+      appendConsoleLine(`[undo] removed ${response.removed_count ?? 0} message(s) from the latest turn`);
+    } catch (error) {
+      appendConsoleLine(`[undo] failed: ${(error as Error).message}`);
     }
   };
 
@@ -213,7 +300,13 @@ export function createChatRuntimeActions({
         session_id: sessionId,
         run_id: activeRunIdRef.current,
         model: selectedModel,
+        thinkingLevel: selectedThinkingLevel,
         contentParts,
+        agentSpec: {
+          actor_id: activeActorId || undefined,
+          contract_id: activeAgentId || undefined,
+          role: activeRole,
+        },
       });
       const runId = response.run_id ?? activeRunIdRef.current;
       if (runId) {
@@ -257,7 +350,10 @@ export function createChatRuntimeActions({
       store?.removeItem(sessionStateKey);
       initializePersistedChatSession(sessionStateKey, nextSessionId, nextConversationId, {
         selectedModel,
+        selectedThinkingLevel,
         systemPrompt,
+        activeActorId,
+        activeAgentId,
       });
     } catch {
       // ignore storage failures
@@ -277,8 +373,10 @@ export function createChatRuntimeActions({
     appendMessageIfMissing,
     handleNewChat,
     handleSend,
+    handleUndoLastTurn,
     loadRunDetail,
     queueLiveControl,
+    voiceSteer,
     abortTurn,
     updateMessageById,
     updateTraceBlocksByMessageId,

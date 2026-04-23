@@ -1,0 +1,7 @@
+{:cap/id :cap/translation
+ :cap/tools [:save_translation]
+ :cap/user-surfaces [{:surface/id :workspace/translation-review
+                      :surface/label "Translation review workspace"
+                      :surface/kind :editor
+                      :surface/routes ["/translations"]
+                      :surface/description "Humans review and approve translations in the translation workspace; agents use save_translation."}]}

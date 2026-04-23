@@ -11,6 +11,7 @@ export type BrowseEntry = {
   failed_count?: number;
   last_ingested_at?: string | null;
   last_error?: string | null;
+  visibility?: "internal" | "review" | "public" | "archived";
 };
 
 export type BrowseResponse = {
@@ -75,6 +76,8 @@ export type SessionStateSnapshot = {
   sessionId?: string;
   systemPrompt?: string;
   selectedModel?: string;
+  selectedThinkingLevel?: string;
+  activeAgentId?: string;
   conversationId?: string | null;
   messages?: RunDetail["request_messages"] | unknown;
   latestRun?: RunDetail | null;

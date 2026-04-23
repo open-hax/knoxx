@@ -1,0 +1,10 @@
+{:actor/id "pi"
+ :actor/kind :user
+ :actor/email "pi@open-hax.local"
+ :actor/username "pi@open-hax.local"
+ :actor/org "open-hax"
+ :actor/label "Pi"
+ :actor/roles [:role/system-admin]
+ :actor/policy {:principal :actor
+                :source-of-truth :contract
+                :notes "Canonical development API-key actor for pi. Valid Knoxx API-key requests can resolve this email as a real user membership, and the actor contract remains the source of truth for role + actor assignment."}}

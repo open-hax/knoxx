@@ -1,0 +1,7 @@
+{:actor/id "admin_page"
+ :actor/kind :user
+ :actor/org "open-hax"
+ :actor/label "Admin"
+ :actor/roles [:role/system-admin]
+ :actor/policy {:principal :actor
+                :notes "Admin surface actor. Governs the admin page context and its agent-equivalent tool access."}}

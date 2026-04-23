@@ -1,0 +1,40 @@
+{:contract/id "actor_capability_surface_parity"
+ :contract/kind :policy
+ :contract/doc "Actors are the policy principal in Knoxx. Only two actor kinds are valid: :agent for AI runtimes and :user for humans. Capabilities must describe both the agent tool surface and the human UI surface so policy reasoning has a single shared atom across both execution modes."
+ :contract/scope "actors roles capabilities"
+ :contract/uses ["actors" "roles" "capabilities"]
+ :policy/invariants
+ [{:id "actors-use-agent-or-user-kinds"
+   :severity :block
+   :message "Actors must declare :actor/kind as either :agent or :user."
+   :check {:rule :actor-kind-known}}
+  {:id "user-actors-do-not-declare-default-agent"
+   :severity :warn
+   :message "User actors should model humans and normally should not set :actor/default-agent."
+   :check {:rule :user-actor-without-default-agent}}
+  {:id "capability-has-agent-tools"
+   :severity :block
+   :message "Every capability must declare the agent tools that implement it."
+   :check {:rule :capability-tools-present}}
+  {:id "capability-has-user-surfaces"
+   :severity :block
+   :message "Every capability must declare at least one human-facing UI surface."
+   :check {:rule :capability-user-surfaces-present}}
+  {:id "roles-compose-capabilities"
+   :severity :block
+   :message "Roles must compose capabilities; direct per-surface policy should be expressed via capabilities, not ad-hoc endpoint lists."
+   :check {:rule :roles-reference-capabilities}}
+  {:id "actor-policy-binds-to-capabilities"
+   :severity :note
+   :message "Actor policies should speak in terms of actors, roles, and capabilities so user surfaces and agent tools stay in lockstep."
+   :check {:rule :actor-policy-uses-capabilities}}]
+ :policy/required
+ [{:id "human-surface-agent-tool-parity"
+   :severity :block
+   :message "Any human surface that exists for a capability needs an agent-tool equivalent, and any agent tool that exists for a capability needs a human surface equivalent."
+   :check {:rule :capability-surface-tool-parity}}
+  {:id "file-editing-is-mode-specific"
+   :severity :note
+   :message "Implementations may differ by actor kind: humans may use editors and panels while agents use narrower file-edit tools, but both must route through the same capability."
+   :check {:rule :implementation-may-differ-while-capability-stays-shared}}]
+ :policy/checked-by :contract-validator}

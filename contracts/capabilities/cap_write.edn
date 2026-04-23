@@ -1,0 +1,7 @@
+{:cap/id :cap/write
+ :cap/tools [:write]
+ :cap/user-surfaces [{:surface/id :workspace/new-document
+                      :surface/label "New document flow"
+                      :surface/kind :editor
+                      :surface/routes ["/" "/ops/documents"]
+                      :surface/description "Humans create drafts and files from creation flows; agents use write."}]}

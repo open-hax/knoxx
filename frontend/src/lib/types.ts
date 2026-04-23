@@ -167,6 +167,7 @@ export interface ToolReceipt {
   result_preview?: string;
   updates?: string[];
   is_error?: boolean;
+  contentParts?: ContentPart[];
   [key: string]: unknown;
 }
 
@@ -186,7 +187,8 @@ export interface RunDetail extends RunSummary {
   session_id?: string | null;
   conversation_id?: string | null;
   answer?: string | null;
-  request_messages: Array<{ role: string; content: string }>;
+  contentParts?: ContentPart[];
+  request_messages: Array<{ role: string; content: string; contentParts?: ContentPart[] }>;
   settings: Record<string, unknown>;
   resources: Record<string, unknown>;
   events?: RunEvent[];
@@ -288,11 +290,18 @@ export interface FrontendConfig {
   shibboleth_ui_url: string;
   shibboleth_enabled: boolean;
   default_role: string;
+  default_actor_id?: string;
+  default_agent_contract?: string;
   email_enabled: boolean;
 
   // Voice / STT (optional)
   stt_enabled?: boolean;
   stt_base_url?: string;
+
+  // Voice / TTS (optional)
+  tts_enabled?: boolean;
+  tts_provider?: string;
+  tts_default_voice_id?: string;
 }
 
 export interface SttTranscribeResponse {
@@ -312,9 +321,44 @@ export interface ToolDefinition {
 
 export interface ToolCatalogResponse {
   role: string;
+  actor_id?: string | null;
+  agent_id?: string | null;
+  agent_label?: string | null;
+  agent_trigger_kind?: string | null;
+  role_slugs?: string[];
+  capability_ids?: string[];
+  system_prompt?: string | null;
+  actor_system_prompt?: string | null;
+  agent_system_prompt?: string | null;
+  task_prompt?: string | null;
   tools: ToolDefinition[];
   email_enabled: boolean;
 }
+
+export interface ActorCatalogItem {
+  id: string;
+  kind?: string | null;
+  defaultAgent?: string | null;
+  roleSlugs?: string[];
+}
+
+export interface AgentContractCatalogItem {
+  id: string;
+  role: string;
+  model?: string | null;
+  triggerKind?: string | null;
+  actorId?: string | null;
+}
+
+export interface AgentContractCatalogResponse {
+  actor_id?: string | null;
+  default_actor_id?: string | null;
+  actors?: ActorCatalogItem[];
+  agents: AgentContractCatalogItem[];
+  default_agent_contract?: string | null;
+}
+
+export type ContractsClass = "agents" | "actors" | "roles" | "capabilities" | "policies";
 
 export interface EmailSendResponse {
   ok: boolean;
@@ -422,6 +466,7 @@ export interface AdminRoleSummary {
 export interface AdminMembershipSummary {
   id: string;
   orgId: string;
+  actorId?: string;
   orgName?: string;
   orgSlug?: string;
   status: string;
@@ -646,9 +691,13 @@ export interface TranslationManifest {
 }
 
 export interface KnoxxAuthContext {
+  actor?: {
+    id: string;
+  };
   user: {
     id: string;
     email: string;
+    username?: string;
     displayName: string;
     status: string;
   };
@@ -662,6 +711,7 @@ export interface KnoxxAuthContext {
   };
   membership: {
     id: string;
+    actorId?: string;
     status: string;
     isDefault?: boolean;
     createdAt?: string;

@@ -156,6 +156,10 @@ export default function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
         <p className="text-center text-xs text-slate-600">
           By signing in, you agree to the Knoxx terms of service.
         </p>
+
+        <p className="text-center text-xs text-slate-500">
+          Need a basic chat account for testing? <a href="/signup" className="text-blue-400 hover:text-blue-300">Sign up</a>
+        </p>
       </div>
     </div>
   );

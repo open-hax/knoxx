@@ -1,14 +1,14 @@
 (ns knoxx.backend.agent-runtime
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-hydration :refer [create-knoxx-custom-tools]]
+            [knoxx.backend.agent-hydration :refer [create-agent-custom-tools]]
+            [knoxx.backend.http :as http]
             [knoxx.backend.http :refer [no-content? request-query-string request-forward-headers request-forward-body]]
-            [knoxx.backend.openplanner-memory :refer [rehydrate-session-manager!]]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
-            [knoxx.backend.runtime.models :refer [normalize-thinking-level models-config allowlisted-model-id?]]
+            [knoxx.backend.runtime.models :refer [normalize-thinking-level effective-thinking-level models-config allowlisted-model-id?]]
             [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.tooling :refer [create-runtime-tools]]))
+            [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]))
 
 (defonce sdk-runtime* (atom nil))
 (defonce agent-sessions* (atom {}))
@@ -96,35 +96,139 @@
                     ;; Keep Knoxx running even if Proxx is offline or auth fails.
                     (js/Promise.resolve [])))))))
 
+(defn- stored-content-part->agent-part
+  [part]
+  (let [part-type (some-> (:type part) str str/lower-case)
+        text (some-> (:text part) str)
+        data (or (:data part) (:url part))
+        mime-type (some-> (:mimeType part) str)
+        filename (some-> (:filename part) str)]
+    (case part-type
+      "text" (when (not (str/blank? (str text)))
+               #js {:type "text" :text text})
+      "image" (when (not (str/blank? (str data)))
+                 #js {:type "image" :data data :mimeType mime-type})
+      "audio" (when (not (str/blank? (str data)))
+                 #js {:type "audio" :data data :mimeType mime-type})
+      "video" (when (not (str/blank? (str data)))
+                 #js {:type "video" :data data :mimeType mime-type})
+      "document" (when (not (str/blank? (str data)))
+                     #js {:type "document" :data data :mimeType mime-type :filename filename})
+      nil)))
+
 (defn stored-session-message->agent-message
   [message]
   (let [role (some-> (:role message) str)
-        content (some-> (:content message) str)]
+        content (some-> (:content message) str)
+        content-parts (vec (keep stored-content-part->agent-part (or (:content-parts message) [])))
+        payload (cond
+                  (seq content-parts) (clj->js content-parts)
+                  (not (str/blank? content)) #js [#js {:type "text" :text content}]
+                  :else nil)]
     (when (and (contains? #{"user" "assistant" "system"} role)
-               (not (str/blank? content)))
+               payload)
       #js {:role role
-           :content #js [#js {:type "text" :text content}]
+           :content payload
            :timestamp (.now js/Date)})))
 
+(defn- planner-row->stored-session-message
+  [row]
+  (let [role (some-> (:role row) str)
+        text (some-> (:text row) str)]
+    (when (and (contains? #{"user" "assistant" "system"} role)
+               (not (str/blank? text)))
+      {:role role
+       :content text})))
+
+(defn- fetch-openplanner-session-messages!
+  [config conversation-id]
+  (if (or (str/blank? conversation-id)
+          (not (http/openplanner-enabled? config)))
+    (js/Promise.resolve [])
+    (-> (http/openplanner-request! config "GET" (str "/v1/sessions/" conversation-id))
+        (.then (fn [body]
+                 (->> (or (:rows body) [])
+                      (keep planner-row->stored-session-message)
+                      vec)))
+        (.catch (fn [err]
+                  (.warn js/console "[knoxx] failed to fetch OpenPlanner session transcript" err)
+                  [])))))
+
+(defn- comparable-session-message
+  [message]
+  {:role (some-> (:role message) str)
+   :content (some-> (:content message) str)})
+
+(defn merge-restored-session-messages
+  [base-messages overlay-messages]
+  (let [base (vec (or base-messages []))
+        overlay (vec (or overlay-messages []))
+        base* (mapv comparable-session-message base)
+        overlay* (mapv comparable-session-message overlay)
+        overlap (loop [n (min (count base*) (count overlay*))]
+                  (cond
+                    (zero? n) 0
+                    (= (subvec base* (- (count base*) n))
+                       (subvec overlay* 0 n)) n
+                    :else (recur (dec n))))]
+    (into base (subvec overlay overlap))))
+
+(defn sync-system-message
+  [messages system-prompt]
+  (let [items (vec (or messages []))
+        prompt (some-> system-prompt str str/trim not-empty)]
+    (if-not prompt
+      items
+      (let [system-index (reduce-kv (fn [_ idx entry]
+                                      (when (= "system" (some-> (:role entry) str str/lower-case))
+                                        (reduced idx)))
+                                    nil
+                                    items)]
+        (if (some? system-index)
+          (let [updated (assoc items system-index {:role "system" :content prompt})]
+            (->> updated
+                 (keep-indexed (fn [idx entry]
+                                 (when (or (not= "system" (some-> (:role entry) str str/lower-case))
+                                           (= idx system-index))
+                                   entry)))
+                 vec))
+          (into [{:role "system" :content prompt}] items))))))
+
 (defn rehydrate-session-manager-from-redis!
-  [session-manager conversation-id]
-  (let [redis-client (redis/get-client)]
-    (if (or (str/blank? conversation-id) (nil? redis-client))
-      (js/Promise.resolve #js {:sessionManager session-manager
-                               :restored false})
-      (-> (session-store/get-conversation-active-session redis-client conversation-id)
-          (.then (fn [session-id]
-                   (if (str/blank? (str (or session-id "")))
-                     #js {:sessionManager session-manager
-                          :restored false}
-                     (-> (session-store/get-session redis-client session-id)
-                         (.then (fn [session]
-                                  (let [messages (vec (or (:messages session) []))]
-                                    (doseq [message messages]
-                                      (when-let [agent-message (stored-session-message->agent-message message)]
-                                        (.appendMessage session-manager agent-message)))
-                                    #js {:sessionManager session-manager
-                                         :restored (boolean (seq messages))})))))))))))
+  ([config session-manager conversation-id]
+   (rehydrate-session-manager-from-redis! config session-manager conversation-id nil nil))
+  ([config session-manager conversation-id agent-spec]
+   (rehydrate-session-manager-from-redis! config session-manager conversation-id nil agent-spec))
+  ([config session-manager conversation-id session-id agent-spec]
+   (let [redis-client (redis/get-client)
+         preferred-session-id (some-> session-id str str/trim not-empty)
+         fetch-session-messages!
+         (fn [target-session-id]
+           (if (or (str/blank? (str (or target-session-id "")))
+                   (nil? redis-client))
+             (js/Promise.resolve [])
+             (-> (session-store/get-session redis-client target-session-id)
+                 (.then (fn [session]
+                          (vec (or (:messages session) [])))))))]
+     (-> (.all js/Promise
+               #js [(fetch-openplanner-session-messages! config conversation-id)
+                    (if preferred-session-id
+                      (fetch-session-messages! preferred-session-id)
+                      (if (or (str/blank? conversation-id) (nil? redis-client))
+                        (js/Promise.resolve [])
+                        (-> (session-store/get-conversation-active-session redis-client conversation-id)
+                            (.then (fn [active-session-id]
+                                     (fetch-session-messages! active-session-id))))))])
+         (.then (fn [parts]
+                  (let [openplanner-messages (vec (or (aget parts 0) []))
+                        redis-messages (vec (or (aget parts 1) []))
+                        merged-messages (-> (merge-restored-session-messages openplanner-messages redis-messages)
+                                            (sync-system-message (:system-prompt agent-spec)))]
+                    (doseq [message merged-messages]
+                      (when-let [agent-message (stored-session-message->agent-message message)]
+                        (.appendMessage session-manager agent-message)))
+                    #js {:sessionManager session-manager
+                         :restored (boolean (seq merged-messages))})))))))
 
 (defn request-stream-body
   [request]
@@ -146,16 +250,96 @@
         stream-opts (request-stream-body request)]
     (js/fetch target-url (.assign js/Object base stream-opts (clj->js extra)))))
 
+(defn- effective-tool-auth-context
+  [auth-context allowed-tool-ids]
+  (if-not auth-context
+    nil
+    (assoc auth-context
+           :toolPolicies (mapv (fn [tool-id]
+                                 {:toolId tool-id :effect "allow"})
+                               (sort (vec allowed-tool-ids))))))
+
+(defn- configured-extra-root-records
+  [node-path config]
+  (let [music-root (some-> (:music-library-root config) str str/trim not-empty)
+        extra-roots (->> (or (:extra-workspace-roots config) [])
+                         (map (fn [raw]
+                                (some-> raw str str/trim not-empty)))
+                         (remove nil?))]
+    (->> (concat
+          (when music-root
+            [{:alias "Music"
+              :root (path-resolve node-path music-root)}])
+          (map (fn [raw-root]
+                 {:alias nil
+                  :root (path-resolve node-path raw-root)})
+               extra-roots))
+         (reduce (fn [acc entry]
+                   (if (some #(= (:root %) (:root entry)) acc)
+                     acc
+                     (conj acc entry)))
+                 [])
+         vec)))
+
+(defn- path-resolve
+  [^js node-path & parts]
+  (case (count parts)
+    0 (.resolve node-path)
+    1 (.resolve node-path (nth parts 0))
+    2 (.resolve node-path (nth parts 0) (nth parts 1))
+    3 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2))
+    4 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3))
+    5 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4))
+    6 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5))
+    7 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5) (nth parts 6))
+    (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5) (nth parts 6) (nth parts 7))))
+
+(defn- path-relative
+  [^js node-path from to]
+  (.relative node-path from to))
+
+(defn- path-is-absolute?
+  [^js node-path value]
+  (.isAbsolute node-path value))
+
+(defn- allowed-root-records
+  [node-path config]
+  (vec (cons {:alias nil
+              :root (path-resolve node-path (:workspace-root config))}
+             (configured-extra-root-records node-path config))))
+
+(defn- root-relative-path
+  [node-path root candidate]
+  (let [rel (path-relative node-path root candidate)]
+    (when-not (or (str/starts-with? rel "..")
+                  (path-is-absolute? node-path rel))
+      rel)))
+
 (defn resolve-workspace-path
   [runtime config raw-path]
   (let [node-path (aget runtime "path")
-        workspace-root (.resolve node-path (:workspace-root config))
-        candidate (if (.isAbsolute node-path raw-path)
-                    (.resolve node-path raw-path)
-                    (.resolve node-path workspace-root raw-path))
-        rel (.relative node-path workspace-root candidate)]
-    (when (or (str/starts-with? rel "..") (.isAbsolute node-path rel))
-      (throw (js/Error. "Path escapes workspace root")))
+        requested (some-> raw-path str str/trim not-empty)
+        roots (allowed-root-records node-path config)
+        music-root (some #(when (= "Music" (:alias %)) %) roots)
+        candidate (cond
+                    (path-is-absolute? node-path (or requested ""))
+                    (path-resolve node-path requested)
+
+                    (and requested
+                         music-root
+                         (or (= requested "Music")
+                             (str/starts-with? requested "Music/")))
+                    (let [suffix (subs requested (min (count requested) (count "Music/")))]
+                      (path-resolve node-path (:root music-root) suffix))
+
+                    :else
+                    (path-resolve node-path (:workspace-root config) (or requested "")))
+        matched-root (some (fn [root-record]
+                             (when (root-relative-path node-path (:root root-record) candidate)
+                               root-record))
+                           roots)]
+    (when-not matched-root
+      (throw (js/Error. "Path escapes allowed workspace roots")))
     candidate))
 
 (defn ensure-sdk-runtime!
@@ -200,15 +384,17 @@
                                loader (DefaultResourceLoader.
                                        #js {:cwd (:workspace-root config)
                                             :agentDir runtime-dir
-                                            :settingsManager settings-manager
-                                            :systemPromptOverride (fn [_] (:agent-system-prompt config))})]
+                                            :settingsManager settings-manager})]
                            (-> (.reload loader)
                                (.then (fn []
                                         #js {:authStorage auth-storage
                                              :modelRegistry model-registry
                                              :settingsManager settings-manager
                                              :loader loader
-                                             :runtimeDir runtime-dir})))))))]
+                                             :runtimeDir runtime-dir}))))))
+                (.catch (fn [err]
+                          (reset! sdk-runtime* nil)
+                          (js/Promise.reject err))))]
       (reset! sdk-runtime* p)
       p)))
 
@@ -218,54 +404,84 @@
   ([runtime config conversation-id model-id auth-context thinking-level]
    (create-agent-session! runtime config conversation-id model-id auth-context thinking-level nil))
   ([runtime config conversation-id model-id auth-context thinking-level session-id]
+   (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id nil))
+  ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec]
    (-> (ensure-sdk-runtime! runtime config)
-      (.then
-       (fn [sdk-runtime]
-         (let [sdk (aget runtime "sdk")
-               SessionManager (aget sdk "SessionManager")
-               createAgentSession (aget sdk "createAgentSession")
+       (.then
+        (fn [sdk-runtime]
+          (let [sdk (aget runtime "sdk")
+                SessionManager (aget sdk "SessionManager")
+                createAgentSession (aget sdk "createAgentSession")
                 model-registry (aget sdk-runtime "modelRegistry")
                 auth-storage (aget sdk-runtime "authStorage")
                 loader (aget sdk-runtime "loader")
                 settings-manager (aget sdk-runtime "settingsManager")
-                thinking-level (or (normalize-thinking-level thinking-level)
-                                   (:agent-thinking-level config)
-                                   "off")
+                thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
+                                                                            thinking-level
+                                                                            (:agent-thinking-level config)
+                                                                            "off"))
                 model (or (.find model-registry "proxx" model-id)
                           (.find model-registry "proxx" (:proxx-default-model config)))
+                allowed-tool-ids (allowed-tool-id-set config
+                                                      (:role agent-spec)
+                                                      auth-context
+                                                      (:contract-id agent-spec)
+                                                      (:actor-id agent-spec))
+                tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
                 create-session (fn [session-manager]
                                  (-> (createAgentSession
                                       #js {:cwd (:workspace-root config)
-                                          :agentDir (aget sdk-runtime "runtimeDir")
-                                          :authStorage auth-storage
-                                          :modelRegistry model-registry
-                                          :resourceLoader loader
-                                          :settingsManager settings-manager
-                                          :sessionManager session-manager
-                                          :model model
+                                           :agentDir (aget sdk-runtime "runtimeDir")
+                                           :authStorage auth-storage
+                                           :modelRegistry model-registry
+                                           :resourceLoader loader
+                                           :settingsManager settings-manager
+                                           :sessionManager session-manager
+                                           :model model
                                            :thinkingLevel thinking-level
-                                           :tools (clj->js (create-runtime-tools runtime config auth-context))
-                                           :customTools (create-knoxx-custom-tools runtime config auth-context)})
+                                           :tools (clj->js (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)))
+                                           :customTools (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)})
                                      (.then (fn [result]
                                               (let [session (aget result "session")]
                                                 (.setThinkingLevel session thinking-level)
                                                 session)))))]
-             (if (no-content? model)
-               (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))
-               (let [session-manager (.inMemory SessionManager (:workspace-root config))]
-                 (when-not (str/blank? (str (or session-id "")))
-                   (.newSession session-manager #js {:id (str session-id)}))
-                 (.appendModelChange session-manager "proxx" model-id)
-                 (.appendThinkingLevelChange session-manager thinking-level)
-                 (-> (rehydrate-session-manager-from-redis! session-manager conversation-id)
-                     (.then (fn [result]
-                              (let [restored? (aget result "restored")
-                                    hydrated-manager (aget result "sessionManager")]
-                                (if restored?
-                                  (create-session hydrated-manager)
-                                  (-> (rehydrate-session-manager! config hydrated-manager conversation-id model-id)
-                                      (.then (fn [openplanner-manager]
-                                               (create-session openplanner-manager)))))))))))))))))
+            (if (no-content? model)
+              (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))
+              (let [session-manager (.inMemory SessionManager (:workspace-root config))]
+                (when-not (str/blank? (str (or session-id "")))
+                  (.newSession session-manager #js {:id (str session-id)}))
+                (.appendModelChange session-manager "proxx" model-id)
+                (.appendThinkingLevelChange session-manager thinking-level)
+                (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id session-id agent-spec)
+                    (.then (fn [result]
+                             (create-session (aget result "sessionManager")))))))))))))
+
+(defn- visible-session-signature
+  [runtime config auth-context agent-spec]
+  (let [name-of (fn [tool]
+                  (or (some-> tool (aget "name") str str/trim not-empty)
+                      (some-> tool (aget "id") str str/trim not-empty)
+                      (some-> tool (aget "label") str str/trim not-empty)))
+        allowed-tool-ids (allowed-tool-id-set config
+                                              (:role agent-spec)
+                                              auth-context
+                                              (:contract-id agent-spec)
+                                              (:actor-id agent-spec))
+        tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
+        builtin-tools (or (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)) [])
+        custom-tools (if-let [tools (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)]
+                       (if (array? tools) (array-seq tools) [])
+                       [])]
+    (pr-str {:tools (->> (concat builtin-tools custom-tools)
+                         (keep name-of)
+                         sort
+                         distinct
+                         vec)
+             :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
+             :actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)
+             :role (some-> (:role agent-spec) str str/trim not-empty)
+             :system-prompt (some-> (:system-prompt agent-spec) str str/trim not-empty)
+             :task-prompt (some-> (:task-prompt agent-spec) str str/trim not-empty)})))
 
 (defn ensure-agent-session!
   ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
@@ -273,26 +489,36 @@
   ([runtime config conversation-id model-id auth-context thinking-level]
    (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level nil))
   ([runtime config conversation-id model-id auth-context thinking-level session-id]
-  (let [thinking-level (or (normalize-thinking-level thinking-level)
-                           (:agent-thinking-level config)
-                           "off")]
-    (if-let [entry (get @agent-sessions* conversation-id)]
-      (let [session (:session entry)
-            active-model (:model-id entry)]
-        (if (and (some? session)
-                 (= (str active-model) (str model-id)))
-          (do
-            (.setThinkingLevel session thinking-level)
-            (js/Promise.resolve session))
-          ;; Model changed mid-conversation: rebuild session so the requested model is respected.
-          (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
-              (.then (fn [next-session]
-                       (swap! agent-sessions* assoc conversation-id {:session next-session :model-id model-id})
-                       next-session)))))
-      (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id)
-          (.then (fn [session]
-                   (swap! agent-sessions* assoc conversation-id {:session session :model-id model-id})
-                   session)))))))
+   (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id nil))
+  ([runtime config conversation-id model-id auth-context thinking-level session-id agent-spec]
+   (let [thinking-level (effective-thinking-level config model-id (or (normalize-thinking-level thinking-level)
+                                                                      thinking-level
+                                                                      (:agent-thinking-level config)
+                                                                      "off"))
+         current-tool-signature (visible-session-signature runtime config auth-context agent-spec)]
+     (if-let [entry (get @agent-sessions* conversation-id)]
+       (let [session (:session entry)
+             active-model (:model-id entry)
+             active-tool-signature (:tool-signature entry)]
+         (if (and (some? session)
+                  (= (str active-model) (str model-id))
+                  (= (str (or active-tool-signature "")) (str (or current-tool-signature ""))))
+           (do
+             (.setThinkingLevel session thinking-level)
+             (js/Promise.resolve session))
+           ;; Model or tool access changed mid-conversation: rebuild session so the requested runtime is respected.
+           (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
+               (.then (fn [next-session]
+                        (swap! agent-sessions* assoc conversation-id {:session next-session
+                                                                      :model-id model-id
+                                                                      :tool-signature current-tool-signature})
+                        next-session)))))
+       (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
+           (.then (fn [session]
+                    (swap! agent-sessions* assoc conversation-id {:session session
+                                                                  :model-id model-id
+                                                                  :tool-signature current-tool-signature})
+                    session)))))))
 
 (defn active-agent-session
   [conversation-id]

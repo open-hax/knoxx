@@ -29,8 +29,8 @@ module.exports = {
         REDIS_URL: 'redis://localhost:6379',
         OPENPLANNER_BASE_URL: 'http://localhost:7777',
         OPENPLANNER_API_KEY: 'change-me',
-        PROXX_BASE_URL: 'http://localhost:8790',
-        PROXX_AUTH_TOKEN: 'change-me',
+        PROXX_BASE_URL: 'http://localhost:8789',
+        PROXX_AUTH_TOKEN: 'change-me-open-hax-proxy-token',
       },
     },
 

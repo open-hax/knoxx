@@ -1,6 +1,7 @@
 import { Badge, Card, Markdown } from "@open-hax/uxx";
 import type { CSSProperties } from "react";
 import type { ChatTraceBlock, ToolReceipt, RunEvent } from "../lib/types";
+import { MultimodalContent } from "./chat-page/MultimodalContent";
 
 const TOOL_STRUCTURED_MAX_DEPTH = 5;
 const TOOL_STRUCTURED_MAX_KEYS = 32;
@@ -310,6 +311,7 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
   // and fall back to raw JSON-like strings in the UI.
   const inputMarkdown = inputPreview ? toolPreviewMarkdown(inputPreview) : "_(inputs unavailable)_";
   const resultMarkdown = resultPreview ? toolOutputMarkdown(resultPreview) : "";
+  const contentParts = Array.isArray(receipt.contentParts) ? receipt.contentParts : [];
   const liveUpdateMarkdown = !resultMarkdown && receipt.updates && receipt.updates.length > 0
     ? toolOutputMarkdown(receipt.updates[receipt.updates.length - 1])
     : "";
@@ -418,6 +420,19 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
               copyButton={false}
             />
           </div>
+        </div>
+      ) : null}
+
+      {contentParts.length > 0 ? (
+        <div style={{ ...sectionStyle, marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)", marginBottom: 6 }}>
+            Attachments
+          </div>
+          <MultimodalContent
+            parts={contentParts}
+            maxPreviewWidth={defaultExpanded ? 480 : 320}
+            maxPreviewHeight={defaultExpanded ? 360 : 240}
+          />
         </div>
       ) : null}
 

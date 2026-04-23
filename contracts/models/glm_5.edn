@@ -1,0 +1,11 @@
+{:model/id "glm-5"
+ :model-family/id "glm-5"
+ :model/provider :proxx
+ :model/label "GLM 5"
+ :model/allowlisted true
+ :model/reasoning true
+ :model/default-thinking :off
+ :model/thinking-levels [:off :minimal :low :medium :high :xhigh]
+ :model/context-window 128000
+ :model/max-tokens 8192
+ :model/input [:text]}

@@ -1,6 +1,7 @@
 (ns knoxx.backend.openplanner-memory
   (:require [clojure.string :as str]
             [knoxx.backend.http :as backend-http]
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.util.time :as time]))
 
 (defn js-array-seq
@@ -316,6 +317,13 @@
        (when-let [result (:result_preview receipt)]
          (str "\nOutput:\n" result))))
 
+(defn- sanitize-tool-receipt-for-indexing
+  [receipt]
+  (-> receipt
+      (dissoc :content_parts)
+      (dissoc :contentParts)
+      (dissoc :attachments)))
+
 (defn run-summary-text
   [run]
   (str "Run " (:run_id run)
@@ -329,7 +337,26 @@
 
 (defn run-scope-extra
   [run]
-  (select-keys run [:org_id :org_slug :user_id :user_email :membership_id]))
+  (let [base (select-keys run [:org_id :org_slug :user_id :user_email :membership_id])
+        agent-spec (or (get-in run [:settings :agentSpec])
+                       (:agent_spec run))
+        contract-id (some-> (or (:contractId agent-spec)
+                                (:contract-id agent-spec))
+                            str
+                            str/trim
+                            not-empty)
+        actor-id (some-> (or (:actorId agent-spec)
+                             (:actor-id agent-spec))
+                         str
+                         str/trim
+                         not-empty)
+        contract-actors (actor-scope/actor-claims->wire
+                         (or (:contractActors agent-spec)
+                             (:contract-actors agent-spec)))]
+    (cond-> base
+      contract-id (assoc :contract_id contract-id)
+      actor-id (assoc :actor_id actor-id)
+      (seq contract-actors) (assoc :contract_actors contract-actors))))
 
 (defn session-node-kind
   [node-type]
@@ -393,20 +420,21 @@
                                                                     :conversation_id conversation-id
                                                                     :session_id session-id}
                                                                    scope-extra)})
-        devel-edges (for [path (extract-mentioned-devel-paths safe-text)]
-                      (session-graph-edge-event config {:event-id (str node-id ":mentions_devel:" path)
+        devel-edges (for [{:keys [path target_node_id target_kind]} (extract-mentioned-devel-paths safe-text)]
+                      (session-graph-edge-event config {:event-id (str node-id ":mentions_devel:" target_node_id)
                                                         :ts ts
                                                         :session conversation-id
                                                         :message node-id
                                                         :edge-type "mentions_devel_path"
                                                         :source-node-id node-id
-                                                        :target-node-id (str "devel:file:" path)
+                                                        :target-node-id target_node_id
                                                         :source-lake (:session-project-name config)
                                                         :target-lake "devel"
                                                         :extra (merge {:run_id run-id
                                                                        :conversation_id conversation-id
                                                                        :session_id session-id
-                                                                       :path path}
+                                                                       :path path
+                                                                       :target_kind target_kind}
                                                                       scope-extra)}))
         web-edges (for [url (extract-mentioned-urls safe-text)]
                     (session-graph-edge-event config {:event-id (str node-id ":mentions_web:" url)
@@ -505,7 +533,7 @@
                                                                       :role "system"
                                                                       :model (:model run)
                                                                       :text summary-text
-                                                                      :extra (merge common-extra {:receipt receipt})})]
+                                                                      :extra (merge common-extra {:receipt (sanitize-tool-receipt-for-indexing receipt)})})]
                                     true (into (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
                                                                           {:run-id run-id
                                                                            :conversation-id conversation-id

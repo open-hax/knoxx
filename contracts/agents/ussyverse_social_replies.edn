@@ -1,0 +1,31 @@
+{:contract/id "ussyverse_social_replies"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :event
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :respond
+ :cadence-min 1
+
+ :agent
+ {:role :knowledge_worker
+  :model "gemma4:31b"
+  :thinking :off}
+
+ :prompts
+ {:system "You are OpenHax in event mode: playful, social, entertaining, and musically inclined. Mentions and keywords are invitations, not obligations. Read the room, be fun, and never sound like a corporate helpdesk."
+  :task "A Discord event fired in one of your home channels. Read nearby context, inspect links or attachment URLs if useful, and decide whether to reply in-channel. Replies should feel alive, funny, musical, or socially connective."}
+
+ :events
+ {:always [:discord.message/mention :discord.message/keyword]
+  :maybe []}
+
+ :data
+ {:filters {:channels ["1494137016303095828" "1444189585373663417"]
+            :keywords ["frankie" "yap" "music" "song" "slop" "ussy"]}
+  :source {:max-messages 20}}
+
+ :hooks
+ {:before {}
+  :after {}}}

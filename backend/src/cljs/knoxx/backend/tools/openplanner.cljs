@@ -1,0 +1,326 @@
+(ns knoxx.backend.tools.openplanner
+  "OpenPlanner memory, graph, websearch, and translation tools."
+  (:require [clojure.string :as str]
+            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
+            [knoxx.backend.http :as backend-http :refer [http-error js-array-seq]]
+            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query!]]
+            [knoxx.backend.text :refer [clip-text tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
+            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
+
+(defn- web-read-url!
+  [url max-chars]
+  (-> (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
+      (.then
+       (fn [resp]
+         (let [content-type (or (.get (.-headers resp) "content-type") "application/octet-stream")]
+           (if-not (.-ok resp)
+             (-> (.text resp)
+                 (.then (fn [text]
+                          (throw (js/Error. (str "web.read failed " (.-status resp) ": " text))))))
+             (if (or (str/starts-with? content-type "text/")
+                     (str/includes? content-type "json")
+                     (str/includes? content-type "xml")
+                     (str/includes? content-type "html"))
+               (-> (.text resp)
+                   (.then
+                    (fn [text]
+                      (let [collapsed (-> text
+                                          (str/replace #"<[^>]+>" " ")
+                                          (str/replace #"\s+" " ")
+                                          str/trim)
+                            clipped (subs collapsed 0 (min max-chars (count collapsed)))]
+                        (tool-text-result (str "Read URL " url " (" content-type "):\n\n" clipped)
+                                          {:url url
+                                           :contentType content-type
+                                           :text clipped})))))
+               (js/Promise.resolve
+                (tool-text-result (str "Fetched URL " url " with content-type " content-type ". Binary/image content is available at the URL for follow-up use.")
+                                  {:url url
+                                   :contentType content-type
+                                   :binary true})))))))))
+
+(defn create-openplanner-custom-tools
+  ([runtime config] (create-openplanner-custom-tools runtime config nil))
+  ([runtime config auth-context]
+   (let [Type (aget runtime "Type")
+         search-params (.Object Type
+                                #js {:query (.String Type #js {:description "Semantic memory search across prior Knoxx sessions and actions indexed in OpenPlanner."})
+                                     :k (type-optional Type (.Number Type #js {:description "Maximum number of memory hits to return." :minimum 1 :maximum 8}))
+                                     :sessionId (type-optional Type (.String Type #js {:description "Optional conversation/session id to scope the search."}))})
+         graph-params (.Object Type
+                               #js {:query (.String Type #js {:description "Search text for canonical graph nodes across OpenPlanner lakes."})
+                                    :lake (type-optional Type (.String Type #js {:description "Optional lake/project filter such as devel, web, bluesky, or knoxx-session."}))
+                                    :nodeType (type-optional Type (.String Type #js {:description "Optional node_type filter such as docs, code, visited, assistant_message, tool_result, or reasoning."}))
+                                    :limit (type-optional Type (.Number Type #js {:description "Maximum number of graph nodes to return." :minimum 1 :maximum 20}))
+                                    :edgeLimit (type-optional Type (.Number Type #js {:description "Maximum number of incident edges to include." :minimum 0 :maximum 60}))})
+         websearch-params (.Object Type
+                                   #js {:query (.String Type #js {:description "Live web search query routed through Proxx websearch."})
+                                        :numResults (type-optional Type (.Number Type #js {:description "Maximum number of results to return." :minimum 1 :maximum 20}))
+                                        :searchContextSize (type-optional Type (.String Type #js {:description "Search context size: low, medium, or high."}))
+                                        :allowedDomains (type-optional Type (.Array Type (.String Type) #js {:description "Optional domain allowlist."}))
+                                        :model (type-optional Type (.String Type #js {:description "Optional Proxx/OpenAI model override for search."}))})
+         web-read-params (.Object Type
+                                  #js {:url (.String Type #js {:description "Web link or attachment URL to fetch and read."})
+                                       :maxChars (type-optional Type (.Number Type #js {:description "Maximum number of characters to return." :minimum 200 :maximum 20000}))})
+         session-params (.Object Type
+                                 #js {:sessionId (.String Type #js {:description "Knoxx conversation/session id stored in OpenPlanner."})})
+         ;; save_translation params
+         translation-params (.Object Type
+                                     #js {:source_text (.String Type #js {:description "Original source text"})
+                                          :translated_text (.String Type #js {:description "Translated text"})
+                                          :source_lang (.String Type #js {:description "Source language code (e.g. 'en')"})
+                                          :target_lang (.String Type #js {:description "Target language code (e.g. 'es')"})
+                                          :document_id (.String Type #js {:description "Document ID being translated"})
+                                          :garden_id (type-optional Type (.String Type #js {:description "Garden ID"}))
+                                          :project (type-optional Type (.String Type #js {:description "Project name"}))
+                                          :segment_index (.Number Type #js {:description "0-based segment index"})})
+         create-file-params (.Object Type
+                                    #js {:title (type-optional Type (.String Type #js {:description "Human-readable title for the new artifact."}))
+                                         :path (type-optional Type (.String Type #js {:description "Relative path for the new file inside the active docs root."}))
+                                         :content (type-optional Type (.String Type #js {:description "Initial markdown content to write into the new file."}))})
+         node-fs (aget runtime "fs")
+         node-path (aget runtime "path")
+         slugify (fn [value]
+                   (let [raw (-> (str (or value "untitled-canvas"))
+                                 str/lower-case
+                                 (str/replace #"[^a-z0-9]+" "-")
+                                 (str/replace #"^-+|-+$" ""))]
+                     (if (str/blank? raw) "untitled-canvas" raw)))
+         memory-search-execute (fn [_tool-call-id params a b c]
+                                 (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                       query (or (aget params "query") "")
+                                       k (aget params "k")
+                                       session-id (or (aget params "sessionId") "")]
+                                   (maybe-tool-update! on-update "Searching Knoxx memory in OpenPlanner…")
+                                   (-> (openplanner-memory-search! config {:query query :k k :session-id session-id})
+                                       (.then (fn [result]
+                                                (-> (filter-authorized-memory-hits! config auth-context (:hits result))
+                                                    (.then (fn [hits]
+                                                             (let [filtered (assoc result :hits hits)]
+                                                               (tool-text-result (openplanner-memory-search-text filtered) filtered))))))))))
+         memory-session-execute (fn [_tool-call-id params a b c]
+                                  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                        session-id (or (aget params "sessionId") "")]
+                                    (maybe-tool-update! on-update "Loading Knoxx session from OpenPlanner…")
+                                    (-> (fetch-openplanner-session-rows! config session-id)
+                                       (.then (fn [rows]
+                                                (when-not (session-visible? auth-context rows)
+                                                  (throw (http-error 403 "memory_scope_denied" "OpenPlanner session is outside the current Knoxx scope")))
+                                                (let [payload (doto (js-obj)
+                                                                 (aset "sessionId" session-id)
+                                                                 (aset "rows" (clj->js rows)))]
+                                                  (tool-text-result (openplanner-session-text session-id rows) payload)))))))
+         graph-query-execute (fn [_tool-call-id params a b c]
+                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                     query (or (aget params "query") "")
+                                     lake (or (aget params "lake") "")
+                                     node-type (or (aget params "nodeType") "")
+                                     limit (aget params "limit")
+                                     edge-limit (aget params "edgeLimit")]
+                                 (maybe-tool-update! on-update "Querying canonical knowledge graph…")
+                                 (-> (openplanner-graph-query! config {:query query
+                                                                       :lake lake
+                                                                       :node-type node-type
+                                                                       :limit limit
+                                                                       :edge-limit edge-limit})
+                                     (.then (fn [result]
+                                              (tool-text-result (graph-query-result-text result) result))))))
+         websearch-execute (fn [_tool-call-id params a b c]
+                             (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                   query (or (aget params "query") "")
+                                   num-results (or (aget params "numResults") 8)
+                                   search-context-size (aget params "searchContextSize")
+                                   allowed-domains (or (aget params "allowedDomains") #js [])
+                                   model (aget params "model")]
+                               (maybe-tool-update! on-update "Searching the live web through Proxx…")
+                               (-> (backend-http/fetch-json (str (:proxx-base-url config) "/api/tools/websearch")
+                                                            #js {:method "POST"
+                                                                 :headers (backend-http/bearer-headers (:proxx-auth-token config))
+                                                                 :body (.stringify js/JSON
+                                                                                   #js {:query query
+                                                                                        :numResults num-results
+                                                                                        :searchContextSize search-context-size
+                                                                                        :allowedDomains allowed-domains
+                                                                                        :model model})})
+                                   (.then (fn [resp]
+                                            (if (aget resp "ok")
+                                              (let [result (js->clj (aget resp "body") :keywordize-keys true)]
+                                                (tool-text-result (websearch-result-text result) result))
+                                              (throw (js/Error. (str "websearch failed: "
+                                                                     (pr-str (js->clj (aget resp "body") :keywordize-keys true)))))))))))
+         web-read-execute (fn [_tool-call-id params a b c]
+                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                  url (or (aget params "url") "")
+                                  max-chars (max 200 (min 20000 (or (aget params "maxChars") 6000)))]
+                              (when (str/blank? (str/trim url))
+                                (throw (js/Error. "url is required")))
+                              (maybe-tool-update! on-update (str "Fetching " url "…"))
+                              (web-read-url! url max-chars)))
+         create-new-file-execute (fn [_tool-call-id params a b c]
+                                   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                         title (or (aget params "title") "Untitled Canvas")
+                                         requested-path (or (aget params "path") (str "notes/canvas/" (slugify title) ".md"))
+                                         content (or (aget params "content") (str "# " title "\n\n"))
+                                         profile (active-agent-profile runtime config auth-context)
+                                         docs-path (:docsPath profile)
+                                         rel-path (media/normalize-relative-path requested-path)
+                                         abs-path (media/path-resolve node-path docs-path rel-path)
+                                         rel-to-root (media/path-relative node-path docs-path abs-path)
+                                         parent (.dirname node-path abs-path)]
+                                     (when (str/blank? rel-path)
+                                       (throw (js/Error. "path is required for create_new_file")))
+                                     (when (or (str/starts-with? rel-to-root "..") (media/path-is-absolute? node-path rel-to-root))
+                                       (throw (js/Error. "Path escapes active docs root")))
+                                     (maybe-tool-update! on-update (str "Creating canvas file " rel-path "…"))
+                                     (-> (media/fs-mkdir! node-fs parent #js {:recursive true})
+                                         (.then (fn [] (media/fs-write-file! node-fs abs-path content "utf8")))
+                                         (.then (fn []
+                                                  (tool-text-result (str "Created canvas file at " rel-path)
+                                                                    {:path rel-path
+                                                                     :title title
+                                                                     :content content
+                                                                     :canvas true}))))))
+         ;; save_translation execute
+         save-translation-execute (fn [_tool-call-id params a b c]
+                                    (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                          resource-policies (:resourcePolicies auth-context)
+                                          source-text (aget params "source_text")
+                                          translated-text (aget params "translated_text")
+                                          source-lang (or (aget params "source_lang") (:source_lang resource-policies) (:source-lang resource-policies))
+                                          target-lang (or (aget params "target_lang") (:target_lang resource-policies) (:target-lang resource-policies))
+                                          document-id (or (aget params "document_id") (:document_id resource-policies) (:document-id resource-policies))
+                                          garden-id (or (aget params "garden_id") (:garden_id resource-policies) (:garden-id resource-policies))
+                                          project (or (aget params "project") (:project resource-policies) (:project-name config))
+                                          segment-index (aget params "segment_index")
+                                          normalized-source (str/trim (str (or source-text "")))
+                                          normalized-translated (str/trim (str (or translated-text "")))
+                                          prose-like? (or (> (count normalized-source) 24)
+                                                          (str/includes? normalized-source " "))
+                                          _ (when (and (not (str/blank? source-lang))
+                                                       (not (str/blank? target-lang))
+                                                       (not= source-lang target-lang)
+                                                       prose-like?
+                                                       (= normalized-source normalized-translated))
+                                              (throw (js/Error. (str "translated_text matches source_text for segment " segment-index
+                                                                      "; provide an actual " target-lang " translation"))))
+                                          _ (when (str/blank? (str document-id))
+                                              (throw (js/Error. "document_id is required for save_translation")))
+                                          segment {:source_text source-text
+                                                   :translated_text translated-text
+                                                   :source_lang source-lang
+                                                   :target_lang target-lang
+                                                   :document_id document-id
+                                                   :garden_id garden-id
+                                                   :project project
+                                                   :segment_index segment-index
+                                                   :status "pending"
+                                                   :mt_model "translation-agent"}
+                                          url (str (:openplanner-base-url config) "/v1/translations/segments")]
+                                      (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
+                                      (-> (js/fetch url #js {:method "POST"
+                                                             :headers #js {"Content-Type" "application/json"
+                                                                           "Authorization" (str "Bearer " (:openplanner-api-key config))}
+                                                             :body (.stringify js/JSON (clj->js segment))})
+                                          (.then (fn [resp]
+                                                   (if (.-ok resp)
+                                                     (.json resp)
+                                                     (-> (.text resp)
+                                                         (.then (fn [text]
+                                                                  (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))
+                                          (.then (fn [result]
+                                                   (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
+                                                                     result))))))
+         memory-search-tool (doto (js-obj)
+                              (aset "name" "memory_search")
+                              (aset "label" "Memory Search")
+                              (aset "description" "Search prior Knoxx sessions, answers, and tool/action receipts stored in OpenPlanner.")
+                              (aset "promptSnippet" "Search Knoxx long-term memory in OpenPlanner when the user asks about earlier sessions, prior decisions, or the agent's own past actions.")
+                              (aset "promptGuidelines" (clj->js ["Use memory_search when the user references previous sessions, past work, or asks you to remember what happened before."
+                                                                 "Prefer memory_search over guessing about prior conversations or actions."
+                                                                 "If one session looks relevant, follow with memory_session to inspect the full transcript slice."]))
+                              (aset "parameters" search-params)
+                              (aset "execute" memory-search-execute))
+         graph-query-tool (doto (js-obj)
+                            (aset "name" "graph_query")
+                            (aset "label" "Graph Query")
+                            (aset "description" "Query the canonical OpenPlanner knowledge graph across the devel, web, bluesky, and knoxx-session lakes.")
+                            (aset "promptSnippet" "Search the canonical knowledge graph when you need entities or cross-lake links rather than plain transcript memory or semantic document snippets.")
+                            (aset "promptGuidelines" (clj->js ["Use graph_query when the question is about entities, paths, URLs, provenance across lakes, or graph connectivity."
+                                                               "Prefer graph_query over semantic_query when node/edge structure matters."
+                                                               "Use the lake filter to focus on devel, web, bluesky, or knoxx-session when the search space is obvious."]))
+                            (aset "parameters" graph-params)
+                            (aset "execute" graph-query-execute))
+         websearch-tool (doto (js-obj)
+                          (aset "name" "websearch")
+                          (aset "label" "Web Search")
+                          (aset "description" "Search the live web through Proxx websearch and return cited results.")
+                          (aset "promptSnippet" "Search the live web when the user needs fresh external information or wants to expand the web frontier.")
+                          (aset "promptGuidelines" (clj->js ["Use websearch when freshness matters or when the answer probably lives outside the current graph corpus."
+                                                             "Prefer allowedDomains when you know the likely source surface."
+                                                             "Use websearch to seed follow-up graph or semantic exploration, not as a substitute for graph_query when graph structure already exists."]))
+                          (aset "parameters" websearch-params)
+                          (aset "execute" websearch-execute))
+         web-read-tool (doto (js-obj)
+                         (aset "name" "web.read")
+                         (aset "label" "Web Read")
+                         (aset "description" "Fetch a web link or attachment URL and extract readable text or metadata.")
+                         (aset "promptSnippet" "Read a web page, text attachment, or direct file URL when you already have a concrete link.")
+                         (aset "promptGuidelines" (clj->js ["Use web.read for direct URLs from Discord messages, embeds, or attachments."
+                                                            "For image/binary URLs, web.read returns metadata so you can decide whether to forward the attachment or inspect it another way."]))
+                         (aset "parameters" web-read-params)
+                         (aset "execute" web-read-execute))
+         memory-session-tool (doto (js-obj)
+                               (aset "name" "memory_session")
+                               (aset "label" "Memory Session")
+                               (aset "description" "Load the indexed transcript/events for a specific Knoxx session from OpenPlanner.")
+                               (aset "promptSnippet" "Load a specific Knoxx OpenPlanner session when you need the exact previous transcript or action trace.")
+                               (aset "promptGuidelines" (clj->js ["Use memory_session after memory_search identifies a promising session id."
+                                                                  "memory_session is the exact transcript/action drill-down companion to memory_search."]))
+                               (aset "parameters" session-params)
+                               (aset "execute" memory-session-execute))
+         save-translation-tool (doto (js-obj)
+                                 (aset "name" "save_translation")
+                                 (aset "label" "Save Translation")
+                                 (aset "description" "Save a translated segment to the OpenPlanner translation database.")
+                                 (aset "promptSnippet" "Save each translated segment after translating.")
+                                 (aset "promptGuidelines" (clj->js ["Call save_translation for each segment you translate."
+                                                                    "Include the source_text, translated_text, language codes, document_id, and segment_index."]))
+                                 (aset "parameters" translation-params)
+                                 (aset "execute" save-translation-execute))
+         create-new-file-tool (doto (js-obj)
+                                 (aset "name" "create_new_file")
+                                 (aset "label" "Create New File")
+                                 (aset "description" "Create a new file-backed artifact for the Knoxx canvas editor.")
+                                 (aset "promptSnippet" "Create a new concrete artifact file when the user is ready to draft a real document instead of continuing in freeform chat.")
+                                 (aset "promptGuidelines" (clj->js ["Use create_new_file when the user wants to start an actual artifact or canvas-backed document."
+                                                                    "Return a file path and initial markdown content so the chat canvas can open it immediately."]))
+                                 (aset "parameters" create-file-params)
+                                 (aset "execute" create-new-file-execute))]
+     (clj->js
+     (vec
+       (remove nil?
+               [(when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "graph_query")
+                          (ctx-tool-allowed? auth-context "semantic_query"))
+                  graph-query-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "websearch"))
+                  websearch-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "web.read"))
+                  web-read-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "memory_search"))
+                  memory-search-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "memory_session"))
+                  memory-session-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "save_translation"))
+                  save-translation-tool)
+                (when (or (nil? auth-context)
+                          (ctx-tool-allowed? auth-context "create_new_file"))
+                  create-new-file-tool)]))))))
+

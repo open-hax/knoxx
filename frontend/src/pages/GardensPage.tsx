@@ -66,7 +66,7 @@ const THEMES: Array<{ value: GardenTheme; label: string; colors: { bg: string; t
 
 const gardenLinks: Record<string, string> = {
   "devel-deps-garden": "http://127.0.0.1:8798/",
-  "truth-workbench": "http://127.0.0.1:8790/workbench",
+  "truth-workbench": "http://127.0.0.1:8789/workbench",
   query: "/query",
   ingestion: "/ingestion",
 };

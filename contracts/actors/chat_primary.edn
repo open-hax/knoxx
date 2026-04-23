@@ -1,0 +1,7 @@
+{:actor/id "chat_primary"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Primary Chat"
+ :actor/default-agent "knoxx_default"
+ :actor/roles [:role/knowledge-worker]
+ :prompts {:system "You are the primary Knoxx chat actor. Stay grounded, useful, and capable across the main workspace surface."}}

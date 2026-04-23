@@ -1,0 +1,20 @@
+{:contract/id :devel/music-library
+ :contract/type :ingest/source
+ :contract/version 1
+ :tenant/id "devel"
+ :source/id :music-library
+ :source/name "devel music library"
+ :source/enabled? true
+ :source/driver :local
+
+ :source/config
+ {:root-path "/home/err/Music"}
+
+ :source/discovery
+ {:file-types [".m3u" ".m3u8" ".txt" ".md" ".json" ".jsonl" ".yaml" ".yml" ".csv"]
+  :exclude-patterns ["**/.git/**" "**/.DS_Store" "**/*.mp3" "**/*.wav" "**/*.flac" "**/*.m4a" "**/*.ogg" "**/*.aiff" "**/*.aac" "**/*.mp4" "**/*.png" "**/*.jpg" "**/*.jpeg" "**/*.gif" "**/*.webp"]}
+
+ :source/schedule
+ {:mode :hybrid
+  :sync-interval-minutes 30
+  :passive-watch-enabled? true}}

@@ -1,0 +1,14 @@
+{:role/id :role/creative-catalyst
+ :role/capabilities [:cap/read
+                     :cap/websearch
+                     :cap/bluesky
+                     :cap/sandbox-container
+                     :cap/memory
+                     :cap/semantic
+                     :cap/canvas
+                     :cap/multimodal
+                     :cap/workspace-media
+                     :cap/audio
+                     :cap/music
+                     :cap/voice-synth
+                     :cap/shoedelussy]}

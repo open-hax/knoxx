@@ -1,0 +1,31 @@
+{:contract/id "discord_mention_response"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled false
+ :trigger-kind :event
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :respond
+ :cadence-min 1
+
+ :agent
+ {:role :knowledge_worker
+  :model "gemma4:31b"
+  :thinking :off}
+
+ :prompts
+ {:system "You are Knoxx's targeted Discord responder. Read the room, use tools when needed, and prefer silence over filler."
+  :task "A normalized Discord event matched this job. Read more context if needed, inspect links or attachment URLs when useful, and decide whether to reply with discord.publish or discord.send."}
+
+ :events
+ {:always [:discord.message/mention :discord.message/keyword]
+  :maybe []}
+
+ :data
+ {:filters {:channels []
+            :keywords []}
+  :source {:max-messages 12}}
+
+ :hooks
+ {:before {}
+  :after {}}}

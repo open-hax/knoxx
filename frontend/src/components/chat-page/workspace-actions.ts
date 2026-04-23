@@ -1,7 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getMemorySession, listMemorySessions } from "../../lib/api";
-import type { ChatMessage, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
-import { findPersistedChatSessionByConversation, listPersistedChatSessions } from "./hooks";
+import { getMemorySession, listMemorySessions, searchMemory } from "../../lib/api";
+import type { ChatMessage, MemorySearchHit, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
+import { findPersistedChatSessionByConversation, listPersistedChatSessions, readPersistedChatSessionSnapshot, type ChatSessionSnapshot } from "./hooks";
 import type {
   BrowseResponse,
   IngestionSource,
@@ -15,6 +15,7 @@ import { isWorkspaceSource, memoryRowRunId, memoryRowsToMessages, selectWorkspac
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
 const RECENT_SESSION_PAGE_SIZE = 20;
+const DEFAULT_EXCLUDED_SESSION_ACTOR = "pi";
 
 function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
   const statusScore = (item: MemorySessionSummary): number => {
@@ -86,11 +87,82 @@ function sortSessions(items: MemorySessionSummary[]): MemorySessionSummary[] {
   });
 }
 
+export function preferredSessionModelForResume(
+  snapshot: ChatSessionSnapshot | null,
+  transcript: ChatMessage[],
+): string {
+  const persisted = typeof snapshot?.selectedModel === "string" ? snapshot.selectedModel.trim() : "";
+  if (persisted) {
+    return persisted;
+  }
+
+  const transcriptModel = [...transcript]
+    .reverse()
+    .find((message) => message.role === "assistant" && typeof message.model === "string" && message.model.trim().length > 0)
+    ?.model;
+
+  return typeof transcriptModel === "string" ? transcriptModel.trim() : "";
+}
+
+export function persistedSessionVisibleForActor(
+  sessionStateKey: string,
+  summary: MemorySessionSummary,
+  activeActorId: string,
+  visibleAgentIds: ReadonlySet<string>,
+): boolean {
+  return persistedSessionVisibleForFilter(sessionStateKey, summary, activeActorId, false, visibleAgentIds);
+}
+
+function normalizedSessionActorFilter(actorId: string): string | null {
+  const trimmed = actorId.trim();
+  return trimmed.length > 0 && trimmed !== "all" ? trimmed : null;
+}
+
+function excludedSessionActorIds(actorFilter: string, excludePiSessions: boolean): string[] {
+  if (!excludePiSessions) return [];
+  return normalizedSessionActorFilter(actorFilter) === DEFAULT_EXCLUDED_SESSION_ACTOR
+    ? []
+    : [DEFAULT_EXCLUDED_SESSION_ACTOR];
+}
+
+export function persistedSessionVisibleForFilter(
+  sessionStateKey: string,
+  summary: MemorySessionSummary,
+  actorFilter: string,
+  excludePiSessions: boolean,
+  visibleAgentIds: ReadonlySet<string>,
+): boolean {
+  const snapshot = summary.active_session_id
+    ? readPersistedChatSessionSnapshot(sessionStateKey, summary.active_session_id)
+    : null;
+  const normalizedActiveActorId = normalizedSessionActorFilter(actorFilter);
+  const sessionAgentId = typeof snapshot?.activeAgentId === "string" ? snapshot.activeAgentId.trim() : "";
+  const sessionActorId = typeof snapshot?.activeActorId === "string" && snapshot.activeActorId.trim().length > 0
+    ? snapshot.activeActorId.trim()
+    : "chat_primary";
+
+  if (excludePiSessions && normalizedActiveActorId !== DEFAULT_EXCLUDED_SESSION_ACTOR && sessionActorId === DEFAULT_EXCLUDED_SESSION_ACTOR) {
+    return false;
+  }
+
+  if (!normalizedActiveActorId) {
+    return true;
+  }
+
+  if (sessionAgentId && visibleAgentIds.size > 0) {
+    return visibleAgentIds.has(sessionAgentId);
+  }
+  return sessionActorId === normalizedActiveActorId;
+}
+
 type ChatWorkspaceActionParams = {
+  visibleAgentIds: ReadonlySet<string>;
   currentPath: string;
   showFiles: boolean;
   browseData: BrowseResponse | null;
   semanticQuery: string;
+  sessionActorFilter: string;
+  excludePiSessions: boolean;
   setBrowseData: SetState<BrowseResponse | null>;
   setPreviewData: SetState<PreviewResponse | null>;
   setLoadingBrowse: SetState<boolean>;
@@ -98,6 +170,8 @@ type ChatWorkspaceActionParams = {
   setSemanticResults: SetState<SemanticSearchMatch[]>;
   setSemanticProjects: SetState<string[]>;
   setSemanticSearching: SetState<boolean>;
+  setSessionSearchHits: SetState<MemorySearchHit[]>;
+  setSessionSearchMode: SetState<string>;
   setSyncingWorkspace: SetState<boolean>;
   setWorkspaceSourceId: SetState<string | null>;
   setWorkspaceJob: SetState<WorkspaceJob | null>;
@@ -110,6 +184,7 @@ type ChatWorkspaceActionParams = {
   setLoadingMoreRecentSessions: SetState<boolean>;
   setLoadingMemorySessionId: SetState<string | null>;
   setMessages: SetState<ChatMessage[]>;
+  setSelectedModel: SetState<string>;
   setSessionId: SetState<string>;
   setConversationId: SetState<string | null>;
   setLatestRun: SetState<RunDetail | null>;
@@ -129,10 +204,13 @@ type ChatWorkspaceActionParams = {
 };
 
 export function createChatWorkspaceActions({
+  visibleAgentIds,
   currentPath,
   showFiles,
   browseData,
   semanticQuery,
+  sessionActorFilter,
+  excludePiSessions,
   setBrowseData,
   setPreviewData,
   setLoadingBrowse,
@@ -140,6 +218,8 @@ export function createChatWorkspaceActions({
   setSemanticResults,
   setSemanticProjects,
   setSemanticSearching,
+  setSessionSearchHits,
+  setSessionSearchMode,
   setSyncingWorkspace,
   setWorkspaceSourceId,
   setWorkspaceJob,
@@ -152,6 +232,7 @@ export function createChatWorkspaceActions({
   setLoadingMoreRecentSessions,
   setLoadingMemorySessionId,
   setMessages,
+  setSelectedModel,
   setSessionId,
   setConversationId,
   setLatestRun,
@@ -219,20 +300,36 @@ export function createChatWorkspaceActions({
     if (!trimmed) {
       setSemanticResults([]);
       setSemanticProjects([]);
+      setSessionSearchHits([]);
+      setSessionSearchMode("none");
       return;
     }
 
     setSemanticSearching(true);
+    const actorId = normalizedSessionActorFilter(sessionActorFilter) ?? undefined;
+    const excludeActorIds = excludedSessionActorIds(sessionActorFilter, excludePiSessions);
     try {
-      const response = await fetch("/api/ingestion/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: trimmed, role: "workspace", path, limit: 30 }),
-      });
-      if (!response.ok) throw new Error(`Semantic search failed: ${response.status}`);
-      const data = (await response.json()) as SemanticSearchResponse;
-      setSemanticResults(data.rows);
-      setSemanticProjects(data.projects);
+      const [fileResult, sessionResult] = await Promise.all([
+        (async () => {
+          const response = await fetch("/api/ingestion/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ q: trimmed, role: "workspace", path, limit: 30 }),
+          });
+          if (!response.ok) throw new Error(`Semantic search failed: ${response.status}`);
+          return (await response.json()) as SemanticSearchResponse;
+        })(),
+        searchMemory({
+          query: trimmed,
+          k: 8,
+          actorId,
+          excludeActorIds,
+        }),
+      ]);
+      setSemanticResults(fileResult.rows);
+      setSemanticProjects(fileResult.projects);
+      setSessionSearchHits(sessionResult.hits);
+      setSessionSearchMode(sessionResult.mode);
     } catch (error) {
       appendConsoleLine(`[semantic] failed: ${(error as Error).message}`);
     } finally {
@@ -317,11 +414,18 @@ export function createChatWorkspaceActions({
   const refreshRecentSessions = async () => {
     setLoadingRecentSessions(true);
     try {
-      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: 0 });
+      const page = await listMemorySessions({
+        limit: RECENT_SESSION_PAGE_SIZE,
+        offset: 0,
+        actorId: normalizedSessionActorFilter(sessionActorFilter) ?? undefined,
+        excludeActorIds: excludedSessionActorIds(sessionActorFilter, excludePiSessions),
+      });
       const preservedTail = remoteRecentSessionsRef.current.filter((item) => !page.rows.some((row) => row.session === item.session));
       const remoteMerged = mergeSessionPages(page.rows, preservedTail);
       remoteRecentSessionsRef.current = remoteMerged;
-      const merged = sortSessions(mergeSessionPages(remoteMerged, listPersistedChatSessions(sessionStateKey)));
+      const localVisible = listPersistedChatSessions(sessionStateKey)
+        .filter((item) => persistedSessionVisibleForFilter(sessionStateKey, item, sessionActorFilter, excludePiSessions, visibleAgentIds));
+      const merged = sortSessions(mergeSessionPages(remoteMerged, localVisible));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
       const remoteTotal = typeof page.total === "number" ? page.total : remoteMerged.length;
@@ -341,10 +445,17 @@ export function createChatWorkspaceActions({
   const loadMoreRecentSessions = async () => {
     setLoadingMoreRecentSessions(true);
     try {
-      const page = await listMemorySessions({ limit: RECENT_SESSION_PAGE_SIZE, offset: remoteRecentSessionsRef.current.length });
+      const page = await listMemorySessions({
+        limit: RECENT_SESSION_PAGE_SIZE,
+        offset: remoteRecentSessionsRef.current.length,
+        actorId: normalizedSessionActorFilter(sessionActorFilter) ?? undefined,
+        excludeActorIds: excludedSessionActorIds(sessionActorFilter, excludePiSessions),
+      });
       const remoteMerged = mergeSessionPages(remoteRecentSessionsRef.current, page.rows);
       remoteRecentSessionsRef.current = remoteMerged;
-      const merged = sortSessions(mergeSessionPages(remoteMerged, listPersistedChatSessions(sessionStateKey)));
+      const localVisible = listPersistedChatSessions(sessionStateKey)
+        .filter((item) => persistedSessionVisibleForFilter(sessionStateKey, item, sessionActorFilter, excludePiSessions, visibleAgentIds));
+      const merged = sortSessions(mergeSessionPages(remoteMerged, localVisible));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
       const remoteTotal = typeof page.total === "number" ? page.total : remoteMerged.length;
@@ -367,10 +478,15 @@ export function createChatWorkspaceActions({
       const localSession = findPersistedChatSessionByConversation(sessionStateKey, sessionKey);
       const remoteSession = recentSessionsRef.current.find((entry) => entry.session === sessionKey) ?? null;
       const resolvedSessionId = localSession?.active_session_id ?? remoteSession?.active_session_id ?? makeId();
+      const localSnapshot = readPersistedChatSessionSnapshot(sessionStateKey, resolvedSessionId);
+      const persistedModel = preferredSessionModelForResume(localSnapshot, []);
 
       setMessages([]);
       setConversationId(sessionKey);
       setSessionId(resolvedSessionId);
+      if (persistedModel) {
+        setSelectedModel(persistedModel);
+      }
       setLatestRun(null);
       setRuntimeEvents([]);
       setLiveControlText("");
@@ -385,8 +501,12 @@ export function createChatWorkspaceActions({
 
       const detail = await getMemorySession(sessionKey);
       const transcript = memoryRowsToMessages(detail.rows).slice(-80);
+      const resumedModel = preferredSessionModelForResume(localSnapshot, transcript);
       const lastRunId = [...detail.rows].reverse().map(memoryRowRunId).find((value): value is string => Boolean(value)) ?? null;
       setMessages(transcript);
+      if (resumedModel) {
+        setSelectedModel(resumedModel);
+      }
       setConversationId(detail.session);
       setLatestRun(null);
       setRuntimeEvents([]);

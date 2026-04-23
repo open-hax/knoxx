@@ -1,2 +1,0 @@
-{:cap/id :cap/schedule-event-agent
- :cap/tools [:schedule_event_agent]}

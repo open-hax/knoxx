@@ -1,5 +1,6 @@
 (ns knoxx.backend.core
   (:require [knoxx.backend.agent-hydration :refer [ensure-settings!]]
+            [knoxx.backend.agent-runtime :as agent-runtime]
             [knoxx.backend.agent-turns :as agent-turns :refer [recover-active-agent-sessions! lounge-messages*]]
             [knoxx.backend.app-routes :as app-routes]
             [knoxx.backend.contracts-routes :as contracts-routes]
@@ -17,13 +18,79 @@
 
 (defonce server* (atom nil))
 
+(defn- app-log-info!
+  [app message]
+  (let [^js log (.-log app)]
+    (.info log message)))
+
+(defn- app-log-error!
+  [app message err]
+  (let [^js log (.-log app)]
+    (.error log message err)))
+
+(defn- app-listen!
+  [^js app host port]
+  (.listen app #js {:host host :port port}))
+
 (defn register-ws-routes!
   [runtime app]
   (realtime/register-ws-routes! runtime app active-runs-count lounge-messages*))
 
+(defn- prewarm-sdk-runtime!
+  [runtime app resolved-config]
+  (-> (agent-runtime/ensure-sdk-runtime! runtime resolved-config)
+      (.then (fn [_]
+               (app-log-info! app "Knoxx SDK runtime prewarmed")))
+      (.catch (fn [err]
+                (app-log-error! app "Knoxx SDK runtime prewarm failed" err)
+                (js/Promise.reject err)))))
+
 (defn config-js
   []
   (clj->js (runtime-models/enrich-config (runtime-config/cfg))))
+
+(defn- initialize-mcp-gateway!
+  [app resolved-config]
+  (if-not (:mcp-enabled resolved-config)
+    (js/Promise.resolve nil)
+    (let [existing-servers (mcp/parse-mcp-servers-env (or (aget js/process.env "MCP_SERVERS") ""))
+          openplanner-url (:openplanner-mcp-base-url resolved-config)
+          openplanner-name (:openplanner-mcp-tool-name resolved-config "openplanner")
+          shoedelussy-url (:shoedelussy-mcp-base-url resolved-config)
+          shoedelussy-name (:shoedelussy-mcp-tool-name resolved-config "shoedelussy")
+          shoedelussy-secret (:shoedelussy-mcp-shared-secret resolved-config)
+          merged-servers (cond-> existing-servers
+                           (and (not (contains? existing-servers openplanner-name))
+                                (some? openplanner-url)
+                                (not= "" openplanner-url))
+                           (assoc openplanner-name {:url openplanner-url
+                                                    :transport "http"})
+
+                           (and (not (contains? existing-servers shoedelussy-name))
+                                (some? shoedelussy-url)
+                                (not= "" shoedelussy-url))
+                           (assoc shoedelussy-name {:url shoedelussy-url
+                                                    :transport "http"
+                                                    :shared-secret shoedelussy-secret}))]
+      (-> (mcp/initialize! {:servers merged-servers})
+          (.then (fn [_]
+                   (app-log-info! app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
+          (.catch (fn [err]
+                    (app-log-error! app "MCP gateway initialization failed" err)))))))
+
+(defn- start-background-services!
+  [app resolved-config]
+  ;; Session recovery is awaited separately only until recovered turns are
+  ;; kicked off again. Event agents and MCP discovery remain background work.
+  (-> (js/Promise.resolve nil)
+      (.then (fn [_]
+               (event-agents/start! resolved-config)))
+      (.then (fn [_]
+               (contracts-routes/start-contract-watcher! resolved-config)))
+      (.then (fn [_]
+               (initialize-mcp-gateway! app resolved-config)))
+      (.catch (fn [err]
+                (app-log-error! app "Background startup services failed" err)))))
 
 (defn register-app-routes!
   [runtime app config lounge-messages*]
@@ -31,28 +98,11 @@
     (ensure-settings! resolved-config)
     (reset! runtime-state/config* resolved-config)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
-    ;; Defer event-agent startup until Redis is connected so control config
-    ;; overrides can be recovered. session-recovery/start! connects Redis.
-    (-> (session-recovery/start! runtime app resolved-config)
+    (-> (prewarm-sdk-runtime! runtime app resolved-config)
         (.then (fn [_]
-                 ;; Redis is now connected — safe to start event agents
-                 ;; with persisted control config recovery.
-                 (event-agents/start! resolved-config)))
+                 (session-recovery/start! runtime app resolved-config)))
         (.then (fn [_]
-                 ;; Initialize MCP gateway if enabled
-                 (when (:mcp-enabled resolved-config)
-                   (let [;; Auto-register openplanner MCP server from config if not in MCP_SERVERS env
-                         existing-servers (mcp/parse-mcp-servers-env (or (aget js/process.env "MCP_SERVERS") ""))
-                         openplanner-url (:openplanner-mcp-base-url resolved-config)
-                         openplanner-name (:openplanner-mcp-tool-name resolved-config "openplanner")
-                         merged-servers (if (contains? existing-servers openplanner-name)
-                                          existing-servers
-                                          (assoc existing-servers openplanner-name {:url openplanner-url :transport "http"}))]
-                     (-> (mcp/initialize! {:servers merged-servers})
-                         (.then (fn [_]
-                                  (.log.info app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
-                         (.catch (fn [err]
-                                   (.log.error app "MCP gateway initialization failed" err))))))
+                 (start-background-services! app resolved-config)
                  (clj->js resolved-config))))))
 
 (defn start!
@@ -69,16 +119,16 @@
                               (.then (fn [redis-client]
                                        (if redis-client
                                          (do
-                                           (.log.info app "Redis client initialized for session persistence")
+                                           (app-log-info! app "Redis client initialized for session persistence")
                                            (-> (recover-active-agent-sessions! runtime config redis-client)
                                                (.then (fn [results]
                                                         (let [resumed (count (filter :resumed results))]
                                                           (when (seq results)
-                                                            (.log.info app (str "Recovered " (count results) " active sessions from Redis; resumed " resumed))))
+                                                            (app-log-info! app (str "Recovered " (count results) " active sessions from Redis; resumed " resumed))))
                                                         nil))))
                                          nil)))
                               (.catch (fn [err]
-                                        (.log.error app "Failed to initialize Redis-backed session recovery" err)
+                                        (app-log-error! app "Failed to initialize Redis-backed session recovery" err)
                                         nil)))]
         (-> redis-startup
             (.then (fn []
@@ -100,22 +150,13 @@
                      (event-agents/start! config)
                      ;; Sync filesystem contracts → Redis index (write-through cache).
                      (contracts-routes/sync-contract-index! config)
-                     (.listen app #js {:host (:host config)
-                                       :port (:port config)})))
+                     (contracts-routes/start-contract-watcher! config)
+                     (app-listen! app (:host config) (:port config))))
             (.then (fn [_]
                      (reset! server* app)
-                     (.log.info app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))))
+                     (app-log-info! app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))))
             (.catch (fn [err]
                       (.error js/console "Knoxx backend CLJS failed to start" err)
                       (js/process.exit 1))))))))
 
 ;; Handle graceful shutdown
-(.on js/process "SIGINT" (fn []
-                           (println "\nShutting down...")
-                           (event-agents/stop!)
-                           (js/process.exit 0)))
-
-(.on js/process "SIGTERM" (fn []
-                            (println "\nShutting down...")
-                            (event-agents/stop!)
-                            (js/process.exit 0)))

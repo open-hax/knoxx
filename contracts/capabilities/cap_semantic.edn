@@ -1,0 +1,9 @@
+{:cap/id :cap/semantic
+ :cap/tools [:semantic_query
+             :semantic_read
+             :graph_query]
+ :cap/user-surfaces [{:surface/id :workspace/semantic-explorer
+                      :surface/label "Semantic explorer"
+                      :surface/kind :reader
+                      :surface/routes ["/" "/ops/vectors"]
+                      :surface/description "Humans search semantic context and inspect graph views from search/explorer surfaces; agents use semantic tools."}]}

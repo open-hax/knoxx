@@ -4,6 +4,30 @@
             [knoxx.backend.document-state :refer [database-state* js-array-seq request-session-id database-docs-dir database-owner-key default-database-id default-database-record ensure-database-state! ensure-dir! profile-can-access? effective-active-database-id active-database-profile normalize-relative-path sanitize-upload-name create-db-id list-documents! active-record start-document-ingestion! priority-ingest-workspace-files!]]
             [knoxx.backend.util.time :as time]))
 
+(defn- path-is-absolute?
+  [^js node-path value]
+  (.isAbsolute node-path value))
+
+(defn- path-relative
+  [^js node-path from to]
+  (.relative node-path from to))
+
+(defn- fs-rm!
+  [^js node-fs path opts]
+  (.rm node-fs path opts))
+
+(defn- fs-write-buffer!
+  [^js node-fs path content]
+  (.writeFile node-fs path content))
+
+(defn- fs-read-file!
+  [^js node-fs path encoding]
+  (.readFile node-fs path encoding))
+
+(defn- request-parts-promise
+  [^js request]
+  (.fromAsync js/Array (.parts request)))
+
 (defn register-document-routes!
   [app runtime config {:keys [route! json-response! error-response!
                               with-request-context! ensure-permission!
@@ -32,9 +56,9 @@
                       rel-path (normalize-relative-path (aget request "params" "*"))
                       abs-path (.resolve node-path (:docsPath profile) rel-path)
                       rel-to-root (.relative node-path (:docsPath profile) abs-path)]
-                  (if (or (str/starts-with? rel-to-root "..") (.isAbsolute node-path rel-to-root))
+                  (if (or (str/starts-with? rel-to-root "..") (path-is-absolute? node-path rel-to-root))
                     (json-response! reply 403 {:detail "Path escapes active docs root"})
-                    (-> (.readFile node-fs abs-path "utf8")
+                    (-> (fs-read-file! node-fs abs-path "utf8")
                         (.then (fn [content]
                                  (json-response! reply 200 {:path rel-path
                                                             :content content})))
@@ -51,8 +75,8 @@
                       node-fs (aget runtime "fs")
                       node-path (aget runtime "path")]
                   (-> (ensure-dir! runtime docs-path)
-                      (.then (fn []
-                               (.fromAsync js/Array (.parts request))))
+                       (.then (fn []
+                                (request-parts-promise request)))
                       (.then (fn [parts]
                                (let [part-seq (js-array-seq parts)
                                      auto-ingest? (boolean (some (fn [part]
@@ -64,11 +88,11 @@
                                      write-promises (mapv (fn [part]
                                                            (let [safe-name (sanitize-upload-name (or (aget part "filename") "upload.bin"))
                                                                  abs-path (.join node-path docs-path safe-name)
-                                                                 rel-path (normalize-relative-path (.relative node-path docs-path abs-path))]
-                                                             (-> (.arrayBuffer (js/Response. (aget part "file")))
-                                                                 (.then (fn [buf]
-                                                                          (.writeFile node-fs abs-path (.from js/Buffer buf))))
-                                                                 (.then (fn [] rel-path)))))
+                                                                  rel-path (normalize-relative-path (path-relative node-path docs-path abs-path))]
+                                                              (-> (.arrayBuffer (js/Response. (aget part "file")))
+                                                                  (.then (fn [buf]
+                                                                           (fs-write-buffer! node-fs abs-path (.from js/Buffer buf))))
+                                                                  (.then (fn [] rel-path)))))
                                                          file-parts)]
                                  (-> (js/Promise.all (clj->js write-promises))
                                      (.then (fn [written]
@@ -92,11 +116,11 @@
                       node-path (aget runtime "path")
                       rel-path (normalize-relative-path (aget request "params" "*"))
                       abs-path (.resolve node-path (:docsPath profile) rel-path)
-                      rel-to-root (.relative node-path (:docsPath profile) abs-path)
+                      rel-to-root (path-relative node-path (:docsPath profile) abs-path)
                       db-id (:id profile)]
-                  (if (or (str/starts-with? rel-to-root "..") (.isAbsolute node-path rel-to-root))
+                  (if (or (str/starts-with? rel-to-root "..") (path-is-absolute? node-path rel-to-root))
                     (json-response! reply 403 {:detail "Path escapes active docs root"})
-                    (-> (.rm node-fs abs-path #js {:force true})
+                    (-> (fs-rm! node-fs abs-path #js {:force true})
                         (.then (fn []
                                  (swap! database-state* update-in [:records db-id :indexed] dissoc rel-path)
                                  (json-response! reply 200 {:ok true

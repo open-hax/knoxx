@@ -1,0 +1,8 @@
+{:cap/id :cap/audio
+ :cap/tools [:audio.spectrogram
+             :audio.waveform]
+ :cap/user-surfaces [{:surface/id :workspace/audio-analysis
+                      :surface/label "Audio analysis panel"
+                      :surface/kind :inspector
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Humans inspect waveform and spectrogram views for uploaded audio."}]}

@@ -1,0 +1,10 @@
+{:actor/id "foamy125_gmail_com"
+ :actor/kind :user
+ :actor/email "foamy125@gmail.com"
+ :actor/username "foamy125@gmail.com"
+ :actor/org "open-hax"
+ :actor/label "foamy125@gmail.com"
+ :actor/roles [:role/system-admin]
+ :actor/policy {:principal :actor
+                :source-of-truth :contract
+                :notes "Canonical human actor contract for foamy125@gmail.com. GitHub OAuth resolves this email as the canonical username and syncs membership role + actor assignment from this contract."}}

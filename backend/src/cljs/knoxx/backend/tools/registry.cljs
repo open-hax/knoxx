@@ -7,6 +7,7 @@
    "edit" {:id "edit" :label "Edit" :description "Revise existing documents and drafts"}
    "bash" {:id "bash" :label "Shell" :description "Run controlled shell commands"}
    "websearch" {:id "websearch" :label "Web Search" :description "Search the live web through Proxx websearch"}
+   "web.read" {:id "web.read" :label "Web Read" :description "Fetch a web link or attachment URL and extract readable content or metadata"}
    "canvas" {:id "canvas" :label "Canvas" :description "Open long-form markdown drafting canvas"}
 
    "email.send" {:id "email.send" :label "Email" :description "Send drafts through configured email account"}
@@ -29,23 +30,39 @@
    "event_agents.upsert_job" {:id "event_agents.upsert_job" :label "Event Agent Upsert Job" :description "Create or update a scheduled event-agent job"}
    "schedule_event_agent" {:id "schedule_event_agent" :label "Schedule Event Agent" :description "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config"}
 
-   "bluesky.publish" {:id "bluesky.publish" :label "Bluesky" :description "Publish updates to Bluesky"}
+   "sandbox_container.create" {:id "sandbox_container.create" :label "Sandbox Create" :description "Create a TTL-bound sandbox container for isolated development work"}
+   "sandbox_container.status" {:id "sandbox_container.status" :label "Sandbox Status" :description "Inspect sandbox container runtime status and remaining TTL"}
+   "sandbox_container.exec" {:id "sandbox_container.exec" :label "Sandbox Exec" :description "Execute a shell command inside a sandbox container"}
+   "sandbox_container.read" {:id "sandbox_container.read" :label "Sandbox Read" :description "Read a text file from the sandbox workdir"}
+   "sandbox_container.write" {:id "sandbox_container.write" :label "Sandbox Write" :description "Write a text file into the sandbox workdir"}
+   "sandbox_container.commit" {:id "sandbox_container.commit" :label "Sandbox Commit" :description "Create a git commit inside the sandbox workdir"}
+   "sandbox_container.destroy" {:id "sandbox_container.destroy" :label "Sandbox Destroy" :description "Destroy a sandbox container and its temporary workspace"}
+
+   "bluesky.publish" {:id "bluesky.publish" :label "Bluesky Publish" :description "Publish updates to Bluesky"}
+   "bluesky.profile" {:id "bluesky.profile" :label "Bluesky Profile" :description "Read a Bluesky profile by handle or DID"}
+   "bluesky.search" {:id "bluesky.search" :label "Bluesky Search" :description "Search public Bluesky posts or actors"}
+   "bluesky.author.feed" {:id "bluesky.author.feed" :label "Bluesky Author Feed" :description "Read recent posts from a specific Bluesky author"}
+   "bluesky.timeline" {:id "bluesky.timeline" :label "Bluesky Timeline" :description "Read the authenticated Bluesky timeline"}
 
    "music.identify_file" {:id "music.identify_file" :label "Music Identify" :description "Identify songs from audio files using AudD API"}
    "music.acoustid_lookup" {:id "music.acoustid_lookup" :label "AcoustID Lookup" :description "Look up audio fingerprints via AcoustID"}
    "music.musicbrainz_recording" {:id "music.musicbrainz_recording" :label "MusicBrainz" :description "Look up recording metadata by MBID"}
    "music.copyright_check" {:id "music.copyright_check" :label "Copyright Check" :description "Check copyright status of audio"}
+   "voice.openutau_project" {:id "voice.openutau_project" :label "OpenUtau Project" :description "Create an OpenUtau .ustx singing project for human review and export"}
 
    "audio.spectrogram" {:id "audio.spectrogram" :label "Audio Spectrogram" :description "Generate spectrogram from audio"}
    "audio.waveform" {:id "audio.waveform" :label "Audio Waveform" :description "Generate waveform from audio"}
 
    "multimodal.upload" {:id "multimodal.upload" :label "Multimodal Upload" :description "Upload images, audio, video, and documents for multimodal AI"}
+   "workspace_media.attach" {:id "workspace_media.attach" :label "Attach Workspace Media" :description "Attach an image, audio file, video, or document from the workspace into the response"}
 
    "semantic_query" {:id "semantic_query" :label "Semantic Query" :description "Query semantic context in the active corpus"}
+   "semantic_read" {:id "semantic_read" :label "Read Document" :description "Read a document by relative path from the active Knoxx corpus"}
    "graph_query" {:id "graph_query" :label "Graph Query" :description "Query the canonical knowledge graph"}
    "memory_search" {:id "memory_search" :label "Memory Search" :description "Search prior Knoxx sessions in OpenPlanner"}
    "memory_session" {:id "memory_session" :label "Memory Session" :description "Load a specific Knoxx session from OpenPlanner"}
    "save_translation" {:id "save_translation" :label "Save Translation" :description "Save translated content to database"}
+   "create_new_file" {:id "create_new_file" :label "Create New File" :description "Create a new file-backed artifact for the Knoxx canvas editor"}
 
    "contract.write" {:id "contract.write" :label "Contract Write" :description "Create or update a contract by writing EDN text"}
 
@@ -55,7 +72,21 @@
    "openplanner.append-obs" {:id "openplanner.append-obs" :label "OpenPlanner Append Obs" :description "Append an Observation to the epistemic kernel"}
    "openplanner.append-inference" {:id "openplanner.append-inference" :label "OpenPlanner Append Inference" :description "Append an Inference to the epistemic kernel"}
    "openplanner.append-attestation" {:id "openplanner.append-attestation" :label "OpenPlanner Append Attestation" :description "Append an Attestation to the epistemic kernel"}
-   "openplanner.append-judgment" {:id "openplanner.append-judgment" :label "OpenPlanner Append Judgment" :description "Append a Judgment to the epistemic kernel"}})
+   "openplanner.append-judgment" {:id "openplanner.append-judgment" :label "OpenPlanner Append Judgment" :description "Append a Judgment to the epistemic kernel"}
+
+   "mcp.shoedelussy.write_pattern" {:id "mcp.shoedelussy.write_pattern" :label "Shoedelussy Write Pattern" :description "Write Strudel code to the Shoedelussy MCP scratch buffer and mirror it into a durable project when project_id already exists"}
+   "mcp.shoedelussy.get_pattern" {:id "mcp.shoedelussy.get_pattern" :label "Shoedelussy Get Pattern" :description "Read the Shoedelussy MCP scratch buffer, or fall back to durable project code when available"}
+   "mcp.shoedelussy.mutate_pattern" {:id "mcp.shoedelussy.mutate_pattern" :label "Shoedelussy Mutate Pattern" :description "Apply a built-in mutation to the current Shoedelussy scratch or project-backed pattern"}
+   "mcp.shoedelussy.inject_section" {:id "mcp.shoedelussy.inject_section" :label "Shoedelussy Inject Section" :description "Append or replace a named section in the current Shoedelussy scratch or project-backed pattern"}
+   "mcp.shoedelussy.create_project" {:id "mcp.shoedelussy.create_project" :label "Shoedelussy Create Project" :description "Create or update a durable Shoedelussy project from inline code or the current scratch pattern"}
+   "mcp.shoedelussy.set_bpm" {:id "mcp.shoedelussy.set_bpm" :label "Shoedelussy Set BPM" :description "Set BPM metadata and project tempo for a durable Shoedelussy project"}
+   "mcp.shoedelussy.set_key" {:id "mcp.shoedelussy.set_key" :label "Shoedelussy Set Key" :description "Set the musical key for a durable Shoedelussy project"}
+   "mcp.shoedelussy.get_state" {:id "mcp.shoedelussy.get_state" :label "Shoedelussy Get State" :description "Read BPM, key, code, and section summary for a durable Shoedelussy project"}
+   "mcp.shoedelussy.list_projects" {:id "mcp.shoedelussy.list_projects" :label "Shoedelussy List Projects" :description "List durable Shoedelussy projects available through the MCP server"}
+   "mcp.shoedelussy.load_project" {:id "mcp.shoedelussy.load_project" :label "Shoedelussy Load Project" :description "Load a durable Shoedelussy project by id"}
+   "mcp.shoedelussy.save_snapshot" {:id "mcp.shoedelussy.save_snapshot" :label "Shoedelussy Save Snapshot" :description "Save a new snapshot/version of a durable Shoedelussy project"}
+   "mcp.shoedelussy.render_loop" {:id "mcp.shoedelussy.render_loop" :label "Shoedelussy Render Loop" :description "Create a share-backed browser playback/render URL for Strudel code; this is a browser render link, not a server wav/mp3 export"}
+   "mcp.shoedelussy.render_wav" {:id "mcp.shoedelussy.render_wav" :label "Shoedelussy Render WAV" :description "Create a browser URL that attempts WAV capture/download from the Shoedelussy frontend shell; this is browser-side export, not a headless server renderer"}})
 
 (defn get-tool
   [tool-id]

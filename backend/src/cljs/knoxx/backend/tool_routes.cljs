@@ -7,6 +7,9 @@
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.triggers.control-config :as control-config]))
 
+(declare nodemailer-create-transport!
+         transporter-send-mail!)
+
 (defn send-email!
   "Send an email via Gmail SMTP using nodemailer.
    Returns a promise that resolves with the result on success or rejects on failure."
@@ -16,13 +19,13 @@
         nodemailer (aget runtime "nodemailer")]
     (if (or (str/blank? email) (str/blank? password))
       (js/Promise.reject (js/Error. "Gmail credentials not configured"))
-      (let [transporter (.createTransport nodemailer
+      (let [transporter (nodemailer-create-transport! nodemailer
                                            #js {:host "smtp.gmail.com"
                                                 :port 587
                                                 :secure false
                                                 :auth #js {:user email
                                                            :pass password}})]
-        (.sendMail transporter
+        (transporter-send-mail! transporter
                    #js {:from email
                         :to (str/join ", " to)
                         :cc (when (seq cc) (str/join ", " cc))
@@ -57,6 +60,30 @@
     (-> (dg/restart! token)
         (.catch (fn [_] nil)))))
 
+(defn- fs-read-file!
+  [^js node-fs path encoding]
+  (.readFile node-fs path encoding))
+
+(defn- fs-write-file!
+  [^js node-fs path content encoding]
+  (.writeFile node-fs path content encoding))
+
+(defn- fs-readdir!
+  [^js node-fs path opts]
+  (.readdir node-fs path opts))
+
+(defn- fs-mkdir!
+  [^js node-fs path opts]
+  (.mkdir node-fs path opts))
+
+(defn- nodemailer-create-transport!
+  [^js nodemailer opts]
+  (.createTransport nodemailer opts))
+
+(defn- transporter-send-mail!
+  [^js transporter message]
+  (.sendMail transporter message))
+
 (defn register-tool-routes!
   [app runtime config {:keys [route!
                               json-response!
@@ -71,12 +98,17 @@
                               clip-text]}]
   (route! app "GET" "/api/tools/catalog"
           (fn [request reply]
-            (let [role (or (aget request "query" "role") (:knoxx-default-role config))]
+            (let [role (or (aget request "query" "role") (:knoxx-default-role config))
+                  agent-contract-id (or (aget request "query" "agent")
+                                        (aget request "query" "agentId")
+                                        (aget request "query" "agentContractId"))
+                  actor-id (or (aget request "query" "actor")
+                               (aget request "query" "actorId"))]
               (with-request-context! runtime request reply
                 (fn [ctx]
                   (when ctx
                     (ensure-permission! ctx "agent.chat.use"))
-                  (json-response! reply 200 (tool-catalog config role ctx)))))))
+                  (json-response! reply 200 (tool-catalog config role ctx agent-contract-id actor-id)))))))
 
   (route! app "POST" "/api/tools/email/send"
           (fn [request reply]
@@ -84,7 +116,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "email.send")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "email.send" agent-contract-id)
                         to (or (aget body "to") #js [])
                         cc (or (aget body "cc") #js [])
                         bcc (or (aget body "bcc") #js [])
@@ -108,7 +142,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "websearch")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "websearch" agent-contract-id)
                         query (str/trim (str (or (aget body "query") "")))
                         num-results (or (aget body "numResults") 8)
                         search-context-size (aget body "searchContextSize")
@@ -141,7 +177,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "read")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "read" agent-contract-id)
                         node-fs (aget runtime "fs")
                         path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
                         offset (max 1 (or (aget body "offset") 1))
@@ -149,7 +187,7 @@
                     (-> (.stat node-fs path-str)
                         (.then (fn [stat]
                                  (if (.isDirectory stat)
-                                   (-> (.readdir node-fs path-str #js {:withFileTypes true})
+                                    (-> (fs-readdir! node-fs path-str #js {:withFileTypes true})
                                        (.then (fn [entries]
                                                 (let [content-lines (map (fn [entry]
                                                                            (str (aget entry "name")
@@ -161,7 +199,7 @@
                                                                              :path path-str
                                                                              :content content
                                                                              :truncated truncated})))))
-                                   (-> (.readFile node-fs path-str "utf8")
+                                   (-> (fs-read-file! node-fs path-str "utf8")
                                        (.then (fn [text]
                                                 (let [lines (str/split-lines text)
                                                       start (dec offset)
@@ -186,7 +224,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write" agent-contract-id)
                         node-fs (aget runtime "fs")
                         node-path (aget runtime "path")
                         path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
@@ -204,10 +244,10 @@
                     (-> check-promise
                         (.then (fn []
                                  (if create-parents
-                                   (.mkdir node-fs parent #js {:recursive true})
+                                    (fs-mkdir! node-fs parent #js {:recursive true})
                                    (js/Promise.resolve nil))))
                         (.then (fn []
-                                 (.writeFile node-fs path-str content "utf8")))
+                                 (fs-write-file! node-fs path-str content "utf8")))
                         (.then (fn []
                                  (json-response! reply 200 {:ok true
                                                             :role role
@@ -224,13 +264,15 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "edit")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "edit" agent-contract-id)
                         node-fs (aget runtime "fs")
                         path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
                         old-string (str (or (aget body "old_string") ""))
                         new-string (str (or (aget body "new_string") ""))
                         replace-all (true? (aget body "replace_all"))]
-                    (-> (.readFile node-fs path-str "utf8")
+                    (-> (fs-read-file! node-fs path-str "utf8")
                         (.then (fn [current]
                                  (if (= (.indexOf current old-string) -1)
                                    (js/Promise.reject (js/Error. "old_string not found in file"))
@@ -240,7 +282,7 @@
                                          updated (if replace-all
                                                    (str/replace current old-string new-string)
                                                    (replace-first current old-string new-string))]
-                                     (-> (.writeFile node-fs path-str updated "utf8")
+                                     (-> (fs-write-file! node-fs path-str updated "utf8")
                                          (.then (fn []
                                                   (json-response! reply 200 {:ok true
                                                                              :role role
@@ -257,7 +299,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "bash")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "bash" agent-contract-id)
                         timeout-ms (min (max (or (aget body "timeout_ms") 120000) 1000) 300000)
                         workdir (if-let [raw-workdir (aget body "workdir")]
                                   (resolve-workspace-path runtime config raw-workdir)
@@ -298,7 +342,9 @@
               (fn [ctx]
                 (try
                   (let [body (or (aget request "body") #js {})
-                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish")
+                        agent-contract-id (or (aget body "agentContractId")
+                                              (aget body "agent_contract_id"))
+                        role (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish" agent-contract-id)
                         channel-id (str/trim (str (or (aget body "channelId") "")))
                         content (str/trim (str (or (aget body "content") "")))
                         token (:discord-bot-token (or @runtime-state/config* config))
@@ -335,7 +381,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (ensure-permission! ctx "platform.org.read")
+                (ensure-permission! ctx "org.event_agents.control")
                 (let [live-config (or @runtime-state/config* config)
                       token (:discord-bot-token live-config)
                       configured (not (str/blank? token))
@@ -348,7 +394,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [body (or (aget request "body") #js {})
                         new-token (str/trim (str (or (aget body "discordBotToken") "")))]
                     (if (str/blank? new-token)
@@ -372,7 +418,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (ensure-permission! ctx "platform.org.read")
+                (ensure-permission! ctx "org.event_agents.control")
                 (json-response! reply 200 (event-agents-control-response config))))))
 
   (route! app "PUT" "/api/admin/config/event-agents"
@@ -380,7 +426,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
                         live-config (or @runtime-state/config* config)
                         next-control (control-config/event-agent-control-config
@@ -399,7 +445,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [job-id (or (aget request "params" "jobId") "")]
                     (if (str/blank? job-id)
                       (json-response! reply 400 {:detail "jobId is required"})
@@ -417,7 +463,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
                     (-> (event-agents/dispatch-event! body)
                         (.then (fn [result]
@@ -434,7 +480,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (ensure-permission! ctx "platform.org.read")
+                (ensure-permission! ctx "org.event_agents.control")
                 (json-response! reply 200 (event-agents-control-response config))))))
 
   (route! app "PUT" "/api/admin/config/discord/control"
@@ -442,7 +488,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
                         live-config (or @runtime-state/config* config)
                         next-control (control-config/event-agent-control-config
@@ -461,7 +507,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (try
-                  (ensure-permission! ctx "platform.org.create")
+                  (ensure-permission! ctx "org.event_agents.control")
                   (let [job-id (or (aget request "params" "jobId") "")]
                     (if (str/blank? job-id)
                       (json-response! reply 400 {:detail "jobId is required"})
@@ -479,7 +525,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (ensure-permission! ctx "platform.org.read")
+                (ensure-permission! ctx "org.event_agents.control")
                 (json-response! reply 200 (:runtime (event-agents-control-response config)))))))
 
   ;; MCP (Model Context Protocol) routes

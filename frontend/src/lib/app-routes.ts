@@ -1,5 +1,7 @@
 export const OPS_BASE_PATH = '/ops';
 export const LEGACY_OPS_BASE_PATH = '/next';
+export const EVENT_AGENTS_ROUTE = '/event-agents';
+export const BASIC_USER_ROLE = 'basic_user';
 
 function trimSlashes(value: string): string {
   return value.replace(/^\/+|\/+$/g, '');
@@ -24,6 +26,21 @@ export const opsRoutes = {
   settings: joinPath(OPS_BASE_PATH, 'settings'),
   admin: joinPath(OPS_BASE_PATH, 'admin'),
 } as const;
+
+export function isBasicUserRole(roleSlugs: string[] = []): boolean {
+  return roleSlugs.includes(BASIC_USER_ROLE);
+}
+
+export function canAccessPath(pathname: string, roleSlugs: string[] = []): boolean {
+  if (!isBasicUserRole(roleSlugs)) {
+    return true;
+  }
+
+  return pathname === '/'
+    || pathname === ''
+    || pathname === '/login'
+    || pathname === '/signup';
+}
 
 export function remapLegacyOpsPath(pathname: string, search = '', hash = ''): string {
   if (pathname === LEGACY_OPS_BASE_PATH) {

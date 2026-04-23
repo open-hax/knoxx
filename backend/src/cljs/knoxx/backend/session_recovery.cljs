@@ -5,7 +5,8 @@
             [knoxx.backend.agent-runtime :as agent-runtime]
             [knoxx.backend.http :as http]
             [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]))
+            [knoxx.backend.session-store :as session-store]
+            [knoxx.backend.turn-control :as turn-control]))
 
 (defonce started?* (atom false))
 (defonce interval-handle* (atom nil))
@@ -14,6 +15,21 @@
 (defonce recovery-inflight?* (atom false))
 
 (def RECOVERY_INTERVAL_MS 15000)
+
+(defn- app-log-info!
+  [app message]
+  (let [^js log (.-log app)]
+    (.info log message)))
+
+(defn- app-log-warn!
+  [app message]
+  (let [^js log (.-log app)]
+    (.warn log message)))
+
+(defn- app-log-error!
+  [app message err]
+  (let [^js log (.-log app)]
+    (.error log message err)))
 
 (defn- proxx-configured?
   [config]
@@ -34,22 +50,35 @@
   [config]
   (let [proxx? (proxx-configured? config)
         openplanner? (openplanner-configured? config)]
-    (if (or (not proxx?) (not openplanner?))
+    (if-not proxx?
       (js/Promise.resolve false)
       (-> (.all js/Promise
                 #js [(check-url-ok! (str (:proxx-base-url config) "/health")
                                     #js {:headers (http/bearer-headers (:proxx-auth-token config))})
-                     (check-url-ok! (http/openplanner-url config "/v1/health")
-                                    #js {:headers (http/openplanner-headers config)})])
+                     (if openplanner?
+                       (check-url-ok! (http/openplanner-url config "/v1/health")
+                                      #js {:headers (http/openplanner-headers config)})
+                       (js/Promise.resolve true))])
           (.then (fn [parts]
                    (and (boolean (aget parts 0))
                         (boolean (aget parts 1)))))))))
 
+(defn- runtime-processing-session?
+  [conversation-id]
+  (let [active (agent-runtime/active-agent-session conversation-id)
+        streaming? (and active (true? (aget active "isStreaming")))
+        current-turn? (and active
+                           (try
+                             (some? (aget active "currentTurn"))
+                             (catch js/Error _ false)))
+        registered-turn? (some? (turn-control/active-turn conversation-id))]
+    (or streaming? current-turn? registered-turn?)))
+
 (defn- session-resumable?
   [session]
   (let [conversation-id (str (or (:conversation_id session) ""))
-        active (agent-runtime/active-agent-session conversation-id)]
-    (not (and active (true? (aget active "isStreaming"))))))
+        active? (runtime-processing-session? conversation-id)]
+    (not active?)))
 
 (defn- resume-sessions!
   [runtime app config sessions]
@@ -58,12 +87,12 @@
                        vec)]
     (if (seq resumable)
       (-> (.all js/Promise
-                (clj->js (mapv #(agent-turns/resume-recovered-session! runtime config %) resumable)))
+                (clj->js (mapv #(agent-turns/resume-recovered-session! runtime config % {:wait-for :kickoff}) resumable)))
           (.then (fn [results]
                    (let [items (vec (js->clj results :keywordize-keys true))
                          resumed (count (filter :resumed items))]
                      (reset! last-recovery-at* (.toISOString (js/Date.)))
-                     (.log.info app (str "[knoxx] session recovery tick: found " (count resumable) ", resumed " resumed))
+                     (app-log-info! app (str "[knoxx] session recovery tick: found " (count resumable) ", resumed " resumed " (kickoff)"))
                      #js {:ok true :found (count resumable) :resumed resumed}))))
       (js/Promise.resolve #js {:ok true :found 0 :resumed 0}))))
 
@@ -85,7 +114,7 @@
                      (-> (session-store/recover-sessions! (redis/get-client))
                          (.then (fn [sessions] (resume-sessions! runtime app config sessions)))
                          (.catch (fn [err]
-                                   (.log.error app "[knoxx] session recovery tick failed" err)
+                                   (app-log-error! app "[knoxx] session recovery tick failed" err)
                                    #js {:ok false :error (str err)})))
                      #js {:ok false :skipped true :reason "deps_unhealthy"})))
           (.catch (fn [err]
@@ -101,11 +130,11 @@
         (.then (fn [client]
                  (if client
                    (do
-                     (.log.info app "[knoxx] Redis connected; session persistence enabled")
+                     (app-log-info! app "[knoxx] Redis connected; session persistence enabled")
                      client)
                    (do
                      (when-not (str/blank? (str redis-url))
-                       (.log.warn app "[knoxx] Redis not connected; session persistence disabled"))
+                       (app-log-warn! app "[knoxx] Redis not connected; session persistence disabled"))
                      nil)))))))
 
 (defn start!
@@ -126,4 +155,13 @@
                                   (-> (ensure-redis! app config) (.catch (fn [_] nil))))
                                 (-> (attempt-recovery! runtime app config) (.catch (fn [_] nil))))
                               RECOVERY_INTERVAL_MS)))
-                   #js {:ok true :started true :interval_ms RECOVERY_INTERVAL_MS}))))))
+                    #js {:ok true :started true :interval_ms RECOVERY_INTERVAL_MS}))))))
+
+(defn stop!
+  []
+  (when-let [interval-id @interval-handle*]
+    (js/clearInterval interval-id)
+    (reset! interval-handle* nil))
+  (reset! recovery-inflight?* false)
+  (reset! started?* false)
+  true)

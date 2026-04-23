@@ -21,7 +21,7 @@ export function ChatWorkspacePane({
   onOpenSourceInPreview,
 }: ChatWorkspacePaneProps) {
   return (
-    <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
+    <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", overflow: "hidden" }}>
       <ChatMainPane
         showFiles={showFiles}
         showSettings={controller.showSettings}
@@ -34,15 +34,22 @@ export function ChatWorkspacePane({
         onToggleConsole={controller.toggleConsole}
         selectedModel={controller.selectedModel}
         onSelectedModelChange={controller.setSelectedModel}
+        selectedThinkingLevel={controller.selectedThinkingLevel}
+        onSelectedThinkingLevelChange={controller.setSelectedThinkingLevel}
         proxxModels={controller.proxxModels}
         proxxReachable={controller.proxxReachable}
         proxxConfigured={controller.proxxConfigured}
         onNewChat={controller.handleNewChat}
+        onUndoMessages={controller.handleUndoLastTurn}
+        undoDisabled={controller.isSending || controller.isRecovering || !controller.messages.some((message) => message.role === "user")}
         systemPrompt={controller.systemPrompt}
         onSystemPromptChange={controller.setSystemPrompt}
         conversationId={controller.conversationId}
         activeRole={controller.activeRole}
-        onActiveRoleChange={controller.setActiveRole}
+        activeActorId={controller.activeActorId}
+        activeAgentId={controller.activeAgentId}
+        availableAgents={controller.availableAgents}
+        onActiveAgentChange={controller.setActiveAgentId}
         toolCatalog={controller.toolCatalog}
         wsStatus={controller.wsStatus}
         isRecovering={controller.isRecovering}
@@ -53,6 +60,7 @@ export function ChatWorkspacePane({
         onLiveControlTextChange={controller.setLiveControlText}
         queueingControl={controller.queueingControl}
         onQueueLiveControl={controller.queueLiveControl}
+        onVoiceSteer={controller.voiceSteer}
         abortingTurn={controller.abortingTurn}
         onAbortTurn={controller.abortTurn}
         activeRunId={controller.activeRunId}
@@ -96,6 +104,9 @@ export function ChatWorkspacePane({
         onSaveCanvasFile={controller.saveCanvasFile}
         onClearScratchpad={controller.clearScratchpad}
         onSendCanvasEmailAction={controller.sendCanvasEmailAction}
+        sttEnabled={controller.sttEnabled}
+        ttsEnabled={controller.ttsEnabled}
+        ttsDefaultVoiceId={controller.ttsDefaultVoiceId}
       />
     </div>
   );

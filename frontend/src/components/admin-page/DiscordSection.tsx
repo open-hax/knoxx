@@ -12,7 +12,7 @@ import {
   type EventAgentRuntimeJob,
 } from "../../lib/api/admin";
 import type { AdminToolDefinition } from "../../lib/types";
-import { Badge, SectionCard } from "./common";
+import { Badge, SectionCard, classNames } from "./common";
 
 type Notice = { tone: "success" | "error"; text: string } | null;
 type DraftControl = EventAgentControlResponse["control"];
@@ -57,6 +57,137 @@ function seedJsonDrafts(jobs: EventAgentJobControl[]): JsonDrafts {
   }, {});
 }
 
+function compactText(value: string | undefined, max = 120): string {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "No description";
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1)}…`;
+}
+
+function normalizeSearch(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function jobSearchText(job: EventAgentJobControl): string {
+  return [
+    job.id,
+    job.name,
+    job.description,
+    job.source.kind,
+    job.source.mode,
+    job.trigger.kind,
+    job.trigger.eventKinds.join(" "),
+    job.agentSpec.role,
+    job.agentSpec.model,
+    job.contractSourceId,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function runtimeStatusTone(status: string | undefined): "default" | "success" | "warn" | "danger" | "info" {
+  switch (status) {
+    case "ok":
+      return "success";
+    case "error":
+      return "danger";
+    case "running":
+      return "info";
+    default:
+      return "default";
+  }
+}
+
+function SidebarJobButton({
+  job,
+  runtime,
+  active,
+  onSelect,
+}: {
+  job: EventAgentJobControl;
+  runtime: EventAgentRuntimeJob | null;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const meta = [job.source.kind, job.trigger.kind, job.contractSourceId ? "contract" : "custom"];
+  const runtimeLabel = runtime?.running ? "running" : (runtime?.lastStatus ?? "idle");
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={classNames(
+        "w-full rounded-lg border px-2.5 py-2 text-left transition",
+        active
+          ? "border-sky-500/60 bg-sky-500/10 shadow-[inset_2px_0_0_0_rgba(56,189,248,0.9)]"
+          : "border-slate-800 bg-slate-950/35 hover:border-slate-700 hover:bg-slate-950/70",
+      )}
+      aria-pressed={active}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 truncate text-sm font-medium text-slate-100">{job.name}</div>
+        <span
+          className={classNames(
+            "h-2 w-2 shrink-0 rounded-full",
+            job.enabled ? "bg-emerald-400" : "bg-amber-400",
+          )}
+          aria-hidden="true"
+        />
+      </div>
+
+      <div className="mt-1 flex items-center justify-between gap-2 text-[11px] leading-4 text-slate-500">
+        <span className="min-w-0 truncate">{meta.join(" · ")}</span>
+        <span className="shrink-0">{runtime?.runCount ?? 0}r</span>
+      </div>
+
+      <div className="mt-1 flex items-center justify-between gap-2 text-[11px] leading-4">
+        <span className="min-w-0 truncate font-mono text-slate-400">{compactText(job.id, 28)}</span>
+        <span className={classNames(
+          "shrink-0 uppercase tracking-wide",
+          runtime?.lastStatus === "ok"
+            ? "text-emerald-300"
+            : runtime?.lastStatus === "error"
+              ? "text-rose-300"
+              : runtime?.running
+                ? "text-sky-300"
+                : "text-slate-500",
+        )}>{runtimeLabel}</span>
+      </div>
+    </button>
+  );
+}
+
+function CollapsiblePanel({
+  title,
+  description,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  description?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 open:bg-slate-950/55"
+    >
+      <summary className="cursor-pointer list-none">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold text-slate-100">{title}</div>
+            {description ? <div className="mt-1 text-xs text-slate-500">{description}</div> : null}
+          </div>
+          <span className="text-xs uppercase tracking-wide text-slate-500">toggle</span>
+        </div>
+      </summary>
+      <div className="mt-4">{children}</div>
+    </details>
+  );
+}
+
 export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; tools?: AdminToolDefinition[] }) {
   const [loading, setLoading] = useState(true);
   const [savingToken, setSavingToken] = useState(false);
@@ -72,6 +203,8 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
   const [eventSourceKind, setEventSourceKind] = useState("github");
   const [eventKind, setEventKind] = useState("issues.opened");
   const [eventPayloadDraft, setEventPayloadDraft] = useState('{\n  "repository": "open-hax/openplanner",\n  "title": "Example event",\n  "content": "Investigate this issue"\n}');
+  const [jobSearch, setJobSearch] = useState("");
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
   const runtimeJobs = useMemo(() => status?.runtime.jobs ?? [], [status]);
   const availableRoles = useMemo(() => status?.availableRoles ?? [], [status]);
@@ -86,6 +219,27 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
   const seenDiscordChannels = discordRuntime && Array.isArray(discordRuntime.lastSeenChannels)
     ? (discordRuntime.lastSeenChannels as unknown[]).length
     : 0;
+
+  const filteredJobs = useMemo(() => {
+    if (!draft) return [];
+    const query = normalizeSearch(jobSearch);
+    if (!query) return draft.jobs;
+    return draft.jobs.filter((job) => jobSearchText(job).includes(query));
+  }, [draft, jobSearch]);
+
+  const selectedJob = useMemo(() => {
+    if (!filteredJobs.length) return null;
+    return filteredJobs.find((job) => job.id === selectedJobId) ?? filteredJobs[0] ?? null;
+  }, [filteredJobs, selectedJobId]);
+
+  const selectedRuntime = useMemo(
+    () => (selectedJob ? runtimeForJob(runtimeJobs, selectedJob.id) : null),
+    [runtimeJobs, selectedJob],
+  );
+
+  const selectedJobJsonDraft = selectedJob
+    ? (jsonDrafts[selectedJob.id] ?? { sourceConfig: "{}", filters: "{}", toolPolicies: "[]" })
+    : null;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -116,6 +270,14 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const nextIds = filteredJobs.map((job) => job.id);
+    setSelectedJobId((current) => {
+      if (current && nextIds.includes(current)) return current;
+      return nextIds[0] ?? null;
+    });
+  }, [filteredJobs]);
 
   const updateJob = useCallback((jobId: string, patch: Partial<EventAgentJobControl>) => {
     setDraft((current) => {
@@ -263,325 +425,242 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
   }, [canManage, eventKind, eventPayloadDraft, eventSourceKind, load]);
 
   return (
-    <SectionCard
-      title="Event agents"
-      description="A generic event-driven agent runtime. Jobs can respond to cron ticks, Discord events, GitHub events, or arbitrary injected events with custom roles, prompts, models, and tool policies."
-      actions={
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading || savingToken || savingControl}
-            className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
-          >
-            {loading ? "Loading…" : "Refresh"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSaveControl()}
-            disabled={!canManage || !draft || savingControl}
-            className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
-          >
-            {savingControl ? "Saving…" : "Save runtime"}
-          </button>
-        </div>
-      }
-    >
+    <SectionCard>
       {loading || !draft || !status ? (
         <div className="text-sm text-slate-300">Loading event-agent control plane…</div>
       ) : (
-        <div className="space-y-6">
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Discord token</div>
-              <div className="mt-2 flex items-center gap-2 text-sm text-slate-200">
-                {status.configured ? <Badge tone="success">Configured</Badge> : <Badge tone="warn">Missing</Badge>}
-                {status.tokenPreview ? <span className="font-mono text-xs text-slate-400">{status.tokenPreview}</span> : null}
+        <div className="space-y-4">
+          <div className="overflow-x-auto pb-1">
+            <div className="grid min-w-[44rem] gap-4 grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[14rem_minmax(0,1fr)]">
+            <aside className="sticky top-4 self-start space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold text-slate-100">Agents</div>
+                <div className="text-[11px] text-slate-500">{filteredJobs.length}/{draft.jobs.length}</div>
               </div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Runtime</div>
-              <div className="mt-2 flex items-center gap-2 text-sm text-slate-200">
-                {status.runtime.running ? <Badge tone="success">Running</Badge> : <Badge tone="warn">Stopped</Badge>}
-                <span>{draft.jobs.length} jobs</span>
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recent events</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-100">{recentEventCount}</div>
-              <div className="mt-1 text-xs text-slate-500">Buffered normalized events</div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Discord freshness</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-100">{seenDiscordChannels}</div>
-              <div className="mt-1 text-xs text-slate-500">Channels with last-seen state</div>
-            </div>
-          </div>
 
-          <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
-            <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div>
-                <div className="text-sm font-semibold text-slate-100">Discord adapter credentials</div>
-                <div className="text-xs text-slate-500">Current generic runtime still uses the Discord bot token for Discord-sourced jobs.</div>
-              </div>
-              <label className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Discord bot token</div>
-                <input
-                  type="password"
-                  value={draftToken}
-                  onChange={(event) => setDraftToken(event.target.value)}
-                  disabled={!canManage || savingToken}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                  placeholder={status.configured ? "Enter new token to replace" : "Bot token from Discord Developer Portal"}
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => void handleSaveToken()}
-                disabled={!canManage || savingToken || !draftToken.trim()}
-                className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
-              >
-                {savingToken ? "Saving…" : "Save token"}
-              </button>
-            </div>
-
-            <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div>
-                <div className="text-sm font-semibold text-slate-100">Source defaults</div>
-                <div className="text-xs text-slate-500">These defaults seed Discord jobs. Individual jobs can override them in their filter/source config JSON.</div>
-              </div>
-              <div className="grid gap-3 md:grid-cols-3">
-                <label className="space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Discord bot user ID</div>
-                  <input
-                    value={discordSource.botUserId ?? ""}
-                    onChange={(event) => setDraft({
-                      ...draft,
-                      sources: {
-                        ...draft.sources,
-                        discord: {
-                          ...discordSource,
-                          botUserId: event.target.value,
-                        },
-                      },
-                    })}
-                    disabled={!canManage || savingControl}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Default channels</div>
-                  <input
-                    value={joinCsv(discordSource.defaultChannels)}
-                    onChange={(event) => setDraft({
-                      ...draft,
-                      sources: {
-                        ...draft.sources,
-                        discord: {
-                          ...discordSource,
-                          defaultChannels: splitCsv(event.target.value),
-                        },
-                      },
-                    })}
-                    disabled={!canManage || savingControl}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                  />
-                </label>
-                <label className="space-y-1">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Default keywords</div>
-                  <input
-                    value={joinCsv(discordSource.targetKeywords)}
-                    onChange={(event) => setDraft({
-                      ...draft,
-                      sources: {
-                        ...draft.sources,
-                        discord: {
-                          ...discordSource,
-                          targetKeywords: splitCsv(event.target.value).map((value) => value.toLowerCase()),
-                        },
-                      },
-                    })}
-                    disabled={!canManage || savingControl}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 space-y-4">
-            <div>
-              <div className="text-sm font-semibold text-slate-100">Dispatch test event</div>
-              <div className="text-xs text-slate-500">Use this to simulate GitHub, Discord, cron, or arbitrary source events against the matcher.</div>
-            </div>
-            <div className="grid gap-3 md:grid-cols-[0.8fr_1.2fr_1fr_auto] md:items-end">
-              <label className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source kind</div>
-                <select
-                  value={eventSourceKind}
-                  onChange={(event) => setEventSourceKind(event.target.value)}
-                  disabled={!canManage || dispatchingEvent}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+              <div className="grid gap-2">
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  disabled={loading || savingToken || savingControl}
+                  className="inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
                 >
-                  {availableSourceKinds.map((kind) => <option key={`event-kind-${kind}`} value={kind}>{kind}</option>)}
-                </select>
-              </label>
+                  {loading ? "Loading…" : "Refresh"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveControl()}
+                  disabled={!canManage || !draft || savingControl}
+                  className="inline-flex items-center justify-center rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
+                >
+                  {savingControl ? "Saving…" : "Save runtime"}
+                </button>
+              </div>
+
+              <div className="grid gap-2">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Discord token</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-200">
+                    {status.configured ? <Badge tone="success">Configured</Badge> : <Badge tone="warn">Missing</Badge>}
+                    {status.tokenPreview ? <span className="font-mono text-[11px] text-slate-400">{status.tokenPreview}</span> : null}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Runtime</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-200">
+                    {status.runtime.running ? <Badge tone="success">Running</Badge> : <Badge tone="warn">Stopped</Badge>}
+                    <span>{draft.jobs.length} jobs</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Recent events</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-100">{recentEventCount}</div>
+                    <div className="text-[11px] text-slate-500">Buffered</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Freshness</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-100">{seenDiscordChannels}</div>
+                    <div className="text-[11px] text-slate-500">Channels</div>
+                  </div>
+                </div>
+              </div>
+
               <label className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Event kind</div>
+                <div className="sr-only">Search</div>
                 <input
-                  value={eventKind}
-                  onChange={(event) => setEventKind(event.target.value)}
-                  disabled={!canManage || dispatchingEvent}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                  placeholder="issues.opened"
+                  aria-label="Search"
+                  value={jobSearch}
+                  onChange={(event) => setJobSearch(event.target.value)}
+                  placeholder="Search…"
+                  className="w-full rounded-md border border-slate-800 bg-slate-950/80 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
                 />
               </label>
-              <label className="space-y-1">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Payload JSON</div>
-                <textarea
-                  value={eventPayloadDraft}
-                  onChange={(event) => setEventPayloadDraft(event.target.value)}
-                  disabled={!canManage || dispatchingEvent}
-                  rows={5}
-                  className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs font-mono text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => void handleDispatchEvent()}
-                disabled={!canManage || dispatchingEvent}
-                className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
-              >
-                {dispatchingEvent ? "Dispatching…" : "Dispatch"}
-              </button>
-            </div>
-          </div>
 
-          <div className="space-y-4">
-            <div>
-              <div className="text-sm font-semibold text-slate-100">Jobs</div>
-              <div className="text-xs text-slate-500">Jobs are the policy layer. Adapters emit events; jobs decide roles, tools, prompts, and timing.</div>
-            </div>
+              <div className="max-h-[72vh] space-y-1.5 overflow-y-auto pr-1">
+                {filteredJobs.length > 0 ? filteredJobs.map((job) => (
+                  <SidebarJobButton
+                    key={job.id}
+                    job={job}
+                    runtime={runtimeForJob(runtimeJobs, job.id)}
+                    active={selectedJob?.id === job.id}
+                    onSelect={() => setSelectedJobId(job.id)}
+                  />
+                )) : (
+                  <div className="rounded-xl border border-dashed border-slate-800 px-3 py-6 text-center text-sm text-slate-500">
+                    No event agents match this search.
+                  </div>
+                )}
+              </div>
+            </aside>
 
-            {draft.jobs.map((job) => {
-              const runtime = runtimeForJob(runtimeJobs, job.id);
-              const jobJsonDraft = jsonDrafts[job.id] ?? { sourceConfig: "{}", filters: "{}", toolPolicies: "[]" };
-              return (
-                <div key={job.id} className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-4">
+            <div className="space-y-4 min-w-0">
+              {selectedJob ? (
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
                   <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-base font-semibold text-slate-100">{job.name}</h3>
-                        <Badge tone={job.enabled ? "success" : "warn"}>{job.enabled ? "Enabled" : "Disabled"}</Badge>
-                        <Badge tone="info">{job.source.kind}</Badge>
-                        <Badge>{job.trigger.kind}</Badge>
-                        {runtime?.running ? <Badge tone="success">Running now</Badge> : null}
+                        <h3 className="text-lg font-semibold text-slate-100">{selectedJob.name}</h3>
+                        <Badge tone={selectedJob.enabled ? "success" : "warn"}>{selectedJob.enabled ? "Enabled" : "Disabled"}</Badge>
+                        <span className="text-xs text-slate-500">{selectedJob.source.kind} · {selectedJob.trigger.kind} · {selectedJob.contractSourceId ? "contract" : "custom"}</span>
+                        {selectedRuntime?.running ? <Badge tone="info">Running now</Badge> : null}
                       </div>
-                      {job.description ? <p className="mt-1 text-sm text-slate-400">{job.description}</p> : null}
+                      <p className="mt-2 text-sm text-slate-400">{selectedJob.description || "No description provided."}</p>
+                      {selectedJob.contractSourceId ? (
+                        <div className="mt-2 text-xs text-slate-500">
+                          Contract-backed from <code className="font-mono text-slate-300">{selectedJob.contractSourceId}</code>
+                          {typeof selectedJob.contractHash === "number" ? (
+                            <span> · hash <code className="font-mono text-slate-300">{selectedJob.contractHash}</code></span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                     <button
                       type="button"
-                      onClick={() => void handleRunJob(job.id)}
-                      disabled={!canManage || runningJobId === job.id}
+                      onClick={() => void handleRunJob(selectedJob.id)}
+                      disabled={!canManage || runningJobId === selectedJob.id}
                       className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
                     >
-                      {runningJobId === job.id ? "Queueing…" : "Run now"}
+                      {runningJobId === selectedJob.id ? "Queueing…" : "Run now"}
                     </button>
                   </div>
 
-                  <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_16rem]">
                     <div className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        <label className="space-y-1">
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Runtime snapshot</div>
+                        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2 text-sm">
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500">Status</div>
+                            <div className="mt-1"><Badge tone={runtimeStatusTone(selectedRuntime?.lastStatus)}>{selectedRuntime?.lastStatus ?? "idle"}</Badge></div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500">Runs</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-100">{selectedRuntime?.runCount ?? 0}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500">Last finished</div>
+                            <div className="mt-1 text-sm text-slate-200">{toLocalDateTime(selectedRuntime?.lastFinishedAt)}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500">Next run</div>
+                            <div className="mt-1 text-sm text-slate-200">{toLocalDateTime(selectedRuntime?.nextRunAt)}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Enabled</div>
-                          <label className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-200">
+                          <label className="inline-flex w-full items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-200">
                             <input
                               type="checkbox"
-                              checked={job.enabled}
-                              onChange={(event) => updateJob(job.id, { enabled: event.target.checked })}
+                              checked={selectedJob.enabled}
+                              onChange={(event) => updateJob(selectedJob.id, { enabled: event.target.checked })}
                               disabled={!canManage || savingControl}
                             />
                             Active
                           </label>
-                        </label>
+                        </div>
 
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Trigger kind</div>
                           <select
-                            value={job.trigger.kind}
-                            onChange={(event) => updateJob(job.id, { trigger: { ...job.trigger, kind: event.target.value } })}
+                            value={selectedJob.trigger.kind}
+                            onChange={(event) => updateJob(selectedJob.id, { trigger: { ...selectedJob.trigger, kind: event.target.value } })}
                             disabled={!canManage || savingControl}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           >
-                            {availableTriggerKinds.map((kind) => <option key={`${job.id}-trigger-${kind}`} value={kind}>{kind}</option>)}
+                            {availableTriggerKinds.map((kind) => <option key={`${selectedJob.id}-trigger-${kind}`} value={kind}>{kind}</option>)}
                           </select>
                         </label>
 
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source kind</div>
                           <select
-                            value={job.source.kind}
-                            onChange={(event) => updateJob(job.id, { source: { ...job.source, kind: event.target.value } })}
+                            value={selectedJob.source.kind}
+                            onChange={(event) => updateJob(selectedJob.id, { source: { ...selectedJob.source, kind: event.target.value } })}
                             disabled={!canManage || savingControl}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           >
-                            {availableSourceKinds.map((kind) => <option key={`${job.id}-source-${kind}`} value={kind}>{kind}</option>)}
+                            {availableSourceKinds.map((kind) => <option key={`${selectedJob.id}-source-${kind}`} value={kind}>{kind}</option>)}
                           </select>
                         </label>
+                      </div>
 
+                      <div className="grid gap-3 md:grid-cols-3">
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source mode</div>
                           <input
-                            value={job.source.mode}
-                            onChange={(event) => updateJob(job.id, { source: { ...job.source, mode: event.target.value } })}
+                            value={selectedJob.source.mode}
+                            onChange={(event) => updateJob(selectedJob.id, { source: { ...selectedJob.source, mode: event.target.value } })}
                             disabled={!canManage || savingControl}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           />
                         </label>
-                      </div>
 
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Cadence (minutes)</div>
                           <input
                             type="number"
                             min={1}
                             max={10080}
-                            value={job.trigger.cadenceMinutes}
-                            onChange={(event) => updateJob(job.id, { trigger: { ...job.trigger, cadenceMinutes: Number(event.target.value || 1) } })}
-                            disabled={!canManage || savingControl || job.trigger.kind !== "cron"}
+                            value={selectedJob.trigger.cadenceMinutes}
+                            onChange={(event) => updateJob(selectedJob.id, { trigger: { ...selectedJob.trigger, cadenceMinutes: Number(event.target.value || 1) } })}
+                            disabled={!canManage || savingControl || selectedJob.trigger.kind !== "cron"}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           />
                         </label>
-                        <label className="space-y-1 md:col-span-3">
+
+                        <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Event kinds</div>
                           <input
-                            value={joinCsv(job.trigger.eventKinds)}
-                            onChange={(event) => updateJob(job.id, { trigger: { ...job.trigger, eventKinds: splitCsv(event.target.value) } })}
-                            disabled={!canManage || savingControl || job.trigger.kind !== "event"}
+                            value={joinCsv(selectedJob.trigger.eventKinds)}
+                            onChange={(event) => updateJob(selectedJob.id, { trigger: { ...selectedJob.trigger, eventKinds: splitCsv(event.target.value) } })}
+                            disabled={!canManage || savingControl || selectedJob.trigger.kind !== "event"}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                            placeholder="discord.message.mention, issues.opened"
+                            placeholder="mention, issues.opened"
                           />
                         </label>
                       </div>
 
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="grid gap-3 md:grid-cols-3">
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Role</div>
                           <select
-                            value={job.agentSpec.role}
-                            onChange={(event) => updateJob(job.id, { agentSpec: { ...job.agentSpec, role: event.target.value } })}
+                            value={selectedJob.agentSpec.role}
+                            onChange={(event) => updateJob(selectedJob.id, { agentSpec: { ...selectedJob.agentSpec, role: event.target.value } })}
                             disabled={!canManage || savingControl}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           >
-                            {availableRoles.map((role) => <option key={`${job.id}-role-${role}`} value={role}>{role}</option>)}
+                            {availableRoles.map((role) => <option key={`${selectedJob.id}-role-${role}`} value={role}>{role}</option>)}
                           </select>
                         </label>
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Model</div>
                           <input
-                            value={job.agentSpec.model}
-                            onChange={(event) => updateJob(job.id, { agentSpec: { ...job.agentSpec, model: event.target.value } })}
+                            value={selectedJob.agentSpec.model}
+                            onChange={(event) => updateJob(selectedJob.id, { agentSpec: { ...selectedJob.agentSpec, model: event.target.value } })}
                             disabled={!canManage || savingControl}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           />
@@ -589,153 +668,283 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Thinking</div>
                           <select
-                            value={job.agentSpec.thinkingLevel}
-                            onChange={(event) => updateJob(job.id, { agentSpec: { ...job.agentSpec, thinkingLevel: event.target.value } })}
+                            value={selectedJob.agentSpec.thinkingLevel}
+                            onChange={(event) => updateJob(selectedJob.id, { agentSpec: { ...selectedJob.agentSpec, thinkingLevel: event.target.value } })}
                             disabled={!canManage || savingControl}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           >
                             {["off", "minimal", "low", "medium", "high", "xhigh"].map((value) => (
-                              <option key={`${job.id}-thinking-${value}`} value={value}>{value}</option>
+                              <option key={`${selectedJob.id}-thinking-${value}`} value={value}>{value}</option>
                             ))}
                           </select>
                         </label>
+                      </div>
+
+                      <label className="space-y-1">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Job description</div>
+                        <input
+                          value={selectedJob.description ?? ""}
+                          onChange={(event) => updateJob(selectedJob.id, { description: event.target.value })}
+                          disabled={!canManage || savingControl}
+                          className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                        />
+                      </label>
+
+                      <label className="space-y-1">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">System prompt</div>
+                        <textarea
+                          value={selectedJob.agentSpec.systemPrompt}
+                          onChange={(event) => updateJob(selectedJob.id, { agentSpec: { ...selectedJob.agentSpec, systemPrompt: event.target.value } })}
+                          disabled={!canManage || savingControl}
+                          rows={4}
+                          className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                        />
+                      </label>
+
+                      {selectedJobJsonDraft ? (
+                        <CollapsiblePanel
+                          title="Advanced JSON"
+                          description="Source config, filters, and tool policies stay available, but hidden unless you need them."
+                        >
+                          <div className="grid gap-3 xl:grid-cols-3">
+                            <label className="space-y-1 xl:col-span-1">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source config JSON</div>
+                              <textarea
+                                value={selectedJobJsonDraft.sourceConfig}
+                                onChange={(event) => updateJsonDraft(selectedJob.id, "sourceConfig", event.target.value)}
+                                disabled={!canManage || savingControl}
+                                rows={8}
+                                className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 font-mono text-xs text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                              />
+                            </label>
+                            <label className="space-y-1 xl:col-span-1">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Filters JSON</div>
+                              <textarea
+                                value={selectedJobJsonDraft.filters}
+                                onChange={(event) => updateJsonDraft(selectedJob.id, "filters", event.target.value)}
+                                disabled={!canManage || savingControl}
+                                rows={8}
+                                className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 font-mono text-xs text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                              />
+                            </label>
+                            <label className="space-y-1 xl:col-span-1">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Tool policies JSON</div>
+                              <textarea
+                                value={selectedJobJsonDraft.toolPolicies}
+                                onChange={(event) => updateJsonDraft(selectedJob.id, "toolPolicies", event.target.value)}
+                                disabled={!canManage || savingControl}
+                                rows={8}
+                                className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 font-mono text-xs text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                              />
+                              <div className="text-[11px] text-slate-500">Available tools: {availableToolIds.join(", ") || "(tool catalog unavailable)"}</div>
+                            </label>
+                          </div>
+                        </CollapsiblePanel>
+                      ) : null}
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                        <div className="text-sm font-semibold text-slate-100">Live runtime</div>
+                        <div className="mt-3 grid gap-x-4 gap-y-2 text-sm text-slate-300">
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Schedule</span><span className="text-right text-slate-200">{selectedRuntime?.scheduleLabel ?? "—"}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Last started</span><span className="text-right text-xs text-slate-200">{toLocalDateTime(selectedRuntime?.lastStartedAt)}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Last finished</span><span className="text-right text-xs text-slate-200">{toLocalDateTime(selectedRuntime?.lastFinishedAt)}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Duration</span><span className="text-right text-slate-200">{selectedRuntime?.lastDurationMs ? `${selectedRuntime.lastDurationMs} ms` : "—"}</span></div>
+                        </div>
+                        {selectedRuntime?.lastError ? (
+                          <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                            {selectedRuntime.lastError}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                        <div className="text-sm font-semibold text-slate-100">Quick reference</div>
+                        <div className="mt-3 space-y-2 text-xs text-slate-400">
+                          <div><span className="text-slate-500">Job id:</span> <code className="font-mono text-slate-200">{selectedJob.id}</code></div>
+                          <div><span className="text-slate-500">Source mode:</span> {selectedJob.source.mode}</div>
+                          <div><span className="text-slate-500">Trigger cadence:</span> {selectedJob.trigger.cadenceMinutes} min</div>
+                          <div><span className="text-slate-500">Event kinds:</span> {selectedJob.trigger.eventKinds.length > 0 ? selectedJob.trigger.eventKinds.join(", ") : "none"}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950/30 px-6 py-10 text-center text-sm text-slate-400">
+                  Select an event agent from the sidebar to inspect it.
+                </div>
+              )}
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <CollapsiblePanel
+                  title="Runtime infrastructure"
+                  description="Credentials and source defaults live here instead of taking over the whole page."
+                >
+                  <div className="space-y-4">
+                    <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-100">Discord adapter credentials</div>
+                        <div className="text-xs text-slate-500">Discord-sourced jobs still use the shared bot token.</div>
+                      </div>
+                      <label className="space-y-1">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Discord bot token</div>
+                        <input
+                          type="password"
+                          value={draftToken}
+                          onChange={(event) => setDraftToken(event.target.value)}
+                          disabled={!canManage || savingToken}
+                          className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                          placeholder={status.configured ? "Enter new token to replace" : "Bot token from Discord Developer Portal"}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveToken()}
+                        disabled={!canManage || savingToken || !draftToken.trim()}
+                        className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
+                      >
+                        {savingToken ? "Saving…" : "Save token"}
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-100">Source defaults</div>
+                        <div className="text-xs text-slate-500">Default Discord values seed contract and custom jobs.</div>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-3">
                         <label className="space-y-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Job description</div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Discord bot user ID</div>
                           <input
-                            value={job.description ?? ""}
-                            onChange={(event) => updateJob(job.id, { description: event.target.value })}
+                            value={discordSource.botUserId ?? ""}
+                            onChange={(event) => setDraft({
+                              ...draft,
+                              sources: {
+                                ...draft.sources,
+                                discord: {
+                                  ...discordSource,
+                                  botUserId: event.target.value,
+                                },
+                              },
+                            })}
+                            disabled={!canManage || savingControl}
+                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Default channels</div>
+                          <input
+                            value={joinCsv(discordSource.defaultChannels)}
+                            onChange={(event) => setDraft({
+                              ...draft,
+                              sources: {
+                                ...draft.sources,
+                                discord: {
+                                  ...discordSource,
+                                  defaultChannels: splitCsv(event.target.value),
+                                },
+                              },
+                            })}
+                            disabled={!canManage || savingControl}
+                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Default keywords</div>
+                          <input
+                            value={joinCsv(discordSource.targetKeywords)}
+                            onChange={(event) => setDraft({
+                              ...draft,
+                              sources: {
+                                ...draft.sources,
+                                discord: {
+                                  ...discordSource,
+                                  targetKeywords: splitCsv(event.target.value).map((value) => value.toLowerCase()),
+                                },
+                              },
+                            })}
                             disabled={!canManage || savingControl}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           />
                         </label>
                       </div>
-
-                      <label className="space-y-1">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">System prompt</div>
-                        <textarea
-                          value={job.agentSpec.systemPrompt}
-                          onChange={(event) => updateJob(job.id, { agentSpec: { ...job.agentSpec, systemPrompt: event.target.value } })}
-                          disabled={!canManage || savingControl}
-                          rows={4}
-                          className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                        />
-                      </label>
-
-                      <label className="space-y-1">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Task prompt</div>
-                        <textarea
-                          value={job.agentSpec.taskPrompt}
-                          onChange={(event) => updateJob(job.id, { agentSpec: { ...job.agentSpec, taskPrompt: event.target.value } })}
-                          disabled={!canManage || savingControl}
-                          rows={4}
-                          className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                        />
-                      </label>
-
-                      <div className="grid gap-3 xl:grid-cols-3">
-                        <label className="space-y-1 xl:col-span-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source config JSON</div>
-                          <textarea
-                            value={jobJsonDraft.sourceConfig}
-                            onChange={(event) => updateJsonDraft(job.id, "sourceConfig", event.target.value)}
-                            disabled={!canManage || savingControl}
-                            rows={8}
-                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 font-mono text-xs text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                          />
-                        </label>
-                        <label className="space-y-1 xl:col-span-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Filters JSON</div>
-                          <textarea
-                            value={jobJsonDraft.filters}
-                            onChange={(event) => updateJsonDraft(job.id, "filters", event.target.value)}
-                            disabled={!canManage || savingControl}
-                            rows={8}
-                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 font-mono text-xs text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                          />
-                        </label>
-                        <label className="space-y-1 xl:col-span-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Tool policies JSON</div>
-                          <textarea
-                            value={jobJsonDraft.toolPolicies}
-                            onChange={(event) => updateJsonDraft(job.id, "toolPolicies", event.target.value)}
-                            disabled={!canManage || savingControl}
-                            rows={8}
-                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 font-mono text-xs text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                          />
-                          <div className="text-[11px] text-slate-500">Available tools: {availableToolIds.join(", ") || "(tool catalog unavailable)"}</div>
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                      <div className="text-sm font-semibold text-slate-100">Live runtime</div>
-                      <div className="grid gap-2 text-sm text-slate-300">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Schedule</span>
-                          <span>{runtime?.scheduleLabel ?? "—"}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Runs</span>
-                          <span>{runtime?.runCount ?? 0}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Last status</span>
-                          <span>
-                            {runtime?.lastStatus === "ok" ? <Badge tone="success">ok</Badge>
-                              : runtime?.lastStatus === "error" ? <Badge tone="danger">error</Badge>
-                              : runtime?.lastStatus === "running" ? <Badge tone="info">running</Badge>
-                              : <Badge>idle</Badge>}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Last started</span>
-                          <span className="text-right text-xs">{toLocalDateTime(runtime?.lastStartedAt)}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Last finished</span>
-                          <span className="text-right text-xs">{toLocalDateTime(runtime?.lastFinishedAt)}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Duration</span>
-                          <span>{runtime?.lastDurationMs ? `${runtime.lastDurationMs} ms` : "—"}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-slate-500">Next run</span>
-                          <span className="text-right text-xs">{toLocalDateTime(runtime?.nextRunAt)}</span>
-                        </div>
-                      </div>
-                      {runtime?.lastError ? (
-                        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                          {runtime.lastError}
-                        </div>
-                      ) : null}
                     </div>
                   </div>
+                </CollapsiblePanel>
+
+                <CollapsiblePanel
+                  title="Dispatch test event"
+                  description="Simulate GitHub, Discord, cron, or manual events against the matcher without expanding every agent panel."
+                >
+                  <div className="grid gap-3 md:grid-cols-[0.8fr_1.2fr]">
+                    <label className="space-y-1">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source kind</div>
+                      <select
+                        value={eventSourceKind}
+                        onChange={(event) => setEventSourceKind(event.target.value)}
+                        disabled={!canManage || dispatchingEvent}
+                        className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                      >
+                        {availableSourceKinds.map((kind) => <option key={`event-kind-${kind}`} value={kind}>{kind}</option>)}
+                      </select>
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Event kind</div>
+                      <input
+                        value={eventKind}
+                        onChange={(event) => setEventKind(event.target.value)}
+                        disabled={!canManage || dispatchingEvent}
+                        className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                        placeholder="issues.opened"
+                      />
+                    </label>
+                  </div>
+                  <label className="mt-3 block space-y-1">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Payload JSON</div>
+                    <textarea
+                      value={eventPayloadDraft}
+                      onChange={(event) => setEventPayloadDraft(event.target.value)}
+                      disabled={!canManage || dispatchingEvent}
+                      rows={7}
+                      className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs font-mono text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void handleDispatchEvent()}
+                    disabled={!canManage || dispatchingEvent}
+                    className="mt-3 inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    {dispatchingEvent ? "Dispatching…" : "Dispatch"}
+                  </button>
+                </CollapsiblePanel>
+              </div>
+
+              {!canManage ? (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                  You do not have <code className="font-mono">platform.org.create</code> permission to mutate the event-agent runtime.
                 </div>
-              );
-            })}
+              ) : null}
+
+              {notice ? (
+                <div className={notice.tone === "success"
+                  ? "rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200"
+                  : "rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200"}
+                >
+                  {notice.text}
+                </div>
+              ) : null}
+
+              {error ? (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {error}
+                </div>
+              ) : null}
+            </div>
+            </div>
           </div>
-
-          {!canManage ? (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-              You do not have <code className="font-mono">platform.org.create</code> permission to mutate the event-agent runtime.
-            </div>
-          ) : null}
-
-          {notice ? (
-            <div className={notice.tone === "success"
-              ? "rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200"
-              : "rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200"}
-            >
-              {notice.text}
-            </div>
-          ) : null}
-
-          {error ? (
-            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-              {error}
-            </div>
-          ) : null}
         </div>
       )}
     </SectionCard>

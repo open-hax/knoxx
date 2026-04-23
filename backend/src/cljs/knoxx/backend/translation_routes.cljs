@@ -12,6 +12,10 @@
   ;; See backend/README.md "Cannot read properties of undefined" section for full diagnosis.
   (:require [knoxx.backend.app-shapes :refer [route!]]))
 
+(defn- reply-header!
+  [^js reply name value]
+  (.header reply name value))
+
 (defn register-translation-routes!
   [app runtime config {:keys [json-response!
                               error-response!
@@ -115,7 +119,7 @@
                     (-> (.text resp)
                         (.then (fn [text]
                           (if (aget resp "ok")
-                            (do (.header reply "Content-Type" "application/x-ndjson") (.send reply text))
+                            (do (reply-header! reply "Content-Type" "application/x-ndjson") (.send reply text))
                             (json-response! reply (or (aget resp "status") 502) {:detail text}))))))
                   (.catch (fn [err] (error-response! reply err)))))))))))
 

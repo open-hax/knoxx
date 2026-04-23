@@ -44,6 +44,16 @@
   (when (and conversation-id (not (empty? (str conversation-id))))
     (get @active-turns* (str conversation-id))))
 
+(defn active-turn-count
+  []
+  (count @active-turns*))
+
+(defn active-turn-entries
+  []
+  (mapv (fn [[conversation-id entry]]
+          (assoc entry :conversation_id conversation-id))
+        @active-turns*))
+
 (defn abort-active-turn!
   "Abort the currently registered turn for conversation-id.
 

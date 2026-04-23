@@ -9,13 +9,6 @@ type ChatRuntimePanelProps = {
   latestRun: RunDetail | null;
   isSending: boolean;
   selectedModel: string;
-  liveControlEnabled: boolean;
-  liveControlText: string;
-  onLiveControlTextChange: (value: string) => void;
-  queueingControl: "steer" | "follow_up" | null;
-  onQueueLiveControl: (kind: "steer" | "follow_up") => void | Promise<void>;
-  abortingTurn: boolean;
-  onAbortTurn: () => void | Promise<void>;
   conversationId: string | null;
   activeRunId: string | null;
   hydrationSources: HydrationSource[];
@@ -35,13 +28,6 @@ export function ChatRuntimePanel({
   latestRun,
   isSending,
   selectedModel,
-  liveControlEnabled,
-  liveControlText,
-  onLiveControlTextChange,
-  queueingControl,
-  onQueueLiveControl,
-  abortingTurn,
-  onAbortTurn,
   conversationId,
   activeRunId,
   hydrationSources,
@@ -72,52 +58,6 @@ export function ChatRuntimePanel({
             {latestRun?.status ?? (isSending ? "running" : "idle")}
           </Badge>
           <Badge size="sm" variant="info">{selectedModel || "no-model"}</Badge>
-        </div>
-      </div>
-
-      <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, border: "1px solid var(--token-colors-border-default)", background: "var(--token-colors-background-surface)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "var(--token-colors-text-muted)" }}>Live Intervention</div>
-            <div style={{ fontSize: 11, color: "var(--token-colors-text-subtle)" }}>
-              Steer the current turn or queue a follow-up while the agent is still working.
-            </div>
-          </div>
-          <Badge size="sm" variant={liveControlEnabled ? "success" : "default"}>{liveControlEnabled ? "active" : "idle"}</Badge>
-        </div>
-        <textarea
-          value={liveControlText}
-          onChange={(event) => onLiveControlTextChange(event.target.value)}
-          rows={2}
-          placeholder={liveControlEnabled ? "e.g. steer: focus on the corpus evidence, or follow up: turn this into a file draft" : "Start a turn to enable steer/follow-up controls"}
-          disabled={!liveControlEnabled || queueingControl !== null}
-          style={{
-            width: "100%",
-            borderRadius: 8,
-            border: "1px solid var(--token-colors-border-subtle)",
-            padding: 8,
-            fontSize: 12,
-            resize: "vertical",
-            background: "var(--token-colors-surface-input)",
-            color: "var(--token-colors-text-default)",
-          }}
-        />
-        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-          <Button variant="secondary" size="sm" loading={queueingControl === "steer"} disabled={!liveControlEnabled || !liveControlText.trim() || queueingControl !== null} onClick={() => void onQueueLiveControl("steer")}>
-            Steer current turn
-          </Button>
-          <Button variant="ghost" size="sm" loading={queueingControl === "follow_up"} disabled={!liveControlEnabled || !liveControlText.trim() || queueingControl !== null} onClick={() => void onQueueLiveControl("follow_up")}>
-            Queue follow-up
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            loading={abortingTurn}
-            disabled={!isSending || !conversationId || abortingTurn || queueingControl !== null}
-            onClick={() => void onAbortTurn()}
-          >
-            Abort turn
-          </Button>
         </div>
       </div>
 

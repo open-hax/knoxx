@@ -1,3 +1,0 @@
-{:cap/id :cap/semantic
- :cap/tools [:semantic_query
-             :graph_query]}

@@ -1,0 +1,18 @@
+{:role/id :role/system-admin
+ :role/capabilities [:cap/read
+                     :cap/write
+                     :cap/edit
+                     :cap/bash
+                     :cap/websearch
+                     :cap/memory
+                     :cap/semantic
+                     :cap/canvas
+                     :cap/email
+                     :cap/discord
+                     :cap/event-agents
+                     :cap/schedule-event-agent
+                     :cap/bluesky
+                     :cap/music
+                     :cap/audio
+                     :cap/multimodal
+                     :cap/openplanner]}

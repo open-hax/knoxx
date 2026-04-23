@@ -1,0 +1,17 @@
+{:cap/id :cap/discord
+ :cap/tools [:discord.publish
+             :discord.send
+             :discord.read
+             :discord.channel.messages
+             :discord.channel.scroll
+             :discord.dm.messages
+             :discord.search
+             :discord.guilds
+             :discord.channels
+             :discord.list.servers
+             :discord.list.channels]
+ :cap/user-surfaces [{:surface/id :workspace/discord-ops
+                      :surface/label "Discord operations"
+                      :surface/kind :admin-console
+                      :surface/routes ["/event-agents"]
+                      :surface/description "Humans manage Discord publishing, reading, and routing from admin/integration surfaces; agents use Discord tools."}]}

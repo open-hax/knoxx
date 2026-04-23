@@ -1,0 +1,7 @@
+{:cap/id :cap/edit
+ :cap/tools [:edit]
+ :cap/user-surfaces [{:surface/id :workspace/text-editor
+                      :surface/label "Text editor"
+                      :surface/kind :editor
+                      :surface/routes ["/" "/ops/contracts"]
+                      :surface/description "Humans edit files in a text editor; agents use targeted edit operations."}]}

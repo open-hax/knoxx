@@ -4,7 +4,7 @@ Date: 2026-04-18
 Status: next
 Story points: 5
 Parent epic: Knoxx Epistemic Kernel Integration
-Depends on: `promptdb-core` schemas, openplanner HTTP API, openplanner-proxx (semantic search)
+Depends on: `promptdb-core` schemas, openplanner HTTP API, canonical `services/proxx` (semantic search)
 
 ## Purpose
 
@@ -40,7 +40,7 @@ An MCP server between Knoxx and OpenPlanner solves all four.
 - Docker Compose: `openplanner-mcp-server` service in the openplanner compose file
 - Depends on:
   - `openplanner` (graph + events API on port 7777)
-  - `openplanner-proxx` (semantic search, embeddings)
+  - canonical `services/proxx` (semantic search, embeddings)
 
 ## Interfaces
 

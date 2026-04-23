@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.agent-hydration :refer [settings-state*]]
             [knoxx.backend.app-shapes :refer [route!]]
-            [knoxx.backend.authz :refer [with-request-context! run-visible? ensure-permission!]]
+            [knoxx.backend.authz :refer [with-request-context! run-visible? ensure-permission! ctx-tool-constraints]]
             [knoxx.backend.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq request-query-string]]
             [knoxx.backend.run-state :refer [runs* run-order* summarize-run]]
             [knoxx.backend.runtime.models :refer [allowlisted-model-id?]]
@@ -38,6 +38,33 @@
     (when (and session-key (or (nil? existing) (str/blank? (str existing))))
       (aset payload "prompt_cache_key" session-key)))
   payload)
+
+(defn- model-policy-allowed-ids
+  [ctx]
+  (let [constraints (ctx-tool-constraints ctx "agent.chat")
+        raw (or (:allowedModels constraints)
+                (:allowed-models constraints)
+                (:models constraints))]
+    (->> (cond
+           (sequential? raw) raw
+           (array? raw) (array-seq raw)
+           :else [])
+         (keep (fn [value]
+                 (when (string? value)
+                   (let [trimmed (str/trim value)]
+                     (when-not (str/blank? trimmed)
+                       trimmed)))))
+         set)))
+
+(defn- filter-model-items-for-ctx
+  [ctx items config]
+  (let [allowed-by-policy (model-policy-allowed-ids ctx)]
+    (filter (fn [item]
+              (let [model-id (aget item "id")]
+                (and (allowlisted-model-id? config model-id)
+                     (or (empty? allowed-by-policy)
+                         (contains? allowed-by-policy model-id)))))
+            items)))
 
 (defn register-model-routes!
   [app runtime config]
@@ -145,21 +172,21 @@
                     (error-response! reply err)))))))
 
   (route! app "GET" "/api/proxx/models"
-          (fn [_request reply]
-            (-> (fetch-json (str (:proxx-base-url config) "/v1/models")
-                            #js {:headers (bearer-headers (:proxx-auth-token config))})
-                (.then (fn [resp]
-                         (if (aget resp "ok")
-                           (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
-                                 filtered (into-array
-                                           (filter (fn [item]
-                                                     (allowlisted-model-id? config (aget item "id")))
-                                                   items))]
-                             (json-response! reply 200 {:models filtered}))
-                           (json-response! reply 502 {:error "Proxx model list failed"
-                                                      :details (js->clj (aget resp "body") :keywordize-keys true)}))))
-                (.catch (fn [err]
-                          (json-response! reply 502 {:error (str err)}))))))
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "agent.chat.use"))
+                (-> (fetch-json (str (:proxx-base-url config) "/v1/models")
+                                #js {:headers (bearer-headers (:proxx-auth-token config))})
+                    (.then (fn [resp]
+                             (if (aget resp "ok")
+                               (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
+                                     filtered (into-array (filter-model-items-for-ctx ctx items config))]
+                                 (json-response! reply 200 {:models filtered}))
+                               (json-response! reply 502 {:error "Proxx model list failed"
+                                                          :details (js->clj (aget resp "body") :keywordize-keys true)}))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:error (str err)}))))))))
 
   (route! app "POST" "/api/proxx/chat"
           (fn [request reply]
@@ -195,27 +222,28 @@
                             (json-response! reply 502 {:error (str err)})))))))
 
   (route! app "GET" "/api/models"
-          (fn [_request reply]
-            (-> (fetch-json (str (:proxx-base-url config) "/v1/models")
-                            #js {:headers (bearer-headers (:proxx-auth-token config))})
-                (.then (fn [resp]
-                         (if (aget resp "ok")
-                           (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
-                                 models (mapv (fn [item]
-                                                {:id (str (or (aget item "id") ""))
-                                                 :name (str (or (aget item "id") ""))
-                                                 :path ""
-                                                 :size_bytes 0
-                                                 :modified_at (now-iso)
-                                                 :hash16mb ""
-                                                 :suggested_ctx 128000})
-                                              (filter (fn [item]
-                                                        (allowlisted-model-id? config (aget item "id")))
-                                                      items))]
-                             (json-response! reply 200 {:models models}))
-                           (json-response! reply 502 {:detail "Model list failed"}))))
-                (.catch (fn [err]
-                          (json-response! reply 502 {:detail (str err)}))))))
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "agent.chat.use"))
+                (-> (fetch-json (str (:proxx-base-url config) "/v1/models")
+                                #js {:headers (bearer-headers (:proxx-auth-token config))})
+                    (.then (fn [resp]
+                             (if (aget resp "ok")
+                               (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
+                                     models (mapv (fn [item]
+                                                    {:id (str (or (aget item "id") ""))
+                                                     :name (str (or (aget item "id") ""))
+                                                     :path ""
+                                                     :size_bytes 0
+                                                     :modified_at (now-iso)
+                                                     :hash16mb ""
+                                                     :suggested_ctx 128000})
+                                                  (filter-model-items-for-ctx ctx items config))]
+                                 (json-response! reply 200 {:models models}))
+                               (json-response! reply 502 {:detail "Model list failed"}))))
+                    (.catch (fn [err]
+                              (json-response! reply 502 {:detail (str err)}))))))))
 
   (route! app "GET" "/api/runs"
           (fn [request reply]

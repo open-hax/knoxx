@@ -8,7 +8,7 @@ import {
   type GraphNode as RenderGraphNode,
   type NodeStyle,
 } from '@octave-commons/webgl-graph-view';
-import { graphqlQuery } from '../lib/nextApi';
+import { graphqlQuery, queryDataMongo } from '../lib/nextApi';
 import type { GraphExportNode } from '../lib/types';
 import { JsonTree } from './JsonTree';
 
@@ -126,6 +126,14 @@ export function GraphExplorer(props: {
   const [graphView, setGraphView] = useState<GraphView | null>(null);
   const [jsonExpandDepth, setJsonExpandDepth] = useState(2);
   const [showRawResult, setShowRawResult] = useState(false);
+
+  const [sourceRows, setSourceRows] = useState<any[] | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState('');
+
+  const [nodePreview, setNodePreview] = useState<any | null>(null);
+  const [nodePreviewLoading, setNodePreviewLoading] = useState(false);
+  const [nodePreviewError, setNodePreviewError] = useState('');
 
   const filteredNodes = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -263,10 +271,95 @@ export function GraphExplorer(props: {
     return () => clearTimeout(t);
   }, [graphqlText, runGraphql]);
 
+  // Load original OpenPlanner event(s) for the selected node (by entity_key).
+  useEffect(() => {
+    if (!selectedNodeId) {
+      setSourceRows(null);
+      setSourceLoading(false);
+      setSourceError('');
+      return;
+    }
+
+    let cancelled = false;
+    setSourceLoading(true);
+    setSourceError('');
+
+    void queryDataMongo({
+      collection: 'events',
+      filter: {
+        kind: 'graph.node',
+        'extra.entity_key': selectedNodeId,
+      },
+      sort: { ts: -1 },
+      limit: 10,
+    })
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          setSourceRows([]);
+          setSourceError(res.error || 'failed to fetch source event');
+          return;
+        }
+        setSourceRows(res.rows || []);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setSourceRows([]);
+        setSourceError(err?.message || String(err));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setSourceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNodeId]);
+
+  // Load graph-weaver preview for the selected node (full file head / url head).
+  useEffect(() => {
+    if (!selectedNodeId) {
+      setNodePreview(null);
+      setNodePreviewLoading(false);
+      setNodePreviewError('');
+      return;
+    }
+
+    let cancelled = false;
+    setNodePreviewLoading(true);
+    setNodePreviewError('');
+
+    const query = `{
+  nodePreview(id: ${JSON.stringify(selectedNodeId)}, maxBytes: 2000000) {
+    id kind format contentType language body truncated bytes error
+  }
+}`;
+
+    void graphqlQuery<any>(query)
+      .then((res) => {
+        if (cancelled) return;
+        setNodePreview((res as any)?.nodePreview ?? null);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setNodePreview(null);
+        setNodePreviewError(err?.message || String(err));
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setNodePreviewLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNodeId]);
+
   const selectedNode = selectedNodeId ? nodeIndex.get(selectedNodeId) ?? null : null;
 
   return (
-    <div className="flex gap-4 h-[720px]">
+    <div className="flex gap-4 h-full min-h-[720px] p-6">
       {/* Sidebar node list */}
       <div className="w-80 shrink-0 flex flex-col rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden">
         <div className="shrink-0 p-3 border-b border-slate-700/30 space-y-2">
@@ -407,11 +500,35 @@ export function GraphExplorer(props: {
             <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap">{graphqlResultText}</pre>
           ) : parsedGraphView ? (
             <div className="space-y-4">
-              <div className="text-xs text-slate-400">
-                nodes={parsedGraphView.meta.totalNodes} edges={parsedGraphView.meta.totalEdges}
-                {parsedGraphView.meta.sampledNodes ? ' (sampled nodes)' : ''}
-                {parsedGraphView.meta.sampledEdges ? ' (sampled edges)' : ''}
-              </div>
+              {(() => {
+                const nodeIds = new Set(parsedGraphView.nodes.map((n) => n.id));
+                const missing = new Set<string>();
+                for (const e of parsedGraphView.edges) {
+                  if (!nodeIds.has(e.source)) missing.add(e.source);
+                  if (!nodeIds.has(e.target)) missing.add(e.target);
+                }
+                const missingList = [...missing].slice(0, 12);
+                return (
+                  <>
+                    <div className="text-xs text-slate-400">
+                      nodes={parsedGraphView.meta.totalNodes} edges={parsedGraphView.meta.totalEdges}
+                      {parsedGraphView.meta.sampledNodes ? ' (sampled nodes)' : ''}
+                      {parsedGraphView.meta.sampledEdges ? ' (sampled edges)' : ''}
+                    </div>
+                    {missing.size > 0 && (
+                      <div className="rounded bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-200">
+                        Dangling edge endpoint(s): {missing.size} referenced node id(s) are missing from the node list.
+                        <div className="mt-1 font-mono text-[10px] text-amber-300/90 break-words">
+                          {missingList.join(' · ')}{missing.size > missingList.length ? ' …' : ''}
+                        </div>
+                        <div className="mt-1 text-[10px] text-amber-300/80">
+                          This usually means the edge references a devel path that is a directory or otherwise not ingested as a `devel:file:*` node.
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               <div className="space-y-2">
                 <div className="text-xs text-slate-500">Nodes</div>
@@ -456,6 +573,75 @@ export function GraphExplorer(props: {
                   </div>
                 );
               })()}
+
+              {selectedNodeId && (
+                <div className="space-y-2">
+                  <div className="text-xs text-slate-500">Source data</div>
+
+                  <div className="rounded border border-slate-700/30 bg-slate-900/20 p-2 space-y-2">
+                    <div className="text-[10px] text-slate-500">Graph-weaver preview (files/urls)</div>
+                    {nodePreviewError && (
+                      <div className="rounded bg-rose-500/10 border border-rose-500/20 px-2 py-1 text-xs text-rose-300">{nodePreviewError}</div>
+                    )}
+                    {nodePreviewLoading ? (
+                      <div className="text-xs text-slate-600">Loading preview…</div>
+                    ) : nodePreview?.body ? (
+                      <details open>
+                        <summary className="cursor-pointer text-xs text-slate-400">
+                          {nodePreview.format}{nodePreview.truncated ? ' (truncated)' : ''} · {nodePreview.bytes} bytes
+                        </summary>
+                        <pre className="mt-2 text-xs text-slate-300 font-mono whitespace-pre-wrap">{nodePreview.body}</pre>
+                      </details>
+                    ) : (
+                      <div className="text-xs text-slate-600">No preview available for this node kind.</div>
+                    )}
+                  </div>
+
+                  <div className="rounded border border-slate-700/30 bg-slate-900/20 p-2 space-y-2">
+                    <div className="text-[10px] text-slate-500">OpenPlanner source event(s) (Mongo events by extra.entity_key)</div>
+                    {sourceError && (
+                      <div className="rounded bg-rose-500/10 border border-rose-500/20 px-2 py-1 text-xs text-rose-300">{sourceError}</div>
+                    )}
+                    {sourceLoading ? (
+                      <div className="text-xs text-slate-600">Loading source event…</div>
+                    ) : sourceRows && sourceRows.length > 0 ? (
+                      <div className="space-y-2">
+                        {sourceRows.map((row: any) => {
+                          const id = row?._id ?? row?.id ?? 'event';
+                          const kind = row?.kind ?? 'unknown';
+                          const ts = row?.ts ?? row?.createdAt ?? row?.updatedAt ?? null;
+                          const previewText = typeof row?.text === 'string'
+                            ? (row.text.length > 220 ? `${row.text.slice(0, 217)}…` : row.text)
+                            : null;
+                          return (
+                            <details key={String(id)} className="rounded border border-slate-700/30 bg-slate-900/30 px-2 py-1" open>
+                              <summary className="cursor-pointer text-xs text-slate-300">
+                                <span className="text-slate-500">{kind}</span>
+                                {ts ? <span className="text-slate-600"> · {String(ts)}</span> : null}
+                                <span className="text-slate-700"> · </span>
+                                <span className="font-mono text-slate-400">{String(id)}</span>
+                              </summary>
+                              {previewText && (
+                                <pre className="mt-2 text-xs text-slate-300 font-mono whitespace-pre-wrap">{previewText}</pre>
+                              )}
+                              <div className="mt-2">
+                                <JsonTree value={row} defaultExpandDepth={jsonExpandDepth} />
+                              </div>
+                            </details>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-600">
+                        No matching Mongo event found yet. Try again after ingestion catches up.
+                        <div className="mt-1 text-[10px] text-slate-600 font-mono">
+                          filter:{' '}{JSON.stringify({ kind: 'graph.node', 'extra.entity_key': selectedNodeId })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <div className="text-xs text-slate-500">Edges</div>

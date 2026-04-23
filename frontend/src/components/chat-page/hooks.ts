@@ -9,6 +9,9 @@ export type ChatSessionSnapshot = {
   sessionId?: string;
   systemPrompt?: string;
   selectedModel?: string;
+  selectedThinkingLevel?: string;
+  activeActorId?: string;
+  activeAgentId?: string;
   conversationId?: string | null;
   messages?: ChatMessage[];
   latestRun?: RunDetail | null;
@@ -173,13 +176,16 @@ export function initializePersistedChatSession(
   sessionStateKey: string,
   sessionId: string,
   conversationId: string,
-  seed?: Partial<Pick<ChatSessionSnapshot, "selectedModel" | "systemPrompt">>,
+  seed?: Partial<Pick<ChatSessionSnapshot, "selectedModel" | "selectedThinkingLevel" | "systemPrompt" | "activeActorId" | "activeAgentId">>,
 ): void {
   persistChatSessionSnapshot(sessionStateKey, sessionId, {
     sessionId,
     conversationId,
     selectedModel: seed?.selectedModel,
+    selectedThinkingLevel: seed?.selectedThinkingLevel,
     systemPrompt: seed?.systemPrompt,
+    activeActorId: seed?.activeActorId,
+    activeAgentId: seed?.activeAgentId,
     messages: [],
     latestRun: null,
     runtimeEvents: [],
@@ -213,6 +219,12 @@ type UseChatSessionPersistenceParams = {
   setSystemPrompt: SetState<string>;
   selectedModel: string;
   setSelectedModel: SetState<string>;
+  selectedThinkingLevel: string;
+  setSelectedThinkingLevel: SetState<string>;
+  activeActorId: string;
+  setActiveActorId: SetState<string>;
+  activeAgentId: string;
+  setActiveAgentId: SetState<string>;
   conversationId: string | null;
   setConversationId: SetState<string | null>;
   messages: ChatMessage[];
@@ -240,6 +252,12 @@ export function useChatSessionPersistence({
   setSystemPrompt,
   selectedModel,
   setSelectedModel,
+  selectedThinkingLevel,
+  setSelectedThinkingLevel,
+  activeActorId,
+  setActiveActorId,
+  activeAgentId,
+  setActiveAgentId,
   conversationId,
   setConversationId,
   messages,
@@ -341,6 +359,9 @@ export function useChatSessionPersistence({
 
       if (typeof parsed.systemPrompt === "string") setSystemPrompt(parsed.systemPrompt);
       if (typeof parsed.selectedModel === "string") setSelectedModel(parsed.selectedModel);
+      if (typeof parsed.selectedThinkingLevel === "string") setSelectedThinkingLevel(parsed.selectedThinkingLevel);
+      if (typeof parsed.activeActorId === "string") setActiveActorId(parsed.activeActorId);
+      if (typeof parsed.activeAgentId === "string") setActiveAgentId(parsed.activeAgentId);
       if (typeof parsed.conversationId === "string" || parsed.conversationId === null) {
         setConversationId(parsed.conversationId ?? null);
       }
@@ -377,6 +398,9 @@ export function useChatSessionPersistence({
     setMessages,
     setRuntimeEvents,
     setSelectedModel,
+    setSelectedThinkingLevel,
+    setActiveActorId,
+    setActiveAgentId,
     setSystemPrompt,
   ]);
 
@@ -387,6 +411,9 @@ export function useChatSessionPersistence({
         sessionId,
         systemPrompt,
         selectedModel,
+        selectedThinkingLevel,
+        activeActorId,
+        activeAgentId,
         conversationId,
         messages: messages.slice(-80),
         latestRun,
@@ -398,7 +425,7 @@ export function useChatSessionPersistence({
     } catch {
       // ignore storage failures
     }
-  }, [sessionStateKey, sessionId, systemPrompt, selectedModel, conversationId, messages, latestRun, runtimeEvents, isSending]);
+  }, [sessionStateKey, sessionId, systemPrompt, selectedModel, selectedThinkingLevel, activeActorId, activeAgentId, conversationId, messages, latestRun, runtimeEvents, isSending]);
 }
 
 type UseChatSessionRecoveryParams = {
@@ -429,7 +456,7 @@ export function useChatSessionRecovery({
 
     const parsed = readPersistedChatSessionSnapshot(sessionStateKey, sessionId);
     if (!parsed) return;
-    if (!parsed.isSending || !parsed.conversationId) return;
+    if (!parsed.conversationId) return;
 
     let cancelled = false;
 
@@ -453,10 +480,10 @@ export function useChatSessionRecovery({
           return;
         }
 
-        if (status.status === "running" && !status.has_active_stream) {
+        if (status.status === "running") {
           setConversationId(status.conversation_id ?? null);
           setIsSending(true);
-          appendConsoleLine(setConsoleLines, "[session] agent waiting for input, enable controls");
+          appendConsoleLine(setConsoleLines, "[session] agent still processing; waiting for resume or first token");
           return;
         }
 
