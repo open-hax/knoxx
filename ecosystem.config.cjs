@@ -83,8 +83,7 @@ const workspaceRoot =
   // Fallback: assume standard repo layout: <root>/orgs/open-hax/openplanner/packages/agents/knoxx
   path.resolve(knoxxRoot, '../../../../../../..');
 
-// const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env.cephalon-host');
-const defaultHostEnvPath = "./.env";
+const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env');
 const hostEnvPath = process.env.KNOXX_HOST_ENV_PATH || defaultHostEnvPath;
 const hostEnv = loadSimpleEnv(hostEnvPath);
 const musicLibraryRoot = process.env.KNOXX_MUSIC_LIBRARY_ROOT
@@ -117,9 +116,12 @@ const sttNpuShouldRunLocal =
   );
 const shoedelussyDir = process.env.SHOEDELUSSY_DIR || hostEnv.SHOEDELUSSY_DIR || path.join(os.homedir(), '.knoxx', 'external', 'shoedelussy');
 const shoedelussyServerDir = path.join(shoedelussyDir, 'server');
+const shoedelussyUiDir = path.join(shoedelussyDir, 'ui');
 const shoedelussyMcpPort = process.env.SHOEDELUSSY_MCP_PORT || hostEnv.SHOEDELUSSY_MCP_PORT || '8790';
+const shoedelussyUiPort = process.env.SHOEDELUSSY_UI_PORT || hostEnv.SHOEDELUSSY_UI_PORT || '5175';
 const shoedelussyExplicitBaseUrl = process.env.SHOEDELUSSY_MCP_BASE_URL || hostEnv.SHOEDELUSSY_MCP_BASE_URL || '';
 const shoedelussyMcpBaseUrl = shoedelussyExplicitBaseUrl || `http://127.0.0.1:${shoedelussyMcpPort}/mcp`;
+const shoedelussyUiBaseUrl = process.env.SHOEDELUSSY_UI_URL || hostEnv.SHOEDELUSSY_UI_URL || `http://127.0.0.1:${shoedelussyUiPort}`;
 // auto  = only launch a local Wrangler when no explicit base URL is configured
 //         and the target port is currently free.
 // force = always include the local PM2 sidecar.
@@ -131,6 +133,13 @@ const shoedelussyShouldRunLocal =
   && (
     shoedelussyPm2Mode === 'force'
     || (!shoedelussyExplicitBaseUrl && !isLocalPortBound(shoedelussyMcpPort))
+  );
+const shoedelussyUiShouldRunLocal =
+  fs.existsSync(shoedelussyUiDir)
+  && shoedelussyPm2Mode !== 'off'
+  && (
+    shoedelussyPm2Mode === 'force'
+    || !isLocalPortBound(shoedelussyUiPort)
   );
 
 const apps = [
@@ -316,9 +325,26 @@ if (shoedelussyShouldRunLocal) {
     env: {
       NODE_ENV: 'development',
       MCP_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
-      APP_URL: hostEnv.SHOEDELUSSY_APP_URL || 'http://127.0.0.1:5173',
+      APP_URL: hostEnv.SHOEDELUSSY_APP_URL || shoedelussyUiBaseUrl,
       OPENROUTER_API_KEY: hostEnv.SHOEDELUSSY_OPENROUTER_API_KEY || hostEnv.OPENROUTER_API_KEY || '',
       OPENROUTER_MODEL: hostEnv.SHOEDELUSSY_OPENROUTER_MODEL || hostEnv.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
+    },
+  });
+}
+
+if (shoedelussyUiShouldRunLocal) {
+  apps.splice(3, 0, {
+    name: 'shoedelussy-ui',
+    cwd: shoedelussyUiDir,
+    script: 'pnpm',
+    args: `exec vite --host 127.0.0.1 --port ${shoedelussyUiPort} --strictPort`,
+    watch: false,
+    autorestart: true,
+    max_restarts: 10,
+    restart_delay: 5000,
+    env: {
+      NODE_ENV: 'development',
+      VITE_API_URL: '/shoe/api',
     },
   });
 }
