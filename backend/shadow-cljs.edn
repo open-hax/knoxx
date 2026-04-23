@@ -14,8 +14,9 @@
   {:target :esm
    :output-dir "dist"
    :modules {:app {:exports {:config knoxx.backend.core/config-js
-                             ;; Single bootstrap entrypoint for the Node host shim.
+                             ;; Primary entrypoint — called from src/entrypoint.mjs.
                              :bootstrap knoxx.backend.bootstrap/bootstrap!
+                             ;; Supplementary exports for external consumers.
                              :registerAppRoutes knoxx.backend.core/register-app-routes!
                              :registerWsRoutes knoxx.backend.core/register-ws-routes!
                              :start knoxx.backend.core/start!
@@ -23,14 +24,12 @@
                              :createPolicyDb knoxx.backend.policy-db/create-policy-db
                              :registerAuthRoutes knoxx.backend.auth-session/register-auth-routes
                              :createSessionHook knoxx.backend.auth-session/create-session-hook
-                             ;; Used by MCP OAuth + capability delegation flow.
                              :resolveAuthContext knoxx.backend.auth-session/resolve-auth-context
-                             ;; Used by the Knoxx MCP facade to expose the same tool objects as the agent runtime.
                              :createKnoxxCustomTools knoxx.backend.mcp-expose/create-knoxx-custom-tools-js
                              :getPiIngestStatus knoxx.backend.pi-session-ingester/get-pi-ingest-status
                              :listPiSessions knoxx.backend.pi-session-ingester/list-pi-sessions}}}
    :js-options {:js-provider :import
-                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises" "node:path" "node:crypto" "node:url"}}
+                :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises" "node:path" "node:crypto" "node:url"}}
    :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true

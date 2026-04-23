@@ -2,11 +2,9 @@
   "Single bootstrap entrypoint for hosting the Knoxx CLJS backend inside Node/Fastify.
 
    Contract:
-   - The Node host shim (src/server.mjs) should ONLY import dependencies and call
-     this function.
+   - Node is launched via backend/src/entrypoint.mjs which only calls bootstrap!.
    - All HTTP routes, auth flows, and runtime wiring live in CLJS.
-   - Dependencies are passed in as a single JS object (deps) and then threaded
-     through request/runtime contexts."  
+   - All Node/npm dependencies are required directly here; nothing is injected from JS."
   (:require [clojure.string :as str]
             [knoxx.backend.auth-session :as auth-session]
             [knoxx.backend.core :as core]
@@ -18,7 +16,32 @@
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.tools.proxy-routes :as proxy-routes]
             [knoxx.backend.agent-turns :refer [lounge-messages*]]
-            [knoxx.backend.policy-db :as policy-db]))
+            [knoxx.backend.policy-db :as policy-db]
+            ;; Node / npm deps (previously injected from server.mjs)
+            ["fastify" :default Fastify]
+            ["@fastify/cors" :default fastifyCors]
+            ["@fastify/websocket" :default fastifyWebsocket]
+            ["@fastify/multipart" :default fastifyMultipart]
+            ["@fastify/cookie" :default fastifyCookie]
+            ["@fastify/formbody" :default fastifyFormbody]
+            ["@sinclair/typebox" :refer [Type]]
+            ["@mariozechner/pi-coding-agent" :as sdk]
+            ["node:crypto" :as crypto]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]
+            ["node:os" :as os]
+            ["node:child_process" :refer [execFile]]
+            ["node:util" :refer [promisify]]
+            ["node:module" :refer [createRequire]]
+            ["nodemailer" :default nodemailer]
+            ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
+            ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
+            ["@modelcontextprotocol/sdk/types.js" :refer [isInitializeRequest]]
+            ["zod" :refer [z]]))
+
+;; Provide CJS-style require globally for any CLJS modules that still call js/require.
+(when-not (exists? (.-require js/globalThis))
+  (set! (.-require js/globalThis) (createRequire (.-url js/import.meta))))
 
 (defn- env
   [k default]
@@ -53,7 +76,7 @@
   "Allow Content-Type: application/json with empty bodies.
 
    Fastify's default parser throws FST_ERR_CTP_EMPTY_JSON_BODY, but some
-   endpoints are intentionally POST-without-body."  
+   endpoints are intentionally POST-without-body."
   [^js app]
   (.addContentTypeParser app
                          "application/json"
@@ -62,7 +85,7 @@
                            (try
                              (done nil (if (= body "") #js {} (js/JSON.parse body)))
                              (catch :default err
-                              (done err))))))
+                               (done err))))))
 
 (defn- app-add-hook!
   [^js app hook-name handler]
@@ -73,66 +96,59 @@
   (.listen app #js {:host host :port port}))
 
 (defn- make-runtime
-  "Build the runtime dependency bundle CLJS code expects.
-
-   NOTE: deps is a JS object created by the Node host shim."  
-  [deps policyDb]
-  #js {:Fastify (aget deps "Fastify")
-       :fastifyCors (aget deps "fastifyCors")
-       :fastifyWebsocket (aget deps "fastifyWebsocket")
-       :fastifyMultipart (aget deps "fastifyMultipart")
-       :fastifyCookie (aget deps "fastifyCookie")
-       :fastifyFormbody (aget deps "fastifyFormbody")
-       :Type (aget deps "Type")
-       :sdk (aget deps "sdk")
-       :crypto (aget deps "crypto")
-       :fs (aget deps "fs")
-       :path (aget deps "path")
-       :os (aget deps "os")
-       :execFileAsync (aget deps "execFileAsync")
+  [policyDb]
+  #js {:Fastify Fastify
+       :fastifyCors fastifyCors
+       :fastifyWebsocket fastifyWebsocket
+       :fastifyMultipart fastifyMultipart
+       :fastifyCookie fastifyCookie
+       :fastifyFormbody fastifyFormbody
+       :Type Type
+       :sdk sdk
+       :crypto crypto
+       :fs fs
+       :path path
+       :os os
+       :execFileAsync (promisify execFile)
        :policyDb policyDb
-       :nodemailer (aget deps "nodemailer")
-       ;; MCP deps
-       :McpServer (aget deps "McpServer")
-       :StreamableHTTPServerTransport (aget deps "StreamableHTTPServerTransport")
-       :isInitializeRequest (aget deps "isInitializeRequest")
-       :z (aget deps "z")})
+       :nodemailer nodemailer
+       :McpServer McpServer
+       :StreamableHTTPServerTransport StreamableHTTPServerTransport
+       :isInitializeRequest isInitializeRequest
+       :z z})
 
-(defn bootstrap!
-  "Main entrypoint called from src/server.mjs.
-
-   deps: JS object containing all imported Node/Fastify/MCP dependencies."  
-  [deps]
+(defn ^:export bootstrap!
+  "Main entrypoint. Called from src/entrypoint.mjs (or directly via `node dist/app.js`).
+   Takes no arguments — all dependencies are required at the top of this namespace."
+  []
   (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
-        ^js Fastify (aget deps "Fastify")
         app (Fastify #js {:logger true})
         policy-options #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
-                                                 (aget js/process.env "DATABASE_URL")
-                                                 "")
-                           :primaryOrgSlug (env "KNOXX_PRIMARY_ORG_SLUG" "open-hax")
-                           :primaryOrgName (env "KNOXX_PRIMARY_ORG_NAME" "Open Hax")
-                           :primaryOrgKind (env "KNOXX_PRIMARY_ORG_KIND" "platform_owner")
-                           :bootstrapSystemAdminEmail (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL" "system-admin@open-hax.local")
-                           :bootstrapSystemAdminName (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME" "Knoxx System Admin")
-                           :bootstrapAllowlistEmails (env "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS" "")
-                           :bootstrapAllowlistRoleSlugs (env "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS" "")}
+                                                  (aget js/process.env "DATABASE_URL")
+                                                  "")
+                            :primaryOrgSlug (env "KNOXX_PRIMARY_ORG_SLUG" "open-hax")
+                            :primaryOrgName (env "KNOXX_PRIMARY_ORG_NAME" "Open Hax")
+                            :primaryOrgKind (env "KNOXX_PRIMARY_ORG_KIND" "platform_owner")
+                            :bootstrapSystemAdminEmail (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL" "system-admin@open-hax.local")
+                            :bootstrapSystemAdminName (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME" "Knoxx System Admin")
+                            :bootstrapAllowlistEmails (env "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS" "")
+                            :bootstrapAllowlistRoleSlugs (env "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS" "")}
         cookie-hook? (truthy? (aget js/process.env "KNOXX_ENABLE_SESSION_HOOK"))]
 
-    ;; Initialize global discord gateway manager (sets knoxx.backend.discord-gateway/manager*).
+    ;; Initialize global discord gateway manager.
     (discord-gateway/createDiscordGatewayManager #js {:log js/console})
 
     (-> (policy-db/create-policy-db policy-options)
         (.then
          (fn [policyDb]
-           (let [runtime (make-runtime deps policyDb)]
+           (let [runtime (make-runtime policyDb)]
              (ensure-fastify-json-empty-body-parser! app)
 
-             ;; Fastify plugins
-             (-> (.register app (aget deps "fastifyCors") #js {:origin true})
-                 (.then (fn [] (.register app (aget deps "fastifyCookie"))))
-                 (.then (fn [] (.register app (aget deps "fastifyFormbody"))))
-                 (.then (fn [] (.register app (aget deps "fastifyMultipart"))))
-                 (.then (fn [] (.register app (aget deps "fastifyWebsocket"))))
+             (-> (.register app fastifyCors #js {:origin true})
+                 (.then (fn [] (.register app fastifyCookie)))
+                 (.then (fn [] (.register app fastifyFormbody)))
+                 (.then (fn [] (.register app fastifyMultipart)))
+                 (.then (fn [] (.register app fastifyWebsocket)))
 
                  ;; WS routes plugin
                  (.then (fn []
@@ -155,7 +171,7 @@
                  (.then (fn []
                           (core/register-app-routes! runtime app cfg lounge-messages*)))
 
-                 ;; Extra host-level routes previously implemented in server.mjs
+                 ;; Extra host-level proxy routes
                  (.then (fn []
                           (proxy-routes/register-proxy-routes! app cfg)))
 
