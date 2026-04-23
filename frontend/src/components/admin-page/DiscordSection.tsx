@@ -489,8 +489,9 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[14rem_minmax(0,1fr)]">
-            <aside className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3 xl:sticky xl:top-4 xl:self-start">
+          <div className="overflow-x-auto pb-1">
+            <div className="grid min-w-[44rem] gap-4 grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[14rem_minmax(0,1fr)]">
+            <aside className="sticky top-4 self-start space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold text-slate-100">Agents</div>
                 <div className="text-[11px] text-slate-500">{filteredJobs.length}/{draft.jobs.length}</div>
@@ -524,7 +525,7 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
               </div>
             </aside>
 
-            <div className="space-y-4">
+            <div className="space-y-4 min-w-0">
               {selectedJob ? (
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
                   <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
@@ -958,6 +959,7 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                   {error}
                 </div>
               ) : null}
+            </div>
             </div>
           </div>
         </div>
