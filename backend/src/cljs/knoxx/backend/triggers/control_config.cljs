@@ -8,8 +8,7 @@
             [knoxx.backend.tooling :as tooling]
             [knoxx.backend.tools.registry :as tools]
             [knoxx.backend.util.parse :refer [parse-positive-int]]
-            ["node:fs" :as fs]
-            ["node:path" :as path]))
+            ["node:fs" :as fs]))
 
 (defn- env
   [k default]
@@ -43,10 +42,13 @@
     (string? value) (some-> value str str/trim not-empty (str/replace #"/" "."))
     :else nil))
 
-(defn- read-edn-sync
+(defn- read-edn-with-hash-sync
   [file-path]
   (try
-    (some-> (.readFileSync fs file-path "utf8") str reader/read-string)
+    (let [edn-text (some-> (.readFileSync fs file-path "utf8") str)]
+      (when edn-text
+        {:edn (reader/read-string edn-text)
+         :hash (hash edn-text)}))
     (catch :default _ nil)))
 
 (defn- explicit-tool-ids
@@ -81,7 +83,7 @@
       (seq (or (:repositories filters) [])) (assoc :repositories (vec (:repositories filters))))))
 
 (defn- contract->event-agent-job
-  [config contract-id contract]
+  [config contract-id contract contract-hash]
   (let [trigger-kind (keywordish->string (:trigger-kind contract))
         resolved (tooling/resolve-agent-contract config contract-id)]
     (when (and (= :agent (:contract/kind contract))
@@ -128,6 +130,7 @@
                           (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
                           contract-id)
          :contractSourceId contract-id
+         :contractHash contract-hash
          :actorId (:actor-id resolved)}))))
 
 (defn- contract-agent-jobs
@@ -135,9 +138,9 @@
   (try
     (->> (contract-loader/list-contract-ids-sync config "agents")
          (map (fn [contract-id]
-                (let [contract (read-edn-sync (contract-loader/contract-file-path config "agents" contract-id))]
-                  (when contract
-                    (contract->event-agent-job config contract-id contract)))))
+                (let [{:keys [edn hash]} (read-edn-with-hash-sync (contract-loader/contract-file-path config "agents" contract-id))]
+                  (when edn
+                    (contract->event-agent-job config contract-id edn hash)))))
          (remove nil?)
          (sort-by :id)
          vec)
@@ -417,7 +420,15 @@
 (defn- normalize-event-agent-job
   [config default-job raw-job]
   (let [allowed-roles (set (event-agent-role-options config))
-        source (merge default-job (or raw-job {}))
+        contract-sourced? (some-> (:contractSourceId default-job) str str/trim not-empty)
+        saved-contract-hash (:contractHash raw-job)
+        current-contract-hash (:contractHash default-job)
+        saved-job-current? (or (not contract-sourced?)
+                               (and (= (:contractSourceId raw-job) (:contractSourceId default-job))
+                                    current-contract-hash
+                                    saved-contract-hash
+                                    (= saved-contract-hash current-contract-hash)))
+        source (merge default-job (if saved-job-current? (or raw-job {}) {}))
         trigger-source (merge (:trigger default-job) (or (:trigger source) {}))
         source-config (merge (:source default-job) (or (:source source) {}))
         agent-source (merge (:agentSpec default-job) (or (:agentSpec source) {}))
@@ -474,6 +485,8 @@
                                    (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job))))) }
      :contractSourceId (or (:contractSourceId source)
                            (:contractSourceId default-job))
+     :contractHash (or (:contractHash default-job)
+                       (:contractHash source))
      :actorId (or (:actorId source)
                   (:actorId default-job))
      :description (or (some-> (:description source) str str/trim not-empty)
