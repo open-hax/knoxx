@@ -135,9 +135,19 @@
   [runtime config sandbox-id]
   (-> (sandbox-metadata! runtime config sandbox-id)
       (.then (fn [metadata]
-               (let [ttl-seconds (clamp-ttl-seconds config (:ttlSeconds metadata))
-                     expires-at (+ (.now js/Date) (* 1000 ttl-seconds))]
-                 (write-sandbox-metadata! runtime config sandbox-id (merge metadata {:ttlSeconds ttl-seconds
+               (let [created-at-ms (or (:createdAtMs metadata)
+                                       (when-let [created-at (:createdAt metadata)]
+                                         (.parse js/Date (str created-at)))
+                                       (.now js/Date))
+                     max-ttl-seconds (clamp-ttl-seconds config (:sandbox-max-ttl-seconds config))
+                     max-expires-at (or (:maxExpiresAt metadata)
+                                        (+ created-at-ms (* 1000 max-ttl-seconds)))
+                     ttl-seconds (clamp-ttl-seconds config (:ttlSeconds metadata))
+                     requested-expires-at (+ (.now js/Date) (* 1000 ttl-seconds))
+                     expires-at (min requested-expires-at max-expires-at)]
+                 (write-sandbox-metadata! runtime config sandbox-id (merge metadata {:createdAtMs created-at-ms
+                                                                                      :maxExpiresAt max-expires-at
+                                                                                      :ttlSeconds ttl-seconds
                                                                                       :expiresAt expires-at})))))))
 
 (defn- ensure-sandbox-image!
@@ -233,7 +243,10 @@
         node-crypto (aget runtime "crypto")
         sandbox-id (.randomUUID node-crypto)
         ttl (clamp-ttl-seconds config ttl-seconds)
-        expires-at (+ (.now js/Date) (* ttl 1000))
+        created-at-ms (.now js/Date)
+        max-ttl-seconds (clamp-ttl-seconds config (:sandbox-max-ttl-seconds config))
+        max-expires-at (+ created-at-ms (* 1000 max-ttl-seconds))
+        expires-at (min (+ created-at-ms (* ttl 1000)) max-expires-at)
         host-dir (sandbox-host-dir runtime config sandbox-id)
         container-name (sandbox-container-name sandbox-id)
         workdir (sandbox-workdir config)
@@ -264,6 +277,8 @@
                    (throw (js/Error. (str "docker run failed: " (or error stderr)))))
                   (-> (write-sandbox-metadata! runtime config sandbox-id {:sandboxId sandbox-id
                                                                           :image image
+                                                                          :createdAtMs created-at-ms
+                                                                          :maxExpiresAt max-expires-at
                                                                           :ttlSeconds ttl
                                                                           :createdAt (.toISOString (js/Date.))
                                                                           :expiresAt expires-at})
