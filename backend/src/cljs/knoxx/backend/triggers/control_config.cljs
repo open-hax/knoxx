@@ -172,8 +172,13 @@
 (defn- clamp-source-config
   [source-config default-config]
   (let [cfg (or source-config {})]
-    (assoc cfg :maxMessages (clamp-max-messages (:maxMessages cfg)
-                                                (:maxMessages (or default-config {}))))))
+    (cond-> (assoc cfg :maxMessages (clamp-max-messages (:maxMessages cfg)
+                                                        (:maxMessages (or default-config {}))))
+      (contains? cfg :stickySession)
+      (assoc :stickySession (boolean (:stickySession cfg)))
+
+      (parse-positive-int (:sessionMaxMessages cfg))
+      (assoc :sessionMaxMessages (parse-positive-int (:sessionMaxMessages cfg))))))
 
 (defn persist-event-agent-control!
   "Persist the event-agent-control overrides to Redis so they survive restarts." 

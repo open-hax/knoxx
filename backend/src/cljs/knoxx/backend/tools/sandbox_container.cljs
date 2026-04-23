@@ -24,6 +24,18 @@
   [^js node-fs path opts]
   (.mkdir node-fs path opts))
 
+(defn- fs-read-file!
+  ([^js node-fs path]
+   (.readFile node-fs path))
+  ([^js node-fs path encoding]
+   (.readFile node-fs path encoding)))
+
+(defn- fs-write-file!
+  ([^js node-fs path content]
+   (.writeFile node-fs path content))
+  ([^js node-fs path content encoding]
+   (.writeFile node-fs path content encoding)))
+
 (defn- docker-bin
   [config]
   (or (:sandbox-docker-bin config) "docker"))
@@ -31,6 +43,21 @@
 (defn- sandbox-container-name
   [sandbox-id]
   (str "knoxx-sandbox-" sandbox-id))
+
+(defn- sandbox-metadata-path
+  [runtime config sandbox-id]
+  (let [node-path (aget runtime "path")]
+    (path-resolve node-path (sandbox-host-dir runtime config sandbox-id) ".knoxx-sandbox.json")))
+
+(defn- sandbox-build-context
+  [runtime config]
+  (let [node-path (aget runtime "path")]
+    (path-resolve node-path (.cwd js/process) (or (:sandbox-build-context config) "."))))
+
+(defn- sandbox-dockerfile
+  [runtime config]
+  (let [node-path (aget runtime "path")]
+    (path-resolve node-path (.cwd js/process) (or (:sandbox-dockerfile config) "docker/sandbox/Dockerfile"))))
 
 (defn- sandbox-host-dir
   [runtime config sandbox-id]
@@ -86,6 +113,49 @@
       (throw (js/Error. "execFileAsync runtime dependency is not available")))
     (exec-file-result! exec-file-async (docker-bin config) args opts)))
 
+(defn- sandbox-metadata!
+  [runtime config sandbox-id]
+  (let [node-fs (aget runtime "fs")
+        metadata-path (sandbox-metadata-path runtime config sandbox-id)]
+    (-> (fs-read-file! node-fs metadata-path "utf8")
+        (.then (fn [text]
+                 (js->clj (.parse js/JSON (str text)) :keywordize-keys true)))
+        (.catch (fn [_] nil)))))
+
+(defn- write-sandbox-metadata!
+  [runtime config sandbox-id metadata]
+  (let [node-fs (aget runtime "fs")
+        metadata-path (sandbox-metadata-path runtime config sandbox-id)]
+    (-> (fs-write-file! node-fs metadata-path (.stringify js/JSON (clj->js metadata) nil 2) "utf8")
+        (.then (fn [] metadata)))))
+
+(defn- refresh-sandbox-ttl!
+  [runtime config sandbox-id]
+  (-> (sandbox-metadata! runtime config sandbox-id)
+      (.then (fn [metadata]
+               (let [ttl-seconds (clamp-ttl-seconds config (:ttlSeconds metadata))
+                     expires-at (+ (.now js/Date) (* 1000 ttl-seconds))]
+                 (write-sandbox-metadata! runtime config sandbox-id (merge metadata {:ttlSeconds ttl-seconds
+                                                                                      :expiresAt expires-at})))))))
+
+(defn- ensure-sandbox-image!
+  [runtime config image]
+  (-> (docker-command! runtime config ["image" "inspect" image] {:timeout 30000})
+      (.then (fn [{:keys [ok stderr error]}]
+               (if ok
+                 true
+                 (let [dockerfile (sandbox-dockerfile runtime config)
+                       build-context (sandbox-build-context runtime config)]
+                   (if (or (str/includes? stderr "No such image")
+                           (str/includes? stderr "No such object")
+                           (str/includes? (str error) "No such image"))
+                     (-> (docker-command! runtime config ["build" "-t" image "-f" dockerfile build-context] {:timeout 1800000})
+                         (.then (fn [{build-ok :ok build-stderr :stderr build-error :error}]
+                                  (when-not build-ok
+                                    (throw (js/Error. (str "docker build failed: " (or build-error build-stderr)))))
+                                  true)))
+                     (throw (js/Error. (str "docker image inspect failed: " (or error stderr)))))))))))
+
 (defn- sandbox-inspect!
   [runtime config sandbox-id]
   (let [container-name (sandbox-container-name sandbox-id)]
@@ -101,20 +171,23 @@
                          labels (js->clj (or (aget item "Config" "Labels") #js {}) :keywordize-keys false)
                          state (js->clj (or (aget item "State") #js {}) :keywordize-keys true)
                          mounts (js->clj (or (aget item "Mounts") #js []) :keywordize-keys true)
-                         expires-at (js/parseInt (str (or (get labels (str sandbox-label-prefix ".expiresAt")) "0")) 10)]
-                     {:sandboxId sandbox-id
-                      :containerName container-name
-                      :image (or (aget item "Config" "Image") "")
-                      :hostDir (or (:Source (first mounts)) "")
-                      :workdir (or (aget item "Config" "WorkingDir") (sandbox-workdir config))
-                      :createdAt (or (aget item "Created") "")
-                      :running (boolean (:Running state))
-                      :status (or (:Status state) "unknown")
-                      :exitCode (or (:ExitCode state) 0)
-                      :expiresAt expires-at
-                      :ttlSeconds (if (pos? expires-at)
-                                    (max 0 (int (/ (- expires-at (.now js/Date)) 1000)))
-                                    0)})))))))
+                         label-expires-at (js/parseInt (str (or (get labels (str sandbox-label-prefix ".expiresAt")) "0")) 10)]
+                     (-> (sandbox-metadata! runtime config sandbox-id)
+                         (.then (fn [metadata]
+                                  (let [expires-at (or (:expiresAt metadata) label-expires-at 0)]
+                                    {:sandboxId sandbox-id
+                                     :containerName container-name
+                                     :image (or (aget item "Config" "Image") "")
+                                     :hostDir (or (:Source (first mounts)) "")
+                                     :workdir (or (aget item "Config" "WorkingDir") (sandbox-workdir config))
+                                     :createdAt (or (:createdAt metadata) (aget item "Created") "")
+                                     :running (boolean (:Running state))
+                                     :status (or (:Status state) "unknown")
+                                     :exitCode (or (:ExitCode state) 0)
+                                     :expiresAt expires-at
+                                     :ttlSeconds (if (pos? expires-at)
+                                                   (max 0 (int (/ (- expires-at (.now js/Date)) 1000)))
+                                                   0)}))))))))))
 
 (defn- sandbox-destroy!
   [runtime config sandbox-id]
@@ -142,7 +215,11 @@
                  (-> (sandbox-destroy! runtime config sandbox-id)
                      (.then (fn [_]
                               (throw (js/Error. (str "Sandbox expired and was destroyed: " sandbox-id))))))
-                 (js/Promise.resolve info))))))
+                 (-> (refresh-sandbox-ttl! runtime config sandbox-id)
+                     (.then (fn [metadata]
+                              (assoc info
+                                     :expiresAt (:expiresAt metadata)
+                                     :ttlSeconds (max 0 (int (/ (- (:expiresAt metadata) (.now js/Date)) 1000))))))))))))
 
 (defn sandbox-create!
   [runtime config {:keys [ttl-seconds image]}]
@@ -157,7 +234,9 @@
         image (or (some-> image str str/trim not-empty)
                   (:sandbox-image config))
         keepalive-cmd "trap 'exit 0' TERM INT; while true; do sleep 3600; done"]
-    (-> (fs-mkdir! node-fs host-dir #js {:recursive true})
+    (-> (ensure-sandbox-image! runtime config image)
+        (.then (fn [_]
+                 (fs-mkdir! node-fs host-dir #js {:recursive true})))
         (.then (fn []
                  (docker-command!
                   runtime
@@ -177,7 +256,13 @@
         (.then (fn [{:keys [ok stderr error]}]
                  (when-not ok
                    (throw (js/Error. (str "docker run failed: " (or error stderr)))))
-                 (ensure-live-sandbox! runtime config sandbox-id))))))
+                  (-> (write-sandbox-metadata! runtime config sandbox-id {:sandboxId sandbox-id
+                                                                          :image image
+                                                                          :ttlSeconds ttl
+                                                                          :createdAt (.toISOString (js/Date.))
+                                                                          :expiresAt expires-at})
+                      (.then (fn [_]
+                               (ensure-live-sandbox! runtime config sandbox-id)))))))))
 
 (defn- sandbox-exec!
   [runtime config sandbox-id command timeout-ms]
@@ -230,7 +315,7 @@
                (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
                      sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")]
                  (maybe-tool-update! on-update (str "Inspecting sandbox " sandbox-id "…"))
-                 (-> (sandbox-inspect! runtime config sandbox-id)
+                 (-> (ensure-live-sandbox! runtime config sandbox-id)
                      (.then (fn [result]
                               (if result
                                 (tool-text-result

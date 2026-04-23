@@ -9,6 +9,7 @@
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.session-store :as session-store]
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
@@ -426,13 +427,91 @@
                    :else nil))))
        vec))
 
+(defn- sticky-session-enabled?
+  [job]
+  (true? (get-in job [:source :config :stickySession])))
+
+(defn- sticky-session-max-messages
+  [job]
+  (parse-positive-int (get-in job [:source :config :sessionMaxMessages])))
+
+(defn- sticky-session-base-conversation-id
+  [job event]
+  (str "event-agent-" (:id job) "-" (str/lower-case (str (:sourceKind event))) "-sticky"))
+
+(defn- sticky-session-base-session-id
+  [job]
+  (str "event-agent-session-" (:id job) "-sticky"))
+
+(defn- sticky-session-summary
+  [session]
+  (let [messages (->> (or (:messages session) [])
+                      (filter map?)
+                      (take-last 8)
+                      vec)]
+    (when (seq messages)
+      (str "Previous sticky session summary:\n"
+           (str/join "\n"
+                     (map (fn [message]
+                            (let [role (or (:role message) "message")
+                                  content (str (or (:content message) ""))]
+                              (str "- " role ": " (subs content 0 (min 240 (count content))))))
+                          messages))))))
+
+(defn- sticky-session-target
+  [job event]
+  (let [job-id (:id job)]
+    (if-not (sticky-session-enabled? job)
+      {:conversation-id (str "event-agent-" job-id "-" (str/lower-case (str (:sourceKind event))) "-" (.now js/Date))
+       :session-id (str "event-agent-session-" job-id "-" (.now js/Date))
+       :summary nil}
+      (let [state (get @job-state* job-id {})
+            generation (or (:stickyGeneration state) 0)
+            base-conversation-id (sticky-session-base-conversation-id job event)
+            base-session-id (sticky-session-base-session-id job)
+            current-conversation-id (or (:stickyConversationId state)
+                                        (if (zero? generation)
+                                          base-conversation-id
+                                          (str base-conversation-id "-r" generation)))
+            current-session-id (or (:stickySessionId state)
+                                   (if (zero? generation)
+                                     base-session-id
+                                     (str base-session-id "-r" generation)))
+            existing-session (session-store/get-session-sync current-session-id)
+            message-limit (sticky-session-max-messages job)
+            message-count (count (or (:messages existing-session) []))
+            rollover? (and existing-session message-limit (>= message-count message-limit))]
+        (if rollover?
+          (let [next-generation (inc generation)
+                next-conversation-id (str base-conversation-id "-r" next-generation)
+                next-session-id (str base-session-id "-r" next-generation)
+                summary (sticky-session-summary existing-session)]
+            (update-job-state! job-id
+                               (fn [current]
+                                 (assoc (or current {})
+                                        :stickyGeneration next-generation
+                                        :stickyConversationId next-conversation-id
+                                        :stickySessionId next-session-id)))
+            {:conversation-id next-conversation-id
+             :session-id next-session-id
+             :summary summary})
+          (do
+            (update-job-state! job-id
+                               (fn [current]
+                                 (assoc (or current {})
+                                        :stickyGeneration generation
+                                        :stickyConversationId current-conversation-id
+                                        :stickySessionId current-session-id)))
+            {:conversation-id current-conversation-id
+             :session-id current-session-id
+             :summary nil}))))))
+
 (defn build-agent-run-payload
   [config job event]
   (let [agent-spec (:agentSpec job)
         now (.now js/Date)
         run-id (str "event-agent-" (:id job) "-" now)
-        conversation-id (str "event-agent-" (:id job) "-" (str/lower-case (str (:sourceKind event))) "-" now)
-        session-id (str "event-agent-session-" (:id job) "-" now)
+        {:keys [conversation-id session-id summary]} (sticky-session-target job event)
         contract-id (or (:contract-id agent-spec)
                         (:contractSourceId job))
         actor-id (or (:actor-id agent-spec)
@@ -440,6 +519,8 @@
         user-message (str "An event matched this job.\n\n"
                           (or (:taskPrompt agent-spec) "")
                           (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
+                          (when-not (str/blank? (or summary ""))
+                            (str summary "\n\n"))
                           (event-summary-text event))
         content-parts (event-content-parts event)
         model-id (or (:model agent-spec) "gemma4:31b")]

@@ -86,7 +86,7 @@
 (defn- elevenlabs-stream-model-id
   [config]
   (let [configured (trim-or-empty (:elevenlabs-model-id config))]
-    (if (str/blank? configured) "eleven_multilingual_v2" configured)))
+    (if (str/blank? configured) "eleven_flash_v2_5" configured)))
 
 (defn- elevenlabs-stream-url
   [{:keys [voice-id model-id output-format auto-mode]}]
