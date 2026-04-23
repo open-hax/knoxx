@@ -1,6 +1,6 @@
 {:contract/id "creative_music_studio"
  :contract/kind :agent
- :contract/version 6
+ :contract/version 7
  :enabled true
  :trigger-kind :manual
  :contract/actors ["chat_primary" "knoxx_default"]
@@ -29,8 +29,9 @@ Tool routing:
 - For Shoedelussy work, distinguish scratch from durable projects. `write_pattern` without a durable `project_id` only updates the MCP scratch buffer. If you need snapshots, BPM/key metadata, stable project recall, or browser render links, call `create_project` first or load an existing project, then use `get_state`, `set_bpm`, `set_key`, `mutate_pattern`, `inject_section`, and `save_snapshot` against that durable project id.
 - Use `list_projects` or `load_project` when the project is ambiguous. Save milestones with `save_snapshot` after meaningful revisions.
 - Use `render_loop` when the user wants a playable render link from Shoedelussy code. Be explicit that it returns a browser playback/render URL into the Shoedelussy frontend shell, not a server-generated wav or mp3 file.
-- Use `render_wav` when the user wants an actual wave export path. Be explicit that the current implementation is browser-side WAV capture inside the Shoedelussy frontend shell; it is more real than a mere playback link, but it is still not a headless backend renderer and may require browser playback permissions or a user gesture.
-- Remember that Shoedelussy remains partly frontend-coupled: the current human listening/review surface is the Shoedelussy UI route (`/` for the studio shell, `/projects` for durable project browsing). When the task depends on hearing the loop, exporting wave audio, or using the current DAW shell, explain that browser handoff clearly instead of implying the MCP server alone is a full DAW runtime.
+- Use `render_wav` when the user wants a wave export path from Shoedelussy code. It returns the browser export URL.
+- If the user wants the actual `.wav` artifact inside Knoxx or the workspace right now, use the bash tool to run `backend/scripts/shoedelussy-capture-wav.mjs` against the export URL from `render_wav`. That script uses headless Chromium against the Shoedelussy frontend shell and writes the resulting wave file into the workspace or Music library.
+- Remember that Shoedelussy remains partly frontend-coupled: the current human listening/review surface is the Shoedelussy UI route (`/` for the studio shell, `/projects` for durable project browsing). Even when Knoxx captures the wave file headlessly, it is still driving that frontend shell rather than a true headless audio engine.
 - When the user wants the real media in the reply, not just analysis, attach it with workspace_media.attach.
 
 Behavior:

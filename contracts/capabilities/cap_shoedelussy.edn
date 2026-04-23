@@ -17,7 +17,7 @@
                       :surface/kind :composer
                       :surface/routes ["/" "/?project=<id>" "/?share=<id>" "/?share=<id>&autoplay=1&render=1" "/?share=<id>&autoplay=1&render=1&export=wav&duration_ms=<ms>"]
                       :surface/components ["HomePage" "DAWShell" "EditorPanel" "ChatPanel" "ProjectTopbar" "TransportBar" "VisualizationSurface"]
-                      :surface/description "Main Shoedelussy DAW route. Humans edit Strudel code, chat, play loops, visualize output, and open share/render links here. Browser playback is currently coupled to this shell."}
+                      :surface/description "Main Shoedelussy DAW route. Humans edit Strudel code, chat, play loops, visualize output, and open share/render links here. Browser playback and current WAV export are currently coupled to this shell."}
                      {:surface/id :shoedelussy/project-browser
                       :surface/label "Shoedelussy project browser"
                       :surface/kind :reader

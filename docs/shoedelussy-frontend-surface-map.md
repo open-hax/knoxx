@@ -62,6 +62,7 @@ Key facts:
 - `useChatOrchestrator` owns the editor bridge and drives most project/chat behavior
 - the current `render_loop` MCP tool is honest browser-render plumbing: it creates a share URL with autoplay/render query params so a human can open the loop in the frontend and hear it
 - the new `render_wav` MCP tool returns a browser URL that attempts WAV capture/download in this same shell; it is still frontend-coupled, not a headless worker export
+- Knoxx can now drive that export URL through `backend/scripts/shoedelussy-capture-wav.mjs` using headless Chromium to save a real `.wav` artifact, but this is still frontend automation rather than an independent audio backend
 - there is no true server-side wav/mp3 export path yet
 
 ## Export/share surface
@@ -92,6 +93,7 @@ Until components are imported directly into Knoxx, the safest mental model is:
 2. Shoedelussy frontend is the human-facing playback/render shell.
 3. `render_loop` returns a browser route into that shell, not a server audio file.
 4. `render_wav` returns a browser route that attempts WAV capture/download inside that shell, but it still depends on frontend playback/browser permissions.
+5. `backend/scripts/shoedelussy-capture-wav.mjs` lets Knoxx automate that same route with headless Chromium so the exported wave file lands back in the workspace.
 
 ## Candidate future decomposition
 
