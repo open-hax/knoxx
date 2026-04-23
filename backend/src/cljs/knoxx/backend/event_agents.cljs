@@ -71,6 +71,12 @@
       (boolean (or (aget status "ready")
                    (aget status "started"))))))
 
+(defn- discord-gateway-user-id
+  []
+  (when-let [manager (discord-gateway-manager)]
+    (let [status (.status manager)]
+      (some-> (aget status "userId") str str/trim not-empty))))
+
 (defn- discord-headers
   [token]
   #js {"Authorization" (str "Bot " token)
@@ -284,11 +290,21 @@
 
 (defn- update-job-state!
   [job-id f]
-  (let [new-state (swap! job-state* update job-id (fn [current] (f (or current {}))))]
+  (let [new-state (get (swap! job-state* update job-id (fn [current] (f (or current {})))) job-id)]
     ;; Persistence: Mirror to Redis
     (when-let [client (redis/get-client)]
       (redis/set-json client (str "event-agent:job-state:" job-id) new-state))
     new-state))
+
+(defn- normalize-job-state
+  [job-id state]
+  (let [candidate (cond
+                    (and (map? state) (map? (get state job-id))) (get state job-id)
+                    (map? state) state
+                    :else {})]
+    (if (map? candidate)
+      candidate
+      {})))
 
 (defn- record-job-run-start!
   [job]
@@ -297,7 +313,7 @@
         cadence-ms (* 60 1000 (max 1 (or (get-in job [:trigger :cadenceMinutes]) 1)))]
     (update-job-state! job-id
                        (fn [state]
-                         (assoc state
+                         (assoc (normalize-job-state job-id state)
                                 :id job-id
                                 :name (:name job)
                                 :enabled (:enabled job)
@@ -313,7 +329,7 @@
         job-id (:id job)]
     (update-job-state! job-id
                        (fn [state]
-                         (-> state
+                         (-> (normalize-job-state job-id state)
                              (assoc :id job-id
                                     :name (:name job)
                                     :enabled (:enabled job)
@@ -336,11 +352,12 @@
 
 (defn- direct-start-headers
   [config]
-  (let [api-key (:knoxx-api-key config)]
-    (cond-> #js {"Content-Type" "application/json"
-                 "x-knoxx-user-email" "system-admin@open-hax.local"}
-      (not (str/blank? api-key))
-      (aset "X-API-Key" api-key))))
+  (let [api-key (:knoxx-api-key config)
+        headers #js {"Content-Type" "application/json"
+                     "x-knoxx-user-email" "system-admin@open-hax.local"}]
+    (when-not (str/blank? api-key)
+      (aset headers "X-API-Key" api-key))
+    headers))
 
 (defn- tool-policies->js
   [policies]
@@ -447,7 +464,7 @@
                  result))
         (.catch (fn [err]
                   (println "[event-agents] failed to queue run for job" (:id job) ":" (.-message err))
-                  nil)))))
+                  (js/Promise.reject err))))))
 
 (defn- matches-event-kind?
   [job event-kind]
@@ -531,7 +548,8 @@
 
 (defn- discord-bot-user-id
   [control]
-  (some-> (get-in control [:sources :discord :botUserId]) str str/trim not-empty))
+  (or (some-> (get-in control [:sources :discord :botUserId]) str str/trim not-empty)
+      (discord-gateway-user-id)))
 
 (defn- discord-event-jobs
   [control]
@@ -892,7 +910,7 @@
                            (-> (redis/get-json client (str "event-agent:job-state:" id))
                                (.then (fn [state]
                                         (when state
-                                          (swap! job-state* assoc id state)
+                                          (swap! job-state* assoc id (normalize-job-state id state))
                                           (println "[event-agents] recovered state for" id)))))
 
                            ;; Recover Job Spec Overrides from Redis

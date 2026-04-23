@@ -383,19 +383,36 @@
    {:toolId "memory_search" :effect "allow"}
    {:toolId "graph_query" :effect "allow"}])
 
+(defn- derive-default-discord-channels
+  [jobs]
+  (->> (or jobs [])
+       (mapcat (fn [job]
+                 (concat (or (get-in job [:filters :channels]) [])
+                         (or (get-in job [:filters :publishChannels]) [])
+                         (or (get-in job [:filters :publish_channels]) []))))
+       (map (fn [value] (some-> value str str/trim not-empty)))
+       (remove nil?)
+       distinct
+       vec))
+
 (defn- default-discord-model
   [_config]
   "gemma4:31b")
 
 (defn default-event-agent-control
   [config]
-  (let [default-discord-source {:botUserId (or (some-> (env "DISCORD_BOT_USER_ID" "") str str/trim not-empty) "")
-                                :defaultChannels (default-discord-channels)
+  (let [jobs (contract-agent-jobs config)
+        inferred-default-channels (derive-default-discord-channels jobs)
+        configured-default-channels (default-discord-channels)
+        default-discord-source {:botUserId (or (some-> (env "DISCORD_BOT_USER_ID" "") str str/trim not-empty) "")
+                                :defaultChannels (if (seq configured-default-channels)
+                                                   configured-default-channels
+                                                   inferred-default-channels)
                                 :targetKeywords (default-discord-keywords)}]
     {:sources {:discord default-discord-source
                :github {:webhookSecretConfigured (boolean (some-> (env "GITHUB_WEBHOOK_SECRET" "") str str/trim not-empty))}
                :cron {}}
-     :jobs (contract-agent-jobs config)}))
+     :jobs jobs}))
 
 (defn- normalize-event-agent-job
   [config default-job raw-job]
@@ -464,6 +481,16 @@
         defaults (default-event-agent-control config)
         default-sources (:sources defaults)
         saved-sources (or (:sources saved) {})
+        saved-discord-source (or (:discord saved-sources) {})
+        saved-discord-channels (->> (or (:defaultChannels saved-discord-source) [])
+                                    (map (fn [value] (some-> value str str/trim not-empty)))
+                                    (remove nil?)
+                                    vec)
+        saved-discord-keywords (->> (or (:targetKeywords saved-discord-source) [])
+                                    (map (fn [value] (some-> value str str/trim str/lower-case not-empty)))
+                                    (remove nil?)
+                                    distinct
+                                    vec)
         github-webhook-secret-configured (get-in default-sources [:github :webhookSecretConfigured])
         default-jobs (:jobs defaults)
         saved-jobs (vec (or (:jobs saved) []))
@@ -489,7 +516,18 @@
                                                                  :description "Custom scheduled event-agent job"}
                                                                 job)))))
                          vec)]
-    {:sources (-> {:discord (merge (:discord default-sources) (or (:discord saved-sources) {}))
+    {:sources (-> {:discord (cond-> (merge (:discord default-sources) saved-discord-source)
+                              (empty? saved-discord-channels)
+                              (assoc :defaultChannels (get-in default-sources [:discord :defaultChannels]))
+
+                              (seq saved-discord-channels)
+                              (assoc :defaultChannels saved-discord-channels)
+
+                              (empty? saved-discord-keywords)
+                              (assoc :targetKeywords (get-in default-sources [:discord :targetKeywords]))
+
+                              (seq saved-discord-keywords)
+                              (assoc :targetKeywords saved-discord-keywords))
                    :github (merge (:github default-sources) (or (:github saved-sources) {}))
                    :cron (merge (:cron default-sources) (or (:cron saved-sources) {}))}
                  ;; Never let persisted Redis overrides lie about secret configuration.

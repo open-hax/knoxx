@@ -140,10 +140,12 @@
   (let [c @client-state]
     (cond-> #js {:started (some? c)
                  :ready false
+                 :userId nil
                  :userTag nil
                  :guildCount 0}
       c (doto
           (aset "ready" (try (.isReady c) (catch js/Error _ false)))
+          (aset "userId" (try (.-id (.-user c)) (catch js/Error _ nil)))
           (aset "userTag" (try (.-tag (.-user c)) (catch js/Error _ nil)))
           (aset "guildCount" (try (.. c -guilds -cache -size) (catch js/Error _ 0)))))))
 (defn- gw-list-servers
