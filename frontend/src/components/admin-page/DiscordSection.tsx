@@ -158,15 +158,6 @@ function SidebarJobButton({
   );
 }
 
-function RuntimeField({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-slate-500">{label}</span>
-      <span className="text-right text-slate-200">{value}</span>
-    </div>
-  );
-}
-
 function CollapsiblePanel({
   title,
   description,
@@ -557,28 +548,31 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                     </button>
                   </div>
 
-                  <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_16rem]">
                     <div className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                          <div className="text-[11px] uppercase tracking-wide text-slate-500">Status</div>
-                          <div className="mt-2"><Badge tone={runtimeStatusTone(selectedRuntime?.lastStatus)}>{selectedRuntime?.lastStatus ?? "idle"}</Badge></div>
-                        </div>
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                          <div className="text-[11px] uppercase tracking-wide text-slate-500">Runs</div>
-                          <div className="mt-2 text-lg font-semibold text-slate-100">{selectedRuntime?.runCount ?? 0}</div>
-                        </div>
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                          <div className="text-[11px] uppercase tracking-wide text-slate-500">Last finished</div>
-                          <div className="mt-2 text-sm text-slate-200">{toLocalDateTime(selectedRuntime?.lastFinishedAt)}</div>
-                        </div>
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                          <div className="text-[11px] uppercase tracking-wide text-slate-500">Next run</div>
-                          <div className="mt-2 text-sm text-slate-200">{toLocalDateTime(selectedRuntime?.nextRunAt)}</div>
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Runtime snapshot</div>
+                        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2 text-sm">
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500">Status</div>
+                            <div className="mt-1"><Badge tone={runtimeStatusTone(selectedRuntime?.lastStatus)}>{selectedRuntime?.lastStatus ?? "idle"}</Badge></div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500">Runs</div>
+                            <div className="mt-1 text-lg font-semibold text-slate-100">{selectedRuntime?.runCount ?? 0}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500">Last finished</div>
+                            <div className="mt-1 text-sm text-slate-200">{toLocalDateTime(selectedRuntime?.lastFinishedAt)}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] uppercase tracking-wide text-slate-500">Next run</div>
+                            <div className="mt-1 text-sm text-slate-200">{toLocalDateTime(selectedRuntime?.nextRunAt)}</div>
+                          </div>
                         </div>
                       </div>
 
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="grid gap-3 md:grid-cols-3">
                         <div className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Enabled</div>
                           <label className="inline-flex w-full items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-200">
@@ -615,7 +609,9 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                             {availableSourceKinds.map((kind) => <option key={`${selectedJob.id}-source-${kind}`} value={kind}>{kind}</option>)}
                           </select>
                         </label>
+                      </div>
 
+                      <div className="grid gap-3 md:grid-cols-3">
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source mode</div>
                           <input
@@ -625,9 +621,7 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           />
                         </label>
-                      </div>
 
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Cadence (minutes)</div>
                           <input
@@ -640,19 +634,20 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
                           />
                         </label>
-                        <label className="space-y-1 md:col-span-3">
+
+                        <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Event kinds</div>
                           <input
                             value={joinCsv(selectedJob.trigger.eventKinds)}
                             onChange={(event) => updateJob(selectedJob.id, { trigger: { ...selectedJob.trigger, eventKinds: splitCsv(event.target.value) } })}
                             disabled={!canManage || savingControl || selectedJob.trigger.kind !== "event"}
                             className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                            placeholder="discord.message.mention, issues.opened"
+                            placeholder="mention, issues.opened"
                           />
                         </label>
                       </div>
 
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="grid gap-3 md:grid-cols-3">
                         <label className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Role</div>
                           <select
@@ -686,16 +681,17 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                             ))}
                           </select>
                         </label>
-                        <label className="space-y-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Job description</div>
-                          <input
-                            value={selectedJob.description ?? ""}
-                            onChange={(event) => updateJob(selectedJob.id, { description: event.target.value })}
-                            disabled={!canManage || savingControl}
-                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                          />
-                        </label>
                       </div>
+
+                      <label className="space-y-1">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Job description</div>
+                        <input
+                          value={selectedJob.description ?? ""}
+                          onChange={(event) => updateJob(selectedJob.id, { description: event.target.value })}
+                          disabled={!canManage || savingControl}
+                          className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+                        />
+                      </label>
 
                       <label className="space-y-1">
                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">System prompt</div>
@@ -764,11 +760,11 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                     <div className="space-y-4">
                       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
                         <div className="text-sm font-semibold text-slate-100">Live runtime</div>
-                        <div className="mt-3 grid gap-2 text-sm text-slate-300">
-                          <RuntimeField label="Schedule" value={selectedRuntime?.scheduleLabel ?? "—"} />
-                          <RuntimeField label="Last started" value={<span className="text-xs">{toLocalDateTime(selectedRuntime?.lastStartedAt)}</span>} />
-                          <RuntimeField label="Last finished" value={<span className="text-xs">{toLocalDateTime(selectedRuntime?.lastFinishedAt)}</span>} />
-                          <RuntimeField label="Duration" value={selectedRuntime?.lastDurationMs ? `${selectedRuntime.lastDurationMs} ms` : "—"} />
+                        <div className="mt-3 grid gap-x-4 gap-y-2 text-sm text-slate-300">
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Schedule</span><span className="text-right text-slate-200">{selectedRuntime?.scheduleLabel ?? "—"}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Last started</span><span className="text-right text-xs text-slate-200">{toLocalDateTime(selectedRuntime?.lastStartedAt)}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Last finished</span><span className="text-right text-xs text-slate-200">{toLocalDateTime(selectedRuntime?.lastFinishedAt)}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Duration</span><span className="text-right text-slate-200">{selectedRuntime?.lastDurationMs ? `${selectedRuntime.lastDurationMs} ms` : "—"}</span></div>
                         </div>
                         {selectedRuntime?.lastError ? (
                           <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
