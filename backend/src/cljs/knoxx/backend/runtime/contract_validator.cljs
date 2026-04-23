@@ -24,6 +24,13 @@
             [:expr {:optional true} any?]
             [:rule {:optional true} keyword?]]]])
 
+(def AgentSpec
+  [:map {:closed false}
+   [:role {:optional true} keyword?]
+   [:roles {:optional true} [:sequential keyword?]]
+   [:model {:optional true} string?]
+   [:thinking {:optional true} keyword?]])
+
 (def AgentContract
   "Minimal agent-contract schema for EDN contracts stored on disk."
   [:map {:closed false}
@@ -35,7 +42,8 @@
    [:contract/actors {:optional true} [:set [:or string? [:= actor-scope/wildcard-actor]]]]
    [:actor/id {:optional true} string?]
    [:actor/roles {:optional true} [:sequential keyword?]]
-   [:actor/capabilities {:optional true} [:sequential keyword?]]])
+   [:actor/capabilities {:optional true} [:sequential keyword?]]
+   [:agent {:optional true} AgentSpec]])
 
 (def ActorContract
   [:map {:closed false}

@@ -46,6 +46,17 @@
                  #{fallback}
                  #{}))))))
 
+(defn agent-role-claims
+  [contract]
+  (let [legacy-roles (or (:actor/roles contract) [])
+        agent-roles (or (get-in contract [:agent :roles]) [])
+        agent-role (get-in contract [:agent :role])]
+    (->> (concat legacy-roles
+                 agent-roles
+                 (when agent-role [agent-role]))
+         distinct
+         vec)))
+
 (defn normalize-agent-contract
   [contract]
   (if-not (map? contract)

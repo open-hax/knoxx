@@ -56,6 +56,23 @@
                                     :agent {:role :knowledge_worker}})]
     (is (:ok result) (pr-str result))))
 
+(deftest agent-contract-schema-accepts-agent-roles-vector
+  (let [result (validator/validate "agents"
+                                   {:contract/id "multi_role_agent"
+                                    :contract/kind :agent
+                                    :trigger-kind :manual
+                                    :contract/actors #{"chat_primary"}
+                                    :agent {:roles [:creative_catalyst :discord-user]}})]
+    (is (:ok result) (pr-str result))))
+
+(deftest agent-role-claims-collects-singular-and-plural-role-forms
+  (is (= [:creative_catalyst :discord-user]
+         (actor-scope/agent-role-claims {:agent {:roles [:creative_catalyst :discord-user]}})))
+  (is (= [:role/knowledge-worker :creative_catalyst :discord-user]
+         (actor-scope/agent-role-claims {:actor/roles [:role/knowledge-worker]
+                                         :agent {:role :discord-user
+                                                 :roles [:creative_catalyst :discord-user]}}))))
+
 (deftest normalize-agent-contract-promotes-legacy-and-knoxx-default-claims
   (is (= #{"cms_chat"}
          (:contract/actors

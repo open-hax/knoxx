@@ -87,13 +87,18 @@
     (when (seq segments)
       (str/join "\n\n" segments))))
 
+(defn- contract-edn-file?
+  [name]
+  (and (string? name)
+       (str/ends-with? name ".edn")
+       (not (str/starts-with? name "."))))
+
 (defn actor-catalog
   [config]
   (->> (try
          (.readdirSync fs (.join path (contract-loader/contracts-dir-path config) "actors"))
          (catch :default _ #js []))
-       (filter (fn [name]
-                 (and (string? name) (str/ends-with? name ".edn"))))
+       (filter contract-edn-file?)
        (map (fn [name]
               (let [actor-id (subs name 0 (- (count name) 4))]
                 (resolve-actor config actor-id))))
@@ -163,8 +168,7 @@
              (let [actor-spec (or (when effective-actor-id (resolve-actor config effective-actor-id))
                                   (when-let [default-id (default-actor-id config)]
                                     (resolve-actor config default-id)))
-                   contract-role-slugs (->> (concat (or (:actor/roles contract) [])
-                                                    [(get-in contract [:agent :role])])
+                   contract-role-slugs (->> (actor-scope/agent-role-claims contract)
                                             (map keywordish->slug)
                                             (remove nil?)
                                             distinct
@@ -225,9 +229,7 @@
                (catch :default _ #js []))
          wanted-actor-id (some-> actor-id str str/trim not-empty)]
      (->> ids
-          (filter (fn [name]
-                    (and (string? name)
-                         (str/ends-with? name ".edn"))))
+          (filter contract-edn-file?)
           (map (fn [name]
                  (resolve-agent-contract config (subs name 0 (- (count name) 4)) wanted-actor-id)))
           (remove nil?)
