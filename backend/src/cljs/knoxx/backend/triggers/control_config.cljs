@@ -472,6 +472,10 @@
                                  (if (seq normalized)
                                    normalized
                                    (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job))))) }
+     :contractSourceId (or (:contractSourceId source)
+                           (:contractSourceId default-job))
+     :actorId (or (:actorId source)
+                  (:actorId default-job))
      :description (or (some-> (:description source) str str/trim not-empty)
                       (:description default-job))}))
 

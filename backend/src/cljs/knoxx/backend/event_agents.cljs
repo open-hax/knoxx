@@ -433,6 +433,10 @@
         run-id (str "event-agent-" (:id job) "-" now)
         conversation-id (str "event-agent-" (:id job) "-" (str/lower-case (str (:sourceKind event))) "-" now)
         session-id (str "event-agent-session-" (:id job) "-" now)
+        contract-id (or (:contract-id agent-spec)
+                        (:contractSourceId job))
+        actor-id (or (:actor-id agent-spec)
+                     (:actorId job))
         user-message (str "An event matched this job.\n\n"
                           (or (:taskPrompt agent-spec) "")
                           (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
@@ -444,12 +448,14 @@
      :run_id run-id
      :message user-message
      :content_parts content-parts
-     :agent_spec {:role (or (:role agent-spec) "knowledge_worker")
-                  :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
-                  :task_prompt (or (:taskPrompt agent-spec) "")
-                  :model model-id
-                  :thinking_level (or (:thinkingLevel agent-spec) "off")
-                  :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
+     :agent_spec (cond-> {:role (or (:role agent-spec) "knowledge_worker")
+                          :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
+                          :task_prompt (or (:taskPrompt agent-spec) "")
+                          :model model-id
+                          :thinking_level (or (:thinkingLevel agent-spec) "off")
+                          :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
+                   contract-id (assoc :contract_id contract-id)
+                   actor-id (assoc :actor_id actor-id))
      :model model-id}))
 
 (defn- start-agent-run!
