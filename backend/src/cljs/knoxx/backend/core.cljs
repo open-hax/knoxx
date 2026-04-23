@@ -39,48 +39,58 @@
   []
   (clj->js (runtime-models/enrich-config (runtime-config/cfg))))
 
+(defn- initialize-mcp-gateway!
+  [app resolved-config]
+  (if-not (:mcp-enabled resolved-config)
+    (js/Promise.resolve nil)
+    (let [existing-servers (mcp/parse-mcp-servers-env (or (aget js/process.env "MCP_SERVERS") ""))
+          openplanner-url (:openplanner-mcp-base-url resolved-config)
+          openplanner-name (:openplanner-mcp-tool-name resolved-config "openplanner")
+          shoedelussy-url (:shoedelussy-mcp-base-url resolved-config)
+          shoedelussy-name (:shoedelussy-mcp-tool-name resolved-config "shoedelussy")
+          shoedelussy-secret (:shoedelussy-mcp-shared-secret resolved-config)
+          merged-servers (cond-> existing-servers
+                           (and (not (contains? existing-servers openplanner-name))
+                                (some? openplanner-url)
+                                (not= "" openplanner-url))
+                           (assoc openplanner-name {:url openplanner-url
+                                                    :transport "http"})
+
+                           (and (not (contains? existing-servers shoedelussy-name))
+                                (some? shoedelussy-url)
+                                (not= "" shoedelussy-url))
+                           (assoc shoedelussy-name {:url shoedelussy-url
+                                                    :transport "http"
+                                                    :shared-secret shoedelussy-secret}))]
+      (-> (mcp/initialize! {:servers merged-servers})
+          (.then (fn [_]
+                   (app-log-info! app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
+          (.catch (fn [err]
+                    (app-log-error! app "MCP gateway initialization failed" err)))))))
+
+(defn- start-background-services!
+  [runtime app resolved-config]
+  ;; Boot routes should not block on resumable-session replay, event-agent warmup,
+  ;; or MCP discovery. A single stuck recovered run previously prevented Fastify
+  ;; from ever binding port 8000 even though PM2 showed the process as healthy.
+  (-> (session-recovery/start! runtime app resolved-config)
+      (.then (fn [_]
+               ;; Redis is now connected — safe to start event agents
+               ;; with persisted control config recovery.
+               (event-agents/start! resolved-config)))
+      (.then (fn [_]
+               (initialize-mcp-gateway! app resolved-config)))
+      (.catch (fn [err]
+                (app-log-error! app "Background startup services failed" err)))))
+
 (defn register-app-routes!
   [runtime app config lounge-messages*]
   (let [resolved-config (runtime-models/enrich-config (if (map? config) config (runtime-config/cfg)))]
     (ensure-settings! resolved-config)
     (reset! runtime-state/config* resolved-config)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
-    ;; Defer event-agent startup until Redis is connected so control config
-    ;; overrides can be recovered. session-recovery/start! connects Redis.
-    (-> (session-recovery/start! runtime app resolved-config)
-        (.then (fn [_]
-                 ;; Redis is now connected — safe to start event agents
-                 ;; with persisted control config recovery.
-                 (event-agents/start! resolved-config)))
-        (.then (fn [_]
-                 ;; Initialize MCP gateway if enabled
-                 (when (:mcp-enabled resolved-config)
-                   (let [;; Auto-register known MCP servers from config if not in MCP_SERVERS env
-                         existing-servers (mcp/parse-mcp-servers-env (or (aget js/process.env "MCP_SERVERS") ""))
-                         openplanner-url (:openplanner-mcp-base-url resolved-config)
-                         openplanner-name (:openplanner-mcp-tool-name resolved-config "openplanner")
-                         shoedelussy-url (:shoedelussy-mcp-base-url resolved-config)
-                         shoedelussy-name (:shoedelussy-mcp-tool-name resolved-config "shoedelussy")
-                         shoedelussy-secret (:shoedelussy-mcp-shared-secret resolved-config)
-                         merged-servers (cond-> existing-servers
-                                          (and (not (contains? existing-servers openplanner-name))
-                                               (some? openplanner-url)
-                                               (not= "" openplanner-url))
-                                          (assoc openplanner-name {:url openplanner-url
-                                                                   :transport "http"})
-
-                                          (and (not (contains? existing-servers shoedelussy-name))
-                                               (some? shoedelussy-url)
-                                               (not= "" shoedelussy-url))
-                                          (assoc shoedelussy-name {:url shoedelussy-url
-                                                                   :transport "http"
-                                                                   :shared-secret shoedelussy-secret}))]
-                     (-> (mcp/initialize! {:servers merged-servers})
-                         (.then (fn [_]
-                                  (app-log-info! app (str "MCP gateway initialized: " (count (mcp/catalog)) " tools available"))))
-                         (.catch (fn [err]
-                                   (app-log-error! app "MCP gateway initialization failed" err))))))
-                 (clj->js resolved-config))))))
+    (start-background-services! runtime app resolved-config)
+    (clj->js resolved-config)))
 
 (defn start!
   [runtime]
