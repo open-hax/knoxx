@@ -11,10 +11,12 @@
         runtime (or (when (map? opts) (:runtime opts)) (aget opts "runtime"))
         client-id (or (aget (.-env js/process) "KNOXX_GITHUB_OAUTH_CLIENT_ID") "")
         client-secret (or (aget (.-env js/process) "KNOXX_GITHUB_OAUTH_CLIENT_SECRET") "")
-        github-enabled (and (not (str/blank? client-id)) (not (str/blank? client-secret)))]
+        github-enabled (and (not (str/blank? client-id))
+                            (not (str/blank? client-secret)))]
 
     ;; Wire persistent session store so auth_session can save/load sessions from Postgres
-    (when policyDb (auth-session/set-db-session-store! policyDb))
+    (when policyDb
+      (auth-session/set-db-session-store! policyDb))
 
     (.get app "/api/auth/config"
           (fn [_req reply]
@@ -53,14 +55,14 @@
                                                                             "x-knoxx-org-slug" org-slug})))
                                       (.then (fn [ctx]
                                                (auth-session/create-session-from-context! reply public-base-url ctx
-                                                                             #js {:email email
-                                                                                  :displayName (or display-name email)
-                                                                                  :authProvider "signup"}))))))
+                                                                                          #js {:email email
+                                                                                               :displayName (or display-name email)
+                                                                                               :authProvider "signup"}))))))
                        (.then (fn [result]
                                 (.send reply result)))
                        (.catch (fn [err]
                                  (.send (.code reply (or (.-statusCode err) (.-status err) 500))
-                                        (clj->js {:error (or (.-message err) "Signup failed")})))))))))
+                                        (clj->js {:error (or (.-message err) "Signup failed")})))))))))))
 
     (.get app "/api/auth/login"
           (fn [req reply]
@@ -113,64 +115,57 @@
                    (if (str/blank? email)
                      (.send (.code reply 401) (clj->js {:error "Not authenticated"}))
                      (-> (.redeemInvite policyDb code email)
-                         (.then
-                          (fn [result]
-                            (.send reply (clj->js {:ok true
-                                                   :invite (aget result "invite")
-                                                   :user (aget result "user")}))))
-                         (.catch
-                          (fn [err]
-                            (.send (.code reply (or (.-status err) 500))
-                                   (clj->js {:error (or (.-message err) "Invite redemption failed")})))))))))))
+                         (.then (fn [result]
+                                  (.send reply (clj->js {:ok true
+                                                         :invite (aget result "invite")
+                                                         :user (aget result "user")}))))
+                         (.catch (fn [err]
+                                   (.send (.code reply (or (.-status err) 500))
+                                          (clj->js {:error (or (.-message err) "Invite redemption failed")})))))))))))
 
     (.post app "/api/auth/invite"
            (fn [req reply]
              (-> (auth-session/resolve-auth-context req policyDb)
-                 (.then
-                  (fn [ctx]
-                    (let [org-id (or (some-> req (aget "body") (aget "orgId"))
-                                     (some-> ctx (aget "org") (aget "id")))
-                          email (some-> req (aget "body") (aget "email"))
-                          role-slugs (or (some-> req (aget "body") (aget "roleSlugs")) #js ["knowledge_worker"])]
-                      (if (str/blank? email)
-                        (.send (.code reply 400) (clj->js {:error "email is required"}))
-                        (-> (.createInvite policyDb
-                                           (clj->js {:orgId org-id
-                                                     :email email
-                                                     :roleSlugs role-slugs
-                                                     :inviterMembershipId (some-> ctx (aget "membership") (aget "id"))}))
-                            (.then
-                             (fn [result]
-                               (when (not= (some-> req (aget "body") (aget "sendEmail")) false)
-                                 (.catch (auth-session/send-invite-email runtime (aget result "invite") email public-base-url)
-                                         (fn [err]
-                                           (.error js/console "[knoxx-session] Failed to send invite email:" (.-message err)))))
-                               (.send reply (clj->js {:ok true :invite (aget result "invite")}))))
-                            (.catch
-                             (fn [err]
-                               (.send (.code reply (or (.-status err) 500))
-                                      (clj->js {:error (or (.-message err) "Invite creation failed")})))))))))
-                 (.catch
-                  (fn [err]
-                    (.send (.code reply (or (.-status err) 401))
-                           (clj->js {:error (or (.-message err) "Unauthorized")})))))))
+                 (.then (fn [ctx]
+                          (let [org-id (or (some-> req (aget "body") (aget "orgId"))
+                                           (some-> ctx (aget "org") (aget "id")))
+                                email (some-> req (aget "body") (aget "email"))
+                                role-slugs (or (some-> req (aget "body") (aget "roleSlugs")) #js ["knowledge_worker"])]
+                            (if (str/blank? email)
+                              (.send (.code reply 400) (clj->js {:error "email is required"}))
+                              (-> (.createInvite policyDb
+                                                 (clj->js {:orgId org-id
+                                                           :email email
+                                                           :roleSlugs role-slugs
+                                                           :inviterMembershipId (some-> ctx (aget "membership") (aget "id"))}))
+                                  (.then (fn [result]
+                                           (when (not= (some-> req (aget "body") (aget "sendEmail")) false)
+                                             (.catch (auth-session/send-invite-email runtime (aget result "invite") email public-base-url)
+                                                     (fn [err]
+                                                       (.error js/console "[knoxx-session] Failed to send invite email:" (.-message err)))))
+                                           (.send reply (clj->js {:ok true
+                                                                  :invite (aget result "invite")}))))
+                                  (.catch (fn [err]
+                                            (.send (.code reply (or (.-status err) 500))
+                                                   (clj->js {:error (or (.-message err) "Invite creation failed")}))))))))
+                 (.catch (fn [err]
+                           (.send (.code reply (or (.-status err) 401))
+                                  (clj->js {:error (or (.-message err) "Unauthorized")})))))))
 
     (.get app "/api/auth/invites"
           (fn [req reply]
             (-> (auth-session/resolve-auth-context req policyDb)
-                (.then
-                 (fn [ctx]
-                   (let [org-id (or (some-> req (aget "query") (aget "orgId"))
-                                    (some-> ctx (aget "org") (aget "id")))
-                         status (some-> req (aget "query") (aget "status"))]
-                     (-> (.listInvites policyDb (clj->js (cond-> {:orgId org-id}
-                                                           status (assoc :status status))))
-                         (.then (fn [result] (.send reply result)))
-                         (.catch (fn [err]
-                                   (.send (.code reply 500) (clj->js {:error (.-message err)}))))))))
-                (.catch
-                 (fn [err]
-                   (.send (.code reply (or (.-status err) 401))
-                          (clj->js {:error (or (.-message err) "Unauthorized")})))))))))
-
-    ))
+                (.then (fn [ctx]
+                         (let [org-id (or (some-> req (aget "query") (aget "orgId"))
+                                          (some-> ctx (aget "org") (aget "id")))
+                               status (some-> req (aget "query") (aget "status"))]
+                           (-> (.listInvites policyDb (clj->js (cond-> {:orgId org-id}
+                                                                 status (assoc :status status))))
+                               (.then (fn [result]
+                                        (.send reply result)))
+                               (.catch (fn [err]
+                                         (.send (.code reply 500)
+                                                (clj->js {:error (.-message err)}))))))))
+                (.catch (fn [err]
+                          (.send (.code reply (or (.-status err) 401))
+                                 (clj->js {:error (or (.-message err) "Unauthorized")}))))))))))
