@@ -197,7 +197,7 @@ MODELS_DIR=/path/to/gguf/models
 
 Knoxx now carries a dedicated contract-backed development actor for Pi at:
 
-- `backend/contracts/actors/pi.edn`
+- `contracts/actors/pi.edn`
 
 How it works:
 

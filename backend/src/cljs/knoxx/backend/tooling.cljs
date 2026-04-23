@@ -39,7 +39,7 @@
               (map :toolId))
         (:toolPolicies auth-context)))
 
-(defn- keywordish->slug
+(defn- keywordish->role-slug
   [value]
   (let [raw (cond
               (keyword? value) (name value)
@@ -47,6 +47,14 @@
               (nil? value) nil
               :else (str value))]
     (some-> raw str str/trim not-empty)))
+
+(defn- keywordish->capability-ref
+  [value]
+  (cond
+    (keyword? value) (str (namespace value) "/" (name value))
+    (string? value) (some-> value str str/trim not-empty)
+    (nil? value) nil
+    :else (some-> value str str/trim not-empty)))
 
 (defn- read-edn-sync
   [file-path]
@@ -67,12 +75,12 @@
          :org (some-> (:actor/org actor) str str/trim not-empty)
          :default-agent (some-> (:actor/default-agent actor) str str/trim not-empty)
          :role-slugs (->> (or (:actor/roles actor) [])
-                          (map keywordish->slug)
+                          (map keywordish->role-slug)
                           (remove nil?)
                           distinct
                           vec)
          :capability-ids (->> (or (:actor/capabilities actor) [])
-                              (map keywordish->slug)
+                              (map keywordish->capability-ref)
                               (remove nil?)
                               distinct
                               vec)
@@ -115,7 +123,7 @@
 (defn- collect-role-tool-ids
   [config role-slugs]
   (->> role-slugs
-       (map keywordish->slug)
+       (map keywordish->role-slug)
        (remove nil?)
        distinct
        (mapcat (fn [role-slug]
@@ -127,7 +135,7 @@
 (defn- collect-capability-tool-ids
   [config capability-ids]
   (->> capability-ids
-       (map keywordish->slug)
+       (map keywordish->capability-ref)
        (remove nil?)
        distinct
        (mapcat (fn [cap-id]
@@ -143,6 +151,13 @@
        (remove str/blank?)
        distinct
        sort
+       vec))
+
+(defn- contract-actor-capability-claims
+  [contract]
+  (->> (concat (or (:actor/capabilities contract) [])
+               (or (get-in contract [:actor :capabilities]) []))
+       distinct
        vec))
 
 (defn resolve-agent-contract
@@ -165,15 +180,15 @@
                                   (when-let [default-id (default-actor-id config)]
                                     (resolve-actor config default-id)))
                    contract-role-slugs (->> (actor-scope/agent-role-claims contract)
-                                            (map keywordish->slug)
+                                            (map keywordish->role-slug)
                                             (remove nil?)
                                             distinct
                                             vec)
                    actor-role-slugs (vec (or (:role-slugs actor-spec) []))
                    role-slugs (vec (distinct (concat actor-role-slugs contract-role-slugs)))
                    actor-capability-ids (vec (or (:capability-ids actor-spec) []))
-                   contract-capability-ids (->> (or (:actor/capabilities contract) [])
-                                                (map keywordish->slug)
+                   contract-capability-ids (->> (contract-actor-capability-claims contract)
+                                                (map keywordish->capability-ref)
                                                 (remove nil?)
                                                 distinct
                                                 vec)
@@ -202,14 +217,14 @@
                           (first actor-role-slugs)
                           (:knoxx-default-role config))
                 :model (some-> (get-in contract [:agent :model]) str str/trim not-empty)
-                :thinking-level (some-> (get-in contract [:agent :thinking]) keywordish->slug)
+                :thinking-level (some-> (get-in contract [:agent :thinking]) keywordish->role-slug)
                 :actor-system-prompt (:system-prompt actor-spec)
                 :agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
                 :system-prompt (combine-system-prompts
                                 (:system-prompt actor-spec)
                                 (some-> (get-in contract [:prompts :system]) str str/trim not-empty))
                 :task-prompt (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
-                :trigger-kind (some-> (:trigger-kind contract) keywordish->slug)
+                :trigger-kind (some-> (:trigger-kind contract) keywordish->role-slug)
                 :tool-ids tool-ids
                 :tool-policies tool-policies}))))))))
 (defn- manual-agent-contract?

@@ -147,9 +147,9 @@
         cwd (.cwd js/process)
         candidates (->> [configured
                          "contracts"
-                         "backend/contracts"
-                         "packages/agents/knoxx/backend/contracts"
-                         "orgs/open-hax/openplanner/packages/agents/knoxx/backend/contracts"]
+                         "../contracts"
+                         "packages/agents/knoxx/contracts"
+                         "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
                         (keep identity)
                         (map #(.resolve path cwd %))
                         distinct

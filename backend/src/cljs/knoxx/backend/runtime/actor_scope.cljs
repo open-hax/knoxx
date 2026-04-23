@@ -53,7 +53,10 @@
         agent-role (get-in contract [:agent :role])]
     (->> (concat legacy-roles
                  agent-roles
-                 (when agent-role [agent-role]))
+                 (cond
+                   (sequential? agent-role) agent-role
+                   agent-role [agent-role]
+                   :else []))
          distinct
          vec)))
 

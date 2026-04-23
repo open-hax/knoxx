@@ -9,6 +9,12 @@
 
 (def contract-class-order ["agents" "actors" "roles" "capabilities" "policies" "model_families" "models"])
 
+(defn- contract-edn-filename?
+  [name]
+  (and (string? name)
+       (str/ends-with? name ".edn")
+       (not (str/starts-with? name "."))))
+
 (defn- configured-contracts-dir
   [config]
   (some-> (:contracts-dir config) str str/trim not-empty))
@@ -25,18 +31,12 @@
                     ["../contracts"
                      "contracts"
                      "packages/agents/knoxx/contracts"
-                     "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"
-                     "backend/contracts"
-                     "packages/agents/knoxx/backend/contracts"
-                     "orgs/open-hax/openplanner/packages/agents/knoxx/backend/contracts"]
+                     "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
                     [configured
                      "../contracts"
                      "contracts"
                      "packages/agents/knoxx/contracts"
-                     "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"
-                     "backend/contracts"
-                     "packages/agents/knoxx/backend/contracts"
-                     "orgs/open-hax/openplanner/packages/agents/knoxx/backend/contracts"]) ]
+                     "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"])]
     (->> preferred
          (keep identity)
          distinct
@@ -166,8 +166,8 @@
                        (.then (fn [entries]
                                 (->> (array-seq entries)
                                      (keep (fn [ent]
-                                             (when (and (.isFile ent)
-                                                        (str/ends-with? (.-name ent) ".edn"))
+                                 (when (and (.isFile ent)
+                                                        (contract-edn-filename? (.-name ent)))
                                                (subs (.-name ent) 0 (- (count (.-name ent)) 4)))))
                                      vec)))
                        (.catch (fn [_]
@@ -186,9 +186,8 @@
        (mapcat (fn [dir]
                  (try
                    (->> (.readdirSync node-fs dir)
-                        (keep (fn [name]
-                                (when (and (string? name)
-                                           (str/ends-with? name ".edn"))
+                         (keep (fn [name]
+                                (when (contract-edn-filename? name)
                                   (subs name 0 (- (count name) 4))))))
                    (catch :default _
                      []))))

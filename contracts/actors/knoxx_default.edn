@@ -2,4 +2,4 @@
  :actor/kind :agent
  :actor/label "Knoxx Default"
  :actor/contract "knoxx_default"
- :actor/roles [:role/knowledge-worker]}
+ :actor/roles [:role/knowledge-worker :role/discord-user]}
