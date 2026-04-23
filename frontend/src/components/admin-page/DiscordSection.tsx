@@ -437,64 +437,65 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
     <SectionCard
       title="Event agents"
       description="Compact control plane with a searchable agent sidebar. Select one event agent at a time, inspect runtime state, and edit only the active job."
-      actions={
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading || savingToken || savingControl}
-            className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
-          >
-            {loading ? "Loading…" : "Refresh"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSaveControl()}
-            disabled={!canManage || !draft || savingControl}
-            className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
-          >
-            {savingControl ? "Saving…" : "Save runtime"}
-          </button>
-        </div>
-      }
     >
       {loading || !draft || !status ? (
         <div className="text-sm text-slate-300">Loading event-agent control plane…</div>
       ) : (
         <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Discord token</div>
-              <div className="mt-2 flex items-center gap-2 text-sm text-slate-200">
-                {status.configured ? <Badge tone="success">Configured</Badge> : <Badge tone="warn">Missing</Badge>}
-                {status.tokenPreview ? <span className="font-mono text-xs text-slate-400">{status.tokenPreview}</span> : null}
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Runtime</div>
-              <div className="mt-2 flex items-center gap-2 text-sm text-slate-200">
-                {status.runtime.running ? <Badge tone="success">Running</Badge> : <Badge tone="warn">Stopped</Badge>}
-                <span>{draft.jobs.length} jobs</span>
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recent events</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-100">{recentEventCount}</div>
-              <div className="mt-1 text-xs text-slate-500">Buffered normalized events</div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Discord freshness</div>
-              <div className="mt-2 text-2xl font-semibold text-slate-100">{seenDiscordChannels}</div>
-              <div className="mt-1 text-xs text-slate-500">Channels with last-seen state</div>
-            </div>
-          </div>
-
           <div className="overflow-x-auto pb-1">
             <div className="grid min-w-[44rem] gap-4 grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[14rem_minmax(0,1fr)]">
             <aside className="sticky top-4 self-start space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold text-slate-100">Agents</div>
                 <div className="text-[11px] text-slate-500">{filteredJobs.length}/{draft.jobs.length}</div>
+              </div>
+
+              <div className="grid gap-2">
+                <button
+                  type="button"
+                  onClick={() => void load()}
+                  disabled={loading || savingToken || savingControl}
+                  className="inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {loading ? "Loading…" : "Refresh"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveControl()}
+                  disabled={!canManage || !draft || savingControl}
+                  className="inline-flex items-center justify-center rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
+                >
+                  {savingControl ? "Saving…" : "Save runtime"}
+                </button>
+              </div>
+
+              <div className="grid gap-2">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Discord token</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-200">
+                    {status.configured ? <Badge tone="success">Configured</Badge> : <Badge tone="warn">Missing</Badge>}
+                    {status.tokenPreview ? <span className="font-mono text-[11px] text-slate-400">{status.tokenPreview}</span> : null}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Runtime</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-200">
+                    {status.runtime.running ? <Badge tone="success">Running</Badge> : <Badge tone="warn">Stopped</Badge>}
+                    <span>{draft.jobs.length} jobs</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Recent events</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-100">{recentEventCount}</div>
+                    <div className="text-[11px] text-slate-500">Buffered</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Freshness</div>
+                    <div className="mt-1 text-lg font-semibold text-slate-100">{seenDiscordChannels}</div>
+                    <div className="text-[11px] text-slate-500">Channels</div>
+                  </div>
+                </div>
               </div>
 
               <label className="space-y-1">
