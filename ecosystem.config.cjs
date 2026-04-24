@@ -3,7 +3,7 @@
  *
  * Runs all three Knoxx services on the host for source-mapped debugging:
  *   1. knoxx-shadow    — shadow-cljs watch with source maps (compiles CLJS → dist/)
- *   2. knoxx-backend   — node src/server.mjs with source-map stack traces
+ *   2. knoxx-backend   — node dist/server.js (compiled by shadow-cljs) with source-map stack traces
  *   3. knoxx-frontend  — vite dev server with HMR + API proxy to backend
  *   4. knoxx-ingestion — clojure -M:run (kms-ingestion on port 3003)
  *
@@ -141,6 +141,15 @@ const shoedelussyUiShouldRunLocal =
     shoedelussyPm2Mode === 'force'
     || !isLocalPortBound(shoedelussyUiPort)
   );
+const shoedelussyDmxDir = path.join(shoedelussyDir, 'bridges', 'dmx-mcp');
+const shoedelussyDmxPort = process.env.SHOEDELUSSY_DMX_PORT || hostEnv.SHOEDELUSSY_DMX_PORT || '3334';
+const shoedelussyDmxShouldRunLocal =
+  fs.existsSync(shoedelussyDmxDir)
+  && shoedelussyPm2Mode !== 'off'
+  && (
+    shoedelussyPm2Mode === 'force'
+    || !isLocalPortBound(shoedelussyDmxPort)
+  );
 
 const apps = [
     // ── 1. shadow-cljs watch ──────────────────────────────────────────
@@ -150,7 +159,7 @@ const apps = [
       script: 'pnpm',
       // Force source maps in the watch build so dist/*.map stays available
       // even if the underlying shadow config drifts.
-      args: 'exec shadow-cljs --source-maps watch app',
+      args: 'exec shadow-cljs --source-maps watch server',
       watch: false,
       autorestart: true,
       max_restarts: 10,
@@ -194,7 +203,9 @@ const apps = [
     {
       name: 'knoxx-backend',
       cwd: backendDir,
-      script: 'src/server.mjs',
+      // All-CLJS runtime entrypoint compiled by shadow-cljs (:server build).
+      // This keeps the backend fully CLJS-driven so nREPL can mutate the runtime.
+      script: 'dist/server.js',
       node_args: '--enable-source-maps',
       // Keep graceful PM2 shutdown messaging for resumable agent sessions,
       // but do not gate startup on PM2 wait_ready: Knoxx can be fully serving
@@ -203,7 +214,7 @@ const apps = [
       kill_timeout: 35000,
       shutdown_with_message: true,
       // Auto-restart when shadow-cljs produces new output
-      watch: ['dist', 'src/server.mjs'],
+      watch: ['dist'],
       watch_delay: 800,
       ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
       autorestart: true,
@@ -345,6 +356,24 @@ if (shoedelussyUiShouldRunLocal) {
     env: {
       NODE_ENV: 'development',
       VITE_API_URL: '/shoe/api',
+    },
+  });
+}
+
+if (shoedelussyDmxShouldRunLocal) {
+  apps.splice(4, 0, {
+    name: 'shoedelussy-dmx',
+    cwd: shoedelussyDmxDir,
+    script: 'pnpm',
+    args: 'start',
+    watch: false,
+    autorestart: true,
+    max_restarts: 10,
+    restart_delay: 5000,
+    env: {
+      NODE_ENV: 'development',
+      DMX_MCP_PORT: shoedelussyDmxPort,
+      DMX_BACKEND: process.env.DMX_BACKEND || hostEnv.DMX_BACKEND || 'simulator',
     },
   });
 }
