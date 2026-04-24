@@ -22,6 +22,7 @@
 (defonce running?* (atom false))
 (defonce scheduled-tasks* (atom {}))
 (defonce job-state* (atom {}))
+(defonce user-job-state* (atom {}))
 (defonce source-state* (atom {:discord {:last-seen {}}}))
 (defonce recent-events* (atom []))
 (defonce discord-gateway-unsubscribe* (atom nil))
@@ -435,13 +436,30 @@
   [job]
   (parse-positive-int (get-in job [:source :config :sessionMaxMessages])))
 
+(defn- update-user-job-state!
+  [job-id user-id f]
+  (let [user-key (str job-id ":" user-id)
+        new-state (get (swap! user-job-state* update user-key (fn [current] (f (or current {})))) user-key)]
+    ;; Persistence: Mirror to Redis
+    (when-let [client (redis/get-client)]
+      (redis/set-json client (str "event-agent:user-job-state:" user-key) new-state))
+    new-state))
+
+(defn- normalize-user-job-state
+  [user-key state]
+  (if (map? state)
+    state
+    {}))
+
 (defn- sticky-session-base-conversation-id
   [job event]
-  (str "event-agent-" (:id job) "-" (str/lower-case (str (:sourceKind event))) "-sticky"))
+  (let [author-id (or (get-in event [:payload :authorId]) "unknown-user")]
+    (str "event-agent-" (:id job) "-" author-id "-" (str/lower-case (str (:sourceKind event))) "-sticky")))
 
 (defn- sticky-session-base-session-id
-  [job]
-  (str "event-agent-session-" (:id job) "-sticky"))
+  [job event]
+  (let [author-id (or (get-in event [:payload :authorId]) "unknown-user")]
+    (str "event-agent-session-" (:id job) "-" author-id "-sticky")))
 
 (defn- sticky-session-summary
   [session]
