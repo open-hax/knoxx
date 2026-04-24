@@ -17,14 +17,11 @@ export type AgentAuditLogsMode = "active" | "history";
 export type AgentAuditLogsProps = {
   defaultMode?: AgentAuditLogsMode;
 
-  /**
-   * Optional, page-provided filter seed applied to the sessions list (keyword).
-   * Example: selected event-agent role/id.
-   */
-  builtInSessionQuery?: string;
+  /** Optional, page-provided filter: only show sessions whose archived rows resolve to this actor id. */
+  builtInActorId?: string;
 
-  /** Optional, page-provided filter seed applied to the event rows list (keyword). */
-  builtInRowQuery?: string;
+  /** Optional, page-provided filter: only show sessions whose archived rows resolve to this agent contract id. */
+  builtInContractId?: string;
 
   className?: string;
 };
@@ -114,7 +111,16 @@ function extractContentParts(extra: Record<string, unknown>): Array<Record<strin
 }
 
 function sessionSearchText(session: MemorySessionSummary): string {
-  return [session.session, session.title ?? "", session.project ?? ""].join(" ").toLowerCase();
+  return [
+    session.session,
+    session.title ?? "",
+    session.project ?? "",
+    session.actor_id ?? "",
+    session.contract_id ?? "",
+    (session.contract_actors ?? []).join(" "),
+  ]
+    .join(" ")
+    .toLowerCase();
 }
 
 function activeStatusLabel(session: MemorySessionSummary): string {
@@ -148,6 +154,8 @@ function SessionRow({
   onSelect: () => void;
 }) {
   const status = activeStatusLabel(session);
+  const contractId = session.contract_id;
+  const actorId = session.actor_id;
 
   return (
     <button
@@ -169,6 +177,18 @@ function SessionRow({
       </div>
       <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
         <span>{session.event_count ?? 0} events</span>
+        {contractId ? (
+          <>
+            <span>•</span>
+            <span className="font-mono text-[11px] text-slate-400">contract {contractId}</span>
+          </>
+        ) : null}
+        {actorId ? (
+          <>
+            <span>•</span>
+            <span className="font-mono text-[11px] text-slate-400">actor {actorId}</span>
+          </>
+        ) : null}
         {session.last_ts ? (
           <>
             <span>•</span>
@@ -204,8 +224,8 @@ function HitList({ hits }: { hits: MemorySearchHit[] }) {
 
 export default function AgentAuditLogs({
   defaultMode = "active",
-  builtInSessionQuery,
-  builtInRowQuery,
+  builtInActorId,
+  builtInContractId,
   className,
 }: AgentAuditLogsProps) {
   const [mode, setMode] = useState<AgentAuditLogsMode>(defaultMode);
@@ -233,15 +253,9 @@ export default function AgentAuditLogs({
 
   const [error, setError] = useState<string | null>(null);
 
-  const effectiveSessionsQuery = useMemo(() => {
-    const parts = [builtInSessionQuery, sessionsQuery].filter((value): value is string => Boolean(value && value.trim().length > 0));
-    return normalizeSearch(parts.join(" "));
-  }, [builtInSessionQuery, sessionsQuery]);
+  const effectiveSessionsQuery = useMemo(() => normalizeSearch(sessionsQuery), [sessionsQuery]);
 
-  const effectiveRowsQuery = useMemo(() => {
-    const parts = [builtInRowQuery, rowsQuery].filter((value): value is string => Boolean(value && value.trim().length > 0));
-    return normalizeSearch(parts.join(" "));
-  }, [builtInRowQuery, rowsQuery]);
+  const effectiveRowsQuery = useMemo(() => normalizeSearch(rowsQuery), [rowsQuery]);
 
   const filteredSessions = useMemo(() => {
     const query = effectiveSessionsQuery;
@@ -250,9 +264,20 @@ export default function AgentAuditLogs({
       return !session.is_active;
     });
 
-    if (!query) return inMode;
-    return inMode.filter((session) => sessionSearchText(session).includes(query));
-  }, [sessions, effectiveSessionsQuery, mode]);
+    const withBuiltIns = inMode.filter((session) => {
+      if (builtInActorId && session.actor_id !== builtInActorId) return false;
+      if (builtInContractId && session.contract_id !== builtInContractId) return false;
+      return true;
+    });
+
+    if (!query) return withBuiltIns;
+    return withBuiltIns.filter((session) => sessionSearchText(session).includes(query));
+  }, [sessions, effectiveSessionsQuery, mode, builtInActorId, builtInContractId]);
+
+  const selectedSessionSummary = useMemo(
+    () => sessions.find((session) => session.session === selectedSessionId) ?? null,
+    [sessions, selectedSessionId],
+  );
 
   useEffect(() => {
     const nextIds = filteredSessions.map((session) => session.session);
@@ -436,7 +461,7 @@ export default function AgentAuditLogs({
                 aria-label="Search sessions"
                 value={sessionsQuery}
                 onChange={(event) => setSessionsQuery(event.target.value)}
-                placeholder={builtInSessionQuery ? `Search… (filtered by: ${builtInSessionQuery})` : "Search…"}
+                placeholder={builtInActorId || builtInContractId ? "Search… (filters active)" : "Search…"}
                 className="w-full rounded-md border border-slate-800 bg-slate-950/80 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
               />
             </div>
@@ -471,6 +496,16 @@ export default function AgentAuditLogs({
                   <div className="text-lg font-semibold text-slate-100">Agent audit logs</div>
                   <div className="mt-1 font-mono text-xs text-slate-400 break-all">{selectedSessionId}</div>
                   <div className="mt-2 text-xs text-slate-500">OpenPlanner session trace (knoxx-session).</div>
+                  {selectedSessionSummary?.contract_id || selectedSessionSummary?.actor_id ? (
+                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-500">
+                      {selectedSessionSummary?.contract_id ? (
+                        <span className="rounded bg-slate-950 px-2 py-1 font-mono text-slate-300">contract {selectedSessionSummary.contract_id}</span>
+                      ) : null}
+                      {selectedSessionSummary?.actor_id ? (
+                        <span className="rounded bg-slate-950 px-2 py-1 font-mono text-slate-300">actor {selectedSessionSummary.actor_id}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Badge size="sm" variant="info">{filteredRows.length}/{rows.length} events</Badge>
@@ -484,7 +519,7 @@ export default function AgentAuditLogs({
                     aria-label="Search events"
                     value={rowsQuery}
                     onChange={(event) => setRowsQuery(event.target.value)}
-                    placeholder={builtInRowQuery ? `Search… (filtered by: ${builtInRowQuery})` : "Search…"}
+                    placeholder="Search…"
                     className="mt-2 w-full rounded-md border border-slate-800 bg-slate-950/80 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
                   />
                 </Card>

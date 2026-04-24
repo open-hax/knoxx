@@ -4,7 +4,30 @@
    These used to live in src/server.mjs; keeping them in CLJS ensures the Node
    host shim stays a pure dependency injector."  
   (:require [clojure.string :as str]
+            [knoxx.backend.contracts.actor-scope :as actor-scope]
+            [knoxx.backend.core-memory :as core-memory]
+            [knoxx.backend.http :as backend-http]
             [knoxx.backend.pi-session-ingester :as pi]))
+
+(defn- enrich-session-summary!
+  [config summary]
+  (let [session-id (or (:session summary) (get summary :session))]
+    (if-not session-id
+      (js/Promise.resolve summary)
+      (-> (core-memory/fetch-openplanner-session-rows! config session-id)
+          (.then (fn [rows]
+                   (let [contract-id (core-memory/session-contract-id-from-rows rows)
+                         actor-id (core-memory/session-actor-id-from-rows rows)
+                         contract-actors (core-memory/session-contract-actors-from-rows rows)
+                         wire-actors (when (seq contract-actors)
+                                      (actor-scope/actor-claims->wire contract-actors))]
+                     (cond-> summary
+                       contract-id (assoc :contract_id contract-id)
+                       actor-id (assoc :actor_id actor-id)
+                       (seq wire-actors) (assoc :contract_actors wire-actors)))))
+          (.catch (fn [_]
+                    ;; If enrichment fails (e.g. permissions, missing session), return the base summary.
+                    summary))))))
 
 (defn- now-iso [] (.toISOString (js/Date.)))
 
@@ -213,6 +236,22 @@
   ;; ---------------------------------------------------------------------------
   ;; OpenPlanner Proxy
   ;; ---------------------------------------------------------------------------
+
+  ;; Enriched sessions list for Knoxx: OpenPlanner does not currently expose
+  ;; actor/agent-contract identity in the session summary payload.
+  ;; Knoxx reconstructs it from the archived session rows.
+  (.get app "/api/openplanner/v1/sessions"
+        (fn [req reply]
+          (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions" (request-query-string req)))
+              (.then (fn [body]
+                       (let [rows (vec (or (:rows body) []))]
+                         (-> (js/Promise.all
+                              (clj->js (map (fn [row] (enrich-session-summary! config row)) rows)))
+                             (.then (fn [enriched]
+                                      (let [enriched-rows (vec (array-seq enriched))]
+                                        (.send reply (clj->js (assoc body :rows enriched-rows)))))))))))
+              (.catch (fn [err]
+                        (send-proxy-error! reply "OpenPlanner session enrichment error" err))))))
 
   ;; Frontend calls /api/openplanner/v1/* but OpenPlanner serves /v1/*.
   ;; Proxy: strip /api/openplanner prefix, add Authorization header.

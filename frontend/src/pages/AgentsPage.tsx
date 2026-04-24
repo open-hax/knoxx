@@ -85,18 +85,15 @@ export default function AgentsPage() {
     };
   }, [canControlEventAgents, canReadToolCatalog]);
 
-  const agentFilterSeed = useMemo(() => {
-    if (!selectedJob) return undefined;
+  const builtInContractId = useMemo(
+    () => (selectedJob?.contractSourceId ? String(selectedJob.contractSourceId) : undefined),
+    [selectedJob?.contractSourceId],
+  );
 
-    // Favor stable identifiers first, then role.
-    const role = selectedJob.agentSpec?.role;
-    if (typeof role === "string" && role.trim().length > 0) return role;
-
-    const name = selectedJob.name;
-    if (typeof name === "string" && name.trim().length > 0) return name;
-
-    return selectedJob.id;
-  }, [selectedJob]);
+  const builtInActorId = useMemo(
+    () => (selectedJob?.actorId ? String(selectedJob.actorId) : undefined),
+    [selectedJob?.actorId],
+  );
 
   return (
     <div data-page="agents" className="h-full min-h-0 overflow-y-auto bg-slate-950 p-4 text-slate-100">
@@ -118,8 +115,12 @@ export default function AgentsPage() {
           </Button>
         </div>
 
-        {agentFilterSeed ? (
-          <div className="text-xs text-slate-500">audit filter: <span className="font-mono text-slate-300">{agentFilterSeed}</span></div>
+        {builtInContractId || builtInActorId ? (
+          <div className="text-xs text-slate-500">
+            audit filter:
+            {builtInContractId ? <span className="ml-2 font-mono text-slate-300">contract {builtInContractId}</span> : null}
+            {builtInActorId ? <span className="ml-2 font-mono text-slate-300">actor {builtInActorId}</span> : null}
+          </div>
         ) : null}
       </div>
 
@@ -146,7 +147,8 @@ export default function AgentsPage() {
         </div>
       ) : (
         <AgentAuditLogs
-          builtInSessionQuery={agentFilterSeed}
+          builtInContractId={builtInContractId}
+          builtInActorId={builtInActorId}
           className="min-h-0"
         />
       )}
