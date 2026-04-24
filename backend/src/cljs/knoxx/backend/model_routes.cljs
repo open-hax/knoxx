@@ -126,6 +126,41 @@
       (catch _err
         (send-proxx-health-failure! ctx)))))
 
+(defn proxx-models-ctx
+  [config request reply auth-ctx]
+  {:config config
+   :request request
+   :reply reply
+   :auth auth-ctx
+   :fetch-json! fetch-json})
+
+(defn- fetch-proxx-models
+  [{:keys [config fetch-json!]}]
+  (fetch-json! (str (:proxx-base-url config) "/v1/models")
+               #js {:headers (bearer-headers (:proxx-auth-token config))}))
+
+(defn- send-proxx-models-success!
+  [{:keys [auth config reply]} resp]
+  (if (aget resp "ok")
+    (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
+          filtered (into-array (filter-model-items-for-ctx auth items config))]
+      (json-response! reply 200 {:models filtered}))
+    (json-response! reply 502 {:error "Proxx model list failed"
+                               :details (js->clj (aget resp "body") :keywordize-keys true)}))
+  reply)
+
+(defn- send-proxx-models-failure!
+  [{:keys [reply]} err]
+  (json-response! reply 502 {:error (str err)})
+  reply)
+
+(defn send-proxx-models!
+  [ctx]
+  (js-await [resp (fetch-proxx-models ctx)]
+    (send-proxx-models-success! ctx resp)
+    (catch err
+      (send-proxx-models-failure! ctx err))))
+
 (defn register-model-routes!
   [app runtime config]
   (route! app "GET" "/api/proxx/health"
@@ -204,17 +239,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (-> (fetch-json (str (:proxx-base-url config) "/v1/models")
-                                #js {:headers (bearer-headers (:proxx-auth-token config))})
-                    (.then (fn [resp]
-                             (if (aget resp "ok")
-                               (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
-                                     filtered (into-array (filter-model-items-for-ctx ctx items config))]
-                                 (json-response! reply 200 {:models filtered}))
-                               (json-response! reply 502 {:error "Proxx model list failed"
-                                                          :details (js->clj (aget resp "body") :keywordize-keys true)}))))
-                    (.catch (fn [err]
-                              (json-response! reply 502 {:error (str err)}))))))))
+                (send-proxx-models! (proxx-models-ctx config request reply ctx))))))
 
   (route! app "POST" "/api/proxx/chat"
           (fn [request reply]
