@@ -37,8 +37,10 @@
          (keep (fn [message]
                  (let [role (some-> (aget message "role") str)
                        text (some-> (session-message-text message) nonblank)
-                       parts (when (= role "assistant")
-                               (assistant-content-parts message))]
+                       ;; Despite the name, assistant-content-parts extracts media parts from any
+                       ;; pi message content array. We must persist user-side content parts too,
+                       ;; otherwise restored sessions lose multimodal inputs.
+                       parts (assistant-content-parts message)]
                    (when (and (contains? #{"user" "assistant" "system"} role)
                               (or text (seq parts)))
                      (cond-> {:role role}

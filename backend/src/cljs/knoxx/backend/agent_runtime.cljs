@@ -104,20 +104,36 @@
   [part]
   (let [part-type (some-> (:type part) str str/lower-case)
         text (some-> (:text part) str)
-        data (or (:data part) (:url part))
+        url (some-> (:url part) str)
+        data (some-> (:data part) str)
         mime-type (some-> (:mimeType part) str)
         filename (some-> (:filename part) str)]
     (case part-type
       "text" (when (not (str/blank? (str text)))
                #js {:type "text" :text text})
-      "image" (when (not (str/blank? (str data)))
-                 #js {:type "image" :data data :mimeType mime-type})
-      "audio" (when (not (str/blank? (str data)))
-                 #js {:type "audio" :data data :mimeType mime-type})
-      "video" (when (not (str/blank? (str data)))
-                 #js {:type "video" :data data :mimeType mime-type})
-      "document" (when (not (str/blank? (str data)))
-                     #js {:type "document" :data data :mimeType mime-type :filename filename})
+      ;; IMPORTANT:
+      ;; Proxx expects OpenAI-style multimodal parts. In particular:
+      ;; - Data URLs must remain data URLs (or be placed under image_url.url)
+      ;; - Remote URLs must be placed under image_url.url (NOT in the base64 data field)
+      ;; If we put a URL or data: URL into the `data` field, Proxx will treat it as raw base64 and upstreams will 400.
+      "image" (cond
+                (and (string? url) (not (str/blank? url)))
+                #js {:type "image_url" :image_url #js {:url url}}
+
+                (and (string? data) (not (str/blank? data)) (str/starts-with? data "data:"))
+                #js {:type "image_url" :image_url #js {:url data}}
+
+                (and (string? data) (not (str/blank? data)))
+                ;; Raw base64 fallback.
+                #js {:type "image" :data data :mimeType mime-type}
+
+                :else nil)
+      "audio" (when (not (str/blank? (str (or data url))))
+                 #js {:type "audio" :data (or data url) :mimeType mime-type})
+      "video" (when (not (str/blank? (str (or data url))))
+                 #js {:type "video" :data (or data url) :mimeType mime-type})
+      "document" (when (not (str/blank? (str (or data url))))
+                     #js {:type "document" :data (or data url) :mimeType mime-type :filename filename})
       nil)))
 
 (defn stored-session-message->agent-message
