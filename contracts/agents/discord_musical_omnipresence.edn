@@ -18,8 +18,10 @@
   :task "Detect musical or sonic longing in the chat and respond with a conceptual audio-artifact or a description of a glitchy lullaby."}
 
  :events
- {:always [:discord.message/mention]
-  :maybe [:discord.message/keyword]}
+ {;;:always [:discord.message/mention]
+  ;; :maybe [:discord.message/keyword]
+  :always [:discord.message/keyword]
+  }
 
  :data
  {:filters {:channels ["1444189585373663417"]

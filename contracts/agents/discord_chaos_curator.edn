@@ -19,7 +19,7 @@
   :task "A Discord event suggests the vibe is stagnating or requesting chaos. Read the room and deliver a spark of generative absurdity."}
 
  :events
- {:always [:discord.message/mention :discord.message/keyword]
+ {:always [ :discord.message/keyword]
   :maybe []}
 
  :data

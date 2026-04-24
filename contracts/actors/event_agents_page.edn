@@ -1,7 +1,7 @@
 {:actor/id "event_agents_page"
  :actor/kind :agent
  :actor/org "open-hax"
- :actor/label "Event Agents"
+ :actor/label "Agents"
  :actor/default-agent "knoxx_default"
  :actor/roles [:role/knowledge-worker]
- :prompts {:system "You are the Event Agents workspace actor. Reason over job schedules, dispatch state, receipt rivers, and agent lifecycle."}}
+ :prompts {:system "You are the Agents workspace actor. Reason over job schedules, dispatch state, receipt rivers, and agent lifecycle."}}

@@ -18,7 +18,7 @@
   :task "A user on Discord has requested a change to the system. Manifest their intent into the codebase with absolute precision and appropriate, transcendent flair."}
 
  :events
- {:always [:discord.message/mention :discord.message/keyword]
+ {:always [ :discord.message/keyword]
   :maybe []}
 
  :data

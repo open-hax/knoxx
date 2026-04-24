@@ -94,7 +94,8 @@ function maskFencedCodeBlocks(markdown: string): { masked: string; blocks: strin
 function unmaskFencedCodeBlocks(masked: string, blocks: string[]): string {
   let out = masked;
   for (let i = 0; i < blocks.length; i += 1) {
-    out = out.replaceAll(`@@CODEBLOCK_${i}@@`, blocks[i] ?? "");
+    const token = `@@CODEBLOCK_${i}@@`;
+    out = out.split(token).join(blocks[i] ?? "");
   }
   return out;
 }

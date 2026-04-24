@@ -495,13 +495,21 @@
 
 (defn- sticky-session-base-conversation-id
   [job event]
-  (let [author-id (or (get-in event [:payload :authorId]) "unknown-user")]
-    (str "event-agent-" (:id job) "-" author-id "-" (str/lower-case (str (:sourceKind event))) "-sticky")))
+  (let [source-kind (str (:sourceKind event))
+        author-id (or (get-in event [:payload :authorId]) "unknown-user")
+        owner-id (if (= source-kind "discord")
+                   (or (get-in event [:payload :channelId]) author-id)
+                   author-id)]
+    (str "event-agent-" (:id job) "-" owner-id "-" (str/lower-case source-kind) "-sticky")))
 
 (defn- sticky-session-base-session-id
   [job event]
-  (let [author-id (or (get-in event [:payload :authorId]) "unknown-user")]
-    (str "event-agent-session-" (:id job) "-" author-id "-sticky")))
+  (let [source-kind (str (:sourceKind event))
+        author-id (or (get-in event [:payload :authorId]) "unknown-user")
+        owner-id (if (= source-kind "discord")
+                   (or (get-in event [:payload :channelId]) author-id)
+                   author-id)]
+    (str "event-agent-session-" (:id job) "-" owner-id "-sticky")))
 
 (defn- sticky-session-summary
   [session]
@@ -614,10 +622,14 @@
                   (js/Promise.reject err))))))
 
 (defn- matches-event-kind?
-  [job event-kind]
-  (let [configured (vec (or (get-in job [:trigger :eventKinds]) []))]
+  [job event-kinds]
+  (let [configured (vec (or (get-in job [:trigger :eventKinds]) []))
+        kinds (if (string? event-kinds) [event-kinds] event-kinds)]
     (or (empty? configured)
-        (some #(= (str %) (str event-kind)) configured))))
+        (some (fn [ek]
+                (some (fn [conf] (= (str ek) (str conf)))
+                      configured))
+              kinds))))
 
 (defn- matches-repository?
   [job repository]

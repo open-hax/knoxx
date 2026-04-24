@@ -188,7 +188,15 @@ function CollapsiblePanel({
   );
 }
 
-export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; tools?: AdminToolDefinition[] }) {
+export function DiscordSection({
+  canManage,
+  tools = [],
+  onSelectedJobChange,
+}: {
+  canManage: boolean;
+  tools?: AdminToolDefinition[];
+  onSelectedJobChange?: (job: EventAgentJobControl | null) => void;
+}) {
   const [loading, setLoading] = useState(true);
   const [savingToken, setSavingToken] = useState(false);
   const [savingControl, setSavingControl] = useState(false);
@@ -231,6 +239,10 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
     if (!filteredJobs.length) return null;
     return filteredJobs.find((job) => job.id === selectedJobId) ?? filteredJobs[0] ?? null;
   }, [filteredJobs, selectedJobId]);
+
+  useEffect(() => {
+    onSelectedJobChange?.(selectedJob);
+  }, [onSelectedJobChange, selectedJob]);
 
   const selectedRuntime = useMemo(
     () => (selectedJob ? runtimeForJob(runtimeJobs, selectedJob.id) : null),
@@ -545,11 +557,11 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                     </button>
                   </div>
 
-                  <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_16rem]">
-                    <div className="space-y-4">
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Runtime snapshot</div>
-                        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2 text-sm">
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-4 xl:grid-cols-3">
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                        <div className="text-sm font-semibold text-slate-100">Runtime snapshot</div>
+                        <div className="mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2 text-sm">
                           <div>
                             <div className="text-[11px] uppercase tracking-wide text-slate-500">Status</div>
                             <div className="mt-1"><Badge tone={runtimeStatusTone(selectedRuntime?.lastStatus)}>{selectedRuntime?.lastStatus ?? "idle"}</Badge></div>
@@ -569,6 +581,33 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                         </div>
                       </div>
 
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                        <div className="text-sm font-semibold text-slate-100">Live runtime</div>
+                        <div className="mt-3 grid gap-x-4 gap-y-2 text-sm text-slate-300">
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Schedule</span><span className="text-right text-slate-200">{selectedRuntime?.scheduleLabel ?? "—"}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Last started</span><span className="text-right text-xs text-slate-200">{toLocalDateTime(selectedRuntime?.lastStartedAt)}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Last finished</span><span className="text-right text-xs text-slate-200">{toLocalDateTime(selectedRuntime?.lastFinishedAt)}</span></div>
+                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Duration</span><span className="text-right text-slate-200">{selectedRuntime?.lastDurationMs ? `${selectedRuntime.lastDurationMs} ms` : "—"}</span></div>
+                        </div>
+                        {selectedRuntime?.lastError ? (
+                          <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                            {selectedRuntime.lastError}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                        <div className="text-sm font-semibold text-slate-100">Quick reference</div>
+                        <div className="mt-3 space-y-2 text-xs text-slate-400">
+                          <div><span className="text-slate-500">Job id:</span> <code className="font-mono text-slate-200">{selectedJob.id}</code></div>
+                          <div><span className="text-slate-500">Source mode:</span> {selectedJob.source.mode}</div>
+                          <div><span className="text-slate-500">Trigger cadence:</span> {selectedJob.trigger.cadenceMinutes} min</div>
+                          <div><span className="text-slate-500">Event kinds:</span> {selectedJob.trigger.eventKinds.length > 0 ? selectedJob.trigger.eventKinds.join(", ") : "none"}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
                       <div className="grid gap-3 md:grid-cols-3">
                         <div className="space-y-1">
                           <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Enabled</div>
@@ -741,33 +780,6 @@ export function DiscordSection({ canManage, tools = [] }: { canManage: boolean; 
                           </div>
                         </CollapsiblePanel>
                       ) : null}
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                        <div className="text-sm font-semibold text-slate-100">Live runtime</div>
-                        <div className="mt-3 grid gap-x-4 gap-y-2 text-sm text-slate-300">
-                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Schedule</span><span className="text-right text-slate-200">{selectedRuntime?.scheduleLabel ?? "—"}</span></div>
-                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Last started</span><span className="text-right text-xs text-slate-200">{toLocalDateTime(selectedRuntime?.lastStartedAt)}</span></div>
-                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Last finished</span><span className="text-right text-xs text-slate-200">{toLocalDateTime(selectedRuntime?.lastFinishedAt)}</span></div>
-                          <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Duration</span><span className="text-right text-slate-200">{selectedRuntime?.lastDurationMs ? `${selectedRuntime.lastDurationMs} ms` : "—"}</span></div>
-                        </div>
-                        {selectedRuntime?.lastError ? (
-                          <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                            {selectedRuntime.lastError}
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-                        <div className="text-sm font-semibold text-slate-100">Quick reference</div>
-                        <div className="mt-3 space-y-2 text-xs text-slate-400">
-                          <div><span className="text-slate-500">Job id:</span> <code className="font-mono text-slate-200">{selectedJob.id}</code></div>
-                          <div><span className="text-slate-500">Source mode:</span> {selectedJob.source.mode}</div>
-                          <div><span className="text-slate-500">Trigger cadence:</span> {selectedJob.trigger.cadenceMinutes} min</div>
-                          <div><span className="text-slate-500">Event kinds:</span> {selectedJob.trigger.eventKinds.length > 0 ? selectedJob.trigger.eventKinds.join(", ") : "none"}</div>
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </div>
