@@ -492,15 +492,18 @@
                                  (:taskPrompt (:agentSpec default-job))
                                  "")
                  :toolPolicies (let [normalized (normalize-tool-policy-list (:toolPolicies agent-source))]
-                                 (if (seq normalized)
+                                 (if (and (seq normalized) (every? some? normalized))
                                    normalized
                                    (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job))))) }
      :contractSourceId (or (:contractSourceId source)
                            (:contractSourceId default-job))
      :contractHash (or (:contractHash default-job)
                        (:contractHash source))
-     :actorId (or (:actorId source)
-                  (:actorId default-job))
+:actorId (or (:actorId source)
+                   (:actorId default-job)
+                   ;; Always prefer contract-sourced actorId if available
+                   (when contract-sourced?
+                     (:actor_id (:agentSpec default-job))))
      :description (or (some-> (:description source) str str/trim not-empty)
                       (:description default-job))}))
 
