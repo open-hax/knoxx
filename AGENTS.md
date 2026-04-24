@@ -35,10 +35,36 @@ Over:
 | Shared infra | `knoxx.backend.tools.shared` / `tools.media` | sanitization, media loading, path resolution |
 | Cross-cutting | `knoxx.backend.<capability>` | `event-agents`, `discord-gateway`, `mcp-bridge` |
 
-## Rules of Thumb
+## Rules of Thumb 
 
 1. If a namespace exceeds ~400 lines, it is a candidate for slicing by domain.
 2. If a function is used by two or more domains, promote it to `tools.shared` or `tools.media`.
 3. Keep `agent-hydration` thin: settings, passive hydration, message assembly, and tool-suite composition only. Implementation belongs in domain slices.
 4. Private helpers (`defn-`) should outnumber public functions in domain namespaces. The public surface is the tool factory and any data schemas.
 5. Never import a domain slice into another domain slice to grab a helper — move the helper up to shared.
+
+## Modern CLJS Patterns
+
+Always prefer modern shadow-cljs patterns over legacy verbose forms:
+
+- Use `(require [shadow.cljs.modern :refer [js-await]])` and `js-await` for async/await instead of `(.then ...)` chains
+- Use `when-let` instead of nesting `let` + `if` checks
+- Prefer threading macros `->` and `->>` over manual nested let forms
+- Use `some->` for optional chaining through potential nils
+
+### Why js-await
+
+```cljs
+;; Instead of this:
+(-> (js/fetch url)
+    (.then (fn [resp] (.json resp)))
+    (.catch (fn [err] ...)))
+
+;; Prefer this:
+(js-await [resp (js/fetch url)]
+  (when-not (.-ok resp)
+    (throw (js/Error. "Failed")))
+  (.json resp))
+```
+
+The `js-await` form is flatter, easier to read, and more debuggable.
