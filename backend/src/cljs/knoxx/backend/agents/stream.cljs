@@ -1,0 +1,329 @@
+(ns knoxx.backend.agents.stream
+  "Streaming event handling for agent turns."
+  (:require [clojure.string :as str]
+            [knoxx.backend.agents.content :as content :refer [diff-appended-text preview-text-nonblank tool-result-content-parts]]
+            [knoxx.backend.agents.tools :as tools :refer [tool-call-input-preview tool-call-preview-from-part assistant-tool-call-previews]]
+            [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.realtime :refer [broadcast-ws-session!]]
+            [knoxx.backend.run-state :refer [update-run! append-run-event! update-run-tool-receipt!
+                                             backfill-run-tool-input-preview! append-limited
+                                             append-run-trace-text! apply-run-tool-trace-event!
+                                             tool-event-payload]]
+            [knoxx.backend.session-store :as session-store]
+            [knoxx.backend.text :refer [assistant-message-text assistant-message-reasoning-text]]
+            [knoxx.backend.turn-control :as turn-control]
+            [knoxx.backend.util.time :refer [now-iso]]))
+
+(def ^:private DEATH_SPIRAL_STREAK_LIMIT 6)
+(def ^:private DEATH_SPIRAL_TOTAL_LIMIT 12)
+
+(defn make-stream-state
+  [run-id conversation-id session-id started-at started-ms node-crypto]
+  {:run-id run-id
+   :conversation-id conversation-id
+   :session-id session-id
+   :started-at started-at
+   :started-ms started-ms
+   :node-crypto node-crypto
+   :chunks (atom [])
+   :reasoning-chunks (atom [])
+   :ttft-recorded? (atom false)
+   :last-assistant-text* (atom "")
+   :last-reasoning-text* (atom "")
+   :aborting? (atom false)
+   :abort-reason* (atom nil)
+   :tool-loop* (atom {:last nil :streak 0 :counts {}})
+   :seen-tool-lifecycle-events* (atom #{})})
+
+(defn- first-lifecycle-event?
+  [state type tool-call-id]
+  (if-not (and (string? tool-call-id) (seq tool-call-id))
+    true
+    (let [event-key (str type ":" tool-call-id)
+          seen? (contains? @(:seen-tool-lifecycle-events* state) event-key)]
+      (when-not seen?
+        (swap! (:seen-tool-lifecycle-events* state) conj event-key))
+      (not seen?))))
+
+(defn emit-streaming-delta!
+  [{:keys [run-id conversation-id session-id started-ms ttft-recorded? chunks reasoning-chunks
+           last-assistant-text* last-reasoning-text*]}
+   kind delta]
+  (when (seq delta)
+    (when (and (= kind :agent_message)
+               (not @ttft-recorded?))
+      (reset! ttft-recorded? true)
+      (let [ttft-ms (- (.now js/Date) started-ms)
+            ttft-event (tool-event-payload run-id conversation-id session-id "assistant_first_token"
+                                           {:status "streaming"
+                                            :ttft_ms ttft-ms})]
+        (update-run! run-id #(assoc % :ttft_ms ttft-ms))
+        (append-run-event! run-id ttft-event)
+        (broadcast-ws-session! session-id "events" ttft-event)
+        (session-store/mark-session-streaming! (redis/get-client) session-id true)))
+    (if (= kind :agent_message)
+      (do
+        (swap! chunks conj delta)
+        (swap! last-assistant-text* str delta))
+      (do
+        (swap! reasoning-chunks conj delta)
+        (swap! last-reasoning-text* str delta)))
+    (append-run-trace-text! run-id kind delta (now-iso))
+    (broadcast-ws-session! session-id "tokens"
+                           {:run_id run-id
+                            :conversation_id conversation-id
+                            :session_id session-id
+                            :kind (if (= kind :agent_message) "assistant_message" "reasoning")
+                            :token delta})))
+
+(defn sync-assistant-message!
+  [{:keys [last-assistant-text* last-reasoning-text*] :as state}
+   assistant-message]
+  (when (and assistant-message
+             (= (aget assistant-message "role") "assistant"))
+    (let [full-text (assistant-message-text assistant-message)
+          full-reasoning (assistant-message-reasoning-text assistant-message)
+          tool-previews (assistant-tool-call-previews assistant-message)
+          text-delta (diff-appended-text @last-assistant-text* full-text)
+          reasoning-delta (diff-appended-text @last-reasoning-text* full-reasoning)]
+      (reset! last-assistant-text* (str (or full-text "")))
+      (reset! last-reasoning-text* (str (or full-reasoning "")))
+      (doseq [{:keys [tool_call_id tool_name input_preview]} tool-previews]
+        (backfill-run-tool-input-preview! (:run-id state) tool_call_id tool_name input_preview))
+      (emit-streaming-delta! state :agent_message text-delta)
+      (emit-streaming-delta! state :reasoning reasoning-delta))))
+
+(defn request-abort!
+  [{:keys [run-id conversation-id session-id aborting? abort-reason*]} session reason]
+  (let [reason (str (or reason "aborted"))]
+    (if @aborting?
+      (js/Promise.resolve nil)
+      (do
+        (reset! aborting? true)
+        (reset! abort-reason* reason)
+        (session-store/mark-session-streaming! (redis/get-client) session-id false)
+        (let [abort-event (tool-event-payload run-id conversation-id session-id "abort_requested"
+                                              {:status "aborting"
+                                               :reason reason})]
+          (append-run-event! run-id abort-event)
+          (broadcast-ws-session! session-id "events" abort-event))
+        (.abort session)))))
+
+(defn register-active-turn!
+  [{:keys [run-id conversation-id started-at] :as state} abort!]
+  (turn-control/register-active-turn!
+   conversation-id
+   {:run_id run-id
+    :session_id (:session-id state)
+    :started_at started-at
+    :abort! abort!}))
+
+;; ─── Event handlers ─────────────────────────────────────────────────────────
+
+(defn- handle-message-update!
+  [state event]
+  (let [assistant-event (aget event "assistantMessageEvent")
+        assistant-event-type (aget assistant-event "type")]
+    (cond
+      (= assistant-event-type "text_delta")
+      (let [delta (or (aget assistant-event "delta") "")]
+        (emit-streaming-delta! state :agent_message delta))
+
+      (contains? #{"reasoning_delta" "reasoning" "reasoning_content_delta" "thinking_delta" "thinking"} assistant-event-type)
+      (let [delta (or (aget assistant-event "delta")
+                      (aget assistant-event "text")
+                      (aget assistant-event "reasoning")
+                      (aget assistant-event "thinking")
+                      "")]
+        (emit-streaming-delta! state :reasoning delta))
+
+      (contains? #{"toolcall_delta" "tool_call_delta"} assistant-event-type)
+      (sync-assistant-message! state (or (aget assistant-event "partial")
+                                         (aget event "message")))
+
+      (contains? #{"toolcall_end" "tool_call_end"} assistant-event-type)
+      (do
+        (when-let [preview (tool-call-preview-from-part (aget assistant-event "toolCall"))]
+          (backfill-run-tool-input-preview! (:run-id state)
+                                            (:tool_call_id preview)
+                                            (:tool_name preview)
+                                            (:input_preview preview))
+          (let [preview-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_input_backfill"
+                                                  {:status "running"
+                                                   :tool_name (:tool_name preview)
+                                                   :tool_call_id (:tool_call_id preview)
+                                                   :preview (:input_preview preview)})]
+            (append-run-event! (:run-id state) preview-event)
+            (broadcast-ws-session! (:session-id state) "events" preview-event)))
+        (sync-assistant-message! state (or (aget assistant-event "partial")
+                                           (aget event "message"))))
+
+      :else (sync-assistant-message! state (aget event "message")))))
+
+(defn- handle-message-end!
+  [state event]
+  (sync-assistant-message! state (aget event "message")))
+
+(defn- handle-tool-execution-start!
+  [state session event]
+  (let [tool-name (or (aget event "toolName") "tool")
+        tool-call-id (or (aget event "toolCallId") (.randomUUID (:node-crypto state)))
+        raw-args (or (aget event "params")
+                     (aget event "toolArgs")
+                     (aget event "args")
+                     (aget event "arguments")
+                     (aget event "input")
+                     (aget event "parameters"))
+        input-preview (or (tool-call-input-preview tool-name (aget event "params"))
+                          (tool-call-input-preview tool-name (aget event "toolArgs"))
+                          (tool-call-input-preview tool-name (aget event "args"))
+                          (tool-call-input-preview tool-name (aget event "arguments"))
+                          (tool-call-input-preview tool-name (aget event "input"))
+                          (tool-call-input-preview tool-name (aget event "parameters"))
+                          (tool-call-input-preview tool-name raw-args))
+        signature (str tool-name "::" (or input-preview ""))
+        {:keys [last streak counts]} @(:tool-loop* state)
+        next-total (inc (get counts signature 0))
+        next-counts (assoc counts signature next-total)
+        next-streak (if (= signature last) (inc streak) 1)]
+    (swap! (:tool-loop* state) assoc :last signature :streak next-streak :counts next-counts)
+    (when (and (not @(:aborting? state))
+               (or (>= next-streak DEATH_SPIRAL_STREAK_LIMIT)
+                   (>= next-total DEATH_SPIRAL_TOTAL_LIMIT)))
+      (let [reason (str "death_spiral_detected: tool '" tool-name "' repeated " next-total "x (streak " next-streak ")")
+            spiral-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "death_spiral_detected"
+                                             {:status "failed"
+                                              :tool_name tool-name
+                                              :tool_call_id tool-call-id
+                                              :count next-total
+                                              :streak next-streak})]
+        (append-run-event! (:run-id state) spiral-event)
+        (broadcast-ws-session! (:session-id state) "events" spiral-event)
+        ((:abort! state) reason)))
+    (let [first-event? (first-lifecycle-event? state "tool_start" tool-call-id)
+          tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_start"
+                                         {:status "running"
+                                          :tool_name tool-name
+                                          :tool_call_id tool-call-id
+                                          :preview input-preview})]
+      (update-run-tool-receipt! (:run-id state) tool-call-id {:tool_name tool-name}
+                                (fn [receipt]
+                                  (cond-> (merge receipt {:tool_name tool-name
+                                                          :status "running"
+                                                          :started_at (or (:started_at receipt) (now-iso))})
+                                    input-preview (assoc :input_preview input-preview))))
+      (when first-event?
+        (apply-run-tool-trace-event! (:run-id state) {:type "tool_start"
+                                                      :tool_name tool-name
+                                                      :tool_call_id tool-call-id
+                                                      :preview input-preview
+                                                      :at (now-iso)})
+        (append-run-event! (:run-id state) tool-event)
+        (broadcast-ws-session! (:session-id state) "events" tool-event)))))
+
+(defn- handle-tool-execution-update!
+  [state event]
+  (let [tool-name (or (aget event "toolName") "tool")
+        tool-call-id (or (aget event "toolCallId") (str tool-name "-update"))
+        preview (or (preview-text-nonblank (aget event "delta") 400)
+                    (preview-text-nonblank (aget event "update") 400)
+                    (preview-text-nonblank (aget event "message") 400)
+                    (preview-text-nonblank (aget event "statusMessage") 400))]
+    (update-run-tool-receipt! (:run-id state) tool-call-id {:tool_name tool-name}
+                              (fn [receipt]
+                                (cond-> (merge receipt {:tool_name tool-name
+                                                        :status "running"})
+                                  preview (update :updates #(append-limited % preview 8)))))
+    (apply-run-tool-trace-event! (:run-id state) {:type "tool_update"
+                                                  :tool_name tool-name
+                                                  :tool_call_id tool-call-id
+                                                  :preview preview
+                                                  :at (now-iso)})
+    (when preview
+      (let [tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_update"
+                                           {:status "running"
+                                            :tool_name tool-name
+                                            :tool_call_id tool-call-id
+                                            :preview preview})]
+        (append-run-event! (:run-id state) tool-event)
+        (broadcast-ws-session! (:session-id state) "events" tool-event)))))
+
+(defn- handle-tool-execution-end!
+  [state event]
+  (let [tool-name (or (aget event "toolName") "tool")
+        tool-call-id (or (aget event "toolCallId") (.randomUUID (:node-crypto state)))
+        is-error (boolean (aget event "isError"))
+        raw-result (or (aget event "result")
+                       (aget event "toolResult")
+                       (aget event "output"))
+        content-parts (tool-result-content-parts raw-result)
+        result-preview (or (preview-text-nonblank (aget event "result") 20000)
+                           (preview-text-nonblank (aget event "toolResult") 20000)
+                           (preview-text-nonblank (aget event "output") 20000))
+        first-event? (first-lifecycle-event? state "tool_end" tool-call-id)
+        tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_end"
+                                       {:status (if is-error "failed" "completed")
+                                        :tool_name tool-name
+                                        :tool_call_id tool-call-id
+                                        :is_error is-error
+                                        :preview result-preview})]
+    (update-run-tool-receipt! (:run-id state) tool-call-id {:tool_name tool-name}
+                              (fn [receipt]
+                                (cond-> (merge receipt {:tool_name tool-name
+                                                        :status (if is-error "failed" "completed")
+                                                        :ended_at (now-iso)
+                                                        :is_error is-error})
+                                  result-preview (assoc :result_preview result-preview)
+                                  (seq content-parts) (assoc :content_parts content-parts))))
+    (when first-event?
+      (apply-run-tool-trace-event! (:run-id state) {:type "tool_end"
+                                                    :tool_name tool-name
+                                                    :tool_call_id tool-call-id
+                                                    :preview result-preview
+                                                    :is_error is-error
+                                                    :at (now-iso)})
+      (append-run-event! (:run-id state) tool-event)
+      (broadcast-ws-session! (:session-id state) "events" tool-event))))
+
+(defn- handle-turn-end!
+  [state event]
+  (let [tool-results (or (aget event "toolResults") #js [])
+        turn-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "turn_end"
+                                       {:status "completed"
+                                        :tool_result_count (or (.-length tool-results) 0)})]
+    (append-run-event! (:run-id state) turn-event)
+    (broadcast-ws-session! (:session-id state) "events" turn-event)))
+
+(defn- handle-agent-end!
+  [state _event]
+  (broadcast-ws-session! (:session-id state) "events"
+                         (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "agent_end"
+                                             {:status "completed"})))
+
+(defn build-subscribe-handler
+  [state session]
+  (let [abort! (fn [reason] (request-abort! state session reason))
+        state (assoc state :abort! abort!)]
+    (fn [event]
+      (let [event-type (aget event "type")]
+        (cond
+          (= event-type "message_update")
+          (handle-message-update! state event)
+
+          (= event-type "message_end")
+          (handle-message-end! state event)
+
+          (= event-type "tool_execution_start")
+          (handle-tool-execution-start! state session event)
+
+          (= event-type "tool_execution_update")
+          (handle-tool-execution-update! state event)
+
+          (= event-type "tool_execution_end")
+          (handle-tool-execution-end! state event)
+
+          (= event-type "turn_end")
+          (handle-turn-end! state event)
+
+          (= event-type "agent_end")
+          (handle-agent-end! state event))))))

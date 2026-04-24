@@ -18,7 +18,8 @@
             [knoxx.backend.tools.multimodal :as multimodal]
             [knoxx.backend.tools.workspace-media :as workspace-media]
             [knoxx.backend.tools.mcp :as mcp]
-            [knoxx.backend.tools.contracts :as contracts]))
+            [knoxx.backend.tools.contracts :as contracts]
+            [knoxx.backend.tools.session-mycology :as session-mycology]))
 
 (defonce settings-state* (atom nil))
 
@@ -142,7 +143,7 @@
    (create-knoxx-custom-tools runtime config auth-context nil))
   ([runtime config auth-context allowed-tool-ids]
    (-> (shared/sanitize-custom-tools
-        (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (semantic/create-semantic-custom-tools runtime config auth-context)
+        (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (semantic/create-semantic-custom-tools runtime config auth-context)
                                                                                 (discord/create-discord-custom-tools runtime config auth-context))
                                                                        (event-agents/create-event-agent-custom-tools runtime config auth-context))
                                                               (openplanner/create-openplanner-custom-tools runtime config auth-context))
@@ -150,8 +151,14 @@
                                             (voice/create-voice-synth-custom-tools runtime config auth-context))
                                    (multimodal/create-multimodal-custom-tools runtime config auth-context))
                           (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
-                   (mcp/create-mcp-custom-tools runtime config auth-context)))
+                   (mcp/create-mcp-custom-tools runtime config auth-context))
+          (session-mycology/create-session-mycology-tools runtime config auth-context)))
        (shared/filter-custom-tools-by-allow-set allowed-tool-ids))))
+
+(defn agent-custom-tool-suite
+  "Compatibility wrapper for tests and older call sites."
+  [agent-spec]
+  (shared/agent-custom-tool-suite agent-spec))
 
 (defn create-agent-custom-tools
   "Dispatch to the appropriate tool suite for the given agent spec."
