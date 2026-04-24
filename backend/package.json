@@ -4,16 +4,16 @@
   "type": "module",
   "license": "GPL-3.0-only",
   "scripts": {
-    "build": "shadow-cljs release app",
-    "watch": "shadow-cljs watch app",
-    "start": "node src/server.mjs",
+    "build": "shadow-cljs release server",
+    "watch": "shadow-cljs watch server",
+    "start": "node dist/server.js",
     "test": "node scripts/run-shadow-tests-ci.mjs",
     "test:coverage": "node scripts/run-shadow-tests-coverage-ci.mjs",
     "test:shadow": "shadow-cljs compile test",
     "test:e2e": "node --test tests/*.e2e.test.mjs",
     "import:agent-sessions": "python3 scripts/import_agent_sessions.py",
     "lint": "clj-kondo --lint src/cljs",
-    "typecheck": "shadow-cljs compile app",
+    "typecheck": "shadow-cljs compile server",
     "lint:size": "node ../scripts/lint-file-sizes.mjs backend/src/cljs"
   },
   "dependencies": {
@@ -36,6 +36,8 @@
     "redis": "^4.6.0",
     "shadow-cljs": "^3.3.5",
     "url": "^0.11.4",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "audiobuffer-to-wav": "^1.0.0",
+    "node-web-audio-api": "^1.0.9"
   }
 }
