@@ -1,6 +1,47 @@
 (ns knoxx.backend.app-shapes
   (:require [clojure.string :as str]))
 
+(def ^:private media-extension-pattern #".*\.(?:png|jpg|jpeg|gif|webp|mp4|webm|mp3|wav|ogg|m4a|flac|pdf)(?:\?.*)?$")
+
+(defn- media-url-pattern
+  "Create a regex to find media URLs in text."
+  []
+  (js/RegExp. #"https?://\S+\.(?:png|jpg|jpeg|gif|webp|mp4|webm|mp3|wav|ogg|m4a|flac|pdf)(?:\?\S+)?" "gi"))
+
+(defn- extract-media-urls
+  "Extract media URLs from text content."
+  [text]
+  (when (string? text)
+    (->> (str/split text #"\s+")
+         (keep (fn [token]
+                 (let [lower (str/lower-case token)]
+                   (when (or (re-matches media-extension-pattern lower)
+                             (some #(str/includes? lower %) [".png" ".jpg" ".jpeg" ".gif" ".webp" ".mp4" ".webm" ".mp3" ".wav" ".ogg" ".m4a" ".flac" ".pdf"])
+                             (str/includes? token "cdn.discordapp.com"))
+                     {:url token
+                      :type (cond
+                              (some #(str/includes? lower %) [".png" ".jpg" ".jpeg" ".gif" ".webp"]) "image"
+                              (some #(str/includes? lower %) [".mp4" ".webm" ".mov"]) "video"
+                              (some #(str/includes? lower %) [".mp3" ".wav" ".ogg" ".m4a" ".flac"]) "audio"
+                              (some #(str/includes? lower %) [".pdf"]) "document"
+                              :else "image")}))))
+         vec)))
+
+(defn- auto-detect-content-parts
+  "Auto-detect media URLs in message text and add them as content parts."
+  [message content-parts]
+  (let [extracted (when (string? message) (extract-media-urls message))
+        existing-urls (->> (or content-parts [])
+                          (map :url)
+                          (remove nil?)
+                          set)
+        new-parts (->> extracted
+                       (remove #(existing-urls (:url %)))
+                       vec)]
+    (if (seq new-parts)
+      (vec (concat content-parts new-parts))
+      content-parts)))
+
 (defn- normalize-tool-policy
   [policy]
   (let [tool-id (some-> (or (:toolId policy)
@@ -146,27 +187,30 @@
 
 (defn normalize-chat-body
   [body]
-  {:message (or (aget body "message") "")
-   :conversation-id (or (aget body "conversationId")
-                        (aget body "conversation_id"))
-   :session-id (or (aget body "sessionId")
-                   (aget body "session_id"))
-   :run-id (or (aget body "runId")
-               (aget body "run_id"))
-   :model (or (aget body "model") nil)
-   :thinking-level (or (aget body "thinkingLevel")
-                       (aget body "thinking_level")
-                       (aget body "reasoningEffort")
-                       (aget body "reasoning_effort"))
-   :content-parts (normalize-content-parts (or (aget body "contentParts")
-                                               (aget body "content_parts")
-                                               (aget body "content-parts")))
-   :mode (or (aget body "mode") "direct")
-   :agent-spec (normalize-agent-spec (or (aget body "agentSpec")
-                                         (aget body "agent_spec")))
-   :auth-context (some-> (or (aget body "authContext")
-                             (aget body "auth_context"))
-                         (js->clj :keywordize-keys true))})
+  (let [message (or (aget body "message") "")
+        raw-content-parts (normalize-content-parts (or (aget body "contentParts")
+                                                      (aget body "content_parts")
+                                                      (aget body "content-parts")))
+        content-parts (auto-detect-content-parts message raw-content-parts)]
+    {:message message
+     :conversation-id (or (aget body "conversationId")
+                         (aget body "conversation_id"))
+     :session-id (or (aget body "sessionId")
+                     (aget body "session_id"))
+     :run-id (or (aget body "runId")
+                 (aget body "run_id"))
+     :model (or (aget body "model") nil)
+     :thinking-level (or (aget body "thinkingLevel")
+                         (aget body "thinking_level")
+                         (aget body "reasoningEffort")
+                         (aget body "reasoning_effort"))
+     :content-parts content-parts
+     :mode (or (aget body "mode") "direct")
+     :agent-spec (normalize-agent-spec (or (aget body "agentSpec")
+                                           (aget body "agent_spec")))
+     :auth-context (some-> (or (aget body "authContext")
+                               (aget body "auth_context"))
+                           (js->clj :keywordize-keys true))}))
 
 (defn normalize-control-body
   [body]
