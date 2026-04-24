@@ -214,11 +214,14 @@
                                         (cond-> (nth receipt-items receipt-idx)
                                           (not (preview-present? (:input_preview (nth receipt-items receipt-idx))))
                                           (assoc :input_preview input-preview)
+                                          (and (nil? (:input (nth receipt-items receipt-idx))))
+                                          (assoc :input input-preview)
                                           (and (not (seq (:tool_name (nth receipt-items receipt-idx)))) (seq tool-name))
                                           (assoc :tool_name tool-name))
                                         {:id receipt-id
                                          :tool_name tool-name
                                          :status "running"
+                                         :input input-preview
                                          :input_preview input-preview})
                          next-receipts (if (number? receipt-idx)
                                          (assoc receipt-items receipt-idx next-receipt)

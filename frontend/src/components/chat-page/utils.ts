@@ -435,32 +435,6 @@ export function applyToolTraceEvent(
     return next;
   }
 
-  if (type === "tool_input_backfill") {
-    const preview = typeof event.preview === "string" ? event.preview : undefined;
-    if (!preview) return next;
-    if (index >= 0) {
-      next[index] = {
-        ...(existing as ChatTraceBlock),
-        toolName: event.tool_name ?? existing?.toolName,
-        toolCallId: event.tool_call_id ?? existing?.toolCallId,
-        inputPreview: preview,
-        at: typeof event.at === "string" ? event.at : existing?.at,
-      };
-    } else {
-      next.push({
-        id: blockId,
-        kind: "tool_call",
-        toolName: event.tool_name,
-        toolCallId: event.tool_call_id,
-        inputPreview: preview,
-        status: "streaming",
-        at: typeof event.at === "string" ? event.at : undefined,
-        updates: [],
-      });
-    }
-    return next;
-  }
-
   if (type === "tool_end") {
     const block: ChatTraceBlock = {
       id: blockId,

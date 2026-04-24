@@ -42,6 +42,31 @@
   (or (content/nonblank session-id)
       (.randomUUID node-crypto)))
 
+(defn- split-think-tags
+  "Extract a leading <think>...</think> block from assistant text.
+
+   Some Gemma-family models emit thinking traces inline instead of as structured
+   reasoning parts. This keeps the assistant answer clean while preserving
+   the trace in :reasoning." 
+  [text]
+  (let [text (str (or text ""))
+        open-idx (.indexOf text "<think>")
+        close-idx (.indexOf text "</think>")]
+    (if (and (>= open-idx 0)
+             (>= close-idx 0)
+             (< open-idx 64)
+             (> close-idx open-idx))
+      (let [thinking (subs text (+ open-idx (count "<think>")) close-idx)
+            after (subs text (+ close-idx (count "</think>")))
+            before (subs text 0 open-idx)
+            answer (str (or before "") (or after ""))]
+        {:reasoning (str/trim thinking)
+         :answer (str/trim answer)
+         :hadThinkTags true})
+      {:reasoning ""
+       :answer text
+       :hadThinkTags false})))
+
 (defn- agent-spec-summary
   [agent-spec]
   (when agent-spec
@@ -128,6 +153,16 @@
                            (and (str/blank? streamed) (not (str/blank? final-reasoning))) final-reasoning
                            (and (not (str/blank? final-reasoning)) (> (count final-reasoning) (count streamed))) final-reasoning
                            :else streamed))
+        ;; If the provider didn't supply structured reasoning, try to extract a
+        ;; leading <think>...</think> block from the assistant message.
+        think-split (when (str/blank? (str reasoning-text))
+                      (split-think-tags answer))
+        answer (if (and think-split (:hadThinkTags think-split))
+                 (:answer think-split)
+                 answer)
+        reasoning-text (if (and think-split (:hadThinkTags think-split))
+                         (:reasoning think-split)
+                         reasoning-text)
         elapsed (- (.now js/Date) started-ms)
         output-tokens (or (aget usage "output") 0)
         tokens-per-second (when (and (pos? output-tokens) (pos? elapsed))

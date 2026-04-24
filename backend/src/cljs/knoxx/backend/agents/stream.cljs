@@ -30,10 +30,60 @@
    :ttft-recorded? (atom false)
    :last-assistant-text* (atom "")
    :last-reasoning-text* (atom "")
+   :think-tag-mode* (atom :off)
    :aborting? (atom false)
    :abort-reason* (atom nil)
    :tool-loop* (atom {:last nil :streak 0 :counts {}})
    :seen-tool-lifecycle-events* (atom #{})})
+
+(declare emit-streaming-delta!)
+
+(defn- emit-text-delta-with-think-tags!
+  "Routes text deltas that contain <think>...</think> blocks into the reasoning
+   stream, leaving the assistant message stream clean.
+
+   This is a pragmatic fix for Gemma-family models that sometimes emit thinking
+   traces inline even when the provider does not supply structured reasoning
+   events." 
+  [state delta]
+  (let [delta (str (or delta ""))
+        mode* (:think-tag-mode* state)
+        last-text @(:last-assistant-text* state)]
+    (cond
+      (str/blank? delta) nil
+
+      ;; Only opt-in when we see an explicit <think> tag early, before we've
+      ;; emitted substantive assistant text.
+      (= @mode* :off)
+      (let [idx (.indexOf delta "<think>")]
+        (if (and (>= idx 0)
+                 (str/blank? (str last-text))
+                 (< idx 64))
+          (do
+            (reset! mode* :thinking)
+            (let [before (subs delta 0 idx)
+                  after (subs delta (+ idx (count "<think>")))]
+              (when (seq (str/trim before))
+                (emit-streaming-delta! state :agent_message before))
+              (when (seq after)
+                (emit-text-delta-with-think-tags! state after))))
+          (emit-streaming-delta! state :agent_message delta)))
+
+      (= @mode* :thinking)
+      (let [idx (.indexOf delta "</think>")]
+        (if (>= idx 0)
+          (do
+            (let [thinking (subs delta 0 idx)
+                  after (subs delta (+ idx (count "</think>")))]
+              (when (seq thinking)
+                (emit-streaming-delta! state :reasoning thinking))
+              (reset! mode* :done)
+              (when (seq after)
+                (emit-streaming-delta! state :agent_message after))))
+          (emit-streaming-delta! state :reasoning delta)))
+
+      :else
+      (emit-streaming-delta! state :agent_message delta))))
 
 (defn- first-lifecycle-event?
   [state type tool-call-id]
@@ -127,7 +177,7 @@
     (cond
       (= assistant-event-type "text_delta")
       (let [delta (or (aget assistant-event "delta") "")]
-        (emit-streaming-delta! state :agent_message delta))
+        (emit-text-delta-with-think-tags! state delta))
 
       (contains? #{"reasoning_delta" "reasoning" "reasoning_content_delta" "thinking_delta" "thinking"} assistant-event-type)
       (let [delta (or (aget assistant-event "delta")
@@ -147,14 +197,7 @@
           (backfill-run-tool-input-preview! (:run-id state)
                                             (:tool_call_id preview)
                                             (:tool_name preview)
-                                            (:input_preview preview))
-          (let [preview-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_input_backfill"
-                                                  {:status "running"
-                                                   :tool_name (:tool_name preview)
-                                                   :tool_call_id (:tool_call_id preview)
-                                                   :preview (:input_preview preview)})]
-            (append-run-event! (:run-id state) preview-event)
-            (broadcast-ws-session! (:session-id state) "events" preview-event)))
+                                            (:input_preview preview)))
         (sync-assistant-message! state (or (aget assistant-event "partial")
                                            (aget event "message"))))
 
@@ -174,6 +217,13 @@
                      (aget event "arguments")
                      (aget event "input")
                      (aget event "parameters"))
+        input-raw (cond
+                    (nil? raw-args) nil
+                    (= raw-args js/undefined) nil
+                    (string? raw-args) raw-args
+                    :else (try
+                            (js->clj raw-args :keywordize-keys true)
+                            (catch :default _ (str raw-args))))
         input-preview (or (tool-call-input-preview tool-name (aget event "params"))
                           (tool-call-input-preview tool-name (aget event "toolArgs"))
                           (tool-call-input-preview tool-name (aget event "args"))
@@ -211,6 +261,7 @@
                                   (cond-> (merge receipt {:tool_name tool-name
                                                           :status "running"
                                                           :started_at (or (:started_at receipt) (now-iso))})
+                                    (some? input-raw) (assoc :input input-raw)
                                     input-preview (assoc :input_preview input-preview))))
       (when first-event?
         (apply-run-tool-trace-event! (:run-id state) {:type "tool_start"
@@ -256,6 +307,13 @@
         raw-result (or (aget event "result")
                        (aget event "toolResult")
                        (aget event "output"))
+        result-raw (cond
+                     (nil? raw-result) nil
+                     (= raw-result js/undefined) nil
+                     (string? raw-result) raw-result
+                     :else (try
+                             (js->clj raw-result :keywordize-keys true)
+                             (catch :default _ (str raw-result))))
         content-parts (tool-result-content-parts raw-result)
         result-preview (or (preview-text-nonblank (aget event "result") 20000)
                            (preview-text-nonblank (aget event "toolResult") 20000)
@@ -273,6 +331,7 @@
                                                         :status (if is-error "failed" "completed")
                                                         :ended_at (now-iso)
                                                         :is_error is-error})
+                                  (some? result-raw) (assoc :result result-raw)
                                   result-preview (assoc :result_preview result-preview)
                                   (seq content-parts) (assoc :content_parts content-parts))))
     (when first-event?

@@ -17,34 +17,36 @@ describe("novelAppendedText", () => {
 });
 
 describe("applyToolTraceEvent", () => {
-  it("backfills tool input previews from append-only runtime events", () => {
-    const blocks = applyToolTraceEvent([
-      {
-        id: "tool:call-1",
-        kind: "tool_call",
-        toolName: "read",
-        toolCallId: "call-1",
-        status: "streaming",
-        updates: [],
-      },
-    ], {
-      type: "tool_input_backfill",
+  it("maps tool_start + tool_end events into a single tool_call trace block", () => {
+    const started = applyToolTraceEvent([], {
+      type: "tool_start",
       tool_name: "read",
       tool_call_id: "call-1",
       preview: "```yaml\npath: docs/guide.md\n```",
       at: "2026-04-22T17:00:00.000Z",
     });
 
-    expect(blocks).toEqual([
+    const finished = applyToolTraceEvent(started, {
+      type: "tool_end",
+      tool_name: "read",
+      tool_call_id: "call-1",
+      preview: "done",
+      is_error: false,
+      at: "2026-04-22T17:00:02.000Z",
+    });
+
+    expect(finished).toEqual([
       {
         id: "tool:call-1",
         kind: "tool_call",
         toolName: "read",
         toolCallId: "call-1",
         inputPreview: "```yaml\npath: docs/guide.md\n```",
-        status: "streaming",
+        status: "done",
+        outputPreview: "done",
+        isError: false,
+        at: "2026-04-22T17:00:02.000Z",
         updates: [],
-        at: "2026-04-22T17:00:00.000Z",
       },
     ]);
   });

@@ -306,11 +306,17 @@ export function ToolReceiptBlock({ receipt, isLive, defaultExpanded = false }: T
   const toolName = receipt.tool_name ?? receipt.id ?? "tool";
   const inputPreview = normalizeToolPreview(receipt.input_preview);
   const resultPreview = normalizeToolPreview(receipt.result_preview);
+  const fullInput = (receipt as Record<string, unknown>).input;
+  const fullResult = (receipt as Record<string, unknown>).result;
   const inputSummary = inputPreview ? toolInputSummary(inputPreview) : null;
   // IMPORTANT: do not truncate before JSON parsing, or we end up with invalid JSON
   // and fall back to raw JSON-like strings in the UI.
-  const inputMarkdown = inputPreview ? toolPreviewMarkdown(inputPreview) : "_(inputs unavailable)_";
-  const resultMarkdown = resultPreview ? toolOutputMarkdown(resultPreview) : "";
+  const inputMarkdown = fullInput != null
+    ? (typeof fullInput === "string" ? toolPreviewMarkdown(fullInput) : structuredToMarkdown(fullInput))
+    : (inputPreview ? toolPreviewMarkdown(inputPreview) : "_(inputs unavailable)_");
+  const resultMarkdown = fullResult != null
+    ? (typeof fullResult === "string" ? toolOutputMarkdown(fullResult) : structuredToMarkdown(fullResult))
+    : (resultPreview ? toolOutputMarkdown(resultPreview) : "");
   const contentParts = Array.isArray(receipt.contentParts) ? receipt.contentParts : [];
   const liveUpdateMarkdown = !resultMarkdown && receipt.updates && receipt.updates.length > 0
     ? toolOutputMarkdown(receipt.updates[receipt.updates.length - 1])
