@@ -405,30 +405,70 @@
          (when-let [payload-preview (:payloadPreview payload)]
            (str "Payload preview: " payload-preview "\n")))))
 
+(defn- media-url-pattern
+  "Regex to find media URLs in text content."
+  []
+  (js/RegExp. #"https?://\S+\.(?:png|jpg|jpeg|gif|webp|mp4|webm|mp3|wav|ogg|m4a|flac|pdf)" "gi"))
+
+(defn- extract-media-urls-from-text
+  "Extract media URLs from raw text content."
+  [text]
+  (when (string? text)
+    (let [pattern (media-url-pattern)]
+      (->> (str/split text #"\s+")
+           (filter #(re-matches pattern %))
+           distinct
+           vec))))
+
+(defn- extract-media-from-embeds
+  "Extract media URLs from Discord embeds."
+  [embeds]
+  (->> (or embeds [])
+       (keep (fn [embed]
+               (let [url (:url embed)]
+                 (when url
+                   (let [lower (str/lower-case url)]
+                     (when (some #(str/includes? lower %) [".png" ".jpg" ".jpeg" ".gif" ".webp" ".mp4" ".webm" ".pdf"])
+                       url))))))
+       distinct
+       vec))
+
 (defn- event-content-parts
   [event]
-  (->> (or (get-in event [:payload :attachments]) [])
-       (keep (fn [attachment]
-               (let [url (:url attachment)
-                     content-type (some-> (:contentType attachment) str str/lower-case)]
-                 (cond
-                   (and url (some-> content-type (str/starts-with? "image/")))
-                   {:type "image"
-                    :url url
-                    :mimeType (:contentType attachment)
-                    :filename (:filename attachment)}
-
-                   (and url (or (some-> content-type (str/starts-with? "text/"))
-                                (some-> content-type (str/includes? "json"))
-                                (some-> content-type (str/includes? "html"))
-                                (some-> content-type (str/includes? "pdf"))))
-                   {:type "document"
-                    :url url
-                    :mimeType (:contentType attachment)
-                    :filename (:filename attachment)}
-
-                   :else nil))))
-       vec))
+  (let [payload (or (:payload event) {})
+        attachment-urls (->> (or (:attachments payload) [])
+                          (keep (fn [att]
+                                  (let [url (:url att)
+                                        content-type (some-> (:contentType att) str str/lower-case)]
+                                    (when url
+                                      {:type (cond
+                                              (some-> content-type (str/starts-with? "image/")) "image"
+                                              (some-> content-type (str/starts-with? "video/")) "video"
+                                              (some-> content-type (str/starts-with? "audio/")) "audio"
+                                              (some-> content-type (str/starts-with? "text/")) "document"
+                                              (some-> content-type (str/includes? "pdf")) "document"
+                                              :else nil)
+                                       :url url
+                                       :mimeType (:contentType att)
+                                       :filename (:filename att)}))))
+                          vec)
+        text-media-urls (extract-media-urls-from-text (:content payload))
+        embed-media-urls (extract-media-from-embeds (:embeds payload))
+        detected-urls (->> (concat text-media-urls embed-media-urls)
+                           distinct
+                           (map (fn [url]
+                                   (let [lower (str/lower-case url)]
+                                     {:type (cond
+                                             (some #(str/includes? lower %) [".png" ".jpg" ".jpeg" ".gif" ".webp"]) "image"
+                                             (some #(str/includes? lower %) [".mp4" ".webm" ".mov"]) "video"
+                                             (some #(str/includes? lower %) [".mp3" ".wav" ".ogg" ".m4a" ".flac"]) "audio"
+                                             (some #(str/includes? lower %) [".pdf"]) "document"
+                                             :else "image")
+                                      :url url
+                                      :mimeType nil
+                                      :filename nil})))
+                           vec)]
+    (concat attachment-urls detected-urls)))
 
 (defn- sticky-session-enabled?
   [job]
