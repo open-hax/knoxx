@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { getAgentContractsCatalog, getFrontendConfig, getToolCatalog } from '../../lib/api';
 import type { ActorCatalogItem, AgentContractCatalogItem, ToolCatalogResponse } from '../../lib/types';
 
@@ -37,6 +37,9 @@ export function useChatPageConfig({
   setTtsEnabled,
   setTtsDefaultVoiceId,
 }: UseChatPageConfigParams) {
+  const activeAgentIdRef = useRef(activeAgentId);
+  activeAgentIdRef.current = activeAgentId;
+
   useEffect(() => {
     const requestedActorId = activeActorId || defaultActorId;
     void Promise.all([getFrontendConfig(), getAgentContractsCatalog(requestedActorId)])
@@ -55,10 +58,12 @@ export function useChatPageConfig({
         const defaultAgentId = catalog.default_agent_contract || config.default_agent_contract || agents[0]?.id || '';
         setAvailableAgents(agents);
 
-        const nextAgentId = agents.some((agent) => agent.id === activeAgentId)
-          ? activeAgentId
+        // Read the CURRENT activeAgentId from the ref to avoid stale closure
+        const currentAgentId = activeAgentIdRef.current;
+        const nextAgentId = agents.some((agent) => agent.id === currentAgentId)
+          ? currentAgentId
           : defaultAgentId;
-        if (nextAgentId && nextAgentId !== activeAgentId) {
+        if (nextAgentId && nextAgentId !== currentAgentId) {
           setActiveAgentId(nextAgentId);
         }
 

@@ -7,8 +7,12 @@
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
             [knoxx.backend.runtime.models :refer [normalize-thinking-level effective-thinking-level models-config allowlisted-model-id?]]
+            [knoxx.backend.extension-runtime :as ext-runtime]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]))
+
+;; Initialize extension runtime at load time
+(ext-runtime/init!)
 
 (defonce sdk-runtime* (atom nil))
 (defonce agent-sessions* (atom {}))
@@ -509,12 +513,30 @@
            ;; Model or tool access changed mid-conversation: rebuild session so the requested runtime is respected.
            (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
                (.then (fn [next-session]
+                        (let [ctx (ext-runtime/build-extension-ctx runtime config
+                                                                   :conversation-id conversation-id
+                                                                   :session-id session-id
+                                                                   :model-id model-id
+                                                                   :auth-context auth-context)]
+                          (ext-runtime/dispatch-event "session_switch"
+                                                      #js {:conversationId conversation-id
+                                                           :sessionId session-id}
+                                                      ctx))
                         (swap! agent-sessions* assoc conversation-id {:session next-session
                                                                       :model-id model-id
                                                                       :tool-signature current-tool-signature})
                         next-session)))))
        (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
            (.then (fn [session]
+                    (let [ctx (ext-runtime/build-extension-ctx runtime config
+                                                               :conversation-id conversation-id
+                                                               :session-id session-id
+                                                               :model-id model-id
+                                                               :auth-context auth-context)]
+                      (ext-runtime/dispatch-event "session_start"
+                                                  #js {:conversationId conversation-id
+                                                       :sessionId session-id}
+                                                  ctx))
                     (swap! agent-sessions* assoc conversation-id {:session session
                                                                   :model-id model-id
                                                                   :tool-signature current-tool-signature})
@@ -526,8 +548,17 @@
 
 (defn remove-agent-session!
   "Keep completed conversation sessions warm in-process so follow-up turns retain live context.
-   Redis/OpenPlanner rehydration remains the fallback path across restarts or instance changes."
-  [_conversation-id]
+   Redis/OpenPlanner rehydration remains the fallback path across restarts or instance changes.
+   Dispatches session_shutdown to extensions before clearing."
+  [conversation-id]
+  (when-let [entry (get @agent-sessions* conversation-id)]
+    (let [ctx (ext-runtime/build-extension-ctx
+               #js {} {}
+               :conversation-id conversation-id
+               :session-id (:session-id entry))]
+      (ext-runtime/dispatch-event "session_shutdown"
+                                  #js {:conversationId conversation-id}
+                                  ctx)))
   nil)
 
 (defn queue-agent-control!

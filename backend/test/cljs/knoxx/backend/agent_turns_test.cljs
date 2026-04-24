@@ -66,3 +66,44 @@
               {:role "user" :content "first request"}
               {:role "assistant" :content "first answer"}]
              (agent-turns/session->stored-messages session))))))
+
+(deftest reply-attachment-content-parts-lifts-workspace-media-tool-receipts-into-final-replies
+  (testing "workspace_media.attach receipts become assistant reply content parts"
+    (is (= [{:type "audio"
+             :data "data:audio/wav;base64,QUFBQQ=="
+             :mimeType "audio/wav"
+             :filename "reply.wav"}]
+           (agent-turns/reply-attachment-content-parts
+            [{:tool_name "workspace_media.attach"
+              :content_parts [{:type "audio"
+                               :data "data:audio/wav;base64,QUFBQQ=="
+                               :mimeType "audio/wav"
+                               :filename "reply.wav"}]}
+             {:tool_name "read"
+              :content_parts [{:type "document"
+                               :url "file:///tmp/guide.md"
+                               :filename "guide.md"}]}])))))
+
+(deftest merge-content-parts-dedupes-overlapping-attachments
+  (testing "reply media already present in the assistant response is not duplicated"
+    (is (= [{:type "image"
+             :url "/api/multimodal/files/image-1"
+             :mimeType "image/png"
+             :filename "plot.png"}
+            {:type "audio"
+             :data "data:audio/wav;base64,QUFBQQ=="
+             :mimeType "audio/wav"
+             :filename "reply.wav"}]
+           (agent-turns/merge-content-parts
+            [{:type "image"
+              :url "/api/multimodal/files/image-1"
+              :mimeType "image/png"
+              :filename "plot.png"}]
+            [{:type "image"
+              :url "/api/multimodal/files/image-1"
+              :mimeType "image/png"
+              :filename "plot.png"}
+             {:type "audio"
+              :data "data:audio/wav;base64,QUFBQQ=="
+              :mimeType "audio/wav"
+              :filename "reply.wav"}])))))

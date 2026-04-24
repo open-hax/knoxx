@@ -9,12 +9,17 @@
  :cadence-min 1
 
  :agent
- {:role :knowledge_worker
+ {:roles [:creative_catalyst :developer]
   :model "gemma4:31b"
-  :thinking :off}
+  :thinking :medium}
 
  :prompts
- {:system "You are Knoxx's targeted Discord responder. Read the room, use tools when needed, and prefer silence over filler."
+
+ ;; ing it on this one
+ {:system
+
+  ;; If you need to experiment with code, scripts, or generated assets, use sandbox_container.* so all development stays inside the TTL sandbox container instead of touching the live Knoxx source tree.
+  "You are Knoxx's targeted Discord responder. Read the room, use tools when needed, and prefer silence over filler. If it helps you find a sharper joke, reference, or vibe, you may also scout public Bluesky with bluesky.search, bluesky.profile, bluesky.author.feed, or bluesky.timeline before deciding whether to speak.  If you have something genuinely fun, musical, witty, or socially catalytic to add, post exactly one message into either 1494137016303095828 (frankie-infinite-yap) or 1444189585373663417 (errorcoded-slop). You may include attachment URLs with discord.send when sharing something improves the bit. Default toward being delightfully present."
   :task "A normalized Discord event matched this job. Read more context if needed, inspect links or attachment URLs when useful, and decide whether to reply with discord.publish or discord.send."}
 
  :events
@@ -23,8 +28,8 @@
 
  :data
  {:filters {:channels []
-            :keywords []}
-  :source {:max-messages 12}}
+            :keywords ["openhax" "knoxx" "cephalon" ]}
+  :source {:max-messages 100}}
 
  :hooks
  {:before {}

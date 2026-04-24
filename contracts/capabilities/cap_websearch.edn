@@ -2,7 +2,7 @@
  :cap/tools [:websearch
              :web.read]
  :cap/user-surfaces [{:surface/id :workspace/web-research
-                      :surface/label "Web research surface"
+                      Error: "Cannot read properties of null (reading 'path')"Error: "Cannot read properties of null (reading 'path')"                     :surface/label "Web research surface"
                       :surface/kind :reader
                       :surface/routes ["/"]
                       :surface/description "Humans use search/import UI to inspect live web sources; agents use websearch and web.read."}]}

@@ -220,6 +220,7 @@ export const EVENT_KIND_OPTIONS = [
 export const MODEL_OPTIONS = [
   "glm-5",
   "glm-5-plus",
+  "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
   "claude-4-sonnet",

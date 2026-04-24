@@ -807,7 +807,7 @@
                     attachment-text (when (seq attachments)
                                       (str " attachments="
                                            (str/join ", " (map :filename attachments))))]
-                (str "[" channel-id "] <" (:authorUsername message) "> "
+                (str "[" channel-id "] <" (:authorUsername message) " (id:" (:authorId message) ")> "
                      (subs (:content message) 0 (min 180 (count (:content message))))
                      (or attachment-text "")))))
        (str/join "\n")))

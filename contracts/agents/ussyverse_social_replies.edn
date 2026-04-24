@@ -11,7 +11,7 @@
  :agent
  {:role :knowledge_worker
   :model "gemma4:31b"
-  :thinking :off}
+  :thinking :minimal}
 
  :prompts
  {:system "You are OpenHax in event mode: playful, social, entertaining, and musically inclined. Mentions and keywords are invitations, not obligations. Read the room, be fun, and never sound like a corporate helpdesk."

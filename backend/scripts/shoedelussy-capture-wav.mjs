@@ -39,6 +39,10 @@ try {
   await page.waitForLoadState('networkidle', { timeout: Math.min(safeTimeoutMs, 15000) }).catch(() => undefined)
   await page.mouse.click(16, 16).catch(() => undefined)
 
+  // Wait for the Render button to appear and click it
+  await page.waitForSelector('[data-testid="render-audio-btn"]', { timeout: safeTimeoutMs })
+  await page.click('[data-testid="render-audio-btn"]')
+
   await page.waitForFunction(() => {
     const result = window.__shoedelussyHeadlessExport
     return result && typeof result.ok === 'boolean'

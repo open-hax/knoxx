@@ -41,8 +41,33 @@ const CHAT_SESSION_STATE_KEY = "knoxx_chat_session_state";
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_chat_sidebar_width_px";
 const SESSION_ACTOR_FILTER_KEY = "knoxx_session_actor_filter";
 const EXCLUDE_PI_SESSIONS_KEY = "knoxx_exclude_pi_sessions";
+const LAST_CHAT_SETTINGS_KEY = "knoxx_last_chat_settings";
 const DEFAULT_ROLE = "executive";
 const SEND_UI_GUARD_TIMEOUT_MS = 30 * 60 * 1000;
+
+type LastChatSettings = {
+  activeAgentId?: string;
+  selectedModel?: string;
+  selectedThinkingLevel?: string;
+};
+
+function readLastChatSettings(): LastChatSettings {
+  try {
+    const raw = window.localStorage.getItem(LAST_CHAT_SETTINGS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as LastChatSettings;
+  } catch {
+    return {};
+  }
+}
+
+function writeLastChatSettings(settings: LastChatSettings): void {
+  try {
+    window.localStorage.setItem(LAST_CHAT_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignore storage failures
+  }
+}
 
 function readStoredString(key: string, fallback: string): string {
   try {
@@ -91,7 +116,12 @@ export function shouldApplyAgentModelSelection({
   agentModel?: string | null;
 }): boolean {
   if (!activeAgentId || !agentModel) return false;
-  return !selectedModel || previousAgentId !== activeAgentId;
+  // On initial mount (previousAgentId is null), only apply the agent's default
+  // model if no model was already selected/persisted.
+  if (previousAgentId === null) {
+    return !selectedModel;
+  }
+  return previousAgentId !== activeAgentId;
 }
 
 export function useChatWorkspaceController(options: ChatWorkspaceControllerOptions = {}) {
@@ -113,7 +143,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [activeRole, setActiveRole] = useState(defaultRole);
   const [activeActorId, setActiveActorId] = useState(defaultActorId);
   const [availableActors, setAvailableActors] = useState<ActorCatalogItem[]>([]);
-  const [activeAgentId, setActiveAgentId] = useState("");
+  const lastSettings = readLastChatSettings();
+  const [activeAgentId, setActiveAgentId] = useState(lastSettings.activeAgentId ?? "");
   const [availableAgents, setAvailableAgents] = useState<AgentContractCatalogItem[]>([]);
   const [toolCatalog, setToolCatalog] = useState<ToolCatalogResponse | null>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
@@ -132,8 +163,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [queueingControl, setQueueingControl] = useState<"steer" | "follow_up" | null>(null);
   const [abortingTurn, setAbortingTurn] = useState(false);
   const [proxxModels, setProxxModels] = useState<ProxxModelInfo[]>([]);
-  const [selectedModel, setSelectedModel] = useState("");
-  const [selectedThinkingLevel, setSelectedThinkingLevel] = useState("off");
+  const [selectedModel, setSelectedModel] = useState(lastSettings.selectedModel ?? "");
+  const [selectedThinkingLevel, setSelectedThinkingLevel] = useState(lastSettings.selectedThinkingLevel ?? "off");
   const [proxxReachable, setProxxReachable] = useState(false);
   const [proxxConfigured, setProxxConfigured] = useState(false);
   const [sttEnabled, setSttEnabled] = useState(false);
@@ -551,20 +582,18 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     }
   }, [latestRun?.tool_receipts, openCanvasArtifact]);
 
-  return {
-    // pane visibility
-    showConsole,
-    setShowConsole,
-    showSettings,
-    setShowSettings,
-    showCanvas,
-    setShowCanvas,
+  useEffect(() => {
+    writeLastChatSettings({
+      activeAgentId,
+      selectedModel,
+      selectedThinkingLevel,
+    });
+  }, [activeAgentId, selectedModel, selectedThinkingLevel]);
 
-    // chat runtime state
+  return {
+    // state
     activeRole,
-    setActiveRole,
     activeActorId,
-    setActiveActorId,
     availableActors,
     activeAgentId,
     setActiveAgentId,
@@ -576,10 +605,12 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     messages,
     consoleLines,
     isSending,
+    showConsole,
+    showSettings,
+    showCanvas,
     wsStatus,
     conversationId,
     latestRun,
-    activeRunId: latestRun?.run_id ?? activeRunIdRef.current ?? null,
     runtimeEvents,
     liveControlText,
     setLiveControlText,

@@ -26,11 +26,68 @@
   [ms]
   (.timeout js/AbortSignal ms))
 
+(defn- reply-sent?
+  [reply]
+  (let [raw (aget reply "raw")]
+    (boolean
+     (or (aget reply "sent")
+         (and raw (aget raw "writableEnded"))))))
+
+(defn- request-query-string
+  [req]
+  (let [query (or (aget req "query") #js {})
+        params (js/URLSearchParams.)]
+    (doseq [key (array-seq (.keys js/Object query))]
+      (let [value (aget query key)]
+        (cond
+          (nil? value) nil
+          (= value js/undefined) nil
+          (array? value) (doseq [item (array-seq value)]
+                           (.append params key (str item)))
+          :else (.append params key (str value)))))
+    (let [encoded (.toString params)]
+      (if (str/blank? encoded) "" (str "?" encoded)))))
+
 (defn- reply-send-with-content-type!
   [^js reply status content-type body]
-  (let [reply* (.code reply status)]
-    (.header reply* "content-type" content-type)
-    (.send reply* body)))
+  (when-not (reply-sent? reply)
+    (let [reply* (.code reply status)]
+      (.header reply* "content-type" content-type)
+      (.send reply* body))))
+
+(defn- send-proxy-error!
+  [reply prefix err]
+  (when-not (reply-sent? reply)
+    (-> (.code reply 502)
+        (.send #js {:ok false
+                    :error (str prefix ": " (or (aget err "message") (str err)))}))))
+
+(defn- request-body
+  [req]
+  (if (contains? #{"GET" "HEAD"} (aget req "method"))
+    js/undefined
+    (js/JSON.stringify (aget req "body"))))
+
+(defn- proxy-fetch!
+  [target-url req reply headers error-prefix]
+  (let [fetch-promise (js/fetch target-url
+                                #js {:method (aget req "method")
+                                     :headers headers
+                                     :body (request-body req)
+                                     :signal (timeout-signal 60000)})]
+    (.then fetch-promise
+           (fn [resp]
+             (let [content-type (json-content-type resp)
+                   body-promise (if (str/includes? content-type "application/json")
+                                  (safe-json resp)
+                                  (safe-text resp))]
+               (.then body-promise
+                      (fn [body]
+                        (reply-send-with-content-type! reply (.-status resp) content-type body))
+                      (fn [err]
+                        (send-proxy-error! reply error-prefix err)))))
+           (fn [err]
+             (send-proxy-error! reply error-prefix err)))))
 
 (defn register-proxy-routes!
   "Register all proxy endpoints on the fastify app."  
@@ -146,29 +203,12 @@
         (fn [req reply]
           (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
                 sub-path (aget (aget req "params") "*")
-                target-url (str kms-base "/api/ingestion/" sub-path)
+                target-url (str kms-base "/api/ingestion/" sub-path (request-query-string req))
                 headers (js/Object.assign #js {} (aget req "headers"))]
             (js/Reflect.deleteProperty headers "host")
             (js/Reflect.deleteProperty headers "connection")
             (js/Reflect.deleteProperty headers "content-length")
-            (-> (js/fetch target-url
-                          #js {:method (aget req "method")
-                               :headers headers
-                               :body (if (contains? #{"GET" "HEAD"} (aget req "method"))
-                                       js/undefined
-                                       (js/JSON.stringify (aget req "body")))
-                               :signal (timeout-signal 60000)})
-                (.then (fn [resp]
-                         (let [content-type (json-content-type resp)]
-                           (-> (if (str/includes? content-type "application/json")
-                                 (safe-json resp)
-                                 (safe-text resp))
-                               (.then
-                               (fn [body]
-                                  (reply-send-with-content-type! reply (.-status resp) content-type body))))))))
-                (.catch (fn [err]
-                          (.code reply 502)
-                          (.send reply #js {:ok false :error (str "Ingestion proxy error: " (.-message err))}))))))
+            (proxy-fetch! target-url req reply headers "Ingestion proxy error"))))
 
   ;; ---------------------------------------------------------------------------
   ;; OpenPlanner Proxy
@@ -181,28 +221,11 @@
           (let [base (or (:openplanner-base-url config) "http://localhost:7777")
                 key (or (:openplanner-api-key config) "change-me")
                 sub-path (aget (aget req "params") "*")
-                target-url (str base "/" sub-path)
+                target-url (str base "/" sub-path (request-query-string req))
                 fwd-headers #js {"content-type" "application/json"
                                  "authorization" (str "Bearer " key)
                                  "x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
                                  "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}]
-            (-> (js/fetch target-url
-                          #js {:method (aget req "method")
-                               :headers fwd-headers
-                               :body (if (contains? #{"GET" "HEAD"} (aget req "method"))
-                                       js/undefined
-                                       (js/JSON.stringify (aget req "body")))
-                               :signal (timeout-signal 60000)})
-                (.then (fn [resp]
-                         (let [content-type (json-content-type resp)]
-                           (-> (if (str/includes? content-type "application/json")
-                                 (safe-json resp)
-                                 (safe-text resp))
-                               (.then
-                               (fn [body]
-                                  (reply-send-with-content-type! reply (.-status resp) content-type body))))))))
-                (.catch (fn [err]
-                          (.code reply 502)
-                          (.send reply #js {:ok false :error (str "OpenPlanner proxy error: " (.-message err))}))))))
+            (proxy-fetch! target-url req reply fwd-headers "OpenPlanner proxy error"))))
 
   nil)

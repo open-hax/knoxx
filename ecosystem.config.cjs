@@ -2,9 +2,10 @@
  * Knoxx PM2 ecosystem
  *
  * Runs all three Knoxx services on the host for source-mapped debugging:
- *   1. knoxx-backend   — shadow-cljs watch server (runs Node runtime + nREPL in one process)
- *   2. knoxx-frontend  — vite dev server with HMR + API proxy to backend
- *   3. knoxx-ingestion — clojure -M:run (kms-ingestion on port 3003)
+ *   1. knoxx-shadow    — shadow-cljs watch with source maps (compiles CLJS → dist/)
+ *   2. knoxx-backend   — node dist/server.js (compiled by shadow-cljs) with source-map stack traces
+ *   3. knoxx-frontend  — vite dev server with HMR + API proxy to backend
+ *   4. knoxx-ingestion — clojure -M:run (kms-ingestion on port 3003)
  *
  * Dependencies (must be running separately):
  *   - Redis     on localhost:6379  (compose: knoxx-redis)
@@ -151,11 +152,9 @@ const shoedelussyDmxShouldRunLocal =
   );
 
 const apps = [
-    // ── 1. Backend (shadow-cljs watch + Node runtime + nREPL) ─────────
-    // This is the canonical dev mode: the running server is owned by the
-    // shadow-cljs runtime so we can live-eval through nREPL without restarting.
+    // ── 1. shadow-cljs watch ──────────────────────────────────────────
     {
-      name: 'knoxx-backend',
+      name: 'knoxx-shadow',
       cwd: backendDir,
       script: 'pnpm',
       // Force source maps in the watch build so dist/*.map stays available
@@ -165,8 +164,62 @@ const apps = [
       autorestart: true,
       max_restarts: 10,
       restart_delay: 5000,
+      env: {
+        NODE_ENV: 'development',
+      },
+    },
+
+    // ── 2. STT (Whisper/OpenVINO sidecar) ────────────────────────────
+    ...(sttNpuShouldRunLocal
+      ? [{
+        name: 'knoxx-stt-npu',
+        cwd: sttNpuDir,
+        script: sttNpuPython,
+        interpreter: 'none',
+        args: 'server.py',
+        watch: false,
+        autorestart: true,
+        max_restarts: 10,
+        restart_delay: 5000,
+        kill_timeout: 15000,
+        env: {
+          PORT: sttNpuPort,
+          MODEL_DIR: sttNpuModelDir,
+          WHISPER_DEVICE: process.env.WHISPER_DEVICE || hostEnv.WHISPER_DEVICE || 'NPU',
+          WHISPER_MODEL_ID:
+            process.env.WHISPER_MODEL_ID
+            || hostEnv.WHISPER_MODEL_ID
+            || 'anubhav200/openai-whisper-small-openvino-int4',
+          WHISPER_NPU_COMPILER_TYPE:
+            process.env.WHISPER_NPU_COMPILER_TYPE
+            || hostEnv.WHISPER_NPU_COMPILER_TYPE
+            || 'DRIVER',
+          PYTHONUNBUFFERED: '1',
+        },
+      }]
+      : []),
+
+    // ── 3. Backend (Node + compiled CLJS) ────────────────────────────
+    {
+      name: 'knoxx-backend',
+      cwd: backendDir,
+      // All-CLJS runtime entrypoint compiled by shadow-cljs (:server build).
+      // This keeps the backend fully CLJS-driven so nREPL can mutate the runtime.
+      script: 'dist/server.js',
+      node_args: '--enable-source-maps',
+      // Keep graceful PM2 shutdown messaging for resumable agent sessions,
+      // but do not gate startup on PM2 wait_ready: Knoxx can be fully serving
+      // before PM2 accepts the ready handshake, which caused duplicate launches
+      // and EADDRINUSE restart loops on port 8000.
       kill_timeout: 35000,
       shutdown_with_message: true,
+      // Auto-restart when shadow-cljs produces new output
+      watch: ['dist'],
+      watch_delay: 800,
+      ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
+      autorestart: true,
+      max_restarts: 15,
+      restart_delay: 3000,
       env: {
         NODE_ENV: 'development',
         HOST: '0.0.0.0',
@@ -175,7 +228,7 @@ const apps = [
         CONTRACTS_DIR: contractsDir,
         KNOXX_MUSIC_LIBRARY_ROOT: musicLibraryRoot,
         KNOXX_EXTRA_WORKSPACE_ROOTS: musicLibraryRoot,
-        DISCORD_BOT_TOKEN: hostEnv.DISCORD_BOT_TOKEN,
+          DISCORD_BOT_TOKEN: hostEnv.DISCORD_BOT_TOKEN,
         KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
         KNOXX_COLLECTION_NAME: 'devel_docs',
         AUDD_API_TOKEN: hostEnv.AUDD_API_TOKEN || '',
@@ -187,7 +240,7 @@ const apps = [
         KNOXX_GITHUB_OAUTH_CLIENT_SECRET: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_SECRET || '',
         // Canonical Proxx (on host via compose port-forward)
         PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
-        PROXX_DEFAULT_MODEL: 'gemma4:31b',
+          PROXX_DEFAULT_MODEL: 'gemma4:31b',
         PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
         // OpenPlanner (on host via compose port-forward)
         OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
@@ -223,37 +276,6 @@ const apps = [
         KMS_INGESTION_URL: 'http://127.0.0.1:3003',
       },
     },
-
-    // ── 2. STT (Whisper/OpenVINO sidecar) ────────────────────────────
-    ...(sttNpuShouldRunLocal
-      ? [{
-        name: 'knoxx-stt-npu',
-        cwd: sttNpuDir,
-        script: sttNpuPython,
-        interpreter: 'none',
-        args: 'server.py',
-        watch: false,
-        autorestart: true,
-        max_restarts: 10,
-        restart_delay: 5000,
-        kill_timeout: 15000,
-        env: {
-          PORT: sttNpuPort,
-          MODEL_DIR: sttNpuModelDir,
-          WHISPER_DEVICE: process.env.WHISPER_DEVICE || hostEnv.WHISPER_DEVICE || 'NPU',
-          WHISPER_MODEL_ID:
-            process.env.WHISPER_MODEL_ID
-            || hostEnv.WHISPER_MODEL_ID
-            || 'anubhav200/openai-whisper-small-openvino-int4',
-          WHISPER_NPU_COMPILER_TYPE:
-            process.env.WHISPER_NPU_COMPILER_TYPE
-            || hostEnv.WHISPER_NPU_COMPILER_TYPE
-            || 'DRIVER',
-          PYTHONUNBUFFERED: '1',
-        },
-      }]
-      : []),
-
 
     // ── 4. Frontend (Vite dev server) ────────────────────────────────
     {

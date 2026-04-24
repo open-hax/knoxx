@@ -8,12 +8,14 @@
    - Dependencies are passed in as a single JS object (deps) and then threaded
      through request/runtime contexts."  
   (:require [clojure.string :as str]
+            [knoxx.backend.agent-resume :as agent-resume]
             [knoxx.backend.auth.session :as auth-session]
             [knoxx.backend.core :as core]
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.graceful-shutdown :as graceful-shutdown]
             [knoxx.backend.mcp-http :as mcp-http]
             [knoxx.backend.pi-session-ingester :as pi-session-ingester]
+            [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.routes.auth :as auth-routes]
@@ -171,7 +173,17 @@
                           (graceful-shutdown/install! app cfg)
                           (notify-ready!)
                           (let [^js log (.-log app)]
-                            (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg))))))
+                            (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
+                            ;; Redis + session resume (non-blocking)
+                            (-> (redis/init-redis! (:redis-url cfg))
+                                (.then (fn [client]
+                                         (when client
+                                           (.info log "Redis connected for session persistence")
+                                           ;; Fire-and-forget: must not block startup
+                                           (agent-resume/resume-on-startup! runtime app cfg)
+                                           (agent-resume/start-periodic-recovery! runtime app cfg))))
+                                (.catch (fn [err]
+                                          (.warn log "Redis initialization failed" err)))))))
                  (.catch (fn [err]
                            (.error js/console "Knoxx backend CLJS failed to start" err)
                            (js/process.exit 1)))))))

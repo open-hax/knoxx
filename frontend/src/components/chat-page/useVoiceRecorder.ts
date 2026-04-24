@@ -49,9 +49,11 @@ function calculateRMS(timeDomainData: Uint8Array): number {
 export function useVoiceRecorder({
   onTranscript,
   conversationMode = false,
+  silenceThreshold = SILENCE_THRESHOLD,
 }: {
   onTranscript: (text: string) => void;
   conversationMode?: boolean;
+  silenceThreshold?: number;
 }) {
   const [state, setState] = useState<VoiceRecorderState>({ status: "idle" });
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -63,6 +65,7 @@ export function useVoiceRecorder({
   const analysisIntervalRef = useRef<number | null>(null);
   const maxDurationTimeoutRef = useRef<number | null>(null);
   const onTranscriptRef = useRef(onTranscript);
+  const audioLevelRef = useRef(0);
 
   onTranscriptRef.current = onTranscript;
 
@@ -219,8 +222,9 @@ export function useVoiceRecorder({
           analyserNode.getByteTimeDomainData(timeDomainData);
           const rms = calculateRMS(timeDomainData);
           const elapsed = Date.now() - startedAt;
+          audioLevelRef.current = rms;
 
-          if (rms < SILENCE_THRESHOLD && elapsed >= MIN_RECORDING_MS) {
+          if (rms < silenceThreshold && elapsed >= MIN_RECORDING_MS) {
             if (silenceStartRef.current === null) {
               silenceStartRef.current = Date.now();
             } else if (Date.now() - silenceStartRef.current >= SILENCE_DURATION_MS) {
@@ -237,7 +241,7 @@ export function useVoiceRecorder({
       setState({ status: "error", message });
       cleanup();
     }
-  }, [cleanup, cleanupAudio, cleanupRecorder, conversationMode, stopRecording]);
+  }, [cleanup, cleanupAudio, cleanupRecorder, conversationMode, silenceThreshold, stopRecording]);
 
   const toggle = useCallback(() => {
     if (state.status === "recording") {
@@ -253,5 +257,6 @@ export function useVoiceRecorder({
     toggle,
     startRecording,
     stopRecording,
+    audioLevelRef,
   };
 }

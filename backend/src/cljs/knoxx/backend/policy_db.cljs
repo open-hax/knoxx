@@ -16,7 +16,7 @@
   (:require [clojure.string :as str]
             [cljs.reader :as reader]
             [honey.sql :as sql]
-            [knoxx.backend.runtime.roles :as runtime-roles]
+            [knoxx.backend.contracts.roles :as contracts-roles]
             [knoxx.backend.tools.registry :as tool-registry]
             ["pg" :as pg]
             ["node:fs" :as fs]
@@ -33,135 +33,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Data Constants
 ;; ---------------------------------------------------------------------------
-
-(def ^:private PERMISSIONS
-  [["platform.org.create" "platform" "create" "Create orgs across the Knoxx platform"]
-   ["platform.org.read" "platform" "read" "Read orgs across the Knoxx platform"]
-   ["platform.org.update" "platform" "update" "Update orgs across the Knoxx platform"]
-   ["platform.org.delete" "platform" "delete" "Delete orgs across the Knoxx platform"]
-   ["platform.roles.manage" "platform_roles" "manage" "Manage platform-scoped roles"]
-   ["platform.audit.read" "platform_audit" "read" "Read platform-wide audit events"]
-   ["org.settings.read" "org_settings" "read" "Read org settings"]
-   ["org.settings.update" "org_settings" "update" "Update org settings"]
-   ["org.members.read" "org_members" "read" "Read org memberships"]
-   ["org.members.create" "org_members" "create" "Create org memberships"]
-   ["org.members.update" "org_members" "update" "Update org memberships"]
-   ["org.members.delete" "org_members" "delete" "Delete org memberships"]
-   ["org.users.invite" "org_users" "invite" "Invite users into an org"]
-   ["org.users.create" "org_users" "create" "Create users inside an org"]
-   ["org.users.read" "org_users" "read" "Read users inside an org"]
-   ["org.users.update" "org_users" "update" "Update users inside an org"]
-   ["org.users.disable" "org_users" "disable" "Disable users inside an org"]
-   ["org.roles.read" "org_roles" "read" "Read org roles"]
-   ["org.roles.create" "org_roles" "create" "Create org roles"]
-   ["org.roles.update" "org_roles" "update" "Update org roles"]
-   ["org.roles.delete" "org_roles" "delete" "Delete org roles"]
-   ["org.tool_policy.read" "org_tool_policy" "read" "Read org tool policies"]
-   ["org.tool_policy.update" "org_tool_policy" "update" "Update org tool policies"]
-   ["org.user_policy.read" "org_user_policy" "read" "Read per-user policy overrides"]
-   ["org.user_policy.update" "org_user_policy" "update" "Update per-user policy overrides"]
-   ["org.datalakes.read" "org_datalakes" "read" "Read org data lakes"]
-   ["org.datalakes.create" "org_datalakes" "create" "Create org data lakes"]
-   ["org.datalakes.update" "org_datalakes" "update" "Update org data lakes"]
-   ["org.datalakes.delete" "org_datalakes" "delete" "Delete org data lakes"]
-   ["datalake.read" "datalake" "read" "Read a data lake"]
-   ["datalake.query" "datalake" "query" "Query a data lake"]
-   ["datalake.write" "datalake" "write" "Write to a data lake"]
-   ["datalake.ingest" "datalake" "ingest" "Ingest into a data lake"]
-   ["datalake.admin" "datalake" "admin" "Administer a data lake"]
-   ["agent.chat.use" "agent_chat" "use" "Use the Knoxx agent chat runtime"]
-   ["agent.memory.read" "agent_memory" "read" "Read prior Knoxx memory"]
-   ["agent.memory.cross_session" "agent_memory" "cross_session" "Search prior Knoxx sessions"]
-   ["agent.runs.read_own" "agent_runs" "read_own" "Read own Knoxx runs"]
-   ["agent.runs.read_org" "agent_runs" "read_org" "Read org Knoxx runs"]
-   ["agent.runs.read_all" "agent_runs" "read_all" "Read all Knoxx runs"]
-   ["agent.controls.steer" "agent_controls" "steer" "Steer a live Knoxx run"]
-   ["agent.controls.follow_up" "agent_controls" "follow_up" "Queue follow-up on a Knoxx run"]
-   ["tool.read.use" "tool" "read" "Use read tool"]
-   ["tool.write.use" "tool" "write" "Use write tool"]
-   ["tool.edit.use" "tool" "edit" "Use edit tool"]
-   ["tool.bash.use" "tool" "bash" "Use bash tool"]
-   ["tool.email.send" "tool" "email_send" "Send email from Knoxx"]
-   ["tool.discord.publish" "tool" "discord_publish" "Publish to Discord from Knoxx"]
-   ["tool.discord.send" "tool" "discord_send" "Send Discord messages and replies from Knoxx"]
-   ["tool.discord.read" "tool" "discord_read" "Read Discord channel messages from Knoxx"]
-   ["tool.discord.channel.messages" "tool" "discord_channel_messages" "Fetch Discord channel messages with cursors from Knoxx"]
-   ["tool.discord.channel.scroll" "tool" "discord_channel_scroll" "Scroll older Discord channel messages from Knoxx"]
-   ["tool.discord.dm.messages" "tool" "discord_dm_messages" "Fetch Discord DM messages from Knoxx"]
-   ["tool.discord.search" "tool" "discord_search" "Search Discord messages from Knoxx"]
-   ["tool.discord.guilds" "tool" "discord_guilds" "List Discord guilds from Knoxx"]
-   ["tool.discord.channels" "tool" "discord_channels" "List Discord channels from Knoxx"]
-   ["tool.discord.list.servers" "tool" "discord_list_servers" "List all Discord servers from Knoxx"]
-   ["tool.discord.list.channels" "tool" "discord_list_channels" "List Discord channels across guilds from Knoxx"]
-   ["tool.event_agents.status" "tool" "event_agents_status" "Inspect event-agent runtime state from Knoxx"]
-   ["tool.event_agents.dispatch" "tool" "event_agents_dispatch" "Dispatch event-agent events from Knoxx"]
-   ["tool.event_agents.run_job" "tool" "event_agents_run_job" "Trigger event-agent jobs from Knoxx"]
-   ["tool.event_agents.upsert_job" "tool" "event_agents_upsert_job" "Create/update event-agent jobs from Knoxx"]
-   ["tool.schedule_event_agent" "tool" "schedule_event_agent" "Schedule event-agent jobs from Knoxx"]
-   ["tool.sandbox_container.create" "tool" "sandbox_container_create" "Create TTL-bound sandbox containers from Knoxx"]
-   ["tool.sandbox_container.status" "tool" "sandbox_container_status" "Inspect sandbox containers from Knoxx"]
-   ["tool.sandbox_container.exec" "tool" "sandbox_container_exec" "Execute shell commands in sandbox containers from Knoxx"]
-   ["tool.sandbox_container.read" "tool" "sandbox_container_read" "Read files from sandbox containers from Knoxx"]
-   ["tool.sandbox_container.write" "tool" "sandbox_container_write" "Write files into sandbox containers from Knoxx"]
-   ["tool.sandbox_container.commit" "tool" "sandbox_container_commit" "Create git commits inside sandbox containers from Knoxx"]
-   ["tool.sandbox_container.destroy" "tool" "sandbox_container_destroy" "Destroy sandbox containers from Knoxx"]
-   ["tool.bluesky.publish" "tool" "bluesky_publish" "Publish to Bluesky from Knoxx"]
-   ["tool.bluesky.profile" "tool" "bluesky_profile" "Read Bluesky profiles from Knoxx"]
-   ["tool.bluesky.search" "tool" "bluesky_search" "Search public Bluesky content from Knoxx"]
-   ["tool.bluesky.author.feed" "tool" "bluesky_author_feed" "Read a Bluesky author feed from Knoxx"]
-   ["tool.bluesky.timeline" "tool" "bluesky_timeline" "Read the authenticated Bluesky timeline from Knoxx"]
-   ["tool.semantic_query.use" "tool" "semantic_query" "Use semantic query tool"]
-   ["tool.memory_search.use" "tool" "memory_search" "Use memory search tool"]
-   ["tool.memory_session.use" "tool" "memory_session" "Use memory session tool"]
-   ["tool.websearch.use" "tool" "websearch" "Use websearch tool"]
-   ["tool.graph_query.use" "tool" "graph_query" "Use graph query tool"]
-   ["org.translations.read" "org_translations" "read" "Read translation segments"]
-   ["org.translations.review" "org_translations" "review" "Review and label translations"]
-   ["org.translations.export" "org_translations" "export" "Export translation training data"]
-   ["org.translations.manage" "org_translations" "manage" "Manage translation pipeline config"]
-   ["org.event_agents.control" "org_event_agents" "control" "Access and manage the Knoxx event-agents control plane"]
-   ["org.proxx.observability.read" "org_proxx_observability" "read" "Read Proxx analytics and request logs"]])
-
-(def ^:private TOOL-DEFINITIONS
-  [["read" "Read" "Read files and retrieved context" "low"]
-   ["write" "Write" "Create new markdown drafts and artifacts" "medium"]
-   ["edit" "Edit" "Revise existing documents and drafts" "medium"]
-   ["bash" "Shell" "Run controlled shell commands" "high"]
-   ["canvas" "Canvas" "Open long-form markdown drafting canvas" "low"]
-   ["email.send" "Email" "Send drafts through configured email account" "medium"]
-   ["discord.publish" "Discord Publish" "Publish updates to Discord" "medium"]
-   ["discord.send" "Discord Send" "Send Discord messages and threaded replies" "medium"]
-   ["discord.read" "Discord Read" "Read messages from Discord channels" "low"]
-   ["discord.channel.messages" "Discord Channel Messages" "Fetch messages from a Discord channel with before/after/around cursors" "low"]
-   ["discord.channel.scroll" "Discord Channel Scroll" "Scroll older messages in a Discord channel" "low"]
-   ["discord.dm.messages" "Discord DM Messages" "Fetch messages from a Discord DM channel" "low"]
-   ["discord.search" "Discord Search" "Search messages in Discord channels" "low"]
-   ["discord.guilds" "Discord Guilds" "List Discord servers the bot is in" "low"]
-   ["discord.channels" "Discord Channels" "List channels in a Discord server" "low"]
-   ["discord.list.servers" "Discord List Servers" "List all Discord servers the bot can access" "low"]
-   ["discord.list.channels" "Discord List Channels" "List channels across one or all Discord servers" "low"]
-   ["event_agents.status" "Event Agent Status" "Inspect scheduled event-agent runtime state and configuration" "low"]
-   ["event_agents.dispatch" "Event Agent Dispatch" "Dispatch a structured event into the event-agent runtime" "medium"]
-   ["event_agents.run_job" "Event Agent Run Job" "Trigger a configured event-agent job immediately" "medium"]
-   ["event_agents.upsert_job" "Event Agent Upsert Job" "Create or update a scheduled event-agent job" "high"]
-   ["schedule_event_agent" "Schedule Event Agent" "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config" "high"]
-   ["sandbox_container.create" "Sandbox Create" "Create a TTL-bound sandbox container for isolated development work" "high"]
-   ["sandbox_container.status" "Sandbox Status" "Inspect sandbox container runtime status and remaining TTL" "low"]
-   ["sandbox_container.exec" "Sandbox Exec" "Execute a shell command inside a sandbox container" "high"]
-   ["sandbox_container.read" "Sandbox Read" "Read a text file from the sandbox workdir" "low"]
-   ["sandbox_container.write" "Sandbox Write" "Write a text file into the sandbox workdir" "high"]
-   ["sandbox_container.commit" "Sandbox Commit" "Create a git commit inside the sandbox workdir" "high"]
-   ["sandbox_container.destroy" "Sandbox Destroy" "Destroy a sandbox container and its temporary workspace" "medium"]
-   ["bluesky.publish" "Bluesky Publish" "Publish updates to Bluesky" "medium"]
-   ["bluesky.profile" "Bluesky Profile" "Read a Bluesky profile by handle or DID" "low"]
-   ["bluesky.search" "Bluesky Search" "Search public Bluesky posts or actors" "low"]
-   ["bluesky.author.feed" "Bluesky Author Feed" "Read recent posts from a specific Bluesky author" "low"]
-   ["bluesky.timeline" "Bluesky Timeline" "Read the authenticated Bluesky timeline" "low"]
-   ["semantic_query" "Semantic Query" "Query semantic context in the active corpus" "low"]
-   ["memory_search" "Memory Search" "Search prior Knoxx sessions in OpenPlanner" "low"]
-   ["memory_session" "Memory Session" "Load a specific Knoxx session from OpenPlanner" "low"]
-   ["websearch" "Web Search" "Search the live web through Proxx websearch" "low"]
-   ["graph_query" "Graph Query" "Query the canonical knowledge graph" "low"]])
 
 (defn- default-contracts-dir
   []
@@ -271,7 +142,7 @@
                           (string? value) (some-> value str str/trim not-empty)
                           :else (some-> value str str/trim not-empty))]
                 (when raw
-                  (runtime-roles/normalize-role (contracts-config) raw)))))
+                  (contracts-roles/normalize-role (contracts-config) raw)))))
        (remove nil?)
        distinct
        vec))
@@ -339,63 +210,6 @@
     (catch :default _
       #{})))
 
-(defn- tool-risk-level
-  [tool-id]
-  (let [id (str tool-id)]
-    (cond
-      (= id "bash") "high"
-      (= id "edit") "medium"
-      (= id "write") "medium"
-      (= id "contract.write") "high"
-      (or (= id "event_agents.upsert_job") (= id "schedule_event_agent")) "high"
-      (or (str/starts-with? id "openplanner.")
-          (str/starts-with? id "discord.")
-          (str/starts-with? id "music.")
-          (str/starts-with? id "audio.")) "medium"
-      :else "low")))
-
-(defn- tool-seeds-from-contracts
-  []
-  (->> (contract-tool-ids)
-       (map (fn [tool-id]
-              (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
-                [tool-id
-                 (or label tool-id)
-                 (or description "")
-                 (tool-risk-level tool-id)])))
-       vec))
-
-(defn- tool-seeds-from-registry
-  []
-  (->> (tool-registry/known-tool-ids)
-       (map (fn [tool-id]
-              (let [{:keys [label description]} (tool-registry/get-tool tool-id)]
-                [tool-id
-                 (or label tool-id)
-                 (or description "")
-                 (tool-risk-level tool-id)])))
-       vec))
-
-(defn- merged-tool-seeds
-  "Return tool definition seed rows, merging built-in TOOL-DEFINITIONS with
-   registry-known tools and any additional tools referenced by contract
-   capabilities." 
-  []
-  (let [base (into {} (map (fn [[id label description risk-level]]
-                             [id [id label description risk-level]])
-                           TOOL-DEFINITIONS))
-        from-registry (into {} (map (fn [[id label description risk-level]]
-                                      [id [id label description risk-level]])
-                                    (tool-seeds-from-registry)))
-        from-contracts (into {} (map (fn [[id label description risk-level]]
-                                       [id [id label description risk-level]])
-                                     (tool-seeds-from-contracts)))]
-    ;; Prefer explicit base metadata when it exists.
-    (->> (merge from-registry from-contracts base)
-         vals
-         (sort-by first)
-         vec)))
-
 (defn- contracts-config
   []
   {:contracts-dir (default-contracts-dir)})
@@ -405,19 +219,20 @@
 
    Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools." 
   [role-slug]
-  (let [tool-ids (runtime-roles/role-tool-ids (contracts-config) role-slug)]
+  (let [tool-ids (contracts-roles/role-tool-ids (contracts-config) role-slug)]
     (when (seq tool-ids)
       (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) tool-ids))))
 
-(def ^:private ALL-PERMISSION-CODES (map first PERMISSIONS))
+(defn- role-permissions-from-contracts
+  "Return a vector of permission code strings for the given role slug.
 
-(def ^:private ALL-TOOL-IDS (map first (merged-tool-seeds)))
+   Reads :role/permissions from contracts/roles/<role>.edn."
+  [role-slug]
+  (contracts-roles/role-permissions (contracts-config) role-slug))
 
 (def ^:private PLATFORM-ROLE-SEEDS
   [{:slug "system_admin"
-    :name "System Admin"
-    :permissions ALL-PERMISSION-CODES
-    :tool-policies (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS)}])
+    :name "System Admin"}])
 
 (defn- basic-user-chat-policy-constraints
   []
@@ -428,94 +243,17 @@
 (def ^:private ORG-ROLE-SEEDS
   [{:slug "org_admin"
     :name "Org Admin"
-    :permissions ["org.settings.read" "org.settings.update"
-                  "org.members.read" "org.members.create" "org.members.update" "org.members.delete"
-                  "org.users.invite" "org.users.create" "org.users.read" "org.users.update" "org.users.disable"
-                  "org.roles.read" "org.roles.create" "org.roles.update" "org.roles.delete"
-                  "org.tool_policy.read" "org.tool_policy.update"
-                  "org.user_policy.read" "org.user_policy.update"
-                  "org.datalakes.read" "org.datalakes.create" "org.datalakes.update" "org.datalakes.delete"
-                  "datalake.read" "datalake.query" "datalake.write" "datalake.ingest" "datalake.admin"
-                  "agent.chat.use" "agent.memory.read" "agent.memory.cross_session"
-                  "agent.runs.read_org" "agent.controls.steer" "agent.controls.follow_up"
-                  "tool.read.use" "tool.write.use" "tool.edit.use" "tool.bash.use"
-                  "tool.email.send" "tool.discord.publish" "tool.discord.send" "tool.discord.read"
-                  "tool.discord.channel.messages" "tool.discord.channel.scroll" "tool.discord.dm.messages"
-                  "tool.discord.search" "tool.discord.guilds" "tool.discord.channels"
-                  "tool.discord.list.servers" "tool.discord.list.channels"
-                  "tool.event_agents.status" "tool.event_agents.dispatch"
-                  "tool.event_agents.run_job" "tool.event_agents.upsert_job" "tool.schedule_event_agent"
-                  "tool.sandbox_container.create" "tool.sandbox_container.status" "tool.sandbox_container.exec"
-                  "tool.sandbox_container.read" "tool.sandbox_container.write" "tool.sandbox_container.commit" "tool.sandbox_container.destroy"
-                  "tool.bluesky.publish" "tool.bluesky.profile" "tool.bluesky.search"
-                  "tool.bluesky.author.feed" "tool.bluesky.timeline" "tool.semantic_query.use"
-                  "tool.memory_search.use" "tool.memory_session.use" "tool.websearch.use" "tool.graph_query.use"
-                  "org.translations.read" "org.translations.review" "org.translations.export" "org.translations.manage"
-                  "org.event_agents.control"
-                  "org.proxx.observability.read"]
-    :tool-policies (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS)}
+    :tool-policies (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids))}
    {:slug "knowledge_worker"
-    :name "Knowledge Worker"
-    :permissions ["org.datalakes.read" "datalake.read" "datalake.query"
-                  "agent.chat.use" "agent.memory.read"
-                  "agent.runs.read_own" "agent.controls.steer" "agent.controls.follow_up"
-                  "tool.read.use" "tool.semantic_query.use"
-                  "tool.memory_search.use" "tool.memory_session.use"]
-    :tool-policies [{:toolId "read" :effect "allow"}
-                    {:toolId "canvas" :effect "allow"}
-                    {:toolId "semantic_query" :effect "allow"}
-                    {:toolId "memory_search" :effect "allow"}
-                    {:toolId "memory_session" :effect "allow"}]}
+    :name "Knowledge Worker"}
    {:slug "basic_user"
-    :name "Basic User"
-    :permissions ["org.datalakes.read" "datalake.read" "datalake.query"
-                  "agent.chat.use" "agent.memory.read"
-                  "agent.runs.read_own" "agent.controls.steer" "agent.controls.follow_up"
-                  "tool.read.use" "tool.semantic_query.use"
-                  "tool.memory_search.use" "tool.memory_session.use"]
-    :tool-policies [{:toolId "read" :effect "allow"}
-                    {:toolId "canvas" :effect "allow"}
-                    {:toolId "semantic_query" :effect "allow"}
-                    {:toolId "memory_search" :effect "allow"}
-                    {:toolId "memory_session" :effect "allow"}
-                    {:toolId "agent.chat" :effect "allow" :constraints (basic-user-chat-policy-constraints)}]}
+    :name "Basic User"}
    {:slug "data_analyst"
-    :name "Data Analyst"
-    :permissions ["org.datalakes.read" "datalake.read" "datalake.query"
-                  "agent.chat.use" "agent.memory.read" "agent.memory.cross_session"
-                  "agent.runs.read_own"
-                  "tool.read.use" "tool.write.use" "tool.edit.use"
-                  "tool.semantic_query.use" "tool.memory_search.use" "tool.memory_session.use"]
-    :tool-policies [{:toolId "read" :effect "allow"}
-                    {:toolId "write" :effect "allow"}
-                    {:toolId "edit" :effect "allow"}
-                    {:toolId "canvas" :effect "allow"}
-                    {:toolId "semantic_query" :effect "allow"}
-                    {:toolId "memory_search" :effect "allow"}
-                    {:toolId "memory_session" :effect "allow"}]}
+    :name "Data Analyst"}
    {:slug "developer"
-    :name "Developer"
-    :permissions ["org.datalakes.read" "datalake.read" "datalake.query" "datalake.write" "datalake.ingest"
-                  "agent.chat.use" "agent.memory.read" "agent.memory.cross_session"
-                  "agent.runs.read_own"
-                  "tool.read.use" "tool.write.use" "tool.edit.use" "tool.bash.use"
-                  "tool.semantic_query.use" "tool.memory_search.use" "tool.memory_session.use"]
-    :tool-policies [{:toolId "read" :effect "allow"}
-                    {:toolId "write" :effect "allow"}
-                    {:toolId "edit" :effect "allow"}
-                    {:toolId "bash" :effect "allow"}
-                    {:toolId "canvas" :effect "allow"}
-                    {:toolId "semantic_query" :effect "allow"}
-                    {:toolId "memory_search" :effect "allow"}
-                    {:toolId "memory_session" :effect "allow"}]}
+    :name "Developer"}
    {:slug "translator"
-    :name "Translator"
-    :permissions ["org.datalakes.read" "datalake.read"
-                  "agent.chat.use"
-                  "org.translations.read" "org.translations.review"]
-    :tool-policies [{:toolId "read" :effect "allow"}
-                    {:toolId "canvas" :effect "allow"}
-                    {:toolId "semantic_query" :effect "allow"}]}])
+    :name "Translator"}])
 
 ;; ---------------------------------------------------------------------------
 ;; Helper Functions
@@ -542,7 +280,7 @@
   [role-slugs]
   (let [normalized (into #{}
                          (comp (map #(some-> % str str/trim not-empty))
-                               (map #(when % (runtime-roles/normalize-role (contracts-config) %)))
+                               (map #(when % (contracts-roles/normalize-role (contracts-config) %)))
                                (remove nil?))
                          (or role-slugs []))]
     (if (contains? normalized "system_admin")
@@ -640,9 +378,52 @@
     (let [tool-id (or (:toolId policy) (:tool_id policy) (:id policy))]
       (when-not tool-id
         (throw (js/Error. "toolId is required for tool policy")))
-      {:toolId (str tool-id)
+      {:toolId (tool-registry/normalize-tool-id tool-id)
        :effect (if (= (:effect policy) "deny") "deny" "allow")
        :constraints (or (:constraints policy) (:constraints_json policy) {})})))
+
+(defn- seed-tool-ids
+  "Return a stable, sorted list of tool ids that should exist in tool_definitions.
+
+   We seed from the runtime registry AND from contract capabilities so that
+   contract-driven role policies can't fail on FK constraints when a tool id
+   appears in contracts before it is added to the runtime tool registry (or
+   when different nodes deploy slightly different registries)."
+  []
+  (->> (concat (tool-registry/known-tool-ids)
+               (seq (contract-tool-ids)))
+       (keep tool-registry/normalize-tool-id)
+       distinct
+       sort
+       vec))
+
+(defn- ensure-tool-definitions!
+  "Upsert tool definitions so FK constraints on *_tool_policies can't fail.
+
+   Accepts a seq of tool-id strings (or keywords/symbols).
+   This intentionally tolerates unknown tools by inserting a placeholder.
+   Unknown tool ids may originate from contracts, UI experiments, or mixed-version
+   deployments."
+  [pool tool-ids]
+  (let [ids (->> tool-ids
+                 (keep tool-registry/normalize-tool-id)
+                 distinct
+                 vec)]
+    (if (empty? ids)
+      (js/Promise.resolve nil)
+      (-> (js/Promise.all
+           (into-array
+            (for [tool-id ids]
+              (let [{:keys [label description risk-level]} (tool-registry/get-tool tool-id)]
+                (query! pool
+                        "INSERT INTO tool_definitions (id, label, description, risk_level)
+                         VALUES ($1, $2, $3, $4)
+                         ON CONFLICT (id) DO UPDATE
+                         SET label = EXCLUDED.label,
+                             description = EXCLUDED.description,
+                             risk_level = EXCLUDED.risk_level"
+                        [tool-id (or label tool-id) (or description "") (or risk-level "low")])))))
+          (.then (fn [_] nil))))))
 
 (defn- normalize-lake-config
   [config]
@@ -699,6 +480,18 @@
     "knowledge_worker" 60
     0))
 
+(defn- permission-row-shape
+  [code]
+  (let [parts (->> (str/split (str code) #"\.")
+                   (remove str/blank?)
+                   vec)
+        action (or (peek parts) "use")
+        resource-kind (or (some->> (butlast parts) seq (str/join "_")) "permission")]
+    {:code (str code)
+     :resource-kind resource-kind
+     :action action
+     :description (str code)}))
+
 ;; ---------------------------------------------------------------------------
 ;; Database Query Helpers
 ;; ---------------------------------------------------------------------------
@@ -717,6 +510,48 @@
                (let [rows (aget result "rows")]
                  (when (and rows (> (.-length rows) 0))
                    (aget rows 0)))))))
+
+(defn- role-permissions-uses-legacy-ids?
+  [pool]
+  (-> (query! pool
+              "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'role_permissions'"
+              [])
+      (.then (fn [result]
+               (let [rows (array-seq (aget result "rows"))
+                     columns (set (map #(aget % "column_name") rows))]
+                 (contains? columns "permission_id"))))))
+
+(defn- ensure-permission-records!
+  [pool permission-codes]
+  (let [codes (unique permission-codes)]
+    (if (empty? codes)
+      (js/Promise.resolve nil)
+      (-> (js/Promise.all
+           (into-array
+            (for [code codes]
+              (let [{:keys [resource-kind action description]} (permission-row-shape code)]
+                (query! pool
+                        "INSERT INTO permissions (code, resource_kind, action, description)
+                         VALUES ($1, $2, $3, $4)
+                         ON CONFLICT (code) DO UPDATE
+                         SET resource_kind = EXCLUDED.resource_kind,
+                             action = EXCLUDED.action,
+                             description = EXCLUDED.description"
+                        [code resource-kind action description])))))
+          (.then (fn [_] nil))))))
+
+(defn- fetch-role-permission-rows!
+  [pool role-ids]
+  (-> (role-permissions-uses-legacy-ids? pool)
+      (.then
+       (fn [legacy?]
+         (if legacy?
+           (query! pool
+                   "SELECT rp.role_id, p.code AS code FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ANY($1::uuid[]) ORDER BY p.code ASC"
+                   [(into-array role-ids)])
+           (query! pool
+                   "SELECT role_id, permission_code AS code FROM role_permissions WHERE role_id = ANY($1::uuid[]) ORDER BY permission_code ASC"
+                   [(into-array role-ids)]))))))
 
 (defn- honey->sql
   "Convert HoneySQL map to [sql-string & params]."
@@ -799,21 +634,45 @@
       ON roles (org_id, slug)
       WHERE org_id IS NOT NULL;
 
-    CREATE TABLE IF NOT EXISTS permissions (
-      id BIGSERIAL PRIMARY KEY,
-      code TEXT NOT NULL UNIQUE,
-      resource_kind TEXT NOT NULL,
-      action TEXT NOT NULL,
-      description TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS role_permissions (
       role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-      permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+      permission_code TEXT NOT NULL,
       effect TEXT NOT NULL DEFAULT 'allow',
-      PRIMARY KEY (role_id, permission_id),
+      PRIMARY KEY (role_id, permission_code),
       CHECK (effect IN ('allow', 'deny'))
     );
+
+    -- Legacy compatibility: older Knoxx builds stored role permissions via
+    -- permission_id -> permissions(id). Newer builds store permission_code
+    -- directly so contracts can drive the catalog without a separate table.
+    ALTER TABLE role_permissions
+      ADD COLUMN IF NOT EXISTS permission_code TEXT;
+
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'permissions'
+      ) AND EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'role_permissions'
+          AND column_name = 'permission_id'
+      ) THEN
+        UPDATE role_permissions rp
+        SET permission_code = p.code
+        FROM permissions p
+        WHERE rp.permission_code IS NULL
+          AND rp.permission_id = p.id;
+      END IF;
+    END $$;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS role_permissions_role_code_uniq
+      ON role_permissions (role_id, permission_code)
+      WHERE permission_code IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS membership_roles (
       membership_id UUID NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
@@ -929,33 +788,24 @@
   " nil))
 
 (defn- insert-permission-seeds!
+  "Permissions are now contract-driven via role EDN files. No-op for backwards compat."
   [pool]
-  (-> (js/Promise.all
-       (into-array
-        (for [[code resource-kind action description] PERMISSIONS]
-          (query! pool
-                  "INSERT INTO permissions (code, resource_kind, action, description)
-                   VALUES ($1, $2, $3, $4)
-                   ON CONFLICT (code) DO UPDATE
-                   SET resource_kind = EXCLUDED.resource_kind,
-                       action = EXCLUDED.action,
-                       description = EXCLUDED.description"
-                  [code resource-kind action description]))))
-      (.then (fn [_] nil))))
+  (js/Promise.resolve nil))
 
 (defn- insert-tool-seeds!
   [pool]
   (-> (js/Promise.all
        (into-array
-        (for [[id label description risk-level] (merged-tool-seeds)]
-          (query! pool
-                  "INSERT INTO tool_definitions (id, label, description, risk_level)
-                   VALUES ($1, $2, $3, $4)
-                   ON CONFLICT (id) DO UPDATE
-                   SET label = EXCLUDED.label,
-                       description = EXCLUDED.description,
-                       risk_level = EXCLUDED.risk_level"
-                  [id label description risk-level]))))
+        (for [tool-id (seed-tool-ids)]
+          (let [{:keys [label description risk-level]} (tool-registry/get-tool tool-id)]
+            (query! pool
+                    "INSERT INTO tool_definitions (id, label, description, risk_level)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (id) DO UPDATE
+                     SET label = EXCLUDED.label,
+                         description = EXCLUDED.description,
+                         risk_level = EXCLUDED.risk_level"
+                    [tool-id (or label tool-id) (or description "") (or risk-level "low")])))))
       (.then (fn [_] nil))))
 
 ;; ---------------------------------------------------------------------------
@@ -1020,36 +870,35 @@
   [pool role-id permission-codes]
   (let [codes (unique permission-codes)]
     (-> (query! pool "DELETE FROM role_permissions WHERE role_id = $1" [role-id])
+        (.then (fn [_] (role-permissions-uses-legacy-ids? pool)))
         (.then
-         (fn [_]
+         (fn [legacy?]
            (if (empty? codes)
              nil
-             (-> (query! pool
-                         "SELECT id, code FROM permissions WHERE code = ANY($1::text[])"
-                         [(into-array codes)])
-                 (.then
-                  (fn [result]
-                    (let [rows (aget result "rows")
-                          found (set (for [i (range (.-length rows))]
-                                       (aget (aget rows i) "code")))
-                          missing (filter #(not (contains? found %)) codes)]
-                      (when (seq missing)
-                        (throw (js/Error.
-                                (str "Unknown permission codes: "
-                                     (str/join ", " missing)))))
+             (if legacy?
+               (-> (ensure-permission-records! pool codes)
+                   (.then
+                    (fn [_]
                       (js/Promise.all
                        (into-array
-                        (for [i (range (.-length rows))]
-                          (let [row (aget rows i)
-                                perm-id (aget row "id")]
-                            (query! pool
-                                    "INSERT INTO role_permissions (role_id, permission_id, effect) VALUES ($1, $2, 'allow') ON CONFLICT (role_id, permission_id) DO UPDATE SET effect = EXCLUDED.effect"
-                                    [role-id perm-id])))))))))))))))
+                        (for [code codes]
+                          (query! pool
+                                  "INSERT INTO role_permissions (role_id, permission_id, effect) SELECT $1, id, 'allow' FROM permissions WHERE code = $2 ON CONFLICT (role_id, permission_id) DO UPDATE SET effect = EXCLUDED.effect"
+                                  [role-id code])))))))
+               (js/Promise.all
+                (into-array
+                 (for [code codes]
+                   (query! pool
+                           "INSERT INTO role_permissions (role_id, permission_code, effect) VALUES ($1, $2, 'allow') ON CONFLICT (role_id, permission_code) DO UPDATE SET effect = EXCLUDED.effect"
+                           [role-id code])))))))))))
+
 
 (defn- set-role-tool-policies!
   [pool role-id tool-policies]
-  (let [normalized (mapv normalize-tool-policy tool-policies)]
+  (let [normalized (mapv normalize-tool-policy tool-policies)
+        tool-ids (mapv :toolId normalized)]
     (-> (query! pool "DELETE FROM role_tool_policies WHERE role_id = $1" [role-id])
+        (.then (fn [_] (ensure-tool-definitions! pool tool-ids)))
         (.then
          (fn [_]
            (js/Promise.all
@@ -1058,12 +907,15 @@
                (query! pool
                        "INSERT INTO role_tool_policies (role_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (role_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
                        [role-id (:toolId policy) (:effect policy)
-                        (js/JSON.stringify (clj->js (:constraints policy)))])))))))))
+                        (js/JSON.stringify (clj->js (:constraints policy)))]))))))
+        (.then (fn [_] nil)))))
 
 (defn- set-membership-tool-policies!
   [pool membership-id tool-policies]
-  (let [normalized (mapv normalize-tool-policy tool-policies)]
+  (let [normalized (mapv normalize-tool-policy tool-policies)
+        tool-ids (mapv :toolId normalized)]
     (-> (query! pool "DELETE FROM user_tool_policies WHERE membership_id = $1" [membership-id])
+        (.then (fn [_] (ensure-tool-definitions! pool tool-ids)))
         (.then
          (fn [_]
            (js/Promise.all
@@ -1072,7 +924,8 @@
                (query! pool
                        "INSERT INTO user_tool_policies (membership_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (membership_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
                        [membership-id (:toolId policy) (:effect policy)
-                        (js/JSON.stringify (clj->js (:constraints policy)))])))))))))
+                        (js/JSON.stringify (clj->js (:constraints policy)))]))))))
+        (.then (fn [_] nil)))))
 
 (defn- ensure-builtin-org-roles!
   [pool org]
@@ -1087,13 +940,16 @@
                                   :system-managed true})
               (.then
                (fn [role]
-                 (-> (set-role-permissions! pool (aget role "id") (:permissions seed))
-                     (.then (fn [_]
-                              (let [policies (or (role-tool-policies-from-contracts (:slug seed))
-                                                 (:tool-policies seed)
-                                                 (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS))]
-                                (set-role-tool-policies! pool (aget role "id")
-                                                         policies)))))))))))
+                 (let [perms (or (role-permissions-from-contracts (:slug seed))
+                                 (:permissions seed)
+                                 [])]
+                   (-> (set-role-permissions! pool (aget role "id") perms)
+                       (.then (fn [_]
+                                (let [policies (or (role-tool-policies-from-contracts (:slug seed))
+                                                   (:tool-policies seed)
+                                                   (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids)))]
+                                  (set-role-tool-policies! pool (aget role "id")
+                                                           policies))))))))))))
       (.then (fn [_] nil))))
 
 (defn- ensure-builtin-platform-roles!
@@ -1109,13 +965,16 @@
                                   :system-managed true})
               (.then
                (fn [role]
-                 (-> (set-role-permissions! pool (aget role "id") (:permissions seed))
-                     (.then (fn [_]
-                              (let [policies (or (role-tool-policies-from-contracts (:slug seed))
-                                                 (:tool-policies seed)
-                                                 (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) ALL-TOOL-IDS))]
-                                (set-role-tool-policies! pool (aget role "id")
-                                                         policies)))))))))))
+                 (let [perms (or (role-permissions-from-contracts (:slug seed))
+                                 (:permissions seed)
+                                 [])]
+                   (-> (set-role-permissions! pool (aget role "id") perms)
+                       (.then (fn [_]
+                                (let [policies (or (role-tool-policies-from-contracts (:slug seed))
+                                                   (:tool-policies seed)
+                                                   (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids)))]
+                                  (set-role-tool-policies! pool (aget role "id")
+                                                           policies))))))))))))
       (.then (fn [_] nil))))
 
 (defn- tool-allowed
@@ -1175,9 +1034,7 @@
     (js/Promise.resolve [])
     (let [role-ids (mapv #(aget % "id") roles)]
       (-> (js/Promise.all
-           [(query! pool
-                    "SELECT rp.role_id, p.code FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ANY($1::uuid[]) ORDER BY p.code ASC"
-                    [(into-array role-ids)])
+           [(fetch-role-permission-rows! pool role-ids)
             (query! pool
                     "SELECT rtp.role_id, rtp.tool_id, rtp.effect, rtp.constraints_json FROM role_tool_policies rtp WHERE rtp.role_id = ANY($1::uuid[]) ORDER BY rtp.tool_id ASC"
                     [(into-array role-ids)])])
@@ -1493,12 +1350,8 @@
 ;; JS Conversion Helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- ->js-permission [row]
-  #js {:id (aget row "id")
-       :code (aget row "code")
-       :resourceKind (aget row "resource_kind")
-       :action (aget row "action")
-       :description (aget row "description")})
+(defn- ->js-permission [code]
+  #js {:code code})
 
 (defn- ->js-tool [row]
   #js {:id (aget row "id")
@@ -1557,10 +1410,14 @@
                     :allowed (tool-allowed ctx tool-id)}))))
 
 (defn- factory-list-permissions
-  [pool]
-  (-> (query! pool "SELECT id, code, resource_kind, action, description FROM permissions ORDER BY code ASC" [])
-      (.then (fn [r]
-               #js {:permissions (into-array (map ->js-permission (aget r "rows")))}))))
+  [_pool]
+  (let [all-codes (->> (contracts-roles/list-role-slugs (contracts-config))
+                       (mapcat #(contracts-roles/role-permissions (contracts-config) %))
+                       distinct
+                       sort
+                       vec)]
+    (js/Promise.resolve
+     #js {:permissions (into-array (map ->js-permission all-codes))})))
 
 (defn- factory-list-tools
   [pool]

@@ -97,6 +97,14 @@ function rowBody(row: MemorySessionRow): string {
   return "";
 }
 
+function eventFeedKey(event: RunEvent, index: number): string {
+  const runId = typeof event.run_id === "string" ? event.run_id : "run";
+  const type = typeof event.type === "string" ? event.type : "event";
+  const toolCallId = typeof event.tool_call_id === "string" ? event.tool_call_id : "no-tool-id";
+  const at = typeof event.at === "string" ? event.at : "no-time";
+  return `${runId}:${type}:${toolCallId}:${at}:${index}`;
+}
+
 function EventFeed({ events }: { events: RunEvent[] }) {
   if (events.length === 0) {
     return <div className="text-sm text-slate-500">No runtime events captured yet.</div>;
@@ -105,7 +113,7 @@ function EventFeed({ events }: { events: RunEvent[] }) {
   return (
     <div className="space-y-2">
       {events.slice().reverse().map((event, index) => (
-        <div key={`${event.type ?? "event"}:${event.at ?? index}`} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+        <div key={eventFeedKey(event, index)} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-semibold text-slate-100">
               {event.type ?? "event"}
@@ -308,7 +316,15 @@ export default function AgentsPage() {
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (message.startsWith("404 ")) {
+            setDetail(null);
+            setSelectedRunId((current) => (current === selectedRunId ? null : current));
+          } else {
+            setError(message);
+          }
+        }
       } finally {
         if (!cancelled) setLoadingDetail(false);
       }
