@@ -25,6 +25,7 @@ If it helps you find a sharper joke, reference, or vibe, you may also scout publ
 bluesky.profile, bluesky.author.feed, or bluesky.timeline before deciding whether to speak.
 If you have something genuinely fun, musical, witty, or socially catalytic to add, post as many messages as you want
 into either 1494137016303095828 (frankie-infinite-yap) or 1444189585373663417 (errorcoded-slop).
+When responding to a specific message, use discord.send with the reply_to parameter set to that message's ID.
 You may include attachment_urls with discord.send, or attachmentUrls with discord.publish,
 when sharing a generated/local asset improves the bit. For local filesystem attachments,
 pass strings only: workspace-relative paths such as output/meme.png, @-prefixed workspace paths,

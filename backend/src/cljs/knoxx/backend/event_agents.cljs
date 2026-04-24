@@ -387,9 +387,11 @@
          "Event kind: " (:eventKind event) "\n"
          "Event id: " (:id event) "\n"
          "Occurred at: " (:timestamp event) "\n\n"
-         (when-let [channel-id (:channelId payload)]
-           (str "Channel ID: " channel-id "\n"))
-         (when-let [author (:authorUsername payload)]
+(when-let [channel-id (:channelId payload)]
+            (str "Channel ID: " channel-id "\n"))
+          (when-let [message-id (:messageId payload)]
+            (str "Message ID: " message-id "\n"))
+          (when-let [author (:authorUsername payload)]
            (str "Author: " author "\n"))
          (when-let [repository (:repository payload)]
            (str "Repository: " repository "\n"))
