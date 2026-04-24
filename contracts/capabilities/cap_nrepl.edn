@@ -1,0 +1,7 @@
+{:cap/id :cap/nrepl
+ :cap/tools [:nrepl.eval]
+ :cap/user-surfaces [{:surface/id :workspace/developer-repl
+                      :surface/label "Developer nREPL"
+                      :surface/kind :terminal
+                      :surface/routes ["/ops/settings" "/ops/documents"]
+                      :surface/description "Live evaluation against the running shadow-cljs Knoxx backend (dangerous; developer-only)."}]}
