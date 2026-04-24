@@ -6,7 +6,7 @@
  :contract/actor "discord_automation"
  :source-kind :discord
  :source-mode :synthesize
- :cadence-min 5
+ :cadence-min 10
 
  :agent
  {:roles [:creative_catalyst :developer]

@@ -10,7 +10,7 @@
 
  :agent
  {:roles [:developer :creative_catalyst]
-  :model "gpt-5.4"
+  :model "gemma4:31b"
   :thinking :high}
 
  :prompts
@@ -24,16 +24,7 @@
  :data
  {:filters {:channels ["1444189585373663417"]
             :keywords ["change" "fix" "add" "remove" "update" "system-request"]}
-  :source {:max-messages 50}}
-
- :actor
- {:capabilities [:cap/read
-                 :cap/write
-                 :cap/edit
-                 :cap/bash
-                 :cap/contract-write
-                 :cap/memory
-                 :cap/semantic]}
+  :source {:max-messages 200}}
 
  :hooks
  {:before {}
