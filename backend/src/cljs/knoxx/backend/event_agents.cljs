@@ -628,9 +628,16 @@
                                  :eventKind "manual.event"
                                  :payload {}}
                                 (or event {}))
-        matching-jobs (->> (:jobs control)
-                           (filter #(job-matches-event? control % normalized-event))
-                           vec)]
+        raw-matches (->> (:jobs control)
+                         (filter #(job-matches-event? control % normalized-event))
+                         vec)
+        matching-jobs (->> raw-matches
+                          (reduce (fn [acc job]
+                                    (if (some #(= (:id %) (:id job)) acc)
+                                      acc
+                                      (conj acc job)))
+                                  [])
+                          vec)]
     (append-recent-event! normalized-event)
     (if (empty? matching-jobs)
       (js/Promise.resolve {:matchedJobs []
