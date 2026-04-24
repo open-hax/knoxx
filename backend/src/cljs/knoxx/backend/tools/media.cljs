@@ -189,6 +189,10 @@
   [value]
   (str/starts-with? (str (or value "")) "data:"))
 
+(defn source-file-url?
+  [value]
+  (str/starts-with? (str (or value "")) "file://"))
+
 (defn sanitize-mime-type
   [value fallback]
   (let [raw (some-> value str str/trim not-empty)
