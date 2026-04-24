@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.agent-hydration :refer [settings-state* ensure-settings!
                                                    passive-hydration! passive-memory-hydration!
-                                                   build-agent-user-message build-agent-multimodal-message
+                                                   build-agent-user-message
                                                    hydration-sources]]
             [knoxx.backend.agent-runtime :refer [ensure-agent-session! remove-agent-session!]]
             [knoxx.backend.agents.content :as content :refer [model-ready-content-parts merge-content-parts]]
@@ -270,25 +270,65 @@
   [runtime config session-id run-id conversation-id started-ms model-id mode
    session message prompt-content-parts hydration memory-hydration
    persisted-request-messages agent-spec]
-  (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms (aget runtime "crypto"))
-        abort! (fn [reason] (stream/request-abort! state session reason))
-        _registered (stream/register-active-turn! state abort!)
-        unsubscribe (.subscribe session (stream/build-subscribe-handler state session))]
-    (-> (.catch
-         (.then (.prompt session
-                         (if (seq prompt-content-parts)
-                           (build-agent-multimodal-message message prompt-content-parts hydration memory-hydration)
-                           (build-agent-user-message message hydration memory-hydration)))
-                (fn []
-                  (unsubscribe)
-                  (turn-control/unregister-active-turn! conversation-id run-id)
-                  (finalize-turn-success! config state session run-id conversation-id session-id started-ms model-id mode
-                                          hydration memory-hydration persisted-request-messages)))
-         (fn [err]
-           (unsubscribe)
-           (turn-control/unregister-active-turn! conversation-id run-id)
-           (finalize-turn-failure! config state session run-id conversation-id session-id started-ms
-                                   hydration memory-hydration persisted-request-messages err))))))
+  (letfn [(content-part-type [part]
+            (cond
+              (keyword? (:type part)) (name (:type part))
+              (string? (:type part)) (:type part)
+              :else nil))
+
+          (data-url->image-attachment [raw]
+            (when (and (string? raw) (str/starts-with? raw "data:"))
+              (let [[meta b64] (str/split raw #"," 2)
+                    meta (or meta "")
+                    mime (some-> meta
+                                 (str/replace-first #"^data:" "")
+                                 (str/split #";" 2)
+                                 first
+                                 str/trim
+                                 content/nonblank)
+                    b64 (content/nonblank b64)]
+                (when b64
+                  {:data b64
+                   :mimeType mime}))))
+
+          (image-part->pi-attachment [part]
+            (when (= "image" (content-part-type part))
+              (let [raw-data (content/nonblank (:data part))
+                    parsed (data-url->image-attachment raw-data)
+                    data (or (:data parsed) raw-data)
+                    ;; NOTE: pi-coding-agent expects raw base64 in :data (not a data: URL)
+                    mime-type (or (content/nonblank (:mimeType part))
+                                  (:mimeType parsed))]
+                (when data
+                  (cond-> {:type "image"
+                           :data data}
+                    (content/nonblank mime-type) (assoc :mimeType mime-type))))))]
+
+    (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms (aget runtime "crypto"))
+          abort! (fn [reason] (stream/request-abort! state session reason))
+          _registered (stream/register-active-turn! state abort!)
+          unsubscribe (.subscribe session (stream/build-subscribe-handler state session))
+          parts (or prompt-content-parts [])
+          images (->> parts (keep image-part->pi-attachment) vec)
+          omitted-count (max 0 (- (count parts) (count images)))
+          base-text (build-agent-user-message message hydration memory-hydration)
+          final-text (cond-> base-text
+                       (pos? omitted-count)
+                       (str "\n\n" "[Note: " omitted-count " non-image attachment(s) were omitted because the current pi AgentSession API only supports image attachments.]"))
+          content (if (seq images)
+                    (clj->js (into [{:type "text" :text final-text}] images))
+                    final-text)]
+      (-> (.sendUserMessage session content)
+          (.then (fn []
+                   (unsubscribe)
+                   (turn-control/unregister-active-turn! conversation-id run-id)
+                   (finalize-turn-success! config state session run-id conversation-id session-id started-ms model-id mode
+                                           hydration memory-hydration persisted-request-messages)))
+          (.catch (fn [err]
+                    (unsubscribe)
+                    (turn-control/unregister-active-turn! conversation-id run-id)
+                    (finalize-turn-failure! config state session run-id conversation-id session-id started-ms
+                                            hydration memory-hydration persisted-request-messages err)))))))
 
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
