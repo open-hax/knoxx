@@ -44,8 +44,9 @@
    :output-dir "dist"
    :modules {:server {:init-fn knoxx.backend.entrypoint/init}}
    :js-options {:js-provider :import
-                :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises" "node:path" "node:crypto" "node:url"}
-                }
+                :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
+                                  "node:path" "node:crypto" "node:url"
+                                  "@modelcontextprotocol/sdk"}}
   :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true
@@ -56,7 +57,9 @@
    :output-to "target/server_repl.js"
    :main knoxx.backend.entrypoint/init
    :js-options {:js-provider :import
-                :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises" "node:path" "node:crypto" "node:url"}}
+                :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
+                                  "node:path" "node:crypto" "node:url"
+                                  "@modelcontextprotocol/sdk"}}
 
    :compiler-options {:output-feature-set :es-next
                       :optimizations :simple

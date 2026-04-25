@@ -24,7 +24,7 @@
             ["node:util" :refer [promisify]]
             ["nodemailer" :default nodemailer]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
-            ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
+            ["@modelcontextprotocol/sdk/server/streamable-http.js" :refer [StreamableHTTPServerTransport]]
             ["@modelcontextprotocol/sdk/types.js" :refer [isInitializeRequest]]
             ["zod" :refer [z]]))
 
