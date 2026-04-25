@@ -48,7 +48,8 @@
    :js-options {:js-provider :import
                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
                                   "node:path" "node:crypto" "node:url"
-                                  "@modelcontextprotocol/sdk"}}
+                                  "@modelcontextprotocol/sdk"
+                                  }}
   :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true

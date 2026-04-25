@@ -5,7 +5,7 @@
    be run directly from shadow-cljs, enabling nREPL-driven runtime experiments.
 
    This namespace is intended to be used as a shadow-cljs :esm + :runtime :node
-   module with an :init-fn." 
+   module with an :init-fn."
   (:require [knoxx.backend.bootstrap :as bootstrap]
             ["fastify" :default Fastify]
             ["@fastify/cors" :default fastifyCors]
@@ -24,7 +24,7 @@
             ["node:util" :refer [promisify]]
             ["nodemailer" :default nodemailer]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
-            ["@modelcontextprotocol/sdk/server/streamable-http.js" :refer [StreamableHTTPServerTransport]]
+            ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
             ["@modelcontextprotocol/sdk/types.js" :refer [isInitializeRequest]]
             ["zod" :refer [z]]))
 
@@ -32,7 +32,7 @@
   "Knoxx expects runtime.fs to be promise-based (fs/promises) but some routes
    also need fs.createReadStream.
 
-   Provide a merged object that includes both." 
+   Provide a merged object that includes both."
   []
   (js/Object.assign
    #js {}
@@ -41,7 +41,7 @@
         :promises (aget fs "promises")}))
 
 (defn init
-  "shadow-cljs module init-fn. Starts the Fastify server." 
+  "shadow-cljs module init-fn. Starts the Fastify server."
   []
   (bootstrap/bootstrap!
    #js {:Fastify Fastify
