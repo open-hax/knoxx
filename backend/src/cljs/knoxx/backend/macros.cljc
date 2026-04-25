@@ -49,6 +49,7 @@
                        ~'send-fetch-response!
                        ~'session-guard
                        ~'optional-session-guard
+                       ~'run!
                        ~'bearer-headers
                        ~'fetch-json
                        ~'request-query-string
@@ -56,7 +57,12 @@
            ~(if pre-handler-mode?
               `(~'route! ~'app ~method-name ~route-string
                 (cljs.core/js-obj
-                 "preHandler" (cljs.core/clj->js ~pre-handlers)
+                 "preHandler" (fn [~'request ~'reply ~'done]
+                                (-> (~'run! ~(vec pre-handlers)
+                                     (fn [~'ctx] (aset ~'request "ctx" ~'ctx))
+                                     ~'request ~'reply)
+                                    (.then (fn [_] (~'done)))
+                                    (.catch ~'done)))
                  "handler"    (fn [~'request ~'reply]
                                 (let [~'ctx (aget ~'request "ctx")]
                                   ~@body))))
