@@ -264,7 +264,7 @@
 (defn reply-attachment-content-parts
   [tool-receipts]
   (->> (or tool-receipts [])
-       (filter #(= "workspace_media.attach" (:tool_name %)))
+       ;; All tool receipts may carry content_parts (images, docs) encountered during the turn.
        (mapcat #(or (:content_parts %) (:contentParts %) []))
        vec))
 

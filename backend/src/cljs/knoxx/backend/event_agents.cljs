@@ -928,19 +928,19 @@
                                                           (summarize-discord-channel channelId messages)))
                                                    (remove str/blank?)
                                                    (str/join "\n\n"))]
-(if (str/blank? summary)
-                                     (js/Promise.resolve nil)
-                                     (actions-dispatch/dispatch!
-                                      {:config config
-                                       :event {:sourceKind "discord"
-                                               :eventKind "discord.snapshot.summary"
-                                               :timestamp (.toISOString (js/Date.))
-                                               :payload {:summary summary
-                                                         :channelId (first channels)
-                                                         :publishChannels publish-channels}}
-                                       :job job
-                                       :run-agent! start-agent-run!}
-                                      (job-step job))))))
+                                  (if (str/blank? summary)
+                                    (js/Promise.resolve nil)
+                                    (actions-dispatch/dispatch!
+                                     {:config config
+                                      :event {:sourceKind "discord"
+                                              :eventKind "discord.snapshot.summary"
+                                              :timestamp (.toISOString (js/Date.))
+                                              :payload {:summary summary
+                                                        :channelId (first channels)
+                                                        :publishChannels publish-channels}}
+                                      :job job
+                                      :run-agent! start-agent-run!}
+                                     (job-step job))))))
                    (js/Promise.resolve nil)))))))
 
 (defn- execute-direct-job!
@@ -952,8 +952,7 @@
                                       :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}}
                               :job job
                               :run-agent! start-agent-run!}
-                             (job-step job))
-)
+                             (job-step job)))
 
 (defn- execute-cron-job!
   [config job]
@@ -1236,4 +1235,3 @@
    Returns the template map or nil."
   [template-id]
   (templates/get-template template-id))
-)

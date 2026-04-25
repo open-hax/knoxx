@@ -351,7 +351,13 @@
         started-at (now-iso)
         started-ms (.now js/Date)
         existing-messages (vec (or (:messages (session-store/get-session-sync session-id)) []))
-        seeded-messages (transcript/ensure-system-message existing-messages agent-spec)
+seeded-messages (->> (transcript/ensure-system-message existing-messages agent-spec)
+                     ;; Strip historical :content-parts (base64 images) from seeded context.
+                     ;; Rationale: accumulated base64 from prior turns bloats the
+                     ;; LLM request payload — especially in sticky event-agent sessions
+                     ;; that fire on every Discord message. Only the current turn needs
+                     ;; image data; history is adequately represented by text content.
+                     (mapv #(dissoc % :content-parts)))
         auth-extra (auth-snapshot auth-context)]
     (cond
       (and thinking-level-raw (nil? parsed-thinking-level))

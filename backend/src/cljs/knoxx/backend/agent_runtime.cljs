@@ -470,6 +470,61 @@
                                      (.then (fn [result]
                                               (let [session (aget result "session")]
                                                 (.setThinkingLevel session thinking-level)
+                                                ;; Wire afterToolCall: inject images from tool results
+                                                ;; into the LLM context immediately. When the agent
+                                                ;; reads a Discord channel and encounters an image, it
+                                                ;; sees it inline — same as a human scrolling Discord.
+                                                (.setAfterToolCall
+                                                  (.-agent session)
+                                                  (fn [ctx _signal]
+                                                    (let [result     (aget ctx "result")
+                                                          details    (when result (aget result "details"))
+                                                          raw-parts  (or (when details (aget details "content_parts"))
+                                                                         (when details (aget details "contentParts"))
+                                                                         #js [])
+                                                          img-parts  (->> (array-seq raw-parts)
+                                                                          (filter #(= "image" (some-> (aget % "type") str str/lower-case)))
+                                                                          vec)
+                                                          fetch-b64! (fn [url]
+                                                                       (-> (js/fetch url)
+                                                                           (.then (fn [r]
+                                                                                    (when-not (.-ok r)
+                                                                                      (throw (js/Error. (str "img fetch failed: " (.-status r)))))
+                                                                                    (.-arrayBuffer r)))
+                                                                           (.then (fn [ab]
+                                                                                    (let [buf (js/Buffer.from ab)]
+                                                                                      (str "data:image/png;base64," (.toString buf "base64")))))))
+                                                          materialize! (fn [part]
+                                                                         (let [url  (some-> (aget part "url")  str not-empty)
+                                                                               data (some-> (aget part "data") str not-empty)
+                                                                               mime (or (some-> (aget part "mimeType") str not-empty) "image/png")]
+                                                                           (cond
+                                                                             (and data (str/starts-with? data "data:"))
+                                                                             (js/Promise.resolve
+                                                                               (let [comma (.indexOf data ",")]
+                                                                                 #js {:type "image"
+                                                                                      :data (if (>= comma 0) (.slice data (inc comma)) data)
+                                                                                      :mimeType mime}))
+                                                                             (and data (not (str/starts-with? data "http")))
+                                                                             (js/Promise.resolve #js {:type "image" :data data :mimeType mime})
+                                                                             url
+                                                                             (-> (fetch-b64! url)
+                                                                                 (.then (fn [data-url]
+                                                                                          (let [comma (.indexOf data-url ",")]
+                                                                                            #js {:type "image"
+                                                                                                 :data (if (>= comma 0) (.slice data-url (inc comma)) data-url)
+                                                                                                 :mimeType mime}))))
+                                                                             :else (js/Promise.resolve nil))))]
+                                                      (if (seq img-parts)
+                                                        (-> (.all js/Promise (clj->js (mapv materialize! img-parts)))
+                                                            (.then (fn [materialized]
+                                                                     (let [good (->> (array-seq materialized) (remove nil?) vec)]
+                                                                       (when (seq good)
+                                                                         (let [existing (or (some-> result (aget "content")) #js [])
+                                                                               merged   (clj->js (into (vec (array-seq existing)) good))]
+                                                                           #js {:content merged})))))
+                                                            (.catch (fn [_] nil)))
+                                                        (js/Promise.resolve nil)))))
                                                 session)))))]
             (if (no-content? model)
               (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))

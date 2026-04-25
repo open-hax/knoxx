@@ -236,25 +236,57 @@
                                                                          (.catch (fn [_]
                                                                                    (inactive-row titled-row)))))))
                                                     enrich-promises (mapv enrich-row page-rows)]
-                                           (doseq [row page-rows]
-                                             (warm-title-cache! (str (:session row))))
-                                           (-> (.all js/Promise (clj->js enrich-promises))
-                                               (.then (fn [enriched-rows]
-                                                        (json-response! reply 200 (cond-> {:ok true
-                                                                                           :rows (vec (js->clj enriched-rows :keywordize-keys true))
-                                                                                           :offset offset
-                                                                                           :limit limit
-                                                                                           :has_more page-has-more}
-                                                                                    (not page-has-more)
-                                                                                    (assoc :total visible-total)))
-                                                        nil))
-                                               (.catch (fn [err]
-                                                         (error-response! reply err 502)
-                                                         nil))))))
-                        (.catch (fn [err]
-                                  (error-response! reply err 502)
-                                  nil)))))))))
-
+                                           (if-not redis-client
+                                             (do (doseq [row page-rows] (warm-title-cache! (str (:session row))))
+                                                 (-> (.all js/Promise (clj->js enrich-promises))
+                                                     (.then (fn [enriched-rows]
+                                                               (json-response! reply 200
+                                                                               (cond-> {:ok true :rows (vec (js->clj enriched-rows :keywordize-keys true))
+                                                                                        :offset offset :limit limit :has_more page-has-more}
+                                                                                 (not page-has-more) (assoc :total visible-total)))
+                                                               nil))
+                                                     (.catch (fn [err] (error-response! reply err 502) nil))))
+                                             (-> (session-store/list-active-sessions redis-client)
+                                                 (.then (fn [live-ids]
+                                                           (-> (.all js/Promise (clj->js (mapv #(session-store/get-session redis-client %) (vec live-ids))))
+                                                               (.then (fn [live-js]
+                                                                         (let [live      (vec (js->clj live-js :keywordize-keys true))
+                                                                               op-ids   (set (map #(str (:session %)) page-rows))
+                                                                               synthetic (->> live
+                                                                                              (filter #(and (:conversation_id %)
+                                                                                                           (not (op-ids (str (:conversation_id %))))
+                                                                                                           (contains? #{"running" "waiting_input"} (:status %))))
+                                                                                              (map (fn [s]
+                                                                                                     {:session       (:conversation_id s)
+                                                                                                      :is_active     true
+                                                                                                      :active_status (:status s)
+                                                                                                      :has_active_stream (boolean (:has_active_stream s))
+                                                                                                      :title         (str "Running · " (or (:run_id s) (:conversation_id s)))
+                                                                                                      :event_count   0
+                                                                                                      :last_ts       (:updated_at s)
+                                                                                                      :actor_id      (:actor_id s)
+                                                                                                      :contract_id   (get-in s [:agent_spec :contract_id])})))
+                                                                               all-rows (vec (concat synthetic page-rows))]
+                                                                           (doseq [row all-rows] (warm-title-cache! (str (:session row))))
+                                                                           (-> (.all js/Promise (clj->js (mapv enrich-row all-rows)))
+                                                                               (.then (fn [enriched-rows]
+                                                                                         (json-response! reply 200
+                                                                                                         (cond-> {:ok true :rows (vec (js->clj enriched-rows :keywordize-keys true))
+                                                                                                                  :offset offset :limit limit :has_more page-has-more}
+                                                                                                           (not page-has-more) (assoc :total visible-total)))
+                                                                                         nil))
+                                                                               (.catch (fn [err] (error-response! reply err 502) nil)))))
+                                                               (.catch (fn [err] (error-response! reply err 502) nil)))))
+                                                 (.catch (fn [_]
+                                                            (doseq [row page-rows] (warm-title-cache! (str (:session row))))
+                                                            (-> (.all js/Promise (clj->js enrich-promises))
+                                                                (.then (fn [enriched-rows]
+                                                                          (json-response! reply 200
+                                                                                          (cond-> {:ok true :rows (vec (js->clj enriched-rows :keywordize-keys true))
+                                                                                                   :offset offset :limit limit :has_more page-has-more}
+                                                                                            (not page-has-more) (assoc :total visible-total)))
+                                                                          nil))
+                                                                (.catch (fn [err] (error-response! reply err 502) nil))))))))))))))))))
   (route! app "GET" "/api/memory/session-titles/status"
           (fn [request reply]
             (if-not (openplanner-enabled? config)
