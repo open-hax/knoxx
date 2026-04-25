@@ -1,36 +1,63 @@
 (ns knoxx.backend.macros)
 
-;; Two modes of defroute, dispatched on whether the arg after route-string
-;; is a vector (guards) or starts the body directly (classic).
+;; defroute — unified route definition macro.
 ;;
-;; Classic mode:
-;;   (defroute fn-name [extra-dep-syms] method path & body)
-;;   Expands to (defn fn-name [app runtime config deps] ...)
-;;   body receives ctx from with-request-context!
+;; Signature:
+;;   (defroute fn-name [extra-dep-syms] method path [& pre-handlers] & body)
+;;   (defroute fn-name [extra-dep-syms] method path & body)           ; classic, no preHandlers
 ;;
-;; Guard-pipeline mode:
-;;   (defroute fn-name [] method path [:guard ...] & body)
-;;   Expands to (defn fn-name [app runtime config deps] ...)
-;;   deps must contain :run! (a (make-route-runner deps) value);
-;;   body receives ctx assembled by apply-guards.
-;;   Called as: (fn-name app runtime config (assoc deps :run! run!))
+;; Expands to:
+;;   (defn fn-name [app runtime config deps] ...)
+;;
+;; preHandler mode (preferred for new routes):
+;;   [pre-handlers] is a vector of Fastify preHandler hook fns, looked up from
+;;   deps by keyword or passed directly. Fastify runs them in order before the
+;;   handler; each hook attaches its payload to request.* and calls done().
+;;   The handler body receives `ctx` bound from (aget request "ctx").
+;;
+;;   Example guard in deps:
+;;     (defn make-session-guard [runtime]
+;;       (fn [req _reply done]
+;;         (-> (with-request-context! runtime req)
+;;             (.then (fn [ctx] (aset req "ctx" ctx) (done)))
+;;             (.catch done))))
+;;
+;;   Usage:
+;;     (defroute my-route! [ensure-role-can-use!]
+;;       "GET" "/api/foo"
+;;       [session-guard]
+;;       (json-response! reply 200 {:ctx ctx}))
+;;
+;; Classic mode (backward compat — migrating routes incrementally):
+;;   No preHandlers vector; with-request-context! is called inside the handler
+;;   directly, as before. body still receives ctx.
 
 (defmacro defroute
   [fn-name extra-deps method-name route-string & rest]
   {:clj-kondo/lint-as 'clojure.core/defn
    :clj-kondo/ignore [:unresolved-symbol :unused-binding]}
-  (let [guards-mode? (and (seq rest) (vector? (first rest)))
-        guards       (when guards-mode? (first rest))
-        body         (if guards-mode? (next rest) rest)]
-    (if guards-mode?
+  (let [pre-handler-mode? (and (seq rest) (vector? (first rest)))
+        pre-handlers      (when pre-handler-mode? (first rest))
+        body              (if pre-handler-mode? (next rest) rest)]
+    (if pre-handler-mode?
+      ;; ── preHandler mode ──────────────────────────────────────────────
       `(defn ~fn-name [~'app ~'runtime ~'config ~'deps]
-         (let [{:keys [~'route! ~'run!]} ~'deps]
+         (let [{:keys [~'route!
+                       ~'json-response!
+                       ~'error-response!
+                       ~'ensure-permission!
+                       ~'clip-text
+                       ~'send-fetch-response!
+                       ~'bearer-headers
+                       ~'fetch-json
+                       ~'request-query-string
+                       ~@extra-deps]} ~'deps]
            (~'route! ~'app ~method-name ~route-string
-            (fn [~'req ~'reply]
-              (-> (~'run! ~guards ~'req ~'reply)
-                  (.then (fn [~'ctx]
-                           (when ~'ctx
-                             ~@body))))))))
+            #js {:preHandler (clj->js ~pre-handlers)
+                 :handler    (fn [~'request ~'reply]
+                               (let [~'ctx (aget ~'request "ctx")]
+                                 ~@body))})))
+      ;; ── Classic mode (with-request-context! inline) ──────────────────
       `(defn ~fn-name [~'app ~'runtime ~'config ~'deps]
          (let [{:keys [~'route!
                        ~'json-response!
