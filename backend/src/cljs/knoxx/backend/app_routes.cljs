@@ -9,6 +9,7 @@
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.contracts-routes :as contracts-routes]
             [knoxx.backend.document-routes :as document-routes]
+            [knoxx.backend.guards :as guards]
             [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
             [knoxx.backend.memory-routes :as memory-routes]
             [knoxx.backend.model-routes :as model-routes]
@@ -350,7 +351,7 @@
 
 (defn- register-submodule-routes!
   [app config]
-    
+
   (admin-routes/register-admin-routes! app runtime
                                        {:route! route!
                                         :json-response! json-response!
@@ -396,18 +397,22 @@
                                           :lounge-messages* lounge-messages*
                                           :authorized-session-ids! authorized-session-ids!})
 
-  (tool-routes/register-tool-routes! app runtime config
-                                     {:route! route!
-                                      :json-response! json-response!
-                                      :error-response! error-response!
-                                      :with-request-context! with-request-context!
-                                      :ensure-permission! ensure-permission!
-                                      :tool-catalog tool-catalog
-                                      :ensure-role-can-use! ensure-role-can-use!
-                                      :resolve-workspace-path resolve-workspace-path
-                                      :count-occurrences count-occurrences
-                                      :replace-first replace-first
-                                      :clip-text clip-text})
+  (let [session-guard          (guards/make-session-guard runtime)
+        optional-session-guard (guards/make-optional-session-guard runtime)]
+    (tool-routes/register-tool-routes! app runtime config
+                                       {:route! route!
+                                        :json-response! json-response!
+                                        :error-response! error-response!
+                                        :with-request-context! with-request-context!
+                                        :ensure-permission! ensure-permission!
+                                        :tool-catalog tool-catalog
+                                        :ensure-role-can-use! ensure-role-can-use!
+                                        :resolve-workspace-path resolve-workspace-path
+                                        :count-occurrences count-occurrences
+                                        :replace-first replace-first
+                                        :clip-text clip-text
+                                        :session-guard session-guard
+                                        :optional-session-guard optional-session-guard}))
 
   (contracts-routes/register-contracts-routes! app runtime config
                                               {:route! route!
