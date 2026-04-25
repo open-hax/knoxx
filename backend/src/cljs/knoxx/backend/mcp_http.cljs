@@ -522,7 +522,7 @@
                                   (let [redir (js/URL. redirect-uri)]
                                     (.set (.-searchParams redir) "code" code)
                                     (when state (.set (.-searchParams redir) "state" state))
-                                    (.redirect reply (.toString redir) 302)))))))))))
+                                    (.redirect reply (.toString redir) 302))))))))))))
 
 (defn- persist-access-token! [redis crypto token-ttl client-id record]
   (let [access-token (.randomUUID crypto)
@@ -543,9 +543,8 @@
                       :scope        (->> (array-seq (or (aget record "tools") #js [])) (str/join " "))
                       :expires_in   token-ttl})))))
 
-(defroute mcp-exchange-token! [redis-guard] "POST" "/api/mcp/oauth/token" [redis-guard]
-  (let [redis     (aget request "redis")
-        {:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
+(defroute mcp-exchange-token! [redis] "POST" "/api/mcp/oauth/token" [redis-guard]
+  (let [{:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
     (when (or (not= grant-type "authorization_code")
               (str/blank? code) (str/blank? code-verifier)
               (str/blank? client-id) (str/blank? redirect-uri))
@@ -687,11 +686,15 @@
                                      (transport-handle-request! transport
                                                                 (aget request "raw")
                                                                 (aget reply "raw")
-                                                                (aget request "body"))))))))))
-           (.catch (fn [err]
-                     (.error js/console "[knoxx-mcp] initialize failed" err)
-                     (json-send! reply 500 {:error "mcp_init_failed"
-                                            :detail (or (.-message err) (str err))})))))))
+                                                                (aget request "body"))))
+
+                            ))))))
+           ))
+          (.catch (fn [err]
+                    (.error js/console "[knoxx-mcp] initialize failed" err)
+                    (json-send! reply 500 {:error "mcp_init_failed"
+                                           :detail (or (.-message err) (str err))})))
+          ))))
 
 ;; ──────────────────────────────────────────────────────────────
 ;; Registration
