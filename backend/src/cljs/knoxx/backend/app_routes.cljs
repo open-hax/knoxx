@@ -219,7 +219,9 @@
     (or (nil? stamp-ms)
         (> (- (.now js/Date) stamp-ms) SESSION_RECOVERY_STALE_MS))))
 
-(defn register-routes!
+(defn- register-knoxx-core-routes!
+  [app config]
+    (defn register-routes!
   [runtime app config lounge-messages*]
   (ensure-settings! config)
 
@@ -344,6 +346,11 @@
                                              :isSystemAdmin (boolean (:isSystemAdmin ctx))
                                              :primaryRole (primary-context-role ctx)}))))))
 
+    nil))
+
+(defn- register-submodule-routes!
+  [app config]
+    
   (admin-routes/register-admin-routes! app runtime
                                        {:route! route!
                                         :json-response! json-response!
@@ -439,7 +446,12 @@
                                                            :ensure-tool! ensure-tool!})
 
   (route! app "GET" "/api/knoxx/proxy/*"
-          (fn [request reply]
+
+    nil))
+
+(defn- register-proxy-routes!
+  [app config]
+              (fn [request reply]
             (let [path (aget request "params" "*")]
               (-> (forward-knoxx-request! config request "GET" path nil)
                   (.then (fn [resp]
@@ -574,7 +586,12 @@
   ;; ── Data explorer routes ─────────────────────────────────────────────
   ;; Service health aggregation
     ;; OpenPlanner API proxy for documents, search, etc.
-  (route! app "GET" "/api/data/op/*"
+
+    nil))
+
+(defn- register-data-routes!
+  [app config]
+      (route! app "GET" "/api/data/op/*"
           (fn [request reply]
             (let [path (aget request "params" "*")
                   raw-url (aget request "raw" "url")
@@ -815,7 +832,12 @@
             (json-response! reply 200 {:url "http://127.0.0.1:8796"})))
 
 (route! app "GET" "/api/knoxx/health"
-          (fn [_request reply]
+
+    nil))
+
+(defn- register-knoxx-chat-routes!
+  [app config]
+              (fn [_request reply]
             (json-response! reply 200 {:reachable true
                                        :configured true
                                        :base_url (:knoxx-base-url config)
@@ -1040,7 +1062,12 @@ queue-turn! (fn [_log-label]
 
 
   (route! app "POST" "/api/knoxx/steer"
-          (fn [request reply]
+
+    nil))
+
+(defn- register-knoxx-agent-routes!
+  [app config]
+              (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.controls.steer"))
@@ -1264,7 +1291,12 @@ queue-turn! (fn [_log-label]
                                                 :run_id run-id})))))))
 
   (route! app "POST" "/api/shibboleth/handoff"
-          (fn [request reply]
+
+    nil))
+
+(defn- register-shibboleth-routes!
+  [app config]
+              (fn [request reply]
             (let [body (or (aget request "body") #js {})]
               (if (str/blank? (:shibboleth-base-url config))
                 (json-response! reply 503 {:detail "SHIBBOLETH_BASE_URL is not configured"})
@@ -1317,4 +1349,16 @@ queue-turn! (fn [_log-label]
                                                      :ctx-org-id ctx-org-id})
   )
 
-)
+    nil))
+
+(defn register-routes!
+  [runtime app config]
+  (ensure-settings! config)
+  (register-knoxx-core-routes!   app config)
+  (register-submodule-routes!    app config)
+  (register-proxy-routes!        app config)
+  (register-data-routes!         app config)
+  (register-knoxx-chat-routes!   app config)
+  (register-knoxx-agent-routes!  app config)
+  (register-shibboleth-routes!   app config)
+  nil)

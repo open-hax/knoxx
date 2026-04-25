@@ -35,6 +35,8 @@
                       :optimizations :simple
                       :source-map true
                       :infer-externs :auto
+
+                      :macros {:knoxx.backend.macros true}
                       :warnings {:infer-warning false}}}
 
   ;; All-CLJS runtime build (Node ESM) — replaces src/server.mjs.
@@ -50,7 +52,9 @@
   :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true
-                      :infer-externs :auto
+                     :infer-externs :auto
+
+                     :macros {:knoxx.backend.macros true}
                       :warnings {:infer-warning false}}}
   :server-repl
   {:target :node-script
@@ -64,6 +68,8 @@
    :compiler-options {:output-feature-set :es-next
                       :optimizations :simple
                       :source-map true
+
+                      :macros {:knoxx.backend.macros true}
                       :infer-externs :auto}}
 
   :test
@@ -72,6 +78,8 @@
    :ns-regex ["knoxx.backend.*-test$"]
    :autorun true
    :compiler-options {:output-feature-set :es-next
+
+                      :macros {:knoxx.backend.macros true}
                       :infer-externs :auto}}
 
   ;; CI/coverage build: compile the node runner, but do not autorun.
@@ -83,4 +91,6 @@
    :autorun false
    :compiler-options {:output-feature-set :es-next
                       :source-map true
-                      :infer-externs :auto}}}}
+                      :infer-externs :auto
+                      :macros {:knoxx.backend.macros true}
+                      }}}}

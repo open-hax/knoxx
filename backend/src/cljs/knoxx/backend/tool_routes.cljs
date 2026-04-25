@@ -301,7 +301,7 @@
 (defn- register-discord-tool-routes!
   [app runtime config deps]
   (let [[route! json-response! error-response! with-request-context! ensure-permission! tool-catalog ensure-role-can-use! resolve-workspace-path count-occurrences replace-first clip-text]]
-    
+
   (route! app "POST" "/api/tools/bash"
           (fn [request reply]
             (with-request-context! runtime request reply

@@ -1,19 +1,26 @@
 (ns knoxx.backend.macros)
 
 (defmacro defroute
-  "Register a Fastify route whose handler is a single workflow fn taking a
-   context map.
-
-   Expands to:
-   - a thin Fastify handler
-   - delegation to a local `run-route!` function supplied by the caller ns
-
-   Signature:
-   (defroute app method path guards workflow-fn)"
-  [app method path guards workflow-sym]
-  `(~'route! ~app ~method ~path
-             (fn [req# reply#]
-               (~'run-route! ~guards ~workflow-sym req# reply#))))
+  [fn-name extra-deps method-name route-string & body]
+  {:clj-kondo/lint-as 'clojure.core/defn  ;; Treat as defn for arity/locals
+   :clj-kondo/ignore [:unresolved-symbol :unused-binding]}
+  `(defn ~fn-name [~'app ~'runtime ~'config ~'deps]
+     (let [{:keys [~'route!
+                   ~'json-response!
+                   ~'error-response!
+                   ~'with-request-context!
+                   ~'ensure-permission!
+                   ~'clip-text
+                   ~'send-fetch-response!
+                   ~'bearer-headers
+                   ~'fetch-json
+                   ~'request-query-string
+                   ~@extra-deps]} ~'deps]
+       (~'route! ~'app ~method-name ~route-string
+        (fn [~'request ~'reply]
+          (~'with-request-context! ~'runtime ~'request ~'reply
+           (fn [~'ctx]
+             ~@body)))))))
 
 (defmacro defn-async
   "Compatibility macro for async workflow fns.
