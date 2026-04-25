@@ -2,8 +2,26 @@
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
             [knoxx.backend.app-shapes :refer [route!]]
+            [knoxx.backend.http :refer [json-response! error-response! http-error openplanner-enabled? openplanner-request!]]
+            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows!
+                                               session-visible?
+                                               session-matches-page-actor-filter?
+                                               filter-authorized-memory-hits!
+                                               authorized-session-ids!]]
+            [knoxx.backend.realtime :refer [broadcast-ws!]]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-store :as session-store]
+            [knoxx.backend.session-titles :refer [session-titles*
+                                                   session-title-backfill*
+                                                   session-title-seed-text
+                                                   heuristic-session-title
+                                                   resolve-session-title!
+                                                   normalize-session-title
+                                                   cache-session-title!
+                                                   start-session-title-backfill!]]
+            [knoxx.backend.authz :refer [ctx-permitted? system-admin? ensure-permission!]]
+            [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
+            [knoxx.backend.util.time :refer [now-iso]]
             [shadow.cljs.modern :refer [js-await]]))
 
 (defn interactive-session-id?
@@ -128,7 +146,11 @@
                                       (contains? allowed-sessions (str (or (hit-session-id hit) "")))))
                             vec)))))))))
 
-(defroute memory-sessions-route! [openplanner-enabled?]
+  (defroute memory-sessions-route! [openplanner-enabled?
+                                    openplanner-request!
+                                    authorized-session-ids!
+                                    fetch-openplanner-session-rows!
+                                    session-matches-page-actor-filter?]
   "GET" "/api/memory/sessions"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
@@ -395,6 +417,8 @@
 
 (defn register-memory-routes!
   [app runtime config deps]
+  (js/console.log "memory-sessions-route! ="
+                  (.-name memory-sessions-route!))
   (memory-sessions-route! app runtime config deps)
   (memory-session-titles-status-route! app runtime config deps)
   (memory-backfill-titles-route! app runtime config deps)

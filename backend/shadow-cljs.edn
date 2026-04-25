@@ -57,21 +57,21 @@
 
                      :macros {:knoxx.backend.macros true}
                       :warnings {:infer-warning false}}}
-  :server-repl
-  {:target :node-script
-   :output-to "target/server_repl.js"
-   :main knoxx.backend.entrypoint/init
-   :js-options {:js-provider :import
-                :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
-                                  "node:path" "node:crypto" "node:url"
-                                  "@modelcontextprotocol/sdk"}}
+  ;; :server-repl
+  ;; {:target :node-script
+  ;;  :output-to "target/server_repl.js"
+  ;;  :main knoxx.backend.entrypoint/init
+  ;;  :js-options {:js-provider :import
+  ;;               :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
+  ;;                                 "node:path" "node:crypto" "node:url"
+  ;;                                 "@modelcontextprotocol/sdk"}}
 
-   :compiler-options {:output-feature-set :es-next
-                      :optimizations :simple
-                      :source-map true
+  ;;  :compiler-options {:output-feature-set :es-next
+  ;;                     :optimizations :simple
+  ;;                     :source-map true
 
-                      :macros {:knoxx.backend.macros true}
-                      :infer-externs :auto}}
+  ;;                     :macros {:knoxx.backend.macros true}
+  ;;                     :infer-externs :auto}}
 
   :test
   {:target :node-test
