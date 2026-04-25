@@ -31,7 +31,10 @@
 (defn- register-document-crud-routes!
   [app runtime config deps]
   (let [{:keys [route! json-response! error-response!
-                with-request-context! ensure-permission!]} deps]
+                with-request-context! ensure-permission!
+                clip-text openplanner-graph-export!
+                send-fetch-response! bearer-headers
+                fetch-json request-query-string]} deps]
     (route! app "GET" "/api/documents"
             (fn [request reply]
               (with-request-context! runtime request reply
@@ -163,7 +166,7 @@
                     (json-response! reply 200 {:active (boolean (:active progress))
                                                :progress progress
                                                :canResumeForum false
-                                               :stale false})))))
+                                               :stale false}))))))
 
     (route! app "GET" "/api/documents/ingestion-progress"
             (fn [request reply]
@@ -175,7 +178,7 @@
                     (json-response! reply 200 {:active (boolean (:active progress))
                                                :progress progress
                                                :canResumeForum false
-                                               :stale false})))))
+                                               :stale false}))))))
 
     (route! app "GET" "/api/documents/ingestion-history"
             (fn [request reply]
@@ -185,7 +188,7 @@
                   (let [profile (active-database-profile runtime config request ctx)
                         record (active-record runtime config request ctx)]
                     (json-response! reply 200 {:collection (:qdrantCollection profile)
-                                               :items (:history record)})))))
+                                               :items (:history record)}))))))
 
     (route! app "POST" "/api/chat/retrieval-debug"
             (fn [request reply]
@@ -249,8 +252,8 @@
                     (json-response! reply 200 {:activeDatabaseId active-id
                                                :databases profiles
                                                :activeRuntime {:projectName (:project-name config)
-                                                                :docsPath (:docsPath active-profile)
-                                                                :qdrantCollection (:qdrantCollection active-profile)}}))))))
+                                                               :docsPath (:docsPath active-profile)
+                                                               :qdrantCollection (:qdrantCollection active-profile)}}))))))
 
     (route! app "POST" "/api/settings/databases"
             (fn [request reply]
