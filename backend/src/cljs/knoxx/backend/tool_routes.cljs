@@ -8,7 +8,7 @@
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.triggers.control-config :as control-config]))
 
-;; ─── Private helpers ──────────────────────────────────────────────────────────
+;; ── Private helpers ─────────────────────────────────────────────────────────
 
 (defn- send-email!
   "Send an email via Gmail SMTP using nodemailer."
@@ -55,11 +55,12 @@
     (-> (dg/restart! token)
         (.catch (fn [_] nil)))))
 
-;; ─── Tool routes ──────────────────────────────────────────────────────────────
+;; ── Tool routes ──────────────────────────────────────────────────────────────
 
 (defroute register-tool-catalog-route!
   [tool-catalog ensure-role-can-use!]
   "GET" "/api/tools/catalog"
+  [optional-session-guard]
   (let [role              (or (aget request "query" "role") (:knoxx-default-role config))
         agent-contract-id (or (aget request "query" "agent")
                               (aget request "query" "agentId")
@@ -72,6 +73,7 @@
 (defroute register-email-send-route!
   [ensure-role-can-use!]
   "POST" "/api/tools/email/send"
+  [session-guard]
   (try
     (let [body              (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
@@ -95,6 +97,7 @@
 (defroute register-websearch-route!
   [ensure-role-can-use!]
   "POST" "/api/tools/websearch"
+  [session-guard]
   (try
     (let [body              (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
@@ -127,6 +130,7 @@
 (defroute register-read-route!
   [ensure-role-can-use! resolve-workspace-path clip-text]
   "POST" "/api/tools/read"
+  [session-guard]
   (try
     (let [body    (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
@@ -164,6 +168,7 @@
 (defroute register-write-route!
   [ensure-role-can-use! resolve-workspace-path]
   "POST" "/api/tools/write"
+  [session-guard]
   (try
     (let [body    (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
@@ -194,6 +199,7 @@
 (defroute register-edit-route!
   [ensure-role-can-use! resolve-workspace-path count-occurrences replace-first]
   "POST" "/api/tools/edit"
+  [session-guard]
   (try
     (let [body    (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
@@ -221,6 +227,7 @@
 (defroute register-bash-route!
   [ensure-role-can-use! resolve-workspace-path clip-text]
   "POST" "/api/tools/bash"
+  [session-guard]
   (try
     (let [body     (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
@@ -255,6 +262,7 @@
 (defroute register-discord-publish-route!
   [ensure-role-can-use!]
   "POST" "/api/tools/discord/publish"
+  [session-guard]
   (try
     (let [body    (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
@@ -289,9 +297,12 @@
     (catch :default err
       (error-response! reply err))))
 
+;; ── Admin / config routes ───────────────────────────────────────────────────
+
 (defroute register-discord-token-get-route!
   []
   "GET" "/api/admin/config/discord"
+  [session-guard]
   (ensure-permission! ctx "org.event_agents.control")
   (let [live-config (or @runtime-state/config* config)
         token       (:discord-bot-token live-config)
@@ -302,6 +313,7 @@
 (defroute register-discord-token-put-route!
   []
   "PUT" "/api/admin/config/discord"
+  [session-guard]
   (try
     (ensure-permission! ctx "org.event_agents.control")
     (let [body      (or (aget request "body") #js {})
@@ -321,12 +333,14 @@
 (defroute register-event-agents-get-route!
   []
   "GET" "/api/admin/config/event-agents"
+  [session-guard]
   (ensure-permission! ctx "org.event_agents.control")
   (json-response! reply 200 (event-agents-control-response config)))
 
 (defroute register-event-agents-put-route!
   []
   "PUT" "/api/admin/config/event-agents"
+  [session-guard]
   (try
     (ensure-permission! ctx "org.event_agents.control")
     (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
@@ -343,6 +357,7 @@
 (defroute register-event-agents-job-run-route!
   []
   "POST" "/api/admin/config/event-agents/jobs/:jobId/run"
+  [session-guard]
   (try
     (ensure-permission! ctx "org.event_agents.control")
     (let [job-id (or (aget request "params" "jobId") "")]
@@ -357,6 +372,7 @@
 (defroute register-event-agents-dispatch-route!
   []
   "POST" "/api/admin/config/event-agents/events/dispatch"
+  [session-guard]
   (try
     (ensure-permission! ctx "org.event_agents.control")
     (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
@@ -370,15 +386,18 @@
       (error-response! reply err))))
 
 ;; Legacy aliases
+
 (defroute register-discord-control-get-route!
   []
   "GET" "/api/admin/config/discord/control"
+  [session-guard]
   (ensure-permission! ctx "org.event_agents.control")
   (json-response! reply 200 (event-agents-control-response config)))
 
 (defroute register-discord-control-put-route!
   []
   "PUT" "/api/admin/config/discord/control"
+  [session-guard]
   (try
     (ensure-permission! ctx "org.event_agents.control")
     (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
@@ -395,6 +414,7 @@
 (defroute register-discord-control-job-run-route!
   []
   "POST" "/api/admin/config/discord/control/jobs/:jobId/run"
+  [session-guard]
   (try
     (ensure-permission! ctx "org.event_agents.control")
     (let [job-id (or (aget request "params" "jobId") "")]
@@ -409,30 +429,32 @@
 (defroute register-discord-cron-get-route!
   []
   "GET" "/api/admin/config/discord/cron"
+  [session-guard]
   (ensure-permission! ctx "org.event_agents.control")
   (json-response! reply 200 (:runtime (event-agents-control-response config))))
 
-;; ─── MCP routes ───────────────────────────────────────────────────────────────
+;; ── MCP routes ──────────────────────────────────────────────────────────────────
 
 (defroute register-mcp-status-route!
   []
   "GET" "/api/mcp/status"
+  [optional-session-guard]
   (when ctx (ensure-permission! ctx "agent.chat.use"))
   (json-response! reply 200 (mcp/status)))
 
 (defroute register-mcp-catalog-route!
   []
   "GET" "/api/mcp/catalog"
+  [optional-session-guard]
   (when ctx (ensure-permission! ctx "agent.chat.use"))
   (json-response! reply 200 {:tools (mcp/catalog) :enabled (mcp/enabled?)}))
 
 (defroute register-mcp-call-route!
   []
   "POST" "/api/mcp/call"
+  [session-guard]
   (try
-    (if ctx
-      (ensure-permission! ctx "agent.chat.use")
-      (json-response! reply 401 {:detail "Authentication required"}))
+    (ensure-permission! ctx "agent.chat.use")
     (let [body    (or (aget request "body") #js {})
           tool-id (str (or (aget body "toolId") ""))
           args    (js->clj (or (aget body "arguments") #js {}) :keywordize-keys true)]
@@ -445,7 +467,7 @@
     (catch :default err
       (error-response! reply err))))
 
-;; ─── Top-level registration ───────────────────────────────────────────────────
+;; ── Top-level registration ────────────────────────────────────────────────────
 
 (defn register-tool-routes!
   [app runtime config deps]
