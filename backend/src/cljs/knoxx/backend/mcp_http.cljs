@@ -531,7 +531,7 @@
                                   (let [redir (js/URL. redirect-uri)]
                                     (.set (.-searchParams redir) "code" code)
                                     (when state (.set (.-searchParams redir) "state" state))
-                                    (.redirect reply (.toString redir) 302)))))))))))
+                                    (.redirect reply (.toString redir) 302))))))))))))
 
 (defn- persist-access-token! [redis crypto token-ttl client-id record]
   (let [access-token (.randomUUID crypto)
@@ -713,7 +713,7 @@
            (.catch (fn [err]
                      (.error js/console "[knoxx-mcp] initialize failed" err)
                      (json-send! reply 500 {:error "mcp_init_failed"
-                                            :detail (or (.-message err) (str err))})))))))
+                                            :detail (or (.-message err) (str err))})))))))))
 
 ;; ──────────────────────────────────────────────────────────────
 ;; Registration
