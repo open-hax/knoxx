@@ -111,17 +111,17 @@
     (case part-type
       "text" (when (not (str/blank? (str text)))
                #js {:type "text" :text text})
-      ;; IMPORTANT:
-      ;; Proxx expects OpenAI-style multimodal parts. In particular:
-      ;; - Data URLs must remain data URLs (or be placed under image_url.url)
-      ;; - Remote URLs must be placed under image_url.url (NOT in the base64 data field)
-      ;; If we put a URL or data: URL into the `data` field, Proxx will treat it as raw base64 and upstreams will 400.
+      ;; Image part routing:
+      ;; - Remote URLs → image_url.url (OpenAI/Anthropic style; Ollama cannot fetch remote URLs)
+      ;; - data: URLs  → {type "image" :data "data:..." :mimeType} (knoxx-native; ollama-compat.ts strips the prefix)
+      ;; - Raw base64  → same knoxx-native shape
+      ;; pi's SDK does NOT handle image_url parts — always use the native shape for inlined data.
       "image" (cond
                 (and (string? url) (not (str/blank? url)))
                 #js {:type "image_url" :image_url #js {:url url}}
 
                 (and (string? data) (not (str/blank? data)) (str/starts-with? data "data:"))
-                #js {:type "image_url" :image_url #js {:url data}}
+                #js {:type "image" :data data :mimeType mime-type}
 
                 (and (string? data) (not (str/blank? data)))
                 ;; Raw base64 fallback.

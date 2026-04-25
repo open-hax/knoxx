@@ -1,5 +1,6 @@
 (ns knoxx.backend.openplanner-memory
   (:require [clojure.string :as str]
+            [knoxx.backend.stores.session-store-registry :as store-registry]
             [knoxx.backend.http :as backend-http]
             [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.util.time :as time]))
@@ -132,13 +133,26 @@
 
 (defn planner-row->agent-message
   [row]
-  (let [role (some-> (:role row) str)
-        text (some-> (:text row) str)]
+  (let [role  (some-> (:role row) str)
+        text  (some-> (:text row) str)
+        parts (or (get-in row [:extra :content_parts])
+                  (get-in row [:metadata :content_parts]))]
     (when (and (contains? #{"user" "assistant" "system"} role)
                (not (str/blank? text)))
-      #js {:role role
-           :content #js [#js {:type "text" :text text}]
-           :timestamp (planner-row-timestamp-ms row)})))
+      (let [text-block #js {:type "text" :text text}
+            content-arr (if (seq parts)
+                          (clj->js (into [text-block]
+                                         (mapv (fn [p]
+                                                 (if (= "image" (:type p))
+                                                   #js {:type "image_url"
+                                                        :image_url #js {:url (or (:url p)
+                                                                                 (str "data:" (:mimeType p) ";base64," (:data p)))}}
+                                                   #js {:type "text" :text (or (:text p) "")}))
+                                               parts)))
+                          #js [text-block])]
+        #js {:role role
+             :content content-arr
+             :timestamp (planner-row-timestamp-ms row)}))))
 
 (defn rehydrate-session-manager!
   [config session-manager conversation-id _model-id]
@@ -457,8 +471,22 @@
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
   (if-not (backend-http/openplanner-enabled? config)
     (js/Promise.resolve nil)
-    (let [conversation-id (:conversation_id run)
-          session-id (:session_id run)
+    (if-let [store @store-registry/session-store*]
+      (.complete-run! store (:run_id run)
+                     {:status        (:status run)
+                      :answer        (:answer run)
+                      :error         (:error run)
+                      :messages      (:request_messages run)
+                      :trace_blocks  (:trace_blocks run)
+                      :content_parts (:content_parts run)})
+      (index-run-memory-legacy! config run extract-mentioned-devel-paths extract-mentioned-urls))))
+
+(defn- index-run-memory-legacy!
+  [config run extract-mentioned-devel-paths extract-mentioned-urls]
+  (let [conversation-id (:conversation_id run)
+        session-id (:session_id run)
+        scope-extra (run-scope-extra run)
+        session-project (:session-project-name config)
           scope-extra (run-scope-extra run)
           session-project (:session-project-name config)
           request-text (or (some-> (:request_messages run) first :content) "")
@@ -471,6 +499,18 @@
                                :session_id session-id
                                :mode (get-in run [:settings :mode])}
                               scope-extra)
+          content-parts (->> (or (some-> (:request_messages run)
+                                         first
+                                         :content-parts)
+                                [])
+                              (mapv (fn [p]
+                                    (if (and (= "image" (:type p))
+                                             (str/blank? (:url p))
+                                             (not (str/blank? (:data p))))
+                                      {:type "image" :mimeType (:mimeType p)
+                                       :data (subs (:data p) 0 (min 2048 (count (:data p))))
+                                       :truncated true}
+                                      (select-keys p [:type :url :mimeType :filename :text])))))
           base-events (cond-> [(openplanner-event config {:id (str run-id ":user")
                                                           :ts (:created_at run)
                                                           :kind "knoxx.message"
@@ -480,7 +520,8 @@
                                                           :role "user"
                                                           :model (:model run)
                                                           :text request-text
-                                                          :extra common-extra})
+                                                          :extra (merge common-extra
+                                                                        {:content_parts content-parts})})
                                (openplanner-event config {:id (str run-id ":summary")
                                                           :ts (:updated_at run)
                                                           :kind "knoxx.run"
@@ -593,8 +634,32 @@
                                                       :label "Reasoning"
                                                       :model (:model run)
                                                       :scope-extra scope-extra})))
-          all-events (vec (concat base-events graph-events tool-events))]
+          content-parts (vec (or (:content_parts run) []))
+          media-events  (when (seq content-parts)
+                          [(openplanner-event config
+                             {:id      (str run-id ":media")
+                              :ts      (:created_at run)
+                              :kind    "knoxx.run.media"
+                              :project session-project
+                              :session conversation-id
+                              :message (str run-id ":media")
+                              :role    "system"
+                              :model   (:model run)
+                              :text    (str "Media context: "
+                                            (count content-parts) " part(s)"
+                                            " \u2014 "
+                                            (str/join ", "
+                                              (mapv (fn [p]
+                                                      (str (or (:type p) "?")
+                                                           "/" (or (:mimeType p) "?")
+                                                           " " (or (:filename p) (:url p) "(inline)")))
+                                                    content-parts)))
+                              :extra   (merge common-extra
+                                             {:content_parts_count   (count content-parts)
+                                              :content_parts_summary (mapv #(select-keys % [:type :mimeType :filename :url])
+                                                                           content-parts)})})])
+          all-events (vec (concat base-events graph-events tool-events media-events))]
       (-> (backend-http/openplanner-request! config "POST" "/v1/events" {:events all-events})
           (.catch (fn [err]
                     (.warn js/console "[knoxx] failed to index run memory into OpenPlanner" err)
-                    nil))))))
+                    nil)))))))

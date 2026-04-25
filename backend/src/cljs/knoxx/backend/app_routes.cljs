@@ -125,30 +125,43 @@
 
 (defn- active-run-summary
   [run session]
-  {:run_id (:run_id run)
-   :session_id (:session_id run)
-   :conversation_id (:conversation_id run)
-   :status (:status run)
-   :model (:model run)
-   :created_at (:created_at run)
-   :updated_at (:updated_at run)
-   :ttft_ms (:ttft_ms run)
-   :total_time_ms (:total_time_ms run)
-   :input_tokens (:input_tokens run)
-   :output_tokens (:output_tokens run)
-   :tokens_per_s (:tokens_per_s run)
-   :error (:error run)
-   :event_count (count (or (:events run) []))
-   :tool_receipt_count (count (or (:tool_receipts run) []))
-   :has_active_stream (boolean (:has_active_stream session))
-   :agent_spec (get-in run [:settings :agentSpec])
-   :resource_policies (get-in run [:resources :agentResourcePolicies])
-   :latest_user_message (some->> (:request_messages run)
-                                 reverse
-                                 (some (fn [message]
-                                         (when (= "user" (some-> (:role message) str str/lower-case))
-                                           (:content message)))))
-   :latest_event (some-> (:events run) last (select-keys [:type :status :tool_name :preview :at]))})
+  (let [messages   (vec (or (:request_messages run) []))
+        user-msg   (some #(when (= "user" (some-> (:role %) str/lower-case)) %) (reverse messages))]
+    {:run_id (:run_id run)
+     :session_id (:session_id run)
+     :conversation_id (:conversation_id run)
+     :status (:status run)
+     :model (:model run)
+     :created_at (:created_at run)
+     :updated_at (:updated_at run)
+     :ttft_ms (:ttft_ms run)
+     :total_time_ms (:total_time_ms run)
+     :input_tokens (:input_tokens run)
+     :output_tokens (:output_tokens run)
+     :tokens_per_s (:tokens_per_s run)
+     :error (:error run)
+     :event_count (count (or (:events run) []))
+     :tool_receipt_count (count (or (:tool_receipts run) []))
+     :has_active_stream (boolean (:has_active_stream session))
+     :agent_spec (get-in run [:settings :agentSpec])
+     :resource_policies (get-in run [:resources :agentResourcePolicies])
+     :latest_user_message (:content user-msg)
+     :content_parts (mapv (fn [p]
+                            (-> p
+                                (dissoc :data)
+                                (select-keys [:type :url :mimeType :filename :text])))
+                          (or (:content-parts user-msg) []))
+     :tool_receipts (mapv (fn [r]
+                           (select-keys r [:id :tool_name :status
+                                           :input_preview :result_preview
+                                           :started_at :ended_at]))
+                         (or (:tool_receipts run) []))
+     :trace_blocks (mapv (fn [b]
+                           (select-keys b [:id :kind :status :toolName
+                                           :toolCallId :content :at
+                                           :inputPreview :outputPreview :isError]))
+                         (or (:trace_blocks run) []))
+     :latest_event (some-> (:events run) last (select-keys [:type :status :tool_name :preview :at]))}))
 
 (def SESSION_RECOVERY_STALE_MS 60000)
 
@@ -1241,8 +1254,28 @@
                                  (json-response! reply 200 {:run_id run-id
                                                             :events events
                                                             :count (count events)})))
-                        (.catch (fn [err]
-                                  (json-response! reply 500 {:error (str err)}))))))))))
+(.catch (fn [err]
+                                   (json-response! reply 500 {:error (str err)})))))))))
+
+  (route! app "GET" "/api/knoxx/runs/:runId"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "agent.chat.use"))
+                (let [run-id (str (or (aget request "params" "runId") ""))]
+                  (cond
+                    (str/blank? run-id)
+                    (json-response! reply 400 {:error "runId required"})
+
+                    (some? (get @runs* run-id))
+                    (if-let [filtered (run-visible? ctx (get @runs* run-id))]
+                      (json-response! reply 200
+                        {:ok true :source "memory" :run filtered})
+                      (json-response! reply 403 {:error "Access denied"}))
+
+                    :else
+                    (json-response! reply 404 {:ok false :error "Run not found"
+                                                :run_id run-id})))))))
 
   (route! app "POST" "/api/shibboleth/handoff"
           (fn [request reply]
