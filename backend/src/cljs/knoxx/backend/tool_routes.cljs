@@ -84,7 +84,10 @@
   [^js transporter message]
   (.sendMail transporter message))
 
-(defn register-tool-routes!
+(defn- register-agent-tool-routes!
+  [app runtime config deps]
+  (let [[route! json-response! error-response! with-request-context! ensure-permission! tool-catalog ensure-role-can-use! resolve-workspace-path count-occurrences replace-first clip-text]]
+    (defn register-tool-routes!
   [app runtime config {:keys [route!
                               json-response!
                               error-response!
@@ -293,6 +296,12 @@
                   (catch :default err
                     (error-response! reply err)))))))
 
+    nil)))
+
+(defn- register-discord-tool-routes!
+  [app runtime config deps]
+  (let [[route! json-response! error-response! with-request-context! ensure-permission! tool-catalog ensure-role-can-use! resolve-workspace-path count-occurrences replace-first clip-text]]
+    
   (route! app "POST" "/api/tools/bash"
           (fn [request reply]
             (with-request-context! runtime request reply
@@ -378,7 +387,13 @@
 
   ;; Discord bot token admin route
   (route! app "GET" "/api/admin/config/discord"
-          (fn [request reply]
+
+    nil)))
+
+(defn- register-admin-tool-routes!
+  [app runtime config deps]
+  (let [[route! json-response! error-response! with-request-context! ensure-permission! tool-catalog ensure-role-can-use! resolve-workspace-path count-occurrences replace-first clip-text]]
+              (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
                 (ensure-permission! ctx "org.event_agents.control")
@@ -523,7 +538,13 @@
   ;; Discord cron status route
   (route! app "GET" "/api/admin/config/discord/cron"
           (fn [request reply]
-            (with-request-context! runtime request reply
+
+    nil)))
+
+(defn- register-mcp-tool-routes!
+  [app runtime config deps]
+  (let [[route! json-response! error-response! with-request-context! ensure-permission!]]
+                (with-request-context! runtime request reply
               (fn [ctx]
                 (ensure-permission! ctx "org.event_agents.control")
                 (json-response! reply 200 (:runtime (event-agents-control-response config)))))))
@@ -567,4 +588,14 @@
                   (catch :default err
                     (error-response! reply err)))))))
 
+  nil)
+
+    nil)))
+
+(defn register-tool-routes!
+  [app runtime config deps]
+  (register-agent-tool-routes!   app runtime config deps)
+  (register-discord-tool-routes!  app runtime config deps)
+  (register-admin-tool-routes!    app runtime config deps)
+  (register-mcp-tool-routes!      app runtime config deps)
   nil)

@@ -426,29 +426,26 @@
               (.catch (fn [err]
                         (do-text 500 (str ";; Failed to save contract: " (.-message err)))))))))))
 
-(defn register-contracts-routes!
-  [app _runtime config helpers]
+(defn- register-agent-contract-routes!
+  [app runtime config helpers]
   (let [do-route (:route! helpers)
-        do-json (:json-response! helpers)
         do-err (:error-response! helpers)
         do-ctx (:with-request-context! helpers)
         do-perm (:ensure-permission! helpers)
         do-text (fn [reply status text]
                   (.end reply (.status reply status) text #js {"Content-Type" "text/plain; charset=utf-8"}))]
-
     (do-route app "GET" "/api/agent/contracts"
               (fn [request reply]
-                (do-ctx _runtime request reply
+                (do-ctx runtime request reply
                   (fn [ctx]
                     (try
                       (when ctx (do-perm ctx "agent.chat.use"))
                       (handle-agent-list-contracts (partial do-text reply) config)
                       (catch :default err
                         (do-err reply err)))))))
-
     (do-route app "GET" "/api/agent/contracts/:contractId"
               (fn [request reply]
-                (do-ctx _runtime request reply
+                (do-ctx runtime request reply
                   (fn [ctx]
                     (try
                       (when ctx (do-perm ctx "agent.chat.use"))
@@ -461,10 +458,9 @@
                               (handle-agent-get-contract-edn (partial do-text reply) config (:id safe))))))
                       (catch :default err
                         (do-err reply err)))))))
-
     (do-route app "PUT" "/api/agent/contracts/:contractId"
               (fn [request reply]
-                (do-ctx _runtime request reply
+                (do-ctx runtime request reply
                   (fn [ctx]
                     (try
                       (when ctx (do-perm ctx "agent.chat.use"))
@@ -477,11 +473,18 @@
                               (do-text reply 400 (str ";; Invalid contractId: " (:error safe)))
                               (handle-agent-put-contract-edn (partial do-text reply) config (:id safe) edn-text)))))
                       (catch :default err
-                        (do-err reply err)))))))
+                        (do-err reply err)))))))))
 
+(defn- register-admin-contract-routes!
+  [app runtime config helpers]
+  (let [do-route (:route! helpers)
+        do-json (:json-response! helpers)
+        do-err (:error-response! helpers)
+        do-ctx (:with-request-context! helpers)
+        do-perm (:ensure-permission! helpers)]
     (do-route app "GET" "/api/admin/contracts"
               (fn [request reply]
-                (do-ctx _runtime request reply
+                (do-ctx runtime request reply
                   (fn [ctx]
                     (try
                       (when ctx (do-perm ctx "agent.chat.use"))
@@ -493,10 +496,9 @@
                           (handle-list-contracts (partial do-json reply) config (:class safe-kind))))
                       (catch :default err
                         (do-err reply err)))))))
-
     (do-route app "GET" "/api/admin/contracts/:contractId"
               (fn [request reply]
-                (do-ctx _runtime request reply
+                (do-ctx runtime request reply
                   (fn [ctx]
                     (try
                       (when ctx (do-perm ctx "agent.chat.use"))
@@ -519,10 +521,9 @@
                               (handle-get-contract (partial do-json reply) config (:class safe-kind) (:id safe))))))
                       (catch :default err
                         (do-err reply err)))))))
-
     (do-route app "PUT" "/api/admin/contracts/:contractId"
               (fn [request reply]
-                (do-ctx _runtime request reply
+                (do-ctx runtime request reply
                   (fn [ctx]
                     (try
                       (do-perm ctx "platform.org.create")
@@ -545,10 +546,9 @@
                               (handle-save-contract (partial do-json reply) config (:class safe-kind) (:id safe) edn-text)))))
                       (catch :default err
                         (do-err reply err)))))))
-
     (do-route app "POST" "/api/admin/contracts/validate"
               (fn [request reply]
-                (do-ctx _runtime request reply
+                (do-ctx runtime request reply
                   (fn [ctx]
                     (try
                       (do-perm ctx "platform.org.create")
@@ -561,10 +561,9 @@
                           (handle-validate-contract (partial do-json reply) (:class safe-kind) edn-text)))
                       (catch :default err
                         (do-err reply err)))))))
-
     (do-route app "POST" "/api/admin/contracts/:contractId/copy"
               (fn [request reply]
-                (do-ctx _runtime request reply
+                (do-ctx runtime request reply
                   (fn [ctx]
                     (try
                       (do-perm ctx "platform.org.create")
@@ -593,6 +592,10 @@
                               :else
                               (handle-copy-contract (partial do-json reply) config (:class safe-kind) (:id safe-source) (:id safe-new))))))
                       (catch :default err
-                        (do-err reply err)))))))
+                        (do-err reply err)))))))))
 
-    nil))
+(defn register-contracts-routes!
+  [app runtime config helpers]
+  (register-agent-contract-routes! app runtime config helpers)
+  (register-admin-contract-routes! app runtime config helpers)
+  nil)
