@@ -39,44 +39,33 @@
   (let [pre-handler-mode? (and (seq rest) (vector? (first rest)))
         pre-handlers      (when pre-handler-mode? (first rest))
         body              (if pre-handler-mode? (next rest) rest)]
-    (if pre-handler-mode?
-      ;; ── preHandler mode ──────────────────────────────────────────────
-      `(defn ~fn-name [~'app ~'runtime ~'config ~'deps]
+    `(defn ~fn-name [~'app ~'runtime ~'config ~'deps]
          (let [{:keys [~'route!
                        ~'json-response!
                        ~'error-response!
                        ~'ensure-permission!
                        ~'clip-text
-                       ~'send-fetch-response!
-                       ~'bearer-headers
-                       ~'fetch-json
-                       ~'request-query-string
-                       ~@extra-deps]} ~'deps]
-           (~'route! ~'app ~method-name ~route-string
-            (cljs.core/js-obj
-              "preHandler" (cljs.core/clj->js ~pre-handlers)
-              "handler"    (fn [~'request ~'reply]
-                             (let [~'ctx (aget ~'request "ctx")]
-                               ~@body))))))
-      ;; ── Classic mode (with-request-context! inline) ──────────────────
-      `(defn ~fn-name [~'app ~'runtime ~'config ~'deps]
-         (let [{:keys [~'route!
-                       ~'json-response!
-                       ~'error-response!
                        ~'with-request-context!
-                       ~'ensure-permission!
-                       ~'clip-text
                        ~'send-fetch-response!
+                       ~'session-gaurd
+                       ~'optional-session-gaurd
                        ~'bearer-headers
                        ~'fetch-json
                        ~'request-query-string
                        ~@extra-deps]} ~'deps]
-           (~'route! ~'app ~method-name ~route-string
-            (fn [~'request ~'reply]
-              (~'with-request-context! ~'runtime ~'request ~'reply
-               (fn [~'ctx]
-                 ~@body)))))))))
-;; (defmacro then [target  & body]
-;;   `(.then ~target (fn [rseult] ~@body)))
-;; (defmacro catch [target  & body]
-;;   `(.catch ~target (fn [rseult] ~@body)))
+           (if pre-handler-mode?
+             `(~'route! ~'app ~method-name ~route-string
+              (cljs.core/js-obj
+               "preHandler" (cljs.core/clj->js ~pre-handlers)
+               "handler"    (fn [~'request ~'reply]
+                              (let [~'ctx (aget ~'request "ctx")]
+                                ~@body))))
+             (~'route! ~'app ~method-name ~route-string
+              (fn [~'request ~'reply]
+                (~'with-request-context! ~'runtime ~'request ~'reply
+                 (fn [~'ctx]
+                   ~@body)))))))))
+(defmacro then [target  & body]
+  `(.then ~target (fn [rseult] ~@body)))
+(defmacro catch [target  & body]
+  `(.catch ~target (fn [rseult] ~@body)))
