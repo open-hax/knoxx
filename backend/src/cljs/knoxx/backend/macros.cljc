@@ -47,25 +47,26 @@
                        ~'clip-text
                        ~'with-request-context!
                        ~'send-fetch-response!
-                       ~'session-gaurd
-                       ~'optional-session-gaurd
+                       ~'session-guard
+                       ~'optional-session-guard
                        ~'bearer-headers
                        ~'fetch-json
                        ~'request-query-string
                        ~@extra-deps]} ~'deps]
-           (if pre-handler-mode?
-             `(~'route! ~'app ~method-name ~route-string
-              (cljs.core/js-obj
-               "preHandler" (cljs.core/clj->js ~pre-handlers)
-               "handler"    (fn [~'request ~'reply]
-                              (let [~'ctx (aget ~'request "ctx")]
-                                ~@body))))
-             (~'route! ~'app ~method-name ~route-string
-              (fn [~'request ~'reply]
-                (~'with-request-context! ~'runtime ~'request ~'reply
-                 (fn [~'ctx]
-                   ~@body)))))))))
-(defmacro then [target  & body]
+           ~(if pre-handler-mode?
+              `(~'route! ~'app ~method-name ~route-string
+                (cljs.core/js-obj
+                 "preHandler" (cljs.core/clj->js ~pre-handlers)
+                 "handler"    (fn [~'request ~'reply]
+                                (let [~'ctx (aget ~'request "ctx")]
+                                  ~@body))))
+              `(~'route! ~'app ~method-name ~route-string
+                (fn [~'request ~'reply]
+                  (~'with-request-context! ~'runtime ~'request ~'reply
+                   (fn [~'ctx]
+                     ~@body)))))))))
+
+(defmacro then [target & body]
   `(.then ~target (fn [rseult] ~@body)))
-(defmacro catch [target  & body]
+(defmacro catch [target & body]
   `(.catch ~target (fn [rseult] ~@body)))
