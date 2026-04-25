@@ -53,10 +53,11 @@
                        ~'request-query-string
                        ~@extra-deps]} ~'deps]
            (~'route! ~'app ~method-name ~route-string
-            #js {:preHandler (clj->js ~pre-handlers)
-                 :handler    (fn [~'request ~'reply]
-                               (let [~'ctx (aget ~'request "ctx")]
-                                 ~@body))})))
+            (cljs.core/js-obj
+              "preHandler" (cljs.core/clj->js ~pre-handlers)
+              "handler"    (fn [~'request ~'reply]
+                             (let [~'ctx (aget ~'request "ctx")]
+                               ~@body))))))
       ;; ── Classic mode (with-request-context! inline) ──────────────────
       `(defn ~fn-name [~'app ~'runtime ~'config ~'deps]
          (let [{:keys [~'route!

@@ -128,7 +128,7 @@
                                       (contains? allowed-sessions (str (or (hit-session-id hit) "")))))
                             vec)))))))))
 
-(defroute memory-sessions-route! []
+(defroute memory-sessions-route! [openplanner-enabled?]
   "GET" "/api/memory/sessions"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
@@ -395,7 +395,7 @@
 
 (defn register-memory-routes!
   [app runtime config deps]
-  (memory-sessions-routes! app runtime config deps)
+  (memory-sessions-route! app runtime config deps)
   (memory-session-titles-status-route! app runtime config deps)
   (memory-backfill-titles-route! app runtime config deps)
   (memory-import-titles-route! app runtime config deps)
