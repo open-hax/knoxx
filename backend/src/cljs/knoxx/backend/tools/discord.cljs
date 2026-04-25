@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.discord-gateway :as dg]
-            [knoxx.backend.http :as backend-http :refer [http-error js-array-seq]]
+            [knoxx.backend.http :as backend-http :refer [js-array-seq]]
             [knoxx.backend.text :refer [tool-text-result]]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional live-config]]))

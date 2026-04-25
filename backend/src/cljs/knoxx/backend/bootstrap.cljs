@@ -6,7 +6,7 @@
      this function.
    - All HTTP routes, auth flows, and runtime wiring live in CLJS.
    - Dependencies are passed in as a single JS object (deps) and then threaded
-     through request/runtime contexts."  
+     through request/runtime contexts."
   (:require [clojure.string :as str]
             [knoxx.backend.agent-resume :as agent-resume]
             [knoxx.backend.auth.session :as auth-session]
@@ -14,7 +14,6 @@
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.graceful-shutdown :as graceful-shutdown]
             [knoxx.backend.mcp-http :as mcp-http]
-            [knoxx.backend.pi-session-ingester :as pi-session-ingester]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]

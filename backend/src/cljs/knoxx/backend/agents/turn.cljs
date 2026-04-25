@@ -12,7 +12,6 @@
             [knoxx.backend.agents.transcript :as transcript]
             [knoxx.backend.authz :as authz :refer [auth-snapshot]]
             [knoxx.backend.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
-            [knoxx.backend.extension-runtime :as ext-runtime]
             [knoxx.backend.openplanner-memory :as openplanner-memory]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
@@ -269,7 +268,7 @@
 (defn- prompt-and-await!
   [runtime config session-id run-id conversation-id started-ms model-id mode
    session message prompt-content-parts hydration memory-hydration
-   persisted-request-messages agent-spec]
+   persisted-request-messages _agent-spec]
   (letfn [(content-part-type [part]
             (cond
               (keyword? (:type part)) (name (:type part))

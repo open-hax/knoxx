@@ -2,7 +2,8 @@
   (:require [clojure.string :as str]
             [knoxx.backend.app-shapes :refer [route!]]
             [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]))
+            [knoxx.backend.session-store :as session-store]
+            [shadow.cljs.modern :refer [js-await]]))
 
 (defn interactive-session-id?
   [session-id]
@@ -75,15 +76,15 @@
                                                       (>= (count next-acc) needed-count))]
                              (cond
                                reached-target?
-                               {:rows (vec (take needed-count next-acc))
-                                :has_more true}
+                               (js/Promise.resolve {:rows (vec (take needed-count next-acc))
+                                                  :has_more true})
 
                                (and upstream-has-more (pos? fetched-count))
                                (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size next-offset next-acc needed-count)
 
                                :else
-                               {:rows next-acc
-                                :has_more false}))))))))))))))
+                               (js/Promise.resolve {:rows next-acc
+                                                  :has_more false}))))))))))))))
 
 (defn- hit-session-id
   [hit]

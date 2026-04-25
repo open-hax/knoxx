@@ -1,15 +1,14 @@
 (ns knoxx.backend.agent-templates
   "DSL and Library for Agent Runtime Templates.
-   Allows defining reusable profiles (roles, models, prompts) 
+   Allows defining reusable profiles (roles, models, prompts)
    that can be instantiated into specific event-agent jobs.
-   
+
    Architecture:
    - Model Profiles: Decouple templates from specific model strings
    - Templates: Reusable agent personas with prompts and policies
    - Instances: Concrete job specs with triggers, filters, and overrides
    - Persistence: Redis (hot) → SQL (cold) write-behind queue"
-  (:require [clojure.string :as str]
-            [knoxx.backend.runtime.config :as runtime-config]
+  (:require [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.defaults :as defaults]))
 
 ;; =============================================================================

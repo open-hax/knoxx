@@ -3,11 +3,11 @@
    message assembly, and tool-suite composition.  All implementation lives
    in vertical domain slices under knoxx.backend.tools.<domain>."
   (:require [clojure.string :as str]
-            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
+            [knoxx.backend.core-memory :refer [filter-authorized-memory-hits!]]
             [knoxx.backend.http :refer [openplanner-enabled?]]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search!]]
             [knoxx.backend.runtime.defaults :refer [default-settings]]
-            [knoxx.backend.text :refer [value->preview-text clip-text]]
+            [knoxx.backend.text :refer [value->preview-text]]
             [knoxx.backend.tools.shared :as shared]
             [knoxx.backend.tools.semantic :as semantic]
             [knoxx.backend.tools.discord :as discord]

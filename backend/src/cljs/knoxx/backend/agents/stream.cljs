@@ -71,16 +71,15 @@
 
       (= @mode* :thinking)
       (let [idx (.indexOf delta "</think>")]
-        (if (>= idx 0)
-          (do
-            (let [thinking (subs delta 0 idx)
-                  after (subs delta (+ idx (count "</think>")))]
-              (when (seq thinking)
-                (emit-streaming-delta! state :reasoning thinking))
-              (reset! mode* :done)
-              (when (seq after)
-                (emit-streaming-delta! state :agent_message after))))
-          (emit-streaming-delta! state :reasoning delta)))
+(if (>= idx 0)
+           (let [thinking (subs delta 0 idx)
+                 after (subs delta (+ idx (count "</think>")))]
+             (when (seq thinking)
+               (emit-streaming-delta! state :reasoning thinking))
+             (reset! mode* :done)
+             (when (seq after)
+               (emit-streaming-delta! state :agent_message after)))
+           (emit-streaming-delta! state :reasoning delta)))
 
       :else
       (emit-streaming-delta! state :agent_message delta))))
@@ -208,7 +207,7 @@
   (sync-assistant-message! state (aget event "message")))
 
 (defn- handle-tool-execution-start!
-  [state session event]
+  [state _session event]
   (let [tool-name (or (aget event "toolName") "tool")
         tool-call-id (or (aget event "toolCallId") (.randomUUID (:node-crypto state)))
         raw-args (or (aget event "params")

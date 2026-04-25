@@ -1,0 +1,5 @@
+((nil . ((cider-default-cljs-repl . shadow)
+          (cider-shadow-cljs-default-options . ":server")
+          (cider-repl-display-help-banner . nil)
+          (cider-preferred-build-tool . shadow-cljs)
+          (cider-cljs-lein-repl . nil))))

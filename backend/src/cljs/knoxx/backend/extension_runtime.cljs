@@ -155,7 +155,7 @@
      :runId          – current run id
      :authContext    – authz context
      :config         – Knoxx config map"
-  [runtime config & {:keys [conversation-id session-id run-id model-id auth-context]}]
+  [_runtime config & {:keys [conversation-id session-id run-id model-id auth-context]}]
   #js {:cwd (or (:workspace-root config) (.. js/process cwd))
        :model (when model-id
                 #js {:provider "proxx" :id model-id})

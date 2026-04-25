@@ -1,7 +1,4 @@
-(ns knoxx.backend.actions.loader
-  (:require [clojure.string :as str]
-            ["node:fs/promises" :as fs]
-            ["node:path" :as path]))
+(ns knoxx.backend.actions.loader)
 
 (def well-known-actions
   {"run-agent" {:action/id "run-agent"
@@ -9,7 +6,7 @@
                 :action/label "Run Knoxx Agent"}})
 
 (defn resolve-action!
-  [config {:keys [uses with] :as _step-spec}]
+  [_config {:keys [uses with] :as _step-spec}]
   (let [base (or (get well-known-actions uses)
                  {:action/id uses
                   :action/kind :invoke/noop

@@ -1,8 +1,6 @@
 (ns knoxx.backend.tools.workspace-media
   "Workspace media attachment tools."
-  (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.text :refer [tool-text-result]]
+  (:require [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
 

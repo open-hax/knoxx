@@ -260,7 +260,7 @@
       nil)))
 
 (defn- require-browser-auth-context!
-  [policy-db runtime config req reply]
+  [policy-db _runtime config req reply]
   (-> (auth-session/resolve-auth-context req policy-db)
       (.catch
        (fn [_]

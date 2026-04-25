@@ -2,7 +2,7 @@
   "Content-part, media, and text helpers for agent turns."
   (:require [clojure.string :as str]
             [knoxx.backend.runtime.models :refer [model-supports-input?]]
-            [knoxx.backend.text :refer [value->preview-text content-part-text clip-text]]))
+            [knoxx.backend.text :refer [value->preview-text content-part-text]]))
 
 (defn nonblank
   "Return s when it is a non-blank string (after trim)."

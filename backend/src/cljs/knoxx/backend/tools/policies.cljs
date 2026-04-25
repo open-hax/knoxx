@@ -6,7 +6,7 @@
    Neither contract class grants tools — only the capability/role path does.
    All functions are pure and sync."
   (:require [clojure.set :as set]
-            [knoxx.backend.contracts.loader :as loader]
+            [cljs.reader :as reader]
             [knoxx.backend.tools.registry :as tool-registry]
             ["node:fs" :as node-fs]
             ["node:path" :as path]))

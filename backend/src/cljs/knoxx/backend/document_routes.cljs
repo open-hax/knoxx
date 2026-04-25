@@ -29,11 +29,11 @@
   (.fromAsync js/Array (.parts request)))
 
 (defn register-document-routes!
-  [app runtime config {:keys [route! json-response! error-response!
-                              with-request-context! ensure-permission!
-                              clip-text openplanner-graph-export!
-                              send-fetch-response! bearer-headers
-                              fetch-json openai-auth-error request-query-string]}]
+[app runtime config {:keys [route! json-response! error-response!
+                            with-request-context! ensure-permission!
+                            clip-text openplanner-graph-export!
+                            send-fetch-response! bearer-headers
+                            fetch-json request-query-string]}]
   (route! app "GET" "/api/documents"
           (fn [request reply]
             (with-request-context! runtime request reply

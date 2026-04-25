@@ -1,6 +1,5 @@
 (ns knoxx.backend.tooling
-  (:require [clojure.set :as set]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [knoxx.backend.authz :as authz]
             [knoxx.backend.contracts.resolve :as contract-resolve]
             [knoxx.backend.contracts.roles :as roles]

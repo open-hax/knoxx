@@ -3,11 +3,6 @@
 
 (def ^:private media-extension-pattern #".*\.(?:png|jpg|jpeg|gif|webp|mp4|webm|mp3|wav|ogg|m4a|flac|pdf)(?:\?.*)?$")
 
-(defn- media-url-pattern
-  "Create a regex to find media URLs in text."
-  []
-  (js/RegExp. #"https?://\S+\.(?:png|jpg|jpeg|gif|webp|mp4|webm|mp3|wav|ogg|m4a|flac|pdf)(?:\?\S+)?" "gi"))
-
 (defn- extract-media-urls
   "Extract media URLs from text content."
   [text]

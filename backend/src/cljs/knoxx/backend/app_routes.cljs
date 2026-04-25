@@ -9,14 +9,13 @@
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.contracts-routes :as contracts-routes]
             [knoxx.backend.document-routes :as document-routes]
-            [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers require-openai-key! fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
+            [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
             [knoxx.backend.memory-routes :as memory-routes]
             [knoxx.backend.model-routes :as model-routes]
-            [knoxx.backend.multimodal-routes :as multimodal-routes]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-export!]]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws!]]
-            [knoxx.backend.run-state :as run-state :refer [runs* run-order* summarize-run]]
+            [knoxx.backend.run-state :as run-state :refer [runs* run-order*]]
             [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.util.time :refer [now-iso]]
             [knoxx.backend.session-store :as session-store]
@@ -33,15 +32,10 @@
 
 
 (defn- queue-chat-start!
-  [runtime config reply agent-ctx policy-model body accepted-response log-label]
-  (js-await [_ (validate-chat-policy! agent-ctx policy-model)]
-    (js-await [_ (send-agent-turn! runtime config body)]
-      nil
-      (catch err
-        (.error js/console log-label err)))
-    (json-response! reply 202 accepted-response)
-    (catch err
-      (error-response! reply err 429))))
+  [runtime config reply agent-ctx policy-model body accepted-response]
+  (js-await [validated (validate-chat-policy! agent-ctx policy-model)]
+    (js-await [sent (send-agent-turn! runtime config body)]
+      (json-response! reply 202 accepted-response))))
 
 
 (defn- compact-agent-spec-overrides
@@ -446,8 +440,7 @@
 
   (route! app "GET" "/api/knoxx/proxy/*"
           (fn [request reply]
-            (let [path (aget request "params" "*")
-                  target-url (str (:knoxx-base-url config) "/api/" path (request-query-string request))]
+            (let [path (aget request "params" "*")]
               (-> (forward-knoxx-request! config request "GET" path nil)
                   (.then (fn [resp]
                            (send-fetch-response! reply resp)))
@@ -885,15 +878,8 @@
                                  :model (or (:model body)
                                             (get-in body [:agent-spec :model])
                                             (:llmModel @settings-state*))}
-              queue-turn! (fn [log-label]
-                            (queue-chat-start! runtime
-                                               config
-                                               reply
-                                               agent-ctx
-                                               policy-model
-                                               body
-                                               accepted-response
-                                               log-label))]
+queue-turn! (fn [_log-label]
+                            (queue-chat-start! runtime config reply agent-ctx policy-model body accepted-response))]
           (if-not provided-session-id
             (queue-turn! "Async agent chat failed")
             (-> (session-store/get-session (redis/get-client) session-id)
@@ -1239,7 +1225,7 @@
                               (js/console.error "Session status check failed" err)
                               (json-response! reply 500 {:error (str err)}))))))))
 
-  ;; Run event catch-up endpoint for WS reconnect recovery
+;; Run event catch-up endpoint for WS reconnect recovery
   (route! app "GET" "/api/knoxx/run/:runId/events"
           (fn [request reply]
             (with-request-context! runtime request reply
@@ -1254,8 +1240,8 @@
                                  (json-response! reply 200 {:run_id run-id
                                                             :events events
                                                             :count (count events)})))
-(.catch (fn [err]
-                                   (json-response! reply 500 {:error (str err)})))))))))
+                        (.catch (fn [err]
+                                  (json-response! reply 500 {:error (str err)})))))))))
 
   (route! app "GET" "/api/knoxx/runs/:runId"
           (fn [request reply]

@@ -397,6 +397,8 @@
   (reset! running?* false)
   (println "[discord-cron] stopped"))
 
+(declare start!)
+
 (defn reload!
   []
   (stop!)

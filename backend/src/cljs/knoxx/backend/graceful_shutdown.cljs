@@ -6,8 +6,7 @@
    - allow inflight HTTP requests and active turns a bounded window to settle
    - persist any still-running sessions into a resumable Redis state
    - release timers/sockets so PM2 can restart cleanly"
-  (:require [clojure.string :as str]
-            [knoxx.backend.agent-resume :as agent-resume]
+  (:require [knoxx.backend.agent-resume :as agent-resume]
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.event-agents :as event-agents]
             [knoxx.backend.realtime :as realtime]

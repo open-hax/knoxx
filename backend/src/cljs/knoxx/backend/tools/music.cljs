@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
 
 (defn- music-audd-lookup!

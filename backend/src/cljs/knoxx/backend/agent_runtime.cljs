@@ -278,12 +278,33 @@
 
 (defn- effective-tool-auth-context
   [auth-context allowed-tool-ids]
-  (if-not auth-context
-    nil
-    (assoc auth-context
-           :toolPolicies (mapv (fn [tool-id]
-                                 {:toolId tool-id :effect "allow"})
-                               (sort (vec allowed-tool-ids))))))
+(if-not auth-context
+     nil
+     (assoc auth-context
+            :toolPolicies (mapv (fn [tool-id]
+                                  {:toolId tool-id :effect "allow"})
+                                (sort (vec allowed-tool-ids))))))
+
+(defn- path-resolve
+  [^js node-path & parts]
+  (case (count parts)
+    0 (.resolve node-path)
+    1 (.resolve node-path (nth parts 0))
+    2 (.resolve node-path (nth parts 0) (nth parts 1))
+    3 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2))
+    4 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3))
+    5 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4))
+    6 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5))
+    7 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5) (nth parts 6))
+    (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5) (nth parts 6) (nth parts 7))))
+
+(defn- path-relative
+  [^js node-path from to]
+  (.relative node-path from to))
+
+(defn- path-is-absolute?
+  [^js node-path value]
+  (.isAbsolute node-path value))
 
 (defn- configured-extra-root-records
   [node-path config]

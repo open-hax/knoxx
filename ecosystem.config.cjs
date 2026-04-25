@@ -214,9 +214,9 @@ const apps = [
       kill_timeout: 35000,
       shutdown_with_message: true,
       // Auto-restart when shadow-cljs produces new output
-      watch: ['dist'],
-      watch_delay: 800,
-      ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
+        // watch: ['dist'],
+      // watch_delay: 800,
+      // ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
       autorestart: true,
       max_restarts: 15,
       restart_delay: 3000,
