@@ -1,0 +1,31 @@
+{:lint-as {shadow.cljs.modern/js-await  clojure.core/let
+           shadow.cljs.modern/js-await* clojure.core/let}
+ :linters
+ {:unresolved-symbol
+  {:exclude [js/console js/Promise js/Error js/JSON js/Object
+             js/Array js/fetch js/parseInt js/parseFloat js/Boolean
+             js/clearTimeout js/setTimeout js/setInterval js/clearInterval
+             js/process js/Buffer js/Symbol js/Date js/Math js/Number
+             js/String js/Uint8Array js/ArrayBuffer js/TextDecoder
+             js/TextEncoder js/structuredClone js/URL js/URLSearchParams
+             js/require js/module js/exports js/__dirname js/__filename]}
+  :promise-chain/prefer-js-await {:level :warning}
+  :fn-length/long                {:level :warning}
+  :fn-length/too-long            {:level :error}
+  :file-length/long              {:level :warning}
+  :file-length/too-long          {:level :error}
+  :complexity/high               {:level :warning}
+  :complexity/too-complex        {:level :error}}
+ :hooks
+ {:analyze-call
+  {knoxx.backend.macros/defroute hooks.defroute/defroute
+   cljs.core/ns       hooks.promise-chain/check-ns
+   cljs.core/->       hooks.promise-chain/check
+   cljs.core/->>      hooks.promise-chain/check
+   cljs.core/do       hooks.promise-chain/check
+   cljs.core/let      hooks.promise-chain/check
+   cljs.core/when     hooks.promise-chain/check
+   cljs.core/when-let hooks.promise-chain/check
+   cljs.core/if       hooks.promise-chain/check
+   cljs.core/defn     hooks.promise-chain/check-defn
+   cljs.core/defn-    hooks.promise-chain/check-defn}}}
