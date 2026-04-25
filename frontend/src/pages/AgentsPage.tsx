@@ -147,8 +147,7 @@ export default function AgentsPage() {
         </div>
       ) : (
         <AgentAuditLogs
-          builtInContractId={builtInContractId}
-          builtInActorId={builtInActorId}
+          defaultMode="history"
           className="min-h-0"
         />
       )}

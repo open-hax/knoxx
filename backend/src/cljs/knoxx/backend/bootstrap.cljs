@@ -108,7 +108,8 @@
   [deps]
   (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
         ^js Fastify (aget deps "Fastify")
-        app (Fastify #js {:logger true})
+        app (Fastify #js {:logger true
+                        :bodyLimit (* 50 1024 1024)})
         policy-options #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
                                                  (aget js/process.env "DATABASE_URL")
                                                  "")
@@ -127,14 +128,25 @@
     (-> (policy-db/create-policy-db policy-options)
         (.then
          (fn [policyDb]
-           (let [runtime (make-runtime deps policyDb)]
-             (ensure-fastify-json-empty-body-parser! app)
+(let [runtime (make-runtime deps policyDb)]
+              (ensure-fastify-json-empty-body-parser! app)
 
-             ;; Fastify plugins
+              ;; Debug hook: log large requests before they hit 413
+              (app-add-hook! app "onRequest"
+                (fn [req _reply done]
+                  (when-let [len (aget (.-headers req) "content-length")]
+                    (when (> (js/parseInt len 10) (* 900 1024))
+                      (js/console.warn "[knoxx] large request" (.-url req) len "bytes")))
+                  (done)))
+
+              ;; Fastify plugins
              (-> (.register app (aget deps "fastifyCors") #js {:origin true})
                  (.then (fn [] (.register app (aget deps "fastifyCookie"))))
                  (.then (fn [] (.register app (aget deps "fastifyFormbody"))))
-                 (.then (fn [] (.register app (aget deps "fastifyMultipart"))))
+                 (.then (fn [] (.register app (aget deps "fastifyMultipart")
+                       #js {:limits #js {:fileSize (* 50 1024 1024)
+                                         :fieldSize (* 1 1024 1024)
+                                         :files 10}})))
                  (.then (fn [] (.register app (aget deps "fastifyWebsocket"))))
 
                  ;; WS routes plugin

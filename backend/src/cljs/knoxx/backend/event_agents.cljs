@@ -5,6 +5,7 @@
    Jobs describe triggers + source filters + arbitrary agent specs.
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
+            [shadow.cljs.modern :refer [js-await]]
             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
@@ -13,7 +14,9 @@
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
-            [knoxx.backend.util.parse :refer [parse-positive-int]]))
+            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.util.parse :refer [parse-positive-int]]
+            [knoxx.backend.actions.dispatch :as actions-dispatch]))
 
 (declare start!)
 
@@ -607,6 +610,11 @@
                    actor-id (assoc :actor_id actor-id))
      :model model-id}))
 
+(defn- job-step
+  [job]
+  (or (:step job)
+      {:uses "run-agent" :with (:agentSpec job {})}))
+
 (defn- start-agent-run!
   [config job event]
   (let [body (build-agent-run-payload config job event)]
@@ -699,14 +707,18 @@
       (-> (js/Promise.all
            (clj->js
             (mapv (fn [job]
-                    (let [started-at (record-job-run-start! job)]
-                      (-> (start-agent-run! config job normalized-event)
-                          (.then (fn [result]
-                                   (record-job-run-finish! job started-at "ok" nil)
-                                   result))
-                          (.catch (fn [err]
-                                    (record-job-run-finish! job started-at "error" (.-message err))
-                                    nil)))))
+                    (let [started-at (record-job-run-start! job)
+                      step (job-step job)]
+                  (-> (actions-dispatch/dispatch! {:config config
+                                                   :event normalized-event :job job
+                                                   :run-agent! start-agent-run!}
+                                                  step)
+                      (.then (fn [result]
+                               (record-job-run-finish! job started-at "ok" nil)
+                               result))
+                      (.catch (fn [err]
+                                (record-job-run-finish! job started-at "error" (.-message err))
+                                nil)))))
                   matching-jobs)))
           (.then (fn [_]
                    {:matchedJobs (mapv :id matching-jobs)
@@ -916,28 +928,31 @@
                                                           (summarize-discord-channel channelId messages)))
                                                    (remove str/blank?)
                                                    (str/join "\n\n"))]
-                                  (if (str/blank? summary)
-                                    (js/Promise.resolve nil)
-                                    (start-agent-run!
-                                     config
-                                     job
-                                     {:sourceKind "discord"
-                                      :eventKind "discord.snapshot.summary"
-                                      :timestamp (.toISOString (js/Date.))
-                                      :payload {:summary summary
-                                                :channelId (first channels)
-                                                :publishChannels publish-channels}}))))))
+(if (str/blank? summary)
+                                     (js/Promise.resolve nil)
+                                     (actions-dispatch/dispatch!
+                                      {:config config
+                                       :event {:sourceKind "discord"
+                                               :eventKind "discord.snapshot.summary"
+                                               :timestamp (.toISOString (js/Date.))
+                                               :payload {:summary summary
+                                                         :channelId (first channels)
+                                                         :publishChannels publish-channels}}
+                                       :job job
+                                       :run-agent! start-agent-run!}
+                                      (job-step job))))))
                    (js/Promise.resolve nil)))))))
 
 (defn- execute-direct-job!
   [config job source-kind event-kind]
-  (start-agent-run!
-   config
-   job
-   {:sourceKind source-kind
-    :eventKind event-kind
-    :timestamp (.toISOString (js/Date.))
-    :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}}))
+  (actions-dispatch/dispatch! {:config config
+                              :event {:sourceKind source-kind
+                                      :eventKind event-kind
+                                      :timestamp (.toISOString (js/Date.))
+                                      :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}
+                              :job job
+                              :run-agent! start-agent-run!}
+                             (job-step job)))
 
 (defn- execute-cron-job!
   [config job]

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from 
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import {
   getAgentHistorySession,
-  listAgentHistorySessions,
+  listMemorySessions,
   searchMemory,
 } from "../../lib/api/common";
 import type {
@@ -293,7 +293,7 @@ export default function AgentAuditLogs({
       if (!isMore) setLoadingSessions(true);
       else setLoadingMoreSessions(true);
 
-      const page = await listAgentHistorySessions({ limit: PAGE_SIZE, offset });
+      const page = await listMemorySessions({ limit: PAGE_SIZE, offset });
       const nextRows = page.rows ?? [];
 
       if (!isMore) {

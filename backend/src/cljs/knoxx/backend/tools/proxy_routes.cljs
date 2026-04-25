@@ -2,8 +2,9 @@
   "Fastify routes that proxy through to other internal services.
 
    These used to live in src/server.mjs; keeping them in CLJS ensures the Node
-   host shim stays a pure dependency injector."  
-  (:require [clojure.string :as str]
+   host shim stays a pure dependency injector."
+  (:require [shadow.cljs.modern :refer [js-await]]
+            [clojure.string :as str]
             [knoxx.backend.contracts.actor-scope :as actor-scope]
             [knoxx.backend.core-memory :as core-memory]
             [knoxx.backend.http :as backend-http]
@@ -113,7 +114,7 @@
              (send-proxy-error! reply error-prefix err)))))
 
 (defn register-proxy-routes!
-  "Register all proxy endpoints on the fastify app."  
+  "Register all proxy endpoints on the fastify app."
   [^js app config]
 
   ;; ---------------------------------------------------------------------------
@@ -242,16 +243,10 @@
   ;; Knoxx reconstructs it from the archived session rows.
   (.get app "/api/openplanner/v1/sessions"
         (fn [req reply]
-          (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions" (request-query-string req)))
-              (.then (fn [body]
-                       (let [rows (vec (or (:rows body) []))]
-                         (-> (js/Promise.all
-                              (clj->js (map (fn [row] (enrich-session-summary! config row)) rows)))
-                             (.then (fn [enriched]
-                                      (let [enriched-rows (vec (array-seq enriched))]
-                                        (.send reply (clj->js (assoc body :rows enriched-rows)))))))))))
-              (.catch (fn [err]
-                        (send-proxy-error! reply "OpenPlanner session enrichment error" err))))))
+          (js-await [body (backend-http/openplanner-request! config "GET" (str "/v1/sessions" (request-query-string req)))]
+            (js-await [enriched (js/Promise.all
+                                  (clj->js (map #(enrich-session-summary! config %) (vec (or (:rows body) [])))))]
+              (.send reply (clj->js (assoc body :rows (vec (array-seq enriched)))))))))
 
   ;; Frontend calls /api/openplanner/v1/* but OpenPlanner serves /v1/*.
   ;; Proxy: strip /api/openplanner prefix, add Authorization header.
@@ -266,5 +261,4 @@
                                  "x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
                                  "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}]
             (proxy-fetch! target-url req reply fwd-headers "OpenPlanner proxy error"))))
-
-  nil)
+  )
