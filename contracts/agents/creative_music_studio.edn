@@ -8,6 +8,7 @@
  :actor
  {:capabilities [:cap/read-directory
                  :cap/playlist-curation
+                 :cap/music
                  :cap/audio-editing]}
 
  :agent

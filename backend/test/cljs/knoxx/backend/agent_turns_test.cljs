@@ -14,6 +14,18 @@
       (is (= "generated-session-id"
              (agent-turns/ensure-session-id crypto nil))))))
 
+(deftest model-ready-content-parts-normalizes-js-object-image-parts
+  (testing "image parts arriving as JS objects are normalized and do not crash"
+    (with-redefs [knoxx.backend.runtime.models/model-supports-input? (fn [_ _ part-type]
+                                                                      (= part-type "image"))]
+      (is (= [{:type "image"
+               :url "file://clip.png"}]
+             (agent-turns/model-ready-content-parts
+              {}
+              "test-model"
+              [#js {:type "image"
+                    :url "file://clip.png"}]))))))
+
 (deftest model-ready-content-parts-rewrites-unsupported-audio-inputs
   (testing "unsupported multimodal inputs degrade into explanatory text instead of crashing"
     (with-redefs [knoxx.backend.runtime.models/model-supports-input? (fn [_ _ part-type]

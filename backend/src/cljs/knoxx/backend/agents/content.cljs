@@ -272,7 +272,8 @@
   [config model-id content-parts]
   (->> (or content-parts [])
        (mapcat (fn [part]
-                 (let [part-type (cond
+                 (let [part (if (map? part) part (js->clj part :keywordize-keys true))
+                       part-type (cond
                                    (keyword? (:type part)) (name (:type part))
                                    (string? (:type part)) (:type part)
                                    :else nil)]
