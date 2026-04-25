@@ -75,7 +75,10 @@
               (~'with-request-context! ~'runtime ~'request ~'reply
                (fn [~'ctx]
                  ~@body)))))))))
-
+(defmacro then [target  & body]
+  `(.then ~target (fn [rseult] ~@body)))
+(defmacro then [target  & body]
+  `(.catch ~target (fn [rseult] ~@body)))
 (defmacro defn-async
   "Compatibility macro for async workflow fns.
 

@@ -6,7 +6,7 @@
             [knoxx.backend.authz :as authz]
             [knoxx.backend.document-state
              :refer [database-state*
-                     (js-array-seq)
+                     js-array-seq
                      request-session-id
                      database-docs-dir
                      database-owner-key

@@ -92,7 +92,7 @@
             (.catch (fn [err]
                       (json-response! reply 502 {:detail (str "Failed to send email: " (or (aget err "message") (str err)))})))))))
     (catch :default err
-      (error-response! reply err))))
+      (error-response! reply err)))
 
 (defroute register-websearch-route!
   [ensure-role-can-use!]
@@ -295,7 +295,7 @@
             (.catch (fn [err]
                       (json-response! reply 502 {:detail (str "Discord request failed: " (or (aget err "message") (str err)))})))))))
     (catch :default err
-      (error-response! reply err))))
+      (error-response! reply err)))
 
 ;; ── Admin / config routes ───────────────────────────────────────────────────
 
@@ -465,7 +465,7 @@
             (.catch (fn [err]
                       (json-response! reply 502 {:detail (str "MCP tool call failed: " (or (aget err "message") (str err)))})))))))
     (catch :default err
-      (error-response! reply err))))
+      (error-response! reply err)))
 
 ;; ── Top-level registration ────────────────────────────────────────────────────
 
