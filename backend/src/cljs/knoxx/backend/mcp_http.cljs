@@ -12,8 +12,7 @@
             [knoxx.backend.app-shapes :refer [route!]]
             [knoxx.backend.auth.session :as auth-session]
             [knoxx.backend.mcp-expose :as mcp-expose]
-            [knoxx.backend.redis-client :as redis])
-  (:require-macros [knoxx.backend.macros :refer [defroute]]))
+            [knoxx.backend.redis-client :as redis]))
 
 (declare typebox->zod-shape
          reply-header!)
@@ -186,8 +185,6 @@
         accept (str/lower-case (str (or (aget headers "accept") "")))
         has-json? (str/includes? accept "application/json")
         has-sse? (str/includes? accept "text/event-stream")]
-    ;; The Node transport adapter reconstructs Web headers from rawHeaders,
-    ;; not from req.headers. Update both representations.
     (when (or (str/blank? accept) (not has-json?) (not has-sse?))
       (aset headers "accept" accept-value)
       (aset raw "headers" headers)
@@ -933,39 +930,18 @@
                                           (str (* 60 60 24 30)))
                                       10)
               :base (public-base-url config)}
-        run-route! (make-route-runner deps)]
+        run! (make-route-runner deps)]
 
-    (defroute app "GET" "/.well-known/oauth-authorization-server" nil
-      discovery-metadata!)
-
-    (defroute app "GET" "/.well-known/oauth-protected-resource" nil
-      protected-resource-metadata!)
-
-    (defroute app "POST" "/api/mcp/oauth/register" [:redis]
-      register-client!)
-
-    (defroute app "GET" "/api/mcp/oauth/authorize" [:redis :browser-auth]
-      authorize-client!)
-
-    (defroute app "GET" "/api/mcp/oauth/authorize/confirm" [:redis :browser-auth]
-      authorize-confirm!)
-
-    (defroute app "POST" "/api/mcp/oauth/token" [:redis]
-      exchange-token!)
-
-    (defroute app "GET" "/api/mcp/tokens" [:redis :browser-auth]
-      list-user-tokens!)
-
-    (defroute app "DELETE" "/api/mcp/tokens/:tokenId" [:redis :browser-auth]
-      revoke-user-token!)
-
-    (defroute app "POST" "/mcp" [:redis :bearer-token]
-      handle-mcp-post!)
-
-    (defroute app "GET" "/mcp" [:bearer-token]
-      handle-mcp-session!)
-
-    (defroute app "DELETE" "/mcp" [:bearer-token]
-      handle-mcp-session!)
+    (route! app "GET"    "/.well-known/oauth-authorization-server"    (partial run! nil             discovery-metadata!))
+    (route! app "GET"    "/.well-known/oauth-protected-resource"       (partial run! nil             protected-resource-metadata!))
+    (route! app "POST"   "/api/mcp/oauth/register"                    (partial run! [:redis]        register-client!))
+    (route! app "GET"    "/api/mcp/oauth/authorize"                   (partial run! [:redis :browser-auth] authorize-client!))
+    (route! app "GET"    "/api/mcp/oauth/authorize/confirm"           (partial run! [:redis :browser-auth] authorize-confirm!))
+    (route! app "POST"   "/api/mcp/oauth/token"                      (partial run! [:redis]        exchange-token!))
+    (route! app "GET"    "/api/mcp/tokens"                            (partial run! [:redis :browser-auth] list-user-tokens!))
+    (route! app "DELETE" "/api/mcp/tokens/:tokenId"                  (partial run! [:redis :browser-auth] revoke-user-token!))
+    (route! app "POST"   "/mcp"                                       (partial run! [:redis :bearer-token] handle-mcp-post!))
+    (route! app "GET"    "/mcp"                                       (partial run! [:bearer-token] handle-mcp-session!))
+    (route! app "DELETE" "/mcp"                                       (partial run! [:bearer-token] handle-mcp-session!))
 
     nil))
