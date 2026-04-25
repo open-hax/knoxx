@@ -6,7 +6,6 @@ import DocumentsPage from './DocumentsPage';
 import VectorsPage from './VectorsPage';
 import RawGraphExportPage from './RawGraphExportPage';
 import SourceDocPage from './SourceDocPage';
-import AgentsPage from './AgentsPage';
 import AdminLayout from './AdminLayout';
 import SidebarOpsStatus from '../components/SidebarOpsStatus';
 
@@ -73,7 +72,7 @@ export default function OpsRoot() {
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="docs/view" element={<SourceDocPage />} />
             <Route path="vectors" element={<VectorsPage />} />
-            <Route path="agents" element={<AgentsPage />} />
+            <Route path="agents" element={<Navigate to={`${EVENT_AGENTS_ROUTE}?tab=audit`} replace />} />
             <Route path="event-agents" element={<Navigate to={EVENT_AGENTS_ROUTE} replace />} />
             <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />

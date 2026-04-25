@@ -15,7 +15,7 @@
                              (map (juxt :id :input))
                              (:models provider))]
       (is (= ["text" "image"] (get model-inputs "gpt-5")))
-      (is (= ["text"] (get model-inputs "gemma4:31b"))))))
+      (is (= ["text" "image"] (get model-inputs "gemma4:31b"))))))
 
 (deftest provider-model-config-routes-gpt-family-through-responses
   (testing "gpt-family models use OpenAI Responses with reasoning enabled"
@@ -35,7 +35,7 @@
     (let [model (models/provider-model-config test-config "gemma4:e4b")]
       (is (= "openai-completions" (:api model)))
       (is (true? (:reasoning model)))
-      (is (= ["text"] (:input model)))
+      (is (= ["text" "image"] (:input model)))
       (is (= {:supportsDeveloperRole false
               :supportsReasoningEffort true}
              (models/per-model-compat test-config "gemma4:e4b")))

@@ -7,6 +7,7 @@ type ConversationVoiceButtonProps = {
   disabled?: boolean;
   onTranscript: (text: string) => void;
   title?: string;
+  silenceThreshold?: number;
 };
 
 type VoiceState =
@@ -52,6 +53,7 @@ export function ConversationVoiceButton({
   disabled,
   onTranscript,
   title = "Voice (auto-send on pause)",
+  silenceThreshold = SILENCE_THRESHOLD,
 }: ConversationVoiceButtonProps) {
   const [state, setState] = useState<VoiceState>({ status: "idle" });
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -202,7 +204,7 @@ export function ConversationVoiceButton({
         const rms = calculateRMS(timeDomainData);
         const elapsed = Date.now() - startedAt;
 
-        if (rms < SILENCE_THRESHOLD && elapsed >= MIN_RECORDING_MS) {
+        if (rms < silenceThreshold && elapsed >= MIN_RECORDING_MS) {
           if (silenceStartRef.current === null) {
             silenceStartRef.current = Date.now();
           } else if (Date.now() - silenceStartRef.current >= SILENCE_DURATION_MS) {
@@ -217,7 +219,7 @@ export function ConversationVoiceButton({
       setState({ status: "error", message });
       cleanup();
     }
-  }, [cleanup, cleanupAudio, cleanupRecorder, stopRecording]);
+  }, [cleanup, cleanupAudio, cleanupRecorder, silenceThreshold, stopRecording]);
 
   const handleClick = useCallback((event: MouseEvent<HTMLElement>) => {
     event.preventDefault();

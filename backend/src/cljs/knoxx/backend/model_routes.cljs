@@ -6,7 +6,8 @@
             [knoxx.backend.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq request-query-string]]
             [knoxx.backend.run-state :refer [runs* run-order* summarize-run]]
             [knoxx.backend.runtime.models :refer [allowlisted-model-id?]]
-            [knoxx.backend.util.time :refer [now-iso]]))
+            [knoxx.backend.util.time :refer [now-iso]]
+            [shadow.cljs.modern :refer [js-await]]))
 
 (defn- proxx-configured?
   [config]
@@ -66,43 +67,105 @@
                          (contains? allowed-by-policy model-id)))))
             items)))
 
+(defn- proxx-health-ctx
+  [config request reply]
+  {:config config
+   :request request
+   :reply reply
+   :configured (proxx-configured? config)
+   :default-model (:llmModel @settings-state*)})
+
+(defn- send-proxx-health-unconfigured!
+  [{:keys [config reply default-model]}]
+  (json-response! reply 200 {:reachable false
+                             :configured false
+                             :base_url (:proxx-base-url config)
+                             :status_code 503
+                             :default_model default-model})
+  reply)
+
+(defn- fetch-proxx-health
+  [{:keys [config]}]
+  (fetch-json (str (:proxx-base-url config) "/health")
+              #js {:headers (bearer-headers (:proxx-auth-token config))}))
+
+(defn- send-proxx-health-success!
+  [{:keys [config reply default-model]} resp]
+  (let [body (aget resp "body")
+        key-pool (aget body "keyPool")]
+    (json-response! reply 200 {:reachable (boolean (aget resp "ok"))
+                               :configured true
+                               :base_url (:proxx-base-url config)
+                               :status_code (aget resp "status")
+                               :model_count (cond
+                                              (number? (aget body "modelCount"))
+                                              (aget body "modelCount")
+
+                                              (number? (aget key-pool "totalKeys"))
+                                              (aget key-pool "totalKeys")
+
+                                              :else nil)
+                               :default_model default-model})
+    reply))
+
+(defn- send-proxx-health-failure!
+  [{:keys [config reply default-model]}]
+  (json-response! reply 200 {:reachable false
+                             :configured true
+                             :base_url (:proxx-base-url config)
+                             :status_code 502
+                             :default_model default-model})
+  reply)
+
+(defn- send-proxx-health!
+  [ctx]
+  (if-not (:configured ctx)
+    (send-proxx-health-unconfigured! ctx)
+    (js-await [resp (fetch-proxx-health ctx)]
+      (send-proxx-health-success! ctx resp)
+      (catch _err
+        (send-proxx-health-failure! ctx)))))
+
+(defn proxx-models-ctx
+  [config request reply auth-ctx]
+  {:config config
+   :request request
+   :reply reply
+   :auth auth-ctx
+   :fetch-json! fetch-json})
+
+(defn- fetch-proxx-models
+  [{:keys [config fetch-json!]}]
+  (fetch-json! (str (:proxx-base-url config) "/v1/models")
+               #js {:headers (bearer-headers (:proxx-auth-token config))}))
+
+(defn- send-proxx-models-success!
+  [{:keys [auth config reply]} resp]
+  (if (aget resp "ok")
+    (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
+          filtered (into-array (filter-model-items-for-ctx auth items config))]
+      (json-response! reply 200 {:models filtered}))
+    (json-response! reply 502 {:error "Proxx model list failed"
+                               :details (js->clj (aget resp "body") :keywordize-keys true)}))
+  reply)
+
+(defn- send-proxx-models-failure!
+  [{:keys [reply]} err]
+  (json-response! reply 502 {:error (str err)})
+  reply)
+
+(defn send-proxx-models!
+  [ctx]
+  (js-await [resp (fetch-proxx-models ctx)]
+    (send-proxx-models-success! ctx resp)
+    (catch err
+      (send-proxx-models-failure! ctx err))))
+
 (defn register-model-routes!
   [app runtime config]
   (route! app "GET" "/api/proxx/health"
-          (fn [_request reply]
-            (let [configured (proxx-configured? config)]
-              (if-not configured
-                (json-response! reply 200 {:reachable false
-                                           :configured false
-                                           :base_url (:proxx-base-url config)
-                                           :status_code 503
-                                           :default_model (:llmModel @settings-state*)})
-                (.then (fetch-json (str (:proxx-base-url config) "/health")
-                                   #js {:headers (bearer-headers (:proxx-auth-token config))})
-                       (fn [resp]
-                         (let [body (aget resp "body")
-                               key-pool (aget body "keyPool")]
-                           (json-response! reply 200 {:reachable (boolean (aget resp "ok"))
-                                                      :configured true
-                                                      :base_url (:proxx-base-url config)
-                                                      :status_code (aget resp "status")
-                                                      :model_count (cond
-                                                                     (number? (aget body "modelCount"))
-                                                                     (aget body "modelCount")
-
-                                                                     (number? (aget key-pool "totalKeys"))
-                                                                     (aget key-pool "totalKeys")
-
-                                                                     :else nil)
-                                                       :default_model (:llmModel @settings-state*)})
-                           reply))
-                       (fn [_err]
-                         (json-response! reply 200 {:reachable false
-                                                    :configured true
-                                                    :base_url (:proxx-base-url config)
-                                                    :status_code 502
-                                                    :default_model (:llmModel @settings-state*)})
-                          reply))))))
+          (fn [request reply]
+            (send-proxx-health! (proxx-health-ctx config request reply))))
 
   ;; ============================================================
   ;; Proxx observability (analytics + request logs)
@@ -176,17 +239,7 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (-> (fetch-json (str (:proxx-base-url config) "/v1/models")
-                                #js {:headers (bearer-headers (:proxx-auth-token config))})
-                    (.then (fn [resp]
-                             (if (aget resp "ok")
-                               (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
-                                     filtered (into-array (filter-model-items-for-ctx ctx items config))]
-                                 (json-response! reply 200 {:models filtered}))
-                               (json-response! reply 502 {:error "Proxx model list failed"
-                                                          :details (js->clj (aget resp "body") :keywordize-keys true)}))))
-                    (.catch (fn [err]
-                              (json-response! reply 502 {:error (str err)}))))))))
+                (send-proxx-models! (proxx-models-ctx config request reply ctx))))))
 
   (route! app "POST" "/api/proxx/chat"
           (fn [request reply]

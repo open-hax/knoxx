@@ -63,7 +63,7 @@ export function ChatWorkspacePane({
         onVoiceSteer={controller.voiceSteer}
         abortingTurn={controller.abortingTurn}
         onAbortTurn={controller.abortTurn}
-        activeRunId={controller.activeRunId}
+        activeRunId={controller.latestRun?.run_id ?? null}
         hydrationSources={controller.hydrationSources}
         runtimeEvents={controller.runtimeEvents}
         latestToolReceipts={controller.latestToolReceipts}

@@ -1,11 +1,11 @@
 (ns knoxx.backend.tools.voice
-  "Voice synthesis / OpenUtau project tools."
-  (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.openutau :as openutau]
+  "OpenUtau/voice synthesis tool factories."
+  (:require [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.media :as media]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
+            [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
+            [knoxx.backend.tools.openutau :as openutau]
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]
+            [knoxx.backend.document-state :refer [normalize-relative-path]]))
 
 (defn create-voice-synth-custom-tools
   ([runtime config] (create-voice-synth-custom-tools runtime config nil))
@@ -45,7 +45,7 @@
                                           output-dir (.dirname node-path absolute)
                                           filename (media/path-basename node-path absolute)
                                           readme-absolute (.join node-path output-dir "README.md")
-                                          readme-relative (media/normalize-relative-path (media/path-relative node-path workspace-root readme-absolute))
+                                          readme-relative (normalize-relative-path (media/path-relative node-path workspace-root readme-absolute))
                                           notes (openutau/normalize-notes (js->clj (or (aget params "notes") #js []) :keywordize-keys true))
                                           project (openutau/build-project {:project_name (aget params "project_name")
                                                                           :tempo (aget params "tempo")

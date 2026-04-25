@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.discord-gateway :as dg]
-            [knoxx.backend.http :as backend-http :refer [http-error js-array-seq]]
+            [knoxx.backend.http :as backend-http :refer [js-array-seq]]
             [knoxx.backend.text :refer [tool-text-result]]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional live-config]]))
@@ -105,7 +105,7 @@
                                                 (when-let [url (:url embed)]
                                                   (str " <" url ">"))))
                                          embeds))))]
-    (str "<" (:authorUsername message) "> "
+    (str "<" (:authorUsername message) " (id:" (:authorId message) ")> "
          (if (str/blank? content) "[no text]" content)
          (or attachment-text "")
          (or embed-text ""))))
@@ -213,22 +213,71 @@
         candidate (some-> pathname (str/split #"/") last str/trim not-empty)]
     (or candidate (str "attachment-" idx ".bin"))))
 
+(defn- file-url->path
+  [source]
+  (try
+    (js/decodeURIComponent (.-pathname (js/URL. source)))
+    (catch :default _
+      (subs source (count "file://")))))
+
 (defn- fetch-discord-upload-attachment!
-  [url idx]
-  (-> (js/fetch (str url))
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.then (.arrayBuffer resp)
-                        (fn [buf]
-                          {:name (infer-upload-filename url idx)
-                           :mimeType (or (.get (.-headers resp) "content-type") "application/octet-stream")
-                           :buffer (.from js/Buffer buf)}))
-                 (-> (.text resp)
-                     (.then (fn [text]
-                              (throw (js/Error. (str "Attachment fetch failed " (.-status resp) ": " text)))))))))))
+  "Fetch an attachment from a URL, data URL, or local file path.
+   Returns a promise resolving to {:name :mimeType :buffer}."
+  [runtime config url idx]
+  (let [source (str (or url ""))]
+    (cond
+      (str/blank? source)
+      (js/Promise.reject (js/Error. "Empty attachment source"))
+
+      (media/source-data-url? source)
+      (let [match (.match source #"^data:([^;,]+)?(;base64)?,(.*)$")]
+        (if-not match
+          (js/Promise.reject (js/Error. "Invalid data URL attachment"))
+          (let [mime-type (media/sanitize-mime-type (aget match 1) "application/octet-stream")
+                base64? (= ";base64" (or (aget match 2) ""))
+                payload (or (aget match 3) "")
+                buffer (if base64?
+                         (.from js/Buffer payload "base64")
+                         (.from js/Buffer (js/decodeURIComponent payload) "utf8"))]
+            (media/ensure-source-size! (.-length buffer) media/workspace-media-max-bytes "Discord attachment")
+            (js/Promise.resolve
+             {:name (str "attachment-" idx (media/mime-type->extension mime-type))
+              :mimeType mime-type
+              :buffer buffer}))))
+
+      (media/source-http-url? source)
+      (-> (js/fetch source #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
+          (.then (fn [resp]
+                   (if (.-ok resp)
+                     (.then (.arrayBuffer resp)
+                            (fn [buf]
+                              (let [buffer (.from js/Buffer buf)
+                                    mime-type (media/sanitize-mime-type (.get (.-headers resp) "content-type")
+                                                                        (media/workspace-media-mime-type source))]
+                                (media/ensure-source-size! (.-length buffer) media/workspace-media-max-bytes "Discord attachment")
+                                {:name (infer-upload-filename source idx)
+                                 :mimeType mime-type
+                                 :buffer buffer})))
+                     (-> (.text resp)
+                         (.then (fn [text]
+                                  (throw (js/Error. (str "Attachment fetch failed " (.-status resp) ": " text))))))))))
+
+      :else
+      ;; Local file path — resolve through shared workspace media rules so
+      ;; @-prefixed, workspace-relative, and allowed absolute paths work, while
+      ;; paths outside allowed media roots are rejected before Discord sees them.
+      (let [raw-source (if (media/source-file-url? source)
+                         (file-url->path source)
+                         source)]
+        (-> (media/load-media-source! runtime config raw-source media/workspace-media-max-bytes)
+            (.then (fn [loaded]
+                     {:name (or (:filename loaded)
+                                (str "attachment-" idx (media/mime-type->extension (:mime-type loaded))))
+                      :mimeType (media/sanitize-mime-type (:mime-type loaded) "application/octet-stream")
+                      :buffer (:buffer loaded)})))))))
 
 (defn- discord-send-message!
-  [config channel-id text reply-to attachment-urls]
+  [runtime config channel-id text reply-to attachment-urls]
   (let [manager (discord-gateway-manager)
         normalized (str/trim (str (or text "")))
         attachment-urls (->> (or attachment-urls [])
@@ -241,12 +290,12 @@
       (throw (js/Error. "text or attachment_urls is required")))
     (-> (js/Promise.all
          (clj->js (map-indexed (fn [idx url]
-                                 (fetch-discord-upload-attachment! url idx))
+                                 (fetch-discord-upload-attachment! runtime config url idx))
                                attachment-urls)))
         (.then (fn [files]
-                 (let [file-list (vec (js->clj files :keywordize-keys true))]
+                 (let [file-list (vec (array-seq files))]
                    (if (discord-gateway-started?)
-                     (-> (.sendMessage manager channel-id normalized reply-to (clj->js file-list))
+                     (-> (.sendMessage manager channel-id normalized reply-to file-list)
                          (.then (fn [result]
                                   (js->clj result :keywordize-keys true))))
                      (let [token (discord-token config)
@@ -292,6 +341,61 @@
                                      :timestamp (or (aget result "timestamp") "")
                                      :chunkCount (count chunks)
                                      :attachmentCount (count file-list)}))))))))))))
+
+(defn- discord-react!
+  "Add an emoji reaction to a Discord message."
+  [config channel-id message-id emoji]
+  (when (str/blank? channel-id)
+    (throw (js/Error. "channel_id is required")))
+  (when (str/blank? message-id)
+    (throw (js/Error. "message_id is required")))
+  (when (str/blank? emoji)
+    (throw (js/Error. "emoji is required")))
+  (let [token (discord-token config)
+        encoded-emoji (js/encodeURIComponent emoji)]
+    (-> (js/fetch (str "https://discord.com/api/v10/channels/" channel-id "/messages/" message-id "/reactions/" encoded-emoji "/@me")
+                  #js {:method "PUT"
+                       :headers #js {"Authorization" (str "Bot " token)}})
+        (.then (fn [resp]
+                 (if (.-ok resp)
+                   {:channelId channel-id
+                    :messageId message-id
+                    :emoji emoji
+                    :reacted true}
+                   (-> (.text resp)
+                       (.then (fn [text]
+                                (throw (js/Error. (str "Discord API error " (.-status resp) ": " text))))))))))))
+
+(defn- discord-thread-create!
+  "Create a thread in a channel or from a message."
+  [config channel-id message-id name auto-archive-duration]
+  (when (str/blank? channel-id)
+    (throw (js/Error. "channel_id is required")))
+  (when (str/blank? name)
+    (throw (js/Error. "name is required")))
+  (let [token (discord-token config)
+        url (if (str/blank? message-id)
+              (str "https://discord.com/api/v10/channels/" channel-id "/threads")
+              (str "https://discord.com/api/v10/channels/" channel-id "/messages/" message-id "/threads"))
+        body (clj->js {:name name
+                       :auto_archive_duration (or auto-archive-duration 1440)
+                       :type 11})]
+    (-> (js/fetch url
+                  #js {:method "POST"
+                       :headers (discord-rest-headers token)
+                       :body (.stringify js/JSON body)})
+        (.then (fn [resp]
+                 (if (.-ok resp)
+                   (.json resp)
+                   (-> (.text resp)
+                       (.then (fn [text]
+                                (throw (js/Error. (str "Discord API error " (.-status resp) ": " text)))))))))
+        (.then (fn [result]
+                 {:threadId (or (aget result "id") "")
+                  :channelId channel-id
+                  :messageId (or message-id "")
+                  :name name
+                  :created true})))))
 
 (defn- discord-list-guilds!
   [config]
@@ -370,7 +474,7 @@
                               #js {:channel_id (.String Type #js {:description "Discord channel ID to send the message to. Use discord.list.channels to discover IDs."})
                                    :text (.String Type #js {:description "Message content to send. Long messages will be chunked automatically."})
                                    :reply_to (type-optional Type (.String Type #js {:description "Optional message ID to reply to."}))
-                                   :attachment_urls (type-optional Type (.Array Type (.String Type) #js {:description "Optional attachment URLs to fetch and upload into the Discord message."}))})
+                                   :attachment_urls (type-optional Type (.Array Type (.String Type) #js {:description "Optional attachment sources to upload: HTTP(S) URLs, data URLs, absolute file paths, or workspace-relative paths (e.g. sandbox output files, generated images)."}))})
          channel-messages-params (.Object Type
                                           #js {:channel_id (.String Type #js {:description "Discord channel ID to fetch messages from."})
                                                :limit (type-optional Type (.Number Type #js {:description "Maximum number of messages to fetch (default 50, max 100)." :minimum 1 :maximum 100}))
@@ -393,6 +497,15 @@
                                      :limit (type-optional Type (.Number Type #js {:description "Maximum number of matching messages to return." :minimum 1 :maximum 100}))
                                      :before (type-optional Type (.String Type #js {:description "Fetch messages before this message ID."}))
                                      :after (type-optional Type (.String Type #js {:description "Fetch messages after this message ID."}))})
+         react-params (.Object Type
+                               #js {:channel_id (.String Type #js {:description "Discord channel ID containing the message to react to."})
+                                    :message_id (.String Type #js {:description "Discord message ID to react to."})
+                                    :emoji (.String Type #js {:description "Emoji to react with (e.g. 👍, 🎉, 💀)."})})
+         thread-create-params (.Object Type
+                                       #js {:channel_id (.String Type #js {:description "Discord channel ID to create the thread in."})
+                                            :message_id (type-optional Type (.String Type #js {:description "Optional message ID to create a thread from. If omitted, creates a standalone thread in the channel."}))
+                                            :name (.String Type #js {:description "Name of the thread (max 100 chars)."})
+                                            :auto_archive_duration (type-optional Type (.Number Type #js {:description "Auto-archive duration in minutes: 60, 1440 (default), 4320, or 10080."}))})
          list-channels-params (.Object Type
                                        #js {:guild_id (type-optional Type (.String Type #js {:description "Optional guild/server ID. If omitted, returns channels across all visible guilds."}))})
          empty-params (.Object Type #js {})
@@ -404,7 +517,7 @@
                                       reply-to (or (aget params "reply_to") (aget params "replyTo"))
                                       attachment-urls (or (aget params "attachment_urls") (aget params "attachmentUrls") #js [])]
                                   (maybe-tool-update! on-update (str "Sending Discord message to " channel-id "…"))
-                                  (-> (discord-send-message! config channel-id text reply-to attachment-urls)
+                                  (-> (discord-send-message! runtime config channel-id text reply-to attachment-urls)
                                       (.then (fn [result]
                                                (tool-text-result (str "Sent Discord message " (:messageId result) " to channel " channel-id)
                                                                  result))))))
@@ -479,6 +592,28 @@
                                                                          (str/join "\n"))]
                                                           (tool-text-result (str "Discord channels:\n" lines) result)))))))
 
+         discord-react-execute (fn [_tool-call-id params a b c]
+                                 (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                       channel-id (or (aget params "channel_id") (aget params "channelId") "")
+                                       message-id (or (aget params "message_id") (aget params "messageId") "")
+                                       emoji (or (aget params "emoji") "")]
+                                   (maybe-tool-update! on-update (str "Reacting to message " message-id " with " emoji "…"))
+                                   (-> (discord-react! config channel-id message-id emoji)
+                                       (.then (fn [result]
+                                                (tool-text-result (str "Reacted with " emoji " to message " message-id) result))))))
+
+         discord-thread-create-execute (fn [_tool-call-id params a b c]
+                                         (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                               channel-id (or (aget params "channel_id") (aget params "channelId") "")
+                                               message-id (or (aget params "message_id") (aget params "messageId"))
+                                               name (or (aget params "name") "")
+                                               auto-archive (aget params "auto_archive_duration")]
+                                           (maybe-tool-update! on-update (str "Creating thread '" name "' in channel " channel-id "…"))
+                                           (-> (discord-thread-create! config channel-id message-id name auto-archive)
+                                               (.then (fn [result]
+                                                        (tool-text-result (str "Created thread " (:threadId result) " named '" name "'")
+                                                                          result))))))
+
 
          ]
 
@@ -493,10 +628,11 @@
                     (aset "promptSnippet" "Post updates, summaries, or notifications to Discord channels.")
                     (aset "promptGuidelines" (clj->js ["Use discord.publish or discord.send to share results in a Discord channel."
                                                        "Provide channelId/channel_id and content/text."
-                                                       "If replying in-thread, prefer discord.send with reply_to."]))
+                                                       "Include attachmentUrls/attachment_urls to upload files, images, or generated assets."
+                                                       "To mention a user, use <@user_id> in the text. Do NOT use @username — it will not ping."]))
                     (aset "parameters" (.Object Type #js {:channelId (.String Type #js {:description "Discord channel ID to post the message to."})
                                                            :content (.String Type #js {:description "Message content to post to the Discord channel."})
-                                                           :attachmentUrls (type-optional Type (.Array Type (.String Type) #js {:description "Optional attachment URLs to upload with the message."}))}))
+                                                           :attachmentUrls (type-optional Type (.Array Type (.String Type) #js {:description "Optional attachment sources to upload: HTTP(S) URLs, data URLs, absolute file paths, or workspace-relative paths (e.g. sandbox output files, generated images)."}))}))
                     (aset "execute" (fn [tool-call-id params a b c]
                                        (discord-send-execute tool-call-id #js {:channel_id (aget params "channelId")
                                                                                :text (aget params "content")
@@ -509,9 +645,34 @@
                     (aset "description" "Send a message to a Discord channel, optionally as a reply to an existing message.")
                     (aset "promptSnippet" "Send a Discord message or reply to a specific message id.")
                     (aset "promptGuidelines" (clj->js ["Use discord.send to post or reply in channels once you know the channel id."
-                                                       "Use discord.list.servers and discord.list.channels first if you need discovery."]))
+                                                       "Use discord.list.servers and discord.list.channels first if you need discovery."
+                                                       "Include attachment_urls to upload local files, images, data URLs, or remote URLs."
+                                                       "To mention a user, use <@user_id> in the text. Do NOT use @username — it will not ping."
+                                                       "To reply to a message, pass its message id as reply_to."
+                                                       "Thread IDs work as channel_ids for sending messages inside threads."]))
                     (aset "parameters" send-params)
                     (aset "execute" discord-send-execute)))
+                (when (allowed? "discord.react")
+                  (doto (js-obj)
+                    (aset "name" "discord.react")
+                    (aset "label" "Discord React")
+                    (aset "description" "Add an emoji reaction to a Discord message.")
+                    (aset "promptSnippet" "React to a Discord message with an emoji.")
+                    (aset "promptGuidelines" (clj->js ["Use discord.react to add emoji reactions to messages."
+                                                       "Provide channel_id, message_id, and an emoji (e.g. 👍, 🎉, 💀)."]))
+                    (aset "parameters" react-params)
+                    (aset "execute" discord-react-execute)))
+                (when (allowed? "discord.thread.create")
+                  (doto (js-obj)
+                    (aset "name" "discord.thread.create")
+                    (aset "label" "Discord Thread Create")
+                    (aset "description" "Create a Discord thread from a message or in a channel.")
+                    (aset "promptSnippet" "Create a thread to spin off a conversation.")
+                    (aset "promptGuidelines" (clj->js ["Use discord.thread.create to start a thread from a message or in a channel."
+                                                       "Provide channel_id and a name. Optionally pass message_id to create a thread from that message."
+                                                       "After creating a thread, use the returned threadId as channel_id with discord.send to post in it."]))
+                    (aset "parameters" thread-create-params)
+                    (aset "execute" discord-thread-create-execute)))
                 (when (allowed? "discord.read")
                   (doto (js-obj)
                     (aset "name" "discord.read")

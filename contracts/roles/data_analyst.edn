@@ -2,4 +2,18 @@
  :role/capabilities [:cap/read
                      :cap/write
                      :cap/edit
-                     :cap/canvas]}
+                     :cap/canvas]
+ :role/permissions ["org.datalakes.read"
+                     "datalake.read"
+                     "datalake.query"
+                     "agent.chat.use"
+                     "agent.memory.read"
+                     "agent.memory.cross_session"
+                     "agent.runs.read_own"
+                     "tool.read.use"
+                     "tool.write.use"
+                     "tool.edit.use"
+                     "tool.semantic_query.use"
+                     "tool.memory_search.use"
+                     "tool.memory_session.use"]
+}

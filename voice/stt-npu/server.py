@@ -1,12 +1,15 @@
 import os
 import time
 import subprocess
+import threading
 from typing import Tuple
 
 import numpy as np
 from flask import Flask, jsonify, request
 from huggingface_hub import snapshot_download
 
+
+MAX_AUDIO_DURATION_S = 25.0  # NPU KV cache can't handle very long audio
 
 def env(name: str, default: str) -> str:
     value = os.getenv(name)
@@ -19,6 +22,10 @@ MODEL_ID = env("WHISPER_MODEL_ID", "anubhav200/openai-whisper-small-openvino-int
 REQUESTED_DEVICE = env("WHISPER_DEVICE", "NPU")
 NPU_COMPILER_TYPE = env("WHISPER_NPU_COMPILER_TYPE", "DRIVER")
 
+# Audio chunking for long recordings
+CHUNK_DURATION_S = float(env("STT_CHUNK_DURATION_S", "20.0"))
+CHUNK_OVERLAP_S = float(env("STT_CHUNK_OVERLAP_S", "1.0"))
+SAMPLE_RATE = 16000
 
 def ensure_model(model_id: str, model_dir: str) -> None:
     os.makedirs(model_dir, exist_ok=True)
@@ -106,7 +113,66 @@ def load_pipeline(requested_device: str) -> Tuple[object, str, str | None]:
         raise
 
 
+def _acquire_pipe_lock(timeout: float = 30.0) -> bool:
+    """Try to acquire the NPU inference lock with a timeout."""
+    return _pipe_lock.acquire(timeout=timeout)
+
+
+def _generate(audio: np.ndarray) -> str:
+    """Run inference while holding the lock. Caller must have acquired the lock."""
+    result = app.config["PIPE"].generate(audio)
+    text = getattr(result, "text", None)
+    return text.strip() if text else str(result).strip()
+
+
+def _longest_common_suffix_prefix(a: str, b: str) -> int:
+    """Return the length of the longest suffix of `a` that matches a prefix of `b`."""
+    max_len = min(len(a), len(b))
+    for length in range(max_len, 0, -1):
+        if a[-length:] == b[:length]:
+            return length
+    return 0
+
+
+def transcribe_chunked(audio: np.ndarray) -> str:
+    """Split long audio into overlapping chunks, transcribe each, and merge."""
+    total_samples = audio.shape[0]
+    chunk_samples = int(CHUNK_DURATION_S * SAMPLE_RATE)
+    overlap_samples = int(CHUNK_OVERLAP_S * SAMPLE_RATE)
+    stride = max(1, chunk_samples - overlap_samples)
+
+    segments: list[str] = []
+    pos = 0
+
+    while pos < total_samples:
+        end = min(pos + chunk_samples, total_samples)
+        chunk = audio[pos:end]
+
+        acquired = _acquire_pipe_lock(timeout=30.0)
+        if not acquired:
+            raise RuntimeError("NPU is busy processing another request. Try again in a moment.")
+        try:
+            text = _generate(chunk)
+        finally:
+            _pipe_lock.release()
+
+        if text:
+            # Deduplicate overlap with previous segment
+            if segments:
+                overlap = _longest_common_suffix_prefix(segments[-1], text)
+                if overlap > 0:
+                    text = text[overlap:].strip()
+            if text:
+                segments.append(text)
+
+        pos += stride
+
+    return " ".join(segments)
+
+
 app = Flask(__name__)
+# Only one NPU inference at a time to avoid KV-cache contention / hangs.
+_pipe_lock = threading.Lock()
 
 
 @app.get("/health")
@@ -135,13 +201,24 @@ def transcribe():
     except Exception as e:
         return jsonify({"detail": str(e)}), 400
 
-    duration_s = float(audio.shape[0]) / 16000.0
+    duration_s = float(audio.shape[0]) / SAMPLE_RATE
 
     try:
-        result = app.config["PIPE"].generate(audio)
-        text = getattr(result, "text", None)
-        if text is None:
-            text = str(result)
+        if duration_s <= CHUNK_DURATION_S:
+            # Short audio — single inference
+            acquired = _acquire_pipe_lock(timeout=30.0)
+            if not acquired:
+                return jsonify({
+                    "detail": "NPU is busy processing another request. Try again in a moment.",
+                    "device": app.config.get("DEVICE"),
+                }), 503
+            try:
+                text = _generate(audio)
+            finally:
+                _pipe_lock.release()
+        else:
+            # Long audio — chunked transcription
+            text = transcribe_chunked(audio)
     except Exception as e:
         return jsonify({"detail": str(e), "device": app.config.get("DEVICE")}), 500
 
@@ -166,7 +243,8 @@ def main() -> None:
     app.config["DEVICE"] = device
     app.config["INIT_ERROR"] = init_error
     # Bind 0.0.0.0 for docker; publish to 127.0.0.1 at compose-level.
-    app.run(host="0.0.0.0", port=PORT)
+    # threaded=True so a stuck NPU inference doesn't block new HTTP requests.
+    app.run(host="0.0.0.0", port=PORT, threaded=True)
 
 
 if __name__ == "__main__":

@@ -150,6 +150,7 @@ export interface EventAgentJobControl {
   description?: string;
   contractSourceId?: string;
   contractHash?: number;
+  actorId?: string;
   trigger: {
     kind: string;
     cadenceMinutes: number;

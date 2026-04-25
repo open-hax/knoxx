@@ -240,7 +240,7 @@
                   nil)))))
 
 (defn cache-session-title!
-  [runtime config session-id title title-model]
+  [_runtime _config session-id title title-model]
   (let [session-id (str (or session-id ""))
         resolved (cache-session-title-entry! session-id title title-model nil)]
     resolved))

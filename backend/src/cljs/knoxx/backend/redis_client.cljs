@@ -2,7 +2,8 @@
   "Simple Redis client for Knoxx session storage.
 
    Uses node-redis under the hood with promise-based API."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            ["redis" :as redis]))
 
 (defonce redis-client* (atom nil))
 (defonce redis-init-promise* (atom nil))
@@ -35,8 +36,7 @@
   [redis-url]
   (when (and redis-url (not (str/blank? redis-url)))
     (try
-      (let [redis (js/require "redis")
-            client (.createClient redis #js {:url redis-url})]
+      (let [client (.createClient redis #js {:url redis-url})]
         (.on client "error" (fn [err]
                                (js/console.error "Redis client error:" err)))
         (.on client "connect" (fn []

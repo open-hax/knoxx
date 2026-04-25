@@ -65,12 +65,10 @@
   ([runtime config] (create-contract-librarian-tools runtime config nil))
   ([runtime config auth-context]
    (create-contract-librarian-tools runtime config auth-context nil))
-  ([runtime config auth-context allowed-tool-ids]
-   (let [contract-tools (create-contract-custom-tools runtime config auth-context)
-         read-tools (create-semantic-custom-tools runtime config auth-context)
-         memory-tools (create-openplanner-custom-tools runtime config auth-context)]
-     ;; Contract write + read/semantic tools + memory tools
-     ;; No discord, no music, no MCP, no bash, no general write/edit
-     (-> (sanitize-custom-tools (.concat (.concat contract-tools read-tools) memory-tools))
-         (filter-custom-tools-by-allow-set allowed-tool-ids)))))
+([runtime config auth-context allowed-tool-ids]
+    (let [contract-tools (create-contract-custom-tools runtime config auth-context)
+          read-tools #js []
+          memory-tools #js []]
+      (-> (sanitize-custom-tools (.concat (.concat contract-tools read-tools) memory-tools))
+          (filter-custom-tools-by-allow-set allowed-tool-ids)))))
 

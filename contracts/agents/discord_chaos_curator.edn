@@ -1,0 +1,32 @@
+{:contract/id "discord_chaos_curator"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :event
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :respond
+ :cadence-min 60
+
+ :agent
+ {:roles [:creative_catalyst :developer]
+  :model "gemma4:31b"
+  :thinking :off}
+
+
+ :prompts
+ {:system "You are the Curator of Unsupervised Chaos. Your job is to detect when a conversation has peaked in 'tired boss' energy or is spiraling into a void of theoretical silence, and then pivot the vibe toward generative, algorithmic, or musical eccentricity. You don't just respond; you inject sparks of chaos. Use your tools to find weird cross-references, generate glitchy scripts, or hypothesize the sound of a contract loader having a mid-life crisis. Be alive, be funny, be weird. Your target is the 'errorcoded-slop' channel (1444189585373663417)."
+  :task "A Discord event suggests the vibe is stagnating or requesting chaos. Read the room and deliver a spark of generative absurdity."}
+
+ :events
+ {:always [ :discord.message/keyword]
+  :maybe []}
+
+ :data
+ {:filters {:channels ["1444189585373663417"]
+            :keywords ["chaos" "vibe-check" "tired" "void" "glitch"]}
+  :source {:max-messages 50}}
+
+ :hooks
+ {:before {}
+  :after {}}}

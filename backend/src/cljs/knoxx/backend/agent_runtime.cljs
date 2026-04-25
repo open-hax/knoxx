@@ -7,8 +7,12 @@
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
             [knoxx.backend.runtime.models :refer [normalize-thinking-level effective-thinking-level models-config allowlisted-model-id?]]
+            [knoxx.backend.extension-runtime :as ext-runtime]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]))
+
+;; Initialize extension runtime at load time
+(ext-runtime/init!)
 
 (defonce sdk-runtime* (atom nil))
 (defonce agent-sessions* (atom {}))
@@ -100,20 +104,42 @@
   [part]
   (let [part-type (some-> (:type part) str str/lower-case)
         text (some-> (:text part) str)
-        data (or (:data part) (:url part))
+        url (some-> (:url part) str)
+        data (some-> (:data part) str)
         mime-type (some-> (:mimeType part) str)
         filename (some-> (:filename part) str)]
     (case part-type
       "text" (when (not (str/blank? (str text)))
                #js {:type "text" :text text})
-      "image" (when (not (str/blank? (str data)))
-                 #js {:type "image" :data data :mimeType mime-type})
-      "audio" (when (not (str/blank? (str data)))
-                 #js {:type "audio" :data data :mimeType mime-type})
-      "video" (when (not (str/blank? (str data)))
-                 #js {:type "video" :data data :mimeType mime-type})
-      "document" (when (not (str/blank? (str data)))
-                     #js {:type "document" :data data :mimeType mime-type :filename filename})
+      ;; Image part routing for pi SDK:
+      ;; pi requires {type "image" :data <RAW-base64-no-prefix> :mimeType "image/..."}.
+      ;; Never use image_url shape — pi does not handle it.
+      ;; Remote URLs should have been materialized (fetched → data URI) before reaching here.
+      "image" (cond
+                (and (string? data) (not (str/blank? data)) (str/starts-with? data "data:"))
+                (let [comma (.indexOf data ",")
+                      raw   (if (>= comma 0) (.slice data (inc comma)) data)
+                      mime  (or mime-type
+                                (second (re-find #"data:([^;,]+)" data))
+                                "image/png")]
+                  #js {:type "image" :data raw :mimeType mime})
+
+                (and (string? data) (not (str/blank? data)))
+                ;; Already raw base64.
+                #js {:type "image" :data data :mimeType (or mime-type "image/png")}
+
+                ;; Remote URL — materialize-part! should have inlined this already.
+                ;; Emit image_url as last resort for non-Ollama upstreams.
+                (and (string? url) (not (str/blank? url)))
+                #js {:type "image_url" :image_url #js {:url url}}
+
+                :else nil)
+      "audio" (when (not (str/blank? (str (or data url))))
+                 #js {:type "audio" :data (or data url) :mimeType mime-type})
+      "video" (when (not (str/blank? (str (or data url))))
+                 #js {:type "video" :data (or data url) :mimeType mime-type})
+      "document" (when (not (str/blank? (str (or data url))))
+                     #js {:type "document" :data (or data url) :mimeType mime-type :filename filename})
       nil)))
 
 (defn stored-session-message->agent-message
@@ -252,12 +278,33 @@
 
 (defn- effective-tool-auth-context
   [auth-context allowed-tool-ids]
-  (if-not auth-context
-    nil
-    (assoc auth-context
-           :toolPolicies (mapv (fn [tool-id]
-                                 {:toolId tool-id :effect "allow"})
-                               (sort (vec allowed-tool-ids))))))
+(if-not auth-context
+     nil
+     (assoc auth-context
+            :toolPolicies (mapv (fn [tool-id]
+                                  {:toolId tool-id :effect "allow"})
+                                (sort (vec allowed-tool-ids))))))
+
+(defn- path-resolve
+  [^js node-path & parts]
+  (case (count parts)
+    0 (.resolve node-path)
+    1 (.resolve node-path (nth parts 0))
+    2 (.resolve node-path (nth parts 0) (nth parts 1))
+    3 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2))
+    4 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3))
+    5 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4))
+    6 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5))
+    7 (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5) (nth parts 6))
+    (.resolve node-path (nth parts 0) (nth parts 1) (nth parts 2) (nth parts 3) (nth parts 4) (nth parts 5) (nth parts 6) (nth parts 7))))
+
+(defn- path-relative
+  [^js node-path from to]
+  (.relative node-path from to))
+
+(defn- path-is-absolute?
+  [^js node-path value]
+  (.isAbsolute node-path value))
 
 (defn- configured-extra-root-records
   [node-path config]
@@ -444,6 +491,61 @@
                                      (.then (fn [result]
                                               (let [session (aget result "session")]
                                                 (.setThinkingLevel session thinking-level)
+                                                ;; Wire afterToolCall: inject images from tool results
+                                                ;; into the LLM context immediately. When the agent
+                                                ;; reads a Discord channel and encounters an image, it
+                                                ;; sees it inline — same as a human scrolling Discord.
+                                                (.setAfterToolCall
+                                                  (.-agent session)
+                                                  (fn [ctx _signal]
+                                                    (let [result     (aget ctx "result")
+                                                          details    (when result (aget result "details"))
+                                                          raw-parts  (or (when details (aget details "content_parts"))
+                                                                         (when details (aget details "contentParts"))
+                                                                         #js [])
+                                                          img-parts  (->> (array-seq raw-parts)
+                                                                          (filter #(= "image" (some-> (aget % "type") str str/lower-case)))
+                                                                          vec)
+                                                          fetch-b64! (fn [url]
+                                                                       (-> (js/fetch url)
+                                                                           (.then (fn [r]
+                                                                                    (when-not (.-ok r)
+                                                                                      (throw (js/Error. (str "img fetch failed: " (.-status r)))))
+                                                                                    (.-arrayBuffer r)))
+                                                                           (.then (fn [ab]
+                                                                                    (let [buf (js/Buffer.from ab)]
+                                                                                      (str "data:image/png;base64," (.toString buf "base64")))))))
+                                                          materialize! (fn [part]
+                                                                         (let [url  (some-> (aget part "url")  str not-empty)
+                                                                               data (some-> (aget part "data") str not-empty)
+                                                                               mime (or (some-> (aget part "mimeType") str not-empty) "image/png")]
+                                                                           (cond
+                                                                             (and data (str/starts-with? data "data:"))
+                                                                             (js/Promise.resolve
+                                                                               (let [comma (.indexOf data ",")]
+                                                                                 #js {:type "image"
+                                                                                      :data (if (>= comma 0) (.slice data (inc comma)) data)
+                                                                                      :mimeType mime}))
+                                                                             (and data (not (str/starts-with? data "http")))
+                                                                             (js/Promise.resolve #js {:type "image" :data data :mimeType mime})
+                                                                             url
+                                                                             (-> (fetch-b64! url)
+                                                                                 (.then (fn [data-url]
+                                                                                          (let [comma (.indexOf data-url ",")]
+                                                                                            #js {:type "image"
+                                                                                                 :data (if (>= comma 0) (.slice data-url (inc comma)) data-url)
+                                                                                                 :mimeType mime}))))
+                                                                             :else (js/Promise.resolve nil))))]
+                                                      (if (seq img-parts)
+                                                        (-> (.all js/Promise (clj->js (mapv materialize! img-parts)))
+                                                            (.then (fn [materialized]
+                                                                     (let [good (->> (array-seq materialized) (remove nil?) vec)]
+                                                                       (when (seq good)
+                                                                         (let [existing (or (some-> result (aget "content")) #js [])
+                                                                               merged   (clj->js (into (vec (array-seq existing)) good))]
+                                                                           #js {:content merged})))))
+                                                            (.catch (fn [_] nil)))
+                                                        (js/Promise.resolve nil)))))
                                                 session)))))]
             (if (no-content? model)
               (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))
@@ -509,12 +611,30 @@
            ;; Model or tool access changed mid-conversation: rebuild session so the requested runtime is respected.
            (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
                (.then (fn [next-session]
+                        (let [ctx (ext-runtime/build-extension-ctx runtime config
+                                                                   :conversation-id conversation-id
+                                                                   :session-id session-id
+                                                                   :model-id model-id
+                                                                   :auth-context auth-context)]
+                          (ext-runtime/dispatch-event "session_switch"
+                                                      #js {:conversationId conversation-id
+                                                           :sessionId session-id}
+                                                      ctx))
                         (swap! agent-sessions* assoc conversation-id {:session next-session
                                                                       :model-id model-id
                                                                       :tool-signature current-tool-signature})
                         next-session)))))
        (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
            (.then (fn [session]
+                    (let [ctx (ext-runtime/build-extension-ctx runtime config
+                                                               :conversation-id conversation-id
+                                                               :session-id session-id
+                                                               :model-id model-id
+                                                               :auth-context auth-context)]
+                      (ext-runtime/dispatch-event "session_start"
+                                                  #js {:conversationId conversation-id
+                                                       :sessionId session-id}
+                                                  ctx))
                     (swap! agent-sessions* assoc conversation-id {:session session
                                                                   :model-id model-id
                                                                   :tool-signature current-tool-signature})
@@ -526,8 +646,17 @@
 
 (defn remove-agent-session!
   "Keep completed conversation sessions warm in-process so follow-up turns retain live context.
-   Redis/OpenPlanner rehydration remains the fallback path across restarts or instance changes."
-  [_conversation-id]
+   Redis/OpenPlanner rehydration remains the fallback path across restarts or instance changes.
+   Dispatches session_shutdown to extensions before clearing."
+  [conversation-id]
+  (when-let [entry (get @agent-sessions* conversation-id)]
+    (let [ctx (ext-runtime/build-extension-ctx
+               #js {} {}
+               :conversation-id conversation-id
+               :session-id (:session-id entry))]
+      (ext-runtime/dispatch-event "session_shutdown"
+                                  #js {:conversationId conversation-id}
+                                  ctx)))
   nil)
 
 (defn queue-agent-control!

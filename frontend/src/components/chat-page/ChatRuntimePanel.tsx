@@ -110,7 +110,7 @@ export function ChatRuntimePanel({
             <div style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>No live runtime events yet.</div>
           ) : (
             runtimeEvents.slice(-6).reverse().map((event, index) => (
-              <div key={`${event.type ?? "event"}:${event.at ?? index}`} style={{ borderLeft: "2px solid var(--token-colors-accent-cyan)", padding: "8px 10px", borderRadius: 8, background: assistantSurfaceBackground, color: assistantSurfaceText }}>
+              <div key={`${event.type ?? "event"}:${event.at ?? ""}:${index}`} style={{ borderLeft: "2px solid var(--token-colors-accent-cyan)", padding: "8px 10px", borderRadius: 8, background: assistantSurfaceBackground, color: assistantSurfaceText }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: assistantSurfaceText }}>{event.type ?? "event"}{event.tool_name ? ` • ${event.tool_name}` : ""}</div>
                 <div style={{ fontSize: 10, color: assistantSurfaceText, opacity: 0.84 }}>{formatMaybeDate(event.at as string | undefined) ?? event.at ?? "just now"}</div>
                 {typeof event.preview === "string" && event.preview.trim().length > 0 ? (
@@ -133,16 +133,30 @@ export function ChatRuntimePanel({
                 <div style={{ fontSize: 11, fontWeight: 600, color: assistantSurfaceText }}>{receipt.tool_name ?? receipt.id}</div>
                 <Badge size="sm" variant={receipt.status === "completed" ? "success" : receipt.status === "failed" ? "error" : "warning"}>{receipt.status ?? "running"}</Badge>
               </div>
-              {typeof receipt.input_preview === "string" && receipt.input_preview.trim().length > 0 ? (
+              {((typeof (receipt as Record<string, unknown>).input === "string" && String((receipt as Record<string, unknown>).input).trim().length > 0)
+                || (typeof receipt.input_preview === "string" && receipt.input_preview.trim().length > 0)) ? (
                 <div style={{ marginTop: 6 }}>
                   <div style={{ fontSize: 10, fontWeight: 600, color: assistantSurfaceText, opacity: 0.84, marginBottom: 4 }}>input</div>
-                  <Markdown content={asMarkdownPreview(truncateText(receipt.input_preview, 500))} theme="dark" variant="compact" lineNumbers={false} copyButton={false} />
+                  <Markdown
+                    content={asMarkdownPreview(truncateText(String((receipt as Record<string, unknown>).input ?? receipt.input_preview ?? ""), 800))}
+                    theme="dark"
+                    variant="compact"
+                    lineNumbers={false}
+                    copyButton={false}
+                  />
                 </div>
               ) : null}
-              {typeof receipt.result_preview === "string" && receipt.result_preview.trim().length > 0 ? (
+              {((typeof (receipt as Record<string, unknown>).result === "string" && String((receipt as Record<string, unknown>).result).trim().length > 0)
+                || (typeof receipt.result_preview === "string" && receipt.result_preview.trim().length > 0)) ? (
                 <div style={{ marginTop: 6 }}>
                   <div style={{ fontSize: 10, fontWeight: 600, color: assistantSurfaceText, opacity: 0.84, marginBottom: 4 }}>output</div>
-                  <Markdown content={asMarkdownPreview(truncateText(receipt.result_preview, 500))} theme="dark" variant="compact" lineNumbers={false} copyButton={false} />
+                  <Markdown
+                    content={asMarkdownPreview(truncateText(String((receipt as Record<string, unknown>).result ?? receipt.result_preview ?? ""), 800))}
+                    theme="dark"
+                    variant="compact"
+                    lineNumbers={false}
+                    copyButton={false}
+                  />
                 </div>
               ) : null}
             </div>

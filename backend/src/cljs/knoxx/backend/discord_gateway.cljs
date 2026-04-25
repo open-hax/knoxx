@@ -91,6 +91,24 @@
           (swap! parts (fn [p] (.concat p #js [@remaining]))))
         @parts))))
 
+(defn- attachment-value
+  "Read an attachment field from either a CLJS map or a plain JS object."
+  [attachment k js-key]
+  (or (when (map? attachment) (get attachment k))
+      (when (object? attachment) (aget attachment js-key))))
+
+(defn- discord-file-payload
+  [attachment]
+  (let [buffer (or (attachment-value attachment :buffer "buffer")
+                   (attachment-value attachment :attachment "attachment"))
+        name (or (attachment-value attachment :name "name")
+                 (attachment-value attachment :filename "filename")
+                 "attachment.bin")]
+    (when-not buffer
+      (throw (js/Error. "Discord attachment is missing file data")))
+    #js {:attachment buffer
+         :name name}))
+
 ;; ---------------------------------------------------------------------------
 ;; Gateway method implementations (extracted for readability)
 ;; ---------------------------------------------------------------------------
@@ -292,10 +310,7 @@
                                                         (aset payload "reply" (clj->js {:messageReference reply-to})))
                                                       (when (and (= index 0) (seq attachments))
                                                         (aset payload "files"
-                                                              (clj->js (mapv (fn [attachment]
-                                                                               {:attachment (:buffer attachment)
-                                                                                :name (:name attachment)})
-                                                                             attachments))))
+                                                              (into-array (map discord-file-payload attachments))))
                                                       (.send channel payload)))))
                                          nil)
                                 (.then (fn [_]

@@ -1,6 +1,7 @@
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import { AgentTraceTimeline, ToolReceiptGroup } from "../ToolReceiptBlock";
 import { MultimodalContent } from "./MultimodalContent";
+import { extractEmbedsFromMarkdown } from "../../lib/mediaEmbeds";
 import type {
   AgentSource,
   ChatMessage,
@@ -77,6 +78,9 @@ export function ChatMessageList({
           && rawTraceBlocks.length > 0
           && Boolean(message.content?.trim());
 
+        const { markdown: embeddedMarkdown, contentParts: embeddedParts } = extractEmbedsFromMarkdown(message.content || "");
+        const mergedContentParts: ContentPart[] = (message.contentParts ?? []).concat(embeddedParts);
+
         return <Card
           key={message.id}
           variant="outlined"
@@ -139,29 +143,23 @@ export function ChatMessageList({
                 marginTop: 4,
               }}
             >
-              <Markdown content={message.content || ""} theme="dark" variant="full" />
+              <Markdown content={embeddedMarkdown} theme="dark" variant="full" />
               {/* Multimodal content for assistant messages */}
-              {message.contentParts && message.contentParts.length > 0 && (
-                <MultimodalContent parts={message.contentParts} />
-              )}
+              {mergedContentParts.length > 0 ? <MultimodalContent parts={mergedContentParts} /> : null}
               {renderAssistantActions(message)}
             </div>
           ) : message.role === "assistant" || message.role === "system" ? (
             <>
-              <Markdown content={message.content || ""} theme="dark" variant="full" />
+              <Markdown content={embeddedMarkdown} theme="dark" variant="full" />
               {/* Multimodal content for assistant/system messages */}
-              {message.contentParts && message.contentParts.length > 0 && (
-                <MultimodalContent parts={message.contentParts} />
-              )}
+              {mergedContentParts.length > 0 ? <MultimodalContent parts={mergedContentParts} /> : null}
               {message.role === "assistant" ? renderAssistantActions(message) : null}
             </>
           ) : (
             <>
-              <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{message.content}</div>
+              <div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{embeddedMarkdown}</div>
               {/* Multimodal content for user messages */}
-              {message.contentParts && message.contentParts.length > 0 && (
-                <MultimodalContent parts={message.contentParts} />
-              )}
+              {mergedContentParts.length > 0 ? <MultimodalContent parts={mergedContentParts} /> : null}
               {/* Legacy attachments support */}
               {message.attachments && message.attachments.length > 0 && (
                 <MultimodalContent

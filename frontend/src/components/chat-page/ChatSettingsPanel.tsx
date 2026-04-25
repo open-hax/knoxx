@@ -218,8 +218,8 @@ export function ChatSettingsPanel({
             <div style={labelStyle}>Capabilities</div>
             {capabilityIds.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 124, overflow: "auto", paddingRight: 4 }}>
-                {capabilityIds.map((capabilityId) => (
-                  <Badge key={capabilityId} size="sm" variant="default">{capabilityId}</Badge>
+                {capabilityIds.map((capabilityId, idx) => (
+                  <Badge key={`${capabilityId}:${idx}`} size="sm" variant="default">{capabilityId}</Badge>
                 ))}
               </div>
             ) : (
@@ -235,8 +235,8 @@ export function ChatSettingsPanel({
                   Enabled ({enabledTools.length})
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 96, overflow: "auto", paddingRight: 4 }}>
-                  {enabledTools.length > 0 ? enabledTools.map((tool) => (
-                    <Badge key={tool.id} size="sm" variant="default">{tool.label}</Badge>
+                  {enabledTools.length > 0 ? enabledTools.map((tool, idx) => (
+                    <Badge key={`${tool.id}:${idx}`} size="sm" variant="default">{tool.label}</Badge>
                   )) : <span style={{ fontSize: 12, color: "var(--token-colors-text-muted)" }}>None</span>}
                 </div>
               </div>
@@ -245,8 +245,8 @@ export function ChatSettingsPanel({
                   Disabled ({disabledTools.length})
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 96, overflow: "auto", paddingRight: 4 }}>
-                  {disabledTools.length > 0 ? disabledTools.map((tool) => (
-                    <Badge key={tool.id} size="sm" variant="warning">{tool.label}</Badge>
+                  {disabledTools.length > 0 ? disabledTools.map((tool, idx) => (
+                    <Badge key={`${tool.id}:${idx}`} size="sm" variant="warning">{tool.label}</Badge>
                   )) : <span style={{ fontSize: 12, color: "var(--token-colors-text-muted)" }}>None</span>}
                 </div>
               </div>

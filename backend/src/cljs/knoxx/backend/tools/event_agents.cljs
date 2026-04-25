@@ -4,7 +4,7 @@
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.agent-templates :as templates]
             [knoxx.backend.event-agents :as event-agents]
-            [knoxx.backend.http :as backend-http :refer [http-error js-array-seq]]
+            [knoxx.backend.http :as backend-http :refer [js-array-seq]]
             [knoxx.backend.runtime.defaults :refer [default-settings]]
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.triggers.control-config :as control-config]

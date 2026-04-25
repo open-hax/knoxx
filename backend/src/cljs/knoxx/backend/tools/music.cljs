@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
 
 (defn- music-audd-lookup!
@@ -95,6 +95,30 @@
      :isrcs {:primary isrc
              :apple_music apple-music-isrc
              :spotify spotify-isrc}}))
+
+(defn- music-generate!
+  "Generate a WAV file from a JSON music spec using the native Node.js synthesis engine."
+  [runtime config spec-json output-path]
+  (let [exec-file-async (aget runtime "execFileAsync")
+        node-fs (aget runtime "fs")
+        node-path (aget runtime "path")
+        script-path (media/path-resolve node-path (or (.cwd js/process) "/") "scripts" "synthesize-music.mjs")]
+    (when-not exec-file-async
+      (throw (js/Error. "execFileAsync runtime dependency is not available")))
+    (-> (media/temp-file-path! runtime "music-specs" ".json")
+        (.then (fn [spec-path]
+                 (-> (media/fs-write-file! node-fs spec-path spec-json)
+                     (.then (fn []
+                              (let [out-path (or output-path
+                                                 (str "Music/generated/" (.randomUUID (aget runtime "crypto")) ".wav"))
+                                    {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config out-path)]
+                                (-> (media/fs-mkdir! node-fs (media/path-resolve node-path absolute "..") #js {:recursive true})
+                                    (.then (fn []
+                                             (-> (exec-file-async "node" #js [script-path spec-path absolute]
+                                                                 #js {:timeout 120000 :maxBuffer 1048576})
+                                                 (.then (fn [stdout _stderr]
+                                                          (let [result (js->clj (.parse js/JSON stdout) :keywordize-keys true)]
+                                                            (assoc result :workspace-path relative :absolute-path absolute)))))))))))))))))
 
 (defn create-music-custom-tools
   "Create music/audio identification and analysis tools."
@@ -196,7 +220,23 @@
                                #js {:source (.String Type #js {:description "Path or URL to the audio file."})
                                     :width (type-optional Type (.Number Type #js {:description "Output width in pixels."}))
                                     :height (type-optional Type (.Number Type #js {:description "Output height in pixels."}))
-                                    :title (type-optional Type (.String Type #js {:description "Optional filename/title for the rendered image."}))})]
+                                    :title (type-optional Type (.String Type #js {:description "Optional filename/title for the rendered image."}))})
+
+         generate-params (.Object Type
+                                  #js {:spec_json (.String Type #js {:description "JSON music specification describing BPM, tracks, instruments, patterns, and notes."})
+                                       :output_path (type-optional Type (.String Type #js {:description "Optional workspace-relative output path for the WAV file. Defaults to Music/generated/<uuid>.wav"}))})
+
+         generate-execute (fn [_tool-call-id params a b c]
+                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                  spec-json (aget params "spec_json")
+                                  output-path (media/normalize-tool-path-arg (aget params "output_path"))]
+                              (maybe-tool-update! on-update "Generating music from spec…")
+                              (-> (music-generate! runtime config spec-json output-path)
+                                  (.then (fn [result]
+                                           (tool-text-result
+                                            (str "Generated WAV: " (:workspace-path result)
+                                                 " (" (:durationSec result) "s, " (:sampleRate result) "Hz)")
+                                            result))))))]
 
      (clj->js
       (vec
@@ -262,5 +302,18 @@
                      (aset "promptGuidelines" (clj->js ["Use audio.waveform to visualize audio amplitude."
                                                         "Pair with audio.spectrogram when you want both amplitude and frequency views."]))
                      (aset "parameters" audio-params)
-                     (aset "execute" waveform-execute)))]))))))
+                     (aset "execute" waveform-execute)))
+                 (when (allowed? "music.generate")
+                   (doto (js-obj)
+                     (aset "name" "music.generate")
+                     (aset "label" "Generate Music")
+                     (aset "description" "Synthesize a WAV file from a JSON music spec using the native Node.js audio engine.")
+                     (aset "promptSnippet" "Generate original music and render it to a WAV file directly on the server.")
+                     (aset "promptGuidelines" (clj->js ["Use music.generate when the user wants original synthesized music, beats, loops, or melodies."
+                                                        "Construct a JSON spec with bpm, tracks, instruments, and patterns."
+                                                        "Supported instruments: synth, bass, lead, pad, drum (kick, snare, hihat, clap, tom)."
+                                                        "After generation, use workspace_media.attach to embed the WAV in the reply with a player."
+                                                        "Default output path is Music/generated/<uuid>.wav."]))
+                     (aset "parameters" generate-params)
+                     (aset "execute" generate-execute)))]))))))
 

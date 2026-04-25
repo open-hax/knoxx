@@ -9,7 +9,7 @@
   "Create agent SDK custom tools for all connected MCP servers.
    Returns a JS array of tool objects, or an empty array if MCP is disabled."
   ([runtime config] (create-mcp-custom-tools runtime config nil))
-  ([runtime config auth-context]
+  ([_runtime config auth-context]
    (if (and (:mcp-enabled config) (mcp/available?) (mcp/enabled?))
      (let [tools (if-let [items (mcp/mcp-tools-for-agent)]
                    (if (array? items) (array-seq items) [])

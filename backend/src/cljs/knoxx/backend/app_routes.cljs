@@ -9,14 +9,14 @@
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.contracts-routes :as contracts-routes]
             [knoxx.backend.document-routes :as document-routes]
-            [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers require-openai-key! fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
+            [knoxx.backend.guards :as guards]
+            [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
             [knoxx.backend.memory-routes :as memory-routes]
             [knoxx.backend.model-routes :as model-routes]
-            [knoxx.backend.multimodal-routes :as multimodal-routes]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-export!]]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws!]]
-            [knoxx.backend.run-state :as run-state :refer [runs* run-order* summarize-run]]
+            [knoxx.backend.run-state :as run-state :refer [runs* run-order*]]
             [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.util.time :refer [now-iso]]
             [knoxx.backend.session-store :as session-store]
@@ -26,7 +26,18 @@
             [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled? effective-agent-contract agent-contract-catalog actor-catalog default-agent-contract-id default-actor-id]]
             [knoxx.backend.turn-control :as turn-control]
             [knoxx.backend.voice-routes :as voice-routes]
-            [knoxx.backend.translation-routes :as translation-routes]))
+            [knoxx.backend.workspace-media-routes :as workspace-media-routes]
+            [knoxx.backend.translation-routes :as translation-routes]
+            [shadow.cljs.modern :refer (js-await)]
+            ))
+
+
+(defn- queue-chat-start!
+  [runtime config reply agent-ctx policy-model body accepted-response]
+  (js-await [validated (validate-chat-policy! agent-ctx policy-model)]
+    (js-await [sent (send-agent-turn! runtime config body)]
+      (json-response! reply 202 accepted-response))))
+
 
 (defn- compact-agent-spec-overrides
   [agent-spec]
@@ -109,32 +120,59 @@
 
 (defn- active-run-summary
   [run session]
-  {:run_id (:run_id run)
-   :session_id (:session_id run)
-   :conversation_id (:conversation_id run)
-   :status (:status run)
-   :model (:model run)
-   :created_at (:created_at run)
-   :updated_at (:updated_at run)
-   :ttft_ms (:ttft_ms run)
-   :total_time_ms (:total_time_ms run)
-   :input_tokens (:input_tokens run)
-   :output_tokens (:output_tokens run)
-   :tokens_per_s (:tokens_per_s run)
-   :error (:error run)
-   :event_count (count (or (:events run) []))
-   :tool_receipt_count (count (or (:tool_receipts run) []))
-   :has_active_stream (boolean (:has_active_stream session))
-   :agent_spec (get-in run [:settings :agentSpec])
-   :resource_policies (get-in run [:resources :agentResourcePolicies])
-   :latest_user_message (some->> (:request_messages run)
-                                 reverse
-                                 (some (fn [message]
-                                         (when (= "user" (some-> (:role message) str str/lower-case))
-                                           (:content message)))))
-   :latest_event (some-> (:events run) last (select-keys [:type :status :tool_name :preview :at]))})
+  (let [messages   (vec (or (:request_messages run) []))
+        user-msg   (some #(when (= "user" (some-> (:role %) str/lower-case)) %) (reverse messages))]
+    {:run_id (:run_id run)
+     :session_id (:session_id run)
+     :conversation_id (:conversation_id run)
+     :status (:status run)
+     :model (:model run)
+     :created_at (:created_at run)
+     :updated_at (:updated_at run)
+     :ttft_ms (:ttft_ms run)
+     :total_time_ms (:total_time_ms run)
+     :input_tokens (:input_tokens run)
+     :output_tokens (:output_tokens run)
+     :tokens_per_s (:tokens_per_s run)
+     :error (:error run)
+     :event_count (count (or (:events run) []))
+     :tool_receipt_count (count (or (:tool_receipts run) []))
+     :has_active_stream (boolean (:has_active_stream session))
+     :agent_spec (get-in run [:settings :agentSpec])
+     :resource_policies (get-in run [:resources :agentResourcePolicies])
+     :latest_user_message (:content user-msg)
+     :content_parts (mapv (fn [p]
+                            (-> p
+                                (dissoc :data)
+                                (select-keys [:type :url :mimeType :filename :text])))
+                          (or (:content-parts user-msg) []))
+     :tool_receipts (mapv (fn [r]
+                           (select-keys r [:id :tool_name :status
+                                           :input_preview :result_preview
+                                           :started_at :ended_at]))
+                         (or (:tool_receipts run) []))
+     :trace_blocks (mapv (fn [b]
+                           (select-keys b [:id :kind :status :toolName
+                                           :toolCallId :content :at
+                                           :inputPreview :outputPreview :isError]))
+                         (or (:trace_blocks run) []))
+     :latest_event (some-> (:events run) last (select-keys [:type :status :tool_name :preview :at]))}))
 
 (def SESSION_RECOVERY_STALE_MS 60000)
+
+(defn- clear-ghost-turn!
+  "If turn-control has an entry for conversation-id but the underlying Proxx
+   session shows no active streaming or current turn, the entry is a ghost
+   from a previous hung run. Unregister it so zombie recovery can proceed."
+  [conversation-id]
+  (let [agent-session (active-agent-session conversation-id)
+        streaming? (and agent-session (true? (aget agent-session "isStreaming")))
+        current-turn? (and agent-session
+                           (try
+                             (some? (aget agent-session "currentTurn"))
+                             (catch js/Error _ false)))]
+    (when (and (not streaming?) (not current-turn?))
+      (turn-control/unregister-active-turn! conversation-id))))
 
 (defn- runtime-processing-session?
   [conversation-id]
@@ -352,18 +390,22 @@
                                           :lounge-messages* lounge-messages*
                                           :authorized-session-ids! authorized-session-ids!})
 
-  (tool-routes/register-tool-routes! app runtime config
-                                     {:route! route!
-                                      :json-response! json-response!
-                                      :error-response! error-response!
-                                      :with-request-context! with-request-context!
-                                      :ensure-permission! ensure-permission!
-                                      :tool-catalog tool-catalog
-                                      :ensure-role-can-use! ensure-role-can-use!
-                                      :resolve-workspace-path resolve-workspace-path
-                                      :count-occurrences count-occurrences
-                                      :replace-first replace-first
-                                      :clip-text clip-text})
+  (let [session-guard          (guards/make-session-guard runtime)
+        optional-session-guard (guards/make-optional-session-guard runtime)]
+    (tool-routes/register-tool-routes! app runtime config
+                                       {:route! route!
+                                        :json-response! json-response!
+                                        :error-response! error-response!
+                                        :with-request-context! with-request-context!
+                                        :ensure-permission! ensure-permission!
+                                        :tool-catalog tool-catalog
+                                        :ensure-role-can-use! ensure-role-can-use!
+                                        :resolve-workspace-path resolve-workspace-path
+                                        :count-occurrences count-occurrences
+                                        :replace-first replace-first
+                                        :clip-text clip-text
+                                        :session-guard session-guard
+                                        :optional-session-guard optional-session-guard}))
 
   (contracts-routes/register-contracts-routes! app runtime config
                                               {:route! route!
@@ -394,10 +436,16 @@
                                                 :openai-auth-error openai-auth-error
                                                 :request-query-string request-query-string})
 
+  (workspace-media-routes/register-workspace-media-routes! app runtime config
+                                                          {:route! route!
+                                                           :json-response! json-response!
+                                                           :error-response! error-response!
+                                                           :with-request-context! with-request-context!
+                                                           :ensure-tool! ensure-tool!})
+
   (route! app "GET" "/api/knoxx/proxy/*"
           (fn [request reply]
-            (let [path (aget request "params" "*")
-                  target-url (str (:knoxx-base-url config) "/api/" path (request-query-string request))]
+            (let [path (aget request "params" "*")]
               (-> (forward-knoxx-request! config request "GET" path nil)
                   (.then (fn [resp]
                            (send-fetch-response! reply resp)))
@@ -801,69 +849,95 @@
                                 (error-response! reply err 502)))))))))
 
   (route! app "POST" "/api/knoxx/chat/start"
-          (fn [request reply]
-            (with-request-context! runtime request reply
-              (fn [ctx]
-                (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (let [node-crypto (aget runtime "crypto")
-                      parsed0 (normalize-chat-body (or (aget request "body") #js {}))
-                      parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
-                      agent-ctx (effective-auth-context ctx parsed)
-                      policy-model (or (:model parsed)
-                                       (get-in parsed [:agent-spec :model])
-                                       (:llmModel @settings-state*))
-                      provided-session-id (:session-id parsed)
-                      session-id (ensure-session-id node-crypto provided-session-id)
-                      conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
-                      run-id (or (:run-id parsed) (.randomUUID node-crypto))
-                      body (assoc parsed :session-id session-id :conversation-id conversation-id :run-id run-id :mode "rag" :auth-context agent-ctx)
-                      accepted-response {:ok true
-                                         :queued true
-                                         :run_id run-id
-                                         :conversation_id conversation-id
-                                         :session_id (:session-id body)
-                                         :model (or (:model body)
-                                                    (get-in body [:agent-spec :model])
-                                                    (:llmModel @settings-state*))}
-                      queue-turn! (fn [log-label]
-                                    (-> (validate-chat-policy! agent-ctx policy-model)
-                                        (.then (fn [_]
-                                                 (-> (send-agent-turn! runtime config body)
-                                                     (.then (fn [_] nil))
-                                                     (.catch (fn [err]
-                                                               (.error js/console log-label err))))
-                                                 (json-response! reply 202 accepted-response)))
-                                        (.catch (fn [err]
-                                                  (error-response! reply err 429)))))]
-                  ;; Guard: check if session can accept a new turn before queueing
-                  (if-not provided-session-id
-                    ;; No session-id means new session, always allowed
-                    (queue-turn! "Async agent chat failed")
-                    ;; Existing session: check can_send
-                    (-> (session-store/get-session (redis/get-client) session-id)
-                        (.then (fn [session]
-                                 (let [can-send-result (session-store/session-can-send? session)]
-                                   (if (:can-send can-send-result)
-                                     ;; Also check in-memory agent session for live streaming
-                                     (let [agent-session (active-agent-session conversation-id)
-                                           actively-streaming? (and agent-session
-                                                                    (true? (aget agent-session "isStreaming")))]
-                                       (if actively-streaming?
-                                        (json-response! reply 409 {:ok false
-                                                                   :error "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
-                                                                   :code "agent_already_processing"
-                                                                   :has_active_stream true
-                                                                   :can_send false})
-                                         (queue-turn! "Async agent chat failed")))
-                                     (json-response! reply 409 {:ok false
-                                                                :error (str "Agent is already processing. " (or (:reason can-send-result) ""))
-                                                                :code "agent_already_processing"
-                                                                :has_active_stream (boolean (:has_active_stream session))
-                                                                :can_send false})))))
-                        (.catch (fn [err]
-                                  (.error js/console "Session status check failed" err)
-                                  ;; On error, allow the send to proceed (fail-open)
-                                  (queue-turn! "Async agent chat failed"))))))))))
+  (fn [request reply]
+    (with-request-context! runtime request reply
+      (fn [ctx]
+        (when ctx
+          (ensure-permission! ctx "agent.chat.use"))
+        (let [node-crypto (aget runtime "crypto")
+              parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+              parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
+              agent-ctx (effective-auth-context ctx parsed)
+              policy-model (or (:model parsed)
+                               (get-in parsed [:agent-spec :model])
+                               (:llmModel @settings-state*))
+              provided-session-id (:session-id parsed)
+              session-id (ensure-session-id node-crypto provided-session-id)
+              conversation-id (or (:conversation-id parsed)
+                                  (.randomUUID node-crypto))
+              run-id (or (:run-id parsed)
+                         (.randomUUID node-crypto))
+              body (assoc parsed
+                          :session-id session-id
+                          :conversation-id conversation-id
+                          :run-id run-id
+                          :mode "rag"
+                          :auth-context agent-ctx)
+              ;; keep your existing accepted-response map exactly as-is
+              accepted-response {:ok true
+                                 :queued true
+                                 :run-id run-id
+                                 :conversation-id conversation-id
+                                 :session-id session-id
+                                 :body body
+                                 :model (or (:model body)
+                                            (get-in body [:agent-spec :model])
+                                            (:llmModel @settings-state*))}
+queue-turn! (fn [_log-label]
+                            (queue-chat-start! runtime config reply agent-ctx policy-model body accepted-response))]
+          (if-not provided-session-id
+            (queue-turn! "Async agent chat failed")
+            (-> (session-store/get-session (redis/get-client) session-id)
+                (.then (fn [session]
+                         (let [can-send-result (session-store/session-can-send? session)]
+                           (if (:can-send can-send-result)
+                             (let [agent-session (active-agent-session conversation-id)
+                                   actively-streaming? (and agent-session
+                                                            (true? (aget agent-session "isStreaming")))]
+                               (if actively-streaming?
+                                 (json-response! reply 409
+                                                 {:ok false
+                                                  :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
+                                                  :code "agent-already-processing"
+                                                  :has-active-stream true
+                                                  :can-send false})
+                                 (queue-turn! "Async agent chat failed")))
+                             (-> (if (= "running" (:status session))
+                                   (latest-run-event! (:run_id session))
+                                   (js/Promise.resolve nil))
+                                 (.then (fn [latest-event]
+                                          (clear-ghost-turn! conversation-id)
+                                          (let [stalled? (and (= "running" (:status session))
+                                                              (not (runtime-processing-session? conversation-id))
+                                                              (stale-running-session? session latest-event))]
+                                            (if stalled?
+                                              (-> (session-store/complete-session!
+                                                   (redis/get-client)
+                                                   session-id
+                                                   conversation-id
+                                                   {:status "failed"
+                                                    :error "Session was stale/zombie auto-aborted before new turn."
+                                                    :messages (:messages session)})
+                                                  (.then (fn [_]
+                                                           (queue-turn! "Async agent chat failed (recovered from zombie)")))
+                                                  (.catch (fn [err]
+                                                            (.error js/console "Failed to abort zombie session" err)
+                                                            (json-response! reply 409
+                                                                            {:ok false
+                                                                             :error (str "Agent is already processing. Zombie recovery failed: " err)
+                                                                             :code "agent-already-processing"
+                                                                             :has-active-stream false
+                                                                             :can-send false}))))
+                                              (json-response! reply 409
+                                                              {:ok false
+                                                               :error (str "Agent is already processing. "
+                                                                           (or (:reason can-send-result) ""))
+                                                               :code "agent-already-processing"
+                                                               :has-active-stream (boolean (:has-active-stream session))
+                                                               :can-send false}))))))))
+                (.catch (fn [err]
+                          (.error js/console "Session status check failed" err)
+                          (queue-turn! "Async agent chat failed"))))))))))))
 
   (route! app "POST" "/api/knoxx/direct"
           (fn [request reply]
@@ -917,31 +991,58 @@
                                                  (json-response! reply 202 accepted-response)))
                                         (.catch (fn [err]
                                                   (error-response! reply err 429)))))]
-                  ;; Guard: check if session can accept a new turn before queueing
+                  ;; Guard: check if session can accept a new turn before queueing.
                   (if-not provided-session-id
                     (queue-turn! "Async direct agent chat failed")
-                    (-> (session-store/get-session (redis/get-client) session-id)
-                        (.then (fn [session]
-                                 (let [can-send-result (session-store/session-can-send? session)]
-                                   (if (:can-send can-send-result)
-                                     (let [agent-session (active-agent-session conversation-id)
-                                           actively-streaming? (and agent-session
-                                                                    (true? (aget agent-session "isStreaming")))]
-                                       (if actively-streaming?
-                                        (json-response! reply 409 {:ok false
-                                                                   :error "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
-                                                                   :code "agent_already_processing"
-                                                                   :has_active_stream true
-                                                                   :can_send false})
-                                         (queue-turn! "Async direct agent chat failed")))
+                    (.then (session-store/get-session (redis/get-client) session-id)
+                           (fn [session]
+                             (let [can-send-result (session-store/session-can-send? session)]
+                               (if (:can-send can-send-result)
+                                 (let [agent-session (active-agent-session conversation-id)
+                                       actively-streaming? (and agent-session
+                                                                (true? (aget agent-session "isStreaming")))]
+                                   (if actively-streaming?
                                      (json-response! reply 409 {:ok false
-                                                                :error (str "Agent is already processing. " (or (:reason can-send-result) ""))
+                                                                :error "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
                                                                 :code "agent_already_processing"
-                                                                :has_active_stream (boolean (:has_active_stream session))
-                                                                :can_send false})))))
-                        (.catch (fn [err]
-                                  (.error js/console "Session status check failed" err)
-                                  (queue-turn! "Async direct agent chat failed"))))))))))
+                                                                :has_active_stream true
+                                                                :can_send false})
+                                     (queue-turn! "Async direct agent chat failed")))
+                                 ;; Zombie detection: if session looks dead in Redis but not in runtime,
+                                 ;; force-complete it and allow the new turn to proceed.
+                                 (.then (if (= "running" (:status session))
+                                          (latest-run-event! (:run_id session))
+                                          (js/Promise.resolve nil))
+                                        (fn [latest-event]
+                                          (clear-ghost-turn! conversation-id)
+                                          (let [stalled? (and (= "running" (:status session))
+                                                              (not (runtime-processing-session? conversation-id))
+                                                              (stale-running-session? session latest-event))]
+                                            (if stalled?
+                                              (-> (session-store/complete-session! (redis/get-client)
+                                                                                  session-id
+                                                                                  conversation-id
+                                                                                  {:status "failed"
+                                                                                   :error "Session was stale/zombie; auto-aborted before new turn."
+                                                                                   :messages (:messages session)})
+                                                  (.then (fn [_]
+                                                           (queue-turn! "Async direct agent chat failed (recovered from zombie)")))
+                                                  (.catch (fn [err]
+                                                            (.error js/console "Failed to abort zombie session" err)
+                                                            (json-response! reply 409 {:ok false
+                                                                                       :error (str "Agent is already processing. Zombie recovery failed: " err)
+                                                                                       :code "agent_already_processing"
+                                                                                       :has_active_stream false
+                                                                                       :can_send false}))))
+                                              (json-response! reply 409 {:ok false
+                                                                         :error (str "Agent is already processing. " (or (:reason can-send-result) ""))
+                                                                         :code "agent_already_processing"
+                                                                         :has_active_stream (boolean (:has_active_stream session))
+                                                                         :can_send false}))))))))
+                           (fn [err]
+                             (.error js/console "Session status check failed" err)
+                             (queue-turn! "Async direct agent chat failed")))))))))
+
 
   (route! app "POST" "/api/knoxx/steer"
           (fn [request reply]
@@ -1129,7 +1230,7 @@
                               (js/console.error "Session status check failed" err)
                               (json-response! reply 500 {:error (str err)}))))))))
 
-  ;; Run event catch-up endpoint for WS reconnect recovery
+;; Run event catch-up endpoint for WS reconnect recovery
   (route! app "GET" "/api/knoxx/run/:runId/events"
           (fn [request reply]
             (with-request-context! runtime request reply
@@ -1145,7 +1246,27 @@
                                                             :events events
                                                             :count (count events)})))
                         (.catch (fn [err]
-                                  (json-response! reply 500 {:error (str err)}))))))))))
+                                  (json-response! reply 500 {:error (str err)})))))))))
+
+  (route! app "GET" "/api/knoxx/runs/:runId"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-permission! ctx "agent.chat.use"))
+                (let [run-id (str (or (aget request "params" "runId") ""))]
+                  (cond
+                    (str/blank? run-id)
+                    (json-response! reply 400 {:error "runId required"})
+
+                    (some? (get @runs* run-id))
+                    (if-let [filtered (run-visible? ctx (get @runs* run-id))]
+                      (json-response! reply 200
+                        {:ok true :source "memory" :run filtered})
+                      (json-response! reply 403 {:error "Access denied"}))
+
+                    :else
+                    (json-response! reply 404 {:ok false :error "Run not found"
+                                                :run_id run-id})))))))
 
   (route! app "POST" "/api/shibboleth/handoff"
           (fn [request reply]
@@ -1200,3 +1321,5 @@
                                                      :ctx-user-email ctx-user-email
                                                      :ctx-org-id ctx-org-id})
   )
+
+)

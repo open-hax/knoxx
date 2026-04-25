@@ -5,7 +5,7 @@
    Files are stored temporarily and served back to the frontend for preview/playback."
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [with-request-context! ensure-tool!]]
-            [knoxx.backend.http :refer [json-response! error-response! js-array-seq]]
+            [knoxx.backend.http :refer [json-response! js-array-seq]]
             [knoxx.backend.util.time :refer [now-iso]]))
 
 (declare fs-mkdir!)
@@ -86,7 +86,7 @@
 
 (defn- save-upload-file!
   "Save an uploaded file and return its metadata."
-  [runtime config file-part filename]
+  [runtime _config file-part filename]
   (let [node-fs (aget runtime "fs")
         node-path (aget runtime "path")]
     (.then
@@ -115,8 +115,8 @@
 
 (defn register-multimodal-routes!
   "Register routes for multimodal file handling."
-  [app runtime config {:keys [route! json-response! error-response!
-                              with-request-context!]}]
+[app runtime config {:keys [route! json-response!
+                           with-request-context!]}]
   
   ;; Upload files for multimodal messages
   (route! app "POST" "/api/multimodal/upload"

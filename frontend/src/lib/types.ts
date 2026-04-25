@@ -203,6 +203,12 @@ export interface MemorySessionSummary {
   title_model?: string | null;
   last_ts?: string;
   event_count?: number;
+
+  // Knoxx enrichment: reconstructed from OpenPlanner rows.
+  actor_id?: string;
+  contract_id?: string;
+  contract_actors?: string[];
+
   is_active?: boolean;
   active_status?: "running" | "waiting_input" | "completed" | "failed" | "inactive" | "unknown" | string;
   has_active_stream?: boolean;

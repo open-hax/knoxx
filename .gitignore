@@ -16,7 +16,7 @@ venv/
 .idea/
 *.swp
 *.swo
-**/.clj-kondo/
+**/.clj-kondo/.cache
 **/.cpcache/
 **/.shadow-cljs/
 **/.vite-vitest/

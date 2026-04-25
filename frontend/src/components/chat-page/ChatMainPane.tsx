@@ -196,6 +196,20 @@ export function ChatMainPane({
   const shouldAutoScrollRef = useRef(true);
   const [autoConversationEnabled, setAutoConversationEnabled] = useState(false);
   const [autoRecording, setAutoRecording] = useState(false);
+  const [voiceThreshold, setVoiceThreshold] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('knoxx_voice_threshold');
+      if (saved) {
+        const parsed = parseFloat(saved);
+        if (!isNaN(parsed)) return Math.max(0.001, Math.min(0.1, parsed));
+      }
+    }
+    return 0.015;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('knoxx_voice_threshold', String(voiceThreshold));
+  }, [voiceThreshold]);
 
   const updateAutoScrollState = useCallback((container: HTMLDivElement) => {
     const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
@@ -243,12 +257,13 @@ export function ChatMainPane({
 
   const prevAutoConversationEnabledRef = useRef(false);
 
-  const { state: autoRecorderState, startRecording: startAutoRecording, stopRecording: stopAutoRecording } = useVoiceRecorder({
+  const { state: autoRecorderState, startRecording: startAutoRecording, stopRecording: stopAutoRecording, audioLevelRef } = useVoiceRecorder({
     onTranscript: (text) => {
       setAutoRecording(false);
       onSend(text);
     },
     conversationMode: true,
+    silenceThreshold: voiceThreshold,
   });
 
   // Start recording immediately when user toggles auto-conversation ON
@@ -489,6 +504,9 @@ export function ChatMainPane({
             undoDisabled={undoDisabled}
             onNewChat={onNewChat}
             autoRecording={autoRecording}
+            voiceThreshold={voiceThreshold}
+            onVoiceThresholdChange={setVoiceThreshold}
+            audioLevelRef={audioLevelRef}
           />
           {autoConversationEnabled && autoConversationVoice.error ? (
             <div style={{ marginTop: 8, fontSize: 12, color: 'var(--token-colors-text-muted)' }}>

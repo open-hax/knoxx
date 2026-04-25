@@ -13,6 +13,7 @@ Replace the Python/FastAPI backend in `orgs/open-hax/knoxx/backend/` with a shad
 
 - HTTP server: Fastify
 - Backend language/runtime: ClojureScript compiled by shadow-cljs
+- Backend async style: prefer `shadow.cljs.modern/js-await` plus request context-map stages; see `docs/cljs-async-and-request-state.md`
 - Agent/session logic: `@mariozechner/pi-coding-agent`
 - Theme/UI contracts remain unchanged in the frontend
 - Current ingress topology through `services/knoxx/config/conf.d/default.conf` must keep working during migration

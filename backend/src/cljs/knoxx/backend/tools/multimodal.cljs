@@ -1,9 +1,8 @@
 (ns knoxx.backend.tools.multimodal
   "Multimodal upload tools for images, audio, video, and documents."
-  (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
+  (:require [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg media-source->content-part! multimodal-upload-max-bytes]]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
 
 (defn create-multimodal-custom-tools

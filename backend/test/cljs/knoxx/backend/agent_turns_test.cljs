@@ -14,6 +14,18 @@
       (is (= "generated-session-id"
              (agent-turns/ensure-session-id crypto nil))))))
 
+(deftest model-ready-content-parts-normalizes-js-object-image-parts
+  (testing "image parts arriving as JS objects are normalized and do not crash"
+    (with-redefs [knoxx.backend.runtime.models/model-supports-input? (fn [_ _ part-type]
+                                                                      (= part-type "image"))]
+      (is (= [{:type "image"
+               :url "file://clip.png"}]
+             (agent-turns/model-ready-content-parts
+              {}
+              "test-model"
+              [#js {:type "image"
+                    :url "file://clip.png"}]))))))
+
 (deftest model-ready-content-parts-rewrites-unsupported-audio-inputs
   (testing "unsupported multimodal inputs degrade into explanatory text instead of crashing"
     (with-redefs [knoxx.backend.runtime.models/model-supports-input? (fn [_ _ part-type]
@@ -66,3 +78,44 @@
               {:role "user" :content "first request"}
               {:role "assistant" :content "first answer"}]
              (agent-turns/session->stored-messages session))))))
+
+(deftest reply-attachment-content-parts-lifts-workspace-media-tool-receipts-into-final-replies
+  (testing "workspace_media.attach receipts become assistant reply content parts"
+    (is (= [{:type "audio"
+             :data "data:audio/wav;base64,QUFBQQ=="
+             :mimeType "audio/wav"
+             :filename "reply.wav"}]
+           (agent-turns/reply-attachment-content-parts
+            [{:tool_name "workspace_media.attach"
+              :content_parts [{:type "audio"
+                               :data "data:audio/wav;base64,QUFBQQ=="
+                               :mimeType "audio/wav"
+                               :filename "reply.wav"}]}
+             {:tool_name "read"
+              :content_parts [{:type "document"
+                               :url "file:///tmp/guide.md"
+                               :filename "guide.md"}]}])))))
+
+(deftest merge-content-parts-dedupes-overlapping-attachments
+  (testing "reply media already present in the assistant response is not duplicated"
+    (is (= [{:type "image"
+             :url "/api/multimodal/files/image-1"
+             :mimeType "image/png"
+             :filename "plot.png"}
+            {:type "audio"
+             :data "data:audio/wav;base64,QUFBQQ=="
+             :mimeType "audio/wav"
+             :filename "reply.wav"}]
+           (agent-turns/merge-content-parts
+            [{:type "image"
+              :url "/api/multimodal/files/image-1"
+              :mimeType "image/png"
+              :filename "plot.png"}]
+            [{:type "image"
+              :url "/api/multimodal/files/image-1"
+              :mimeType "image/png"
+              :filename "plot.png"}
+             {:type "audio"
+              :data "data:audio/wav;base64,QUFBQQ=="
+              :mimeType "audio/wav"
+              :filename "reply.wav"}])))))

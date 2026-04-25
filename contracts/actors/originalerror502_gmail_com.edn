@@ -1,10 +1,1 @@
-{:actor/id "originalerror502_gmail_com"
- :actor/kind :user
- :actor/email "originalerror502@gmail.com"
- :actor/username "originalerror502@gmail.com"
- :actor/org "open-hax"
- :actor/label "originalerror502@gmail.com"
- :actor/roles [:role/knowledge-worker]
- :actor/policy {:principal :actor
-                :source-of-truth :contract
-                :notes "Canonical human actor contract for originalerror502@gmail.com. GitHub OAuth resolves this email as the canonical username and syncs membership role + actor assignment from this contract."}}
+{:actor/id "originalerror502_gmail_com", :actor/kind :user, :actor/email "originalerror502@gmail.com", :actor/username "originalerror502@gmail.com", :actor/org "open-hax", :actor/label "code_erorr", :actor/roles [:role/basic-user], :actor/policy {:principal :actor, :source-of-truth :contract, :notes "Canonical human actor contract for originalerror502@gmail.com. GitHub OAuth resolves this email as the canonical username and syncs membership role + actor assignment from this contract."}}

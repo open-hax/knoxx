@@ -20,7 +20,7 @@
    - :started_at
   "
   [conversation-id entry]
-  (when (and conversation-id (not (empty? (str conversation-id))))
+  (when (and conversation-id (seq (str conversation-id)))
     (swap! active-turns* assoc (str conversation-id) entry))
   entry)
 
@@ -28,7 +28,7 @@
   "Remove the active turn entry if it matches the run-id (when provided)."
   ([conversation-id] (unregister-active-turn! conversation-id nil))
   ([conversation-id run-id]
-   (when (and conversation-id (not (empty? (str conversation-id))))
+   (when (and conversation-id (seq (str conversation-id)))
      (let [cid (str conversation-id)]
        (swap! active-turns*
               (fn [m]
@@ -41,7 +41,7 @@
 
 (defn active-turn
   [conversation-id]
-  (when (and conversation-id (not (empty? (str conversation-id))))
+  (when (and conversation-id (seq (str conversation-id)))
     (get @active-turns* (str conversation-id))))
 
 (defn active-turn-count

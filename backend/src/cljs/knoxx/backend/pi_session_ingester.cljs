@@ -1,8 +1,7 @@
 (ns knoxx.backend.pi-session-ingester
   (:require [clojure.string :as str]
             ["node:fs/promises" :as fs]
-            ["node:path" :as path]
-            ["node:crypto" :as crypto]))
+            ["node:path" :as path]))
 
 
 (def ^:private PI-SESSIONS-ROOT

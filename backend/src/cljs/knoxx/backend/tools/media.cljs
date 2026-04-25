@@ -8,6 +8,16 @@
 (def multimodal-upload-max-bytes (* 25 1024 1024))
 (def audio-render-max-bytes (* 50 1024 1024))
 
+(defn source-discord-cdn-url?
+  "Detect Discord CDN attachment URLs that require bot token auth."
+  [value]
+  (some-> (str value) (str/includes? "cdn.discordapp.com/attachments")))
+
+(defn- discord-bot-token
+  "Get Discord bot token from config, if available."
+  [config]
+  (some-> config :discord-bot-token str str/trim not-empty))
+
 ;; -------------------------------------------------------------------------
 ;; Path / FS shims
 ;; -------------------------------------------------------------------------
@@ -188,6 +198,10 @@
 (defn source-data-url?
   [value]
   (str/starts-with? (str (or value "")) "data:"))
+
+(defn source-file-url?
+  [value]
+  (str/starts-with? (str (or value "")) "file://"))
 
 (defn sanitize-mime-type
   [value fallback]

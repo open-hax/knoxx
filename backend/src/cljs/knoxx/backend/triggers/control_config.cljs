@@ -88,7 +88,7 @@
         resolved (tooling/resolve-agent-contract config contract-id)]
     (when (and (= :agent (:contract/kind contract))
                (contains? event-agent-trigger-kinds trigger-kind))
-      (let [role (:role resolved)
+        (let [role (:role resolved)
             model (or (:model resolved)
                       (default-discord-model config))
             thinking-level (or (:thinking-level resolved)
@@ -105,7 +105,12 @@
                              (remove nil?)
                              distinct
                              vec)
-            filters (filters-from-contract contract)]
+            filters (filters-from-contract contract)
+            source-config (or (get-in contract [:data :source]) {})
+            sticky-session? (or (true? (:stickySession source-config))
+                                (true? (:sticky_session source-config)))
+            session-max-messages (or (parse-positive-int (:sessionMaxMessages source-config))
+                                     (parse-positive-int (:session_max_messages source-config)))]
         {:id contract-id
          :name contract-id
          :enabled (not (false? (:enabled contract)))
@@ -114,8 +119,10 @@
                    :eventKinds event-kinds}
          :source {:kind source-kind
                   :mode source-mode
-                  :config {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
-                                                           (get-in contract [:data :source :maxMessages]))}}
+                  :config (cond-> {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
+                                                                   (get-in contract [:data :source :maxMessages]))}
+                           sticky-session? (assoc :stickySession true)
+                           session-max-messages (assoc :sessionMaxMessages session-max-messages))}
          :filters filters
          :agentSpec {:role (if (str/blank? (str (or role ""))) (:knoxx-default-role config) role)
                      :model model
@@ -485,15 +492,18 @@
                                  (:taskPrompt (:agentSpec default-job))
                                  "")
                  :toolPolicies (let [normalized (normalize-tool-policy-list (:toolPolicies agent-source))]
-                                 (if (seq normalized)
+                                 (if (and (seq normalized) (every? some? normalized))
                                    normalized
                                    (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job))))) }
      :contractSourceId (or (:contractSourceId source)
                            (:contractSourceId default-job))
      :contractHash (or (:contractHash default-job)
                        (:contractHash source))
-     :actorId (or (:actorId source)
-                  (:actorId default-job))
+:actorId (or (:actorId source)
+                   (:actorId default-job)
+                   ;; Always prefer contract-sourced actorId if available
+                   (when contract-sourced?
+                     (:actor_id (:agentSpec default-job))))
      :description (or (some-> (:description source) str str/trim not-empty)
                       (:description default-job))}))
 

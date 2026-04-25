@@ -2,4 +2,10 @@
  :role/capabilities [:cap/read
                      :cap/memory
                      :cap/semantic
-                     :cap/translation]}
+                     :cap/translation]
+ :role/permissions ["org.datalakes.read"
+                     "datalake.read"
+                     "agent.chat.use"
+                     "org.translations.read"
+                     "org.translations.review"]
+}

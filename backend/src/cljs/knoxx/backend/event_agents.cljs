@@ -5,6 +5,7 @@
    Jobs describe triggers + source filters + arbitrary agent specs.
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
+            [shadow.cljs.modern :refer [js-await]]
             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
@@ -13,7 +14,9 @@
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
-            [knoxx.backend.util.parse :refer [parse-positive-int]]))
+            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.util.parse :refer [parse-positive-int]]
+            [knoxx.backend.actions.dispatch :as actions-dispatch]))
 
 (declare start!)
 
@@ -22,6 +25,7 @@
 (defonce running?* (atom false))
 (defonce scheduled-tasks* (atom {}))
 (defonce job-state* (atom {}))
+(defonce user-job-state* (atom {}))
 (defonce source-state* (atom {:discord {:last-seen {}}}))
 (defonce recent-events* (atom []))
 (defonce discord-gateway-unsubscribe* (atom nil))
@@ -386,9 +390,11 @@
          "Event kind: " (:eventKind event) "\n"
          "Event id: " (:id event) "\n"
          "Occurred at: " (:timestamp event) "\n\n"
-         (when-let [channel-id (:channelId payload)]
-           (str "Channel ID: " channel-id "\n"))
-         (when-let [author (:authorUsername payload)]
+(when-let [channel-id (:channelId payload)]
+            (str "Channel ID: " channel-id "\n"))
+          (when-let [message-id (:messageId payload)]
+            (str "Message ID: " message-id "\n"))
+          (when-let [author (:authorUsername payload)]
            (str "Author: " author "\n"))
          (when-let [repository (:repository payload)]
            (str "Repository: " repository "\n"))
@@ -402,30 +408,70 @@
          (when-let [payload-preview (:payloadPreview payload)]
            (str "Payload preview: " payload-preview "\n")))))
 
+(defn- media-url-pattern
+  "Regex to find media URLs in text content."
+  []
+  (js/RegExp. #"https?://\S+\.(?:png|jpg|jpeg|gif|webp|mp4|webm|mp3|wav|ogg|m4a|flac|pdf)" "gi"))
+
+(defn- extract-media-urls-from-text
+  "Extract media URLs from raw text content."
+  [text]
+  (when (string? text)
+    (let [pattern (media-url-pattern)]
+      (->> (str/split text #"\s+")
+           (filter #(re-matches pattern %))
+           distinct
+           vec))))
+
+(defn- extract-media-from-embeds
+  "Extract media URLs from Discord embeds."
+  [embeds]
+  (->> (or embeds [])
+       (keep (fn [embed]
+               (let [url (:url embed)]
+                 (when url
+                   (let [lower (str/lower-case url)]
+                     (when (some #(str/includes? lower %) [".png" ".jpg" ".jpeg" ".gif" ".webp" ".mp4" ".webm" ".pdf"])
+                       url))))))
+       distinct
+       vec))
+
 (defn- event-content-parts
   [event]
-  (->> (or (get-in event [:payload :attachments]) [])
-       (keep (fn [attachment]
-               (let [url (:url attachment)
-                     content-type (some-> (:contentType attachment) str str/lower-case)]
-                 (cond
-                   (and url (some-> content-type (str/starts-with? "image/")))
-                   {:type "image"
-                    :url url
-                    :mimeType (:contentType attachment)
-                    :filename (:filename attachment)}
-
-                   (and url (or (some-> content-type (str/starts-with? "text/"))
-                                (some-> content-type (str/includes? "json"))
-                                (some-> content-type (str/includes? "html"))
-                                (some-> content-type (str/includes? "pdf"))))
-                   {:type "document"
-                    :url url
-                    :mimeType (:contentType attachment)
-                    :filename (:filename attachment)}
-
-                   :else nil))))
-       vec))
+  (let [payload (or (:payload event) {})
+        attachment-urls (->> (or (:attachments payload) [])
+                          (keep (fn [att]
+                                  (let [url (:url att)
+                                        content-type (some-> (:contentType att) str str/lower-case)]
+                                    (when url
+                                      {:type (cond
+                                              (some-> content-type (str/starts-with? "image/")) "image"
+                                              (some-> content-type (str/starts-with? "video/")) "video"
+                                              (some-> content-type (str/starts-with? "audio/")) "audio"
+                                              (some-> content-type (str/starts-with? "text/")) "document"
+                                              (some-> content-type (str/includes? "pdf")) "document"
+                                              :else nil)
+                                       :url url
+                                       :mimeType (:contentType att)
+                                       :filename (:filename att)}))))
+                          vec)
+        text-media-urls (extract-media-urls-from-text (:content payload))
+        embed-media-urls (extract-media-from-embeds (:embeds payload))
+        detected-urls (->> (concat text-media-urls embed-media-urls)
+                           distinct
+                           (map (fn [url]
+                                   (let [lower (str/lower-case url)]
+                                     {:type (cond
+                                             (some #(str/includes? lower %) [".png" ".jpg" ".jpeg" ".gif" ".webp"]) "image"
+                                             (some #(str/includes? lower %) [".mp4" ".webm" ".mov"]) "video"
+                                             (some #(str/includes? lower %) [".mp3" ".wav" ".ogg" ".m4a" ".flac"]) "audio"
+                                             (some #(str/includes? lower %) [".pdf"]) "document"
+                                             :else "image")
+                                      :url url
+                                      :mimeType nil
+                                      :filename nil})))
+                           vec)]
+    (concat attachment-urls detected-urls)))
 
 (defn- sticky-session-enabled?
   [job]
@@ -435,13 +481,38 @@
   [job]
   (parse-positive-int (get-in job [:source :config :sessionMaxMessages])))
 
+(defn- update-user-job-state!
+  [job-id user-id f]
+  (let [user-key (str job-id ":" user-id)
+        new-state (get (swap! user-job-state* update user-key (fn [current] (f (or current {})))) user-key)]
+    ;; Persistence: Mirror to Redis
+    (when-let [client (redis/get-client)]
+      (redis/set-json client (str "event-agent:user-job-state:" user-key) new-state))
+    new-state))
+
+(defn- normalize-user-job-state
+  [user-key state]
+  (if (map? state)
+    state
+    {}))
+
 (defn- sticky-session-base-conversation-id
   [job event]
-  (str "event-agent-" (:id job) "-" (str/lower-case (str (:sourceKind event))) "-sticky"))
+  (let [source-kind (str (:sourceKind event))
+        author-id (or (get-in event [:payload :authorId]) "unknown-user")
+        owner-id (if (= source-kind "discord")
+                   (or (get-in event [:payload :channelId]) author-id)
+                   author-id)]
+    (str "event-agent-" (:id job) "-" owner-id "-" (str/lower-case source-kind) "-sticky")))
 
 (defn- sticky-session-base-session-id
-  [job]
-  (str "event-agent-session-" (:id job) "-sticky"))
+  [job event]
+  (let [source-kind (str (:sourceKind event))
+        author-id (or (get-in event [:payload :authorId]) "unknown-user")
+        owner-id (if (= source-kind "discord")
+                   (or (get-in event [:payload :channelId]) author-id)
+                   author-id)]
+    (str "event-agent-session-" (:id job) "-" owner-id "-sticky")))
 
 (defn- sticky-session-summary
   [session]
@@ -539,6 +610,11 @@
                    actor-id (assoc :actor_id actor-id))
      :model model-id}))
 
+(defn- job-step
+  [job]
+  (or (:step job)
+      {:uses "run-agent" :with (:agentSpec job {})}))
+
 (defn- start-agent-run!
   [config job event]
   (let [body (build-agent-run-payload config job event)]
@@ -554,10 +630,14 @@
                   (js/Promise.reject err))))))
 
 (defn- matches-event-kind?
-  [job event-kind]
-  (let [configured (vec (or (get-in job [:trigger :eventKinds]) []))]
+  [job event-kinds]
+  (let [configured (vec (or (get-in job [:trigger :eventKinds]) []))
+        kinds (if (string? event-kinds) [event-kinds] event-kinds)]
     (or (empty? configured)
-        (some #(= (str %) (str event-kind)) configured))))
+        (some (fn [ek]
+                (some (fn [conf] (= (str ek) (str conf)))
+                      configured))
+              kinds))))
 
 (defn- matches-repository?
   [job repository]
@@ -610,9 +690,16 @@
                                  :eventKind "manual.event"
                                  :payload {}}
                                 (or event {}))
-        matching-jobs (->> (:jobs control)
-                           (filter #(job-matches-event? control % normalized-event))
-                           vec)]
+        raw-matches (->> (:jobs control)
+                         (filter #(job-matches-event? control % normalized-event))
+                         vec)
+        matching-jobs (->> raw-matches
+                          (reduce (fn [acc job]
+                                    (if (some #(= (:id %) (:id job)) acc)
+                                      acc
+                                      (conj acc job)))
+                                  [])
+                          vec)]
     (append-recent-event! normalized-event)
     (if (empty? matching-jobs)
       (js/Promise.resolve {:matchedJobs []
@@ -620,14 +707,18 @@
       (-> (js/Promise.all
            (clj->js
             (mapv (fn [job]
-                    (let [started-at (record-job-run-start! job)]
-                      (-> (start-agent-run! config job normalized-event)
-                          (.then (fn [result]
-                                   (record-job-run-finish! job started-at "ok" nil)
-                                   result))
-                          (.catch (fn [err]
-                                    (record-job-run-finish! job started-at "error" (.-message err))
-                                    nil)))))
+                    (let [started-at (record-job-run-start! job)
+                      step (job-step job)]
+                  (-> (actions-dispatch/dispatch! {:config config
+                                                   :event normalized-event :job job
+                                                   :run-agent! start-agent-run!}
+                                                  step)
+                      (.then (fn [result]
+                               (record-job-run-finish! job started-at "ok" nil)
+                               result))
+                      (.catch (fn [err]
+                                (record-job-run-finish! job started-at "error" (.-message err))
+                                nil)))))
                   matching-jobs)))
           (.then (fn [_]
                    {:matchedJobs (mapv :id matching-jobs)
@@ -807,7 +898,7 @@
                     attachment-text (when (seq attachments)
                                       (str " attachments="
                                            (str/join ", " (map :filename attachments))))]
-                (str "[" channel-id "] <" (:authorUsername message) "> "
+                (str "[" channel-id "] <" (:authorUsername message) " (id:" (:authorId message) ")> "
                      (subs (:content message) 0 (min 180 (count (:content message))))
                      (or attachment-text "")))))
        (str/join "\n")))
@@ -837,28 +928,32 @@
                                                           (summarize-discord-channel channelId messages)))
                                                    (remove str/blank?)
                                                    (str/join "\n\n"))]
-                                  (if (str/blank? summary)
-                                    (js/Promise.resolve nil)
-                                    (start-agent-run!
-                                     config
-                                     job
-                                     {:sourceKind "discord"
-                                      :eventKind "discord.snapshot.summary"
-                                      :timestamp (.toISOString (js/Date.))
-                                      :payload {:summary summary
-                                                :channelId (first channels)
-                                                :publishChannels publish-channels}}))))))
-                   (js/Promise.resolve nil)))))))
+(if (str/blank? summary)
+                                     (js/Promise.resolve nil)
+                                     (actions-dispatch/dispatch!
+                                      {:config config
+                                       :event {:sourceKind "discord"
+                                               :eventKind "discord.snapshot.summary"
+                                               :timestamp (.toISOString (js/Date.))
+                                               :payload {:summary summary
+                                                         :channelId (first channels)
+                                                         :publishChannels publish-channels}}
+                                      :job job
+                                      :run-agent! start-agent-run!}
+                                      (job-step job))))))
+                    (js/Promise.resolve nil)))))))
 
 (defn- execute-direct-job!
   [config job source-kind event-kind]
-  (start-agent-run!
-   config
-   job
-   {:sourceKind source-kind
-    :eventKind event-kind
-    :timestamp (.toISOString (js/Date.))
-    :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}}))
+  (actions-dispatch/dispatch! {:config config
+                              :event {:sourceKind source-kind
+                                      :eventKind event-kind
+                                      :timestamp (.toISOString (js/Date.))
+                                      :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}}
+                              :job job
+                              :run-agent! start-agent-run!}
+                             (job-step job))
+)
 
 (defn- execute-cron-job!
   [config job]
@@ -883,16 +978,15 @@
     (if-not job
       (js/Promise.reject (js/Error. (str "Unknown event-agent job: " job-id)))
       (let [started-at (record-job-run-start! job)]
-        (-> (js/Promise.resolve
-             (if (= "cron" (get-in job [:trigger :kind]))
-               (execute-cron-job! config job)
-               (execute-direct-job! config job (get-in job [:source :kind]) "manual.run")))
-            (.then (fn [result]
-                     (record-job-run-finish! job started-at "ok" nil)
-                     result))
-            (.catch (fn [err]
-                      (record-job-run-finish! job started-at "error" (.-message err))
-                      nil)))))))
+        (js-await [result
+                   (if (= "cron" (get-in job [:trigger :kind]))
+                     (execute-cron-job! config job)
+                     (execute-direct-job! config job (get-in job [:source :kind]) "manual.run"))]
+          (record-job-run-finish! job started-at "ok" nil)
+          result
+          (catch err
+            (record-job-run-finish! job started-at "error" (.-message err))
+            nil))))))
 
 (defn- clear-interval-task!
   [task]
@@ -1141,3 +1235,4 @@
    Returns the template map or nil."
   [template-id]
   (templates/get-template template-id))
+)

@@ -21,10 +21,10 @@
                              :start knoxx.backend.core/start!
                              :createDiscordGatewayManager knoxx.backend.discord-gateway/createDiscordGatewayManager
                              :createPolicyDb knoxx.backend.policy-db/create-policy-db
-                             :registerAuthRoutes knoxx.backend.auth-session/register-auth-routes
-                             :createSessionHook knoxx.backend.auth-session/create-session-hook
+                             :registerAuthRoutes knoxx.backend.routes.auth/register-auth-routes
+                             :createSessionHook knoxx.backend.auth.session/create-session-hook
                              ;; Used by MCP OAuth + capability delegation flow.
-                             :resolveAuthContext knoxx.backend.auth-session/resolve-auth-context
+                             :resolveAuthContext knoxx.backend.auth.session/resolve-auth-context
                              ;; Used by the Knoxx MCP facade to expose the same tool objects as the agent runtime.
                              :createKnoxxCustomTools knoxx.backend.mcp-expose/create-knoxx-custom-tools-js
                              :getPiIngestStatus knoxx.backend.pi-session-ingester/get-pi-ingest-status
@@ -35,7 +35,43 @@
                       :optimizations :simple
                       :source-map true
                       :infer-externs :auto
+
+                      :macros {:knoxx.backend.macros true}
                       :warnings {:infer-warning false}}}
+
+  ;; All-CLJS runtime build (Node ESM) — replaces src/server.mjs.
+  :server
+  {:target :esm
+   :runtime :node
+   :output-dir "dist"
+   :modules {:server {:init-fn knoxx.backend.entrypoint/init}}
+   :js-options {:js-provider :import
+                :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
+                                  "node:path" "node:crypto" "node:url"
+                                  "@modelcontextprotocol/sdk"
+                                  }}
+  :compiler-options {:output-feature-set :es-next
+                      :optimizations :simple
+                      :source-map true
+                     :infer-externs :auto
+
+                     :macros {:knoxx.backend.macros true}
+                      :warnings {:infer-warning false}}}
+  ;; :server-repl
+  ;; {:target :node-script
+  ;;  :output-to "target/server_repl.js"
+  ;;  :main knoxx.backend.entrypoint/init
+  ;;  :js-options {:js-provider :import
+  ;;               :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
+  ;;                                 "node:path" "node:crypto" "node:url"
+  ;;                                 "@modelcontextprotocol/sdk"}}
+
+  ;;  :compiler-options {:output-feature-set :es-next
+  ;;                     :optimizations :simple
+  ;;                     :source-map true
+
+  ;;                     :macros {:knoxx.backend.macros true}
+  ;;                     :infer-externs :auto}}
 
   :test
   {:target :node-test
@@ -43,6 +79,8 @@
    :ns-regex ["knoxx.backend.*-test$"]
    :autorun true
    :compiler-options {:output-feature-set :es-next
+
+                      :macros {:knoxx.backend.macros true}
                       :infer-externs :auto}}
 
   ;; CI/coverage build: compile the node runner, but do not autorun.
@@ -56,4 +94,6 @@
    :compiler-options {:output-feature-set :es-next
                       :optimizations :none
                       :source-map true
-                      :infer-externs :auto}}}}
+                      :infer-externs :auto
+                      :macros {:knoxx.backend.macros true}
+                      }}}}

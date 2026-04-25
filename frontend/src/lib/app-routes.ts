@@ -1,6 +1,10 @@
 export const OPS_BASE_PATH = '/ops';
 export const LEGACY_OPS_BASE_PATH = '/next';
-export const EVENT_AGENTS_ROUTE = '/event-agents';
+export const AGENTS_ROUTE = '/agents';
+/** Legacy route kept for redirects. */
+export const LEGACY_EVENT_AGENTS_ROUTE = '/event-agents';
+// Back-compat name: this was previously the event-agent control surface.
+export const EVENT_AGENTS_ROUTE = AGENTS_ROUTE;
 export const BASIC_USER_ROLE = 'basic_user';
 
 function trimSlashes(value: string): string {

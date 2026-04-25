@@ -3,11 +3,11 @@
    message assembly, and tool-suite composition.  All implementation lives
    in vertical domain slices under knoxx.backend.tools.<domain>."
   (:require [clojure.string :as str]
-            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
+            [knoxx.backend.core-memory :refer [filter-authorized-memory-hits!]]
             [knoxx.backend.http :refer [openplanner-enabled?]]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search!]]
             [knoxx.backend.runtime.defaults :refer [default-settings]]
-            [knoxx.backend.text :refer [value->preview-text clip-text]]
+            [knoxx.backend.text :refer [value->preview-text]]
             [knoxx.backend.tools.shared :as shared]
             [knoxx.backend.tools.semantic :as semantic]
             [knoxx.backend.tools.discord :as discord]
@@ -18,7 +18,9 @@
             [knoxx.backend.tools.multimodal :as multimodal]
             [knoxx.backend.tools.workspace-media :as workspace-media]
             [knoxx.backend.tools.mcp :as mcp]
-            [knoxx.backend.tools.contracts :as contracts]))
+            [knoxx.backend.tools.contracts :as contracts]
+            [knoxx.backend.tools.nrepl :as nrepl]
+            [knoxx.backend.tools.session-mycology :as session-mycology]))
 
 (defonce settings-state* (atom nil))
 
@@ -109,20 +111,28 @@
                                  (passive-memory-hydration-text memory) (conj (passive-memory-hydration-text memory))))
         base-parts [{:type "text" :text text-content}]]
     (if (seq content-parts)
-      (let [multimodal-parts (mapv (fn [part]
-                                     (let [type (:type part)
-                                           data (or (:data part) (:url part))
-                                           mime-type (:mimeType part)
-                                           text (:text part)]
-                                       (case type
-                                         :text {:type "text" :text (str text)}
-                                         :image {:type "image" :data data :mimeType mime-type}
-                                         :audio {:type "audio" :data data :mimeType mime-type}
-                                         :video {:type "video" :data data :mimeType mime-type}
-                                         :document {:type "document" :data data :mimeType mime-type :filename (:filename part)}
-                                         {:type "text" :text (str "[Unknown content type: " type "]")})))
-                                   content-parts)]
-        (clj->js (into base-parts multimodal-parts)))
+      (clj->js (into base-parts
+                     (mapv (fn [part]
+                             (let [p        (if (map? part) part (js->clj part :keywordize-keys true))
+                                   raw      (or (:data p) (:url p))
+                                   strip-fn (fn [s]
+                                              (if (and (string? s) (str/starts-with? s "data:"))
+                                                (let [i (.indexOf s ",")]
+                                                  (if (>= i 0) (.slice s (inc i)) s))
+                                                s))
+                                   data     (strip-fn raw)
+                                   mime     (or (:mimeType p)
+                                               (when (and (string? raw) (str/starts-with? raw "data:"))
+                                                 (second (re-find #"data:([^;,]+)" raw))))
+                                   ptype    (some-> (or (:type p) (aget p "type")) name)]
+                               (case ptype
+                                 "text"     {:type "text"     :text (str (:text p))}
+                                 "image"    {:type "image"    :data data :mimeType mime}
+                                 "audio"    {:type "audio"    :data data :mimeType mime}
+                                 "video"    {:type "video"    :data data :mimeType mime}
+                                 "document" {:type "document" :data data :mimeType mime :filename (:filename p)}
+                                 {:type "text" :text (str "[Unknown: " ptype "]")})))
+                           content-parts)))
       (clj->js base-parts))))
 
 (defn hydration-sources
@@ -142,16 +152,24 @@
    (create-knoxx-custom-tools runtime config auth-context nil))
   ([runtime config auth-context allowed-tool-ids]
    (-> (shared/sanitize-custom-tools
-        (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (semantic/create-semantic-custom-tools runtime config auth-context)
-                                                                                (discord/create-discord-custom-tools runtime config auth-context))
-                                                                       (event-agents/create-event-agent-custom-tools runtime config auth-context))
-                                                              (openplanner/create-openplanner-custom-tools runtime config auth-context))
-                                                     (music/create-music-custom-tools runtime config auth-context))
-                                            (voice/create-voice-synth-custom-tools runtime config auth-context))
-                                   (multimodal/create-multimodal-custom-tools runtime config auth-context))
-                          (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
-                   (mcp/create-mcp-custom-tools runtime config auth-context)))
+        (.concat
+         (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (semantic/create-semantic-custom-tools runtime config auth-context)
+                                                                                 (discord/create-discord-custom-tools runtime config auth-context))
+                                                                        (event-agents/create-event-agent-custom-tools runtime config auth-context))
+                                                               (openplanner/create-openplanner-custom-tools runtime config auth-context))
+                                                      (music/create-music-custom-tools runtime config auth-context))
+                                             (voice/create-voice-synth-custom-tools runtime config auth-context))
+                                    (multimodal/create-multimodal-custom-tools runtime config auth-context))
+                           (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
+                    (mcp/create-mcp-custom-tools runtime config auth-context))
+           (session-mycology/create-session-mycology-tools runtime config auth-context))
+         (nrepl/create-nrepl-custom-tools runtime config auth-context)))
        (shared/filter-custom-tools-by-allow-set allowed-tool-ids))))
+
+(defn agent-custom-tool-suite
+  "Compatibility wrapper for tests and older call sites."
+  [agent-spec]
+  (shared/agent-custom-tool-suite agent-spec))
 
 (defn create-agent-custom-tools
   "Dispatch to the appropriate tool suite for the given agent spec."
