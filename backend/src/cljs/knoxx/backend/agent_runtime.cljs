@@ -111,21 +111,27 @@
     (case part-type
       "text" (when (not (str/blank? (str text)))
                #js {:type "text" :text text})
-      ;; Image part routing:
-      ;; - Remote URLs → image_url.url (OpenAI/Anthropic style; Ollama cannot fetch remote URLs)
-      ;; - data: URLs  → {type "image" :data "data:..." :mimeType} (knoxx-native; ollama-compat.ts strips the prefix)
-      ;; - Raw base64  → same knoxx-native shape
-      ;; pi's SDK does NOT handle image_url parts — always use the native shape for inlined data.
+      ;; Image part routing for pi SDK:
+      ;; pi requires {type "image" :data <RAW-base64-no-prefix> :mimeType "image/..."}.
+      ;; Never use image_url shape — pi does not handle it.
+      ;; Remote URLs should have been materialized (fetched → data URI) before reaching here.
       "image" (cond
-                (and (string? url) (not (str/blank? url)))
-                #js {:type "image_url" :image_url #js {:url url}}
-
                 (and (string? data) (not (str/blank? data)) (str/starts-with? data "data:"))
-                #js {:type "image" :data data :mimeType mime-type}
+                (let [comma (.indexOf data ",")
+                      raw   (if (>= comma 0) (.slice data (inc comma)) data)
+                      mime  (or mime-type
+                                (second (re-find #"data:([^;,]+)" data))
+                                "image/png")]
+                  #js {:type "image" :data raw :mimeType mime})
 
                 (and (string? data) (not (str/blank? data)))
-                ;; Raw base64 fallback.
-                #js {:type "image" :data data :mimeType mime-type}
+                ;; Already raw base64.
+                #js {:type "image" :data data :mimeType (or mime-type "image/png")}
+
+                ;; Remote URL — materialize-part! should have inlined this already.
+                ;; Emit image_url as last resort for non-Ollama upstreams.
+                (and (string? url) (not (str/blank? url)))
+                #js {:type "image_url" :image_url #js {:url url}}
 
                 :else nil)
       "audio" (when (not (str/blank? (str (or data url))))
