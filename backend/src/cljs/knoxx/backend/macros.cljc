@@ -75,15 +75,7 @@
               (~'with-request-context! ~'runtime ~'request ~'reply
                (fn [~'ctx]
                  ~@body)))))))))
-(defmacro then [target  & body]
-  `(.then ~target (fn [rseult] ~@body)))
-(defmacro then [target  & body]
-  `(.catch ~target (fn [rseult] ~@body)))
-(defmacro defn-async
-  "Compatibility macro for async workflow fns.
-
-   Today it expands to a plain defn so callers can return either nil or a
-   Promise. Keeping the macro lets us evolve toward a lowered js-await DSL
-   without rewriting call sites."
-  [name args & body]
-  `(defn ~name ~args ~@body))
+;; (defmacro then [target  & body]
+;;   `(.then ~target (fn [rseult] ~@body)))
+;; (defmacro catch [target  & body]
+;;   `(.catch ~target (fn [rseult] ~@body)))

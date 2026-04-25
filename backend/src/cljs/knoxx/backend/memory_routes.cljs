@@ -392,3 +392,14 @@
               (swap! lounge-messages* #(->> (conj (vec %) msg) (take-last 100) vec))
               (broadcast-ws! "lounge" msg)
               (json-response! reply 200 {:ok true :message msg})))))
+
+(defn register-memory-routes!
+  [app runtime config deps]
+  (memory-sessions-routes! app runtime config deps)
+  (memory-session-titles-status-route! app runtime config deps)
+  (memory-backfill-titles-route! app runtime config deps)
+  (memory-import-titles-route! app runtime config deps)
+  (memory-session-by-id-route! app runtime config deps)
+  (memory-search-route! app runtime config deps)
+  (lounge-messages-list-route! app runtime config deps)
+  (lounge-messages-create-route! app runtime config deps))
