@@ -116,12 +116,12 @@
   (-> (reply-header! reply "WWW-Authenticate" (www-authenticate-challenge base))
       (.code 401) (.send "Unauthorized")))
 
-(defn- redis-set!     [^js c k v o]  (.set c k v o))
-(defn- redis-get!     [^js c k]      (.get c k))
-(defn- redis-del!     [^js c k]      (.del c k))
-(defn- redis-sadd!    [^js c k v]    (.sAdd c k v))
-(defn- redis-smembers! [^js c k]     (.sMembers c k))
-(defn- redis-srem!    [^js c k v]    (.sRem c k v))
+(defn- redis-set!      [^js c k v o]  (.set c k v o))
+(defn- redis-get!      [^js c k]      (.get c k))
+(defn- redis-del!      [^js c k]      (.del c k))
+(defn- redis-sadd!     [^js c k v]    (.sAdd c k v))
+(defn- redis-smembers! [^js c k]      (.sMembers c k))
+(defn- redis-srem!     [^js c k v]    (.sRem c k v))
 
 (defn- transport-handle-request!
   ([^js t req reply]      (.handleRequest t req reply))
@@ -179,59 +179,40 @@
     (nil? value)                 (js/Promise.resolve js/undefined)
     :else                        (js/Promise.resolve value)))
 
-(defn- require-redis! [reply]
-  (if-let [client (redis/get-client)]
-    client
-    (do (json-send! reply 503 {:error "redis_unavailable" :detail "Redis is not connected"}) nil)))
+(defn- require-redis!
+  "Fastify preHandler hook: attaches redis client to request or sends 503."
+  [^js redis-client]
+  (fn [req _reply done]
+    (if redis-client
+      (do (aset req "redis" redis-client) (done))
+      (done (ex-info "Redis unavailable" {:status 503 :error "redis_unavailable"})))))
 
-(defn- require-browser-auth-context!
-  [policy-db _runtime config req reply]
-  (-> (auth-session/resolve-auth-context req policy-db)
-      (.catch
-       (fn [_]
-         (let [base         (public-base-url config)
-               current-path (or (some-> req (aget "raw") (aget "url")) "/api/mcp/oauth/authorize")
-               login-url    (js/URL. "/api/auth/login" base)]
-           (.set (.-searchParams login-url) "redirect" current-path)
-           (.redirect reply (.toString login-url) 302)
-           (js/Promise.resolve nil))))))
+(defn- require-browser-auth!
+  "Fastify preHandler hook: resolves browser auth context or redirects to login."
+  [policy-db config]
+  (fn [req reply done]
+    (-> (auth-session/resolve-auth-context req policy-db)
+        (.then (fn [auth-ctx]
+                 (aset req "authContext" auth-ctx)
+                 (done)))
+        (.catch
+         (fn [_]
+           (let [base         (public-base-url config)
+                 current-path (or (some-> req (aget "raw") (aget "url")) "/api/mcp/oauth/authorize")
+                 login-url    (js/URL. "/api/auth/login" base)]
+             (.set (.-searchParams login-url) "redirect" current-path)
+             (.redirect reply (.toString login-url) 302)
+             ;; do NOT call done — response is already sent
+             nil))))))
 
-(defn- apply-guard [ctx guard]
-  (case guard
-    :redis
-    (js/Promise.resolve
-     (when-let [client (require-redis! (:reply ctx))]
-       (assoc ctx :redis client)))
-
-    :browser-auth
-    (-> (require-browser-auth-context! (:policy-db ctx) (:runtime ctx) (:config ctx) (:req ctx) (:reply ctx))
-        (.then (fn [auth-ctx] (when auth-ctx (assoc ctx :auth-context auth-ctx)))))
-
-    :bearer-token
-    (let [token (bearer-token (:req ctx))]
+(defn- require-bearer-token!
+  "Fastify preHandler hook: extracts bearer token or sends 401."
+  [base]
+  (fn [req reply done]
+    (let [token (bearer-token req)]
       (if (str/blank? token)
-        (do (challenge-unauthorized! (:reply ctx) (:base ctx)) (js/Promise.resolve nil))
-        (js/Promise.resolve (assoc ctx :bearer-token token))))
-
-    (js/Promise.resolve ctx)))
-
-(defn- apply-guards [ctx guards]
-  (reduce (fn [p guard]
-            (.then p (fn [ctx*]
-                       (if ctx*
-                         (apply-guard ctx* guard)
-                         (js/Promise.resolve nil)))))
-          (js/Promise.resolve ctx)
-          (or guards [])))
-
-(defn make-route-runner
-  "Returns (fn [guards req reply] ...) that runs the guard pipeline then calls handler.
-   Exported so the defroute guard-mode expansion can call it from deps."
-  [deps]
-  (fn [guards handler req reply]
-    (-> (apply-guards (assoc deps :req req :reply reply) guards)
-        (.then (fn [ctx] (when ctx (as-promise (handler ctx)))))
-        (.catch (fn [err] (handle-route-error! reply err))))))
+        (do (challenge-unauthorized! reply base) nil)
+        (do (aset req "bearerToken" token) (done))))))
 
 ;; ──────────────────────────────────────────────────────────────
 ;; Parsers
@@ -327,7 +308,7 @@
 
 (defn- selected-tools-from-scope [tools requested-scope]
   (let [requested (into #{} (comp (map str/trim) (remove str/blank?))
-                        (str/split (str (or requested-scope "")) #"\\s+"))]
+                        (str/split (str (or requested-scope "")) #"\s+"))]
     (into #{} (keep (fn [t]
                       (let [n (some-> (aget t "name") str str/trim not-empty)]
                         (when (and n (or (contains? requested "all") (contains? requested n))) n))))
@@ -457,10 +438,10 @@
               (array-seq entries)))))
 
 ;; ──────────────────────────────────────────────────────────────
-;; Route handlers (each is a standalone defn receiving ctx)
+;; Route handlers
 ;; ──────────────────────────────────────────────────────────────
 
-(defroute mcp-discovery-metadata!         [] "GET"    "/.well-known/oauth-authorization-server" []
+(defroute mcp-discovery-metadata! [] "GET" "/.well-known/oauth-authorization-server" []
   (let [{:keys [reply base]} ctx
         issuer (js/URL. (.toString base))]
     (.send reply
@@ -482,8 +463,11 @@
                 :scopes_supported        #js ["mcp:tools"]
                 :bearer_methods_supported #js ["header"]})))
 
-(defroute mcp-register-client! [] "POST" "/api/mcp/oauth/register" [:redis]
-  (let [{:keys [req reply redis crypto]} ctx
+(defroute mcp-register-client! [redis-guard] "POST" "/api/mcp/oauth/register" [redis-guard]
+  (let [req   (aget request "req")
+        reply (aget request "reply")
+        redis (aget request "redis")
+        crypto (aget request "crypto")
         {:keys [redirect-uris client-name]} (parse-register-client-body req)
         client-id (.randomUUID crypto)
         client    #js {:client_id                  client-id
@@ -497,8 +481,11 @@
         (.then (fn [_] (-> (.code reply 201) (.send client))))
         (.catch (fn [err] (throw (http-error 500 "registration_failed" (or (.-message err) (str err)))))))))
 
-(defroute mcp-authorize-client! [] "GET" "/api/mcp/oauth/authorize" [:redis :browser-auth]
-  (let [{:keys [req reply redis runtime config auth-context base]} ctx
+(defroute mcp-authorize-client! [redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [redis-guard browser-auth-guard]
+  (let [req        (aget request "req")
+        reply      (aget request "reply")
+        redis      (aget request "redis")
+        auth-context (aget request "authContext")
         {:keys [client-id redirect-uri state code-challenge scope] :as params} (parse-authorize-query req)]
     (ensure-oauth-request! params)
     (-> (get-registered-client redis client-id)
@@ -514,8 +501,13 @@
                                   :requested-scope (or scope "") :tools tools :selected selected})]
                    (.send (reply-header! reply "content-type" "text/html; charset=utf-8") html)))))))
 
-(defroute mcp-authorize-confirm! [] "GET" "/api/mcp/oauth/authorize/confirm" [:redis :browser-auth]
-  (let [{:keys [req reply redis runtime config auth-context crypto code-ttl]} ctx
+(defroute mcp-authorize-confirm! [redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize/confirm" [redis-guard browser-auth-guard]
+  (let [req        (aget request "req")
+        reply      (aget request "reply")
+        redis      (aget request "redis")
+        auth-context (aget request "authContext")
+        crypto     (aget request "crypto")
+        code-ttl   (aget request "codeTtl")
         {:keys [client-id redirect-uri state code-challenge selected-tools] :as params}
         (parse-authorize-confirm-query req)]
     (ensure-oauth-confirm-request! params)
@@ -539,7 +531,7 @@
                                   (let [redir (js/URL. redirect-uri)]
                                     (.set (.-searchParams redir) "code" code)
                                     (when state (.set (.-searchParams redir) "state" state))
-                                    (.redirect reply (.toString redir) 302))))))))))))
+                                    (.redirect reply (.toString redir) 302)))))))))))
 
 (defn- persist-access-token! [redis crypto token-ttl client-id record]
   (let [access-token (.randomUUID crypto)
@@ -560,8 +552,12 @@
                       :scope        (->> (array-seq (or (aget record "tools") #js [])) (str/join " "))
                       :expires_in   token-ttl})))))
 
-(defroute mcp-exchange-token! [] "POST" "/api/mcp/oauth/token" [:redis]
-  (let [{:keys [req reply redis crypto token-ttl]} ctx
+(defroute mcp-exchange-token! [redis-guard] "POST" "/api/mcp/oauth/token" [redis-guard]
+  (let [req       (aget request "req")
+        reply     (aget request "reply")
+        redis     (aget request "redis")
+        crypto    (aget request "crypto")
+        token-ttl (aget request "tokenTtl")
         {:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body req)]
     (when (or (not= grant-type "authorization_code")
               (str/blank? code) (str/blank? code-verifier)
@@ -585,8 +581,10 @@
                        (.then (fn [_] (persist-access-token! redis crypto token-ttl client-id record)))))))
         (.then (fn [token-response] (.send reply token-response))))))
 
-(defroute mcp-list-user-tokens! [] "GET" "/api/mcp/tokens" [:redis :browser-auth]
-  (let [{:keys [reply redis auth-context]} ctx
+(defroute mcp-list-user-tokens! [redis-guard browser-auth-guard] "GET" "/api/mcp/tokens" [redis-guard browser-auth-guard]
+  (let [reply        (aget request "reply")
+        redis        (aget request "redis")
+        auth-context (aget request "authContext")
         membership-id (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))]
     (when (str/blank? membership-id)
       (throw (http-error 400 "missing_membership" "No membership available for this session")))
@@ -601,8 +599,11 @@
         (.then (fn [records]
                  (.send reply #js {:ok true :tokens (->> (array-seq records) (remove nil?) into-array)}))))))
 
-(defroute mcp-revoke-user-token! [] "DELETE" "/api/mcp/tokens/:tokenId" [:redis :browser-auth]
-  (let [{:keys [req reply redis auth-context]} ctx
+(defroute mcp-revoke-user-token! [redis-guard browser-auth-guard] "DELETE" "/api/mcp/tokens/:tokenId" [redis-guard browser-auth-guard]
+  (let [req           (aget request "req")
+        reply         (aget request "reply")
+        redis         (aget request "redis")
+        auth-context  (aget request "authContext")
         {:keys [token-id]}    (parse-revoke-token-params req)
         membership-id         (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))]
     (when (or (str/blank? membership-id) (str/blank? token-id))
@@ -611,8 +612,10 @@
         (.then (fn [_] (redis-srem! redis (str "knoxx:mcp:user:" membership-id ":tokens") token-id)))
         (.then (fn [_] (.send reply #js {:ok true}))))))
 
-(defroute mcp-handle-session! [] "GET" "/mcp" [:bearer-token]
-  (let [{:keys [req reply bearer-token base]} ctx
+(defroute mcp-handle-session! [bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
+  (let [req        (aget request "req")
+        reply      (aget request "reply")
+        bearer     (aget request "bearerToken")
         session-id (resolve-session-id req)]
     (cond
       (str/blank? (str session-id))
@@ -621,13 +624,15 @@
       :else
       (let [{:keys [transport token]} (get @mcp-sessions* session-id)]
         (cond
-          (nil? transport)                       (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
-          (not= (str bearer-token) (str token))  (challenge-unauthorized! reply base)
+          (nil? transport)                   (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
+          (not= (str bearer) (str token))    (challenge-unauthorized! reply base)
           :else (do (ensure-streamable-accept! req)
                     (transport-handle-request! transport (aget req "raw") (aget reply "raw"))))))))
 
-(defroute mcp-handle-delete-session! [] "DELETE" "/mcp" [:bearer-token]
-  (let [{:keys [req reply bearer-token base]} ctx
+(defroute mcp-handle-delete-session! [bearer-token-guard] "DELETE" "/mcp" [bearer-token-guard]
+  (let [req        (aget request "req")
+        reply      (aget request "reply")
+        bearer     (aget request "bearerToken")
         session-id (resolve-session-id req)]
     (cond
       (str/blank? (str session-id))
@@ -636,19 +641,21 @@
       :else
       (let [{:keys [transport token]} (get @mcp-sessions* session-id)]
         (cond
-          (nil? transport)                       (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
-          (not= (str bearer-token) (str token))  (challenge-unauthorized! reply base)
+          (nil? transport)                   (text-send! reply 404 (str "Invalid mcp-session-id: " session-id))
+          (not= (str bearer) (str token))    (challenge-unauthorized! reply base)
           :else (do (ensure-streamable-accept! req)
                     (transport-handle-request! transport (aget req "raw") (aget reply "raw"))))))))
 
-(defroute mcp-handle-post! [] "POST" "/mcp" [:redis :bearer-token]
-  (let [{:keys [req reply redis bearer-token policy-db runtime config crypto
-                McpServer StreamableHTTPServerTransport isInitializeRequest z base]} ctx
+(defroute mcp-handle-post! [redis-guard bearer-token-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
+  (let [req        (aget request "req")
+        reply      (aget request "reply")
+        redis      (aget request "redis")
+        bearer     (aget request "bearerToken")
         session-id (resolve-session-id req)
         existing   (when session-id (get @mcp-sessions* session-id))]
     (cond
       existing
-      (if (not= (str bearer-token) (str (:token existing)))
+      (if (not= (str bearer) (str (:token existing)))
         (challenge-unauthorized! reply base)
         (do (ensure-streamable-accept! req)
             (transport-handle-request! (:transport existing) (aget req "raw") (aget reply "raw") (aget req "body"))))
@@ -660,7 +667,7 @@
                             :id nil}))
 
       :else
-      (-> (load-token-record! redis bearer-token)
+      (-> (load-token-record! redis bearer)
           (.then
            (fn [token-record]
              (if-not token-record
@@ -706,7 +713,7 @@
            (.catch (fn [err]
                      (.error js/console "[knoxx-mcp] initialize failed" err)
                      (json-send! reply 500 {:error "mcp_init_failed"
-                                            :detail (or (.-message err) (str err))})))))))))
+                                            :detail (or (.-message err) (str err))})))))))
 
 ;; ──────────────────────────────────────────────────────────────
 ;; Registration
@@ -714,20 +721,27 @@
 
 (defn register-mcp-http-routes!
   [app runtime config]
-  (let [base-deps {:runtime  runtime
-                   :config   config
-                   :policy-db (aget runtime "policyDb")
-                   :crypto    (aget runtime "crypto")
-                   :McpServer (aget runtime "McpServer")
-                   :StreamableHTTPServerTransport (aget runtime "StreamableHTTPServerTransport")
-                   :isInitializeRequest (aget runtime "isInitializeRequest")
-                   :z         (aget runtime "z")
-                   :code-ttl  (js/parseInt (env "KNOXX_MCP_CODE_TTL_SECONDS" "300") 10)
-                   :token-ttl (js/parseInt (env "KNOXX_MCP_TOKEN_TTL_SECONDS" (str (* 60 60 24 30))) 10)
-                   :base      (public-base-url config)
-                   :route!    route!}
-        ;; Inject run! so defroute guard-mode can pull it from deps
-        deps      (assoc base-deps :run! (make-route-runner base-deps))]
+  (let [redis-client (redis/get-client)
+        base         (public-base-url config)
+        policy-db    (aget runtime "policyDb")
+        crypto       (aget runtime "crypto")
+        code-ttl     (js/parseInt (env "KNOXX_MCP_CODE_TTL_SECONDS" "300") 10)
+        token-ttl    (js/parseInt (env "KNOXX_MCP_TOKEN_TTL_SECONDS" (str (* 60 60 24 30))) 10)
+        deps {:route!             route!
+              :redis-guard        (require-redis! redis-client)
+              :browser-auth-guard (require-browser-auth! policy-db config)
+              :bearer-token-guard (require-bearer-token! base)
+              :base               base
+              :runtime            runtime
+              :config             config
+              :policy-db          policy-db
+              :crypto             crypto
+              :McpServer                    (aget runtime "McpServer")
+              :StreamableHTTPServerTransport (aget runtime "StreamableHTTPServerTransport")
+              :isInitializeRequest           (aget runtime "isInitializeRequest")
+              :z                             (aget runtime "z")
+              :code-ttl  code-ttl
+              :token-ttl token-ttl}]
 
     (mcp-discovery-metadata!          app runtime config deps)
     (mcp-protected-resource-metadata! app runtime config deps)
