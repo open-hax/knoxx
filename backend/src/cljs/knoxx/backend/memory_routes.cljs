@@ -276,21 +276,21 @@
                                                                        :has_more page-has-more}
                                                                 (not page-has-more) (assoc :total visible-total)))
                                               nil))
-                                     (.catch (fn [err] (error-response! reply err 502) nil)))))
-                             (.catch (fn [err] (error-response! reply err 502) nil)))))
-                      (.catch (fn [_]
-                                (doseq [row page-rows] (warm-title-cache! (str (:session row))))
-                                (-> (.all js/Promise (clj->js enrich-promises))
-                                    (.then (fn [enriched-rows]
-                                             (json-response! reply 200
-                                                             (cond-> {:ok true
-                                                                      :rows (vec (js->clj enriched-rows :keywordize-keys true))
-                                                                      :offset offset
-                                                                      :limit limit
-                                                                      :has_more page-has-more}
-                                                               (not page-has-more) (assoc :total visible-total)))
-                                             nil))
-                                    (.catch (fn [err] (error-response! reply err 502) nil)))))))))))))))
+                                     (.catch (fn [err] (error-response! reply err 502) nil))))))
+                            (.catch (fn [err] (error-response! reply err 502) nil)))))
+                     (.catch (fn [_]
+                               (doseq [row page-rows] (warm-title-cache! (str (:session row))))
+                               (-> (.all js/Promise (clj->js enrich-promises))
+                                   (.then (fn [enriched-rows]
+                                            (json-response! reply 200
+                                                            (cond-> {:ok true
+                                                                     :rows (vec (js->clj enriched-rows :keywordize-keys true))
+                                                                     :offset offset
+                                                                     :limit limit
+                                                                     :has_more page-has-more}
+                                                              (not page-has-more) (assoc :total visible-total)))
+                                            nil))
+                                   (.catch (fn [err] (error-response! reply err 502) nil))))))))))))))
 
 (defroute memory-session-titles-status-route! []
   "GET" "/api/memory/session-titles/status"
