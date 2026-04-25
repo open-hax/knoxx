@@ -662,4 +662,4 @@
       (-> (backend-http/openplanner-request! config "POST" "/v1/events" {:events all-events})
           (.catch (fn [err]
                     (.warn js/console "[knoxx] failed to index run memory into OpenPlanner" err)
-                    nil)))))))
+                    nil))))))
