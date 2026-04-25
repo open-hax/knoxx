@@ -18,7 +18,8 @@
   :complexity/too-complex        {:level :error}}
  :hooks
  {:analyze-call
-  {cljs.core/ns       hooks.promise-chain/check-ns
+  {knoxx.backend.macros/defroute hooks.defroute/defroute
+   cljs.core/ns       hooks.promise-chain/check-ns
    cljs.core/->       hooks.promise-chain/check
    cljs.core/->>      hooks.promise-chain/check
    cljs.core/do       hooks.promise-chain/check

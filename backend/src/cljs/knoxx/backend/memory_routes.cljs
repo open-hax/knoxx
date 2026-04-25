@@ -1,24 +1,24 @@
 (ns knoxx.backend.memory-routes
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
-            [knoxx.backend.app-shapes :refer [route!]]
             [knoxx.backend.http :refer [json-response! error-response! http-error openplanner-enabled? openplanner-request!]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows!
                                                session-visible?
                                                session-matches-page-actor-filter?
                                                filter-authorized-memory-hits!
                                                authorized-session-ids!]]
+            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search!]]
             [knoxx.backend.realtime :refer [broadcast-ws!]]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [session-titles*
-                                                   session-title-backfill*
-                                                   session-title-seed-text
-                                                   heuristic-session-title
-                                                   resolve-session-title!
-                                                   normalize-session-title
-                                                   cache-session-title!
-                                                   start-session-title-backfill!]]
+                                                  session-title-backfill*
+                                                  session-title-seed-text
+                                                  heuristic-session-title
+                                                  resolve-session-title!
+                                                  normalize-session-title
+                                                  cache-session-title!
+                                                  start-session-title-backfill!]]
             [knoxx.backend.authz :refer [ctx-permitted? system-admin? ensure-permission!]]
             [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.util.time :refer [now-iso]]
@@ -103,7 +103,7 @@
 
                                :else
                                (js/Promise.resolve {:rows next-acc
-                                                    :has_more false}))))))))))))))
+                                                    :has_more false})))))))))))))))
 
 (defn- hit-session-id
   [hit]
@@ -146,11 +146,60 @@
                                       (contains? allowed-sessions (str (or (hit-session-id hit) "")))))
                             vec)))))))))
 
-  (defroute memory-sessions-route! [openplanner-enabled?
-                                    openplanner-request!
-                                    authorized-session-ids!
-                                    fetch-openplanner-session-rows!
-                                    session-matches-page-actor-filter?]
+(defn- warm-title-cache!  [session-id config runtime]
+  (when-not (contains? @session-titles* session-id)
+    (-> (fetch-openplanner-session-rows! config session-id)
+        (.then
+         (fn [title-rows]
+           (let [seed-text (session-title-seed-text title-rows)
+                 fallback-title (heuristic-session-title seed-text)]
+             (-> (resolve-session-title! config seed-text)
+                 (.then (fn [entry]
+                          (cache-session-title! runtime config session-id
+                                                (or (normalize-session-title (:title entry) fallback-title)
+                                                    fallback-title)
+                                                (:title_model entry))))
+                 (.catch (fn [_]
+                           (cache-session-title! runtime config session-id fallback-title nil)))))))
+        (.catch (fn [_]
+                  (cache-session-title! runtime config session-id "Untitled session" nil))))))
+
+(defn- inactive-row [row]
+  (assoc row
+         :is_active false
+         :active_status "inactive"
+         :has_active_stream false))
+(defn- enrich-row  [redis-client row ]
+  (let [session-id (str (:session row))
+        titled-row (if-let [title-entry (get @session-titles* session-id)]
+                     (assoc row
+                            :title (:title title-entry)
+                            :title_model (:title_model title-entry))
+                     row)]
+    (if-not redis-client
+      (js/Promise.resolve (inactive-row titled-row))
+      (-> (session-store/get-conversation-active-session redis-client session-id)
+          (.then (fn [active-session-id]
+                   (if (str/blank? (str active-session-id))
+                     (inactive-row titled-row)
+                     (-> (session-store/get-session redis-client active-session-id)
+                         (.then (fn [active-session]
+                                  (let [status (or (:status active-session) "inactive")
+                                        is-active (contains? #{"running" "waiting_input"} status)]
+                                    (assoc titled-row
+                                           :active_session_id active-session-id
+                                           :is_active is-active
+                                           :active_status status
+                                           :has_active_stream (boolean (:has_active_stream active-session))))))
+                         (.catch (fn [_]
+                                   (inactive-row titled-row)))))))
+          (.catch (fn [_]
+                    (inactive-row titled-row)))))))
+(defroute memory-sessions-route! [openplanner-enabled?
+                                  openplanner-request!
+                                  authorized-session-ids!
+                                  fetch-openplanner-session-rows!
+                                  session-matches-page-actor-filter?]
   "GET" "/api/memory/sessions"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
@@ -177,55 +226,9 @@
                    page-has-more (or has_more
                                      (> visible-total (+ offset (count page-rows))))
                    redis-client (redis/get-client)
-                   inactive-row (fn [row]
-                                  (assoc row
-                                         :is_active false
-                                         :active_status "inactive"
-                                         :has_active_stream false))
-                   warm-title-cache! (fn [session-id]
-                                       (when-not (contains? @session-titles* session-id)
-                                         (-> (fetch-openplanner-session-rows! config session-id)
-                                             (.then
-                                              (fn [title-rows]
-                                                (let [seed-text (session-title-seed-text title-rows)
-                                                      fallback-title (heuristic-session-title seed-text)]
-                                                  (-> (resolve-session-title! config seed-text)
-                                                      (.then (fn [entry]
-                                                               (cache-session-title! runtime config session-id
-                                                                                     (or (normalize-session-title (:title entry) fallback-title)
-                                                                                         fallback-title)
-                                                                                     (:title_model entry))))
-                                                      (.catch (fn [_]
-                                                                (cache-session-title! runtime config session-id fallback-title nil)))))))
-                                             (.catch (fn [_]
-                                                       (cache-session-title! runtime config session-id "Untitled session" nil))))))
-                   enrich-row (fn [row]
-                                (let [session-id (str (:session row))
-                                      titled-row (if-let [title-entry (get @session-titles* session-id)]
-                                                   (assoc row
-                                                          :title (:title title-entry)
-                                                          :title_model (:title_model title-entry))
-                                                   row)]
-                                  (if-not redis-client
-                                    (js/Promise.resolve (inactive-row titled-row))
-                                    (-> (session-store/get-conversation-active-session redis-client session-id)
-                                        (.then (fn [active-session-id]
-                                                 (if (str/blank? (str active-session-id))
-                                                   (inactive-row titled-row)
-                                                   (-> (session-store/get-session redis-client active-session-id)
-                                                       (.then (fn [active-session]
-                                                                (let [status (or (:status active-session) "inactive")
-                                                                      is-active (contains? #{"running" "waiting_input"} status)]
-                                                                  (assoc titled-row
-                                                                         :active_session_id active-session-id
-                                                                         :is_active is-active
-                                                                         :active_status status
-                                                                         :has_active_stream (boolean (:has_active_stream active-session))))))
-                                                       (.catch (fn [_]
-                                                                 (inactive-row titled-row)))))))
-                                        (.catch (fn [_]
-                                                  (inactive-row titled-row)))))))
-                   enrich-promises (mapv enrich-row page-rows)]
+
+
+                   enrich-promises (mapv (partial enrich-row redis-client) page-rows)]
                (if-not redis-client
                  (do (doseq [row page-rows] (warm-title-cache! (str (:session row))))
                      (-> (.all js/Promise (clj->js enrich-promises))
@@ -263,7 +266,7 @@
                                                             :contract_id (get-in s [:agent_spec :contract_id])})))
                                      all-rows (vec (concat synthetic page-rows))]
                                  (doseq [row all-rows] (warm-title-cache! (str (:session row))))
-                                 (-> (.all js/Promise (clj->js (mapv enrich-row all-rows)))
+                                 (-> (.all js/Promise (clj->js (mapv (partial enrich-row redis-client) all-rows)))
                                      (.then (fn [enriched-rows]
                                               (json-response! reply 200
                                                               (cond-> {:ok true
@@ -275,7 +278,7 @@
                                               nil))
                                      (.catch (fn [err] (error-response! reply err 502) nil)))))
                              (.catch (fn [err] (error-response! reply err 502) nil)))))
-                     (.catch (fn [_]
+                      (.catch (fn [_]
                                 (doseq [row page-rows] (warm-title-cache! (str (:session row))))
                                 (-> (.all js/Promise (clj->js enrich-promises))
                                     (.then (fn [enriched-rows]
@@ -287,7 +290,7 @@
                                                                       :has_more page-has-more}
                                                                (not page-has-more) (assoc :total visible-total)))
                                              nil))
-                                    (.catch (fn [err] (error-response! reply err 502) nil))))))))))))))))
+                                    (.catch (fn [err] (error-response! reply err 502) nil)))))))))))))))
 
 (defroute memory-session-titles-status-route! []
   "GET" "/api/memory/session-titles/status"
@@ -297,7 +300,7 @@
                                :status @session-title-backfill*
                                :cached_count (count @session-titles*)})))
 
-(defroute memory-backfill-titles-route! []
+(defroute memory-backfill-titles-route! [fetch-openplanner-session-rows!]
   "POST" "/api/memory/sessions/backfill-titles"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
@@ -306,8 +309,7 @@
                     (parse-positive-int (aget request "query" "limit")))
           force? (or (truthy-param? (aget body "force"))
                      (truthy-param? (aget request "query" "force")))]
-      (-> (start-session-title-backfill! runtime config {:force force?
-                                                         :limit limit})
+      (-> (start-session-title-backfill! runtime config {:force force? :limit limit} fetch-openplanner-session-rows!)
           (.then (fn [status]
                    (json-response! reply 202 {:ok true
                                               :status status
@@ -343,7 +345,7 @@
                                  :updated updated
                                  :cached_count (count @session-titles*)}))))
 
-(defroute memory-session-by-id-route! []
+(defroute memory-session-by-id-route! [fetch-openplanner-session-rows!]
   "GET" "/api/memory/sessions/:sessionId"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
@@ -360,7 +362,8 @@
             (.catch (fn [err]
                       (error-response! reply err 502))))))))
 
-(defroute memory-search-route! []
+(defroute memory-search-route! [fetch-openplanner-session-rows!
+                                session-matches-page-actor-filter?]
   "POST" "/api/memory/search"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
