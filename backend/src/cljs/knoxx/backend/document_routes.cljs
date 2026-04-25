@@ -42,8 +42,13 @@
                   (when ctx (ensure-permission! ctx "datalake.read"))
                   (-> (list-documents! runtime config request ctx)
                       (.then (fn [resp] (json-response! reply 200 resp)))
-                      (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to list documents: " err)}))))))))
+                      (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to list documents: " err)}))))))))))
 
+  (let [{:keys [route! json-response! error-response!
+                with-request-context! ensure-permission!
+                clip-text openplanner-graph-export!
+                send-fetch-response! bearer-headers
+                fetch-json request-query-string]} deps]
     (route! app "GET" "/api/documents/content/*"
             (fn [request reply]
               (with-request-context! runtime request reply
@@ -59,7 +64,7 @@
                       (json-response! reply 403 {:detail "Path escapes active docs root"})
                       (-> (fs-read-file! node-fs abs-path "utf8")
                           (.then (fn [content] (json-response! reply 200 {:path rel-path :content content})))
-                          (.catch (fn [err] (json-response! reply 404 {:detail (str "Failed to read document: " err)}))))))))))
+                          (.catch (fn [err] (json-response! reply 404 {:detail (str "Failed to read document: " err)})))))))))))
 
     (route! app "POST" "/api/documents/upload"
             (fn [request reply]
@@ -94,8 +99,15 @@
                                                   (when auto-ingest?
                                                     (start-document-ingestion! runtime config profile {:full false :selected-files files}))
                                                   (json-response! reply 200 {:ok true :uploaded files :autoIngest auto-ingest?})))))))
-                        (.catch (fn [err] (json-response! reply 500 {:detail (str "Upload failed: " err)})))))))))
+                        (.catch (fn [err] (json-response! reply 500 {:detail (str "Upload failed: " err)}))))))))))))
 
+(defn- register-document-ingest-routes!
+  [app runtime config deps]
+  (let [{:keys [route! json-response! error-response!
+                with-request-context! ensure-permission!
+                clip-text openplanner-graph-export!
+                send-fetch-response! bearer-headers
+                fetch-json request-query-string]} deps]
     (route! app "DELETE" "/api/documents/*"
             (fn [request reply]
               (with-request-context! runtime request reply
@@ -114,7 +126,7 @@
                           (.then (fn []
                                    (swap! database-state* update-in [:records db-id :indexed] dissoc rel-path)
                                    (json-response! reply 200 {:ok true :path rel-path})))
-                          (.catch (fn [err] (json-response! reply 500 {:detail (str "Delete failed: " err)}))))))))))
+                          (.catch (fn [err] (json-response! reply 500 {:detail (str "Delete failed: " err)})))))))))))
 
     (route! app "POST" "/api/documents/ingest"
             (fn [request reply]
@@ -125,7 +137,7 @@
                         body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
                     (-> (start-document-ingestion! runtime config profile body)
                         (.then (fn [resp] (json-response! reply 200 resp)))
-                        (.catch (fn [err] (json-response! reply 500 {:detail (str "Ingestion failed to start: " err)}))))))))
+                        (.catch (fn [err] (json-response! reply 500 {:detail (str "Ingestion failed to start: " err)})))))))))
 
     (route! app "POST" "/api/documents/ingest/priority"
             (fn [request reply]
@@ -139,7 +151,7 @@
                       (json-response! reply 400 {:detail "paths (array of workspace-relative file paths) is required"})
                       (-> (priority-ingest-workspace-files! runtime config {:paths paths :project project})
                           (.then (fn [resp] (json-response! reply 200 resp)))
-                          (.catch (fn [err] (json-response! reply 500 {:detail (str "Priority ingestion failed: " err)}))))))))))
+                          (.catch (fn [err] (json-response! reply 500 {:detail (str "Priority ingestion failed: " err)})))))))))))
 
     (route! app "POST" "/api/documents/ingest/restart"
             (fn [request reply]
@@ -188,7 +200,7 @@
                   (let [profile (active-database-profile runtime config request ctx)
                         record (active-record runtime config request ctx)]
                     (json-response! reply 200 {:collection (:qdrantCollection profile)
-                                               :items (:history record)}))))))
+                                               :items (:history record)})))))))
 
     (route! app "POST" "/api/chat/retrieval-debug"
             (fn [request reply]
@@ -219,7 +231,7 @@
                                                       (take top-k)
                                                       vec)]
                                      (json-response! reply 200 {:query query :topK top-k :results results}))))
-                          (.catch (fn [err] (json-response! reply 500 {:detail (str "Retrieval debug failed: " err)}))))))))))
+                          (.catch (fn [err] (json-response! reply 500 {:detail (str "Retrieval debug failed: " err)})))))))))))
 
     (route! app "GET" "/api/graph/export"
             (fn [request reply]
@@ -375,5 +387,6 @@
 (defn register-document-routes!
   [app runtime config deps]
   (register-document-crud-routes! app runtime config deps)
+  (register-document-ingest-routes! app runtime config deps)
   (register-document-db-settings-routes! app runtime config deps)
   nil)
