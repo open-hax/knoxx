@@ -218,7 +218,17 @@
                (aget body "run_id"))})
 
 (defn route!
-  [app method url handler]
-  (.route app #js {:method method
-                   :url url
-                   :handler handler}))
+  "Register a Fastify route. handler-or-opts may be either:
+   - a plain function  → classic-mode (no preHandlers)
+   - a JS options obj  → preHandler-mode from defroute macro;
+     its keys are merged into the base route options so that
+     @fastify/websocket receives a proper :handler fn, not a
+     nested object (which causes `handler.call is not a function`)."
+  [app method url handler-or-opts]
+  (if (fn? handler-or-opts)
+    (.route app #js {:method method
+                     :url    url
+                     :handler handler-or-opts})
+    (.route app (.assign js/Object
+                         #js {:method method :url url}
+                         handler-or-opts))))
