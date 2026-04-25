@@ -949,10 +949,11 @@
                               :event {:sourceKind source-kind
                                       :eventKind event-kind
                                       :timestamp (.toISOString (js/Date.))
-                                      :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}
+                                      :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}}
                               :job job
                               :run-agent! start-agent-run!}
-                             (job-step job)))
+                             (job-step job))
+)
 
 (defn- execute-cron-job!
   [config job]
@@ -1235,3 +1236,4 @@
    Returns the template map or nil."
   [template-id]
   (templates/get-template template-id))
+)
