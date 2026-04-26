@@ -628,7 +628,7 @@
           :else (do (ensure-streamable-accept! request)
                     (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
-(defroute mcp-handle-post! [base crypto config runtime code-ttl token-ttl policy-db redis-guard bearer-token-guard browser-auth-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
+(defroute mcp-handle-post! [base crypto config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z redis-guard bearer-token-guard browser-auth-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
   (let [redis  (aget request "redis")
         bearer (aget request "bearerToken")]
     (-> (load-token-record! redis bearer)
