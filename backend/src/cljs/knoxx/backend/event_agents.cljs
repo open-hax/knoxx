@@ -436,6 +436,32 @@
        distinct
        vec))
 
+(defn- fetch-image-part!
+  "Download an image content-part's :url, embed as raw base64 :data."
+  [part]
+  (-> (js/fetch (:url part) #js {:method "GET"})
+      (.then (fn [resp]
+               (if (.-ok resp)
+                 (-> (.arrayBuffer resp)
+                     (.then (fn [buf]
+                              (let [b64 (.toString (.from js/Buffer (js/Uint8Array. buf)) "base64")]
+                                (clj->js (-> part
+                                             (dissoc :url)
+                                             (assoc :data b64)))))))
+                 ;; fetch failed — keep raw url so turn.cljs can surface error
+                 (js/Promise.resolve (clj->js part)))))))
+
+(defn- materialize-content-parts!
+  "Returns Promise<vec-of-parts> with image :url replaced by base64 :data."
+  [parts]
+  (-> (js/Promise.all
+        (clj->js (mapv (fn [part]
+                         (if (= "image" (:type part))
+                           (fetch-image-part! part)
+                           (js/Promise.resolve (clj->js part))))
+                       parts)))
+      (.then (fn [arr]
+               (mapv #(js->clj % :keywordize-keys true) arr)))))
 (defn- event-content-parts
   [event]
   (let [payload (or (:payload event) {})
@@ -617,18 +643,21 @@
 
 (defn- start-agent-run!
   [config job event]
-  (let [body (build-agent-run-payload config job event)]
-    (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/direct/start")
-                     #js {:method "POST"
-                          :headers (direct-start-headers config)
-                          :body (.stringify js/JSON (clj->js body))})
-        (.then (fn [result]
-                 (println "[event-agents] queued run" (:run_id body) "for job" (:id job) "event" (:eventKind event))
-                 result))
-        (.catch (fn [err]
-                  (println "[event-agents] failed to queue run for job" (:id job) ":" (.-message err))
-                  (js/Promise.reject err))))))
-
+  (let [raw-body (build-agent-run-payload config job event)]
+    (-> (materialize-content-parts! (:content_parts raw-body))
+        (.then (fn [materialized-parts]
+                 (let [body (assoc raw-body :content_parts materialized-parts)]
+                   (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/direct/start")
+                                    #js {:method "POST"
+                                         :headers (direct-start-headers config)
+                                         :body (.stringify js/JSON (clj->js body))})
+                       (.then (fn [result]
+                                (println "[event-agents] queued run" (:run_id body)
+                                         "for job" (:id job) "event" (:eventKind event))
+                                result))
+                       (.catch (fn [err]
+                                 (println "[event-agents] failed to queue run for job" (:id job) ":" (.-message err))
+                                 (js/Promise.reject err))))))))))
 (defn- matches-event-kind?
   [job event-kinds]
   (let [configured (vec (or (get-in job [:trigger :eventKinds]) []))
@@ -684,22 +713,30 @@
   [event]
   (let [config (cfg)
         control (control-config config)
-        normalized-event (merge {:id (str "event-" (.now js/Date))
-                                 :timestamp (.toISOString (js/Date.))
-                                 :sourceKind "manual"
-                                 :eventKind "manual.event"
-                                 :payload {}}
-                                (or event {}))
-        raw-matches (->> (:jobs control)
-                         (filter #(job-matches-event? control % normalized-event))
-                         vec)
-        matching-jobs (->> raw-matches
+        normalized-base (merge {:id (str "event-" (.now js/Date))
+                                :timestamp (.toISOString (js/Date.))
+                                :sourceKind "manual"
+                                :eventKind "manual.event"
+                                :payload {}}
+                               (or event {}))
+        ;; Fan matching across all event-kinds, dedup jobs by :id.
+        ;; Preserves which specific eventKind triggered each job so
+        ;; downstream context is accurate.
+        all-kinds (or (seq (:eventKinds normalized-base))
+                      [(:eventKind normalized-base)])
+        matching-jobs (->> all-kinds
+                           (mapcat (fn [kind]
+                                     (let [e (assoc normalized-base :eventKind kind)]
+                                       (->> (:jobs control)
+                                            (filter #(job-matches-event? control % e))
+                                            (map #(assoc % ::matched-kind kind))))))
                            (reduce (fn [acc job]
                                      (if (some #(= (:id %) (:id job)) acc)
                                        acc
                                        (conj acc job)))
                                    [])
-                           vec)]
+                           vec)
+        normalized-event normalized-base]
     (append-recent-event! normalized-event)
     (if (empty? matching-jobs)
       (js/Promise.resolve {:matchedJobs []
@@ -765,17 +802,12 @@
                  :embeds (vec (or (:embeds message) []))}]
     (when-not (:authorIsBot message)
       (remember-discord-latest! (:channelId message) [message])
-      (dispatch-event! {:sourceKind "discord"
-                        :eventKind "discord.message.created"
-                        :payload payload})
-      (when mention?
-        (dispatch-event! {:sourceKind "discord"
-                          :eventKind "discord.message.mention"
-                          :payload payload}))
-      (when keyword?
-        (dispatch-event! {:sourceKind "discord"
-                          :eventKind "discord.message.keyword"
-                          :payload payload})))))
+      (dispatch-event! {:sourceKind  "discord"
+                        :eventKind   "discord.message.created"
+                        :eventKinds  (cond-> ["discord.message.created"]
+                                       mention? (conj "discord.message.mention")
+                                       keyword? (conj "discord.message.keyword"))
+                        :payload     payload})))
 
 (defn- bind-discord-gateway!
   [config]
@@ -943,210 +975,210 @@
                                      (job-step job))))))
                        (js/Promise.resolve nil))))))))
 
-  (defn- execute-direct-job!
-    [config job source-kind event-kind]
-    (actions-dispatch/dispatch! {:config config
-                                 :event {:sourceKind source-kind
-                                         :eventKind event-kind
-                                         :timestamp (.toISOString (js/Date.))
-                                         :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}}
-                                 :job job
-                                 :run-agent! start-agent-run!}
-                                (job-step job))
-    )
+(defn- execute-direct-job!
+  [config job source-kind event-kind]
+  (actions-dispatch/dispatch! {:config config
+                               :event {:sourceKind source-kind
+                                       :eventKind event-kind
+                                       :timestamp (.toISOString (js/Date.))
+                                       :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}}
+                               :job job
+                               :run-agent! start-agent-run!}
+                              (job-step job))
+  )
 
-  (defn- execute-cron-job!
-    [config job]
-    (let [control (control-config config)
-          source-kind (get-in job [:source :kind])
-          mode (get-in job [:source :mode])]
-      (cond
-        (and (= source-kind "discord") (= mode "patrol"))
-        (execute-discord-patrol! config control job)
-
-        (and (= source-kind "discord") (= mode "synthesize"))
-        (execute-discord-synthesis! config control job)
-
-        :else
-        (execute-direct-job! config job source-kind "cron.tick"))))
-
-  (defn run-job!
-    [job-id]
-    (let [config (cfg)
-          control (control-config config)
-          job (some (fn [candidate] (when (= (:id candidate) job-id) candidate)) (:jobs control))]
-      (if-not job
-        (js/Promise.reject (js/Error. (str "Unknown event-agent job: " job-id)))
-        (let [started-at (record-job-run-start! job)]
-          (js-await [result
-                     (if (= "cron" (get-in job [:trigger :kind]))
-                       (execute-cron-job! config job)
-                       (execute-direct-job! config job (get-in job [:source :kind]) "manual.run"))]
-                    (record-job-run-finish! job started-at "ok" nil)
-                    result
-                    (catch err
-                        (record-job-run-finish! job started-at "error" (.-message err))
-                      nil))))))
-
-  (defn- clear-interval-task!
-    [task]
-    (when-let [id (:id task)]
-      (js/clearInterval id)))
-
-  (defn stop!
-    []
-    (when-let [unsubscribe @discord-gateway-unsubscribe*]
-      (unsubscribe)
-      (reset! discord-gateway-unsubscribe* nil))
-    (doseq [[_ task] @scheduled-tasks*]
-      (when (and task (map? task) (= :interval (:type task)))
-        (clear-interval-task! task)))
-    (reset! scheduled-tasks* {})
-    (reset! running?* false)
-    (println "[event-agents] stopped"))
-
-  (defn- cadence-label
-    [minutes]
+(defn- execute-cron-job!
+  [config job]
+  (let [control (control-config config)
+        source-kind (get-in job [:source :kind])
+        mode (get-in job [:source :mode])]
     (cond
-      (= minutes 1) "Every minute"
-      (< minutes 60) (str "Every " minutes " minutes")
-      (= (mod minutes 60) 0) (str "Every " (/ minutes 60) " hours")
-      :else (str "Every " minutes " minutes")))
+      (and (= source-kind "discord") (= mode "patrol"))
+      (execute-discord-patrol! config control job)
 
-  (defn status-snapshot
-    [config]
-    (let [control (control-config config)]
-      {:running @running?*
-       :configured true
-       :sources {:discord {:lastSeenChannels (-> @source-state* :discord :last-seen keys vec)}
-                 :recentEvents @recent-events*}
-       :jobs (mapv (fn [job]
-                     (merge {:id (:id job)
-                             :name (:name job)
-                             :enabled (:enabled job)
-                             :trigger (:trigger job)
-                             :source (:source job)
-                             :scheduleLabel (cadence-label (get-in job [:trigger :cadenceMinutes]))}
-                            (get @job-state* (:id job) {:runCount 0 :lastStatus "none"})))
-                   (:jobs control))}))
+      (and (= source-kind "discord") (= mode "synthesize"))
+      (execute-discord-synthesis! config control job)
 
-  (defn- schedule-job!
-    [config job]
-    (let [every-ms (* 60 1000 (max 1 (get-in job [:trigger :cadenceMinutes])))
-          wrapped (fn []
-                    (when @running?*
-                      (run-job! (:id job))
-                      nil))
-          id (js/setInterval wrapped every-ms)]
-      (swap! scheduled-tasks* assoc (:id job) {:type :interval
-                                               :id id
-                                               :everyMs every-ms})
-      (update-job-state! (:id job)
-                         (fn [state]
-                           (merge state
-                                  {:id (:id job)
-                                   :name (:name job)
-                                   :enabled (:enabled job)
-                                   :nextRunAt (+ (.now js/Date) every-ms)})))))
+      :else
+      (execute-direct-job! config job source-kind "cron.tick"))))
 
-  (defn reload!
-    []
-    (stop!)
-    (start! nil))
+(defn run-job!
+  [job-id]
+  (let [config (cfg)
+        control (control-config config)
+        job (some (fn [candidate] (when (= (:id candidate) job-id) candidate)) (:jobs control))]
+    (if-not job
+      (js/Promise.reject (js/Error. (str "Unknown event-agent job: " job-id)))
+      (let [started-at (record-job-run-start! job)]
+        (js-await [result
+                   (if (= "cron" (get-in job [:trigger :kind]))
+                     (execute-cron-job! config job)
+                     (execute-direct-job! config job (get-in job [:source :kind]) "manual.run"))]
+                  (record-job-run-finish! job started-at "ok" nil)
+                  result
+                  (catch err
+                      (record-job-run-finish! job started-at "error" (.-message err))
+                    nil))))))
 
-  (defn start!
-    [_config]
-    (when-not @running?*
-      (reset! running?* true)
-      ;; =======================================================================
-      ;; Persistence: Recover event-agent-control overrides from Redis FIRST.
-      ;; This is the primary fix for "changes not sticking" — the admin panel
-      ;; writes control overrides via PUT, but they were only in memory.
-      ;; We must recover before scheduling so jobs use persisted settings.
-      ;; =======================================================================
-      (let [recovery-promise
-            (if-let [client (redis/get-client)]
-              (-> (control-config/load-event-agent-control)
-                  (.then (fn [saved-control]
-                           (when saved-control
-                             (swap! runtime-state/config*
-                                    (fn [current-cfg]
-                                      (assoc (or current-cfg (cfg))
-                                             :event-agent-control saved-control)))))))
-              (js/Promise.resolve nil))]
-        (-> recovery-promise
-            (.then (fn [_]
-                     (let [config (cfg)
-                           control (control-config config)]
-                       (println "[event-agents] starting with" (count (:jobs control)) "jobs")
+(defn- clear-interval-task!
+  [task]
+  (when-let [id (:id task)]
+    (js/clearInterval id)))
 
-                       ;; Recover remaining state from Redis (job state, specs, last-seen)
-                       (when-let [client (redis/get-client)]
-                         (println "[event-agents] recovering state from Redis...")
+(defn stop!
+  []
+  (when-let [unsubscribe @discord-gateway-unsubscribe*]
+    (unsubscribe)
+    (reset! discord-gateway-unsubscribe* nil))
+  (doseq [[_ task] @scheduled-tasks*]
+    (when (and task (map? task) (= :interval (:type task)))
+      (clear-interval-task! task)))
+  (reset! scheduled-tasks* {})
+  (reset! running?* false)
+  (println "[event-agents] stopped"))
 
-                         ;; Recover operational state and specs for all configured jobs
-                         (let [job-ids (map :id (:jobs control))]
-                           (doseq [id job-ids]
-                             ;; Recover Operational State (Counts/Status)
-                             (-> (redis/get-json client (str "event-agent:job-state:" id))
-                                 (.then (fn [state]
-                                          (when state
-                                            (swap! job-state* assoc id (normalize-job-state id state))
-                                            (println "[event-agents] recovered state for" id)))))
+(defn- cadence-label
+  [minutes]
+  (cond
+    (= minutes 1) "Every minute"
+    (< minutes 60) (str "Every " minutes " minutes")
+    (= (mod minutes 60) 0) (str "Every " (/ minutes 60) " hours")
+    :else (str "Every " minutes " minutes")))
 
-                             ;; Recover Job Spec Overrides from Redis
-                             (-> (redis/get-json client (str "event-agent:job-spec:" id))
-                                 (.then (fn [redis-spec]
-                                          (when redis-spec
-                                            (println "[event-agents] loaded Redis spec override for" id)))))))
+(defn status-snapshot
+  [config]
+  (let [control (control-config config)]
+    {:running @running?*
+     :configured true
+     :sources {:discord {:lastSeenChannels (-> @source-state* :discord :last-seen keys vec)}
+               :recentEvents @recent-events*}
+     :jobs (mapv (fn [job]
+                   (merge {:id (:id job)
+                           :name (:name job)
+                           :enabled (:enabled job)
+                           :trigger (:trigger job)
+                           :source (:source job)
+                           :scheduleLabel (cadence-label (get-in job [:trigger :cadenceMinutes]))}
+                          (get @job-state* (:id job) {:runCount 0 :lastStatus "none"})))
+                 (:jobs control))}))
 
-                         ;; Recover Discord last-seen markers
-                         (let [channels (or (:defaultChannels (discord-source-config control)) [])]
-                           (doseq [channel-id channels]
-                             (-> (redis/get-key client (str "event-agent:discord-last-seen:" channel-id))
-                                 (.then (fn [last-id]
-                                          (when last-id
-                                            (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id)
-                                            (println "[event-agents] recovered last-seen for channel" channel-id))))))))
+(defn- schedule-job!
+  [config job]
+  (let [every-ms (* 60 1000 (max 1 (get-in job [:trigger :cadenceMinutes])))
+        wrapped (fn []
+                  (when @running?*
+                    (run-job! (:id job))
+                    nil))
+        id (js/setInterval wrapped every-ms)]
+    (swap! scheduled-tasks* assoc (:id job) {:type :interval
+                                             :id id
+                                             :everyMs every-ms})
+    (update-job-state! (:id job)
+                       (fn [state]
+                         (merge state
+                                {:id (:id job)
+                                 :name (:name job)
+                                 :enabled (:enabled job)
+                                 :nextRunAt (+ (.now js/Date) every-ms)})))))
 
-                       ;; Schedule background SQL flush task
-                       (schedule-flush-task!)
+(defn reload!
+  []
+  (stop!)
+  (start! nil))
 
-                       ;; Bind Discord gateway for real-time message handling
-                       (bind-discord-gateway! config)
+(defn start!
+  [_config]
+  (when-not @running?*
+    (reset! running?* true)
+    ;; =======================================================================
+    ;; Persistence: Recover event-agent-control overrides from Redis FIRST.
+    ;; This is the primary fix for "changes not sticking" — the admin panel
+    ;; writes control overrides via PUT, but they were only in memory.
+    ;; We must recover before scheduling so jobs use persisted settings.
+    ;; =======================================================================
+    (let [recovery-promise
+          (if-let [client (redis/get-client)]
+            (-> (control-config/load-event-agent-control)
+                (.then (fn [saved-control]
+                         (when saved-control
+                           (swap! runtime-state/config*
+                                  (fn [current-cfg]
+                                    (assoc (or current-cfg (cfg))
+                                           :event-agent-control saved-control)))))))
+            (js/Promise.resolve nil))]
+      (-> recovery-promise
+          (.then (fn [_]
+                   (let [config (cfg)
+                         control (control-config config)]
+                     (println "[event-agents] starting with" (count (:jobs control)) "jobs")
 
-                       ;; Schedule cron jobs from control config
-                       (doseq [job (:jobs control)]
-                         (when (and (:enabled job)
-                                    (= "cron" (get-in job [:trigger :kind])))
-                           (schedule-job! config job)))
+                     ;; Recover remaining state from Redis (job state, specs, last-seen)
+                     (when-let [client (redis/get-client)]
+                       (println "[event-agents] recovering state from Redis...")
 
-                       ;; Kick one job immediately so boot doesn't wait for the first cron tick.
-                       (when-let [first-cron-job (some (fn [job]
-                                                         (when (and (:enabled job)
-                                                                    (= "cron" (get-in job [:trigger :kind])))
-                                                           job))
-                                                       (:jobs control))]
-                         (run-job! (:id first-cron-job))))))
-            (.catch (fn [err]
-                      (println "[event-agents] failed to recover control config from Redis:" (.-message err))
-                      ;; Fall through — start with defaults
-                      (let [config (cfg)
-                            control (control-config config)]
-                        (println "[event-agents] starting with" (count (:jobs control)) "jobs (defaults)")
-                        (schedule-flush-task!)
-                        (bind-discord-gateway! config)
-                        (doseq [job (:jobs control)]
-                          (when (and (:enabled job)
-                                     (= "cron" (get-in job [:trigger :kind])))
-                            (schedule-job! config job))))))))))
+                       ;; Recover operational state and specs for all configured jobs
+                       (let [job-ids (map :id (:jobs control))]
+                         (doseq [id job-ids]
+                           ;; Recover Operational State (Counts/Status)
+                           (-> (redis/get-json client (str "event-agent:job-state:" id))
+                               (.then (fn [state]
+                                        (when state
+                                          (swap! job-state* assoc id (normalize-job-state id state))
+                                          (println "[event-agents] recovered state for" id)))))
 
-  ;; =============================================================================
-  ;; Public API: Job Management with Template Support
-  ;; =============================================================================
+                           ;; Recover Job Spec Overrides from Redis
+                           (-> (redis/get-json client (str "event-agent:job-spec:" id))
+                               (.then (fn [redis-spec]
+                                        (when redis-spec
+                                          (println "[event-agents] loaded Redis spec override for" id)))))))
 
-  (defn upsert-job!
-    "Public API: Create or update an event-agent job.
+                       ;; Recover Discord last-seen markers
+                       (let [channels (or (:defaultChannels (discord-source-config control)) [])]
+                         (doseq [channel-id channels]
+                           (-> (redis/get-key client (str "event-agent:discord-last-seen:" channel-id))
+                               (.then (fn [last-id]
+                                        (when last-id
+                                          (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id)
+                                          (println "[event-agents] recovered last-seen for channel" channel-id))))))))
+
+                     ;; Schedule background SQL flush task
+                     (schedule-flush-task!)
+
+                     ;; Bind Discord gateway for real-time message handling
+                     (bind-discord-gateway! config)
+
+                     ;; Schedule cron jobs from control config
+                     (doseq [job (:jobs control)]
+                       (when (and (:enabled job)
+                                  (= "cron" (get-in job [:trigger :kind])))
+                         (schedule-job! config job)))
+
+                     ;; Kick one job immediately so boot doesn't wait for the first cron tick.
+                     (when-let [first-cron-job (some (fn [job]
+                                                       (when (and (:enabled job)
+                                                                  (= "cron" (get-in job [:trigger :kind])))
+                                                         job))
+                                                     (:jobs control))]
+                       (run-job! (:id first-cron-job))))))
+          (.catch (fn [err]
+                    (println "[event-agents] failed to recover control config from Redis:" (.-message err))
+                    ;; Fall through — start with defaults
+                    (let [config (cfg)
+                          control (control-config config)]
+                      (println "[event-agents] starting with" (count (:jobs control)) "jobs (defaults)")
+                      (schedule-flush-task!)
+                      (bind-discord-gateway! config)
+                      (doseq [job (:jobs control)]
+                        (when (and (:enabled job)
+                                   (= "cron" (get-in job [:trigger :kind])))
+                          (schedule-job! config job))))))))))
+
+;; =============================================================================
+;; Public API: Job Management with Template Support
+;; =============================================================================
+
+(defn upsert-job!
+  "Public API: Create or update an event-agent job.
 
    Args:
    - job-id: String identifier for the job
@@ -1169,69 +1201,69 @@
                  :enabled true
                  :trigger {:kind \"cron\" :cadenceMinutes 10}
                  :agentSpec {:role \"executive\" :model \"glm-5\" :thinkingLevel \"off\"}})"
-    [job-id job-spec]
-    (let [config (cfg)
-          template-id (or (:templateId job-spec) (:template-id job-spec))
+  [job-id job-spec]
+  (let [config (cfg)
+        template-id (or (:templateId job-spec) (:template-id job-spec))
 
-          normalized-job (if template-id
-                           ;; Template instantiation path
-                           (let [trigger (or (:trigger job-spec)
-                                             {:kind "event" :cadenceMinutes 5 :eventKinds []})
-                                 source (or (:source job-spec)
-                                            {:kind "manual" :mode "respond" :config {}})
-                                 filters (or (:filters job-spec)
-                                             {:channels [] :keywords []})
-                                 overrides (dissoc job-spec :templateId :template-id :trigger :source :filters)]
-                             (templates/instantiate-job template-id job-id trigger source filters overrides))
-                           ;; Direct spec path - ensure required fields
-                           (merge job-spec {:id job-id}))]
+        normalized-job (if template-id
+                         ;; Template instantiation path
+                         (let [trigger (or (:trigger job-spec)
+                                           {:kind "event" :cadenceMinutes 5 :eventKinds []})
+                               source (or (:source job-spec)
+                                          {:kind "manual" :mode "respond" :config {}})
+                               filters (or (:filters job-spec)
+                                           {:channels [] :keywords []})
+                               overrides (dissoc job-spec :templateId :template-id :trigger :source :filters)]
+                           (templates/instantiate-job template-id job-id trigger source filters overrides))
+                         ;; Direct spec path - ensure required fields
+                         (merge job-spec {:id job-id}))]
 
-      ;; Normalize and persist
-      (let [final-job (templates/normalize-job-for-persistence normalized-job)]
-        (update-job-spec! job-id final-job)
-        (reload!)
-        (js/Promise.resolve final-job))))
+    ;; Normalize and persist
+    (let [final-job (templates/normalize-job-for-persistence normalized-job)]
+      (update-job-spec! job-id final-job)
+      (reload!)
+      (js/Promise.resolve final-job))))
 
-  (defn get-job
-    "Get a job spec by ID.
+(defn get-job
+  "Get a job spec by ID.
    Loads from Redis if available, otherwise returns nil.
    Returns a promise."
-    [job-id]
-    (let [config (cfg)
-          control (control-config config)
-          default-job (some #(when (= (:id %) job-id) %) (:jobs control))]
-      (get-job-spec job-id default-job)))
+  [job-id]
+  (let [config (cfg)
+        control (control-config config)
+        default-job (some #(when (= (:id %) job-id) %) (:jobs control))]
+    (get-job-spec job-id default-job)))
 
-  (defn delete-job!
-    "Delete a job from Redis and reload runtime.
+(defn delete-job!
+  "Delete a job from Redis and reload runtime.
    Note: This only removes the Redis override - the job will revert to config defaults.
    Returns a promise."
-    [job-id]
-    (when-let [client (redis/get-client)]
-      (let [key (str "event-agent:job-spec:" job-id)
-            dirty-key "event-agent:job-dirty"]
-        (-> (redis/del client key)
-            (.then (fn []
-                     (redis/srem client dirty-key job-id)
-                     (reload!)
-                     (println "[event-agents] deleted job" job-id "from Redis")
-                     {:deleted job-id})))))
-    (js/Promise.resolve {:deleted job-id}))
+  [job-id]
+  (when-let [client (redis/get-client)]
+    (let [key (str "event-agent:job-spec:" job-id)
+          dirty-key "event-agent:job-dirty"]
+      (-> (redis/del client key)
+          (.then (fn []
+                   (redis/srem client dirty-key job-id)
+                   (reload!)
+                   (println "[event-agents] deleted job" job-id "from Redis")
+                   {:deleted job-id})))))
+  (js/Promise.resolve {:deleted job-id}))
 
-  (defn list-templates
-    "List all available agent templates.
+(defn list-templates
+  "List all available agent templates.
    Returns vector of template keywords."
-    []
-    (templates/all-templates))
+  []
+  (templates/all-templates))
 
-  (defn list-model-profiles
-    "List all available model profiles.
+(defn list-model-profiles
+  "List all available model profiles.
    Returns vector of profile keywords."
-    []
-    (templates/all-model-profiles))
+  []
+  (templates/all-model-profiles))
 
-  (defn get-template
-    "Get a template definition by keyword.
+(defn get-template
+  "Get a template definition by keyword.
    Returns the template map or nil."
-    [template-id]
-    (templates/get-template template-id))
+  [template-id]
+  (templates/get-template template-id))

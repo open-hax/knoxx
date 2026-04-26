@@ -1,14 +1,16 @@
 {:cap/id :cap/discord
  :cap/tools [:discord.publish
              :discord.send
+             :discord.react
+             :discord.thread.create
              :discord.read
              :discord.channel.messages
              :discord.channel.scroll
              :discord.dm.messages
              :discord.search
              :discord.guilds
-             :discord.channels
              :discord.list.servers
+             :discord.channels
              :discord.list.channels]
  :cap/user-surfaces [{:surface/id :workspace/discord-ops
                       :surface/label "Discord operations"
