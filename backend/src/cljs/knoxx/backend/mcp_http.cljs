@@ -465,7 +465,7 @@
 
 ;; preHandler-mode routes
 
-(defroute mcp-register-client! [redis-guard] "POST" "/api/mcp/oauth/register" [redis-guard]
+(defroute mcp-register-client! [crypto redis-guard] "POST" "/api/mcp/oauth/register" [redis-guard]
   (let [redis  (aget request "redis")
         {:keys [redirect-uris client-name]} (parse-register-client-body request)
         client-id (.randomUUID crypto)
@@ -480,7 +480,7 @@
         (.then (fn [_] (-> (.code reply 201) (.send client))))
         (.catch (fn [err] (throw (http-error 500 "registration_failed" (or (.-message err) (str err)))))))))
 
-(defroute mcp-authorize-client! [base redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [redis-guard browser-auth-guard]
+(defroute mcp-authorize-client! [base config runtime redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [redis-guard browser-auth-guard]
   (let [redis        (aget request "redis")
         auth-context (aget request "authContext")
         {:keys [client-id redirect-uri state code-challenge scope] :as params} (parse-authorize-query request)]
@@ -498,7 +498,7 @@
                                   :requested-scope (or scope "") :tools tools :selected selected})]
                    (.send (reply-header! reply "content-type" "text/html; charset=utf-8") html)))))))
 
-(defroute mcp-authorize-confirm! [redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize/confirm" [redis-guard browser-auth-guard]
+(defroute mcp-authorize-confirm! [base crypto config runtime code-ttl token-ttl redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize/confirm" [redis-guard browser-auth-guard]
   (let [redis        (aget request "redis")
         auth-context (aget request "authContext")
         {:keys [client-id redirect-uri state code-challenge selected-tools] :as params}
@@ -545,7 +545,7 @@
                       :scope        (->> (array-seq (or (aget record "tools") #js [])) (str/join " "))
                       :expires_in   token-ttl})))))
 
-(defroute mcp-exchange-token! [redis] "POST" "/api/mcp/oauth/token" [redis-guard]
+(defroute mcp-exchange-token! [crypto token-ttl redis-guard] "POST" "/api/mcp/oauth/token" [redis-guard]
   (let [{:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
     (when (or (not= grant-type "authorization_code")
               (str/blank? code) (str/blank? code-verifier)
@@ -627,7 +627,7 @@
           :else (do (ensure-streamable-accept! request)
                     (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
-(defroute mcp-handle-post! [base redis-guard bearer-token-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
+(defroute mcp-handle-post! [base crypto config runtime code-ttl token-ttl policy-db redis-guard bearer-token-guard browser-auth-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
   (let [redis      (aget request "redis")
         bearer     (aget request "bearerToken")
         session-id (resolve-session-id request)
