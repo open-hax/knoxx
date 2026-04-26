@@ -48,6 +48,7 @@ export interface ContractListItem {
   enabled: boolean;
   title?: string;
   path?: string;
+  folder?: string;
   ednHash: number;
   compiledAt: string | null;
   updatedAt: string;

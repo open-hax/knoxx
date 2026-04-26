@@ -1198,6 +1198,7 @@
                                                 (json-response! reply 200
                                                                 {:session_id session-id
                                                                  :conversation_id (:conversation_id session)
+                                                         :run_id (:run_id session)
                                                                  :status (:status session)
                                                                  :has_active_stream (boolean (or (:has_active_stream session)
                                                                                                  runtime-active?))

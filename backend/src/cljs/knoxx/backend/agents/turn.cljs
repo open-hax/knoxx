@@ -305,7 +305,7 @@
 
     (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms (aget runtime "crypto"))
           abort! (fn [reason] (stream/request-abort! state session reason))
-          _registered (stream/register-active-turn! state abort!)
+          _registered (stream/register-active-turn! state abort! _agent-spec)
           unsubscribe (.subscribe session (stream/build-subscribe-handler state session))
           parts (or prompt-content-parts [])
           images (->> parts (keep image-part->pi-attachment) vec)
@@ -315,8 +315,29 @@
                        (pos? omitted-count)
                        (str "\n\n" "[Note: " omitted-count " non-image attachment(s) were omitted because the current pi AgentSession API only supports image attachments.]"))
           content (if (seq images)
-                    (clj->js (into images [{:type "text" :text final-text}] ))
+                    (clj->js (into [(last images)] [{:type "text" :text final-text}] ))
                     final-text)]
+      (let [hash-data (fn [s] (str "[img:sha=" (.slice (.toString (.from js/Buffer s "base64") "hex") 0 12) " len=" (count s) "]"))
+            safe-part (fn [p]
+                         (let [m (js->clj p :keywordize-keys true)]
+                           (if (and (:data m) (> (count (:data m)) 64))
+                             (clj->js (assoc m :data (hash-data (:data m))))
+                             p)))
+            log-content (if (array? content)
+                           (clj->js (mapv safe-part (array-seq content)))
+                           content)]
+        (js/console.log "[prompt-and-await!]"
+                        (js/JSON.stringify
+                         #js {:run_id run-id
+                              :session_id session-id
+                              :conversation_id conversation-id
+                              :model_id model-id
+                              :mode mode
+                              :parts_count (count parts)
+                              :images_count (count images)
+                              :omitted_count omitted-count
+                              :content_type (if (array? content) "multipart" "text")
+                              :content log-content})))
       (-> (.sendUserMessage session content)
           (.then (fn [_]
                    (unsubscribe)

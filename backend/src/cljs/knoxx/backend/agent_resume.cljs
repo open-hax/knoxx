@@ -246,7 +246,7 @@
       (js/Promise.resolve 0)
       (-> (.all js/Promise
                 (clj->js
-                 (mapv (fn [{:keys [session_id conversation_id run_id]}]
+                 (mapv (fn [{:keys [session_id conversation_id run_id agent_spec]}]
                          (if (str/blank? (str (or session_id "")))
                            (js/Promise.resolve nil)
                            (session-store/update-session! client session_id
@@ -255,7 +255,8 @@
                                                            :run_id run_id
                                                            :has_active_stream false
                                                            :shutdown_requested_at stamp
-                                                           :shutdown_signal signal})))
+                                                           :shutdown_signal signal
+                                                           :agent_spec agent_spec})))
                        active-turns)))
           (.then (fn [_] (count active-turns)))))))
 

@@ -28,6 +28,7 @@
                     "This role has access to the nrepl.eval tool. Purpose: live runtime experimentation against the running shadow-cljs Node backend (build=server) without restarting.\n"
                     "Use nrepl.eval for small, reversible probes (e.g., inspect state atoms, redefine a function, hot-patch a handler) to understand behavior.\n\n"
                     "Rules when using nrepl.eval:\n"
+                    "- The workspace uses ESM (`\"type\": \"module\"`). When writing JavaScript or running Node.js via bash, use `import` instead of `require`. For one-liner shell probes, use `node --input-type=module -e \"...\"`.\n"
                     "- Prefer :target=cljs unless you explicitly need CLJ-side inspection.\n"
                     "- Avoid infinite loops / heavy computation; you can crash the live server.\n"
                     "- Never print or exfiltrate secrets from env/config.\n"

@@ -372,17 +372,29 @@
       {:toolId (:toolId policy)
        :effect (:effect policy)}))))
 
+(defn- download-attachment-to-tmp!
+  [{:keys [filename url]}]
+  (when (and filename url)
+    (let [local-path (str "/tmp/" filename)
+          result (js/require "child_process")
+          _ (.execSync result (str "curl -sL -o " (pr-str local-path) " " (pr-str url)) #js {:timeout 10000})]
+      local-path)))
+
 (defn event-summary-text
   [event]
   (let [payload (or (:payload event) {})
         attachments (or (:attachments payload) [])
         attachment-lines (when (seq attachments)
-                           (str "Attachments:\n"
+                           (str "Attachments (downloaded for reading):\n"
                                 (str/join "\n"
                                           (map (fn [attachment]
-                                                 (str "- " (:filename attachment)
-                                                      (when-let [url (:url attachment)]
-                                                        (str " <" url ">"))))
+                                                 (let [filename (:filename attachment)
+                                                       url (:url attachment)
+                                                       local-path (try (download-attachment-to-tmp! attachment)
+                                                                       (catch :default _ nil))]
+                                                   (if local-path
+                                                     (str "- " filename " (saved to " local-path " — use the read tool to view it)")
+                                                     (str "- " filename (when url (str " <" url ">"+ " (download failed, use url directly)")))))) 
                                                attachments))
                                 "\n"))
         publish-channels (or (:publishChannels payload) [])]
@@ -447,9 +459,12 @@
                               (let [b64  (.toString (.from js/Buffer (js/Uint8Array. buf)) "base64")
                                     mime (or (:mimeType part) "image/jpeg")]
                                 (-> part
-                                    (dissoc :url)
-                                    (assoc :data (str "data:" mime ";base64," b64)))))))
-                 (js/Promise.resolve part))))))
+                                    (assoc :data b64))))))
+                 (do (js/console.warn "[event-agents] fetch-image-part! HTTP" (.-status resp) (:url part))
+                     (js/Promise.resolve nil)))))
+      (.catch (fn [err]
+                (js/console.warn "[event-agents] fetch-image-part! failed" (.-message err) (:url part))
+                (js/Promise.resolve nil)))))
 
 (defn- materialize-content-parts!
   "Returns Promise<vec-of-parts> with image :url replaced by data URI :data."
@@ -460,45 +475,8 @@
                            (fetch-image-part! part)
                            (js/Promise.resolve part)))
                        parts)))
-      (.then (fn [arr] (vec (array-seq arr))))))
-(defn- event-content-parts
-  [event]
-  (let [payload (or (:payload event) {})
-        attachment-urls (->> (or (:attachments payload) [])
-                             (keep (fn [att]
-                                     (let [url (:url att)
-                                           content-type (some-> (:contentType att) str str/lower-case)]
-                                       (when url
-                                         {:type (cond
-                                                  (some-> content-type (str/starts-with? "image/")) "image"
-                                                  (some-> content-type (str/starts-with? "video/")) "video"
-                                                  (some-> content-type (str/starts-with? "audio/")) "audio"
-                                                  (some-> content-type (str/starts-with? "text/")) "document"
-                                                  (some-> content-type (str/includes? "pdf")) "document"
-                                                  :else nil)
-                                          :url url
-                                          :mimeType (:contentType att)
-                                          :filename (:filename att)}))))
-                             vec)
-        text-media-urls (extract-media-urls-from-text (:content payload))
-        embed-media-urls (extract-media-from-embeds (:embeds payload))
-        detected-urls (->> (concat text-media-urls embed-media-urls)
-                           distinct
-                           (map (fn [url]
-                                  (let [lower (str/lower-case url)]
-                                    {:type (cond
-                                             (some #(str/includes? lower %) [".png" ".jpg" ".jpeg" ".gif" ".webp"]) "image"
-                                             (some #(str/includes? lower %) [".mp4" ".webm" ".mov"]) "video"
-                                             (some #(str/includes? lower %) [".mp3" ".wav" ".ogg" ".m4a" ".flac"]) "audio"
-                                             (some #(str/includes? lower %) [".pdf"]) "document"
-                                             :else "image")
-                                     :url url
-                                     :mimeType nil
-                                     :filename nil})))
-                           vec)]
-    (->> (concat attachment-urls detected-urls)
-                (filter (fn [part] (some? (:type part))))
-                vec)))
+      (.then (fn [arr] (vec (remove nil? (array-seq arr)))))))
+(defn- event-content-parts [_event] [])
 
 (defn- sticky-session-enabled?
   [job]

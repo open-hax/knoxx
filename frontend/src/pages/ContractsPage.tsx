@@ -295,6 +295,10 @@ export default function ContractsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedContractClass, setSelectedContractClass] = useState<ContractsClass>("agents");
 
+  // ── Folder grouping state ──────────────────────────────────────────────
+  const [searchQuery, setSearchQuery] = useState("");
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+
   const [ednDraft, setEdnDraft] = useState(DEFAULT_CONTRACT_EDN);
   const [lastSavedEdn, setLastSavedEdn] = useState<string | null>(null);
   const [validation, setValidation] = useState<ValidationWithContract | null>(null);
@@ -366,6 +370,44 @@ export default function ContractsPage() {
 
   const isDirty = lastSavedEdn == null ? ednDraft.trim().length > 0 : ednDraft !== lastSavedEdn;
   const validationErrors = validation?.errors ?? [];
+
+  // ── Folder grouping ─────────────────────────────────────────────────────
+  const isSearching = searchQuery.trim().length > 0;
+  const groupedContracts = useMemo(() => {
+    const groups = new Map<string, ContractListItem[]>();
+    for (const c of contracts) {
+      const folder = c.folder ?? c.contractClass;
+      const existing = groups.get(folder) ?? [];
+      groups.set(folder, [...existing, c]);
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [contracts]);
+
+  const filteredContracts = useMemo(() => {
+    if (!isSearching) return groupedContracts;
+    const query = searchQuery.toLowerCase();
+    return groupedContracts
+      .map(([folder, items]) => [
+        folder,
+        items.filter((c) =>
+          c.id.toLowerCase().includes(query) ||
+          (c.title?.toLowerCase().includes(query) ?? false)
+        ),
+      ])
+      .filter(([, items]) => items.length > 0);
+  }, [groupedContracts, isSearching, searchQuery]);
+
+  const toggleFolder = useCallback((folder: string) => {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folder)) {
+        next.delete(folder);
+      } else {
+        next.add(folder);
+      }
+      return next;
+    });
+  }, []);
 
   // ── Load agent library (contracts + runtime jobs) ──────────────────────
 

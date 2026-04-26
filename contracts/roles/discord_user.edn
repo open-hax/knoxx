@@ -2,5 +2,4 @@
  :role/capabilities [:cap/discord
                      :cap/websearch
                      :cap/memory
-                     :cap/semantic
-                     :cap/multimodal]}
+                     :cap/semantic]}

@@ -235,10 +235,76 @@
                      :validation {:ok false
                                   :errors [{:path [] :message (str "EDN parse error: " (.-message err))}]}}))))))
          (.catch
-          (fn [err]
-            (if (= "ENOENT" (.-code err))
-              {:ok? false
-               :edn-text ""
-               :contract nil
-               :validation {:ok false :errors [{:path [] :message "Contract not found"}]}}
-              (throw err))))))))
+(fn [err]
+             (if (= "ENOENT" (.-code err))
+               {:ok? false
+                :edn-text ""
+                :contract nil
+                :validation {:ok false :errors [{:path [] :message "Contract not found"}]}}
+               (throw err))))))))
+
+;; ── Flat recursive contract scan ────────────────────────────────────────────────
+
+(defn- all-edn-files-recursive
+  "Recursively find all .edn files under a root directory."
+  [root-dir]
+  (let [results (atom [])]
+    (letfn [(walk [dir]
+              (let [entries (try
+                            (.readdirSync node-fs dir)
+                            (catch :default _
+                              nil))]
+                (when entries
+                  (doseq [entry entries]
+                    (let [full-path (.join path dir entry)
+                          stat (try
+                                (.statSync node-fs full-path)
+                                (catch :default _
+                                  nil))]
+                      (when stat
+                        (if (.-isDirectory stat)
+                          (walk full-path)
+                          (when (contract-edn-filename? entry)
+                            (swap! results conj full-path))))))))]
+    (walk root-dir)
+    @results))
+
+(defn- extract-contract-id
+  "Extract :contract/id or :actor/id from EDN text."
+  [edn-text]
+  (try
+    (let [parsed (reader/read-string edn-text)]
+      (or (:contract/id parsed)
+          (:actor/id parsed)
+          (:role/id parsed)
+          (:capability/id parsed)
+          (:policy/id parsed)
+          (:model/id parsed)
+          (:model-family/id parsed)
+          nil))
+    (catch :default _
+      nil)))
+
+(defn list-all-contracts-flat!
+  "List ALL contracts recursively under the contracts root.
+   Returns a vector of maps with :id, :contractClass (inferred from folder),
+   and :folder (relative path for display)."
+  [config]
+  (let [roots (contract-root-paths config)]
+    (->> (mapcat all-edn-files-recursive roots)
+         (mapcat (fn [file-path]
+                   (let [relative-path (try
+                                  (->> roots
+                                       (some #(when (.startsWith file-path %)
+                                              (subs file-path (inc (count %))))
+                                       (str))
+                                 edn-text (try
+                                           (.readFileSync node-fs file-path "utf8")
+                                           (catch :default "")))
+                                 id (extract-contract-id edn-text)]
+                     (when id
+                       [{:id id
+                         :folder relative-path
+                         :path file-path}])))
+         distinct
+         vec)))

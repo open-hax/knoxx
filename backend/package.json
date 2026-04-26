@@ -24,6 +24,7 @@
     "@fastify/websocket": "^11.2.0",
     "@mariozechner/pi-coding-agent": "^0.63.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@sinclair/typebox": "^0.34.41",
     "audiobuffer-to-wav": "^1.0.0",
     "c8": "^10.1.3",
