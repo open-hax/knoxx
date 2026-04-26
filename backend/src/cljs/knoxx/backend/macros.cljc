@@ -36,6 +36,8 @@
                      ~'bearer-headers
                      ~'fetch-json
                      ~'request-query-string
+                     ~'session-guard
+                     ~'optional-session-guard
                      ~@extra-deps]} ~'deps]
          ~(if pre-handler-mode?
             `(~'route! ~'app ~method-name ~route-string

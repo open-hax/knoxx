@@ -14,7 +14,7 @@
 
  :agent
  {:role :developer
-  :model "gpt-5.4"
+  :model "gemma4:31b"
   :thinking :medium}
 
  :prompts

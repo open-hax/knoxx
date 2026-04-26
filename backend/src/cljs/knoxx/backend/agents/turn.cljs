@@ -331,7 +331,11 @@
 
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
-  (let [node-crypto (aget runtime "crypto")
+  (js/Promise.
+   (fn [resolve reject]
+     (try
+       (resolve
+        (let [node-crypto (aget runtime "crypto")
         conversation-id (or conversation-id (.randomUUID node-crypto))
         session-id (ensure-session-id node-crypto session-id)
         _ (ensure-conversation-access! auth-context conversation-id)
@@ -494,3 +498,4 @@ seeded-messages (->> (transcript/ensure-system-message existing-messages agent-s
                                                                     session message prompt-content-parts hydration memory-hydration
                                                                     persisted-request-messages agent-spec)))))))))))))))
 )
+       (catch :default e# (reject e#))))))
