@@ -110,7 +110,10 @@
                                 SESSION_TTL_SECONDS)
                      (resolved nil))))
           (.then (fn []
-                   (redis/sadd redis-client ACTIVE_SESSIONS_SET session-id)))
+                   (if session-id
+                     (redis/sadd redis-client ACTIVE_SESSIONS_SET session-id)
+                     (do (js/console.error "[session-store] put-session! reached sadd with nil session-id; session keys:" (pr-str (keys session)))
+                         (js/Promise.resolve nil)))))
           (.then (fn [] session))
           (.catch (fn [err]
                     (js/console.error "Failed to persist session to Redis:" err)
@@ -120,9 +123,13 @@
 (defn update-session!
   "Update session state, merging with existing. Always resolves the updated session."
   [redis-client session-id updates]
-  (let [current (or (get @session-cache* session-id) {})
-        updated (merge current updates {:updated_at (js/Date.now)})]
-    (put-session! redis-client updated)))
+  (if (str/blank? (str (or session-id "")))
+    (do (js/console.error "[session-store] update-session! called with nil/blank session-id; updates:" (pr-str updates))
+        (js/Promise.resolve nil))
+    (let [current (or (get @session-cache* session-id) {})
+          updated (merge current updates {:session_id session-id
+                                          :updated_at (js/Date.now)})]
+      (put-session! redis-client updated))))
 
 (defn rewind-messages
   "Remove the last N user turns plus everything that followed them.

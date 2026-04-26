@@ -437,31 +437,30 @@
        vec))
 
 (defn- fetch-image-part!
-  "Download an image content-part's :url, embed as raw base64 :data."
+  "Download an image content-part's :url, embed as data URI in :data."
   [part]
   (-> (js/fetch (:url part) #js {:method "GET"})
       (.then (fn [resp]
                (if (.-ok resp)
                  (-> (.arrayBuffer resp)
                      (.then (fn [buf]
-                              (let [b64 (.toString (.from js/Buffer (js/Uint8Array. buf)) "base64")]
-                                (clj->js (-> part
-                                             (dissoc :url)
-                                             (assoc :data b64)))))))
-                 ;; fetch failed — keep raw url so turn.cljs can surface error
-                 (js/Promise.resolve (clj->js part)))))))
+                              (let [b64  (.toString (.from js/Buffer (js/Uint8Array. buf)) "base64")
+                                    mime (or (:mimeType part) "image/jpeg")]
+                                (-> part
+                                    (dissoc :url)
+                                    (assoc :data (str "data:" mime ";base64," b64)))))))
+                 (js/Promise.resolve part))))))
 
 (defn- materialize-content-parts!
-  "Returns Promise<vec-of-parts> with image :url replaced by base64 :data."
+  "Returns Promise<vec-of-parts> with image :url replaced by data URI :data."
   [parts]
   (-> (js/Promise.all
         (clj->js (mapv (fn [part]
                          (if (= "image" (:type part))
                            (fetch-image-part! part)
-                           (js/Promise.resolve (clj->js part))))
+                           (js/Promise.resolve part)))
                        parts)))
-      (.then (fn [arr]
-               (mapv #(js->clj % :keywordize-keys true) arr)))))
+      (.then (fn [arr] (vec (array-seq arr))))))
 (defn- event-content-parts
   [event]
   (let [payload (or (:payload event) {})
@@ -497,7 +496,9 @@
                                      :mimeType nil
                                      :filename nil})))
                            vec)]
-    (concat attachment-urls detected-urls)))
+    (->> (concat attachment-urls detected-urls)
+                (filter (fn [part] (some? (:type part))))
+                vec)))
 
 (defn- sticky-session-enabled?
   [job]
@@ -807,7 +808,7 @@
                         :eventKinds  (cond-> ["discord.message.created"]
                                        mention? (conj "discord.message.mention")
                                        keyword? (conj "discord.message.keyword"))
-                        :payload     payload})))
+                        :payload     payload}))))
 
 (defn- bind-discord-gateway!
   [config]
@@ -896,6 +897,9 @@
 
 (defn- execute-discord-patrol!
   [config control job]
+  ;; Skip patrol dispatch entirely when the gateway is live — the gateway fires
+  ;; dispatch-discord-gateway-message! in real time, so patrol would double-fire.
+  (when-not (discord-gateway-active?)
   (let [limit (job-max-messages job 25)]
     (-> (resolve-job-channel-ids! control job)
         (.then (fn [channels]
@@ -918,7 +922,7 @@
                                            {:channelId channel-id
                                             :error true}))))
                            channels)))
-                   (js/Promise.resolve nil)))))))
+                   (js/Promise.resolve nil))))))))
 
 (defn- summarize-discord-channel
   [channel-id messages]
@@ -929,7 +933,8 @@
               (let [attachments (:attachments message)
                     attachment-text (when (seq attachments)
                                       (str " attachments="
-                                           (str/join ", " (map :filename attachments))))]
+                                           (str/join ", " (map (fn [a] (str (:filename a) (when (:url a) (str " <" (:url a) ">"))))
+                                          attachments))))]
                 (str "[" channel-id "] <" (:authorUsername message) " (id:" (:authorId message) ")> "
                      (subs (:content message) 0 (min 180 (count (:content message))))
                      (or attachment-text "")))))
@@ -969,7 +974,16 @@
                                               :timestamp (.toISOString (js/Date.))
                                               :payload {:summary summary
                                                         :channelId (first channels)
-                                                        :publishChannels publish-channels}}
+                                                        :publishChannels publish-channels
+                                                         :attachments (->> rows
+                                                                           (mapcat (fn [{:keys [messages]}]
+                                                                                    (mapcat :attachments messages)))
+                                                                           (filter :url)
+                                                                           (filter (fn [a]
+                                                                                     (some-> (:contentType a) str str/lower-case
+                                                                                             (str/starts-with? "image/"))))
+                                                                           (take 8)
+                                                                           vec)}}
                                       :job job
                                       :run-agent! start-agent-run!}
                                      (job-step job))))))

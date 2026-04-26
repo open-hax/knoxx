@@ -46,7 +46,7 @@
 
    Some Gemma-family models emit thinking traces inline instead of as structured
    reasoning parts. This keeps the assistant answer clean while preserving
-   the trace in :reasoning." 
+   the trace in :reasoning."
   [text]
   (let [text (str (or text ""))
         open-idx (.indexOf text "<think>")
@@ -295,13 +295,13 @@
               (let [raw-data (content/nonblank (:data part))
                     parsed (data-url->image-attachment raw-data)
                     data (or (:data parsed) raw-data)
-                    ;; NOTE: pi-coding-agent expects raw base64 in :data (not a data: URL)
-                    mime-type (or (content/nonblank (:mimeType part))
-                                  (:mimeType parsed))]
+                    mime-type (content/nonblank
+                               (some-> (or (:mimeType part) (:mimeType parsed))
+                                       name))]
                 (when data
                   (cond-> {:type "image"
                            :data data}
-                    (content/nonblank mime-type) (assoc :mimeType mime-type))))))]
+                    mime-type (assoc :mimeType mime-type))))))]
 
     (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms (aget runtime "crypto"))
           abort! (fn [reason] (stream/request-abort! state session reason))
@@ -315,14 +315,15 @@
                        (pos? omitted-count)
                        (str "\n\n" "[Note: " omitted-count " non-image attachment(s) were omitted because the current pi AgentSession API only supports image attachments.]"))
           content (if (seq images)
-                    (clj->js (into [{:type "text" :text final-text}] images))
+                    (clj->js (into images [{:type "text" :text final-text}] ))
                     final-text)]
       (-> (.sendUserMessage session content)
-          (.then (fn []
+          (.then (fn [_]
                    (unsubscribe)
-                   (turn-control/unregister-active-turn! conversation-id run-id)
-                   (finalize-turn-success! config state session run-id conversation-id session-id started-ms model-id mode
-                                           hydration memory-hydration persisted-request-messages)))
+                   (finalize-turn-success!
+                    config state
+                    session run-id conversation-id session-id started-ms model-id mode
+                    hydration memory-hydration persisted-request-messages)))
           (.catch (fn [err]
                     (unsubscribe)
                     (turn-control/unregister-active-turn! conversation-id run-id)
