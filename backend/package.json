@@ -4,7 +4,7 @@
   "type": "module",
   "license": "GPL-3.0-only",
   "scripts": {
-    "build": "shadow-cljs release server",
+    "build": "shadow-cljs release server && git add src && git commit -m 'shadow-cljs backend built successfully'",
     "watch": "shadow-cljs watch server",
     "start": "node dist/server.js",
     "test": "node scripts/run-shadow-tests-ci.mjs",
