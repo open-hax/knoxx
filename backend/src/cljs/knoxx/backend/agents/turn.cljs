@@ -17,7 +17,8 @@
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [store-run! append-run-event! update-run!
                                              finalize-run-trace-blocks! tool-event-payload
-                                             record-retrieval-sample! latest-assistant-message]]
+                                             record-retrieval-sample! latest-assistant-message
+                                             maybe-sync-to-openplanner!]]
             [knoxx.backend.runtime.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
@@ -492,8 +493,9 @@ seeded-messages (->> (transcript/ensure-system-message existing-messages agent-s
                                                      (-> run
                                                          (update :resources merge {:passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results])})
                                                          (assoc :updated_at (now-iso)))))
-                                      (append-run-event! run-id hydration-event)
-                                      (broadcast-ws-session! session-id "events" hydration-event)))
+(append-run-event! run-id hydration-event)
+                                       (broadcast-ws-session! session-id "events" hydration-event)
+                                       (maybe-sync-to-openplanner! config (get @runs* run-id))))
                                   (when (seq (:hits memory-hydration))
                                     (let [memory-event (tool-event-payload run-id conversation-id session-id "memory_hydration"
                                                                            {:status "ok"
@@ -504,8 +506,9 @@ seeded-messages (->> (transcript/ensure-system-message existing-messages agent-s
                                                      (-> run
                                                          (update :resources merge {:memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])})
                                                          (assoc :updated_at (now-iso)))))
-                                      (append-run-event! run-id memory-event)
-                                      (broadcast-ws-session! session-id "events" memory-event)))
+(append-run-event! run-id memory-event)
+                                       (broadcast-ws-session! session-id "events" memory-event)
+                                       (maybe-sync-to-openplanner! config (get @runs* run-id))))
                                   (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
                                       (.then (fn [session]
                                                (let [persisted-request-messages (transcript/transcript-before-prompt session user-message agent-spec)]

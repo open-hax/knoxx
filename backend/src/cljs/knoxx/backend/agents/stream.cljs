@@ -8,7 +8,8 @@
             [knoxx.backend.run-state :refer [update-run! append-run-event! update-run-tool-receipt!
                                              backfill-run-tool-input-preview! append-limited
                                              append-run-trace-text! apply-run-tool-trace-event!
-                                             tool-event-payload]]
+                                             tool-event-payload
+                                             maybe-sync-to-openplanner!]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.turn-control :as turn-control]
@@ -343,7 +344,8 @@
                                                     :is_error is-error
                                                     :at (now-iso)})
       (append-run-event! (:run-id state) tool-event)
-      (broadcast-ws-session! (:session-id state) "events" tool-event))))
+      (broadcast-ws-session! (:session-id state) "events" tool-event)
+      (maybe-sync-to-openplanner! {} (get @runs* (:run-id state))))))
 
 (defn- handle-turn-end!
   [state event]

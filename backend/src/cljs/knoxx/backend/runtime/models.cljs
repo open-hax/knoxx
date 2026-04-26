@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [cljs.reader :as reader]
             [knoxx.backend.runtime.contract-loader :as contract-loader]
-            ["node:fs" :as fs]
+            ["node:fs/promises" :as fsp]
             ["node:path" :as path]))
 
 (def ^:private default-model-prefix-allowlist
@@ -39,31 +39,35 @@
     (when (contains? input-kinds normalized)
       normalized)))
 
-(defn- read-edn-sync
+(defn- read-edn
   [file-path]
-  (try
-    (some-> (.readFileSync fs file-path "utf8") str reader/read-string)
-    (catch :default _
-      nil)))
+  (-> (.readFile fsp file-path "utf8")
+      (.then (fn [text]
+               (some-> text str reader/read-string)))
+      (.catch (fn [_] nil))))
 
 (defn- read-contract-dir
   [dir]
-  (try
-    (->> (.readdirSync fs dir)
-         (filter (fn [name]
-                   (and (string? name) (str/ends-with? name ".edn"))))
-         (map (fn [name]
-                (read-edn-sync (.join path dir name))))
-         (remove nil?)
-         vec)
-    (catch :default _
-      [])))
+  (-> (.readdir fsp dir)
+      (.then (fn [entries]
+               (->> entries
+                    (filter (fn [name]
+                               (and (string? name) (str/ends-with? name ".edn"))))
+                    (map (fn [name]
+                           (read-edn (.join path dir name))))
+                    (remove nil?)
+                    vec)))
+      (.catch (fn [_] []))))
 
 (defn- read-contract-dirs
   [dirs]
-  (->> dirs
-       (mapcat read-contract-dir)
-       vec))
+  (-> (js/Promise.all
+        (clj->js
+         (mapv read-contract-dir dirs)))
+      (.then (fn [results]
+               (->> (js->clj results)
+                    (mapcat identity)
+                    vec)))))
 
 (defn- normalize-boolean
   [value]

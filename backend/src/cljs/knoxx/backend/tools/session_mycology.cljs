@@ -1,70 +1,72 @@
 (ns knoxx.backend.tools.session-mycology
   "Per-turn retrospection with p-scores and skill-spore incubation.
 
-  Knoxx-native port of the eta-mu extension session-mycology.
-  Because Knoxx does not yet run the full eta-mu event runtime,
-  this is exposed as a voluntary agent tool.  The model is instructed
-  (via the tool description and prompt snippet) to call it near the
-  end of substantive turns.
+   Knoxx-native port of the eta-mu extension session-mycology.
+   Because Knoxx does not yet run the full eta-mu event runtime,
+   this is exposed as a voluntary agent tool.  The model is instructed
+   (via the tool description and prompt snippet) to call it near the
+   end of substantive turns.
 
-  State is stored in ~/.knoxx/state/session-mycology/ and is
-  compatible with the eta-mu spore format so skills can be promoted
-  into either runtime.
+   State is stored in ~/.knoxx/state/session-mycology/ and is
+   compatible with the eta-mu spore format so skills can be promoted
+   into either runtime.
 
-  ETA-MU RUNTIME INTEGRATION NOTES
-  ================================
-  To make the full eta-mu runtime \"just work\" in Knoxx, the following
-  gaps would need to close:
+   ETA-MU RUNTIME INTEGRATION NOTES
+   ================================
+   To make the full eta-mu runtime \"just work\" in Knoxx, the following
+   gaps would need to close:
 
-  1. Extension loader
-     - eta-mu extensions compile to :node-library builds via shadow-cljs.
-     - Knoxx would need a loader that discovers .js artifacts (either
-       from ~/.knoxx/extensions/ or from built-in slices) and requires
-       them at startup.  The loader calls the platform-specific init
-       fn that the eta-mu build script generates.
+   1. Extension loader
+      - eta-mu extensions compile to :node-library builds via shadow-cljs.
+      - Knoxx would need a loader that discovers .js artifacts (either
+        from ~/.knoxx/extensions/ or from built-in slices) and requires
+        them at startup.  The loader calls the platform-specific init
+        fn that the eta-mu build script generates.
 
-  2. Event bus
-     - eta-mu extensions hook: session_start, session_switch, turn_start,
-       turn_end, before_agent_start, context, session_shutdown.
-     - Knoxx turn lifecycle lives in knoxx.backend.agents.turn and
-       knoxx.backend.agent-runtime.  Add a small multimethod or protocol
-       (knoxx.backend.extension-runtime/dispatch-event event-name payload ctx)
-       and call it at the matching lifecycle points.
+   2. Event bus
+      - eta-mu extensions hook: session_start, session_switch, turn_start,
+        turn_end, before_agent_start, context, session_shutdown.
+      - Knoxx turn lifecycle lives in knoxx.backend.agents.turn and
+        knoxx.backend.agent-runtime.  Add a small multimethod or protocol
+        (knoxx.backend.extension-runtime/dispatch-event event-name payload ctx)
+        and call it at the matching lifecycle points.
 
-  3. Command registry
-     - eta-mu slash commands (e.g. /mycology) are registered via
-       (em/command ...).  Knoxx chat commands currently live in the
-       frontend or in hardcoded route handlers.  A command router
-       that delegates to extension command handlers would bridge this.
+   3. Command registry
+      - eta-mu slash commands (e.g. /mycology) are registered via
+        (em/command ...).  Knoxx chat commands currently live in the
+        frontend or in hardcoded route handlers.  A command router
+        that delegates to extension command handlers would bridge this.
 
-  4. Prompt injection
-     - eta-mu extensions mutate the system prompt via the context and
-       before_agent_start events.  Knoxx already has build-agent-user-message
-       and build-agent-multimodal-message in agent-hydration; a hook
-       there for extensions to append prompt sections would suffice.
+   4. Prompt injection
+      - eta-mu extensions mutate the system prompt via the context and
+        before_agent_start events.  Knoxx already has build-agent-user-message
+        and build-agent-multimodal-message in agent-hydration; a hook
+        there for extensions to append prompt sections would suffice.
 
-  5. Context message pruning
-     - session-mycology injects customType messages and then prunes
-       old ones in the context event.  Knoxx would need a pass over
-       request messages before sending to the model that lets extensions
-       filter/inject.
+   5. Context message pruning
+      - session-mycology injects customType messages and then prunes
+        old ones in the context event.  Knoxx would need a pass over
+        request messages before sending to the model that lets extensions
+        filter/inject.
 
-  6. UI status / notify / widget callbacks
-     - eta-mu ctx exposes hasUI, ui.setStatus, ui.notify, ui.setWidget.
-     - Knoxx could expose these via the WebSocket broadcast layer
-       (realtime.cljs) so extensions can push ephemeral UI state.
+   6. UI status / notify / widget callbacks
+      - eta-mu ctx exposes hasUI, ui.setStatus, ui.notify, ui.setWidget.
+      - Knoxx could expose these via the WebSocket broadcast layer
+        (realtime.cljs) so extensions can push ephemeral UI state.
 
-  The fastest path to full compatibility is probably:
-    a) Write knoxx.backend.extension-runtime  (loader + event bus)
-    b) Add extension-runtime/dispatch-event calls in agents.turn
-    c) Add a prompt-extension hook in agent-hydration
-    d) Point the loader at ~/.knoxx/extensions/ and built-ins
-    e) Re-use this namespace as the first built-in that also works
-       as an eta-mu extension when loaded through the adapter."
+   The fastest path to full compatibility is probably:
+     a) Write knoxx.backend.extension-runtime  (loader + event bus)
+     b) Add extension-runtime/dispatch-event calls in agents.turn
+     c) Add a prompt-extension hook in agent-hydration
+     d) Point the loader at ~/.knoxx/extensions/ and built-ins
+     e) Re-use this namespace as the first built-in that also works
+        as an eta-mu extension when loaded through the adapter."
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]
+            ["node:fs/promises" :as fsp]
+            ["node:path" :as path]))
 
 ;; ---------------------------------------------------------------------------
 ;; Constants
@@ -77,7 +79,7 @@
     (js/Math.max 0 (js/Math.min 1 (if (js/Number.isFinite v) v 0.84)))))
 
 ;; ---------------------------------------------------------------------------
-;; State helpers (closed over node-fs / node-path / node-os at factory time)
+;; State helpers (closed over fsp / node-path / node-os at factory time)
 
 (defn- ^:private make-state-dir-fn [node-os node-path]
   (fn []
@@ -138,44 +140,46 @@
         :else "mixed"))))
 
 ;; ---------------------------------------------------------------------------
-;; File I/O helpers (closed over node-fs / node-path)
+;; File I/O helpers (closed over fsp / node-path)
 
-(defn- ^:private make-append-jsonl-fn [node-fs node-path]
+(defn- ^:private make-append-jsonl-fn [node-path]
   (fn [file-path value]
-    (node-fs.mkdirSync (node-path.dirname file-path) #js {:recursive true})
-    (node-fs.appendFileSync file-path (str (js/JSON.stringify value) "\n") "utf8")))
+    (p/let [_ (.mkdir fsp (node-path.dirname file-path) #js {:recursive true})
+            _ (.appendFile fsp file-path (str (js/JSON.stringify value) "\n") "utf8")])))
 
-(defn- ^:private make-read-jsonl-fn [node-fs]
+(defn- ^:private make-read-jsonl-fn []
   (fn [file-path limit]
-    (if-not (node-fs.existsSync file-path)
-      #js []
-      (let [text (node-fs.readFileSync file-path "utf8")
-            lines (-> text
-                      (str/split #"\r?\n")
-                      (->> (filter identity))
-                      (js/Array.prototype.slice.call (- limit)))]
-        (js/Array.from
-         (-> lines
-             (.map (fn [line]
-                     (try (js/JSON.parse line)
-                          (catch js/Error _ nil))))
-             (.filter (fn [x] x))))))))
+    (-> (.readFile fsp file-path "utf8")
+        (.then (fn [text]
+                 (let [lines (-> text
+                               (str/split #"\r?\n")
+                               (->> (filter identity))
+                               (js/Array.prototype.slice.call (- limit)))]
+                   (js/Array.from
+                    (-> lines
+                        (.map (fn [line]
+                                (try (js/JSON.parse line)
+                                     (catch js/Error _ nil))))
+                        (.filter (fn [x] x))))))
+        (.catch (fn [_] #js []))))))
 
-(defn- ^:private make-load-recent-spores-fn [read-jsonl-fn spores-file-fn node-path]
+(defn- ^:private make-load-recent-spores-fn [spores-file-fn node-path]
   (fn [cwd limit]
-    (let [rows (.filter (read-jsonl-fn (spores-file-fn) 400)
-                        (fn [row]
-                          (or (not cwd) (same-cwd node-path (aget row "cwd") cwd))))]
+    (p/let [read-fn (make-read-jsonl-fn)
+                  rows (-> (read-fn (spores-file-fn) 400)
+                             (.filter (fn [row]
+                                       (or (not cwd) (same-cwd node-path (aget row "cwd") cwd)))))]
       (-> (.slice rows (- (.-length rows) limit))
           (.reverse)
           (js/Array.from)))))
 
-(defn- ^:private make-find-latest-spore-fn [read-jsonl-fn spores-file-fn node-path]
+(defn- ^:private make-find-latest-spore-fn [spores-file-fn node-path]
   (fn [slug cwd]
-    (let [rows (.filter (read-jsonl-fn (spores-file-fn) 400)
-                        (fn [row]
-                          (and (= (aget row "slug") slug)
-                               (or (not cwd) (same-cwd node-path (aget row "cwd") cwd)))))]
+    (let [read-fn (make-read-jsonl-fn)
+          rows (-> (read-fn (spores-file-fn) 400)
+                   (.filter (fn [row]
+                              (and (= (aget row "slug") slug)
+                                   (or (not cwd) (same-cwd node-path (aget row "cwd") cwd))))))]
       (or (.at rows -1) nil))))
 
 (defn- summarize-spores [spores]
@@ -235,16 +239,13 @@
         (>= skill-p PROMOTION-HINT-P) true
         :else false))))
 
-(defn- latest-spores-by-slug [read-jsonl-fn spores-file-fn node-path cwd]
-  (let [rows (.filter (read-jsonl-fn (spores-file-fn) 1200)
-                      (fn [row]
-                        (or (not cwd) (same-cwd node-path (aget row "cwd") cwd))))
-        latest (js/Map.)]
-    (.forEach rows
-              (fn [row]
-                (when (aget row "slug")
-                  (.set latest (str (aget row "slug")) row))))
-    (js/Array.from (.values latest))))
+(defn- latest-spores-by-slug [spores-file-fn node-path cwd]
+  (when-let [rows (js-await (spores-file-fn cwd))]  ;; async tail-read
+    (let [latest (js/Map.)]
+      (->> rows
+           (filter (fn [row] (or (nil? cwd) (same-cwd node-path (.-cwd row) cwd))))
+           (run! (fn [row] (when (.-slug row) (.set latest (str (.-slug row)) row))))
+           (Array.from (.values latest))))))
 
 (defn- build-live-skill [spore]
   (str "---\n"
@@ -290,7 +291,7 @@
        "    (non-override [:mission :directives :safety :license :output-shape])\n"
        "    (requires-user-approval false))\n)\n"))
 
-(defn- ^:private make-promote-spore-to-skill-fn [node-fs node-path node-os
+(defn- ^:private make-promote-spore-to-skill-fn [node-path node-os
                                                   promotions-file-fn]
   (fn [spore]
     (if-not (promotion-eligible? spore)
@@ -299,15 +300,19 @@
             dir (node-path.join home ".knoxx" "skills" (aget spore "slug"))
             skill-path (node-path.join dir "SKILL.md")
             contract-path (node-path.join dir "CONTRACT.edn")]
-        (node-fs.mkdirSync dir #js {:recursive true})
-        (let [created-skill (when-not (node-fs.existsSync skill-path)
-                              (node-fs.writeFileSync skill-path (build-live-skill spore) "utf8")
-                              true)
-              created-contract (when-not (node-fs.existsSync contract-path)
-                                 (node-fs.writeFileSync contract-path (build-live-contract spore) "utf8")
-                                 true)]
+        (p/let [_ (.mkdir fsp dir #js {:recursive true})
+                  created-skill (-> (.access fsp skill-path)
+                                        (.then (fn [_] false))
+                                        (.catch (fn [_]
+                                                 (.writeFile fsp skill-path (build-live-skill spore) "utf8")
+                                                 true)))
+                  created-contract (-> (.access fsp contract-path)
+                                         (.then (fn [_] false))
+                                         (.catch (fn [_]
+                                                  (.writeFile fsp contract-path (build-live-contract spore) "utf8")
+                                                  true)))]
           (when (or created-skill created-contract)
-            ((make-append-jsonl-fn node-fs node-path)
+            ((make-append-jsonl-fn node-path)
              (promotions-file-fn)
              #js {:ts (now-iso)
                   :slug (aget spore "slug")
@@ -327,7 +332,7 @@
                :createdSkill created-skill
                :createdContract created-contract})))))
 
-(defn- ^:private make-write-spore-draft-fn [node-fs node-path node-os
+(defn- ^:private make-write-spore-draft-fn [node-path node-os
                                              spore-drafts-dir-fn]
   (fn [reflection spore]
     (let [home (.homedir node-os)
@@ -365,24 +370,24 @@
                        "## Suggested live-skill path\n\n"
                        "- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "SKILL.md") "\n"
                        "- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "CONTRACT.edn") "\n")]
-      (node-fs.writeFileSync file-path content "utf8")
+      (.writeFile fsp file-path content "utf8")
       file-path)))
 
 ;; ---------------------------------------------------------------------------
 ;; Tool execute (closed over runtime deps)
 
-(defn- ^:private make-execute-fn [node-fs node-path node-os]
+(defn- ^:private make-execute-fn [node-path node-os]
   (let [state-dir-fn (make-state-dir-fn node-os node-path)
         reflections-file-fn (make-reflections-file-fn state-dir-fn node-path)
         spores-file-fn (make-spores-file-fn state-dir-fn node-path)
         promotions-file-fn (make-promotions-file-fn state-dir-fn node-path)
         spore-drafts-dir-fn (make-spore-drafts-dir-fn state-dir-fn node-path)
-        append-jsonl-fn (make-append-jsonl-fn node-fs node-path)
-        read-jsonl-fn (make-read-jsonl-fn node-fs)
-        load-recent-spores-fn (make-load-recent-spores-fn read-jsonl-fn spores-file-fn node-path)
-        find-latest-spore-fn (make-find-latest-spore-fn read-jsonl-fn spores-file-fn node-path)
-        promote-spore-to-skill-fn (make-promote-spore-to-skill-fn node-fs node-path node-os promotions-file-fn)
-        write-spore-draft-fn (make-write-spore-draft-fn node-fs node-path node-os spore-drafts-dir-fn)]
+        append-jsonl-fn (make-append-jsonl-fn node-path)
+        read-jsonl-fn (make-read-jsonl-fn)
+        load-recent-spores-fn (make-load-recent-spores-fn spores-file-fn node-path)
+        find-latest-spore-fn (make-find-latest-spore-fn spores-file-fn node-path)
+        promote-spore-to-skill-fn (make-promote-spore-to-skill-fn node-path node-os promotions-file-fn)
+        write-spore-draft-fn (make-write-spore-draft-fn node-path node-os spore-drafts-dir-fn)]
     (fn execute-session-mycology-tool [_tcid params _sig on-update ctx]
       (let [action (.toLowerCase (.trim (str (or (aget params "action") "reflect"))))
             cwd (or (aget ctx "cwd") (.. js/process cwd))
@@ -469,7 +474,6 @@
   ([runtime config] (create-session-mycology-tools runtime config nil))
   ([runtime config auth-context]
    (let [Type (aget runtime "Type")
-         node-fs (aget runtime "fs")
          node-path (aget runtime "path")
          node-os (aget runtime "os")
          allowed? (fn [tool-id]
@@ -485,7 +489,7 @@
                               :candidateName (type-optional Type (.String Type #js {:description "Candidate skill name if a spore should be incubated."}))
                               :candidateDescription (type-optional Type (.String Type #js {:description "One sentence describing the candidate skill."}))
                               :reuseScope (type-optional Type (.String Type #js {:description "Optional reuse scope: turn, session, or multi-session."}))})
-         execute-fn (make-execute-fn node-fs node-path node-os)]
+         execute-fn (make-execute-fn node-path node-os)]
      (clj->js
       (vec
        (remove nil?

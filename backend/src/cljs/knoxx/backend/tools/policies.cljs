@@ -4,74 +4,89 @@
    Policy contracts (contract/kind = :policy) narrow or remove tools.
    Tool-call contracts (contract/kind = :tool-call) declare an explicit tool surface.
    Neither contract class grants tools — only the capability/role path does.
-   All functions are pure and sync."
+   All functions are now async (return Promises)."
   (:require [clojure.set :as set]
-            [cljs.reader :as reader]
+            [knoxx.backend.contracts.loader :as loader]
             [knoxx.backend.tools.registry :as tool-registry]
-            ["node:fs" :as node-fs]
             ["node:path" :as path]))
 
-(defn read-edn-sync
-  [file-path]
-  (try
-    (some-> (.readFileSync node-fs file-path "utf8")
-            cljs.reader/read-string)
-    (catch :default _
-      nil)))
+(defn- find-dir
+  [config subdirs]
+  (-> (loader/contract-root-paths config)
+      (.then (fn [roots]
+               (let [candidates (->> roots
+                                (map #(path/join % subdirs))
+                                distinct
+                                vec)]
+                 (-> (js/Promise.all
+                      (clj->js
+                       (mapv (fn [candidate]
+                               (-> (loader/read-edn-file! (path/join candidate "dummy.edn"))
+                                   (.then (fn [_] candidate))
+                                   (.catch (fn [_] nil))))
+                             candidates)))
+                     (.then (fn [results]
+                              (some identity (js->clj results)))))))))
 
 (defn tool-call-dir
   [config]
-  (let [cwd (.cwd node-fs)
-        candidates (->> [(or (:contracts-dir config) "contracts")
-                         "../contracts"
-                         "packages/agents/knoxx/contracts"
-                         "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
-                        (map #(path/join cwd % "tool_calls"))
-                        distinct)]
-    (some #(when (.existsSync node-fs %) %) candidates)))
+  (find-dir config "tool_calls"))
 
 (defn policy-dir
   [config]
-  (let [cwd (.cwd node-fs)
-        candidates (->> [(or (:contracts-dir config) "contracts")
-                         "../contracts"
-                         "packages/agents/knoxx/contracts"
-                         "orgs/open-hax/openplanner/packages/agents/knoxx/contracts"]
-                        (map #(path/join cwd % "policies"))
-                        distinct)]
-    (some #(when (.existsSync node-fs %) %) candidates)))
+  (find-dir config "policies"))
 
 (defn load-tool-call-contract!
   [config contract-id]
-  (when-let [dir (tool-call-dir config)]
-    (let [file-path (path/join dir (str contract-id ".edn"))]
-      (when (.existsSync node-fs file-path)
-        (read-edn-sync file-path)))))
+  (-> (tool-call-dir config)
+      (.then (fn [dir]
+               (if-not dir
+                 (js/Promise.resolve nil)
+                 (let [file-path (path/join dir (str contract-id ".edn"))]
+                   (-> (loader/read-edn-file! file-path)
+                       (.then (fn [contract]
+                                (when (and contract
+                                           (= :tool-call (:contract/kind contract)))
+                                  contract)))
+                       (.catch (fn [_] nil))))))))
 
 (defn load-policy-contract!
   [config contract-id]
-  (when-let [dir (policy-dir config)]
-    (let [file-path (path/join dir (str contract-id ".edn"))]
-      (when (.existsSync node-fs file-path)
-        (read-edn-sync file-path)))))
+  (-> (policy-dir config)
+      (.then (fn [dir]
+               (if-not dir
+                 (js/Promise.resolve nil)
+                 (let [file-path (path/join dir (str contract-id ".edn"))]
+                   (-> (loader/read-edn-file! file-path)
+                       (.then (fn [contract]
+                                (when (and contract
+                                           (= :policy (:contract/kind contract)))
+                                  contract)))
+                       (.catch (fn [_] nil))))))))
 
 (defn load-tool-call-contracts!
   [config contract-ids]
-  (keep (fn [id]
-          (let [contract (load-tool-call-contract! config id)]
-            (when (and contract
-                       (= :tool-call (:contract/kind contract)))
-              contract)))
-        contract-ids))
+  (-> (js/Promise.all
+        (clj->js
+         (mapv (fn [id]
+                 (load-tool-call-contract! config id))
+               contract-ids)))
+      (.then (fn [results]
+               (->> (js->clj results)
+                    (remove nil?)
+                    vec)))))
 
 (defn load-policy-contracts!
   [config contract-ids]
-  (keep (fn [id]
-          (let [contract (load-policy-contract! config id)]
-            (when (and contract
-                       (= :policy (:contract/kind contract)))
-              contract)))
-        contract-ids))
+  (-> (js/Promise.all
+        (clj->js
+         (mapv (fn [id]
+                 (load-policy-contract! config id))
+               contract-ids)))
+      (.then (fn [results]
+               (->> (js->clj results)
+                    (remove nil?)
+                    vec)))))
 
 (defn- tool-call-contract-tools
   [contract]
@@ -130,10 +145,10 @@
   (if (empty? contracts)
     []
     (let [per-contract-denied (map #(policy-contract-denied % granted-tool-ids) contracts)
-          tool->deny-count (apply merge-with + {}
-                                  (for [denied per-contract-denied]
-                                    (into {} (map (fn [t] [t 1]) denied))))
+          tool->deny-count (apply merge-with +
+                                   (for [denied per-contract-denied]
+                                     (into {} (map (fn [t] [t 1]) denied))))
           must-deny (into {} (filter (fn [[_ cnt]]
-                                       (= cnt (count contracts)))
-                                     tool->deny-count))]
+                                      (= cnt (count contracts)))
+                                    tool->deny-count))]
       (vec (keys must-deny)))))

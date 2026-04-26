@@ -301,59 +301,24 @@
 
 (defn- handle-list-contracts
   [do-json config contract-class]
-  (if-not contract-class
-    ;; No class filter: use flat recursive scan for ALL contracts
-    (-> (loader/list-all-contracts-flat! config)
-        (.then (fn [contracts]
-                 (let [with-metadata (atom [])]
-                   (doseq [c contracts]
-                     (let [id (:id c)
-                           folder (:folder c)
-                           klass (some (fn [prefix]
-                                       (when (.startsWith folder (str prefix "/"))
-                                         prefix))
-                                     loader/contract-class-order)
-                           ;; Extract contract details from file
-                           edn-text (try
-                                     (.readFileSync node-fs (:path c) "utf8")
-                                     (catch :default ""))
-                           parsed (try
-                                  (reader/read-string edn-text)
-                                  (catch :default nil))]
-                       (swap! with-metadata conj
-                             {:id id
-                              :contractClass (or klass "agents")
-                              :kind (parsed-kind-label (or klass "agents") parsed)
-                              :version (parsed-version (or klass "agents") parsed)
-                              :enabled (parsed-enabled? (or klass "agents") parsed)
-                              :title id
-                              :path folder
-                              :folder folder
-                              :ednHash (hash edn-text)
-                              :compiledAt nil
-                              :updatedAt (now-iso)})))
-                   (do-json 200 {:contracts (sort-by :id @with-metadata)}))))
+  (let [classes (if contract-class
+                  [(normalize-contract-class contract-class)]
+                  loader/contract-class-order)]
+    (-> (.all js/Promise
+              (clj->js
+               (map (fn [klass]
+                      (-> (loader/list-contract-ids! config klass)
+                          (.then (fn [ids]
+                                   (.all js/Promise (clj->js (map (partial contract-metadata! config klass) ids)))))))
+                    classes)))
+        (.then (fn [nested]
+                 (let [contracts (->> (js->clj nested :keywordize-keys true)
+                                      (mapcat identity)
+                                      (sort-by (juxt :contractClass :id))
+                                      vec)]
+                   (do-json 200 {:contracts contracts}))))
         (.catch (fn [err]
-                  (do-json 500 {:detail (str "Failed to list contracts: " (.-message err))})))
-    ;; Class filter specified: use original class-based scan
-    (let [classes (if contract-class
-                   [(normalize-contract-class contract-class)]
-                   loader/contract-class-order)]
-      (-> (.all js/Promise
-                (clj->js
-                 (map (fn [klass]
-                        (-> (loader/list-contract-ids! config klass)
-                            (.then (fn [ids]
-                                     (.all js/Promise (clj->js (map (partial contract-metadata! config klass) ids)))))))
-                      classes)))
-          (.then (fn [nested]
-                   (let [contracts (->> (js->clj nested :keywordize-keys true)
-                                        (mapcat identity)
-                                        (sort-by (juxt :contractClass :id))
-                                        vec)]
-                     (do-json 200 {:contracts contracts}))))
-          (.catch (fn [err]
-                    (do-json 500 {:detail (str "Failed to list contracts: " (.-message err))}))))))
+                  (do-json 500 {:detail (str "Failed to list contracts: " (.-message err))}))))))
 
 (defn- handle-get-contract
   [do-json config contract-class contract-id]

@@ -72,11 +72,16 @@
                         (map #(.resolve path cwd %))
                         distinct
                         vec)]
-    (or (some (fn [candidate]
-                (when (.existsSync node-fs candidate)
-                  candidate))
-              candidates)
-        (.resolve path cwd (or configured "../contracts")))))
+    (-> (js/Promise.all
+          (clj->js
+           (mapv (fn [candidate]
+                   (-> (.readdir fs candidate)
+                       (.then (fn [_] candidate))
+                       (.catch (fn [_] nil))))
+                 candidates)))
+        (.then (fn [results]
+                 (or (some identity (js->clj results))
+                     (.resolve path cwd (or configured "../contracts"))))))))
 
 (defn contract-root-paths
   [config]
@@ -85,13 +90,22 @@
         resolved (->> (contract-root-candidates config)
                       (map #(.resolve path cwd %))
                       distinct
-                      vec)
-        existing (->> resolved
-                      (filter #(.existsSync node-fs %))
                       vec)]
-    (if (seq existing)
-      existing
-      [(.resolve path cwd (or configured "../contracts"))])))
+    (-> (js/Promise.all
+          (clj->js
+           (mapv (fn [candidate]
+                   (-> (.readdir fs candidate)
+                       (.then (fn [_] candidate))
+                       (.catch (fn [_] nil))))
+                 resolved)))
+        (.then (fn [results]
+                 (let [existing (->> results
+                                (js->clj)
+                                (remove nil?)
+                                vec)]
+                   (if (seq existing)
+                     existing
+                     [(.resolve path cwd (or configured "../contracts"))])))))))
 
 (defn contracts-dir-path
   [config]
@@ -114,14 +128,21 @@
   ([config contract-class contract-id]
    (let [klass (normalize-contract-class contract-class)
          id (safe-path-segment! contract-id "contract-id")
-         filename (str id ".edn")
-         existing-path (some (fn [root]
-                               (let [candidate (.join path root klass filename)]
-                                 (when (.existsSync node-fs candidate)
-                                   candidate)))
-                             (contract-root-paths config))]
-     (or existing-path
-         (.join path (contracts-dir-path config) klass filename)))))
+         filename (str id ".edn")]
+     (-> (contract-root-paths config)
+         (.then (fn [roots]
+                  (-> (js/Promise.all
+                        (clj->js
+                         (mapv (fn [root]
+                                 (let [candidate (.join path root klass filename)]
+                                   (-> (.readFile fs candidate "utf8")
+                                       (.then (fn [_] candidate))
+                                       (.catch (fn [_] nil)))))
+                               roots)))
+                      (.then (fn [results]
+                               (if-let [existing (some identity (js->clj results))]
+                                 existing
+                                 (.join path (contracts-dir-path config) klass filename)))))))))))
 
 (defn role-file-path
   [config role-slug]
@@ -181,19 +202,10 @@
                        vec)))))))
 
 (defn list-contract-ids-sync
+  "Deprecated - use list-contract-ids! instead.
+   Returns a Promise<vector<string>>."
   [config contract-class]
-  (->> (contract-class-dir-paths config contract-class)
-       (mapcat (fn [dir]
-                 (try
-                   (->> (.readdirSync node-fs dir)
-                        (keep (fn [name]
-                                (when (contract-edn-filename? name)
-                                  (subs name 0 (- (count name) 4))))))
-                   (catch :default _
-                     []))))
-       distinct
-       sort
-       vec))
+  (list-contract-ids! config contract-class))
 
 (defn list-agent-contract-ids!
   [config]
@@ -245,29 +257,29 @@
 
 ;; ── Flat recursive contract scan ────────────────────────────────────────────────
 
+(defn- walk-dir-async
+  [dir results]
+  (-> (.readdir fs dir #js {:withFileTypes true})
+      (.then (fn [entries]
+               (-> (js/Promise.all
+                    (clj->js
+                     (mapv (fn [ent]
+                             (let [full-path (.join path dir (.-name ent))]
+                               (if (.-isDirectory ent)
+                                 (walk-dir-async full-path results)
+                                 (do
+                                   (when (contract-edn-filename? (.-name ent))
+                                     (swap! results conj full-path))
+                                   (js/Promise.resolve nil)))))
+                           (array-seq entries))))
+                   (.then (fn [_] nil)))))))
+
 (defn- all-edn-files-recursive
   "Recursively find all .edn files under a root directory."
   [root-dir]
   (let [results (atom [])]
-    (letfn [(walk [dir]
-              (let [entries (try
-                            (.readdirSync node-fs dir)
-                            (catch :default _
-                              nil))]
-                (when entries
-                  (doseq [entry entries]
-                    (let [full-path (.join path dir entry)
-                          stat (try
-                                (.statSync node-fs full-path)
-                                (catch :default _
-                                  nil))]
-                      (when stat
-                        (if (.-isDirectory stat)
-                          (walk full-path)
-                          (when (contract-edn-filename? entry)
-                            (swap! results conj full-path))))))))]
-    (walk root-dir)
-    @results))
+    (-> (walk-dir-async root-dir results)
+        (.then (fn [_] @results)))))
 
 (defn- extract-contract-id
   "Extract :contract/id or :actor/id from EDN text."
@@ -290,21 +302,33 @@
    Returns a vector of maps with :id, :contractClass (inferred from folder),
    and :folder (relative path for display)."
   [config]
-  (let [roots (contract-root-paths config)]
-    (->> (mapcat all-edn-files-recursive roots)
-         (mapcat (fn [file-path]
-                   (let [relative-path (try
-                                  (->> roots
-                                       (some #(when (.startsWith file-path %)
-                                              (subs file-path (inc (count %))))
-                                       (str))
-                                 edn-text (try
-                                           (.readFileSync node-fs file-path "utf8")
-                                           (catch :default "")))
-                                 id (extract-contract-id edn-text)]
-                     (when id
-                       [{:id id
-                         :folder relative-path
-                         :path file-path}])))
-         distinct
-         vec)))
+  (-> (contract-root-paths config)
+      (.then (fn [roots]
+               (-> (js/Promise.all
+                    (clj->js
+                     (mapv (fn [root]
+                             (-> (all-edn-files-recursive root)
+                                 (.then (fn [files]
+                                          (mapv (fn [file-path]
+                                                  {:path file-path
+                                                   :root root})
+                                                files)))))
+                           roots)))
+                   (.then (fn [results]
+                            (->> (js->clj results)
+                                 (mapcat identity)
+                                 (mapcat (fn [{:keys [path root]}]
+                                           (-> (.readFile fs path "utf8")
+                                               (.then (fn [edn-text]
+                                                        (let [relative-path (some #(when (.startsWith path %)
+                                                                             (subs path (inc (count %))))
+                                                                           [root])
+                                                              id (extract-contract-id edn-text)]
+                                                          (when id
+                                                            [{:id id
+                                                              :folder (str relative-path)
+                                                              :path path}]))))
+                                               (.catch (fn [_] nil))))
+                                 (filter identity)
+                                 distinct
+                                 vec)))))))))

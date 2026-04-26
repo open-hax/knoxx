@@ -7,6 +7,9 @@
 (def RUN_EVENTS_MAX 200)
 (def RUN_EVENTS_TTL 7200) ; 2 hours TTL for run event lists
 
+(def OPENPLANNER_SYNC_INTERVAL_MS 30000) ; throttle OpenPlanner syncs to every 30s
+(def OPENPLANNER_SYNC_EVENT_COUNT 10) ; or every 10 events
+
 (defn run-events-key
   [run-id]
   (str RUN_EVENTS_KEY_PREFIX run-id))
@@ -14,10 +17,11 @@
 (defonce runs* (atom {}))
 (defonce run-order* (atom []))
 (defonce retrieval-stats* (atom {:samples []
-                                 :avgRetrievalMs 0
-                                 :p95RetrievalMs 0
-                                 :recentSamples 0
-                                 :modeCounts {:dense 0 :hybrid 0 :hybrid_rerank 0}}))
+                              :avgRetrievalMs 0
+                              :p95RetrievalMs 0
+                              :recentSamples 0
+                              :modeCounts {:dense 0 :hybrid 0 :hybrid_rerank 0}}))
+(defonce last-openplanner-sync* (atom {})) ; run-id -> last sync timestamp
 
 (defn latest-assistant-message
   [session]
@@ -72,6 +76,32 @@
       (.lTrim redis-client (run-events-key run-id) 0 (dec RUN_EVENTS_MAX))
       (.expire redis-client (run-events-key run-id) RUN_EVENTS_TTL)
       (catch :default _ nil))))
+
+(defn maybe-sync-to-openplanner!
+  "Throttled sync: write run to OpenPlanner every N events or M seconds.
+   Returns true if synced, nil if throttled."
+  [config run]
+  (let [run-id (:run_id run)
+        events-count (count (:events run))
+        now (time/now-ms)
+        last-sync (get @last-openplanner-sync* run-id)
+        time-since-sync (when last-sync (- now last-sync))
+        should-sync? (or (nil? last-sync)
+                        (and time-since-sync (>= time-since-sync OPENPLANNER_SYNC_INTERVAL_MS))
+                        (>= events-count OPENPLANNER_SYNC_EVENT_COUNT))]
+    (when should-sync?
+      (let [stores-atom (:stores config)
+            stores (when stores-atom (deref stores-atom))
+            store (when stores (:session-store stores))]
+        (when store
+          (try
+            (.put-run! store run)
+            (swap! last-openplanner-sync* assoc run-id now)
+            (js/console.log "[run-state]" "Synced to OpenPlanner" run-id "events:" events-count)
+            true)
+            (catch :default err
+              (js/console.error "[run-state] OpenPlanner sync failed" err)
+              nil))))))
 
 (defn- trace-tool-block-id
   [{:keys [tool_call_id tool_name at]}]
