@@ -114,9 +114,11 @@
 (defn contract-class-dir-paths
   [config contract-class]
   (let [klass (normalize-contract-class contract-class)]
-    (mapv (fn [root]
-            (.join path root klass))
-          (contract-root-paths config))))
+    (-> (contract-root-paths config)
+        (.then (fn [roots]
+                 (mapv (fn [root]
+                         (.join path root klass))
+                       roots))))))
 
 (defn contract-file-path
   "Resolve a contract file path.

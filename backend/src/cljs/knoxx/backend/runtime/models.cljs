@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [cljs.reader :as reader]
             [knoxx.backend.runtime.contract-loader :as contract-loader]
+            [promesa.core :as p]
             ["node:fs/promises" :as fsp]
             ["node:path" :as path]))
 
@@ -41,33 +42,25 @@
 
 (defn- read-edn
   [file-path]
-  (-> (.readFile fsp file-path "utf8")
-      (.then (fn [text]
-               (some-> text str reader/read-string)))
-      (.catch (fn [_] nil))))
+  (p/let [text (.readFile fsp file-path "utf8")]
+         (some-> text str reader/read-string)))
 
 (defn- read-contract-dir
   [dir]
-  (-> (.readdir fsp dir)
-      (.then (fn [entries]
-               (->> entries
-                    (filter (fn [name]
-                               (and (string? name) (str/ends-with? name ".edn"))))
-                    (map (fn [name]
-                           (read-edn (.join path dir name))))
-                    (remove nil?)
-                    vec)))
-      (.catch (fn [_] []))))
+  (p/let [entries (.readdir fsp dir)]
+         (->> entries
+              (filter (fn [name]
+                        (and (string? name) (str/ends-with? name ".edn"))))
+              (map (fn [name]
+                     (p/let [contract (read-edn (.join path dir name))]
+                            contract)))
+              (remove nil?)
+              vec)))
 
 (defn- read-contract-dirs
   [dirs]
-  (-> (js/Promise.all
-        (clj->js
-         (mapv read-contract-dir dirs)))
-      (.then (fn [results]
-               (->> (js->clj results)
-                    (mapcat identity)
-                    vec)))))
+  (p/let [results (p/all (mapv read-contract-dir dirs))]
+         (mapcat identity results)))
 
 (defn- normalize-boolean
   [value]
@@ -135,56 +128,63 @@
 
 (defn model-family-contracts
   [config]
-  (->> (read-contract-dirs (contract-loader/contract-class-dir-paths config "model_families"))
-       (map normalize-model-family-contract)
-       (remove nil?)
-       (reverse)
-       (reduce (fn [acc contract]
-                 (assoc acc (:id contract) contract))
-               {})
-       vals
-       vec))
+  (p/let [dirs (contract-loader/contract-class-dir-paths config "model_families")
+          contracts (read-contract-dirs dirs)]
+         (->> contracts
+              (map normalize-model-family-contract)
+              (remove nil?)
+              (reverse)
+              (reduce (fn [acc contract]
+                        (assoc acc (:id contract) contract))
+                      {})
+              vals
+              vec)))
 
 (defn model-contracts
   [config]
-  (->> (read-contract-dirs (contract-loader/contract-class-dir-paths config "models"))
-       (map normalize-model-contract)
-       (remove nil?)
-       (reverse)
-       (reduce (fn [acc contract]
-                 (assoc acc (:id contract) contract))
-               {})
-       vals
-       vec))
+  (p/let [dirs (contract-loader/contract-class-dir-paths config "models")
+          contracts (read-contract-dirs dirs)]
+         (->> contracts
+              (map normalize-model-contract)
+              (remove nil?)
+              (reverse)
+              (reduce (fn [acc contract]
+                        (assoc acc (:id contract) contract))
+                      {})
+              vals
+              vec)))
 
 (defn resolve-model-family
   [config model-id]
-  (let [id (some-> model-id str str/trim not-empty)]
+  (p/let [id (some-> model-id str str/trim not-empty)]
     (when id
-      (->> (model-family-contracts config)
-           (filter (fn [family]
-                     (some (fn [prefix]
-                             (str/starts-with? id prefix))
-                           (:prefixes family))))
-           (sort-by (fn [family]
-                      (- (apply max 0 (map count (:prefixes family))))))
-           first))))
+      (p/let [families (model-family-contracts config)]
+        (->> families
+             (filter (fn [family]
+                       (some (fn [prefix]
+                               (str/starts-with? id prefix))
+                             (:prefixes family))))
+             (sort-by (fn [family]
+                        (- (apply max 0 (map count (:prefixes family))))))
+             first)))))
 
 (defn resolve-model-contract
   [config model-id]
-  (let [id (some-> model-id str str/trim not-empty)
-        exact (when id
-                (some (fn [contract]
-                        (when (= id (:id contract))
-                          contract))
-                      (model-contracts config)))
-        family (or (when-let [family-id (:family-id exact)]
-                     (some (fn [contract]
-                             (when (= family-id (:id contract))
-                               contract))
-                           (model-family-contracts config)))
-                   (resolve-model-family config id))]
-    (merge family exact)))
+  (p/let [id (some-> model-id str str/trim not-empty)]
+    (when id
+      (p/let [contracts (model-contracts config)
+              exact (some (fn [contract]
+                            (when (= id (:id contract))
+                              contract))
+                          contracts)
+              families (model-family-contracts config)
+              family (or (when-let [family-id (:family-id exact)]
+                           (some (fn [contract]
+                                   (when (= family-id (:id contract))
+                                     contract))
+                                 families))
+                         (resolve-model-family config id))]
+        (merge family exact)))))
 
 (defn- fallback-prefix-allowlisted?
   [config model-id]
@@ -201,14 +201,14 @@
 
    Contract model overrides win. Fallback is env-configured prefix allowlist."
   [config model-id]
-  (let [model-spec (resolve-model-contract config model-id)]
+  (p/let [model-spec (resolve-model-contract config model-id)]
     (if (some? (:allowlisted model-spec))
       (boolean (:allowlisted model-spec))
       (fallback-prefix-allowlisted? config model-id))))
 
 (defn model-supports-reasoning?
   [config model-id]
-  (let [model-spec (resolve-model-contract config model-id)]
+  (p/let [model-spec (resolve-model-contract config model-id)]
     (if (some? (:reasoning model-spec))
       (boolean (:reasoning model-spec))
       (let [normalized-model (some-> model-id str str/trim str/lower-case)
@@ -220,37 +220,36 @@
               (some (fn [prefix]
                       (let [normalized-prefix (-> prefix
                                                   str/lower-case
-                                                  (str/replace #"\\*$" ""))]
+                                                  (str/replace #"\*$" ""))]
                         (str/starts-with? normalized-model normalized-prefix)))
                     prefixes)))))))
 
 (defn model-prefers-responses?
   [config model-id]
-  (let [normalized-model (some-> model-id str str/trim str/lower-case)
-        prefixes (->> (str/split (or (:responses-model-prefixes config) "") #",")
-                      (map str/trim)
-                      (remove str/blank?))]
-    (boolean
-     (and normalized-model
-          (some (fn [prefix]
-                  (let [normalized-prefix (-> prefix
-                                              str/lower-case
-                                              (str/replace #"\\*$" ""))]
-                    (str/starts-with? normalized-model normalized-prefix)))
-                prefixes)))))
+  (p/let [model-spec (resolve-model-contract config model-id)]
+    (or (false? (:prefers-completions model-spec))
+        (let [normalized-model (some-> model-id str str/trim str/lower-case)
+              prefixes (->> (str/split (or (:responses-model-prefixes config) "") #",")
+                            (map str/trim)
+                            (remove str/blank?))]
+          (boolean
+           (and normalized-model
+                (some (fn [prefix]
+                        (str/starts-with? normalized-model prefix))
+                      prefixes)))))))
 
 (defn effective-thinking-level
   [config model-id requested-thinking-level]
-  (let [requested (normalize-thinking-level requested-thinking-level)
-        model-spec (resolve-model-contract config model-id)
-        allowed-levels (let [contract-levels (seq (:thinking-levels model-spec))]
-                         (cond
-                           contract-levels (set contract-levels)
-                           (false? (:reasoning model-spec)) #{"off"}
-                           :else thinking-levels))
-        default-level (or (:default-thinking model-spec)
-                          (:agent-thinking-level config)
-                          "off")]
+  (p/let [requested (normalize-thinking-level requested-thinking-level)
+          model-spec (resolve-model-contract config model-id)
+          allowed-levels (let [contract-levels (seq (:thinking-levels model-spec))]
+                           (cond
+                             contract-levels (set contract-levels)
+                             (false? (:reasoning model-spec)) #{"off"}
+                             :else thinking-levels))
+          default-level (or (:default-thinking model-spec)
+                            (:agent-thinking-level config)
+                            "off")]
     (if (and requested (contains? allowed-levels requested))
       requested
       default-level)))
@@ -264,34 +263,31 @@
 
 (defn model-input-modes
   [config model-id]
-  (let [model-spec (resolve-model-contract config model-id)
-        inputs (->> (or (:input model-spec) [])
-                    (map normalize-input-kind)
-                    (remove nil?)
-                    distinct
-                    vec)]
+  (p/let [model-spec (resolve-model-contract config model-id)
+          inputs (->> (or (:input model-spec) [])
+                      (map normalize-input-kind)
+                      (remove nil?)
+                      distinct
+                      vec)]
     (if (seq inputs)
       inputs
       ["text"])))
 
 (defn model-supports-input?
   [config model-id input-kind]
-  (let [wanted (or (normalize-input-kind input-kind) "text")]
+  (p/let [modes (model-input-modes config model-id)
+          wanted (or (normalize-input-kind input-kind) "text")]
     (boolean
-     (some #(= wanted %)
-           (model-input-modes config model-id)))))
-
-(defn tool-cost
-  []
-  {:input 0 :output 0 :cacheRead 0 :cacheWrite 0})
+     (some #(= wanted %) modes))))
 
 (defn provider-model-config
   [config model-id]
-  (let [model-spec (resolve-model-contract config model-id)
-        reasoning? (model-supports-reasoning? config model-id)
-        api (if (model-prefers-responses? config model-id)
-              "openai-responses"
-              "openai-completions")
+  (p/let [model-spec (resolve-model-contract config model-id)
+          reasoning? (model-supports-reasoning? config model-id)
+          prefers-responses (model-prefers-responses? config model-id)
+          api (if prefers-responses
+                "openai-responses"
+                "openai-completions")
         ;; pi-coding-agent 0.63.x model registry only accepts text/image input kinds.
         ;; Keep Knoxx's richer contract input metadata for request validation, but
         ;; down-project provider config so models.json stays loadable.
@@ -321,26 +317,33 @@
   "Compute per-model compat so reasoning/thinking settings aren't
    incorrectly shared across models that don't support them."
   [config model-id]
-  (cond-> {:supportsDeveloperRole false}
-    (model-supports-reasoning? config model-id)
-    (assoc :supportsReasoningEffort true)
-    (some? (model-thinking-format model-id))
-    (assoc :thinkingFormat (model-thinking-format model-id))))
+  (p/let [supports-reasoning (model-supports-reasoning? config model-id)
+          thinking-fmt (model-thinking-format model-id)]
+    (cond-> {:supportsDeveloperRole false}
+      supports-reasoning
+      (assoc :supportsReasoningEffort true)
+      thinking-fmt
+      (assoc :thinkingFormat thinking-fmt))))
 
 (defn models-config
   ([config]
    (models-config config nil))
   ([config model-ids]
-   (let [default-model (:proxx-default-model config)
-         normalized-models (->> (or model-ids [])
-                                (map (fn [m] (some-> m str str/trim not-empty)))
-                                (remove nil?)
-                                distinct
-                                vec)
-         models (if (seq normalized-models)
-                  normalized-models
-                  [default-model])
-         base-compat {:supportsDeveloperRole false}]
+   (p/let [default-model (:proxx-default-model config)
+           normalized-models (->> (or model-ids [])
+                                  (map (fn [m] (some-> m str str/trim not-empty)))
+                                  (remove nil?)
+                                  distinct
+                                  vec)
+           models (if (seq normalized-models)
+                    normalized-models
+                    [default-model])
+           base-compat {:supportsDeveloperRole false}
+           model-configs (p/all (mapv (fn [model-id]
+                                        (p/let [cfg (provider-model-config config model-id)
+                                                compat (per-model-compat config model-id)]
+                                               (merge cfg {:compat compat})))
+                                      models))]
      {:providers
       {:proxx
        {:baseUrl (proxx-openai-base-url config)
@@ -348,18 +351,16 @@
         :authHeader true
         :api "openai-completions"
         :compat base-compat
-        :models (mapv (fn [model-id]
-                        (merge (provider-model-config config model-id)
-                               {:compat (per-model-compat config model-id)}))
-                      models)}}})))
+        :models model-configs}}})))
 
 (defn- default-model-from-contracts
   [config]
-  (or (some->> (model-contracts config)
-               (some (fn [contract]
-                       (when (:default contract)
-                         (:id contract)))))
-      (some-> (model-contracts config) first :id)))
+  (p/let [contracts (model-contracts config)]
+    (or (some (fn [contract]
+                (when (:default contract)
+                  (:id contract)))
+              contracts)
+        (some :id contracts))))
 
 (defn enrich-config
   "Augment an env-only config map with derived model config fields.
@@ -367,32 +368,33 @@
    Keeps knoxx.backend.runtime.config strictly env-only, while ensuring legacy
    call sites continue to find these keys."
   [config]
-  (merge
-   {:model-prefix-allowlist
-    (parse-prefix-allowlist
-     (or (:model-prefix-allowlist config)
-         (aget js/process.env "KNOXX_MODEL_PREFIX_ALLOWLIST")
-         "glm-5,gpt-5,qwen3,gemma4:,gemma3:,deepseek,kimi-k2,nemotron,cogito,devstral,minimax,ministral,mistral-large"))
+  (p/let [default-model (default-model-from-contracts config)]
+    (merge
+     {:model-prefix-allowlist
+      (parse-prefix-allowlist
+       (or (:model-prefix-allowlist config)
+           (aget js/process.env "KNOXX_MODEL_PREFIX_ALLOWLIST")
+           "glm-5,gpt-5,qwen3,gemma4:,gemma3:,deepseek,kimi-k2,nemotron,cogito,devstral,minimax,ministral,mistral-large"))
 
-    :proxx-default-model
-    (or (:proxx-default-model config)
-        (default-model-from-contracts config)
-        "glm-5")
+      :proxx-default-model
+      (or (:proxx-default-model config)
+          default-model
+          "glm-5")
 
-    :agent-thinking-level
-    (or (normalize-thinking-level
-         (or (:agent-thinking-level config)
-             (aget js/process.env "KNOXX_THINKING_LEVEL")
-             "off"))
-        "off")
+      :agent-thinking-level
+      (or (normalize-thinking-level
+           (or (:agent-thinking-level config)
+               (aget js/process.env "KNOXX_THINKING_LEVEL")
+               "off"))
+          "off")
 
-    :reasoning-model-prefixes
-    (or (:reasoning-model-prefixes config)
-        (aget js/process.env "KNOXX_REASONING_MODEL_PREFIXES")
-        "glm-")
+      :reasoning-model-prefixes
+      (or (:reasoning-model-prefixes config)
+          (aget js/process.env "KNOXX_REASONING_MODEL_PREFIXES")
+          "glm-")
 
-    :responses-model-prefixes
-    (or (:responses-model-prefixes config)
-        (aget js/process.env "KNOXX_RESPONSES_MODEL_PREFIXES")
-        "gpt-")}
-   config))
+      :responses-model-prefixes
+      (or (:responses-model-prefixes config)
+          (aget js/process.env "KNOXX_RESPONSES_MODEL_PREFIXES")
+          "gpt-")}
+     config)))
