@@ -546,7 +546,8 @@
                       :expires_in   token-ttl})))))
 
 (defroute mcp-exchange-token! [crypto token-ttl redis-guard] "POST" "/api/mcp/oauth/token" [redis-guard]
-  (let [{:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
+  (let [redis (aget request "redis")
+        {:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
     (when (or (not= grant-type "authorization_code")
               (str/blank? code) (str/blank? code-verifier)
               (str/blank? client-id) (str/blank? redirect-uri))
