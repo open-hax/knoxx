@@ -106,7 +106,7 @@
   (-> (.code reply status) (.send body)))
 
 (defn- protected-resource-metadata-url [base]
-  (.toString (js/URL. "/.well-known/oauth-protected-resource" (.-href base))))
+  (.toString (js/URL. "/.well-known/oauth-protected-resource" base)))
 
 (defn- www-authenticate-challenge [base]
   (str "Bearer realm=\"mcp\", resource_metadata=\""
@@ -201,7 +201,7 @@
          (fn [_]
            (let [base         (public-base-url config)
                  current-path (or (some-> req (aget "raw") (aget "url")) "/api/mcp/oauth/authorize")
-                 login-url    (js/URL. "/api/auth/login" (.-href base))]
+                 login-url    (js/URL. "/api/auth/login" base)]
              (.set (.-searchParams login-url) "redirect" current-path)
              (.redirect reply (.toString login-url) 302)))))))
 
@@ -346,7 +346,7 @@
 
 (defn- authorization-consent-html
   [{:keys [base auth-context client-id redirect-uri state code-challenge requested-scope tools selected]}]
-  (let [confirm-url (js/URL. "/api/mcp/oauth/authorize/confirm" (.-href base))
+  (let [confirm-url (js/URL. "/api/mcp/oauth/authorize/confirm" base)
         user-email  (str (or (aget auth-context "user" "email") (aget auth-context "userEmail") ""))
         org-slug    (str (or (aget auth-context "org" "slug") (aget auth-context "orgSlug") ""))]
     (.set (.-searchParams confirm-url) "client_id" client-id)
@@ -443,22 +443,22 @@
 
 ;; Classic-mode routes (no guards needed — public metadata endpoints)
 
-(defroute mcp-discovery-metadata! [] "GET" "/.well-known/oauth-authorization-server"
+(defroute mcp-discovery-metadata! [base] "GET" "/.well-known/oauth-authorization-server"
   (let [issuer (js/URL. (.toString base))]
     (.send reply
            #js {:issuer                              (-> (.toString issuer) (.replace (js/RegExp. "/$") ""))
-                :authorization_endpoint              (.toString (js/URL. "/api/mcp/oauth/authorize" (.-href issuer)))
-                :token_endpoint                      (.toString (js/URL. "/api/mcp/oauth/token" (.-href issuer)))
-                :registration_endpoint               (.toString (js/URL. "/api/mcp/oauth/register" (.-href issuer)))
+                :authorization_endpoint              (.toString (js/URL. "/api/mcp/oauth/authorize" issuer))
+                :token_endpoint                      (.toString (js/URL. "/api/mcp/oauth/token" issuer))
+                :registration_endpoint               (.toString (js/URL. "/api/mcp/oauth/register" issuer))
                 :response_types_supported            #js ["code"]
                 :grant_types_supported               #js ["authorization_code"]
                 :code_challenge_methods_supported    #js ["S256"]
                 :token_endpoint_auth_methods_supported #js ["none"]})))
 
-(defroute mcp-protected-resource-metadata! [] "GET" "/.well-known/oauth-protected-resource"
+(defroute mcp-protected-resource-metadata! [base] "GET" "/.well-known/oauth-protected-resource"
   (let [issuer (-> (.toString (js/URL. (.toString base))) (.replace (js/RegExp. "/$") ""))]
     (.send reply
-           #js {:resource                (.toString (js/URL. "/mcp" (.-href base)))
+           #js {:resource                (.toString (js/URL. "/mcp" base))
                 :authorization_servers   #js [issuer]
                 :scopes_supported        #js ["mcp:tools"]
                 :bearer_methods_supported #js ["header"]})))
@@ -480,7 +480,7 @@
         (.then (fn [_] (-> (.code reply 201) (.send client))))
         (.catch (fn [err] (throw (http-error 500 "registration_failed" (or (.-message err) (str err)))))))))
 
-(defroute mcp-authorize-client! [redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [redis-guard browser-auth-guard]
+(defroute mcp-authorize-client! [base redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [redis-guard browser-auth-guard]
   (let [redis        (aget request "redis")
         auth-context (aget request "authContext")
         {:keys [client-id redirect-uri state code-challenge scope] :as params} (parse-authorize-query request)]
@@ -597,7 +597,7 @@
         (.then (fn [_] (redis-srem! redis (str "knoxx:mcp:user:" membership-id ":tokens") token-id)))
         (.then (fn [_] (.send reply #js {:ok true}))))))
 
-(defroute mcp-handle-session! [bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
+(defroute mcp-handle-session! [base bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
         session-id (resolve-session-id request)]
     (cond
@@ -612,7 +612,7 @@
           :else (do (ensure-streamable-accept! request)
                     (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
-(defroute mcp-handle-delete-session! [bearer-token-guard] "DELETE" "/mcp" [bearer-token-guard]
+(defroute mcp-handle-delete-session! [base bearer-token-guard] "DELETE" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
         session-id (resolve-session-id request)]
     (cond
@@ -627,7 +627,7 @@
           :else (do (ensure-streamable-accept! request)
                     (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
-(defroute mcp-handle-post! [redis-guard bearer-token-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
+(defroute mcp-handle-post! [base redis-guard bearer-token-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
   (let [redis      (aget request "redis")
         bearer     (aget request "bearerToken")
         session-id (resolve-session-id request)
