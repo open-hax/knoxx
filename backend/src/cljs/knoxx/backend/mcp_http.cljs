@@ -180,11 +180,13 @@
     :else                        (js/Promise.resolve value)))
 
 (defn- require-redis!
-  "Returns a Fastify preHandler hook that attaches redis client to request.redis."
-  [^js redis-client]
+  "Returns a Fastify preHandler hook that attaches redis client to request.redis.
+   Derefs the global redis-client atom at request time, not at route-registration time,
+   so connections established after startup are visible to all handlers."
+  [_ignored]
   (fn [req _reply done]
-    (if redis-client
-      (do (aset req "redis" redis-client) (done))
+    (if-let [client (redis/get-client)]
+      (do (aset req "redis" client) (done))
       (done (ex-info "Redis unavailable" {:status 503 :error "redis_unavailable"})))))
 
 (defn- require-browser-auth!

@@ -31,9 +31,9 @@
 (declare uuid-js-when-available)
 
 (defn- build-actor-baseline
-  [actor/defaults]
-  (when (map? actor/defaults)
-    (->> (get actor/defaults :tools [])
+  [actor-defaults]
+  (when (map? actor-defaults)
+    (->> (get actor-defaults :tools [])
          (map tool-registry/normalize-tool-id)
          (remove str/blank?)
          set)))
@@ -64,7 +64,7 @@
     :else nil))
 
 (defn- resolve-tool-suite*
-  [{:keys [actor/id actor/defaults roles capabilities contract/uses policy/contracts] :as inputs}]
+  [{:keys [actor/id actor-defaults roles capabilities contract/uses policy/contracts] :as inputs}]
   (if (forbidden-inputs-present? inputs)
     {:ok false
      :error/kind :error/legacy-input
@@ -122,7 +122,7 @@
                                         [tool-id {:tool/id tool-id
                                                   :call-shape call-shape
                                                   :provenance prov}]))
-                                  final-tool-ids)
+                                  final-tool-ids))
           denied-reasons (into {} (comp
                                    (map tool-registry/normalize-tool-id)
                                    (remove nil?)
