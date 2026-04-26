@@ -629,75 +629,43 @@
                     (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
 (defroute mcp-handle-post! [base crypto config runtime code-ttl token-ttl policy-db redis-guard bearer-token-guard browser-auth-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
-  (let [redis      (aget request "redis")
-        bearer     (aget request "bearerToken")
-        session-id (resolve-session-id request)
-        existing   (when session-id (get @mcp-sessions* session-id))]
-    (cond
-      existing
-      (if (not= (str bearer) (str (:token existing)))
-        (challenge-unauthorized! reply base)
-        (do (ensure-streamable-accept! request)
-            (transport-handle-request! (:transport existing) (aget request "raw") (aget reply "raw") (aget request "body"))))
-
-      (not (and isInitializeRequest (isInitializeRequest (aget request "body"))))
-      (do (.code reply 400)
-          (.send reply #js {:jsonrpc "2.0"
-                            :error #js {:code -32000 :message "Bad Request: Server not initialized"}
-                            :id nil}))
-
-      :else
-      (-> (load-token-record! redis bearer)
-          (.then
-           (fn [token-record]
-             (if-not token-record
-               (challenge-unauthorized! reply base)
-               (-> (resolve-token-context! policy-db token-record)
-                   (.then
-                    (fn [token-ctx]
-                      (let [all-tools  (available-tools runtime config token-ctx)
-                            allowed    (into #{} (map str) (array-seq (or (aget token-record "tools") #js [])))
-                            effective  (->> (array-seq all-tools)
-                                           (filter #(contains? allowed (str (aget % "name"))))
-                                           into-array)
-                            server     (new McpServer #js {:name "knoxx" :version "0.1.0"})
-                            transport* (atom nil)
-                            transport  (new StreamableHTTPServerTransport
-                                            #js {:sessionIdGenerator  (fn [] (.randomUUID crypto))
-                                                 :onsessioninitialized (fn [sid]
-                                                                         (when-let [t @transport*]
-                                                                           (swap! mcp-sessions* assoc (str sid)
-                                                                                  {:transport t
-                                                                                   :token (aget token-record "accessToken")})))})]
-                        (reset! transport* transport)
-                        (doseq [tool (array-seq effective)]
-                          (let [tool-name    (some-> (aget tool "name") str str/trim not-empty)
-                                input-schema (or (when z (typebox->zod-shape z (or (aget tool "parameters") #js {})))
-                                                 #js {})]
-                            (when tool-name
-                              (.registerTool server tool-name
-                                             #js {:description (str (or (aget tool "description")
-                                                                        (aget tool "label") tool-name))
-                                                  :inputSchema input-schema}
-                                             (fn [params] (tool-execute! tool params))))))
-                        (set! (.-onclose transport)
-                              (fn [] (when-let [sid (.-sessionId transport)]
-                                       (swap! mcp-sessions* dissoc (str sid)))))
-                        (-> (.connect server transport)
-                            (.then (fn [_]
-                                     (ensure-streamable-accept! request)
-                                     (transport-handle-request! transport
-                                                                (aget request "raw")
-                                                                (aget reply "raw")
-                                                                (aget request "body"))))
-
-                            ))))))
-           ))
-          (.catch (fn [err]
-                    (.error js/console "[knoxx-mcp] initialize failed" err)
-                    (json-send! reply 500 {:error "mcp_init_failed"
-                                           :detail (or (.-message err) (str err))})))
-          ))))
+  (let [redis  (aget request "redis")
+        bearer (aget request "bearerToken")]
+    (-> (load-token-record! redis bearer)
+        (.then
+         (fn [token-record]
+           (if-not token-record
+             (challenge-unauthorized! reply base)
+             (-> (resolve-token-context! policy-db token-record)
+                 (.then
+                  (fn [token-ctx]
+                    (let [all-tools (available-tools runtime config token-ctx)
+                          allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") #js [])))
+                          effective (->> (array-seq all-tools)
+                                         (filter (fn [t] (contains? allowed (str (aget t "name")))))
+                                         into-array)
+                          server    (new McpServer #js {:name "knoxx" :version "0.1.0"})
+                          transport (new StreamableHTTPServerTransport
+                                        #js {:sessionIdGenerator js/undefined})]
+                      (doseq [tool (array-seq effective)]
+                        (let [n (some-> (aget tool "name") str str/trim not-empty)
+                              s (or (when z (typebox->zod-shape z (or (aget tool "parameters") #js {}))) #js {})]
+                          (when n
+                            (.registerTool server n
+                                           #js {:description (str (or (aget tool "description") (aget tool "label") n))
+                                                :inputSchema s}
+                                           (fn [params] (tool-execute! tool params))))))
+                      (-> (.connect server transport)
+                          (.then (fn [_]
+                                   (ensure-streamable-accept! request)
+                                   (transport-handle-request! transport
+                                                              (aget request "raw")
+                                                              (aget reply "raw")
+                                                              (aget request "body"))))))))))))))
+        (.catch (fn [err]
+                  (.error js/console "[knoxx-mcp] post failed" err)
+                  (json-send! reply 500 {:error "mcp_post_failed"
+                                         :detail (or (.-message err) (str err))}))))
 
 ;; ──────────────────────────────────────────────────────────────
 ;; Registration
