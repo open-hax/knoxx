@@ -628,49 +628,52 @@
           :else (do (ensure-streamable-accept! request)
                     (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
-(defroute mcp-handle-post! [base crypto config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z redis-guard bearer-token-guard browser-auth-guard] "POST" "/mcp" [redis-guard bearer-token-guard]
-  (let [redis  (aget request "redis")
-        bearer (aget request "bearerToken")]
-    (-> (load-token-record! redis bearer)
-        (.then
-         (fn [token-record]
-           (if-not token-record
-             (challenge-unauthorized! reply base)
-             (-> (resolve-token-context! policy-db token-record)
-                 (.then
-                  (fn [token-ctx]
-                    (let [all-tools (available-tools runtime config token-ctx)
-                          allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") #js [])))
-                          effective (->> (array-seq all-tools)
-                                         (filter (fn [t] (contains? allowed (str (aget t "name")))))
-                                         into-array)
-                          server    (new McpServer #js {:name "knoxx" :version "0.1.0"})
-                          transport (new StreamableHTTPServerTransport
-                                        #js {:sessionIdGenerator js/undefined})]
-                      (doseq [tool (array-seq effective)]
-                        (let [n (some-> (aget tool "name") str str/trim not-empty)
-                              s (or (when z (typebox->zod-shape z (or (aget tool "parameters") #js {}))) #js {})]
-                          (when n
-                            (.registerTool server n
-                                           #js {:description (str (or (aget tool "description") (aget tool "label") n))
-                                                :inputSchema s}
-                                           (fn [params] (tool-execute! tool params))))))
-                      (-> (.connect server transport)
-                          (.then (fn [_]
-                                   (ensure-streamable-accept! request)
-                                   (transport-handle-request! transport
-                                                              (aget request "raw")
-                                                              (aget reply "raw")
-                                                              (aget request "body"))))))))))))))
-        (.catch (fn [err]
-                  (.error js/console "[knoxx-mcp] post failed" err)
-                  (json-send! reply 500 {:error "mcp_post_failed"
-                                         :detail (or (.-message err) (str err))}))))
-
-;; ──────────────────────────────────────────────────────────────
-;; Registration
-;; ──────────────────────────────────────────────────────────────
-
+(defroute mcp-handle-post! [base config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z] "POST" "/mcp" []
+  (.hijack reply)
+  (let [raw-req (aget request "raw")
+        raw-res (aget reply "raw")
+        redis   (redis/get-client)
+        bearer  (bearer-token request)]
+    (if (str/blank? bearer)
+      (do (.writeHead raw-res 401 #js {"WWW-Authenticate" (www-authenticate-challenge base)
+                                        "Content-Type" "text/plain"})
+          (.end raw-res "Unauthorized"))
+      (-> (load-token-record! redis bearer)
+          (.then
+           (fn [token-record]
+             (if-not token-record
+               (do (.writeHead raw-res 401 #js {"WWW-Authenticate" (www-authenticate-challenge base)
+                                                  "Content-Type" "text/plain"})
+                   (.end raw-res "Unauthorized"))
+               (-> (resolve-token-context! policy-db token-record)
+                   (.then
+                    (fn [token-ctx]
+                      (let [all-tools (available-tools runtime config token-ctx)
+                            allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") #js [])))
+                            effective (->> (array-seq all-tools)
+                                           (filter (fn [t] (contains? allowed (str (aget t "name")))))
+                                           into-array)
+                            server    (new McpServer #js {:name "knoxx" :version "0.1.0"})
+                            transport (new StreamableHTTPServerTransport
+                                          #js {:sessionIdGenerator js/undefined})]
+                        (doseq [tool (array-seq effective)]
+                          (let [n (some-> (aget tool "name") str str/trim not-empty)
+                                s (or (when z (typebox->zod-shape z (or (aget tool "parameters") #js {}))) #js {})]
+                            (when n
+                              (.registerTool server n
+                                             #js {:description (str (or (aget tool "description") (aget tool "label") n))
+                                                  :inputSchema s}
+                                             (fn [params] (tool-execute! tool params))))))
+                        (-> (.connect server transport)
+                            (.then (fn [_]
+                                     (ensure-streamable-accept! request)
+                                     (transport-handle-request! transport raw-req raw-res (aget request "body"))))))))))))
+          (.catch (fn [err]
+                    (.error js/console "[knoxx-mcp] post failed" err)
+                    (when-not (.-headersSent raw-res)
+                      (.writeHead raw-res 500 #js {"Content-Type" "application/json"})
+                      (.end raw-res (js/JSON.stringify #js {:error "mcp_post_failed"
+                                                             :detail (or (.-message err) (str err))})))))))))
 (defn register-mcp-http-routes!
   [app runtime config]
   (let [redis-client (redis/get-client)
