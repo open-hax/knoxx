@@ -35,8 +35,8 @@
 (defn- queue-chat-start!
   [runtime config reply agent-ctx policy-model body accepted-response]
   (js-await [validated (validate-chat-policy! agent-ctx policy-model)]
-    (js-await [sent (send-agent-turn! runtime config body)]
-      (json-response! reply 202 accepted-response))))
+            (js-await [sent (send-agent-turn! runtime config body)]
+                      (json-response! reply 202 accepted-response))))
 
 
 (defn- compact-agent-spec-overrides
@@ -105,7 +105,7 @@
         role-slugs (cond
                      (and (nil? base) requested-role-slug) [requested-role-slug]
                      (and requested-role-slug (or (system-admin? ctx)
-                                                 (contains? (into #{} (or (:roleSlugs base) [])) requested-role-slug)))
+                                                  (contains? (into #{} (or (:roleSlugs base) [])) requested-role-slug)))
                      [requested-role-slug]
                      :else (vec (or (:roleSlugs base) [])))
         tool-policies (effective-tool-policies ctx parsed)
@@ -147,10 +147,10 @@
                                 (select-keys [:type :url :mimeType :filename :text])))
                           (or (:content-parts user-msg) []))
      :tool_receipts (mapv (fn [r]
-                           (select-keys r [:id :tool_name :status
-                                           :input_preview :result_preview
-                                           :started_at :ended_at]))
-                         (or (:tool_receipts run) []))
+                            (select-keys r [:id :tool_name :status
+                                            :input_preview :result_preview
+                                            :started_at :ended_at]))
+                          (or (:tool_receipts run) []))
      :trace_blocks (mapv (fn [b]
                            (select-keys b [:id :kind :status :toolName
                                            :toolCallId :content :at
@@ -230,17 +230,17 @@
                                         (not (str/blank? (:proxx-auth-token config))))
                   openplanner-configured (openplanner-enabled? config)
                   proxx-promise (if proxx-configured
-                                 (fetch-json (str (:proxx-base-url config) "/health")
-                                             #js {:headers (bearer-headers (:proxx-auth-token config))})
-                                 (js/Promise.resolve #js {:ok false
-                                                         :status 503
-                                                         :body #js {:detail "Proxx is not configured"}}))
+                                  (fetch-json (str (:proxx-base-url config) "/health")
+                                              #js {:headers (bearer-headers (:proxx-auth-token config))})
+                                  (js/Promise.resolve #js {:ok false
+                                                           :status 503
+                                                           :body #js {:detail "Proxx is not configured"}}))
                   openplanner-promise (if openplanner-configured
-                                       (fetch-json (openplanner-url config "/v1/health")
-                                                   #js {:headers (openplanner-headers config)})
-                                       (js/Promise.resolve #js {:ok false
-                                                               :status 503
-                                                               :body #js {:detail "OpenPlanner is not configured"}}))]
+                                        (fetch-json (openplanner-url config "/v1/health")
+                                                    #js {:headers (openplanner-headers config)})
+                                        (js/Promise.resolve #js {:ok false
+                                                                 :status 503
+                                                                 :body #js {:detail "OpenPlanner is not configured"}}))]
               (-> (js/Promise.all #js [proxx-promise openplanner-promise])
                   (.then (fn [parts]
                            (let [proxx-res (aget parts 0)
@@ -289,8 +289,8 @@
               :shibboleth_ui_url (if (str/blank? (:shibboleth-ui-url config))
                                    ""
                                    (rewrite-localhost-url (:shibboleth-ui-url config) request))
-             :shibboleth_enabled (and (not (str/blank? (:shibboleth-base-url config)))
-                                      (not (str/blank? (:shibboleth-ui-url config))))
+              :shibboleth_enabled (and (not (str/blank? (:shibboleth-base-url config)))
+                                       (not (str/blank? (:shibboleth-ui-url config))))
               :default_role (:knoxx-default-role config)
               :default_actor_id (default-actor-id config)
               :default_agent_contract (default-agent-contract-id config (default-actor-id config))
@@ -303,10 +303,10 @@
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (let [actor-id (some-> (or (aget request "query" "actorId")
-                                             (aget request "query" "actor"))
-                                        str
-                                        str/trim
-                                        not-empty)
+                                           (aget request "query" "actor"))
+                                       str
+                                       str/trim
+                                       not-empty)
                       effective-actor-id (or actor-id (default-actor-id config))
                       agents (agent-contract-catalog config effective-actor-id)
                       default-agent-id (default-agent-contract-id config effective-actor-id)
@@ -408,11 +408,11 @@
                                         :optional-session-guard optional-session-guard}))
 
   (contracts-routes/register-contracts-routes! app runtime config
-                                              {:route! route!
-                                               :json-response! json-response!
-                                               :error-response! error-response!
-                                               :with-request-context! with-request-context!
-                                               :ensure-permission! ensure-permission!})
+                                               {:route! route!
+                                                :json-response! json-response!
+                                                :error-response! error-response!
+                                                :with-request-context! with-request-context!
+                                                :ensure-permission! ensure-permission!})
 
   (model-routes/register-model-routes! app runtime config)
 
@@ -423,25 +423,25 @@
                                         :ensure-tool! ensure-tool!})
 
   (document-routes/register-document-routes! app runtime config
-                                               {:route! route!
-                                                :json-response! json-response!
-                                                :error-response! error-response!
-                                                :with-request-context! with-request-context!
-                                                :ensure-permission! ensure-permission!
-                                                :clip-text clip-text
-                                                :openplanner-graph-export! openplanner-graph-export!
-                                                :send-fetch-response! send-fetch-response!
-                                                :bearer-headers bearer-headers
-                                                :fetch-json fetch-json
-                                                :openai-auth-error openai-auth-error
-                                                :request-query-string request-query-string})
+                                             {:route! route!
+                                              :json-response! json-response!
+                                              :error-response! error-response!
+                                              :with-request-context! with-request-context!
+                                              :ensure-permission! ensure-permission!
+                                              :clip-text clip-text
+                                              :openplanner-graph-export! openplanner-graph-export!
+                                              :send-fetch-response! send-fetch-response!
+                                              :bearer-headers bearer-headers
+                                              :fetch-json fetch-json
+                                              :openai-auth-error openai-auth-error
+                                              :request-query-string request-query-string})
 
   (workspace-media-routes/register-workspace-media-routes! app runtime config
-                                                          {:route! route!
-                                                           :json-response! json-response!
-                                                           :error-response! error-response!
-                                                           :with-request-context! with-request-context!
-                                                           :ensure-tool! ensure-tool!})
+                                                           {:route! route!
+                                                            :json-response! json-response!
+                                                            :error-response! error-response!
+                                                            :with-request-context! with-request-context!
+                                                            :ensure-tool! ensure-tool!})
 
   (route! app "GET" "/api/knoxx/proxy/*"
           (fn [request reply]
@@ -534,8 +534,8 @@
               (let [body (aget request "body")
                     target-url (str ingestion-base "/api/ingestion/jobs")]
                 (-> (fetch-json target-url #js {:method "POST"
-                                                 :headers #js {"Content-Type" "application/json"}
-                                                 :body (js/JSON.stringify (or body #js {}))})
+                                                :headers #js {"Content-Type" "application/json"}
+                                                :body (js/JSON.stringify (or body #js {}))})
                     (.then (fn [resp]
                              (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
                     (.catch (fn [err]
@@ -559,8 +559,8 @@
                     target-url (str ingestion-base "/api/ingestion/" path)
                     body (aget request "body")]
                 (-> (fetch-json target-url #js {:method "POST"
-                                                 :headers #js {"Content-Type" "application/json"}
-                                                 :body (js/JSON.stringify (or body #js {}))})
+                                                :headers #js {"Content-Type" "application/json"}
+                                                :body (js/JSON.stringify (or body #js {}))})
                     (.then (fn [resp]
                              (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
                     (.catch (fn [err]
@@ -578,7 +578,7 @@
 
   ;; ── Data explorer routes ─────────────────────────────────────────────
   ;; Service health aggregation
-    ;; OpenPlanner API proxy for documents, search, etc.
+  ;; OpenPlanner API proxy for documents, search, etc.
   (route! app "GET" "/api/data/op/*"
           (fn [request reply]
             (let [path (aget request "params" "*")
@@ -603,14 +603,14 @@
               (-> (fetch-json (str op-base "/v1/" path)
                               #js {:method "POST"
                                    :headers #js {"Content-Type" "application/json"
-                                                  "Authorization" (str "Bearer " op-key)}
+                                                 "Authorization" (str "Bearer " op-key)}
                                    :body (js/JSON.stringify (or body #js {}))})
                   (.then (fn [resp]
                            (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
                   (.catch (fn [err]
                             (json-response! reply 502 {:error (.-message err)})))))))
 
-(route! app "GET" "/api/data/health"
+  (route! app "GET" "/api/data/health"
           (fn [_request reply]
             (let [ingestion-base (:ingestion-base-url config)
                   op-base (:openplanner-base-url config)
@@ -620,32 +620,32 @@
                   check (fn [url headers]
                           (-> (fetch-json url #js {:headers (or headers #js {}) :method "GET"})
                               (.then (fn [resp] {:ok (aget resp "ok")
-                                               :status (aget resp "status")
-                                               :url url
-                                               :detail (aget resp "body")}))
+                                                :status (aget resp "status")
+                                                :url url
+                                                :detail (aget resp "body")}))
                               (.catch (fn [err] {:ok false :error (.-message err) :url url}))))]
               (-> (js/Promise.all
-                    (into-array
-                      [(check (str op-base "/v1/health") #js {"Authorization" (str "Bearer " op-key)})
-                       (check (str proxx-base "/health") #js {"Authorization" (str "Bearer " proxx-key)})
-                       (check (str ingestion-base "/health") nil)
-                       (check "http://127.0.0.1:8796/api/status" nil)
-                       (check "http://127.0.0.1:3777/health" nil)
-                       (check "http://127.0.0.1:8787/v1/health" nil)
-                       (check "http://127.0.0.1:8786/health" nil)
-                       (check "http://127.0.0.1:8801/health" nil)]))
+                   (into-array
+                    [(check (str op-base "/v1/health") #js {"Authorization" (str "Bearer " op-key)})
+                     (check (str proxx-base "/health") #js {"Authorization" (str "Bearer " proxx-key)})
+                     (check (str ingestion-base "/health") nil)
+                     (check "http://127.0.0.1:8796/api/status" nil)
+                     (check "http://127.0.0.1:3777/health" nil)
+                     (check "http://127.0.0.1:8787/v1/health" nil)
+                     (check "http://127.0.0.1:8786/health" nil)
+                     (check "http://127.0.0.1:8801/health" nil)]))
                   (.then (fn [results]
                            (let [r (js->clj results :keywordize-keys true)]
                              (json-response! reply 200
-                               {:ok true
-                                :services {:openplanner (nth r 0)
-                                           :proxx (nth r 1)
-                                           :ingestion (nth r 2)
-                                           :graph-weaver (nth r 3)
-                                           :shuvcrawl (nth r 4)
-                                           :vexx (nth r 5)
-                                           :eros-eris-field-app (nth r 6)
-                                           :myrmex (nth r 7)}}))))
+                                             {:ok true
+                                              :services {:openplanner (nth r 0)
+                                                         :proxx (nth r 1)
+                                                         :ingestion (nth r 2)
+                                                         :graph-weaver (nth r 3)
+                                                         :shuvcrawl (nth r 4)
+                                                         :vexx (nth r 5)
+                                                         :eros-eris-field-app (nth r 6)
+                                                         :myrmex (nth r 7)}}))))
                   (.catch (fn [err]
                             (json-response! reply 500 {:error (.-message err)})))))))
 
@@ -655,15 +655,15 @@
             (let [op-base (:openplanner-base-url config)
                   op-key (:openplanner-api-key config)]
               (-> (js/Promise.all
-                    (into-array
-                      [(fetch-json (str op-base "/v1/documents/stats")
-                                   #js {:headers #js {"Authorization" (str "Bearer " op-key)}})
-                       (fetch-json (str op-base "/v1/graph/monitoring")
-                                   #js {:headers #js {"Authorization" (str "Bearer " op-key)}})]))
+                   (into-array
+                    [(fetch-json (str op-base "/v1/documents/stats")
+                                 #js {:headers #js {"Authorization" (str "Bearer " op-key)}})
+                     (fetch-json (str op-base "/v1/graph/monitoring")
+                                 #js {:headers #js {"Authorization" (str "Bearer " op-key)}})]))
                   (.then (fn [results]
                            (let [r (js->clj results :keywordize-keys true)]
                              (json-response! reply 200
-                               {:ok true :documents (aget (nth r 0) "body") :graph (aget (nth r 1) "body")}))))
+                                             {:ok true :documents (aget (nth r 0) "body") :graph (aget (nth r 1) "body")}))))
                   (.catch (fn [err]
                             (json-response! reply 502 {:error (.-message err)})))))))
 
@@ -688,7 +688,7 @@
               (-> (fetch-json (str op-base "/v1/mongo/query")
                               #js {:method "POST"
                                    :headers #js {"Content-Type" "application/json"
-                                                  "Authorization" (str "Bearer " op-key)}
+                                                 "Authorization" (str "Bearer " op-key)}
                                    :body (js/JSON.stringify body)})
                   (.then (fn [resp]
                            (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
@@ -699,10 +699,10 @@
   (route! app "GET" "/api/data/pg/tables"
           (fn [_request reply]
             (json-response! reply 200
-              {:ok true
-               :tables ["ingestion_sources" "ingestion_jobs" "ingestion_file_state"
-                        "orgs" "users" "roles" "memberships" "data_lakes"
-                        "sessions" "audit_events" "permissions"]})))
+                            {:ok true
+                             :tables ["ingestion_sources" "ingestion_jobs" "ingestion_file_state"
+                                      "orgs" "users" "roles" "memberships" "data_lakes"
+                                      "sessions" "audit_events" "permissions"]})))
 
   ;; OpenPlanner job triggers
   (route! app "POST" "/api/data/jobs/build-semantic-edges"
@@ -715,7 +715,7 @@
               (-> (fetch-json (str op-base "/v1/jobs/build-semantic-edges")
                               #js {:method "POST"
                                    :headers #js {"Content-Type" "application/json"
-                                                  "Authorization" (str "Bearer " op-key)}
+                                                 "Authorization" (str "Bearer " op-key)}
                                    :body (js/JSON.stringify #js {:k k :minSimilarity min-sim})})
                   (.then (fn [resp]
                            (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
@@ -749,7 +749,7 @@
                           (.then (fn [result]
                                    (let [rows (js->clj (aget result "rows") :keywordize-keys true)]
                                      (json-response! reply 200
-                                       {:ok true :rows rows :count (count rows)}))))
+                                                     {:ok true :rows rows :count (count rows)}))))
                           (.catch (fn [err]
                                     (json-response! reply 400 {:error (.-message err)})))))))
 
@@ -765,11 +765,11 @@
                       (.then (fn [result]
                                (let [rows (js->clj (aget result "rows") :keywordize-keys true)]
                                  (json-response! reply 200
-                                   {:ok true :table table :rows rows :count (count rows)}))))
+                                                 {:ok true :table table :rows rows :count (count rows)}))))
                       (.catch (fn [err]
                                 (json-response! reply 400 {:error (.-message err)})))))))))
 
-(route! app "GET" "/api/data/browse"
+  (route! app "GET" "/api/data/browse"
           (fn [request reply]
             (let [qs (aget request "query")
                   path (or (aget qs "path") "")
@@ -792,7 +792,7 @@
                   (.catch (fn [err]
                             (json-response! reply 502 {:error (.-message err)})))))))
 
-    ;; ── Graph-weaver proxy ────────────────────────────────────────────────
+  ;; ── Graph-weaver proxy ────────────────────────────────────────────────
   (route! app "POST" "/api/data/graphql"
           (fn [request reply]
             (let [body (or (aget request "body") #js {})
@@ -819,7 +819,7 @@
           (fn [_request reply]
             (json-response! reply 200 {:url "http://127.0.0.1:8796"})))
 
-(route! app "GET" "/api/knoxx/health"
+  (route! app "GET" "/api/knoxx/health"
           (fn [_request reply]
             (json-response! reply 200 {:reachable true
                                        :configured true
@@ -849,95 +849,96 @@
                                 (error-response! reply err 502)))))))))
 
   (route! app "POST" "/api/knoxx/chat/start"
-  (fn [request reply]
-    (with-request-context! runtime request reply
-      (fn [ctx]
-        (when ctx
-          (ensure-permission! ctx "agent.chat.use"))
-        (let [node-crypto (aget runtime "crypto")
-              parsed0 (normalize-chat-body (or (aget request "body") #js {}))
-              parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
-              agent-ctx (effective-auth-context ctx parsed)
-              policy-model (or (:model parsed)
-                               (get-in parsed [:agent-spec :model])
-                               (:llmModel @settings-state*))
-              provided-session-id (:session-id parsed)
-              session-id (ensure-session-id node-crypto provided-session-id)
-              conversation-id (or (:conversation-id parsed)
-                                  (.randomUUID node-crypto))
-              run-id (or (:run-id parsed)
-                         (.randomUUID node-crypto))
-              body (assoc parsed
-                          :session-id session-id
-                          :conversation-id conversation-id
-                          :run-id run-id
-                          :mode "rag"
-                          :auth-context agent-ctx)
-              ;; keep your existing accepted-response map exactly as-is
-              accepted-response {:ok true
-                                 :queued true
-                                 :run-id run-id
-                                 :conversation-id conversation-id
-                                 :session-id session-id
-                                 :body body
-                                 :model (or (:model body)
-                                            (get-in body [:agent-spec :model])
-                                            (:llmModel @settings-state*))}
-queue-turn! (fn [_log-label]
-                            (queue-chat-start! runtime config reply agent-ctx policy-model body accepted-response))]
-          (if-not provided-session-id
-            (queue-turn! "Async agent chat failed")
-            (-> (session-store/get-session (redis/get-client) session-id)
-                (.then (fn [session]
-                         (let [can-send-result (session-store/session-can-send? session)]
-                           (if (:can-send can-send-result)
-                             (let [agent-session (active-agent-session conversation-id)
-                                   actively-streaming? (and agent-session
-                                                            (true? (aget agent-session "isStreaming")))]
-                               (if actively-streaming?
-                                 (json-response! reply 409
-                                                 {:ok false
-                                                  :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
-                                                  :code "agent-already-processing"
-                                                  :has-active-stream true
-                                                  :can-send false})
-                                 (queue-turn! "Async agent chat failed")))
-                             (-> (if (= "running" (:status session))
-                                   (latest-run-event! (:run_id session))
-                                   (js/Promise.resolve nil))
-                                 (.then (fn [latest-event]
-                                          (clear-ghost-turn! conversation-id)
-                                          (let [stalled? (and (= "running" (:status session))
-                                                              (not (runtime-processing-session? conversation-id))
-                                                              (stale-running-session? session latest-event))]
-                                            (if stalled?
-                                              (-> (session-store/complete-session!
-                                                   (redis/get-client)
-                                                   session-id
-                                                   conversation-id
-                                                   {:status "failed"
-                                                    :error "Session was stale/zombie auto-aborted before new turn."
-                                                    :messages (:messages session)})
-                                                  (.then (fn [_]
-                                                           (queue-turn! "Async agent chat failed (recovered from zombie)")))
-                                                  (.catch (fn [err]
-                                                            (.error js/console "Failed to abort zombie session" err)
-                                                            (json-response! reply 409
-                                                                            {:ok false
-                                                                             :error (str "Agent is already processing. Zombie recovery failed: " err)
-                                                                             :code "agent-already-processing"
-                                                                             :has-active-stream false
-                                                                             :can-send false}))))
-                                              (json-response! reply 409
-                                                              {:ok false
-                                                               :error (str "Agent is already processing. "
-                                                                           (or (:reason can-send-result) ""))
-                                                               :code "agent-already-processing"
-                                                               :has-active-stream (boolean (:has-active-stream session))
-                                                               :can-send false}))))))))
-                (.catch (fn [err]
-                          (.error js/console "Session status check failed" err)
-                          (queue-turn! "Async agent chat failed"))))))))))))
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx
+                  (ensure-permission! ctx "agent.chat.use"))
+                (let [node-crypto (aget runtime "crypto")
+                      parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+                      parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
+                      agent-ctx (effective-auth-context ctx parsed)
+                      policy-model (or (:model parsed)
+                                       (get-in parsed [:agent-spec :model])
+                                       (:llmModel @settings-state*))
+                      provided-session-id (:session-id parsed)
+                      session-id (ensure-session-id node-crypto provided-session-id)
+                      conversation-id (or (:conversation-id parsed)
+                                          (.randomUUID node-crypto))
+                      run-id (or (:run-id parsed)
+                                 (.randomUUID node-crypto))
+                      body (assoc parsed
+                                  :session-id session-id
+                                  :conversation-id conversation-id
+                                  :run-id run-id
+                                  :mode "rag"
+                                  :auth-context agent-ctx)
+                      ;; keep your existing accepted-response map exactly as-is
+                      accepted-response {:ok true
+                                         :queued true
+                                         :run-id run-id
+                                         :conversation-id conversation-id
+                                         :session-id session-id
+                                         :body body
+                                         :model (or (:model body)
+                                                    (get-in body [:agent-spec :model])
+                                                    (:llmModel @settings-state*))}
+                      queue-turn! (fn [_log-label]
+                                    (queue-chat-start! runtime config reply agent-ctx policy-model body accepted-response))]
+                  (if-not provided-session-id
+                    (queue-turn! "Async agent chat failed")
+                    (-> (session-store/get-session (redis/get-client) session-id)
+                        (.then (fn [session]
+                                 (let [can-send-result (session-store/session-can-send? session)]
+                                   (if (:can-send can-send-result)
+                                     (let [agent-session (active-agent-session conversation-id)
+                                           actively-streaming? (and agent-session
+                                                                    (true? (aget agent-session "isStreaming")))]
+                                       (if actively-streaming?
+                                         (json-response! reply 409
+                                                         {:ok false
+                                                          :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
+                                                          :code "agent-already-processing"
+                                                          :has-active-stream true
+                                                          :can-send false})
+                                         (queue-turn! "Async agent chat failed")))
+                                     (-> (if (= "running" (:status session))
+                                           (latest-run-event! (:run_id session))
+                                           (js/Promise.resolve nil))
+                                         (.then (fn [latest-event]
+                                                  (clear-ghost-turn! conversation-id)
+                                                  (let [stalled? (and (= "running" (:status session))
+                                                                      (not (runtime-processing-session? conversation-id))
+                                                                      (stale-running-session? session latest-event))]
+                                                    (if stalled?
+                                                      (-> (session-store/complete-session!
+                                                           (redis/get-client)
+                                                           session-id
+                                                           conversation-id
+                                                           {:status "failed"
+                                                            :error "Session was stale/zombie auto-aborted before new turn."
+                                                            :messages (:messages session)})
+                                                          (.then (fn [_]
+                                                                   (queue-turn! "Async agent chat failed (recovered from zombie)")))
+                                                          (.catch (fn [err]
+                                                                    (.error js/console "Failed to abort zombie session" err)
+                                                                    (json-response! reply 409
+                                                                                    {:ok false
+                                                                                     :error (str "Agent is already processing. Zombie recovery failed: " err)
+                                                                                     :code "agent-already-processing"
+                                                                                     :has-active-stream false
+                                                                                     :can-send false}))))
+                                                      (json-response! reply 409
+                                                                      {:ok false
+                                                                       :error (str "Agent is already processing. "
+                                                                                   (or (:reason can-send-result) ""))
+                                                                       :code "agent-already-processing"
+                                                                       :has-active-stream (boolean (:has-active-stream session))
+                                                                       :can-send false}))))))))))
+
+                        (.catch (fn [err]
+                                  (.error js/console "Session status check failed" err)
+                                  (queue-turn! "Async agent chat failed"))))))))))
 
   (route! app "POST" "/api/knoxx/direct"
           (fn [request reply]
@@ -1020,11 +1021,11 @@ queue-turn! (fn [_log-label]
                                                               (stale-running-session? session latest-event))]
                                             (if stalled?
                                               (-> (session-store/complete-session! (redis/get-client)
-                                                                                  session-id
-                                                                                  conversation-id
-                                                                                  {:status "failed"
-                                                                                   :error "Session was stale/zombie; auto-aborted before new turn."
-                                                                                   :messages (:messages session)})
+                                                                                   session-id
+                                                                                   conversation-id
+                                                                                   {:status "failed"
+                                                                                    :error "Session was stale/zombie; auto-aborted before new turn."
+                                                                                    :messages (:messages session)})
                                                   (.then (fn [_]
                                                            (queue-turn! "Async direct agent chat failed (recovered from zombie)")))
                                                   (.catch (fn [err]
@@ -1170,8 +1171,8 @@ queue-turn! (fn [_log-label]
                                  (aget request "query" "sessionId")
                                  "")
                   conversation-id (or (aget request "query" "conversation_id")
-                                       (aget request "query" "conversationId")
-                                       "")]
+                                      (aget request "query" "conversationId")
+                                      "")]
               (cond
                 (str/blank? session-id)
                 (json-response! reply 400 {:error "session_id is required"})
@@ -1199,7 +1200,7 @@ queue-turn! (fn [_log-label]
                                                                  :conversation_id (:conversation_id session)
                                                                  :status (:status session)
                                                                  :has_active_stream (boolean (or (:has_active_stream session)
-                                                                                                runtime-active?))
+                                                                                                 runtime-active?))
                                                                  :can_send (if stalled? false (:can-send can-send))
                                                                  :reason (cond
                                                                            stalled? "Session looked stalled after restart; recovery requested."
@@ -1212,25 +1213,25 @@ queue-turn! (fn [_log-label]
                                ;; No session in Redis - check if conversation has active agent session
                                ;; No session in Redis - trust in-memory runtime if it still has a live turn.
                                (if (runtime-processing-session? conversation-id)
-                                   (json-response! reply 200
-                                                     {:session_id session-id
-                                                      :conversation_id conversation-id
-                                                      :status "running"
-                                                      :has_active_stream true
-                                                      :can_send false
-                                                      :reason "Session is already processing. Use steer, follow-up, abort, or wait."})
-                                   (json-response! reply 200
-                                                     {:session_id session-id
-                                                      :conversation_id conversation-id
-                                                      :status "not_found"
-                                                      :has_active_stream false
-                                                      :can_send true
-                                                      :reason "No session state found. Ready for new turn."})))))
+                                 (json-response! reply 200
+                                                 {:session_id session-id
+                                                  :conversation_id conversation-id
+                                                  :status "running"
+                                                  :has_active_stream true
+                                                  :can_send false
+                                                  :reason "Session is already processing. Use steer, follow-up, abort, or wait."})
+                                 (json-response! reply 200
+                                                 {:session_id session-id
+                                                  :conversation_id conversation-id
+                                                  :status "not_found"
+                                                  :has_active_stream false
+                                                  :can_send true
+                                                  :reason "No session state found. Ready for new turn."})))))
                     (.catch (fn [err]
                               (js/console.error "Session status check failed" err)
                               (json-response! reply 500 {:error (str err)}))))))))
 
-;; Run event catch-up endpoint for WS reconnect recovery
+  ;; Run event catch-up endpoint for WS reconnect recovery
   (route! app "GET" "/api/knoxx/run/:runId/events"
           (fn [request reply]
             (with-request-context! runtime request reply
@@ -1248,78 +1249,78 @@ queue-turn! (fn [_log-label]
                         (.catch (fn [err]
                                   (json-response! reply 500 {:error (str err)})))))))))
 
-  (route! app "GET" "/api/knoxx/runs/:runId"
-          (fn [request reply]
-            (with-request-context! runtime request reply
-              (fn [ctx]
-                (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (let [run-id (str (or (aget request "params" "runId") ""))]
-                  (cond
-                    (str/blank? run-id)
-                    (json-response! reply 400 {:error "runId required"})
+          (route! app "GET" "/api/knoxx/runs/:runId"
+                  (fn [request reply]
+                    (with-request-context! runtime request reply
+                      (fn [ctx]
+                        (when ctx (ensure-permission! ctx "agent.chat.use"))
+                        (let [run-id (str (or (aget request "params" "runId") ""))]
+                          (cond
+                            (str/blank? run-id)
+                            (json-response! reply 400 {:error "runId required"})
 
-                    (some? (get @runs* run-id))
-                    (if-let [filtered (run-visible? ctx (get @runs* run-id))]
-                      (json-response! reply 200
-                        {:ok true :source "memory" :run filtered})
-                      (json-response! reply 403 {:error "Access denied"}))
+                            (some? (get @runs* run-id))
+                            (if-let [filtered (run-visible? ctx (get @runs* run-id))]
+                              (json-response! reply 200
+                                              {:ok true :source "memory" :run filtered})
+                              (json-response! reply 403 {:error "Access denied"}))
 
-                    :else
-                    (json-response! reply 404 {:ok false :error "Run not found"
-                                                :run_id run-id})))))))
+                            :else
+                            (json-response! reply 404 {:ok false :error "Run not found"
+                                                       :run_id run-id})))))))
 
-  (route! app "POST" "/api/shibboleth/handoff"
-          (fn [request reply]
-            (let [body (or (aget request "body") #js {})]
-              (if (str/blank? (:shibboleth-base-url config))
-                (json-response! reply 503 {:detail "SHIBBOLETH_BASE_URL is not configured"})
-                (let [payload #js {:source_app "knoxx"
-                                   :model (aget body "model")
-                                   :system_prompt (aget body "system_prompt")
-                                   :provider (aget body "provider")
-                                   :conversation_id (aget body "conversation_id")
-                                   :fake_tools_enabled (boolean (aget body "fake_tools_enabled"))
-                                   :items (or (aget body "items") #js [])}]
-                  (-> (fetch-json (str (:shibboleth-base-url config) "/api/chat/import")
-                                  #js {:method "POST"
-                                       :headers #js {"Content-Type" "application/json"}
-                                       :body (.stringify js/JSON payload)})
-                      (.then (fn [resp]
-                               (if (aget resp "ok")
-                                 (let [data (aget resp "body")
-                                       session (or (aget data "session") #js {})
-                                       session-id (str (or (aget session "id") ""))
-                                       ui-url (if (and (not (str/blank? session-id))
-                                                       (not (str/blank? (:shibboleth-ui-url config))))
-                                                (with-query-param (rewrite-localhost-url (:shibboleth-ui-url config) request)
-                                                                  "session"
-                                                                  session-id)
-                                                "")]
-                                   (if (str/blank? session-id)
-                                     (json-response! reply 502 {:detail "Shibboleth import did not return a session id"})
-                                     (json-response! reply 200 {:ok true
-                                                                :session_id session-id
-                                                                :ui_url ui-url
-                                                                :imported_item_count (count (js-array-seq (aget body "items")))})))
-                                 (json-response! reply 502 {:detail (str "Shibboleth import failed: "
-                                                                        (or (aget (aget resp "body") "raw")
-                                                                            (js/JSON.stringify (aget resp "body"))))}))))
-                      (.catch (fn [err]
-                                (json-response! reply 502 {:detail (str "Shibboleth is unreachable: " err)})))))))))
+          (route! app "POST" "/api/shibboleth/handoff"
+                  (fn [request reply]
+                    (let [body (or (aget request "body") #js {})]
+                      (if (str/blank? (:shibboleth-base-url config))
+                        (json-response! reply 503 {:detail "SHIBBOLETH_BASE_URL is not configured"})
+                        (let [payload #js {:source_app "knoxx"
+                                           :model (aget body "model")
+                                           :system_prompt (aget body "system_prompt")
+                                           :provider (aget body "provider")
+                                           :conversation_id (aget body "conversation_id")
+                                           :fake_tools_enabled (boolean (aget body "fake_tools_enabled"))
+                                           :items (or (aget body "items") #js [])}]
+                          (-> (fetch-json (str (:shibboleth-base-url config) "/api/chat/import")
+                                          #js {:method "POST"
+                                               :headers #js {"Content-Type" "application/json"}
+                                               :body (.stringify js/JSON payload)})
+                              (.then (fn [resp]
+                                       (if (aget resp "ok")
+                                         (let [data (aget resp "body")
+                                               session (or (aget data "session") #js {})
+                                               session-id (str (or (aget session "id") ""))
+                                               ui-url (if (and (not (str/blank? session-id))
+                                                               (not (str/blank? (:shibboleth-ui-url config))))
+                                                        (with-query-param (rewrite-localhost-url (:shibboleth-ui-url config) request)
+                                                          "session"
+                                                          session-id)
+                                                        "")]
+                                           (if (str/blank? session-id)
+                                             (json-response! reply 502 {:detail "Shibboleth import did not return a session id"})
+                                             (json-response! reply 200 {:ok true
+                                                                        :session_id session-id
+                                                                        :ui_url ui-url
+                                                                        :imported_item_count (count (js-array-seq (aget body "items")))})))
+                                         (json-response! reply 502 {:detail (str "Shibboleth import failed: "
+                                                                                 (or (aget (aget resp "body") "raw")
+                                                                                     (js/JSON.stringify (aget resp "body"))))}))))
+                              (.catch (fn [err]
+                                        (json-response! reply 502 {:detail (str "Shibboleth is unreachable: " err)})))))))))
 
-  ;; Translation routes
-  (translation-routes/register-translation-routes! app runtime config
-                                                    {:json-response! json-response!
-                                                     :error-response! error-response!
-                                                     :with-request-context! with-request-context!
-                                                     :ensure-permission! ensure-permission!
-                                                     :openplanner-enabled? openplanner-enabled?
-                                                     :openplanner-request! openplanner-request!
-                                                     :openplanner-url openplanner-url
-                                                     :openplanner-headers openplanner-headers
-                                                     :ctx-user-id ctx-user-id
-                                                     :ctx-user-email ctx-user-email
-                                                     :ctx-org-id ctx-org-id})
+          ;; Translation routes
+          (translation-routes/register-translation-routes! app runtime config
+                                                           {:json-response! json-response!
+                                                            :error-response! error-response!
+                                                            :with-request-context! with-request-context!
+                                                            :ensure-permission! ensure-permission!
+                                                            :openplanner-enabled? openplanner-enabled?
+                                                            :openplanner-request! openplanner-request!
+                                                            :openplanner-url openplanner-url
+                                                            :openplanner-headers openplanner-headers
+                                                            :ctx-user-id ctx-user-id
+                                                            :ctx-user-email ctx-user-email
+                                                            :ctx-org-id ctx-org-id})
+          )
+
   )
-
-)

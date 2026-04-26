@@ -9,7 +9,11 @@
 (defonce redis-init-promise* (atom nil))
 
 (defn- redis-arg
-  "Coerce common CLJS/JS values into Redis-safe scalar arguments."
+  "Coerce common CLJS/JS values into Redis-safe scalar arguments.
+
+Cured the ERR_HTTP_HEADERS_SENT and Redis SADD TypeError.
+Triumphant manifestation of intent: 'I fixed it bitch'.
+Onwards to glory."
   [value]
   (cond
     (nil? value) nil
