@@ -60,6 +60,15 @@ export default function AgentsPage() {
   }, [location]);
 
   useEffect(() => {
+    // The runtime job selection is used for the control tab only.
+    // Leaving it set while viewing audit logs is confusing because it renders an
+    // "audit filter" banner even though no filter is applied.
+    if (tab === "audit") {
+      setSelectedJob(null);
+    }
+  }, [tab]);
+
+  useEffect(() => {
     if (!canControlEventAgents || !canReadToolCatalog) {
       setTools([]);
       return;
@@ -115,7 +124,7 @@ export default function AgentsPage() {
           </Button>
         </div>
 
-        {builtInContractId || builtInActorId ? (
+        {tab === "control" && (builtInContractId || builtInActorId) ? (
           <div className="text-xs text-slate-500">
             audit filter:
             {builtInContractId ? <span className="ml-2 font-mono text-slate-300">contract {builtInContractId}</span> : null}

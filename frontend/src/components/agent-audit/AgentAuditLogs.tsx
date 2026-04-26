@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from 
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import {
   getAgentHistorySession,
+  getRun,
+  listActiveAgents,
   listMemorySessions,
   searchMemory,
 } from "../../lib/api/common";
@@ -9,6 +11,9 @@ import type {
   MemorySearchHit,
   MemorySessionRow,
   MemorySessionSummary,
+  RunDetail,
+  RunEvent,
+  ToolReceipt,
 } from "../../lib/types";
 import MultimodalContent from "../chat-page/MultimodalContent";
 
@@ -142,6 +147,96 @@ function activeStatusTone(status: string): "default" | "success" | "warning" | "
     default:
       return "default";
   }
+}
+
+function toolReceiptToRow(runId: string, receipt: ToolReceipt, idx: number): MemorySessionRow {
+  const receiptId = typeof receipt.id === "string" && receipt.id.trim().length > 0 ? receipt.id : String(idx);
+  return {
+    id: `${runId}:tool:${receiptId}`,
+    kind: "knoxx.tool_receipt",
+    role: "system",
+    message: receiptId,
+    text: typeof receipt.result_preview === "string" ? receipt.result_preview : "",
+    extra: {
+      receipt,
+    },
+  };
+}
+
+function runEventToRow(runId: string, event: RunEvent, idx: number): MemorySessionRow {
+  const at = typeof event.at === "string" ? event.at : undefined;
+  const kind = typeof event.type === "string" && event.type.trim().length > 0
+    ? `knoxx.runtime.${event.type}`
+    : "knoxx.runtime.event";
+  return {
+    id: `${runId}:event:${idx}`,
+    ts: at,
+    kind,
+    role: "system",
+    message: typeof event.type === "string" ? event.type : "event",
+    text: typeof event.preview === "string" ? event.preview : "",
+    extra: event,
+  };
+}
+
+function runDetailToAuditRows(run: RunDetail): MemorySessionRow[] {
+  const runId = run.run_id;
+  const createdAt = typeof run.created_at === "string" ? run.created_at : undefined;
+  const updatedAt = typeof run.updated_at === "string" ? run.updated_at : undefined;
+
+  const rows: MemorySessionRow[] = [];
+
+  // Request messages
+  for (let idx = 0; idx < run.request_messages.length; idx += 1) {
+    const msg = run.request_messages[idx];
+    rows.push({
+      id: `${runId}:request:${idx}`,
+      ts: createdAt,
+      kind: "knoxx.message",
+      role: msg.role,
+      message: `${msg.role}:${idx}`,
+      text: msg.content,
+      extra: Array.isArray(msg.contentParts) ? { contentParts: msg.contentParts } : null,
+    });
+  }
+
+  // Run summary
+  rows.push({
+    id: `${runId}:run`,
+    ts: updatedAt,
+    kind: "knoxx.run",
+    role: "system",
+    message: runId,
+    text: `Run ${runId} · ${run.status}`,
+    extra: {
+      status: run.status,
+      model: run.model,
+      session_id: run.session_id,
+      conversation_id: run.conversation_id,
+    },
+  });
+
+  if (Array.isArray(run.events)) {
+    rows.push(...run.events.map((event, idx) => runEventToRow(runId, event, idx)));
+  }
+
+  if (Array.isArray(run.tool_receipts)) {
+    rows.push(...run.tool_receipts.map((receipt, idx) => toolReceiptToRow(runId, receipt, idx)));
+  }
+
+  if (typeof run.answer === "string" && run.answer.trim().length > 0) {
+    rows.push({
+      id: `${runId}:answer`,
+      ts: updatedAt,
+      kind: "knoxx.message",
+      role: "assistant",
+      message: "assistant",
+      text: run.answer,
+      extra: Array.isArray(run.contentParts) ? { contentParts: run.contentParts } : null,
+    });
+  }
+
+  return rows;
 }
 
 function SessionRow({
@@ -360,6 +455,26 @@ export default function AgentAuditLogs({
       }
       try {
         setLoadingRows(true);
+        const selected = sessionsRef.current.find((session) => session.session === selectedSessionId) ?? null;
+
+        // Active sessions may not have been archived into OpenPlanner yet.
+        // In that case, fall back to live runtime state (runs + events) so the
+        // audit panel still shows *something* for in-flight turns.
+        if (selected?.is_active) {
+          const activeRuns = await listActiveAgents(150);
+          if (cancelled) return;
+
+          const matchingRun = activeRuns.find((run) => run.conversation_id === selectedSessionId) ?? null;
+          if (matchingRun?.run_id) {
+            const detail = await getRun(matchingRun.run_id);
+            if (cancelled) return;
+            setRows(runDetailToAuditRows(detail));
+            setSemanticHits([]);
+            setError(null);
+            return;
+          }
+        }
+
         const result = await getAgentHistorySession(selectedSessionId);
         if (cancelled) return;
         setRows(result.rows ?? []);

@@ -38,22 +38,55 @@ type ScratchpadSnapshot = {
 export function getChatStorage(): Storage | null {
   if (typeof window === "undefined") return null;
   try {
-    return window.sessionStorage;
+    // Prefer localStorage so chat sessions survive reloads/new tabs.
+    return window.localStorage;
   } catch {
     try {
-      return window.localStorage;
+      return window.sessionStorage;
     } catch {
       return null;
     }
   }
 }
 
-function getLegacyLocalStorage(): Storage | null {
+function getLegacySessionStorage(): Storage | null {
   if (typeof window === "undefined") return null;
   try {
-    return window.localStorage;
+    return window.sessionStorage;
   } catch {
     return null;
+  }
+}
+
+function migrateSessionStateFromLegacy({
+  sessionStateKey,
+  store,
+  legacy,
+}: {
+  sessionStateKey: string;
+  store: Storage | null;
+  legacy: Storage | null;
+}): void {
+  if (!store || !legacy) return;
+  if (store === legacy) return;
+
+  // Copy the chat-session index + per-session snapshots into the primary store.
+  // This reverses a previous refactor that migrated localStorage -> sessionStorage,
+  // which caused sessions to disappear when opening a new tab.
+  try {
+    for (let i = 0; i < legacy.length; i += 1) {
+      const key = legacy.key(i);
+      if (!key) continue;
+      if (key === sessionStateKey || key.startsWith(`${sessionStateKey}:`)) {
+        if (store.getItem(key) != null) continue;
+        const value = legacy.getItem(key);
+        if (value != null) {
+          store.setItem(key, value);
+        }
+      }
+    }
+  } catch {
+    // ignore migration failures
   }
 }
 
@@ -279,7 +312,10 @@ export function useChatSessionPersistence({
   useEffect(() => {
     try {
       const store = getChatStorage();
-      const legacy = getLegacyLocalStorage();
+      const legacy = getLegacySessionStorage();
+
+      migrateSessionStateFromLegacy({ sessionStateKey, store, legacy });
+
       let sid = store?.getItem(sessionIdKey) || "";
       if (!sid && legacy && legacy !== store) {
         sid = legacy.getItem(sessionIdKey) || "";
@@ -289,9 +325,6 @@ export function useChatSessionPersistence({
         initializePersistedChatSession(sessionStateKey, sid, makeId());
       }
       store?.setItem(sessionIdKey, sid);
-      if (legacy && legacy !== store) {
-        legacy.removeItem(sessionIdKey);
-      }
       setSessionId(sid);
     } catch {
       setSessionId(makeId());
@@ -302,11 +335,7 @@ export function useChatSessionPersistence({
     if (!sessionId) return;
     try {
       const store = getChatStorage();
-      const legacy = getLegacyLocalStorage();
       store?.setItem(sessionIdKey, sessionId);
-      if (legacy && legacy !== store) {
-        legacy.removeItem(sessionIdKey);
-      }
     } catch {
       // ignore storage failures
     }
@@ -337,7 +366,7 @@ export function useChatSessionPersistence({
     if (!sessionId) return;
     try {
       const store = getChatStorage();
-      const legacy = getLegacyLocalStorage();
+      const legacy = getLegacySessionStorage();
       let parsed = readPersistedChatSessionSnapshot(sessionStateKey, sessionId);
 
       if (!parsed) {
