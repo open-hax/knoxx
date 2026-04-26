@@ -194,7 +194,7 @@
       [])))
 
 (defn- contract-tool-ids
-  "Return a set of tool ids found in contracts/capabilities/*.edn." 
+  "Return a set of tool ids found in contracts/capabilities/*.edn."
   []
   (try
     (let [cap-dir (.join path (contracts-dir) "capabilities")
@@ -217,11 +217,12 @@
 (defn- role-tool-policies-from-contracts
   "Return [{:toolId <id> :effect \"allow\"} ...] for the given role slug.
 
-   Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools." 
+   Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools."
   [role-slug]
-  (let [tool-ids (contracts-roles/role-tool-ids (contracts-config) role-slug)]
-    (when (seq tool-ids)
-      (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) tool-ids))))
+  (-> (contracts-roles/role-tool-ids (contracts-config) role-slug)
+       (.then (fn [tool-ids]
+                (when (seq tool-ids)
+                  (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) tool-ids))))))
 
 (defn- role-permissions-from-contracts
   "Return a vector of permission code strings for the given role slug.
@@ -928,7 +929,7 @@
         (.then (fn [_] nil)))))
 
 (defn- ensure-builtin-org-roles!
-  [pool org]
+  [pool]
   (-> (js/Promise.all
        (into-array
         (for [seed ORG-ROLE-SEEDS]
@@ -940,17 +941,16 @@
                                   :system-managed true})
               (.then
                (fn [role]
-                 (let [perms (or (role-permissions-from-contracts (:slug seed))
-                                 (:permissions seed)
-                                 [])]
-                   (-> (set-role-permissions! pool (aget role "id") perms)
-                       (.then (fn [_]
-                                (let [policies (or (role-tool-policies-from-contracts (:slug seed))
-                                                   (:tool-policies seed)
-                                                   (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids)))]
-                                  (set-role-tool-policies! pool (aget role "id")
-                                                           policies))))))))))))
-      (.then (fn [_] nil))))
+                 (-> (role-permissions-from-contracts (:slug seed))
+                     (.then (fn [perms]
+                              (let [perms (or perms (:permissions seed) [])]
+                                (-> (set-role-permissions! pool (aget role "id") perms)
+                                    (.then (fn [_]
+                                             (-> (role-tool-policies-from-contracts (:slug seed))
+                                                 (.then (fn [policies]
+                                                          (let [policies (or policies (:tool-policies seed) (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids)))]
+                                                            (set-role-tool-policies! pool (aget role "id") policies))))))))))))))))
+        ))))
 
 (defn- ensure-builtin-platform-roles!
   [pool]
@@ -965,17 +965,16 @@
                                   :system-managed true})
               (.then
                (fn [role]
-                 (let [perms (or (role-permissions-from-contracts (:slug seed))
-                                 (:permissions seed)
-                                 [])]
-                   (-> (set-role-permissions! pool (aget role "id") perms)
-                       (.then (fn [_]
-                                (let [policies (or (role-tool-policies-from-contracts (:slug seed))
-                                                   (:tool-policies seed)
-                                                   (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids)))]
-                                  (set-role-tool-policies! pool (aget role "id")
-                                                           policies))))))))))))
-      (.then (fn [_] nil))))
+                 (-> (role-permissions-from-contracts (:slug seed))
+                     (.then (fn [perms]
+                              (let [perms (or perms (:permissions seed) [])]
+                                (-> (set-role-permissions! pool (aget role "id") perms)
+                                    (.then (fn [_]
+                                             (-> (role-tool-policies-from-contracts (:slug seed))
+                                                 (.then (fn [policies]
+                                                          (let [policies (or policies (:tool-policies seed))]
+                                                            (set-role-tool-policies! pool (aget role "id") policies)))))))))))))
+       )))))))
 
 (defn- tool-allowed
   [context tool-id]
