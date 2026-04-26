@@ -106,7 +106,7 @@
   (-> (.code reply status) (.send body)))
 
 (defn- protected-resource-metadata-url [base]
-  (.toString (js/URL. "/.well-known/oauth-protected-resource" base)))
+  (.toString (js/URL. "/.well-known/oauth-protected-resource" (.-href base))))
 
 (defn- www-authenticate-challenge [base]
   (str "Bearer realm=\"mcp\", resource_metadata=\""
@@ -201,7 +201,7 @@
          (fn [_]
            (let [base         (public-base-url config)
                  current-path (or (some-> req (aget "raw") (aget "url")) "/api/mcp/oauth/authorize")
-                 login-url    (js/URL. "/api/auth/login" base)]
+                 login-url    (js/URL. "/api/auth/login" (.-href base))]
              (.set (.-searchParams login-url) "redirect" current-path)
              (.redirect reply (.toString login-url) 302)))))))
 
@@ -346,7 +346,7 @@
 
 (defn- authorization-consent-html
   [{:keys [base auth-context client-id redirect-uri state code-challenge requested-scope tools selected]}]
-  (let [confirm-url (js/URL. "/api/mcp/oauth/authorize/confirm" base)
+  (let [confirm-url (js/URL. "/api/mcp/oauth/authorize/confirm" (.-href base))
         user-email  (str (or (aget auth-context "user" "email") (aget auth-context "userEmail") ""))
         org-slug    (str (or (aget auth-context "org" "slug") (aget auth-context "orgSlug") ""))]
     (.set (.-searchParams confirm-url) "client_id" client-id)
@@ -447,9 +447,9 @@
   (let [issuer (js/URL. (.toString base))]
     (.send reply
            #js {:issuer                              (-> (.toString issuer) (.replace (js/RegExp. "/$") ""))
-                :authorization_endpoint              (.toString (js/URL. "/api/mcp/oauth/authorize" issuer))
-                :token_endpoint                      (.toString (js/URL. "/api/mcp/oauth/token" issuer))
-                :registration_endpoint               (.toString (js/URL. "/api/mcp/oauth/register" issuer))
+                :authorization_endpoint              (.toString (js/URL. "/api/mcp/oauth/authorize" (.-href issuer)))
+                :token_endpoint                      (.toString (js/URL. "/api/mcp/oauth/token" (.-href issuer)))
+                :registration_endpoint               (.toString (js/URL. "/api/mcp/oauth/register" (.-href issuer)))
                 :response_types_supported            #js ["code"]
                 :grant_types_supported               #js ["authorization_code"]
                 :code_challenge_methods_supported    #js ["S256"]
@@ -458,7 +458,7 @@
 (defroute mcp-protected-resource-metadata! [] "GET" "/.well-known/oauth-protected-resource"
   (let [issuer (-> (.toString (js/URL. (.toString base))) (.replace (js/RegExp. "/$") ""))]
     (.send reply
-           #js {:resource                (.toString (js/URL. "/mcp" base))
+           #js {:resource                (.toString (js/URL. "/mcp" (.-href base)))
                 :authorization_servers   #js [issuer]
                 :scopes_supported        #js ["mcp:tools"]
                 :bearer_methods_supported #js ["header"]})))
