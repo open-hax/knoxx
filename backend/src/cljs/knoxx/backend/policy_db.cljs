@@ -391,12 +391,14 @@
    appears in contracts before it is added to the runtime tool registry (or
    when different nodes deploy slightly different registries)."
   []
-  (->> (concat (tool-registry/known-tool-ids)
-               (seq (contract-tool-ids)))
-       (keep tool-registry/normalize-tool-id)
-       distinct
-       sort
-       vec))
+  (let [runtime-ids (tool-registry/known-tool-ids)
+        contract-ids (some-> (contract-tool-ids) seq)]
+    (when runtime-ids
+      (->> (concat runtime-ids contract-ids)
+           (keep tool-registry/normalize-tool-id)
+           distinct
+           sort
+           vec))))
 
 (defn- ensure-tool-definitions!
   "Upsert tool definitions so FK constraints on *_tool_policies can't fail.
@@ -817,7 +819,7 @@
   (let [slug (slugify (or (:primaryOrgSlug options) "open-hax") "open-hax")
         name (str (or (:primaryOrgName options) "Open Hax"))
         kind (str (or (:primaryOrgKind options) "platform_owner"))]
-    (-> (query-one! pool
+(-> (query-one! pool
                     "INSERT INTO orgs (slug, name, kind, is_primary, status)
                      VALUES ($1, $2, $3, TRUE, 'active')
                      ON CONFLICT (slug) DO UPDATE
@@ -827,9 +829,9 @@
                          updated_at = NOW()
                      RETURNING *"
                     [slug name kind])
-        (.then (fn [org]
-                 (.then (query! pool "UPDATE orgs SET is_primary = CASE WHEN slug = $1 THEN TRUE ELSE FALSE END" [slug])
-                        (fn [_] org)))))))
+         (.then (fn [org]
+                  (query! pool "UPDATE orgs SET is_primary = CASE WHEN slug = $1 THEN TRUE ELSE FALSE END" [slug])
+                  (fn [_] org))))))
 
 (defn- find-org-by-slug
   [pool slug]
