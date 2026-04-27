@@ -22,12 +22,16 @@
          (some-> text str reader/read-string)))
 
 (defn role-slug->file [config role-slug]
-  (when-let [segment (safe-segment role-slug)]
-    (contract-loader/role-file-path config segment)))
+  (let [segment (safe-segment role-slug)]
+    (if segment
+      (contract-loader/role-file-path config segment)
+      (js/Promise.resolve nil))))
 
 (defn cap-slug->file [config cap-slug]
-  (when-let [segment (safe-segment cap-slug)]
-    (contract-loader/capability-file-path config segment)))
+  (let [segment (safe-segment cap-slug)]
+    (if segment
+      (contract-loader/capability-file-path config segment)
+      (js/Promise.resolve nil))))
 
 (defn list-role-slugs [config]
   (-> (contract-loader/list-contract-ids! config "roles")
@@ -65,8 +69,10 @@
 (defn role-capability-ids [config role]
   (-> (normalize-role config role)
        (.then (fn [role-slug]
-                (when-let [path (role-slug->file config role-slug)]
-                  (read-edn path))))
+                (-> (role-slug->file config role-slug)
+                    (.then (fn [path]
+                             (when path
+                               (read-edn path)))))))
        (.then (fn [role-map]
                 (->> (or (:role/capabilities role-map) [])
                      (keep normalize-cap-id)
@@ -77,14 +83,18 @@
   (let [cap-slug (some-> cap normalize-cap-id cap-id->slug (when (str/starts-with? cap "cap_") cap))]
     (if-not cap-slug
       (js/Promise.resolve [])
-      (-> (read-edn (cap-slug->file config cap-slug))
-          (.then (fn [cap-map]
-                   (->> (:cap/tools cap-map)
-                        (map tools/normalize-tool-id)
-                        distinct
-                        sort
-                        vec)))
-          (.catch (fn [_] []))))))
+      (-> (cap-slug->file config cap-slug)
+          (.then (fn [path]
+                   (if path
+                     (-> (read-edn path)
+                         (.then (fn [cap-map]
+                                  (->> (:cap/tools cap-map)
+                                       (map tools/normalize-tool-id)
+                                       distinct
+                                       sort
+                                       vec)))
+                         (.catch (fn [_] [])))
+                     (js/Promise.resolve []))))))))
 
 (defn role-tool-ids [config role]
   (-> (role-capability-ids config role)
@@ -103,8 +113,10 @@
 (defn role-contract [config role]
   (-> (normalize-role config role)
        (.then (fn [slug]
-                (when-let [path (role-slug->file config slug)]
-                  (read-edn path))))))
+                (-> (role-slug->file config slug)
+                    (.then (fn [path]
+                             (when path
+                               (read-edn path)))))))))
 
 (defn role-permissions [config role]
   (-> (role-contract config role)
