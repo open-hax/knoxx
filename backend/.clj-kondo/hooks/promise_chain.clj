@@ -26,22 +26,44 @@
                              :message (str "file ~" n " lines (warning >=400)")
                              :type :file-length/long :level :warning)))))))
 
-(defn- dot-method? [node]
+(defn- promise-method? [node]
+  "Returns the method symbol if node is a (.then ...) or (.catch ...) call."
   (when (api/list-node? node)
     (when-let [op (first (:children node))]
       (when (api/token-node? op)
         (let [s (str (api/sexpr op))]
-          (or (= s ".then") (= s ".catch")))))))
+          (when (or (= s ".then") (= s ".catch"))
+            (api/sexpr op)))))))
+
+(defn- nested-chain? [node]
+  "True when any argument of this .then/.catch call is itself a .then/.catch call,
+   i.e., the promise chain is nested/composed rather than flat."
+  (when (api/list-node? node)
+    (let [args (rest (:children node))]
+      (boolean
+       (some (fn [arg]
+               (or (promise-method? arg)
+                   ;; descend one level: callback body may contain a chained call
+                   (when (api/list-node? arg)
+                     (some promise-method? (:children arg)))))
+             args)))))
 
 (defn- walk! [node]
   (when (api/list-node? node)
     (let [ch (:children node) op (first ch)]
       (when-not (and op (api/token-node? op) (= 'quote (api/sexpr op)))
-        (when (dot-method? node)
-          (api/reg-finding!
-           (assoc (meta node)
-                  :message (str (api/sexpr op) " — raw Promise chain; use js-await")
-                  :type :promise-chain/prefer-js-await :level :warning)))
+        (when-let [method (promise-method? node)]
+          (if (nested-chain? node)
+            ;; Nested chain — stronger advice: use p/let
+            (api/reg-finding!
+             (assoc (meta node)
+                    :message (str method " — nested Promise chain detected; replace chain with (p/let [x ...] ...) from promesa.core")
+                    :type :promise-chain/prefer-p-let :level :warning))
+            ;; Flat single .then/.catch — gentler warning
+            (api/reg-finding!
+             (assoc (meta node)
+                    :message (str method " — raw Promise chain; prefer (p/let [x ...] ...) from promesa.core over .then/.catch chains")
+                    :type :promise-chain/prefer-js-await :level :warning))))
         (doseq [c ch] (walk! c))))))
 
 (defn check [{:keys [node]}]

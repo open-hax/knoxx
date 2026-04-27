@@ -1,0 +1,9 @@
+{:contract/kind   :trigger
+ :contract/id     "patrol_trigger"
+ :trigger/kind    :cron
+ :trigger/target  "patrol_pipeline"
+ :trigger/schedule "*/5 * * * *"
+ :enabled         true
+ :data
+ {:context {:channelId "{{defaultChannels}}"
+            :patrol true}}}

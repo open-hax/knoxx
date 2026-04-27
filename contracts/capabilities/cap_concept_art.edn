@@ -1,3 +1,7 @@
-{:cap/id :cap/concept_art
- :capability/description "Visual concept art, art direction, palettes, and visual briefs."
- :capability/tools [:read]}
+{:cap/id :cap/concept-art
+ :cap/tools [:read :write]
+ :cap/user-surfaces [{:surface/id :workspace/concept-art
+                      :surface/label "Concept art workbench"
+                      :surface/kind :editor
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Visual concept art, art direction, palettes, and visual briefs."}]}

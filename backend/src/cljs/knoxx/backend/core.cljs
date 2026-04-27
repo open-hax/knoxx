@@ -110,7 +110,7 @@
           Fastify (aget runtime "Fastify")
           fastify-cors (aget runtime "fastifyCors")
           fastify-multipart (aget runtime "fastifyMultipart")
-          app (Fastify #js {:logger true})]
+          app (Fastify #js {:logger #js {:stream (.-stderr js/process)}})]
       (reset! runtime-state/config* config)
       (ensure-settings! config)
       (-> (js/Promise.resolve nil)

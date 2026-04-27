@@ -21,7 +21,7 @@
 (defn no-legacy-keys?
   "Invariant 3: No FORBIDDEN_INPUTS key survived into a ResolvedToolSuite."
   [suite]
-  (empty? (set/intersection (set (keys suite)) resolution/FORBIDDEN_INPUTS))))
+  (empty? (set/intersection (set (keys suite)) resolution/FORBIDDEN_INPUTS)))
 
 (defn grant-refs-traceable?
   "Invariant 4: Every tool's grant-ref resolves to a loaded contract or actor id."

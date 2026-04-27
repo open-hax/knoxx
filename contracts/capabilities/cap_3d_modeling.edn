@@ -1,3 +1,7 @@
-{:cap/id :cap/3d_modeling
- :capability/description "3D modeling, Blender workflows, mesh creation, materials, and rendering."
- :capability/tools [:bash :read]}
+{:cap/id :cap/3d-modeling
+ :cap/tools [:bash :read]
+ :cap/user-surfaces [{:surface/id :workspace/3d-modeling
+                      :surface/label "3D modeling workbench"
+                      :surface/kind :editor
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "3D modeling, Blender workflows, mesh creation, materials, and rendering."}]}

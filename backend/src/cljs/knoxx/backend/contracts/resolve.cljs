@@ -35,7 +35,7 @@
   [config actor-spec role-slugs capability-ids agent-contract]
   (let [actor-x (actor-extras (:actor actor-spec))
         role-x (map #(role-extras (roles/role-contract config %)) role-slugs)
-        cap-x (map #(capability-extras (loader/load-capability config %)) capability-ids)
+        cap-x (map #(capability-extras (read-edn-sync (loader/capability-file-path config %))) capability-ids)
         agent-x (agent-extras agent-contract)
         merged (reduce into {} (concat (filter seq role-x) (filter seq cap-x) (when agent-x [agent-x]) (when actor-x [actor-x])))]
     (when (seq merged) merged)))

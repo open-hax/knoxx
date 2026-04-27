@@ -1,0 +1,12 @@
+{:contract/kind  :pipeline
+ :contract/id    "patrol_pipeline"
+ :enabled        true
+ :pipeline/steps
+ [{:step/id       "patrol"
+   :step/contract "discord_patrol"
+   :step/data
+   {:context {:channelId "{{trigger.context.channelId}}"}
+    :output  {:key "patrol_result" :ttl "PT1H"}}}]
+ :data
+ {:context  {:source "discord-patrol"}
+  :output   {:key "patrol_pipeline_result" :ttl "PT2H"}}}

@@ -1,0 +1,25 @@
+
+> @open-hax/knoxx-backend-cljs@ test /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend
+> node scripts/run-shadow-tests-ci.mjs
+
+shadow-cljs - connected to server
+
+[:test] Compiling ...
+[1;31m------ ERROR -------------------------------------------------------------------[0m
+ File: /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/src/cljs/knoxx/backend/pipeline_runner.cljs:20:48
+--------------------------------------------------------------------------------
+[2m  17 |   "Given a map m, find all {{memory.temp:k}} keys and resolve them.[0m
+[2m  18 |    Returns Promise<{k value}>."[0m
+[2m  19 |   [m][0m
+[1m  20 |   (let [re #"\\{\\{memory\\.temp:([^}]+)\\}\\}"[0m
+------------------------------------------------------^-------------------------
+Illegal repetition near index 3
+\\{\\{memory\\.temp:([^}]+)\\}\\}
+   ^
+
+--------------------------------------------------------------------------------
+[2m  21 |         all-keys (->> m[0m
+[2m  22 |                      vals[0m
+[2m  23 |                      (keep (fn [v] (when (string? v)[0m
+[2m  24 |                                   (->> (str/re-seq re v) (map second))))[0m
+-------------------------------------------------------------------------------- ELIFECYCLE  Test failed. See above for more details.

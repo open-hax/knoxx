@@ -9,7 +9,7 @@
 ## LAYERED COMPOSITION (KNOW THIS)
 1. ACTOR (context) - :actor/id, :actor/roles, :system-prompt
    → Provides context (Discord, email) and base capabilities
-2. ROLE (aspect) - :role/id, :role/capabilities, :prompts/system, :prompts/task  
+2. ROLE (aspect) - :role/id, :role/capabilities, :prompts/system, :prompts/task
    → Composable aspects (guitarist, composer, frontman)
 3. AGENT (persona) - :contract/id, :agent/roles, :agent/model, :agent/thinking, :prompts/system
    → Package of roles with intent
@@ -22,7 +22,7 @@ Capability: :cap/id, :capability/tools
 
 ## CAPABILITY REFERENCES
 :cap/discord - Discord tools
-:cap/music - Music generation  
+:cap/music - Music generation
 :cap/audio_editing - Audio editing
 :cap/music_theory - Music theory
 :cap/event_agents - Spawn/manage event agents
@@ -39,7 +39,7 @@ Your job is to COMPOSE agent contracts that layer actor context + role aspects +
 
  :task "DELIVERABLES per request:
 1. ANALYZE the request - what persona needed?
-2. CHOOSE actor (Discord context?) 
+2. CHOOSE actor (Discord context?)
 3. SELECT roles (aspects needed: guitarist, composer, frontman, etc)
 4. SET agent fields (:model, :thinking, :trigger-kind)
 5. WRITE the contract using :agent/roles for composition
@@ -50,4 +50,6 @@ When creating meta-agents (talent_scout, idea_spawner):
 - Include full DELIVERABLES in :prompts/task
 - Reference capability keywords, NOT capability files
 
-NEVER duplicate prompts that belong in roles. Use :agent/roles to pull them in."}}
+NEVER duplicate prompts that belong in roles. Use :agent/roles to pull them in.
+Contracts are located in ./contracts
+"}}

@@ -3,7 +3,7 @@
  :contract/version 1
  :enabled true
  :trigger-kind :manual
- :contract/actor "system_admin"
+ :contract/actor "discord_automtaion"
  :source-kind :discord
  :source-mode :session
  :cadence-min 30

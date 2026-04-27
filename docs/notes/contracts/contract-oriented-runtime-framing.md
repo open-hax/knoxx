@@ -1,0 +1,220 @@
+---
+title: "Contract-Oriented Runtime — Facts vs Frames"
+category: contracts
+created: 2026-04-23
+original: 2026.04.23.14.24.59.md
+status: note
+---
+
+
+Signal
+
+ (己, p=0.95) Your instinct is right: if the system is truly
+ contract-oriented, runtime is the wrong bucket for most of
+ this code.
+
+ (己, p=0.93) I would make this split:
+
+ - knoxx.backend.runtime.* = live process concerns only
+     - runtime.config
+     - runtime.state
+     - maybe runtime.sdk / runtime.sessions if needed
+ - knoxx.backend.contracts.* = contract system
+     - contracts.loader
+     - contracts.validator
+     - contracts.catalog
+     - contracts.resolve
+     - contracts.watch
+     - contracts.index
+     - contracts.engine or contracts.compiler
+     - contracts.drivers.{edn,mongodb,postgresql,json,yaml}
+
+ (己, p=0.92) I would not create a top-level contract_runtime
+ namespace unless it literally executes compiled contracts at
+ runtime. Idiomatic CLJ here is domain-first:
+ - contracts.* for contract semantics
+ - runtime.* for process/runtime semantics
+
+ (己, p=0.91) The real target architecture looks like this:
+
+ EDN contracts -> validate -> normalize -> resolve refs ->
+ compile/materialize -> serve/use everywhere
+
+ (己, p=0.9) That means:
+ - users have user contracts
+ - agents have agent contracts
+ - roles/capabilities/policies/models are contracts
+ - auth/policy/tooling/routes consume compiled contract state
+ - storage is a driver detail, not the meaning of the system
+
+ (己, p=0.89) On storage: MongoDB is a better fit than
+ PostgreSQL for the contract catalog if:
+ - Malli/Malli-like validation is already your truth layer
+ - contract shapes will evolve often
+ - you already run Mongo
+ - you want to stop doing schema duplication work
+
+ (己, p=0.88) But the key move is not “switch SQL to Mongo.”
+ The key move is “extract a contract store protocol, then swap
+ drivers under it.” Do that first.
+
+ (己, p=0.9) Concretely, I’d split your proposed namespaces
+ like this:
+
+ - top-level app domains:
+     - auth
+     - users
+     - agents
+     - routes
+     - tools
+     - triggers
+     - memory
+     - mcp
+     - policy
+     - voice
+     - translation
+     - discord
+ - contract subdomain:
+     - contracts.actors
+     - contracts.users
+     - contracts.agents
+     - contracts.roles
+     - contracts.capabilities
+     - contracts.policies
+     - contracts.models
+     - contracts.loader
+     - contracts.validator
+     - contracts.resolve
+     - contracts.drivers.*
+
+ (己, p=0.87) I would keep actors and capabilities under
+ contracts.* unless they also gain non-contract behavior.
+ Otherwise you’ll just recreate the same drift one level
+ higher.
+
+ (己, p=0.91) The highest-value decompositions are:
+
+ - policy_db.cljs
+     - split into:
+           - policy.catalog for static permission/tool
+ definitions
+           - policy.repo protocol
+           - policy.drivers.postgresql
+           - later policy.drivers.mongodb
+           - users.provisioning or contracts.users.sync for
+ actor-contract upserts
+ - tooling.cljs
+     - move contract resolution into contracts.resolve
+     - leave tool runtime factories in tooling / tools
+ - contracts_routes.cljs
+     - split into:
+           - routes.contracts
+           - contracts.watch
+           - contracts.index
+ - agent_turns.cljs
+     - split into:
+           - agents.turns
+           - agents.recovery
+           - agents.policy
+           - agents.streaming
+           - agents.previews
+ - event_agents.cljs
+     - split into:
+           - triggers.runtime
+           - triggers.sources.discord
+           - triggers.jobs
+           - triggers.dispatch
+           - triggers.state
+
+ Evidence
+
+ (己, p=0.97) runtime/config.cljs already says it is
+ “intentionally env-only,” which is a clean runtime boundary.
+
+ (己, p=0.97) runtime/state.cljs is basically just mutable
+ process state (config*), which also fits true runtime
+ semantics.
+
+ (己, p=0.96) runtime/contract_loader.cljs,
+ runtime/contract_validator.cljs, and runtime/roles.cljs are
+ not runtime concerns; they are contract catalog / validation /
+ resolution concerns.
+
+ (己, p=0.95) tooling.cljs currently resolves actors, agent
+ contracts, roles, capabilities, and effective tool policies.
+ That is contract interpretation logic, not generic tooling
+ logic.
+
+ (己, p=0.96) policy_db.cljs is the clearest drift signal: its
+ docstring says PostgreSQL policy DB, but it also contains
+ contract-dir discovery, EDN reading, and user actor contract
+ upsert helpers. That means persistence, policy semantics, and
+ contract projection are mixed together.
+
+ (己, p=0.95) contracts_routes.cljs mixes HTTP handlers, file
+ watching, Redis indexing, and event-agent reload behavior.
+ That should be at least three layers, not one.
+
+ (己, p=0.94) The backend already partially wants domain
+ separation:
+ - existing dirs: auth, routes, tools, triggers, users
+ - huge files still sitting at root:
+     - policy_db.cljs 113214 bytes
+     - agent_turns.cljs 84753
+     - app_routes.cljs 74938
+     - event_agents.cljs 49200
+
+ (己, p=0.93) The large function sizes reinforce the same
+ story:
+ - create-policy-db at line 2118 in policy_db.cljs
+ - send-agent-turn! at line 646 in agent_turns.cljs
+ - resume-recovered-session! at line 1223 in agent_turns.cljs
+
+ Frames
+
+ (己, p=0.84) Frame 1: this is mostly a naming problem.
+ - If so, renaming runtime to contracts and moving a few files
+ will buy a lot of clarity fast.
+
+ (己, p=0.88) Frame 2: this is really a boundary problem.
+ - The deeper issue is that contract loading, policy
+ enforcement, actor resolution, persistence, and routes are
+ entangled. Renaming alone will help, but not fix drift.
+
+ (己, p=0.82) Frame 3: this is a source-of-truth problem.
+ - If EDN contracts are meant to do the work, then DBs should
+ become projections/caches/materializations of contract state,
+ not peer sources of truth.
+
+ Countermoves
+
+ (己, p=0.93) Do not migrate from PostgreSQL to MongoDB by
+ rewriting policy_db.cljs in place. First extract a protocol,
+ keep the PG driver, then add a Mongo driver.
+
+ (己, p=0.91) Do not let “driver system” mean “every backend is
+ equally canonical.” Pick one source-of-truth model:
+ - best fit here: EDN contracts canonical, DBs are
+ projections/materializations
+
+ (己, p=0.9) Do not put actors, roles, capabilities, and
+ policies into unrelated top-level namespaces unless they have
+ app behavior independent of contracts. Otherwise you weaken
+ the contract-oriented center.
+
+ (己, p=0.89) Do not keep contract resolution in tooling.cljs.
+ That guarantees future policy and agent logic keeps leaking
+ into tool code.
+
+ (己, p=0.88) Do not try to break up app_routes.cljs first. The
+ safer first seam is the contract subsystem, because it already
+ has identifiable files and clearer domain edges.
+
+ Next
+
+ (己, p=0.95) Write a short
+ docs/contract-oriented-backend-refactor.md that defines one
+ boundary in one sentence: “knoxx.backend.contracts.* owns
+ loading, validating, resolving, compiling, and storing
+ contracts; knoxx.backend.runtime.* owns live process state
+ only.”

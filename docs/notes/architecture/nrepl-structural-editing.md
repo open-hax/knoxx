@@ -1,0 +1,94 @@
+---
+title: "nREPL + Structural Editing as Agent Capability"
+category: architecture
+created: 2026-04-21
+original: 2026.04.21.17.02.30.md
+status: note
+---
+
+## Two Separable Problems
+
+**1. nREPL into a running shadow-cljs Node process** — already mostly free, shadow-cljs ships an nREPL server. You just need to start it and expose it on the MCP server as a tool.
+
+**2. Structural editing as an agent capability** — this is the interesting part. The agent needs to think of code as a **zipper over a tree**, not as a string. The tools it calls should be `slurp`, `barf`, `wrap`, `splice`, `raise`, `transpose` — not `str/replace`.
+
+***
+
+## What "Lisp as Data" Means for an Agent
+
+The representation an agent can reason about cleanly is a **tagged node tree**, not s-expression text:
+
+```clojure
+;; The agent sees this — a cursor into a zipper
+{:node {:tag :list
+        :children [{:tag :sym :val "defn"}
+                   {:tag :sym :val "foo"}
+                   {:tag :vec :children []}
+                   {:tag :list :children [...]}]}
+ :path [...]}  ; breadcrumb back to root
+```
+
+The tools expose **named structural moves** that return a new cursor. The agent never constructs or parses text — it only calls tools and reads cursor state back.
+
+***
+
+## Tool Surface (the MCP tools to expose)
+
+```clojure
+;; READ
+read-file     {:path str}               -> {:cursor Cursor :text str}
+get-node      {:cursor Cursor}          -> {:node Node}
+children      {:cursor Cursor}          -> {:nodes [Node]}
+parent        {:cursor Cursor}          -> {:cursor Cursor}
+next-sibling  {:cursor Cursor}          -> {:cursor Cursor}
+prev-sibling  {:cursor Cursor}          -> {:cursor Cursor}
+down          {:cursor Cursor :idx int} -> {:cursor Cursor}
+find-form     {:cursor Cursor :q str}   -> {:cursor Cursor} ; path to first match
+
+;; STRUCTURAL EDIT
+slurp-forward {:cursor Cursor}  -> {:cursor Cursor :text str}
+barf-forward  {:cursor Cursor}  -> {:cursor Cursor :text str}
+slurp-back    {:cursor Cursor}  -> {:cursor Cursor :text str}
+barf-back     {:cursor Cursor}  -> {:cursor Cursor :text str}
+wrap          {:cursor Cursor :tag :list|:vec|:map} -> {:cursor Cursor :text str}
+splice        {:cursor Cursor}  -> {:cursor Cursor :text str}
+raise         {:cursor Cursor}  -> {:cursor Cursor :text str}
+kill-node     {:cursor Cursor}  -> {:cursor Cursor :text str}
+insert-before {:cursor Cursor :form str} -> {:cursor Cursor :text str}
+insert-after  {:cursor Cursor :form str} -> {:cursor Cursor :text str}
+replace-node  {:cursor Cursor :form str} -> {:cursor Cursor :text str}
+
+;; EVAL (nREPL bridge)
+eval-form     {:cursor Cursor}          -> {:result str :error str}
+eval-str      {:ns str :code str}       -> {:result str :error str}
+load-ns       {:ns str}                 -> {:result str :error str}
+```
+
+Every edit tool returns the **updated text** too — so the agent can always see what it just did in plain text without needing to traverse back to root.
+
+***
+
+## Stack Choices
+
+| Layer | Choice | Why |
+|---|---|---|
+| Parser | [`rewrite-clj`](https://github.com/clj-commons/rewrite-clj) | Preserves whitespace, runs on JVM; output is a zipper already |
+| Cursor serialization | EDN + base64 over the wire | Zippers aren't JSON-serializable; serialize the path as a vector of indices |
+| nREPL bridge | shadow-cljs built-in nREPL + `nrepl` client lib on JVM | shadow-cljs already starts one on a configurable port |
+| Transport | Exposed as Knoxx MCP tools in `mcp_expose.cljs` | Same tool registration path everything else uses |
+
+The key insight: `rewrite-clj` zipper paths are just vectors of integers (child indices). A cursor is `{:file "path/to/foo.cljs" :path [0 2 1]}`. Totally serializable, totally stateless on the server side.
+
+***
+
+## The nREPL Wiring (what's actually missing)
+
+shadow-cljs already runs an nREPL server when you add this to `shadow-cljs.edn`:
+
+```clojure
+{:nrepl {:port 7888}}
+```
+
+The MCP tools then connect to it as a client using `nrepl.core` from the JVM side (a small Clojure sidecar), or you bridge it via a Node TCP socket if you want to stay fully in ClojureScript. The cleanest path given the current stack: **a small JVM sidecar** (`nrepl-bridge.clj`, ~50 lines) that accepts HTTP POSTs from the Node backend and forwards them to the nREPL socket. The Node side never needs to speak the nREPL protocol directly.
+
+***

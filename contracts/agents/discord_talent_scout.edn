@@ -9,8 +9,7 @@
  :cadence-min 120
 
  :agent
- {:role :meta_producer
-  :roles [:contract_writer :meseeks]
+ {:roles [:contract_writer :meseeks]
   :model "gemma4:31b"
   :thinking :xhigh}
 
@@ -51,7 +50,7 @@
 
 Track everything in :data. Speak like a seasoned scout who's seen it all."}
 
- :capabilities [:cap/discord :cap/event_agents :cap/music :cap/audio_editing :cap/music_theory]
+ ;; :capabilities [:cap/discord :cap/event_agents :cap/music :cap/audio_editing :cap/music_theory]
 
  :data
  {:active_agents [[:drummer :active "session_drummer_20260427061610"]

@@ -7,7 +7,8 @@
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 
-(def contract-class-order ["agents" "actors" "roles" "capabilities" "policies" "model_families" "models"])
+(def contract-class-order ["agents" "actors" "roles" "capabilities" "policies" "model_families" "models"
+                              "actions" "pipelines" "triggers"])
 
 (defn- contract-edn-filename?
   [name]
@@ -62,6 +63,9 @@
       ("policy" "policies") "policies"
       ("model-family" "model-families" "model_family" "model_families") "model_families"
       ("model" "models") "models"
+      ("action" "actions") "actions"
+      ("pipeline" "pipelines") "pipelines"
+      ("trigger" "triggers") "triggers"
       (throw (js/Error. (str "Unknown contract class: " value))))))
 
 (defn- resolve-contracts-dir

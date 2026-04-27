@@ -1,3 +1,7 @@
 {:cap/id :cap/creative-writing
- :capability/description "Story writing, worldbuilding, characters, plot, and narrative craft tools."
- :capability/tools [:write :read]}
+ :cap/tools [:read :write]
+ :cap/user-surfaces [{:surface/id :workspace/creative-writing
+                      :surface/label "Creative writing workbench"
+                      :surface/kind :editor
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Story writing, worldbuilding, characters, plot, and narrative craft tools."}]}

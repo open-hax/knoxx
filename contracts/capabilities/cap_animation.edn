@@ -1,3 +1,7 @@
 {:cap/id :cap/animation
- :capability/description "Animation production, storyboards, keyframes, timing, and motion graphics."
- :capability/tools [:bash :read]}
+ :cap/tools [:bash :read]
+ :cap/user-surfaces [{:surface/id :workspace/animation
+                      :surface/label "Animation workbench"
+                      :surface/kind :editor
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Animation production, storyboards, keyframes, timing, and motion graphics."}]}

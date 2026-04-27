@@ -11,8 +11,7 @@
     "test:coverage": "node scripts/run-shadow-tests-coverage-ci.mjs",
     "test:shadow": "shadow-cljs compile test",
     "test:e2e": "node --test tests/*.e2e.test.mjs",
-    "import:agent-sessions": "python3 scripts/import_agent_sessions.py",
-    "lint": "clj-kondo --lint src/cljs",
+    "lint": "clj-kondo --lint src/cljs test/cljs",
     "typecheck": "shadow-cljs compile server",
     "lint:size": "node ../scripts/lint-file-sizes.mjs backend/src/cljs"
   },

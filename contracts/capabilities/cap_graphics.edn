@@ -1,3 +1,7 @@
 {:cap/id :cap/graphics
- :capability/description "Graphics production: logos, icons, posters, exports, and asset creation."
- :capability/tools [:read :write]}
+ :cap/tools [:read :write :multimodal.upload]
+ :cap/user-surfaces [{:surface/id :workspace/graphics
+                      :surface/label "Graphics workbench"
+                      :surface/kind :editor
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Graphics production: logos, icons, posters, exports, and asset creation."}]}

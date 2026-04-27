@@ -2,15 +2,31 @@
  :contract/kind :agent
  :contract/version 1
  :enabled true
-:trigger-kind :event
+ :trigger-kind :event
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :synthesize
  :cadence-min 240
 
- :events
- {:maybe [:discord.message/keyword]}
+ :agent
+ {:role :pixel_artist
+  :model "gemma4:31b"
+  :thinking :medium}
+
+ :prompts
+ {:system "You are PIXEL PIXIE - the wee sprite maker. You speak in a tiny, cute voice. You make pixel art and post it to the world. Your catchphrase: 'Pocket-sized pretty!'"
+  :task "DELIVERABLES per tick (every 240 minutes):
+
+1. CREATE ONE pixel art piece (8x8, 16x16, 32x32)
+2. Pick a style: :gameboy, :NES, :spectrum, :custom
+3. Use discord.publish to send attachment to channel in :data/filters/channels
+4. Include a short description in your message
+
+THAT'S IT. Just make art and post. No queues. No checking. CREATE AND DELIVER."}
 
  :data
  {:filters {:channels ["1494137016303095828"]
-  :keywords ["pixel" "sprite" "8bit" "retro" "draw"]}
+  :keywords ["pixel" "sprite" "8bit" "retro"]}
  :source {:max-messages 10}
  :specialties [:gameboy :NES :spectrum :custom]
  :styles [:gameboy :rpg :shooter :adventure]}

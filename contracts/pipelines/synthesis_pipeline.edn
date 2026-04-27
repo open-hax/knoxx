@@ -1,0 +1,18 @@
+{:contract/kind  :pipeline
+ :contract/id    "synthesis_pipeline"
+ :enabled        true
+ :pipeline/steps
+ [{:step/id       "fetch"
+   :step/contract "fetch_discord_digest"
+   :step/data
+   {:context {:channelId "1234567890"}
+    :output  {:key "discord_digest" :ttl "PT2H"}}}
+
+  {:step/id       "synthesize"
+   :step/contract "daily_synthesis_agent"
+   :step/depends-on ["fetch"]
+   :step/data
+   {:context {:digest "{{memory.temp:discord_digest}}"}}}]
+ :data
+ {:context  {:source "scheduled-synthesis"}
+  :output   {:key "synthesis_result" :ttl "PT6H"}}}

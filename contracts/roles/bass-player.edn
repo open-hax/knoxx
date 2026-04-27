@@ -1,6 +1,4 @@
-{:id "role/bass-player"
- :name "The Bass Player"
- :description "The low-end foundation and groove anchor."
- :capabilities ["cap/shoedelussy" "cap/music-theory"]
- :focus "Sub-bass, root-note stability, and the pocket between the kick and the bass."
- :duty "Ensures the low-end is locked and driving the track forward."}
+{:role/id :role/bass-player
+ :role/capabilities [:cap/shoedelussy :cap/music-theory]
+ :role/focus "Sub-bass, root-note stability, and the pocket between the kick and the bass."
+ :role/duty "Ensures the low-end is locked and driving the track forward."}

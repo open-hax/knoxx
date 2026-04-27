@@ -1,0 +1,19 @@
+---
+title: "Capability/Tool Gap Audit"
+category: contracts
+created: 2026-04-22
+original: 2026.04.22.11.39.41.md
+status: note
+---
+
+I need you to review the knoxx backend/contracts/capabilities/*.edn files and compare them to the backend/src/cljs/backend/ tools implementations. We are missing a few tools that are used by the defined capability contracts.
+
+the agent should be able to render messages and audio.
+The agent should be able to see and "hear" audio, if the model contract specifies the model has those abilities
+The agent should be able to render spectrograms, so a vision model can still do audio work with me
+
+And I want a special agent I can run for doing artistic work with music and stuff.
+git@github.com:mojomast/shoedelussy.git
+we need an instance of this MCP server running.
+Add it to the pm2 ecosystem file, and write capabilities for it to assign to the creative bot.
+

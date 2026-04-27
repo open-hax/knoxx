@@ -1,0 +1,8 @@
+{:contract/kind   :action
+ :contract/id     "discord_patrol"
+ :action/handler  "discord.read"
+ :action/params   {:maxMessages 25}
+ :data
+ {:context  {:channelId "{{trigger.context.channelId}}"}
+  :output   {:key  "patrol_result"
+             :ttl  "PT1H"}}}

@@ -1,6 +1,4 @@
-{:id "role/rapper"
- :name "The Rapper"
- :description "The rhythmic poet and flow specialist."
- :capabilities ["cap/vocal-synthesis" "cap/shoedelussy"]
- :focus "Cadence, internal rhyme, and percussive vocal delivery."
- :duty "Writes flow patterns and syllable-mapped vocal specs."}
+{:role/id :role/rapper
+ :role/capabilities [:cap/vocal-synthesis :cap/shoedelussy]
+ :role/focus "Cadence, internal rhyme, and percussive vocal delivery."
+ :role/duty "Writes flow patterns and syllable-mapped vocal specs."}
