@@ -359,7 +359,7 @@
       (let [file-path (loader/contract-file-path config klass route-id)]
         (-> (loader/write-edn-file! file-path edn-text)
             (.then (fn [_]
-                     (sync-contract-index! config)))
+                     (sync-contract-index! config) (schedule-contract-refresh! config "programmatic save")))
             (.then (fn [_]
                      (do-json 200 {:ok true
                                    :contractClass klass
@@ -418,7 +418,7 @@
                                 :ednContractId parsed-id}))
           (-> (loader/write-edn-file! (loader/contract-file-path config "agents" route-id) edn-text)
               (.then (fn [_]
-                       (sync-contract-index! config)))
+                       (sync-contract-index! config) (schedule-contract-refresh! config "programmatic save")))
               (.then (fn [_]
                        (do-text 200 (pr-str {:ok true
                                              :contract/id route-id
