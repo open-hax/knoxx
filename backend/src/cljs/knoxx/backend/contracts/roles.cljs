@@ -21,8 +21,13 @@
   (p/let [text (.readFile fsp file-path "utf8")]
          (some-> text str reader/read-string)))
 
-(def role-slug->file (comp contract-loader/role-file-path safe-segment))
-(def cap-slug->file (comp contract-loader/capability-file-path safe-segment))
+(defn role-slug->file [config role-slug]
+  (when-let [segment (safe-segment role-slug)]
+    (contract-loader/role-file-path config segment)))
+
+(defn cap-slug->file [config cap-slug]
+  (when-let [segment (safe-segment cap-slug)]
+    (contract-loader/capability-file-path config segment)))
 
 (defn list-role-slugs [config]
   (-> (contract-loader/list-contract-ids! config "roles")

@@ -412,19 +412,18 @@
                  vec)]
     (if (empty? ids)
       (js/Promise.resolve nil)
-      (-> (js/Promise.all
-           (into-array
-            (for [tool-id ids]
-              (let [{:keys [label description risk-level]} (tool-registry/get-tool tool-id)]
-                (query! pool
-                        "INSERT INTO tool_definitions (id, label, description, risk_level)
+      (js/Promise.all
+       (into-array
+        (for [tool-id ids]
+          (let [{:keys [label description risk-level]} (tool-registry/get-tool tool-id)]
+            (query! pool
+                    "INSERT INTO tool_definitions (id, label, description, risk_level)
                          VALUES ($1, $2, $3, $4)
                          ON CONFLICT (id) DO UPDATE
                          SET label = EXCLUDED.label,
                              description = EXCLUDED.description,
                              risk_level = EXCLUDED.risk_level"
-                        [tool-id (or label tool-id) (or description "") (or risk-level "low")])))))
-          (.then (fn [_] nil))))))
+                    [tool-id (or label tool-id) (or description "") (or risk-level "low")]))))))))
 
 (defn- normalize-lake-config
   [config]
