@@ -643,69 +643,119 @@ export default function ContractsPage() {
 
         {/* Panel body */}
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 10px 12px" }}>
+          {/* Search input */}
+          <div style={{ marginBottom: 12 }}>
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search contracts..."
+              style={{
+                width: "100%",
+                padding: "8px 10px",
+                borderRadius: tokens.radius.md,
+                border: `1px solid ${palette.fg.subtle}`,
+                background: palette.bg.default,
+                color: palette.fg.default,
+                fontSize: tokens.fontSize.sm,
+                outline: "none",
+              }}
+            />
+          </div>
+
           {leftPanelTab === "agents" ? (
             <>
               {loadingAgents ? (
                 <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>Loading agents…</div>
-              ) : agentEntries.length === 0 ? (
-                <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>No agents yet. Save a contract to create one.</div>
+              ) : filteredContracts.length === 0 ? (
+                <div style={{ fontSize: tokens.fontSize.sm, color: palette.fg.muted, padding: "8px" }}>No contracts found.</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {agentEntries.map((entry) => {
-                    const isSelected = entry.id === selectedId && entry.contractClass === selectedContractClass;
+                  {filteredContracts.map(([folder, items]) => {
+                    const isCollapsed = collapsedFolders.has(folder);
+                    const showItems = isSearching || !isCollapsed;
+
                     return (
-                      <button
-                        key={`${entry.contractClass}:${entry.id}`}
-                        type="button"
-                        onClick={() => { setSelectedId(entry.id); setSelectedContractClass(entry.contractClass); }}
-                        style={{
-                          width: "100%", padding: "10px 12px", textAlign: "left",
-                          borderRadius: tokens.radius.md,
-                          border: `1px solid ${isSelected ? palette.accent.cyan : "transparent"}`,
-                          background: isSelected ? "rgba(102, 217, 239, 0.08)" : "transparent",
-                          cursor: "pointer", transition: "background 0.1s, border-color 0.1s",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)";
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent";
-                        }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                            <span style={{ color: statusColor(entry.status, palette), fontSize: 10 }}>{statusDot(entry.status)}</span>
-                            <span style={{
-                              fontSize: tokens.fontSize.sm, fontWeight: 500,
-                              color: isSelected ? palette.accent.cyan : palette.fg.default,
-                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                            }}>
-                              {entry.label}
-                            </span>
-                          </div>
-                          <span style={{
-                            fontSize: tokens.fontSize.xs, padding: "1px 6px",
-                            borderRadius: tokens.radius.xs,
-                            background: entry.enabled ? "rgba(166, 226, 46, 0.1)" : "rgba(117, 113, 94, 0.15)",
-                            color: entry.enabled ? palette.accent.green : palette.fg.muted,
-                          }}>
-                            {entry.enabled ? "on" : "off"}
+                      <div key={folder}>
+                        {/* Folder header */}
+                        <button
+                          type="button"
+                          onClick={() => !isSearching && toggleFolder(folder)}
+                          disabled={isSearching}
+                          style={{
+                            width: "100%",
+                            padding: "8px 10px",
+                            textAlign: "left",
+                            borderRadius: tokens.radius.sm,
+                            border: "none",
+                            background: "rgba(255,255,255,0.03)",
+                            color: palette.fg.muted,
+                            fontSize: tokens.fontSize.xs,
+                            fontWeight: 600,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                            cursor: isSearching ? "default" : "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          <span style={{ transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
+                            {isSearching ? "▸" : (isCollapsed ? "▸" : "▾")}
                           </span>
-                        </div>
-                        <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
-                          <span>{entry.contractClass}</span>
-                          <span>·</span>
-                          <span>{entry.triggerKind}</span>
-                          <span>·</span>
-                          <span>{entry.sourceKind}</span>
-                          {entry.model ? (<><span>·</span><span>{entry.model}</span></>) : null}
-                        </div>
-                        {entry.lastStatus ? (
-                          <div style={{ marginTop: 3, fontSize: tokens.fontSize.xs, color: entry.lastStatus === "ok" ? palette.accent.green : palette.accent.orange }}>
-                            last: {entry.lastStatus}
-                          </div>
-                        ) : null}
-                      </button>
+                          {folder} ({items.length})
+                        </button>
+
+                        {/* Folder items */}
+                        {showItems && items.map((entry) => {
+                          const isSelected = entry.id === selectedId && entry.contractClass === selectedContractClass;
+                          return (
+                            <button
+                              key={`${entry.contractClass}:${entry.id}`}
+                              type="button"
+                              onClick={() => { setSelectedId(entry.id); setSelectedContractClass(entry.contractClass); }}
+                              style={{
+                                width: "100%", padding: "10px 12px", textAlign: "left",
+                                borderRadius: tokens.radius.md,
+                                border: `1px solid ${isSelected ? palette.accent.cyan : "transparent"}`,
+                                background: isSelected ? "rgba(102, 217, 239, 0.08)" : "transparent",
+                                cursor: "pointer", transition: "background 0.1s, border-color 0.1s",
+                                marginLeft: 8,
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)";
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent";
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                  <span style={{
+                                    fontSize: tokens.fontSize.sm, fontWeight: 500,
+                                    color: isSelected ? palette.accent.cyan : palette.fg.default,
+                                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                  }}>
+                                    {entry.title ?? entry.id}
+                                  </span>
+                                </div>
+                                <span style={{
+                                  fontSize: tokens.fontSize.xs, padding: "1px 6px",
+                                  borderRadius: tokens.radius.xs,
+                                  background: entry.enabled ? "rgba(166, 226, 46, 0.1)" : "rgba(117, 113, 94, 0.15)",
+                                  color: entry.enabled ? palette.accent.green : palette.fg.muted,
+                                }}>
+                                  {entry.enabled ? "on" : "off"}
+                                </span>
+                              </div>
+                              <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
+                                <span>{entry.contractClass}</span>
+                                <span>·</span>
+                                <span>v{entry.version}</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                     );
                   })}
 
@@ -719,6 +769,7 @@ export default function ContractsPage() {
                       border: `1px dashed ${palette.fg.subtle}`,
                       background: "transparent", cursor: "pointer",
                       fontSize: tokens.fontSize.sm, color: palette.fg.muted,
+                      marginTop: 8,
                     }}
                   >
                     + New contract
