@@ -392,10 +392,16 @@
    when different nodes deploy slightly different registries)."
   []
   (let [runtime-ids (tool-registry/known-tool-ids)
-        contract-ids (some-> (contract-tool-ids) seq)]
-    (when runtime-ids
+        contract-result (contract-tool-ids)
+        contract-ids (when (and (not (nil? contract-result))
+                             (sequential? contract-result))
+                     (seq contract-result))]
+    (when (and runtime-ids (sequential? runtime-ids))
       (->> (concat runtime-ids contract-ids)
-           (keep tool-registry/normalize-tool-id)
+           (keep (fn [x]
+                   (when (some? x)
+                     (let [id (tool-registry/normalize-tool-id x)]
+                       (when (string? id) id)))))
            distinct
            sort
            vec))))
