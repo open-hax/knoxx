@@ -3,7 +3,7 @@
  :contract/version 1
  :enabled true
  :trigger-kind :manual
- :contract/actors ["chat_primary" "knoxx_default"]
+ :contract/actors ["chat_primary" "knoxx_default" "discord_automation"]
 
  :actor
  {:capabilities [:cap/read
@@ -12,10 +12,11 @@
                  :cap/bash
                  :cap/music
                  :cap/audio
+                 :cap/event-agents
+                 :cap/schedule-event-agent
                  :cap/audio-editing
                  :cap/playlist-curation
                  :cap/workspace-media
-                 :cap/multimodal
                  :cap/memory
                  :cap/semantic
                  :cap/websearch]}

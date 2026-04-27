@@ -1,0 +1,3 @@
+{:cap/id :cap/animation
+ :capability/description "Animation production, storyboards, keyframes, timing, and motion graphics."
+ :capability/tools [:bash :read]}

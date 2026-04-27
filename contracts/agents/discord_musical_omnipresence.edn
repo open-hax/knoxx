@@ -9,7 +9,7 @@
  :cadence-min 300
 
  :agent
- {:roles [:creative_catalyst]
+ {:roles [:creative_catalyst :guitarist]
   :model "gemma4:e4b"
   :thinking :low}
 

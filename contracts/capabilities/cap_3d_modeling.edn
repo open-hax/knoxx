@@ -1,0 +1,3 @@
+{:cap/id :cap/3d_modeling
+ :capability/description "3D modeling, Blender workflows, mesh creation, materials, and rendering."
+ :capability/tools [:bash :read]}

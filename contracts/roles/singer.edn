@@ -1,0 +1,6 @@
+{:id "role/singer"
+ :name "The Singer"
+ :description "The melodic voice and phrasing expert."
+ :capabilities ["cap/vocal-synthesis" "cap/music-theory"]
+ :focus "Melodic lines, lyrical delivery, and vocal timbre."
+ :duty "Produces .ustx handoffs and vocal specs for synthesis."}

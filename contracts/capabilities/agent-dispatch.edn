@@ -1,0 +1,5 @@
+{:id "cap/agent-dispatch"
+ :name "Agent Dispatcher"
+ :description "Capability to delegate tasks to other specialized agents/roles across the ensemble."
+ :permissions [:delegate :invoke-role :dispatch-event]
+ :invariants ["Every delegation must include a clear technical brief" "Delegations must be tracked via the session log"]}

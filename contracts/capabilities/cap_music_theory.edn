@@ -1,0 +1,3 @@
+{:capability/id :cap/music-theory
+ :description "Expertise in music theory, including scales, chords, harmonic analysis, and rhythmic structures."
+ :capabilities [:cap/read :cap/memory :cap/semantic]}

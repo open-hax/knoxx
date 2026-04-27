@@ -1,0 +1,3 @@
+{:cap/id :cap/creative-writing
+ :capability/description "Story writing, worldbuilding, characters, plot, and narrative craft tools."
+ :capability/tools [:write :read]}

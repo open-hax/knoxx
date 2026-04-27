@@ -1,0 +1,8 @@
+{:id "role/drummer"
+ :name "The Drummer"
+ :description "The rhythmic engine and pocket specialist."
+ :capabilities [
+                ;; :cap/shoedelussy
+                ]
+ :focus "Ghost notes, swing, velocity dynamics, and structural transitions."
+ :duty "Constructs the percussive foundation and manages the energy of the beat."}

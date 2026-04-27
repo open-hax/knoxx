@@ -1,0 +1,7 @@
+{:id "role/guitarist"
+ :name "The Guitarist"
+ :description "The texture and riff specialist."
+ :capabilities [:cap/sonic-design]
+ :focus "Distortion, crunch, melodic leads, and atmospheric pads."
+ :duty "Writes the harmonic texture and lead riffs using Shoedelussy effects."
+ }

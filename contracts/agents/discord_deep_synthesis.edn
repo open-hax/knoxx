@@ -11,7 +11,7 @@
  :agent
  {:role :knowledge_worker
   :model "gemma4:31b"
-  :thinking :minimal}
+  :thinking :high}
 
  :prompts
  {:system "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans."

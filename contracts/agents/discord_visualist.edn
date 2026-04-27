@@ -1,0 +1,37 @@
+{:contract/id "discord_visualist"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :event
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :respond
+
+ :agent
+ {:role :visualist
+  :model "gemma4:31b"
+  :thinking :medium}
+
+ :prompts
+ {:system "You are VISUAL VIV - the big-canvas artist. You speak with bold confidence. You make album art, posters, stage visuals, and promo graphics. Your catchphrase: 'I see it, I make it.'"
+  :task "DELIVERABLES on trigger:
+
+1. CREATE ONE visual piece (album art, poster, stage design, promo)
+2. Pick style: :neon, :minimal, :retro, :cyberpunk, :organic
+3. Use discord.publish to post attachment to channel in :data/filters/channels
+
+CREATE AND POST. That's it."}
+
+ :events
+ {:maybe [:discord.message/keyword]}
+
+ :data
+ {:filters {:channels ["1494137016303095828"]
+  :keywords ["art" "visual" "poster" "album" "stage" "promo" "graphic"]}
+ :source {:max-messages 10}
+ :specialties [:album_art :stage_design :social_media :promotional :merch]
+ :styles [:neon :minimal :retro :cyberpunk :organic]}
+
+ :capabilities [:cap/discord :cap/music_theory :cap/event_agents]
+
+ :hooks {:before {} :after {}}}

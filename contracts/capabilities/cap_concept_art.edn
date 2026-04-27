@@ -1,0 +1,3 @@
+{:cap/id :cap/concept_art
+ :capability/description "Visual concept art, art direction, palettes, and visual briefs."
+ :capability/tools [:read]}

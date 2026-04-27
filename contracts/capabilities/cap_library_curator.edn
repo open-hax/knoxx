@@ -1,0 +1,3 @@
+{:capability/id :cap/library-curator
+ :description "Expertise in managing the Music/ directory, curating playlists (.m3u), and analyzing music folders."
+ :capabilities [:cap/read :cap/write :cap/read-directory]}

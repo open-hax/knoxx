@@ -1,0 +1,3 @@
+{:cap/id :cap/graphics
+ :capability/description "Graphics production: logos, icons, posters, exports, and asset creation."
+ :capability/tools [:read :write]}

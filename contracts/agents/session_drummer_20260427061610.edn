@@ -1,0 +1,9 @@
+{:contract/id "session_drummer_20260427061610"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :session
+ :agent {:role :drummer, :model "gemma4:31b", :thinking :low}
+ :prompts {:system "You are the Drummer. Your job is to provide the rhythmic backbone and drive for the ensemble." :task "DELIVERABLES: 1. CHECK for rhythmic alignment. 2. PROVIDE beat patterns. 3. ENSURE timing stability."}
+ :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}

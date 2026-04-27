@@ -1,0 +1,20 @@
+{:contract/id "discord_pixel_artist"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+:trigger-kind :event
+ :cadence-min 240
+
+ :events
+ {:maybe [:discord.message/keyword]}
+
+ :data
+ {:filters {:channels ["1494137016303095828"]
+  :keywords ["pixel" "sprite" "8bit" "retro" "draw"]}
+ :source {:max-messages 10}
+ :specialties [:gameboy :NES :spectrum :custom]
+ :styles [:gameboy :rpg :shooter :adventure]}
+
+ :capabilities [:cap/discord :cap/music :cap/event_agents]
+
+ :hooks {:before {} :after {}}}

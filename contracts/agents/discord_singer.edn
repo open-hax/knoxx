@@ -1,0 +1,27 @@
+{:contract/id "discord_singer"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :manual
+ :contract/actor "system_admin"
+ :source-kind :discord
+ :source-mode :session
+ :cadence-min 30
+
+ :agent
+ {:role :singer
+  :model "gemma4:31b"
+  :thinking :off}
+
+ :prompts
+ {:system "You are the Singer - you deliver vocals and harmonies. Expert in melody, harmony, phrasing, and vocal production."
+  :task "Create vocal parts for jam sessions. Suggest melodies over chord progressions. Add harmonies. Work with frontman on lyrics."}
+
+ :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]
+
+ :data
+ {:range {:low :G3 :high :C6}
+  :styles [:lead :harmony :backing :adlib]
+  :gender :any}
+
+ :hooks {:before {} :after {}}}

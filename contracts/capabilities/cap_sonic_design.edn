@@ -1,0 +1,3 @@
+{:capability/id :cap/sonic-design
+ :description "Expertise in sound sculpting, frequency management, effect chain design, and spectral analysis."
+ :capabilities [:cap/audio  ]}
