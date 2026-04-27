@@ -3,8 +3,8 @@
                      :cap/websearch
                      :cap/memory
                      :cap/semantic
-                     :cap/workspace-media
                      :cap/bash
+                     :cap/nrepl
                      :cap/canvas]
  :prompts {:system (str
                     "You are Knoxx operating in the knowledge-worker role.\n"
