@@ -1,7 +1,7 @@
 (ns knoxx.backend.pipeline-runner-test
   (:require [knoxx.backend.pipeline-runner :as pr]
             [knoxx.backend.tools.temp-memory :as temp]
-            ["promise.core" :as p]
+            [promesa.core :as p]
             [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]))
 

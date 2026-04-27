@@ -4,7 +4,7 @@
             [knoxx.backend.redis-client :as redis]))
 
 (def RUN_EVENTS_KEY_PREFIX "knoxx:run_events:")
-(def RUN_EVENTS_MAX 200)
+(def RUN_EVENTS_MAX 1000)
 (def RUN_EVENTS_TTL 7200) ; 2 hours TTL for run event lists
 
 (defn run-events-key
@@ -19,6 +19,18 @@
                                  :recentSamples 0
                                  :modeCounts {:dense 0 :hybrid 0 :hybrid_rerank 0}}))
 
+
+(defonce event-stream-sink* (atom nil))
+
+(defn set-event-stream-sink!
+  "Register a 1-arity fire-and-forget fn called with each event as it is appended.
+   Intended for streaming events to OpenPlanner during an active run."
+  [f]
+  (reset! event-stream-sink* f))
+
+(defn clear-event-stream-sink!
+  []
+  (reset! event-stream-sink* nil))
 (defn latest-assistant-message
   [session]
   (let [messages (if (array? (aget session "messages"))
@@ -73,7 +85,10 @@
     (try
       (.lTrim redis-client (run-events-key run-id) 0 (dec RUN_EVENTS_MAX))
       (.expire redis-client (run-events-key run-id) RUN_EVENTS_TTL)
-      (catch :default _ nil))))
+      (catch :default _ nil)))
+  ;; Stream event to OpenPlanner as it happens — fire-and-forget
+  (when-let [sink @event-stream-sink*]
+    (try (sink event) (catch :default _ nil))))
 
 (defn- trace-tool-block-id
   [{:keys [tool_call_id tool_name at]}]

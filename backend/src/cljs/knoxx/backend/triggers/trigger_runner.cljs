@@ -61,12 +61,12 @@
    Falls back to 5 minutes."
   [cron-expr]
   (cond
-    (str/re-find #"/(\d+)" cron-expr)
-    (let [n (-> (str/re-find #"/(\d+)" cron-expr) second js/parseInt)]
+    (re-find #"/(\d+)" cron-expr)
+    (let [n (-> (re-find #"/(\d+)" cron-expr) second js/parseInt)]
       (* 60 1000 (or n 5)))
 
-    (str/re-find #"^\d+" cron-expr)
-    (-> (str/re-find #"^\d+" cron-expr) first js/parseInt (* 60 1000))
+    (re-find #"^\d+" cron-expr)
+    (-> (re-find #"^\d+" cron-expr) js/parseInt (* 60 1000))
 
     :else (* 5 60 1000)))
 
@@ -137,4 +137,4 @@
      :triggers (->> (loader/list-contract-ids-sync config "triggers")
                    (mapv (fn [id]
                            (when-let [c (loader/load-contract config "triggers" id)]
-                             (select-keys c [:contract/id :trigger/kind :trigger/target :enabled]))))}))
+                              (select-keys c [:contract/id :trigger/kind :trigger/target :enabled])))))}))

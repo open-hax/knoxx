@@ -12,12 +12,14 @@
             [knoxx.backend.agents.transcript :as transcript]
             [knoxx.backend.authz :as authz :refer [auth-snapshot]]
             [knoxx.backend.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
+            [knoxx.backend.http :as http]
             [knoxx.backend.openplanner-memory :as openplanner-memory]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [store-run! append-run-event! update-run!
                                              finalize-run-trace-blocks! tool-event-payload
-                                             record-retrieval-sample! latest-assistant-message]]
+                                             record-retrieval-sample! latest-assistant-message
+                                             set-event-stream-sink! clear-event-stream-sink!]]
             [knoxx.backend.runtime.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
@@ -114,6 +116,28 @@
                                       (get agent-spec :resource-policies) (assoc :agentResourcePolicies (get agent-spec :resource-policies)))}
                         auth-extra)]
     (store-run! run-id base-run)
+    (set-event-stream-sink!
+       (fn [event]
+         (when (http/openplanner-enabled? config)
+           (-> (http/openplanner-request! config "POST" "/v1/events"
+                                          {:events [(openplanner-memory/openplanner-event
+                                                     config
+                                                     {:id        (str (:run_id event) ":"
+                                                                      (:type event) ":"
+                                                                      (:at event))
+                                                      :ts        (:at event)
+                                                      :kind      (str "knoxx." (:type event))
+                                                      :session   (:conversation_id event)
+                                                      :message   (:run_id event)
+                                                      :role      "system"
+                                                      :text      (str (:type event)
+                                                                      (when (:tool_name event)
+                                                                        (str ": " (:tool_name event)))
+                                                                      (when (:preview event)
+                                                                        (str "\n" (:preview event))))
+                                                      :extra     event})]}
+                )
+               (.catch (fn [_] nil))))))
     (session-store/put-session! (redis/get-client)
                                 (merge (cond-> {:session_id session-id
                                                 :conversation_id conversation-id
@@ -228,6 +252,7 @@
                                          {:status "completed"
                                           :answer answer
                                           :messages final-messages}))
+      (clear-event-stream-sink!)
       (remove-agent-session! conversation-id)
       response)))
 
@@ -262,6 +287,7 @@
                                          {:status "failed"
                                           :error err-text
                                           :messages final-messages}))
+      (clear-event-stream-sink!)
       (remove-agent-session! conversation-id))
     (throw err)))
 

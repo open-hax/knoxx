@@ -1,7 +1,7 @@
 (ns knoxx.backend.pipeline-runner
   "Executes :pipeline contracts. Runs steps in dependency order,
    interpolates {{memory.temp:key}} in :context, writes :output to temp memory."
-  (:require ["promise.core" :as p]
+  (:require [promesa.core :as p]
             [clojure.string :as str]
             [knoxx.backend.tools.temp-memory :as temp]
             [knoxx.backend.contracts.loader :as loader]
@@ -17,11 +17,11 @@
   "Given a map m, find all {{memory.temp:k}} keys and resolve them.
    Returns Promise<{k value}>."
   [m]
-  (let [re #"\\{\\{memory\\.temp:([^}]+)\\}\\}"
+  (let [re #"\{\{memory\.temp:([^}]+)\}\}"
         all-keys (->> m
                      vals
                      (keep (fn [v] (when (string? v)
-                                    (->> (str/re-seq re v) (map second))))
+                                     (->> (str/re-seq re v) (map second)))))
                      (apply concat)
                      distinct
                      vec)]
@@ -70,14 +70,14 @@
     (p/let [ctx (interpolate-map
                 (merge pipeline-ctx
                        (:context contract)
-                       (get-in step [:step/data :context]))
+                        (get-in step [:step/data :context])))
                 result (discord-io/start-agent-session!
                        config
                        (assoc contract :task-prompt (get-in contract [:prompts :task]))
                        (select-keys ctx [:channelId :channelName
                                                :authorUsername :content :reason]))]
       (when output
-        (temp/set! (:key output) result {:ttl (:ttl output)}))
+        (temp/mem-set! (:key output) result {:ttl (:ttl output)}))
       {:step-id (:step/id step) :status "ok" :result result})))
 
 (defn- run-step!
@@ -101,7 +101,7 @@
   [steps]
   (->> steps
        (sort-by #(count (or (:step/depends-on %) [])))
-       vec)))
+       vec))
 
 ;; ── public API ─────────────────────────────
 

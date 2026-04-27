@@ -334,4 +334,4 @@
                     (aset "label" "Bluesky Timeline")
                     (aset "description" "Read the authenticated account's Bluesky timeline.")
                     (aset "parameters" timeline-params)
-                    (aset "execute" timeline-execute))))))))))
+                    (aset "execute" timeline-execute)))]))))))

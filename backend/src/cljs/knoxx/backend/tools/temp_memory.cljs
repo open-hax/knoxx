@@ -14,12 +14,12 @@
   [ttl]
   (cond
     (number? ttl) (* ttl 1000)
-    (string? ttl) (let [[_ h m s] (re-find #"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?" ttl)]
-                    (+ (* (or (parse-long (str h)) 0) 3600000)
-                       (* (or (parse-long (str m)) 0)   60000)
-                       (* (or (parse-long (str s)) 0)   1000)))
+    (string? ttl) (let [[_ h m s] (re-find #"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?" ttl)
+                        total (+ (* (or (parse-long (str h)) 0) 3600000)
+                                 (* (or (parse-long (str m)) 0)   60000)
+                                 (* (or (parse-long (str s)) 0)   1000))]
+                    (if (pos? total) total default-ttl-ms))
     :else         default-ttl-ms))
-
 (defn- now-ms [] (.now js/Date))
 
 ;; ─── local fallback ────────────────────────────────────────────────────────────────────────

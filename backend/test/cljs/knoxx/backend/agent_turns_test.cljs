@@ -1,7 +1,7 @@
 (ns knoxx.backend.agent-turns-test
   (:require [knoxx.backend.authz :as authz]
             [knoxx.backend.agents.turn :as turn]
-            [cljs.test :refer [deftest is testing]]
+            [cljs.test :refer [deftest is testing async]]
             [knoxx.backend.agent-turns :as agent-turns]))
 
 (deftest ensure-session-id-preserves-provided-value

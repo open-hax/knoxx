@@ -52,7 +52,7 @@
 (defn- keywordish->capability-ref
   [value]
   (cond
-    (keyword? value) (str (namespace value) "/" (name value))
+    (keyword? value) (name value)
     (string? value) (some-> value str str/trim not-empty)
     (nil? value) nil
     :else (some-> value str str/trim not-empty)))

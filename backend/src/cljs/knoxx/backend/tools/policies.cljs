@@ -33,7 +33,7 @@
 
 (defn policy-dir
   [config]
-  (let [cwd (.cwd node-fs)
+  (let [cwd (if (exists? js/process) (.cwd js/process) "")
         candidates (->> [(or (:contracts-dir config) "contracts")
                          "../contracts"
                          "packages/agents/knoxx/contracts"
@@ -95,12 +95,11 @@
       (vec (set/difference granted-tool-ids allowed)))))
 
 (defn policy-contract-denied
-  [contract granted-tool-ids]
-  (let [deny-set (->> (get-in contract [:policy/denied] [])
-                       (map tool-registry/normalize-tool-id)
-                       (remove str/blank?)
-                       set)]
-    (vec (set/intersection deny-set granted-tool-ids))))
+  [contract _granted-tool-ids]
+  (->> (get-in contract [:policy/denied] [])
+       (map tool-registry/normalize-tool-id)
+       (remove str/blank?)
+       vec))
 
 (defn policy-contract-reason
   [contract tool-id]
