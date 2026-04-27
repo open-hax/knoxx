@@ -139,8 +139,10 @@
       (reset! last-reasoning-text* (str (or full-reasoning "")))
       (doseq [{:keys [tool_call_id tool_name input_preview]} tool-previews]
         (backfill-run-tool-input-preview! (:run-id state) tool_call_id tool_name input_preview))
-      (emit-streaming-delta! state :agent_message text-delta)
-      (emit-streaming-delta! state :reasoning reasoning-delta))))
+      (when (seq text-delta)
+        (emit-streaming-delta! state :agent_message text-delta))
+      (when (seq reasoning-delta)
+        (emit-streaming-delta! state :reasoning reasoning-delta)))))
 
 (defn request-abort!
   [{:keys [run-id conversation-id session-id aborting? abort-reason*]} session reason]
