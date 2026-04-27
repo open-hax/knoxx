@@ -12,6 +12,10 @@
    "principal_architect" "developer"
    "junior_dev" "knowledge_worker"})
 
+(def ^:private role-slugs-cache* (atom nil))
+(def ^:private role-contracts-cache* (atom {}))
+(def ^:private capability-contracts-cache* (atom {}))
+
 (defn- safe-segment [s]
   (when (and (string? s)
              (re-matches #"[A-Za-z0-9._-]+" s))
@@ -19,7 +23,7 @@
 
 (defn- read-edn [file-path]
   (p/let [text (.readFile fsp file-path "utf8")]
-         (some-> text str reader/read-string)))
+          (some-> text str reader/read-string)))
 
 (defn role-slug->file [config role-slug]
   (let [segment (safe-segment role-slug)]
@@ -33,9 +37,100 @@
       (contract-loader/capability-file-path config segment)
       (js/Promise.resolve nil))))
 
-(defn list-role-slugs [config]
+(defn list-role-slugs!
+  "Async - load all role slugs from contracts directory."
+  [config]
   (-> (contract-loader/list-contract-ids! config "roles")
        (.catch (fn [_] (js/Promise.resolve ["knowledge_worker"])))))
+
+(defn- list-role-slugs-sync
+  "Sync - return cached role slugs."
+  []
+  (or @role-slugs-cache*
+       ["knowledge_worker"]))
+
+(defn warm-up!
+  "Pre-load all role/capability contracts into memory cache.
+   Call this once at startup before any sync reads."
+  [config]
+  (p/let [role-slugs (list-role-slugs! config)
+          role-paths (p/all (mapv #(role-slug->file config %) role-slugs))
+          role-contracts (p/all (mapv read-edn role-paths))
+          cap-slugs (contract-loader/list-contract-ids! config "capabilities")
+          cap-paths (p/all (mapv #(cap-slug->file config %) cap-slugs))
+          cap-contracts (p/all (mapv read-edn cap-paths))]
+    (reset! role-slugs-cache* (set role-slugs))
+    (reset! role-contracts-cache* (into {} (mapv vector role-slugs role-contracts)))
+    (reset! capability-contracts-cache* (into {} (mapv vector cap-slugs cap-contracts)))
+    (js/console.log "[roles] warmed up:" (count role-slugs) "roles," (count cap-slugs) "capabilities")
+    {:ok true
+     :roles (count role-slugs)
+     :capabilities (count cap-slugs)}))
+
+(def list-role-slugs list-role-slugs!)
+
+(defn role-contract-sync
+  "Sync - read role contract from cache, or nil if not warmed up."
+  [role-slug]
+  (get @role-contracts-cache* role-slug))
+
+(defn capability-contract-sync
+  "Sync - read capability contract from cache, or nil if not warmed up."
+  [cap-slug]
+  (get @capability-contracts-cache* cap-slug))
+
+(defn role-tool-ids-sync
+  "Sync - return tool IDs for role from cache."
+  [role-slug]
+  (when-let [role-map (role-contract-sync role-slug)]
+    (let [cap-ids (->> (or (:role/capabilities role-map) [])
+                      (keep normalize-cap-id)
+                      distinct)]
+      (->> cap-ids
+            (mapcat (fn [cap-id]
+                      (let [cap-slug (some-> cap-id normalize-cap-id cap-id->slug (when (str/starts-with? cap-id "cap_") cap-id))]
+                        (some->> (capability-contract-sync cap-slug)
+                                :cap/tools
+                                (map tools/normalize-tool-id)))))
+            distinct
+            sort
+            vec))))
+
+(defn role-permissions-sync
+  "Sync - return permissions from cache."
+  [role-slug]
+  (some->> (role-contract-sync role-slug)
+           :role/permissions
+           (map str)
+           distinct
+           sort
+           vec))
+
+(defn normalize-role-sync
+  "Sync - normalize role using cached role slugs."
+  [role]
+  (let [known (list-role-slugs-sync)
+        role-str (str (or role ""))]
+    (or (matching-role known role-str)
+        "knowledge_worker")))
+
+(defn role-system-prompt-sync
+  "Sync - return system prompt from cache."
+  [role-slug]
+  (some-> (role-contract-sync role-slug)
+          (or (:role/prompts :system)
+              (:role/system-prompt)
+              (:system-prompt))
+          str str/trim not-empty))
+
+(defn role-task-prompt-sync
+  "Sync - return task prompt from cache."
+  [role-slug]
+  (some-> (role-contract-sync role-slug)
+          (or (:role/prompts :task)
+              (:role/task-prompt)
+              (:task-prompt))
+          str str/trim not-empty))
 
 (defn- known-roles->set [known]
   (set known))

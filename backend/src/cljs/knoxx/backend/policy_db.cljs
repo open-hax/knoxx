@@ -1411,8 +1411,8 @@
 
 (defn- factory-list-permissions
   [_pool]
-  (let [all-codes (->> (contracts-roles/list-role-slugs (contracts-config))
-                       (mapcat #(contracts-roles/role-permissions (contracts-config) %))
+  (let [all-codes (->> (contracts-roles/list-role-slugs-sync)
+                       (mapcat contracts-roles/role-permissions-sync)
                        distinct
                        sort
                        vec)]

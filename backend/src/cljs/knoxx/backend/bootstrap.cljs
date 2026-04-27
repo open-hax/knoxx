@@ -124,11 +124,13 @@
     ;; Initialize global discord gateway manager (sets knoxx.backend.discord-gateway/manager*).
     (discord-gateway/createDiscordGatewayManager #js {:log js/console})
 
-    (-> (policy-db/create-policy-db policy-options)
+(-> (policy-db/create-policy-db policy-options)
         (.then
          (fn [policyDb]
-(let [runtime (make-runtime deps policyDb)]
-              (ensure-fastify-json-empty-body-parser! app)
+           (let [cfg (assoc cfg :contracts-dir (policy-db/contracts-dir policyDb))]
+             (roles/warm-up! cfg))
+           (let [runtime (make-runtime deps policyDb)]
+             (ensure-fastify-json-empty-body-parser! app)
 
               ;; Debug hook: log large requests before they hit 413
               (app-add-hook! app "onRequest"
