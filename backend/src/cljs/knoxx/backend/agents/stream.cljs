@@ -203,7 +203,13 @@
         (sync-assistant-message! state (or (aget assistant-event "partial")
                                            (aget event "message"))))
 
-      :else (sync-assistant-message! state (aget event "message")))))
+      ;; Only sync message at stream start if we haven't already emitted any content.
+      ;; This prevents first-token duplication when text_delta and :else both fire.
+      ;; Guard: skip sync if no content emitted yet (stream not started).
+      (and (aget event "message")
+           (not (str/blank? (aget (aget event "message") "content")))
+       (pos? (count @(:chunks state))))
+      (sync-assistant-message! state (aget event "message")))))
 
 (defn- handle-message-end!
   [state event]

@@ -928,7 +928,7 @@
         (.then (fn [_] nil)))))
 
 (defn- ensure-builtin-org-roles!
-  [pool]
+  [pool org]
   (-> (js/Promise.all
        (into-array
         (for [seed ORG-ROLE-SEEDS]
@@ -940,16 +940,17 @@
                                   :system-managed true})
               (.then
                (fn [role]
-                 (-> (role-permissions-from-contracts (:slug seed))
-                     (.then (fn [perms]
-                              (let [perms (or perms (:permissions seed) [])]
-                                (-> (set-role-permissions! pool (aget role "id") perms)
-                                    (.then (fn [_]
-                                             (-> (role-tool-policies-from-contracts (:slug seed))
-                                                 (.then (fn [policies]
-                                                          (let [policies (or policies (:tool-policies seed) (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids)))]
-                                                            (set-role-tool-policies! pool (aget role "id") policies))))))))))))))))
-        ))))
+                 (let [perms (or (role-permissions-from-contracts (:slug seed))
+                                 (:permissions seed)
+                                 [])]
+                   (-> (set-role-permissions! pool (aget role "id") perms)
+                       (.then (fn [_]
+                                (let [policies (or (role-tool-policies-from-contracts (:slug seed))
+                                                   (:tool-policies seed)
+                                                   (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids)))]
+                                  (set-role-tool-policies! pool (aget role "id")
+                                                           policies))))))))))))
+      (.then (fn [_] nil))))
 
 (defn- ensure-builtin-platform-roles!
   [pool]
