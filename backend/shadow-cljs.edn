@@ -3,7 +3,8 @@
  :dependencies [[cider/cider-nrepl "0.50.2"]
                 [refactor-nrepl "3.9.1"]
                 [com.github.seancorfield/honeysql "2.7.1368"]
-                [metosin/malli "0.16.4"]]
+                [metosin/malli "0.16.4"]
+                [funcool/promesa "11.0.678"]]
 
  :nrepl {:port 4500}
 
@@ -49,6 +50,7 @@
                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
                                   "node:path" "node:crypto" "node:url"
                                   "@modelcontextprotocol/sdk"
+                                  "@resvg/resvg-js"
                                   }}
   :compiler-options {:output-feature-set :es-next
                       :optimizations :simple

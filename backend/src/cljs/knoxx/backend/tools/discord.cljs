@@ -5,6 +5,9 @@
             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.http :as backend-http :refer [js-array-seq]]
             [knoxx.backend.text :refer [tool-text-result]]
+
+            ["@resvg/resvg-js" :default resvg-mod]
+            ;; ["@resvg/resvg-js" :as resvg-mod]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional live-config]]))
 
@@ -226,7 +229,7 @@
   (js/Promise.
    (fn [resolve reject]
      (try
-       (let [resvg-mod  (js/require "@resvg/resvg-js")
+       (let [
              Resvg      (or (.-Resvg resvg-mod) resvg-mod)
              svg-str    (.toString svg-buffer "utf8")
              renderer   (new Resvg svg-str #js {:logLevel "off"})
@@ -235,7 +238,8 @@
        (catch :default e (reject e))))))
 
 (defn- maybe-render-svg!
-  "If the resolved attachment is an SVG, render it to PNG transparently."
+  "If the resolved attachment is an SVG, render it to PNG transparently.
+   On render failure, returns original attachment."
   [{:keys [name mimeType buffer] :as attachment}]
   (if (or (= mimeType "image/svg+xml")
           (some-> name str/lower-case (str/ends-with? ".svg")))
@@ -306,20 +310,25 @@
 (defn- discord-send-message!
   [runtime config channel-id text reply-to attachment-urls]
   (let [manager (discord-gateway-manager)
-        normalized (str/trim (str (or text "")))
-        attachment-urls (->> (or attachment-urls [])
-                             (map (fn [value] (some-> value str str/trim not-empty)))
-                             (remove nil?)
-                             vec)]
+        raw-text (str/trim (str (or text "")))
+        extracted-urls (when (and (not (str/blank? raw-text)) (str/includes? raw-text "data:image/"))
+                          (vec (re-seq #"data:image/[^;]+;base64,[A-Za-z0-9+/=]+" raw-text)))
+        text-for-discord (if (seq extracted-urls)
+                          (reduce (fn [txt url] (str/replace txt url "[image]"))
+                                  raw-text
+                                  extracted-urls)
+                          raw-text)
+        normalized (str/trim text-for-discord)
+        all-urls (vec (concat (or attachment-urls []) extracted-urls))]
     (when (str/blank? channel-id)
       (throw (js/Error. "channel_id is required")))
-    (when (and (str/blank? normalized) (empty? attachment-urls))
+    (when (and (str/blank? normalized) (empty? all-urls))
       (throw (js/Error. "text or attachment_urls is required")))
     (-> (js/Promise.all
          (clj->js (map-indexed (fn [idx url]
                                  (-> (fetch-discord-upload-attachment! runtime config url idx)
                                      (.then maybe-render-svg!)))
-                               attachment-urls)))
+                               all-urls)))
         (.then (fn [files]
                  (let [file-list (vec (array-seq files))]
                    (if (discord-gateway-started?)
