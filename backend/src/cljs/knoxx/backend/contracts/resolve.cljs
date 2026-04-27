@@ -8,6 +8,38 @@
             ["node:fs" :as fs]
             ["node:path" :as path]))
 
+(def known-actor-keys #{:id :kind :default-agent :role-slugs :capability-ids :system-prompt :task-prompt :thinking-level :model :contract-id :model-profile :tool-policies})
+(def known-role-keys #{:id :role/capabilities :role/permissions :role/prompts})
+(def known-capability-keys #{:id :capability/description :capability/tools})
+(def known-agent-keys #{:id :enabled :agent/model :agent/thinking :prompts/task :prompts/system :trigger-kind :contract/actor :contract/actors :contract/uses})
+
+(defn contract-extras
+  [contract-data known-set]
+  (when contract-data
+    (let [extras (apply dissoc contract-data (seq known-set))]
+      (when (seq extras) extras))))
+
+(defn actor-extras [actor-spec]
+  (contract-extras actor-spec known-actor-keys))
+
+(defn role-extras [role-data]
+  (contract-extras role-data known-role-keys))
+
+(defn capability-extras [cap-data]
+  (contract-extras cap-data known-capability-keys))
+
+(defn agent-extras [agent-contract]
+  (contract-extras agent-contract known-agent-keys))
+
+(defn all-contract-extras
+  [config actor-spec role-slugs capability-ids agent-contract]
+  (let [actor-x (actor-extras (:actor actor-spec))
+        role-x (map #(role-extras (roles/load-role config %)) role-slugs)
+        cap-x (map #(capability-extras (loader/load-capability config %)) capability-ids)
+        agent-x (agent-extras agent-contract)
+        merged (reduce into {} (concat (filter seq role-x) (filter seq cap-x) (when agent-x [agent-x]) (when actor-x [actor-x])))]
+    (when (seq merged) merged)))
+
 (defn- keywordish->role-slug
   [value]
   (let [raw (cond
@@ -171,12 +203,13 @@
                                     (:knoxx-default-role config))
                    role-system-prompt-text (some-> (roles/role-system-prompt config primary-role)
                                                    str str/trim not-empty)
-                   agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
-                   system-prompt (combine-system-prompts
-                                  role-system-prompt-text
-                                  (:system-prompt actor-spec)
-                                  agent-system-prompt)]
-               {:id id
+agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
+                    system-prompt (combine-system-prompts
+                                   role-system-prompt-text
+                                   (:system-prompt actor-spec)
+                                   agent-system-prompt)
+                    all-extras (all-contract-extras config actor-spec role-slugs capability-ids contract)]
+                {:id id
                 :enabled enabled?
                 :contract contract
                 :contract-actors contract-actors
@@ -196,7 +229,8 @@
                 :task-prompt (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
                 :trigger-kind (some-> (:trigger-kind contract) keywordish->role-slug)
                 :tool-ids tool-ids
-                :tool-policies tool-policies}))))))))
+                :tool-policies tool-policies
+                 :extras all-extras}))))))))
 
 (defn- manual-agent-contract?
   [entry]
