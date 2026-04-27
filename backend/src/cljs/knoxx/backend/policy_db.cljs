@@ -194,7 +194,7 @@
       [])))
 
 (defn- contract-tool-ids
-  "Return a set of tool ids found in contracts/capabilities/*.edn."
+  "Return a set of tool ids found in contracts/capabilities/*.edn." 
   []
   (try
     (let [cap-dir (.join path (contracts-dir) "capabilities")
@@ -217,12 +217,11 @@
 (defn- role-tool-policies-from-contracts
   "Return [{:toolId <id> :effect \"allow\"} ...] for the given role slug.
 
-   Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools."
+   Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools." 
   [role-slug]
-  (-> (contracts-roles/role-tool-ids (contracts-config) role-slug)
-       (.then (fn [tool-ids]
-                (when (seq tool-ids)
-                  (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) tool-ids))))))
+  (let [tool-ids (contracts-roles/role-tool-ids (contracts-config) role-slug)]
+    (when (seq tool-ids)
+      (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) tool-ids))))
 
 (defn- role-permissions-from-contracts
   "Return a vector of permission code strings for the given role slug.
@@ -391,20 +390,12 @@
    appears in contracts before it is added to the runtime tool registry (or
    when different nodes deploy slightly different registries)."
   []
-  (let [runtime-ids (tool-registry/known-tool-ids)
-        contract-result (contract-tool-ids)
-        contract-ids (when (and (not (nil? contract-result))
-                             (sequential? contract-result))
-                     (seq contract-result))]
-    (when (and runtime-ids (sequential? runtime-ids))
-      (->> (concat runtime-ids contract-ids)
-           (keep (fn [x]
-                   (when (some? x)
-                     (let [id (tool-registry/normalize-tool-id x)]
-                       (when (string? id) id)))))
-           distinct
-           sort
-           vec))))
+  (->> (concat (tool-registry/known-tool-ids)
+               (seq (contract-tool-ids)))
+       (keep tool-registry/normalize-tool-id)
+       distinct
+       sort
+       vec))
 
 (defn- ensure-tool-definitions!
   "Upsert tool definitions so FK constraints on *_tool_policies can't fail.
@@ -420,18 +411,19 @@
                  vec)]
     (if (empty? ids)
       (js/Promise.resolve nil)
-      (js/Promise.all
-       (into-array
-        (for [tool-id ids]
-          (let [{:keys [label description risk-level]} (tool-registry/get-tool tool-id)]
-            (query! pool
-                    "INSERT INTO tool_definitions (id, label, description, risk_level)
+      (-> (js/Promise.all
+           (into-array
+            (for [tool-id ids]
+              (let [{:keys [label description risk-level]} (tool-registry/get-tool tool-id)]
+                (query! pool
+                        "INSERT INTO tool_definitions (id, label, description, risk_level)
                          VALUES ($1, $2, $3, $4)
                          ON CONFLICT (id) DO UPDATE
                          SET label = EXCLUDED.label,
                              description = EXCLUDED.description,
                              risk_level = EXCLUDED.risk_level"
-                    [tool-id (or label tool-id) (or description "") (or risk-level "low")]))))))))
+                        [tool-id (or label tool-id) (or description "") (or risk-level "low")])))))
+          (.then (fn [_] nil))))))
 
 (defn- normalize-lake-config
   [config]
@@ -825,7 +817,7 @@
   (let [slug (slugify (or (:primaryOrgSlug options) "open-hax") "open-hax")
         name (str (or (:primaryOrgName options) "Open Hax"))
         kind (str (or (:primaryOrgKind options) "platform_owner"))]
-(-> (query-one! pool
+    (-> (query-one! pool
                     "INSERT INTO orgs (slug, name, kind, is_primary, status)
                      VALUES ($1, $2, $3, TRUE, 'active')
                      ON CONFLICT (slug) DO UPDATE
@@ -835,9 +827,9 @@
                          updated_at = NOW()
                      RETURNING *"
                     [slug name kind])
-         (.then (fn [org]
-                  (query! pool "UPDATE orgs SET is_primary = CASE WHEN slug = $1 THEN TRUE ELSE FALSE END" [slug])
-                  (fn [_] org))))))
+        (.then (fn [org]
+                 (.then (query! pool "UPDATE orgs SET is_primary = CASE WHEN slug = $1 THEN TRUE ELSE FALSE END" [slug])
+                        (fn [_] org)))))))
 
 (defn- find-org-by-slug
   [pool slug]
@@ -973,16 +965,17 @@
                                   :system-managed true})
               (.then
                (fn [role]
-                 (-> (role-permissions-from-contracts (:slug seed))
-                     (.then (fn [perms]
-                              (let [perms (or perms (:permissions seed) [])]
-                                (-> (set-role-permissions! pool (aget role "id") perms)
-                                    (.then (fn [_]
-                                             (-> (role-tool-policies-from-contracts (:slug seed))
-                                                 (.then (fn [policies]
-                                                          (let [policies (or policies (:tool-policies seed))]
-                                                            (set-role-tool-policies! pool (aget role "id") policies)))))))))))))
-       )))))))
+                 (let [perms (or (role-permissions-from-contracts (:slug seed))
+                                 (:permissions seed)
+                                 [])]
+                   (-> (set-role-permissions! pool (aget role "id") perms)
+                       (.then (fn [_]
+                                (let [policies (or (role-tool-policies-from-contracts (:slug seed))
+                                                   (:tool-policies seed)
+                                                   (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}) (tool-registry/known-tool-ids)))]
+                                  (set-role-tool-policies! pool (aget role "id")
+                                                           policies))))))))))))
+      (.then (fn [_] nil))))
 
 (defn- tool-allowed
   [context tool-id]
