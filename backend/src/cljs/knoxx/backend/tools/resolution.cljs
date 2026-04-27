@@ -64,7 +64,7 @@
     :else nil))
 
 (defn- resolve-tool-suite*
-  [{:keys [actor/id actor-defaults roles capabilities contract/uses policy/contracts] :as inputs}]
+  [{:keys [actor/id roles capabilities contract/uses policy/contracts] :as inputs}]
   (if (forbidden-inputs-present? inputs)
     {:ok false
      :error/kind :error/legacy-input
@@ -85,7 +85,8 @@
                                 (remove nil?)
                                 distinct
                                 vec)
-          actor-baseline (build-actor-baseline defaults)
+          actor-defaults (get inputs :actor/defaults)
+          actor-baseline (build-actor-baseline actor-defaults)
           config {:contracts-dir (or (:contracts-dir inputs) "contracts")}
           role-tools (role-tool-ids-with-ref config normalized-roles)
           cap-tools (capability-tool-ids-with-ref config normalized-caps)
@@ -118,7 +119,7 @@
                                                                          (when (= (:tool-id t) tool-id)
                                                                            (:role-slug t)))
                                                                         role-tools)
-                                                                 (str actor/id))}]
+                                                                 (str id))}]
                                         [tool-id {:tool/id tool-id
                                                   :call-shape call-shape
                                                   :provenance prov}]))
@@ -141,7 +142,7 @@
       {:ok true
        :suite {:run/id run-id
                :contract/id (or (some :contract/id inputs) "")
-               :actor/id (str actor/id)
+               :actor/id (str id)
                :resolved-at (now-inst)
                :tools tool-entries
                :denied (vec (sort all-denied))
@@ -150,7 +151,7 @@
 (defn- uuid-js-when-available
   []
   (if (exists? js/crypto)
-    (let [buf (js/Uint8Array 16)]
+    (let [buf (new js/Uint8Array 16)]
       (js/crypto.getRandomValues buf)
       (apply str (map (fn [b]
                         (-> b

@@ -214,6 +214,7 @@
                                  :skipped (- (count recent) (count resumable))}))))))
         (.catch (fn [err]
                   (log-info! app "[agent-resume] recovery tick error" err)
+                  (log-info! app "[agent-resume] redis:" (nil? (redis/get-client)))
                   {:error (str err)})))
     (js/Promise.resolve {:skipped true :reason "redis_not_connected"})))
 

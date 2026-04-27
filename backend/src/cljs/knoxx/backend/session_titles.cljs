@@ -43,17 +43,19 @@
                :else text)
         text (str/trim text)]
     (when-not (str/blank? text)
-      (subs text 0 (min 80 (count text))))))
+      (subs text 0 (min 160 (count text))))))
 
 (defn heuristic-session-title
   [seed-text]
-  (let [line (->> (str/split-lines (or seed-text ""))
-                  (map str/trim)
-                  (remove str/blank?)
-                  first)
-        cleaned (some-> line
-                        (str/replace #"^[#>*\-\d.\s]+" "")
-                        sanitize-session-title)]
+  (let [words (->> (str/split-lines (or seed-text ""))
+                   (map str/trim)
+                   (remove str/blank?)
+                   (take 2)
+                   (map #(str/replace % #"^[#>*\-\d.\s]+" ""))
+                   (map str/trim)
+                   (remove str/blank?)
+                   (str/join " "))
+        cleaned (some-> words str/lower-case sanitize-session-title)]
     (or cleaned "Untitled session")))
 
 (defn acceptable-session-title?
@@ -79,7 +81,7 @@
          fallback-title (sanitize-session-title fallback)]
      (cond
        (acceptable-session-title? title) title
-       (not (str/blank? fallback-title)) fallback-title
+       (acceptable-session-title? fallback-title) fallback-title
        :else nil))))
 
 (defn session-title-seed-text
@@ -95,7 +97,7 @@
                                    user-texts))
         combined (some->> user-texts
                           (take 3)
-                          (str/join "\n\n")
+                          (str/join " ")
                           str/trim
                           not-empty)
         fallback (->> (or rows [])

@@ -376,9 +376,17 @@
   [{:keys [filename url]}]
   (when (and filename url)
     (let [local-path (str "/tmp/" filename)
-          result (js/require "child_process")
-          _ (.execSync result (str "curl -sL -o " (pr-str local-path) " " (pr-str url)) #js {:timeout 10000})]
-      local-path)))
+          result (js/require "child_process")]
+      (if (media/source-discord-cdn-url? url)
+        (let [token (discord-token)]
+          (when token
+            (.execSync result
+              (str "curl -sL -H " (pr-str (str "Authorization: Bot " token)) " -o " (pr-str local-path) " " (pr-str url))
+              #js {:timeout 10000})
+            local-path))
+        (do
+          (.execSync result (str "curl -sL -o " (pr-str local-path) " " (pr-str url)) #js {:timeout 10000})
+          local-path)))))
 
 (defn event-summary-text
   [event]

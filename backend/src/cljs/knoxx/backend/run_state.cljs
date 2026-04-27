@@ -28,8 +28,9 @@
 
 (defn usage-map
   [usage]
-  {:input_tokens (or (aget usage "input") 0)
-   :output_tokens (or (aget usage "output") 0)})
+  (when usage
+    {:input_tokens (or (aget usage "input") 0)
+     :output_tokens (or (aget usage "output") 0)}))
 
 (defn store-run!
   [run-id run]
@@ -46,9 +47,10 @@
 
 (defn append-limited
   [items item limit]
-  (->> (conj (vec items) item)
-       (take-last limit)
-       vec))
+  (let [v (conj (vec items) item)]
+    (if (> (count v) limit)
+      (subvec v (- (count v) limit))
+      v)))
 
 (defn update-run!
   [run-id f]

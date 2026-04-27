@@ -108,7 +108,9 @@
   (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
         ^js Fastify (aget deps "Fastify")
         app (Fastify #js {:logger true
-                        :bodyLimit (* 50 1024 1024)})
+                        :bodyLimit (* 50 1024 1024)
+                        :requestTimeout 600000 ; 10 min
+                        :connectionTimeout 600000})
         policy-options #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
                                                  (aget js/process.env "DATABASE_URL")
                                                  "")

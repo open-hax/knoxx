@@ -2,10 +2,10 @@ import os
 import time
 import subprocess
 import threading
-from typing import Tuple
+from typing import Tuple, Generator
 
 import numpy as np
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response, stream_with_context
 from huggingface_hub import snapshot_download
 
 
@@ -23,7 +23,11 @@ REQUESTED_DEVICE = env("WHISPER_DEVICE", "NPU")
 NPU_COMPILER_TYPE = env("WHISPER_NPU_COMPILER_TYPE", "DRIVER")
 
 # Audio chunking for long recordings
-CHUNK_DURATION_S = float(env("STT_CHUNK_DURATION_S", "20.0"))
+# Ensure CHUNK_DURATION_S < MAX_AUDIO_DURATION_S to avoid NPU KV cache issues
+CHUNK_DURATION_S = min(
+    float(env("STT_CHUNK_DURATION_S", "20.0")),
+    MAX_AUDIO_DURATION_S - 1.0
+)
 CHUNK_OVERLAP_S = float(env("STT_CHUNK_OVERLAP_S", "1.0"))
 SAMPLE_RATE = 16000
 
@@ -134,14 +138,14 @@ def _longest_common_suffix_prefix(a: str, b: str) -> int:
     return 0
 
 
-def transcribe_chunked(audio: np.ndarray) -> str:
-    """Split long audio into overlapping chunks, transcribe each, and merge."""
+def transcribe_chunked_gen(audio: np.ndarray) -> Generator[str, None, None]:
+    """Split long audio into overlapping chunks, transcribe each, and yield."""
     total_samples = audio.shape[0]
     chunk_samples = int(CHUNK_DURATION_S * SAMPLE_RATE)
     overlap_samples = int(CHUNK_OVERLAP_S * SAMPLE_RATE)
     stride = max(1, chunk_samples - overlap_samples)
 
-    segments: list[str] = []
+    prev_text = ""
     pos = 0
 
     while pos < total_samples:
@@ -150,7 +154,9 @@ def transcribe_chunked(audio: np.ndarray) -> str:
 
         acquired = _acquire_pipe_lock(timeout=30.0)
         if not acquired:
-            raise RuntimeError("NPU is busy processing another request. Try again in a moment.")
+            yield " [Error: NPU busy] "
+            pos += stride
+            continue
         try:
             text = _generate(chunk)
         finally:
@@ -158,16 +164,15 @@ def transcribe_chunked(audio: np.ndarray) -> str:
 
         if text:
             # Deduplicate overlap with previous segment
-            if segments:
-                overlap = _longest_common_suffix_prefix(segments[-1], text)
-                if overlap > 0:
-                    text = text[overlap:].strip()
+            overlap = _longest_common_suffix_prefix(prev_text, text)
+            if overlap > 0:
+                text = text[overlap:].strip()
+            
             if text:
-                segments.append(text)
+                prev_text = text # For the next overlap check
+                yield text
 
         pos += stride
-
-    return " ".join(segments)
 
 
 app = Flask(__name__)
@@ -203,36 +208,28 @@ def transcribe():
 
     duration_s = float(audio.shape[0]) / SAMPLE_RATE
 
-    try:
-        if duration_s <= CHUNK_DURATION_S:
-            # Short audio — single inference
-            acquired = _acquire_pipe_lock(timeout=30.0)
-            if not acquired:
-                return jsonify({
-                    "detail": "NPU is busy processing another request. Try again in a moment.",
-                    "device": app.config.get("DEVICE"),
-                }), 503
-            try:
-                text = _generate(audio)
-            finally:
-                _pipe_lock.release()
-        else:
-            # Long audio — chunked transcription
-            text = transcribe_chunked(audio)
-    except Exception as e:
-        return jsonify({"detail": str(e), "device": app.config.get("DEVICE")}), 500
+    def generate_stream():
+        try:
+            if duration_s <= CHUNK_DURATION_S:
+                # Short audio — single inference
+                acquired = _acquire_pipe_lock(timeout=30.0)
+                if not acquired:
+                    yield f"data: {{\"error\": \"NPU busy\"}}\n\n"
+                    return
+                try:
+                    text = _generate(audio)
+                    yield f"data: {{\"text\": \"{text}\", \"final\": true}}\n\n"
+                finally:
+                    _pipe_lock.release()
+            else:
+                # Long audio — chunked transcription stream
+                for segment in transcribe_chunked_gen(audio):
+                    yield f"data: {{\"text\": \"{segment}\", \"final\": false}}\n\n"
+                yield f"data: {{\"final\": true}}\n\n"
+        except Exception as e:
+            yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
 
-    total_s = max(0.0001, time.time() - start)
-    rtf = duration_s / total_s
-    return jsonify(
-        {
-            "text": text,
-            "device": app.config.get("DEVICE"),
-            "model_id": MODEL_ID,
-            "duration_s": duration_s,
-            "rtf": rtf,
-        }
-    )
+    return Response(stream_with_context(generate_stream()), mimetype="text/event-stream")
 
 
 def main() -> None:

@@ -70,6 +70,9 @@ export function useChatRuntimeEffects({
   const streamRef = useRef<StreamConnection | null>(null);
   const lastEventTimestampRef = useRef<string | null>(null);
   const conversationIdRef = useRef(conversationId);
+  const tokenBufferRef = useRef<Array<{ token: string; meta?: { runId?: string; kind?: string } }>>([]);
+  const tokenFlushPendingRef = useRef(false);
+  const lastConsoleUpdateRef = useRef(0);
   const callbacksRef = useRef({
     appendMessageIfMissing,
     loadDirectory,
@@ -136,21 +139,45 @@ export function useChatRuntimeEffects({
           onToken: (token, meta) => {
             const pendingId = pendingAssistantIdRef.current;
             if (!pendingId) return;
-            const runId = meta?.runId;
-            if (runId) activeRunIdRef.current = runId;
-            const blockKind = meta?.kind === 'reasoning' ? 'reasoning' : 'agent_message';
-            callbacksRef.current.updateTraceBlocksByMessageId(pendingId, (blocks) => appendTraceTextDelta(blocks, blockKind, token));
-            callbacksRef.current.updateMessageById(pendingId, (message) => {
-              const novelDelta = blockKind === 'agent_message'
-                ? novelAppendedText(message.content, token)
-                : '';
-              return {
-                ...message,
-                runId: runId ?? message.runId ?? null,
-                status: 'streaming',
-                content: blockKind === 'agent_message' ? `${message.content}${novelDelta}` : message.content,
-              };
-            });
+            tokenBufferRef.current.push({ token, meta });
+            if (!tokenFlushPendingRef.current) {
+              tokenFlushPendingRef.current = true;
+              requestAnimationFrame(() => {
+                const pendingId2 = pendingAssistantIdRef.current;
+                if (!pendingId2) {
+                  tokenFlushPendingRef.current = false;
+                  return;
+                }
+                const buffer = tokenBufferRef.current;
+                tokenBufferRef.current = [];
+                tokenFlushPendingRef.current = false;
+                if (buffer.length === 0) return;
+                const lastMeta = buffer[buffer.length - 1].meta;
+                const runId = lastMeta?.runId;
+                if (runId) activeRunIdRef.current = runId;
+                let combinedTokens = '';
+                let combinedReasoning = '';
+                for (const { token: tok, meta: m } of buffer) {
+                  if (m?.kind === 'reasoning') {
+                    combinedReasoning += tok;
+                  } else {
+                    combinedTokens += tok;
+                  }
+                }
+                if (combinedTokens) {
+                  callbacksRef.current.updateTraceBlocksByMessageId(pendingId2, (blocks) => appendTraceTextDelta(blocks, 'agent_message', combinedTokens));
+                  callbacksRef.current.updateMessageById(pendingId2, (message) => ({
+                    ...message,
+                    runId: runId ?? message.runId ?? null,
+                    status: 'streaming',
+                    content: `${message.content}${novelAppendedText(message.content, combinedTokens)}`,
+                  }));
+                }
+                if (combinedReasoning) {
+                  callbacksRef.current.updateTraceBlocksByMessageId(pendingId2, (blocks) => appendTraceTextDelta(blocks, 'reasoning', combinedReasoning));
+                }
+              });
+            }
           },
           onEvent: (event) => {
             const runtimeEvent = event as RunEvent & {
@@ -183,6 +210,36 @@ export function useChatRuntimeEffects({
               }
               if (runtimeEvent.type === 'run_completed' || runtimeEvent.type === 'run_failed') {
                 if (pendingId) {
+                  if (tokenBufferRef.current.length > 0) {
+                    const buffer = tokenBufferRef.current;
+                    tokenBufferRef.current = [];
+                    let combinedTokens = '';
+                    let combinedReasoning = '';
+                    for (const { token: tok, meta: m } of buffer) {
+                      if (m?.kind === 'reasoning') {
+                        combinedReasoning += tok;
+                      } else {
+                        combinedTokens += tok;
+                      }
+                    }
+                    if (combinedTokens) {
+                      callbacksRef.current.updateTraceBlocksByMessageId(
+                        pendingId,
+                        (blocks) => appendTraceTextDelta(blocks, 'agent_message', combinedTokens),
+                      );
+                      callbacksRef.current.updateMessageById(pendingId, (message) => ({
+                        ...message,
+                        status: 'streaming',
+                        content: `${message.content}${novelAppendedText(message.content, combinedTokens)}`,
+                      }));
+                    }
+                    if (combinedReasoning) {
+                      callbacksRef.current.updateTraceBlocksByMessageId(
+                        pendingId,
+                        (blocks) => appendTraceTextDelta(blocks, 'reasoning', combinedReasoning),
+                      );
+                    }
+                  }
                   callbacksRef.current.updateTraceBlocksByMessageId(
                     pendingId,
                     (blocks) => finalizeTraceBlocks(blocks, runtimeEvent.type === 'run_failed' ? 'error' : 'done'),
@@ -203,7 +260,11 @@ export function useChatRuntimeEffects({
             const preview = typeof runtimeEvent.preview === 'string' && runtimeEvent.preview.trim().length > 0
               ? ` :: ${truncateText(runtimeEvent.preview, 120)}`
               : '';
-            setConsoleLines((previous) => [...previous.slice(-400), `[agent:${label}]${toolName}${preview}`]);
+            const now = Date.now();
+            if (now - lastConsoleUpdateRef.current > 200) {
+              lastConsoleUpdateRef.current = now;
+              setConsoleLines((previous) => [...previous.slice(-400), `[agent:${label}]${toolName}${preview}`]);
+            }
           },
         },
         sessionId,

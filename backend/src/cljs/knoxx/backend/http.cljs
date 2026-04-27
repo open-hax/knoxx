@@ -141,7 +141,7 @@
 
 (defn http-error
   [status code message]
-  (doto (js/Error. message)
+  (doto (ex-info (str status " " message) {:status status :code code})
     (aset "statusCode" status)
     (aset "code" code)))
 

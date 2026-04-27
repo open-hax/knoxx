@@ -45,7 +45,7 @@
                   (let [idx (.indexOf haystack token)]
                     (when (>= idx 0) idx)))
                 tokens)
-          0))))
+          -1))))
 
 (defn snippet-around
   [text query tokens max-chars]
@@ -274,6 +274,7 @@
 (defn content-part-text
   [part]
   (cond
+    (nil? part) ""
     (string? part) part
     (= (aget part "type") "text") (or (aget part "text") "")
     (= (aget part "type") "output_text") (or (aget part "text") "")
@@ -412,9 +413,10 @@
                (let [trimmed (str/trim (str value))
                      lowered (str/lower-case trimmed)]
                  (cond
+                   (str/blank? trimmed) ""
                    (or (= lowered "null") (= lowered "undefined")) ""
                    :else (or (summarize-json-string value)
-                             value)))
+                             trimmed)))
 
                (or (map? value) (vector? value) (seq? value))
                (or (summarize-structured value)

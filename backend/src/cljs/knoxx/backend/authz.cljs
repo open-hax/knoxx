@@ -76,11 +76,11 @@
                   (http/error-response! reply err)
                   js/undefined)))))
 
-(defn ctx-org-id [ctx] (or (:orgId ctx) (get-in ctx [:org :id])))
-(defn ctx-org-slug [ctx] (or (:orgSlug ctx) (get-in ctx [:org :slug])))
-(defn ctx-user-id [ctx] (or (:userId ctx) (get-in ctx [:user :id])))
-(defn ctx-user-email [ctx] (or (:userEmail ctx) (get-in ctx [:user :email])))
-(defn ctx-membership-id [ctx] (or (:membershipId ctx) (get-in ctx [:membership :id])))
+(defn ctx-org-id [ctx] (or (:orgId ctx) (get-in ctx [:org :id]) (when ctx (aget ctx "orgId"))))
+(defn ctx-org-slug [ctx] (or (:orgSlug ctx) (get-in ctx [:org :slug]) (when ctx (aget ctx "orgSlug"))))
+(defn ctx-user-id [ctx] (or (:userId ctx) (get-in ctx [:user :id]) (when ctx (aget ctx "userId"))))
+(defn ctx-user-email [ctx] (or (:userEmail ctx) (get-in ctx [:user :email]) (when ctx (aget ctx "userEmail"))))
+(defn ctx-membership-id [ctx] (or (:membershipId ctx) (get-in ctx [:membership :id]) (when ctx (aget ctx "membershipId"))))
 
 (defn ctx-role-slugs
   [ctx]
