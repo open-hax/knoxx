@@ -186,7 +186,7 @@
         raw-content-parts (normalize-content-parts (or (aget body "contentParts")
                                                       (aget body "content_parts")
                                                       (aget body "content-parts")))
-        content-parts (auto-detect-content-parts message raw-content-parts)]
+        content-parts raw-content-parts]
     {:message message
      :conversation-id (or (aget body "conversationId")
                          (aget body "conversation_id"))

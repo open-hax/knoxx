@@ -220,9 +220,36 @@
     (catch :default _
       (subs source (count "file://")))))
 
+(defn- svg-buffer->png-buffer!
+  "Render an SVG buffer to PNG using @resvg/resvg-js. Returns a promise."
+  [svg-buffer]
+  (js/Promise.
+   (fn [resolve reject]
+     (try
+       (let [resvg-mod  (js/require "@resvg/resvg-js")
+             Resvg      (or (.-Resvg resvg-mod) resvg-mod)
+             svg-str    (.toString svg-buffer "utf8")
+             renderer   (new Resvg svg-str #js {:logLevel "off"})
+             png-data   (.asPng (.render renderer))]
+         (resolve (.from js/Buffer (.-data png-data))))
+       (catch :default e (reject e))))))
+
+(defn- maybe-render-svg!
+  "If the resolved attachment is an SVG, render it to PNG transparently."
+  [{:keys [name mimeType buffer] :as attachment}]
+  (if (or (= mimeType "image/svg+xml")
+          (some-> name str/lower-case (str/ends-with? ".svg")))
+    (-> (svg-buffer->png-buffer! buffer)
+        (.then (fn [png-buf]
+                 {:name    (str/replace name #"(?i)\.svg$" ".png")
+                  :mimeType "image/png"
+                  :buffer   png-buf})))
+    (js/Promise.resolve attachment)))
+
 (defn- fetch-discord-upload-attachment!
   "Fetch an attachment from a URL, data URL, or local file path.
-   Returns a promise resolving to {:name :mimeType :buffer}."
+   Returns a promise resolving to {:name :mimeType :buffer}.
+   SVG files are automatically rendered to PNG before upload."
   [runtime config url idx]
   (let [source (str (or url ""))]
     (cond
@@ -290,7 +317,8 @@
       (throw (js/Error. "text or attachment_urls is required")))
     (-> (js/Promise.all
          (clj->js (map-indexed (fn [idx url]
-                                 (fetch-discord-upload-attachment! runtime config url idx))
+                                 (-> (fetch-discord-upload-attachment! runtime config url idx)
+                                     (.then maybe-render-svg!)))
                                attachment-urls)))
         (.then (fn [files]
                  (let [file-list (vec (array-seq files))]

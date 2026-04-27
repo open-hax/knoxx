@@ -109,6 +109,13 @@
                          (resolve-actor config resolved-actor-id)))
         normalized (roles/normalize-role config (or (:role contract-spec) role))
         role-tool-ids (set (roles/role-tool-ids config normalized))
+        _ (js/console.log "[tooling/resolve-tool-context]"
+                                   (clj->js {:contract-id agent-contract-id
+                                             :actor-id actor-id
+                                             :contract-spec-id (:id contract-spec)
+                                             :tool-ids-from-contract (vec (:tool-ids contract-spec))
+                                             :role-slugs-from-contract (vec (:role-slugs contract-spec))
+                                             :actor-role-slugs (vec (:role-slugs actor-spec))}))
         allowed-tool-ids (cond
                            contract-spec (set (:tool-ids contract-spec))
                            auth-context (auth-tool-ids auth-context)

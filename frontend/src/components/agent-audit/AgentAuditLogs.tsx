@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
-import {
-  getAgentHistorySession,
-  getRun,
-  listActiveAgents,
-  listMemorySessions,
-  searchMemory,
-} from "../../lib/api/common";
+import { getAgentHistorySession, getRun, listActiveAgents, listMemorySessions, searchMemory } from "../../lib/api/common";
+import { getRunEvents, getSessionStatus } from "../../lib/api/runtime";
 import type {
   MemorySearchHit,
   MemorySessionRow,
@@ -472,6 +467,27 @@ export default function AgentAuditLogs({
             setSemanticHits([]);
             setError(null);
             return;
+          }
+
+          // Backend restart case: @runs* is empty but Redis still has the session.
+          // Fall back to Redis run events directly using run_id from session status.
+          try {
+            const sessionStatus = await getSessionStatus(selectedSessionId);
+            if (cancelled) return;
+
+            // If we have a run_id from Redis, fetch its events
+            if (sessionStatus.run_id) {
+              const eventsResult = await getRunEvents(sessionStatus.run_id);
+              if (cancelled) return;
+              if (eventsResult.events && eventsResult.events.length > 0) {
+                setRows(eventsResult.events.map((event, idx) => runEventToRow(sessionStatus.run_id!, event, idx)));
+                setSemanticHits([]);
+                setError(null);
+                return;
+              }
+            }
+          } catch {
+            // Session status or events call failed - continue to OpenPlanner fallback
           }
         }
 

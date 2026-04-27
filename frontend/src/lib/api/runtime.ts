@@ -420,6 +420,7 @@ export async function knoxxChatStart(payload: {
 export async function getSessionStatus(sessionId: string, conversationId?: string | null): Promise<{
   session_id: string;
   conversation_id?: string | null;
+  run_id?: string | null;
   status: "running" | "completed" | "failed" | "waiting_input" | "not_found" | "unknown";
   has_active_stream: boolean;
   can_send: boolean;

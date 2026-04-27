@@ -369,10 +369,17 @@ export function EdnEditor({
   }, []);
 
   // Sync external value changes (not from user typing)
+  // Track cursor position to restore after update
   const lastExternalValue = useRef(value);
+  const savedCursorPos = useRef<number>(0);
+
   useEffect(() => {
     if (!viewRef.current) return;
     if (value === lastExternalValue.current) return;
+
+    // Save current cursor position before external update
+    savedCursorPos.current = viewRef.current.state.selection.main.head;
+
     lastExternalValue.current = value;
     viewRef.current.dispatch({
       changes: {
@@ -380,6 +387,13 @@ export function EdnEditor({
         to: viewRef.current.state.doc.length,
         insert: value,
       },
+    });
+
+    // Restore cursor position after replacing content
+    const newDoc = viewRef.current.state.doc;
+    const restoredPos = Math.min(savedCursorPos.current, newDoc.length);
+    viewRef.current.dispatch({
+      selection: { anchor: restoredPos },
     });
   }, [value]);
 
