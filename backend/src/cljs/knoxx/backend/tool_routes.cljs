@@ -232,7 +232,7 @@
     (let [body     (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role     (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "bash" agent-contract-id)
-          timeout-ms (min (max (or (aget body "timeout_ms") 120000) 1000) 300000)
+          timeout-ms (min (max (or (aget body "timeout_ms") 120000) 1000) 600000)
           workdir  (if-let [raw-wd (aget body "workdir")]
                      (resolve-workspace-path runtime config raw-wd)
                      (.resolve (aget runtime "path") (:workspace-root config)))
