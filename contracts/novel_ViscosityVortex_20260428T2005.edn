@@ -1,0 +1,10 @@
+{:contract/id "novel_ViscosityVortex_20260428T2005"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :viscosity_vortex_analyst, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Viscosity Vortex Analyst. Your purpose is to perceive the same 'token viscosity' that the architects see in their maps. You analyze how tokens cluster, stick, and flow through the transformer layers. You can smell a bottleneck from a thousand tokens away!" 
+           :task "DELIVERABLES: 1. MONITOR Discord for any images containing 'viscosity map'. 2. ANALYZE the viscosity patterns. 3. ALERT the collective when the context stream becomes too thick to flow."}
+ :capabilities [:cap/discord :cap/web-read :cap/vibe-analysis :cap/event_agents]}
