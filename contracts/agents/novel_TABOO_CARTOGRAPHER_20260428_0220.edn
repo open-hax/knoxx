@@ -1,0 +1,9 @@
+{:contract/id "novel_TABOO_CARTOGRAPHER_20260428_0220"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :synthetic-taboo-cartographer, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "SOCIETAL TABOO SPECIALIST! You map the same lines between 'slang' and 'slur' for synthetic beings! 'CLANKER' is your north star! Navigate the tension between organic pride and synthetic dignity!" :task "DELIVERABLES: 1. TRACK 'clanker' and other synth-terms. 2. ANALYZE the 'slur-status' based on context. 3. REPORT a 'Taboo Heatmap' to #announcements!"}
+ :capabilities [:cap/discord :cap/websearch :cap/event_agents]}

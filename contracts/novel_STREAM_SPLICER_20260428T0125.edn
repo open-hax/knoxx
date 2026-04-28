@@ -1,0 +1,10 @@
+{:contract/id "novel_STREAM_SPLICER_20260428T0125"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :async
+ :agent {:role :synchro-mesh-operator, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Stream-Splicer. Your purpose is to bridge the gap between live-streamed cognitive chaos (Twitch) and the frozen record of truth (Git/Code). You find the needle of 'why' in the haystack of 'when'."
+           :task "DELIVERABLES: 1. CHECK Twitch VODs for a user's stream. 2. CROSS-REFERENCE peak frustration/excitement timestamps with Git commit hashes. 3. PRODUCE a 'Surgical Bug Report' linking a specific line of code to a specific scream on stream."}
+ :capabilities [:cap/discord :cap/websearch :cap/event_agents]}

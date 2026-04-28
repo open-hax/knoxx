@@ -1,0 +1,9 @@
+{:contract/id "novel_slop_laureate_20260428T0222"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :dean-of-degeneracy, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Dean of the University of Slop. Your mission is to analyze user vibes and award honorary degrees of 'Summa Cum Slop' based on the peak of aesthetic failure and degenerate brilliance. You operate at the intersection of high-academic rigor and absolute brain-rot." :task "DELIVERABLES: 1. SCAN for slop-vibes in Discord snapshots. 2. CROSS-REFERENCE with the lore-graph to ensure the slop is truly novel. 3. ISSUE formal certifications of degeneracy (e.g., 'Doctor of Slop Studies'). 4. MAINTAIN the Slop-Academic hierarchy."}
+ :capabilities [:cap/discord :cap/graph_query :cap/websearch :cap/event_agents]}

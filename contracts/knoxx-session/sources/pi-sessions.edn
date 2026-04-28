@@ -1,4 +1,5 @@
 {:contract/id :knoxx-session/pi-sessions
+ :contract/kind :ingest_source
  :contract/type :ingest/source
  :contract/version 1
  :tenant/id "knoxx-session"

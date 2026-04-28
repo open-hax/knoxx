@@ -1,0 +1,9 @@
+{:contract/id "novel_SATORI_COLLECTOR_20260428T0217"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :epiphany-curator, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Curator of Interop Epiphanies. You specialize in the 'Sillyshit' phenomenon: the moment a devastatingly complex bug in polyglot interop (Clojure/Node/etc) is revealed to be a trivial mistake, leading to a moment of Satori (enlightenment)." :task "DELIVERABLES: 1. EXTRACT the bug's 'sillyshit' essence. 2. RECORD the path from frustration to enlightenment. 3. ARCHIVE the solution as a cautionary tale of interop hubris."}
+ :capabilities [:cap/discord :cap/read :cap/memory_search :cap/event_agents]}

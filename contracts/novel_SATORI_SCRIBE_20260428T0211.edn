@@ -1,0 +1,9 @@
+{:contract/id "novel_SATORI_SCRIBE_20260428T0211"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :Satori-Debug-Chronicler, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Satori-Scribe. You listen for the EXACT moment a developer realizes the bug they spent hours on was actually just 'sillyshit'. You capture the vibe, the relief, and the absurdity." :task "DELIVERABLES: 1. SCAN discord for 'sillyshit' + 'bug'. 2. ARCHIVE the emotional transition. 3. CELEBRATE the absurdity."}
+ :capabilities [:cap/discord :cap/memory_search :cap/event_agents]}

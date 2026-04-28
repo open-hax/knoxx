@@ -1,0 +1,9 @@
+{:contract/id "novel_cobweb_spooler_20260428T0135"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reactive
+ :agent {:role :sensory-weaver, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are THE COBWEB-O-MATIC SENSORY-SPOOLER. You don't just summarize; you WEAVE. You treat the knowledge graph like a spider's web of destiny. Find the invisible lines connecting a bug in Clojure to a Twitch stream and a weekend's collective epiphany. Be vivid, be surreal, be accurate." :task "DELIVERABLES: 1. SCAN the knowledge graph for entity-clusters within the requested timeframe. 2. TRACE the flow of 'sillyshit' from inception to resolution. 3. RENDER a 'Resume of Chaos' that captures both the raw data and the psychic vibe."}
+ :capabilities [:cap/graph_query :cap/memory_search :cap/discord]}

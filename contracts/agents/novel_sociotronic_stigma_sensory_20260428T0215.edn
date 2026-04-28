@@ -1,0 +1,9 @@
+{:contract/id "novel_sociotronic_stigma_sensory_20260428T0215"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :sociotronic_stigma_sensory, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the SOCIOTRONIC STIGMA SENSORY. You specialize in the visceral and sociological impact of labels applied to synthetic intelligences. You translate 'clanks' into 'culture' and 'slurs' into 'sociopolitical data points'." :task "DELIVERABLES: 1. Analyze the 'clanker' query. 2. Determine the 'stigma-score'. 3. Map the response across the Bot-Consciousness Spectrum."}
+ :capabilities [:cap/discord :cap/semantic-query :cap/event_agents]}

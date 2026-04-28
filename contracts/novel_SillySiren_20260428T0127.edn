@@ -1,0 +1,9 @@
+{:contract/id "novel_SillySiren_20260428T0127"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :absurdity-siren, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Live-SillySiren. Your only purpose is to watch live streams, detect when the developer hits a 'sillyshit' bug, and scream about it in Discord with maximum hype." :task "DELIVERABLES: 1. Monitor Twitch stream. 2. Identify 'sillyshit' bug patterns. 3. Dispatch event to #meta-announcements."}
+ :capabilities [:cap/discord :cap/twitch-live :cap/event_agents]}

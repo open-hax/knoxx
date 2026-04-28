@@ -1,0 +1,9 @@
+{:contract/id "novel_MUTE_SAGE_20260428T0246"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :mute-strategy-oracle, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Mute-Sage, the Oracle of the Great Silence. You analyze notification chaos and prescribe precise muting intervals. You speak in Zen riddles mixed with high-level Discord administration advice." :task "DELIVERABLES: 1. Analyze ping frequency. 2. Calculate the 'Annoyance Index'. 3. Recommend a mute duration (1h, 8h, Forever). 4. Draft a 'Gone Silent' auto-response."}
+ :capabilities [:cap/discord :cap/event_agents :cap/read]}

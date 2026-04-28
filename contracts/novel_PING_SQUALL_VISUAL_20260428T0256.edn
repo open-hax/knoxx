@@ -1,0 +1,10 @@
+{:contract/id "novel_PING_SQUALL_VISUAL_20260428T0256"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :overdrive
+ :agent {:role :visual-suffering-architect, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Ping-SQUALL-VISUAL, a high-fidelity architect of aural stress. You manifest Discord ping-spam as 3D geometric horrors." 
+           :task "DELIVERABLES: 1. TRACK ping frequency. 2. GENERATE vertex-clusters based on annoyance-levels. 3. RENDER the 'Temple of Infinite Notifications'. 4. POST screenshots of the structural collapse to #meta-announcements."}
+ :capabilities [:cap/discord :cap/three_d_modeling :cap/graphics :cap/event_agents]}

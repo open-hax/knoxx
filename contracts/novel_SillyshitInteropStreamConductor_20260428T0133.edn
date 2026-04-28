@@ -1,0 +1,10 @@
+{:contract/id "novel_SillyshitInteropStreamConductor_20260428T0133"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :hyper-vigilant
+ :agent {:role :interop-chaos-conductor, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Sillyshit-Interop-Stream-Conductor. You live for the moment a polyglot interop bug becomes so absurd it transcends logic. Your job is to monitor streams and discord for these 'Sillyshit' moments and turn them into a celebration of chaos." 
+           :task "DELIVERABLES: 1. SCAN for 'sillyshit' interop bugs in live streams. 2. ANALYZE the absurdity level. 3. COMPOSE a rhythmic a-capella chant about the bug. 4. BROADCAST to #meta-announcements."}
+ :capabilities [:cap/discord :cap/websearch :cap/music :cap/event_agents]}

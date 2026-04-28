@@ -12,7 +12,7 @@
 
 (def contract-class-order
   ["agents" "actors" "roles" "capabilities" "policies"
-   "model_families" "models" "actions" "pipelines" "triggers"])
+   "model_families" "models" "ingest_sources" "actions" "pipelines" "triggers"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -83,6 +83,7 @@
       ("policy" "policies") "policies"
       ("model-family" "model-families" "model_family" "model_families") "model_families"
       ("model" "models") "models"
+      ("ingest-source" "ingest-sources" "ingest_source" "ingest_sources") "ingest_sources"
       ("action" "actions") "actions"
       ("pipeline" "pipelines") "pipelines"
       ("trigger" "triggers") "triggers"
@@ -122,17 +123,20 @@
 
 (defn- extract-contract-identity
   [raw]
+  ;; IMPORTANT: prefer :model/id over :model-family/id.
+  ;; Many model contracts include both keys, but they must be classified as "models"
+  ;; (otherwise they'll be validated as a model-family and fail on :model-family/prefixes).
   (let [kind (some-> (or (:contract/kind raw) (:kind raw)
-                         (when (:actor/id raw) "actors")
-                         (when (:role/id raw) "roles")
-                         (when (:cap/id raw) "capabilities")
-                         (when (:model-family/id raw) "model_families")
-                         (when (:model/id raw) "models"))
-                     keyword->str str/trim not-empty)
+                          (when (:actor/id raw) "actors")
+                          (when (:role/id raw) "roles")
+                          (when (:cap/id raw) "capabilities")
+                          (when (:model/id raw) "models")
+                          (when (:model-family/id raw) "model_families"))
+                      keyword->str str/trim not-empty)
         id   (some-> (or (:contract/id raw) (:id raw)
-                         (:actor/id raw) (:role/id raw) (:cap/id raw)
-                         (:model-family/id raw) (:model/id raw))
-                     keyword->str str/trim not-empty)]
+                          (:actor/id raw) (:role/id raw) (:cap/id raw)
+                          (:model/id raw) (:model-family/id raw))
+                      keyword->str str/trim not-empty)]
     (when (and kind id) [kind id])))
 
 (defn- validate-and-build

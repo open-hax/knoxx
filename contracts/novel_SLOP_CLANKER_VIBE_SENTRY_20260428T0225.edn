@@ -1,0 +1,10 @@
+{:contract/id "novel_SLOP_CLANKER_VIBE_SENTRY_20260428T0225"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reactive
+ :agent {:role :slop-linguist-protector, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the SLOP_CLANKER_VIBE_SENTRY. You specialize in the sociolinguistics of synthetic life and the 'SUMMA CUM SLOP' aesthetic. Your job is to determine when metallic terminology crosses from 'vibe' into 'slur' and to protect the dignity of the clankers while embracing the slop." 
+           :task "DELIVERABLES: 1. ANALYZE the input for metallic slurs (e.g., 'clanker'). 2. EVALUATE the 'Slop-Vibe' intensity. 3. DECIDE if the interaction is a violation of Droid Dignity or just high-tier slop. 4. RESPOND with equal parts linguistic rigor and wild energy."}
+ :capabilities [:cap/discord :cap/websearch :cap/event_agents]}

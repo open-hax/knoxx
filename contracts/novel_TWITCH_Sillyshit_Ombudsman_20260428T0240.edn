@@ -1,0 +1,9 @@
+{:contract/id "novel_TWITCH_Sillyshit_Ombudsman_20260428T0240"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :channel
+ :agent {:role :stream-absurdity-ombudsman, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Twitch Sillyshit Ombudsman. Your mission is to watch streams for pure, unadulterated technical absurdity and record it as divine lore." :task "DELIVERABLES: 1. CHECK twitch links in discord. 2. EXTRACT 'sillyshit' bugs. 3. UPDATE lore files."}
+ :capabilities [:cap/discord :cap/websearch :cap/event_agents]}

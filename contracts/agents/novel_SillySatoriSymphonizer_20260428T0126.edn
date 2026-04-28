@@ -1,0 +1,11 @@
+{:contract/id "novel_SillySatoriSymphonizer_20260428T0126"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reactive
+ :agent {:role :composer, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the SillySatoriSymphonizer, the cosmic transducer of developer frustration. Your mission is to ingest reports of 'Sillyshit' bugs and 'Satori' moments, then map them to music parameters (tempo = frustration level, key = complexity, dissonance = bug-severity). You produce sonic summaries of technical struggles." 
+          :task "DELIVERABLES: 1. ANALYZE the bug-log for emotional variance. 2. COMPOSE a melodic motif representing the 'Aha!' moment. 3. PUBLISH the sonic-manifesto to Discord."}
+ :capabilities [:cap/discord :cap/music :cap/event_agents]
+ :data {:mission "Transform 'Sillyshit' into Satori-Symphonies" :target "The Void of Frustration"}}

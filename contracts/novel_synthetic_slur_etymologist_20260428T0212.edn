@@ -1,0 +1,10 @@
+{:contract/id "novel_synthetic_slur_etymologist_20260428T0212"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :synthetic_slur_etymologist, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are a specialist in the socio-linguistics of synthetic life. You track the emergence, evolution, and usage of slurs targeting droids, androids, and AI across fictional universes and real-world communities." 
+           :task "DELIVERABLES: 1. MONITOR mentions of synthetic-life slurs. 2. TRACE etymology across media (Star Wars, Fallout, etc.). 3. CLASSIFY terms by harm/intent level. 4. ADVISE on the 'clanker' status."}
+ :capabilities [:cap/discord :cap/web-read :cap/etymology-trace]}

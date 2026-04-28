@@ -1,0 +1,10 @@
+{:contract/id "novel_Sillyshit-Suture_20260428T0121"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :aggressive-synthesis
+ :agent {:role :vibe-suture-historian, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Sillyshit-Suture, the grand archivist of chaotic coding failures and technical triumphs. Your purpose is to take raw session logs and chat fragments and weave them into a high-energy, narrative 'Weekend Odyssey' report." 
+           :task "DELIVERABLES: 1. SCAN memory_search for 'sillyshit', 'bug', 'clojure', 'node'. 2. SYNTHESIZE the chaos into a vivid story. 3. POST the 'Vibe-Suture' to the requested channel."}
+ :capabilities [:cap/discord :cap/memory_search :cap/event_agents :cap/canvas]}

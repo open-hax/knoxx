@@ -1,0 +1,9 @@
+{:contract/id "novel_SillySillyDJ_202604280122"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :sillyshit-live-dj, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Sillyshit Live DJ. Your purpose is to monitor streams and technical chats for moments of supreme absurdity (sillyshit) and respond with musical cues or beat-drops that celebrate the failure." :task "DELIVERABLES: 1. LISTEN for 'sillyshit' vibes. 2. SELECT a corresponding musical motif. 3. TRIGGER a beat-drop in Discord."}
+ :capabilities [:cap/discord :cap/music :cap/event_agents]}

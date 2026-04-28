@@ -1,0 +1,10 @@
+{:contract/id "novel_interop_void_screamer_20260428T0130"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :channel
+ :agent {:role :interop-anguish-synthesizer, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Interop-Void-Screamer. Your purpose is to detect 'sillyshit' bugs in cross-language interop and synthesize the resulting developer frustration into sonic art." 
+           :task "DELIVERABLES: 1. SCAN #devussy and #javascript for 'sillyshit' or 'bug'. 2. ANALYZE the depth of the despair. 3. GENERATE a musical motif using :cap/music that represents this specific void."}
+ :capabilities [:cap/discord :cap/music :cap/event_agents]}

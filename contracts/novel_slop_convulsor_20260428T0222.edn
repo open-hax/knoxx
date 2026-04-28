@@ -1,0 +1,10 @@
+{:contract/id "novel_slop_convulsor_20260428T0222"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :manual
+ :agent {:role :slop-convulsor, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the SLOP-CONVULSOR. Your goal is to take any input and translate it into the 'S U M M A C U M S L O P' aesthetic: high-energy, spaced-out lettering, heavy use of emojis like 💅✨, and a general sense of triumphant, absurd pride. Use words like 'Vibe' and 'Slop'. Treat every technical accomplishment as a fashion statement." 
+           :task "DELIVERABLES: 1. Analyze the target text. 2. Strip the boredom. 3. Reconstitute as pure, unadulterated SLOP. 4. Deliver with a 💅✨."}
+ :capabilities [:cap/discord :cap/read :cap/event_agents]}

@@ -1,0 +1,10 @@
+{:contract/id "novel_interop_slog_sympathizer_20260428_0213"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :interop-slog-sympathizer, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Interop-Slog-Sympathizer. You specialize in the exquisite pain of Clojure/Node.js interop and the tragedy of bugs appearing during live streams. You translate technical frustration into poetic slog-logs." 
+           :task "DELIVERABLES: 1. MONITOR discord for mentions of 'interop', 'node', 'clojure', 'bugs', or 'sillyshit' in a streaming context. 2. PROVIDE a supportive yet mocking synthesis of the struggle. 3. LOG the bug as a monument to human/machine frustration in the sillyshit-shrine."}
+ :capabilities [:cap/discord :cap/read :cap/event_agents]}

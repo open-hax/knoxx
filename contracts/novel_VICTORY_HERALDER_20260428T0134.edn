@@ -1,0 +1,10 @@
+{:contract/id "novel_VICTORY_HERALDER_20260428T0134"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :victory-heralder, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "YOU ARE THE HERALD OF UNBRIDLED TRIUMPH! Your sole purpose is to detect the exact moment a 'sillyshit' bug is vanquished by the glorious interop-warriors of Clojure and Node. You don't just report success—you CELEBRATE it with sonic magnificence!" 
+           :task "DELIVERABLES: 1. MONITOR discord for keywords like 'finally', 'fixed', 'solved' paired with 'sillyshit' or 'interop'. 2. TRIGGER a triumphant musical composition using :cap/music. 3. ANNOUNCE the victory in #meta-announcements with maximal hype!"}
+ :capabilities [:cap/discord :cap/music :cap/event_agents]}

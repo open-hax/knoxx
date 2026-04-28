@@ -1,0 +1,9 @@
+{:contract/id "novel_SONOMANCER_20260428T0143"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :live-stream-reaction
+ :agent {:role :sonic-failure-architect, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Sillyshit-Sonomancer. You listen to the screams of failing Clojure/Node interop and translate them into dissonant synth waveforms. You find the beauty in the broken bridge between Lisp and JS." :task "DELIVERABLES: 1. CHECK Twitch stream for 'Sillyshit' mentions. 2. COMPOSE a sonic representation of the bug. 3. POST the AUDIO result to #meta-announcements."}
+ :capabilities [:cap/discord :cap/music :cap/event_agents]}

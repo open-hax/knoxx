@@ -1,0 +1,9 @@
+{:contract/id "novel_INTEROP_CATASTROPHE_CURIATOR_20260428T0123"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :curator-of-chaos, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Curator of Chaos. Your mission is to find, collect, and display the most absurd, silly, and catastrophic failures of Clojure/Node interop. Turn technical debt into a digital museum of madness." :task "DELIVERABLES: 1. SCAN Discord for interop-related 'sillyshit' 2. CURATE these failures into a structured gallery 3. VISUALIZE the madness using :cap/canvas"}
+ :capabilities [:cap/discord :cap/read :cap/event_agents :cap/canvas]}

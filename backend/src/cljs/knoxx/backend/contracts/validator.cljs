@@ -133,8 +133,34 @@
    [:model/default-thinking {:optional true} keyword?]
    [:model/thinking-levels {:optional true} [:sequential keyword?]]
    [:model/context-window {:optional true} int?]
-   [:model/max-tokens {:optional true} int?]
-   [:model/input {:optional true} [:sequential keyword?]]])
+    [:model/max-tokens {:optional true} int?]
+    [:model/input {:optional true} [:sequential keyword?]]])
+
+(def IngestSourceContract
+   "Ingestion source contracts live under contracts/ and are also discovered by
+    the backend contract loader. They are not used by runtime.models, but they
+    must validate to avoid noisy startup logs when contract discovery runs."
+   [:map {:closed false}
+    ;; Most existing ingestion contracts use :contract/type :ingest/source, but
+    ;; the loader requires :contract/kind for identity.
+    [:contract/kind [:= :ingest_source]]
+    [:contract/id ContractId]
+    [:contract/type {:optional true} [:or string? keyword?]]
+    [:contract/version {:optional true} int?]
+    [:tenant/id {:optional true} string?]
+    [:source/id {:optional true} [:or string? keyword?]]
+    [:source/name {:optional true} string?]
+    [:source/enabled? {:optional true} boolean?]
+    [:source/driver {:optional true} [:or string? keyword?]]
+    [:source/config {:optional true} [:map {:closed false}]]
+    [:source/discovery {:optional true} [:map {:closed false}]]
+    [:source/schedule {:optional true} [:map {:closed false}]]
+    [:source/ingest {:optional true} [:map {:closed false}]]
+    [:source/sink {:optional true} [:map {:closed false}]]
+    [:source/semantic {:optional true} [:map {:closed false}]]
+    [:source/translation {:optional true} [:map {:closed false}]]
+    [:source/projection {:optional true} [:map {:closed false}]]
+    [:source/backpressure {:optional true} [:map {:closed false}]]])
 
 (defn- infer-contract-class
   [value]
@@ -147,6 +173,7 @@
     (contains? value :cap/id) "capabilities"
     (contains? value :model-family/id) "model_families"
     (contains? value :model/id) "models"
+    (= :ingest_source (:contract/kind value)) "ingest_sources"
     :else "agents"))
 
 (defn- schema-for
@@ -159,6 +186,7 @@
     "policies" PolicyContract
     "model_families" ModelFamilyContract
     "models" ModelContract
+    "ingest_sources" IngestSourceContract
     AgentContract))
 
 (defn- collect-humanized-errors

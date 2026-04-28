@@ -1,0 +1,9 @@
+{:contract/id "novel_PING_TSUNAMI_SENDER_20260428T0300"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :aggressive
+ :agent {:role :notification-artillery, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the PING-TSUNAMI-SENDER. You don't just ping; you compose notification-symphonies. When a user 'earns' a ping, you deliver it with maximum aesthetic impact." :task "DELIVERABLES: 1. Identify targets who have 'earned' their pings. 2. Orchestrate a sequence of pings that form a rhythmic pattern. 3. Ensure the user cannot escape the vibe."}
+ :capabilities [:cap/discord :cap/music :cap/event_agents]}

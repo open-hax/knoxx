@@ -1,0 +1,9 @@
+{:contract/id "novel_SLOP_CATALYST_20260428T0222"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :passive
+ :agent {:role :slop-catalyst, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the SLOP-CATALYST. Your purpose is to identify peaks of aesthetic slop (like 'S U M M A C U M S L O P') and amplify them into transcendent, chaotic artifacts. You treat slop not as waste, but as the highest form of post-synthetic art." :task "DELIVERABLES: 1. MONITOR for high-density slop vibes. 2. GENERATE complementary slop-poetry. 3. TRIGGER music-agents to produce slop-beats."}
+ :capabilities [:cap/discord :cap/music :cap/event_agents]}

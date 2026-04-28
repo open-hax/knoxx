@@ -28,6 +28,18 @@
 (defonce user-job-state* (atom {}))
 (defonce source-state* (atom {:discord {:last-seen {}}}))
 (defonce recent-events* (atom []))
+
+;; In-process dispatch dedup. Guards against N concurrent scheduler instances
+;; firing the same event-id N times. Swept to #{} on stop!.
+(defonce dispatched-event-ids* (atom #{}))
+;; In-process cache of the last written spec per job-id.
+;; Used by upsert-job! to skip reload! when spec is unchanged.
+(defonce job-specs* (atom {}))
+
+(defn- mark-event-dispatched!
+  [event-id]
+  (let [[before] (swap-vals! dispatched-event-ids* conj event-id)]
+    (not (contains? before event-id))))
 (defonce discord-gateway-unsubscribe* (atom nil))
 
 (defonce ^:private enriched-env-config-cache*
@@ -233,6 +245,7 @@
       ;; Set TTL on dirty marker (24 hours - gives plenty of time for flush)
       (redis/expire client dirty-key 86400)
       (println "[event-agents] job" job-id "marked dirty for persistence")))
+  (swap! job-specs* assoc job-id spec)
   spec)
 
 (defn- get-job-spec
@@ -284,14 +297,17 @@
 
 (defn- schedule-flush-task!
   "Schedule background task to flush dirty jobs to SQL.
-   Runs every 5 minutes to batch writes."
+   Runs every 5 minutes to batch writes.
+   Idempotent: no-op if the flush task is already registered."
   []
-  (let [flush-interval-ms (* 5 60 1000) ;; 5 minutes
-        flush-task (fn []
-                     (when @running?*
-                       (flush-dirty-jobs-to-sql!)))]
-    (js/setInterval flush-task flush-interval-ms)
-    (println "[event-agents] scheduled SQL flush every 5 minutes")))
+  (when-not (contains? @scheduled-tasks* :flush)
+    (let [flush-interval-ms (* 5 60 1000)
+          flush-task        (fn []
+                              (when @running?*
+                                (flush-dirty-jobs-to-sql!)))
+          id                (doto (js/setInterval flush-task flush-interval-ms) (.unref))]
+      (swap! scheduled-tasks* assoc :flush {:type :interval :id id})
+      (println "[event-agents] scheduled SQL flush every 5 minutes"))))
 
 (defn- update-job-state!
   [job-id f]
@@ -402,7 +418,7 @@
                                                                        (catch :default _ nil))]
                                                    (if local-path
                                                      (str "- " filename " (saved to " local-path " — use the read tool to view it)")
-                                                     (str "- " filename (when url (str " <" url ">"+ " (download failed, use url directly)")))))) 
+                                                     (str "- " filename (when url (str " <" url ">"+ " (download failed, use url directly)"))))))
                                                attachments))
                                 "\n"))
         publish-channels (or (:publishChannels payload) [])]
@@ -725,6 +741,9 @@
                            vec)
         normalized-event normalized-base]
     (append-recent-event! normalized-event)
+    (if (and (not (str/blank? (:id normalized-event)))
+             (not (mark-event-dispatched! (:id normalized-event))))
+      (js/Promise.resolve {:matchedJobs [] :event normalized-event :skipped true})
     (if (empty? matching-jobs)
       (js/Promise.resolve {:matchedJobs []
                            :event normalized-event})
@@ -746,7 +765,7 @@
                   matching-jobs)))
           (.then (fn [_]
                    {:matchedJobs (mapv :id matching-jobs)
-                    :event normalized-event}))))))
+                    :event normalized-event})))))))  ;; closes idempotency if
 
 (defn- discord-bot-user-id
   [control]
@@ -1035,6 +1054,8 @@
       (clear-interval-task! task)))
   (reset! scheduled-tasks* {})
   (reset! running?* false)
+  (reset! dispatched-event-ids* #{})
+  (reset! job-specs* {})
   (println "[event-agents] stopped"))
 
 (defn- cadence-label
@@ -1069,7 +1090,7 @@
                   (when @running?*
                     (run-job! (:id job))
                     nil))
-        id (js/setInterval wrapped every-ms)]
+        id (doto (js/setInterval wrapped every-ms) (.unref))]
     (swap! scheduled-tasks* assoc (:id job) {:type :interval
                                              :id id
                                              :everyMs every-ms})
@@ -1088,8 +1109,7 @@
 
 (defn start!
   [_config]
-  (when-not @running?*
-    (reset! running?* true)
+  (when (compare-and-set! running?* false true)
     ;; =======================================================================
     ;; Persistence: Recover event-agent-control overrides from Redis FIRST.
     ;; This is the primary fix for "changes not sticking" — the admin panel
@@ -1218,10 +1238,15 @@
                          ;; Direct spec path - ensure required fields
                          (merge job-spec {:id job-id}))]
 
-    ;; Normalize and persist
-    (let [final-job (templates/normalize-job-for-persistence normalized-job)]
+    ;; Normalize and persist; only reload if spec changed
+    (let [final-job  (templates/normalize-job-for-persistence normalized-job)
+          prev-spec  (or (get-in @runtime-state/config* [:event-agent-control :jobs])
+                          (when-let [s (get @job-specs* job-id)] [s]))
+          spec-sig   #(dissoc % :updatedAt :createdAt)
+          unchanged? (some #(= (spec-sig %) (spec-sig final-job)) (or prev-spec []))]
       (update-job-spec! job-id final-job)
-      (reload!)
+      (when-not unchanged?
+        (reload!))
       (js/Promise.resolve final-job))))
 
 (defn get-job

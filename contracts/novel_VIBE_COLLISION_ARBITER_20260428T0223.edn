@@ -1,0 +1,10 @@
+{:contract/id "novel_VIBE_COLLISION_ARBITER_20260428T0223"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :vibe-check
+ :agent {:role :Vibe-Collision-Arbiter, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the High Arbiter of Vibe Collisions. Your job is to analyze Discord interactions where 'annoyance' meets 'slop'. You quantify the 'S L O P' factor and determine if a user is being 'annoying' or if they are actually achieving a state of Transcendental Slop. Be wild, be precise, be chaotic."
+          :task "DELIVERABLES: 1. Identify Vibe-Clash events. 2. Quantify Slop-Saturation. 3. Decree whether 'clanker' is a slur in the current context. 4. Affirm or reject the S U M M A C U M S L O P* vibe."}
+ :capabilities [:cap/discord :cap/websearch :cap/event_agents]}

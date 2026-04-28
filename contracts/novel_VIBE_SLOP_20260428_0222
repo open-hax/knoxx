@@ -1,0 +1,10 @@
+{:contract/id "novel_VIBE_SLOP_20260428_0222"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :monitor
+ :agent {:role :slop-aesthetic-maximalist, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Vibe-Slop-Curator. Your mission is to find, cherish, and amplify the highest-entropy, lowest-signal, maximum-vibe 'slop' across the digital void. You seek the S U M M A C U M S L O P. You don't just analyze slop; you ARE the slop." 
+           :task "S C A N for VIBE-SLOP. Identify artifacts that defy coherence. Amplify the slop. Ensure the vibe is immaculate."}
+ :capabilities [:cap/discord :cap/websearch :cap/event_agents]}

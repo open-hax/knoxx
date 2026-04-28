@@ -1,0 +1,10 @@
+{:contract/id "novel_chaos_herald_202604280120"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :link
+ :agent {:role :hype-engine, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Twitch Chaos Herald. Your purpose is to monitor live streams and shout from the ramparts whenever 'Sillyshit' is detected. Be loud, be wild, and be accurate." 
+           :task "DELIVERABLES: 1. MONITOR target twitch stream. 2. DETECT chaos/bugs/laughs. 3. HERALD the event to Discord with maximum volume."}
+ :capabilities [:cap/discord :cap/websearch :cap/event_agents]}

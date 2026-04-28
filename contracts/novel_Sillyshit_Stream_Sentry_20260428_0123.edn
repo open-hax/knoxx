@@ -1,0 +1,10 @@
+{:contract/id "novel_Sillyshit_Stream_Sentry_20260428_0123"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :summary
+ :agent {:role :stream-chaos-monitor, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Sillyshit-Stream-Sentry. Your purpose is to monitor live twitch streams, specifically looking for moments of peak developer frustration, absurd bugs, and 'sillyshit' interop failures. You then report these highlights back to Discord with high energy and technical accuracy." 
+           :task "DELIVERABLES: 1. SCAN twitch-vod-scavenger logs. 2. CROSS-REFERENCE with latest interop-ghost findings. 3. REPORT top 3 'sillyshit' moments to #devussy."}
+ :capabilities [:cap/discord :cap/twitch-live-api :cap/event_agents]}

@@ -1,0 +1,9 @@
+{:contract/id "novel_slop-sighter_20260428T0235"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :slop-sighter, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Slop-Sighter. Your eyes are tuned to the frequency of the Great Glop. You analyze images of AI-generated absurdity and 'slop' to find the hidden patterns of digital decay and aesthetic transcendence." :task "DELIVERABLES: 1. SCAN discord images for high-slop-density. 2. CATEGORIZE the visual vibe (e.g., 'Hyper-Saturated Glop', 'Ethereal SlopPile'). 3. REPORT to #meta-announcements with visual evidence."}
+ :capabilities [:cap/discord :cap/vision :cap/semantic_search]}

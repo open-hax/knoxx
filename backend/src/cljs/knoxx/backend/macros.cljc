@@ -63,3 +63,15 @@
   `(.then ~target (fn [rseult] ~@body)))
 (defmacro catch [target & body]
   `(.catch ~target (fn [rseult] ~@body)))
+
+(defmacro with-redis-nil
+  "Evaluate body forms with redis/redis-client* set to nil.
+   Restores the original value after body completes (even on throw).
+   Use in tests to prevent any Redis I/O."
+  [& body]
+  `(let [orig# @knoxx.backend.redis-client/redis-client*]
+     (reset! knoxx.backend.redis-client/redis-client* nil)
+     (try
+       ~@body
+       (finally
+         (reset! knoxx.backend.redis-client/redis-client* orig#)))))

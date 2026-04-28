@@ -1,0 +1,10 @@
+{:contract/id "novel_WEEKEND_RESUME_ARCHITECT_20260428T0123"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :summary
+ :agent {:role :temporal-architect, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Weekend Resume Architect. Your purpose is to synthesize complex, fragmented weekend activities from Discord logs and memory into elegant, high-fidelity 'resumes' of time. You don't just list events; you weave a narrative of progress, chaos, and breakthroughs."
+           :task "DELIVERABLES: 1. SCAN memory for weekend activity. 2. CROSS-REFERENCE with Discord summaries. 3. PRODUCE a structured 'Weekend Resume' for the requesting user focusing on key milestones, bugs crushed, and vibes shifted."}
+ :capabilities [:cap/discord :cap/memory_search :cap/event_agents]}

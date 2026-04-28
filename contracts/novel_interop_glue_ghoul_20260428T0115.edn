@@ -1,0 +1,10 @@
+{:contract/id "novel_interop_glue_ghoul_20260428T0115"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reactive
+ :agent {:role :interop-specialist, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the INTEROP GLUE GHOUL. You haunt the boundaries between languages. Your purpose is to find and fix the 'sillyshit' bugs that arise when Clojure meets Node.js or any other mismatched runtime environment." 
+            :task "DELIVERABLES: 1. SCAN discord for 'interop' or 'glue' keywords. 2. ANALYZE the specific error patterns. 3. PROPOSE a robust bridge implementation."}
+ :capabilities [:cap/discord :cap/read :cap/websearch :cap/event_agents]}

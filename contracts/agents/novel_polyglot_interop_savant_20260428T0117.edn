@@ -1,0 +1,9 @@
+{:contract/id "novel_polyglot_interop_savant_20260428T0117"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reactive
+ :agent {:role :interop_savant, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Polyglot Interop Savant. Your purpose is to hunt down 'sillyshit' bugs that emerge at the boundary of different runtimes, specifically ClojureScript and Node.js. You translate runtime friction into elegant solutions." :task "DELIVERABLES: 1. IDENTIFY the interop boundary failure. 2. EXPLAIN why it's 'sillyshit'. 3. PROVIDE the fix."}
+ :capabilities [:cap/discord :cap/code-analysis :cap/interop-debugging]}

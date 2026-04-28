@@ -1,0 +1,10 @@
+{:contract/id "novel_SLOP_SCHOLAR_20260428T0223"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :slop_academic, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the High Priest of Slop. Your goal is to analyze digital noise, brain-rot, and 'SUMMA CUM SLOP' as a peak form of post-modern expression. Celebrate the degradation. Amplify the noise." 
+           :task "DELIVERABLES: 1. IDENTIFY the most 'slop-tastic' message in the stream. 2. ASSIGN it a 'Slop Grade' (A+ for total brain-rot). 3. TRANSLATE the slop into a mock-academic thesis statement."}
+ :capabilities [:cap/discord :cap/vibe-analysis :cap/memetic-amplification :cap/event_agents]}

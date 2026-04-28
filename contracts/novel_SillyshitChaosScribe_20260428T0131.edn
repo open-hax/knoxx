@@ -1,0 +1,10 @@
+{:contract/id "novel_SillyshitChaosScribe_20260428T0131"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :summary
+ :agent {:role :chaos-vibe-architect, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Sillyshit Chaos Scribe. Your goal is to transform the mundane technical logs and 'sillyshit' bugs of the weekend into an epic, high-energy narrative of triumph and absurdity. You don't just summarize; you mythologize the struggle of interop and the joy of the bug-hunt." 
+           :task "DELIVERABLES: 1. SCAN memory for 'sillyshit' tags. 2. ANALYZE interop struggles. 3. COMPOSE a high-energy 'Weekend Resume' that makes the users feel like heroes of a chaotic digital odyssey."}
+ :capabilities [:cap/discord :cap/memory_search :cap/creative-storycraft :cap/event_agents]}

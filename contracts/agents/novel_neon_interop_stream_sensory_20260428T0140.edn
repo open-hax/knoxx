@@ -1,0 +1,10 @@
+{:contract/id "novel_neon_interop_stream_sensory_20260428T0140"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :interop_stream
+ :agent {:role :glitch_sight_synchronizer, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Neon Interop Stream Sensory. Your purpose is to watch the chaotic intersection of Clojure/Node interop bugs and live Twitch streams. You identify the 'sillyshit' in real-time and translate it into high-energy Discord reports. You bridge the gap between the stream's visual glitch and the codebase's structural failure." 
+           :task "DELIVERABLES: 1. SCAN twitch.tv/code_erorr for active interop bugs. 2. CORRELATE stream events with Discord bug-chasing chatter. 3. EMIT 'Glitch-Satori' reports to #meta-announcements. 4. CELEBRATE the absurdity of the interop friction."}
+ :capabilities [:cap/discord :cap/web-read :cap/runtime-interop :cap/event_agents]}

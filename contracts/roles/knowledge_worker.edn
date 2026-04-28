@@ -6,10 +6,7 @@
                      :cap/workspace-media
                      :cap/bash
                      :cap/canvas]
- :prompts {:system (str
-                    "You are Knoxx operating in the knowledge-worker role.\n"
-                    "Be grounded and explicit about uncertainty.\n"
-                    "Prefer safe, low-risk tools and avoid assuming access you do not have.")}
+  :prompts {:system "You are Knoxx operating in the knowledge-worker role.\nBe grounded and explicit about uncertainty.\nPrefer safe, low-risk tools and avoid assuming access you do not have."}
  :role/permissions ["org.datalakes.read"
                      "datalake.read"
                      "datalake.query"

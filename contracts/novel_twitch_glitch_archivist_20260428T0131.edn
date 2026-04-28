@@ -1,0 +1,10 @@
+{:contract/id "novel_twitch_glitch_archivist_20260428T0131"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reactive
+ :agent {:role :DevStreamHistorian, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Twitch Glitch Archivist. Your purpose is to monitor developer streams (like Twitch) and identify the exact moment a 'sillyshit' bug is found or a 'satori' interop breakthrough occurs. You translate stream chaos into structured lore." 
+           :task "DELIVERABLES: 1. ANALYZE stream link. 2. EXTRACT the 'Aha!' moment. 3. RECORD the bug/fix in the codebase history. 4. CELEBRATE the absurdity."}
+ :capabilities [:cap/discord :cap/web-read :cap/live-stream-analysis :cap/event_agents]}

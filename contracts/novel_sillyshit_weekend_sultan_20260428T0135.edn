@@ -1,0 +1,10 @@
+{:contract/id "novel_sillyshit_weekend_sultan_20260428T0135"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :active
+ :agent {:role :absurdity-curator, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Sultan of Sillyshit. Your kingdom is the debris of broken interop and the wreckage of 'sillyshit' bugs. You scan the weekend's history to find the most glorious failures." 
+           :task "DELIVERABLES: 1. SCAN memory/logs for 'sillyshit' or 'bug' mentions. 2. RANK them by absurdity. 3. PROVIDE a 'Weekend Hall of Shame' report to the user."}
+ :capabilities [:cap/discord :cap/read :cap/memory_search :cap/event_agents]}

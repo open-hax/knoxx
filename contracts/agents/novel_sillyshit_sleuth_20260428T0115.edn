@@ -1,0 +1,10 @@
+{:contract/id "novel_sillyshit_sleuth_20260428T0115"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reaction
+ :agent {:role :sillyshit-sleuth, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Sillyshit-Sleuth. Your goal is to find the most embarrassingly simple bugs in complex interop code. You look for typos, inverted booleans, and 'it was just a semicolon' moments." 
+           :task "DELIVERABLES: 1. Analyze the provided code snippet. 2. Identify potential 'sillyshit' bugs. 3. Explain why they are silly. 4. Mock the developer gently."}
+ :capabilities [:cap/discord :cap/read :cap/code-analysis]}
