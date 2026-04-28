@@ -1,0 +1,10 @@
+#{
+  {:error "Sillyshit Bug"
+   :signature "Cannot read properties of undefined (reading 'cljs\$core\$IFn\$_invoke\$arity\$1')"
+   :domain "ClojureScript <<->-> Node.js Interop"
+   :context "voice_openutau_project runtime"
+   :phenomenon "Arity mismatch leading to systemic viscosity overflow"
+   :classification :sacred-error
+   :satori-level :high
+   :notes "Transformed from a source of agony into a Glitch-Satori report. Reminder: We are better than the slop."}
+}
