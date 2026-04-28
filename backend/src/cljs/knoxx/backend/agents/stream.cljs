@@ -38,6 +38,24 @@
 
 (declare emit-streaming-delta!)
 
+(defn- emit-progress-text!
+  "Emit appended delta for a *cumulative* text value.
+
+   Some providers misuse `*_delta` to carry the full message-so-far (cumulative)
+   instead of an incremental token. If we treat that as an incremental delta we
+   get duplicated leading tokens. This helper diffs against our last seen text,
+   emits only the appended portion, and then resets our last-text atom to the
+   provided cumulative value."
+  [state kind full-text]
+  (let [full-text (str (or full-text ""))
+        last* (if (= kind :agent_message)
+                (:last-assistant-text* state)
+                (:last-reasoning-text* state))
+        delta (diff-appended-text @last* full-text)]
+    (when (seq delta)
+      (emit-streaming-delta! state kind delta))
+    (reset! last* full-text)))
+
 (defn- emit-text-delta-with-think-tags!
   "Routes text deltas that contain <think>...</think> blocks into the reasoning
    stream, leaving the assistant message stream clean.
@@ -179,16 +197,29 @@
         assistant-event-type (aget assistant-event "type")]
     (cond
       (= assistant-event-type "text_delta")
-      (let [delta (or (aget assistant-event "delta") "")]
-        (emit-text-delta-with-think-tags! state delta))
+      (let [delta (or (aget assistant-event "delta") "")
+            delta (str (or delta ""))
+            last-text @(:last-assistant-text* state)]
+        ;; Some providers send cumulative "text so far" in `delta`.
+        ;; Heuristic: if the incoming payload already includes what we've emitted,
+        ;; treat it as cumulative and diff it.
+        (if (and (not (str/blank? last-text))
+                 (str/starts-with? delta last-text))
+          (emit-progress-text! state :agent_message delta)
+          (emit-text-delta-with-think-tags! state delta)))
 
       (contains? #{"reasoning_delta" "reasoning" "reasoning_content_delta" "thinking_delta" "thinking"} assistant-event-type)
       (let [delta (or (aget assistant-event "delta")
                       (aget assistant-event "text")
                       (aget assistant-event "reasoning")
                       (aget assistant-event "thinking")
-                      "")]
-        (emit-streaming-delta! state :reasoning delta))
+                      "")
+            delta (str (or delta ""))
+            last-reasoning @(:last-reasoning-text* state)]
+        (if (and (not (str/blank? last-reasoning))
+                 (str/starts-with? delta last-reasoning))
+          (emit-progress-text! state :reasoning delta)
+          (emit-streaming-delta! state :reasoning delta)))
 
       (contains? #{"toolcall_delta" "tool_call_delta"} assistant-event-type)
       (sync-assistant-message! state (or (aget assistant-event "partial")
