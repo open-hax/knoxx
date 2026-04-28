@@ -18,6 +18,15 @@
   [role]
   (roles/normalize-role (current-config) role))
 
+(defn- normalize-slugs
+  "Normalize role slug strings to kebab-case and deduplicate.
+   Collapses mixed forms like 'knowledge_worker' / 'knowledge-worker' into one."
+  [slugs]
+  (->> (or slugs [])
+       (map #(-> % name (str/replace "_" "-")))
+       distinct
+       vec))
+
 (defn email-enabled?
   [config]
   (and (not (str/blank? (:gmail-app-email config)))
@@ -114,8 +123,8 @@
                                              :actor-id actor-id
                                              :contract-spec-id (:id contract-spec)
                                              :tool-ids-from-contract (vec (:tool-ids contract-spec))
-                                             :role-slugs-from-contract (vec (:role-slugs contract-spec))
-                                             :actor-role-slugs (vec (:role-slugs actor-spec))}))
+                                             :role-slugs-from-contract (normalize-slugs (:role-slugs contract-spec))
+                                             :actor-role-slugs (normalize-slugs (:role-slugs actor-spec))}))
         allowed-tool-ids (cond
                            contract-spec (set (:tool-ids contract-spec))
                            auth-context (auth-tool-ids auth-context)
@@ -175,7 +184,7 @@
       :agent_id (:id contract-spec)
       :agent_label (:id contract-spec)
       :agent_trigger_kind (:trigger-kind contract-spec)
-      :role_slugs (vec (or (:role-slugs contract-spec) []))
+      :role_slugs (normalize-slugs (:role-slugs contract-spec))
       :capability_ids (vec (or (:capability-ids contract-spec) []))
       :system_prompt (when (or (nil? auth-context)
                                (authz/system-admin? auth-context))

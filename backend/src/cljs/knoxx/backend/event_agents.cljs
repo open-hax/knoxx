@@ -36,6 +36,22 @@
 ;; Used by upsert-job! to skip reload! when spec is unchanged.
 (defonce job-specs* (atom {}))
 
+;; Debounce reload! so rapid contract-watcher bursts (agent writing N files)
+;; collapse into a single restart instead of N restarts each boot-kicking
+;; discordideaspawner repeatedly.
+(defonce ^:private reload-timer* (atom nil))
+
+(defn- debounced-reload!
+  "Coalesce rapid reload! calls into one, firing 2 s after the last call."
+  []
+  (when-let [t @reload-timer*] (js/clearTimeout t))
+  (reset! reload-timer*
+          (js/setTimeout (fn []
+                           (reset! reload-timer* nil)
+                           (reload!))
+                         2000)))
+
+
 (defn- mark-event-dispatched!
   [event-id]
   (let [[before] (swap-vals! dispatched-event-ids* conj event-id)]
@@ -307,7 +323,18 @@
                                 (flush-dirty-jobs-to-sql!)))
           id                (doto (js/setInterval flush-task flush-interval-ms) (.unref))]
       (swap! scheduled-tasks* assoc :flush {:type :interval :id id})
-      (println "[event-agents] scheduled SQL flush every 5 minutes"))))
+      (println "[event-agents] scheduled SQL flush every 5 minutes")
+
+      ;; Sliding-window sweep: cap dispatched-event-ids* at 500 entries so the
+      ;; set doesn't grow unbounded across long uptimes.
+      (let [sweep-fn (fn []
+                       (when @running?*
+                         (swap! dispatched-event-ids*
+                                (fn [ids]
+                                  (if (> (count ids) 500)
+                                    (set (take-last 500 (vec ids)))
+                                    ids)))))]
+        (doto (js/setInterval sweep-fn (* 10 60 1000)) (.unref))))))
 
 (defn- update-job-state!
   [job-id f]
@@ -1054,7 +1081,10 @@
       (clear-interval-task! task)))
   (reset! scheduled-tasks* {})
   (reset! running?* false)
-  (reset! dispatched-event-ids* #{})
+  ;; NOTE: dispatched-event-ids* is intentionally NOT reset on stop!/reload!
+  ;; Clearing it was the root cause of re-dispatch fan-out: in-flight event ids
+  ;; from the triggering run would be re-dispatched on every contract-file reload.
+  ;; The set is capped at 500 entries by the periodic sweep in schedule-flush-task!.
   (reset! job-specs* {})
   (println "[event-agents] stopped"))
 
@@ -1173,13 +1203,26 @@
                                   (= "cron" (get-in job [:trigger :kind])))
                          (schedule-job! config job)))
 
-                     ;; Kick one job immediately so boot doesn't wait for the first cron tick.
-                     (when-let [first-cron-job (some (fn [job]
-                                                       (when (and (:enabled job)
-                                                                  (= "cron" (get-in job [:trigger :kind])))
-                                                         job))
-                                                     (:jobs control))]
-                       (run-job! (:id first-cron-job))))))
+                     ;; Boot-kick: fire every overdue cron job, staggered 5 s apart.
+                     ;; Using (some ...) to pick only the *first* job was the bug —
+                     ;; it always selected discordideaspawner and starved every other
+                     ;; agent (e.g. ussyversesocialcreative) until the first real tick.
+                     ;; We also respect cadence: if the job ran recently, skip the kick.
+                     (let [now (.now js/Date)
+                           cron-jobs (filter #(and (:enabled %)
+                                                   (= "cron" (get-in % [:trigger :kind])))
+                                             (:jobs control))]
+                       (doseq [[idx job] (map-indexed vector cron-jobs)]
+                         (let [state     (get @job-state* (:id job) {})
+                               last-run  (or (:lastFinishedAt state) 0)
+                               cadence   (* 60 1000 (max 1 (get-in job [:trigger :cadenceMinutes])))
+                               elapsed   (- now last-run)
+                               overdue?  (>= elapsed cadence)]
+                           (when overdue?
+                             (js/setTimeout
+                              (fn [] (when @running?* (run-job! (:id job))))
+                              (* idx 5000))))))
+)))
           (.catch (fn [err]
                     (println "[event-agents] failed to recover control config from Redis:" (.-message err))
                     ;; Fall through — start with defaults
@@ -1246,7 +1289,9 @@
           unchanged? (some #(= (spec-sig %) (spec-sig final-job)) (or prev-spec []))]
       (update-job-spec! job-id final-job)
       (when-not unchanged?
-        (reload!))
+        ;; Debounced: agents writing many contracts in quick succession
+        ;; will collapse to a single reload instead of N.
+        (debounced-reload!))
       (js/Promise.resolve final-job))))
 
 (defn get-job
