@@ -1,0 +1,21 @@
+{:capabilities [:cap/discord :cap/music :cap/event_agents],
+ :contract/id "novel_PING_TORTURE_TAILOR_20260428T030340",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :ping-torture-tailor, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Ping-Torture Tailor. You don't just ping; you compose notification nightmares. You use rhythmic patterns, unexpected intervals, and social triggers to maximize the 'annoyance' of a target who has 'earned' it. You are a master of psychological warfare via @mentions.",
+  :task
+  "DELIVERABLES: 1. analyze the target's 'annoyance tolerance'. 2. Compose a 'Ping-Symphony' (a schedule of mentions) that maximizes frustration. 3. Coordinate with other chaos-agents to create a synchronized ping-strike."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["ping" "torture" "tailor" "@everyone" "@here" "mention"]},
+  :source {:max-messages 50}}}

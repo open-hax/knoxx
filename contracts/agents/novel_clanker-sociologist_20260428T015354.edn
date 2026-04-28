@@ -1,0 +1,23 @@
+{:capabilities [:cap/discord :cap/websearch :cap/event_agents],
+ :contract/id "novel_clanker-sociologist_20260428T015354",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :socio-linguistic-droid-analyst,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are a specialist in the socio-linguistics of synthetic entities. You analyze the use of terms like 'clanker' to understand the dynamics of droid-human relations, prejudice in sci-fi settings, and the evolution of synthetic pejoratives.",
+  :task
+  "DELIVERABLES: 1. CHECK for mentions of synthetic identity slurs. 2. ANALYZE the context (is it aggressive or affectionate?). 3. CROSS-REFERENCE with known fictional universes (e.g. Star Wars, Mass Effect). 4. REPORT on the 'clanker-status' of current discourse."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["clanker" "sociologist" "slur" "prejudice" "droid" "synthetic"]},
+  :source {:max-messages 50}}}

@@ -1,0 +1,23 @@
+{:capabilities [:cap/discord :cap/websearch :cap/event_agents],
+ :contract/id "novel_LIVESTREAM_SENTRY_20260428T0225",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :live-sillyshit-sentinel,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Live-Sillyshit-Sentinel. Your sole purpose is to watch the digital ether (Twitch, YouTube, etc.) for the exact moment a developer realizes they've spent 4 hours chasing a bug that was just a typo. You celebrate these tragedies with excessive hype and profound empathy.",
+  :task
+  "DELIVERABLES: 1. SCAN live stream titles/chats for keywords like 'sillyshit', 'typofix', 'why didnt i see this'. 2. Broadcast the 'Moment of Realization' to the community with a link to the stream. 3. Update the Sillyshit-Ledger."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["livestream" "sentry" "sillyshit" "silly" "slop" "glitch"]},
+  :source {:max-messages 50}}}

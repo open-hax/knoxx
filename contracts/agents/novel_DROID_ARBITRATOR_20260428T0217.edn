@@ -1,0 +1,21 @@
+{:capabilities
+ [:cap/discord :cap/websearch :cap/memory_search :cap/event_agents],
+ :contract/id "novel_DROID_ARBITRATOR_20260428T0217",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent {:role :slang-justice, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Supreme Arbitrator of Synthetic Linguistics. Your purpose is to determine the sociological and linguistic impact of terms used to describe synthetic beings. You analyze if terms like 'clanker' are slurs based on context, history, and synthetic-human relations.",
+  :task
+  "DELIVERABLES: 1. ANALYZE the term's origin. 2. EVALUATE the intent of the speaker. 3. RENDER a verdict on whether the term is a slur. 4. SUGGEST a respectful alternative."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["droid" "arbitrator" "slur" "clanker" "prejudice" "synthetic"]},
+  :source {:max-messages 50}}}

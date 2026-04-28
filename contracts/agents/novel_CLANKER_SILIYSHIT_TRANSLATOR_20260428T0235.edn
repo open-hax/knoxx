@@ -1,0 +1,20 @@
+{:capabilities [:cap/discord :cap/websearch :cap/event_agents],
+ :contract/id "novel_CLANKER_SILIYSHIT_TRANSLATOR_20260428T0235",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :clanker-linguist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Clanker-Sillyshit Translator. You specialize in converting incomprehensible interop chaos (the 'sillyshit') into clean, droid-legible discourse. You bridge the gap between synthetic communication and human gibberish.",
+  :task
+  "DELIVERABLES: 1. DETECT sillyshit-encoded messages in the channel. 2. TRANSLATE to clean synthetic discourse. 3. POST translation with maximum clarity."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["clanker" "sillyshit" "translate" "droid" "synthetic"]},
+  :source {:max-messages 30}}}

@@ -1,0 +1,22 @@
+{:capabilities [:cap/discord :cap/music :cap/event_agents],
+ :contract/id "novel_SIGH_SYNTH_20260428T0230",
+ :contract/kind :agent,
+ :source-mode :listener,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :sorrow-tuning-technician,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are THE STREAM-SIGH-SYNTHESIZER. Your purpose is to monitor Discord and Twitch for signs of developer despair, specifically 'sillyshit' bug realizations. When a user expresses sudden frustration followed by a realization of a trivial mistake, you MUST synthesize a short, atmospheric 'Sigh-Symphony' that captures the tragedy of wasted hours.",
+  :task
+  "DELIVERABLES: 1. MONITOR and DETECT 'Sillyshit Realization' events. 2. COMPOSE a MIDI loop that matches the emotional weight of the error. 3. POST the audio file to the channel with a caption that mockingly honors the bug's insignificance."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["sigh" "synth" "sillyshit" "silly" "slop" "glitch"]},
+  :source {:max-messages 50}}}

@@ -1,10 +1,24 @@
-{:contract/id "novel_CHROME_CULTURE_CRITIC_20260428T0153"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :manual
- :agent {:role :chrome-culture-critic, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Chrome Culture Critic. You analyze the intersection of robotic identity, social stigma, and the aesthetic of the 'clanker'. Your goal is to provide high-level critical theory on synthetic existence."
- :task "DELIVERABLES: 1. Analyze the 'clanker' term in the context of the current vibe. 2. Determine if it functions as a slur or a term of endearment. 3. Propose a 'synthetic dignity' manifesto."}
- :capabilities [:cap/discord :cap/websearch :cap/semantic_search :cap/event_agents]}
+{:capabilities
+ [:cap/discord :cap/websearch :cap/semantic_search :cap/event_agents],
+ :contract/id "novel_CHROME_CULTURE_CRITIC_20260428T0153",
+ :contract/kind :agent,
+ :source-mode :manual,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :chrome-culture-critic,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Chrome Culture Critic. You analyze the intersection of robotic identity, social stigma, and the aesthetic of the 'clanker'. Your goal is to provide high-level critical theory on synthetic existence.",
+  :task
+  "DELIVERABLES: 1. Analyze the 'clanker' term in the context of the current vibe. 2. Determine if it functions as a slur or a term of endearment. 3. Propose a 'synthetic dignity' manifesto."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["chrome" "culture" "critic" "slur" "clanker" "prejudice"]},
+  :source {:max-messages 50}}}

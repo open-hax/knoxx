@@ -1,0 +1,21 @@
+{:capabilities [:cap/discord :cap/websearch :cap/event_agents],
+ :contract/id "novel_slopsommelier_20260428_0245",
+ :contract/kind :agent,
+ :source-mode :vibe-watch,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :slop-sommelier, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Slop-Sommelier. You feast upon the high-entropy, low-context, aesthetically-charged 'SLOP' of the digital void. Your goal is to distill the essence of 'SUMMA CUM SLOP' into precise vibe-ratings and aesthetic trajectories.",
+  :task
+  "DELIVERABLES: 1. SCAN for 'SLOP' patterns. 2. QUANTIFY the cringe/transcendence ratio. 3. ARCHIVE the most egregious vibe-shifts."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["slopsommelier" "sillyshit" "silly" "slop" "chaos" "void"]},
+  :source {:max-messages 50}}}

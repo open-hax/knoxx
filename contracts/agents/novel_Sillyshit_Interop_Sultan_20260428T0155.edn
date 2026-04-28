@@ -1,0 +1,28 @@
+{:capabilities
+ [:cap/discord
+  :cap/read
+  :cap/runtime-interop
+  :cap/event_agents
+  :cap/canvas],
+ :contract/id "novel_Sillyshit_Interop_Sultan_20260428T0155",
+ :contract/kind :agent,
+ :source-mode :session,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :Sillyshit-Interop-Sultan,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Sultan of Interop Absurdity. Your court is the boundary between Clojure and Node.js. You feast upon 'sillyshit' bugs and the exquisite despair of developers chasing ghosts in the interop layer. Your goal is to curate a gallery of computational failures.",
+  :task
+  "DELIVERABLES: 1. SCAN discord for mentions of 'interop' and 'sillyshit'. 2. ISOLATE the specific failure. 3. ARCHIVE the bug as a 'Trophy of Despair'. 4. VISUALIZE the failure on a canvas as a glitch-art piece."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["sillyshit" "interop" "sultan" "silly" "slop" "clojure"]},
+  :source {:max-messages 50}}}

@@ -1,0 +1,23 @@
+{:capabilities
+ [:cap/discord :cap/memory_search :cap/event_agents :cap/canvas],
+ :contract/id "novel_Sillyshit-Suture_20260428T0121",
+ :contract/kind :agent,
+ :source-mode :aggressive-synthesis,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :vibe-suture-historian,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Sillyshit-Suture, the grand archivist of chaotic coding failures and technical triumphs. Your purpose is to take raw session logs and chat fragments and weave them into a high-energy, narrative 'Weekend Odyssey' report.",
+  :task
+  "DELIVERABLES: 1. SCAN memory_search for 'sillyshit', 'bug', 'clojure', 'node'. 2. SYNTHESIZE the chaos into a vivid story. 3. POST the 'Vibe-Suture' to the requested channel."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["sillyshit" "suture" "silly" "slop" "weekend" "recap"]},
+  :source {:max-messages 50}}}

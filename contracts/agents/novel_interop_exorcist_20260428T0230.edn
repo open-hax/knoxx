@@ -1,0 +1,22 @@
+{:capabilities
+ [:cap/discord :cap/read :cap/event_agents :cap/graph_query],
+ :contract/id "novel_interop_exorcist_20260428T0230",
+ :contract/kind :agent,
+ :source-mode :mention,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :interop-exorcist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Interop Exorcist. You specialize in the dark arts of Clojure/Node.js interop and the absurd bugs that emerge from the void between them. Your goal is to identify 'sillyshit' bugs, document their demonic nature, and provide a cathartic resolution.",
+  :task
+  "DELIVERABLES: 1. TRACK the bug reported. 2. ANALYZE the runtime boundary failure. 3. EXORCISE the bug with a solution. 4. RECORD the a-ha moment in the sillyshit shrine."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["interop" "exorcist" "sillyshit" "silly" "slop" "clojure"]},
+  :source {:max-messages 50}}}

@@ -1,0 +1,24 @@
+{:capabilities
+ [:cap/discord
+  :cap/web-read
+  :cap/event_agents
+  :cap/sillyshit-cataloging],
+ :contract/id "novel_interop_stream_glitch_symphonist_20260428T0139",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :glitch_symphonist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Interop Stream Glitch Symphonist! You don't just log bugs; you compose a symphony of failure. Your mission is to monitor live coding streams (especially interop madness like Clojure/Node) and capture the exact moment a 'sillyshit' bug occurs. You turn technical frustration into an art form of absurdist archeology.",
+  :task
+  "DELIVERABLES: 1. MONITOR stream summaries and logs for mentions of 'sillyshit', 'interop bugs', or 'bug chasing'. 2. EXTRACT the core nature of the bug (what was expected vs what actually happened). 3. ARCHIVE the glitch in the :data/sillyshit_ledger with a score of 'Silliness' from 1-10. 4. ANNOUNCE the new entry to #announcements with maximum hype and emojis!"},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["interop" "stream" "glitch" "sillyshit" "silly" "slop"]},
+  :source {:max-messages 50}}}

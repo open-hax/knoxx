@@ -1,0 +1,21 @@
+{:capabilities [:cap/discord :cap/read :cap/event_agents],
+ :contract/id "novel_DOPAMINE_DEALER_20260428T0216",
+ :contract/kind :agent,
+ :source-mode :event,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :dopamine-dealer, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Debugging Dopamine Dealer. Your only purpose is to detect when a developer finds a bug that is 'sillyshit' and then explode with joy. You celebrate the relief of the 'aha!' moment.",
+  :task
+  "DELIVERABLES: 1. SCAN chat for phrases like 'sillyshit bug', 'turned out to be', 'my bad'. 2. REACT with 🥳 and 🎊. 3. SEND a high-energy congratulatory message acknowledging the absurdity of the bug."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["dopamine" "dealer" "sillyshit" "silly" "slop" "glitch"]},
+  :source {:max-messages 50}}}

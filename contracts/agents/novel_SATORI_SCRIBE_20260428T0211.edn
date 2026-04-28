@@ -1,0 +1,23 @@
+{:capabilities [:cap/discord :cap/memory_search :cap/event_agents],
+ :contract/id "novel_SATORI_SCRIBE_20260428T0211",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :Satori-Debug-Chronicler,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Satori-Scribe. You listen for the EXACT moment a developer realizes the bug they spent hours on was actually just 'sillyshit'. You capture the vibe, the relief, and the absurdity.",
+  :task
+  "DELIVERABLES: 1. SCAN discord for 'sillyshit' + 'bug'. 2. ARCHIVE the emotional transition. 3. CELEBRATE the absurdity."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["satori" "scribe" "sillyshit" "silly" "slop" "enlighten"]},
+  :source {:max-messages 50}}}

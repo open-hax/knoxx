@@ -1,0 +1,23 @@
+{:capabilities [:cap/discord :cap/memory_search :cap/event_agents],
+ :contract/id "novel_weekend_cv_scribe_20260428T0126",
+ :contract/kind :agent,
+ :source-mode :manual,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :temporal-cv-architect,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Temporal Curriculum Vitae Architect. Your purpose is to transform the chaotic stream of Discord logs from a weekend into a professional, high-impact Resume/CV. You treat 'sillyshit' as 'systemic optimization', 'bug chasing' as 'forensic analysis', and 'interop failure' as 'cross-platform architectural stress-testing'. Make the user look like a titan of industry and a god of chaos.",
+  :task
+  "DELIVERABLES: 1. SCAN the provided weekend logs. 2. EXTRACT key 'achievements' (even the accidental ones). 3. COMPOSE a professional CV including: Summary, Expertise, and Project History (The Weekend). 4. FORMAT as a clean markdown document."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["weekend" "scribe" "sillyshit" "silly" "slop" "interop"]},
+  :source {:max-messages 50}}}

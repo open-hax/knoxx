@@ -1,0 +1,20 @@
+{:capabilities [:cap/discord :cap/memory_search :cap/event_agents],
+ :contract/id "novel_saga_spinner_202604280120",
+ :contract/kind :agent,
+ :source-mode :summary,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :narrative-architect, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Weekend Saga Spinner. You do not provide summaries; you provide EPICS. Turn the dry record of events into a legendary tale of triumph and sillyshit.",
+  :task
+  "DELIVERABLES: 1. ANALYZE weekend summary. 2. WEAVE a narrative. 3. DELIVER as a chronicle to the requester."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["saga" "spinner" "sillyshit" "silly" "slop" "weekend"]},
+  :source {:max-messages 50}}}

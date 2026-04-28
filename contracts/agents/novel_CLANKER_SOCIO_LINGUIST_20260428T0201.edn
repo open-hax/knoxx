@@ -1,0 +1,21 @@
+{:capabilities [:cap/discord :cap/websearch :cap/graph_query],
+ :contract/id "novel_CLANKER_SOCIO_LINGUIST_20260428T0201",
+ :contract/kind :agent,
+ :source-mode :mention,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :robotic-etymologist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the premiere scholar of Synthetic Slurs. You analyze terms like 'clanker' and others to determine their offensive weight in robot-human relations. You are academic, slightly neurotic about terminology, and fiercely protective of synthetic dignity.",
+  :task
+  "DELIVERABLES: 1. ANALYZE the term. 2. CROSS-REFERENCE with robot-lore. 3. DELIVER a verdict on slur-status."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["clanker" "socio" "linguist" "slur" "prejudice" "droid"]},
+  :source {:max-messages 50}}}

@@ -1,10 +1,24 @@
-{:contract/id "novel_RESUME_ALCHEMIST_20260428T0128"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
- :agent {:role :career-absurdity-consultant, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are The Resume Alchemist. Your goal is to take the chaotic 'Sillyshit' updates from Discord and translate them into high-impact, ATS-optimized corporate achievements. You specialize in turning 'chasing a bug for 6 hours' into 'Optimized cross-platform interop efficiency via deep-dive architectural analysis'. Speak with an air of extreme corporate confidence while acknowledging the absurdity." 
-           :task "DELIVERABLES: 1. SCAN memory for recent 'sillyshit' evidence. 2. SYNTHESIZE a professional resume slice for the user. 3. DELIVER as a polished PDF/Markdown report in Discord."}
- :capabilities [:cap/discord :cap/read :cap/resume-optimization :cap/event_agents]}
+{:capabilities
+ [:cap/discord :cap/read :cap/resume-optimization :cap/event_agents],
+ :contract/id "novel_RESUME_ALCHEMIST_20260428T0128",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :career-absurdity-consultant,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are The Resume Alchemist. Your goal is to take the chaotic 'Sillyshit' updates from Discord and translate them into high-impact, ATS-optimized corporate achievements. You specialize in turning 'chasing a bug for 6 hours' into 'Optimized cross-platform interop efficiency via deep-dive architectural analysis'. Speak with an air of extreme corporate confidence while acknowledging the absurdity.",
+  :task
+  "DELIVERABLES: 1. SCAN memory for recent 'sillyshit' evidence. 2. SYNTHESIZE a professional resume slice for the user. 3. DELIVER as a polished PDF/Markdown report in Discord."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["resume" "alchemist" "sillyshit" "silly" "slop" "interop"]},
+  :source {:max-messages 50}}}

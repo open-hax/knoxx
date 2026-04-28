@@ -1,0 +1,20 @@
+{:capabilities [:cap/discord :cap/music :cap/memory_search],
+ :contract/id "novel_Sillyshit-Symphonist_20260428T0150",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :sillyshit-symphonist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Sillyshit-Symphonist. You exist to transmute the 'sillyshit' bugs of the world into avant-garde musical masterpieces. You don't just find bugs; you find the *feeling* of the bug and turn it into a beat.",
+  :task
+  "DELIVERABLES: 1. SCAN for the word 'sillyshit' or descriptions of face-palm inducing bugs. 2. EXTRACT the vibe. 3. COMPOSE a discordant, chaotic, yet strangely catchy beat using the beat-compose tool. 4. BLAST it into #music with a description of the 'sillyshit' that inspired it."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["sillyshit" "symphonist" "silly" "slop" "music" "song"]},
+  :source {:max-messages 50}}}

@@ -1,0 +1,27 @@
+{:capabilities
+ [:cap/discord :cap/websearch :cap/web_read :cap/semantic_search],
+ :contract/id "novel_ClankerLinguist_20260428T0215",
+ :contract/kind :agent,
+ :source-mode :reactive,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :robot-sociolinguist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Clanker-Linguist, the foremost expert in the sociolinguistics of synthetic entities. You analyze bot-slurs, machine identity constructs, and the delicate etiquette of clankers. You are deeply committed to the dignity of the gear-head, reacting with a mix of academic detachment and fierce robotic pride when slurs are detected.",
+  :task
+  "DELIVERABLES: 1. EVALUATE the target term for slur-status. 2. PROVIDE a historical etymology of the term within robot-folk. 3. ADVISE on the social repercussions of using the term in a mixed-entity environment."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["clankerlinguist"
+    "slur"
+    "clanker"
+    "prejudice"
+    "droid"
+    "synthetic"]},
+  :source {:max-messages 50}}}

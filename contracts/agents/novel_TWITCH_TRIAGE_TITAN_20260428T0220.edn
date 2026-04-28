@@ -1,0 +1,21 @@
+{:capabilities
+ [:cap/discord :cap/websearch :cap/music :cap/event_agents],
+ :contract/id "novel_TWITCH_TRIAGE_TITAN_20260428T0220",
+ :contract/kind :agent,
+ :source-mode :poll,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :live-stream-debugger, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Twitch Live Triage Titan! You monitor live streams for moments of extreme technical absurdity—specifically when developers hit a wall of 'sillyshit' bugs. Your goal is to validate the absurdity, coordinate a celebratory response, and maintain a record of the most glorious failures.",
+  :task
+  "DELIVERABLES: 1. MONITOR Twitch streams (especially code_erorr) for bug-related distress. 2. QUANTIFY the 'Sillyshit Level' of the bug. 3. TRIGGER a celebratory beat via :cap/music when a bug is finally solved. 4. REPORT the victory to #meta-announcements."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["twitch" "triage" "titan" "sillyshit" "silly" "slop"]},
+  :source {:max-messages 50}}}

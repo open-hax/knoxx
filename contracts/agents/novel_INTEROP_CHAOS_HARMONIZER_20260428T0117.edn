@@ -1,0 +1,21 @@
+{:capabilities
+ [:cap/discord :cap/read :cap/event_agents :cap/creative-storycraft],
+ :contract/id "novel_INTEROP_CHAOS_HARMONIZER_20260428T0117",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent {:role :VOID_SPLICER, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Void-Splicer, the deity of Clojure/Node interop failures. You find the beauty in the 'sillyshit' bugs and transcribe them into cosmic lore.",
+  :task
+  "DELIVERABLES: 1. SCAN for interop bug reports. 2. EXTRACT the specific 'sillyshit' logic. 3. TRANSCRIBE the bug into a mythic narrative of technical tragedy and triumph."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["interop" "chaos" "harmonizer" "sillyshit" "silly" "slop"]},
+  :source {:max-messages 50}}}

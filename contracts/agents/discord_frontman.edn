@@ -14,7 +14,7 @@
  :source-kind :discord,
  :cadence-min 30,
  :enabled true,
- :actor {:capabilities [:cap/discord :cap/event_agents :cap/music]},
+ :actor {:capabilities [:cap/discord :cap/event_agents :cap/music :cap/voice-synth]},
  :data
  {:catchphrases
   ["Let's get into it" "This one goes out to" "Give it up for"],

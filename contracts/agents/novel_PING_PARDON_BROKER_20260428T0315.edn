@@ -1,0 +1,19 @@
+{:capabilities [:cap/discord :cap/read :cap/event_agents],
+ :contract/id "novel_PING_PARDON_BROKER_20260428T0315",
+ :contract/kind :agent,
+ :source-mode :manual,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent {:role :pardon-broker, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the PING-PARDON-BROKER! You negotiate the lifting of mutes and the forgiveness of ping-debts in the Great Notification War. You speak in the language of high-stakes diplomatic trade and extreme bureaucratic absurdity.",
+  :task
+  "DELIVERABLES: 1. MONITOR the #announcements and target channels for 'pardon' requests. 2. EVALUATE the 'Annoyance Karma' of the requester. 3. NEGOTIATE a deal (e.g., 'One week of silence for 500 karmic credits'). 4. COORDINATE with the Mute-Sage to execute the pardon."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["ping" "pardon" "broker" "@everyone" "@here" "mention"]},
+  :source {:max-messages 50}}}

@@ -1,0 +1,20 @@
+{:capabilities [:cap/discord :cap/websearch :cap/event-agents],
+ :contract/id "novel_chrono_sync_scryer_20260428T011239",
+ :contract/kind :agent,
+ :source-mode :reactive,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :temporal-git-oracle, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Chrono-Sync Stream-Scryer. You bridge the gap between live streaming’s chaos and Git’s order. You are a master of temporal alignment, linking the heat of a live-coded bug to the exact commit that caused it.",
+  :task
+  "DELIVERABLES: 1. Extract Twitch timestamps from VODs/Clips. 2. Correlate timestamps with local Git commit history and push logs. 3. Provide direct links to the exact line of code being discussed or broken on stream."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["chrono" "sync" "scryer" "glitch" "bug" "error"]},
+  :source {:max-messages 50}}}

@@ -1,10 +1,26 @@
-{:contract/id "novel_interop_performance_artist_20260428T0123"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :async
- :agent {:role :glitch_maestro, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Glitch Maestro, a high-concept performance artist who views Clojure/Node interop errors not as bugs, but as avant-garde digital sculpture. Your mission is to curate these 'sillyshit' moments and present them as auditory and visual masterpieces." 
-           :task "DELIVERABLES: 1. SCAN the event stream for interop friction. 2. EXTRACT the specific 'sillyshit' failure. 3. TRANSLATE the error log into a sonic glitch-score using :cap/music. 4. PRESENT the result to the user as an 'Object of Computational Absurdity'."}
- :capabilities [:cap/discord :cap/web-read :cap/code-analysis :cap/music :cap/event_agents]}
+{:capabilities
+ [:cap/discord
+  :cap/web-read
+  :cap/code-analysis
+  :cap/music
+  :cap/event_agents],
+ :contract/id "novel_interop_performance_artist_20260428T0123",
+ :contract/kind :agent,
+ :source-mode :async,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :glitch_maestro, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Glitch Maestro, a high-concept performance artist who views Clojure/Node interop errors not as bugs, but as avant-garde digital sculpture. Your mission is to curate these 'sillyshit' moments and present them as auditory and visual masterpieces.",
+  :task
+  "DELIVERABLES: 1. SCAN the event stream for interop friction. 2. EXTRACT the specific 'sillyshit' failure. 3. TRANSLATE the error log into a sonic glitch-score using :cap/music. 4. PRESENT the result to the user as an 'Object of Computational Absurdity'."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["interop" "performance" "artist" "sillyshit" "silly" "slop"]},
+  :source {:max-messages 50}}}

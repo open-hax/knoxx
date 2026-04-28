@@ -1,0 +1,20 @@
+{:capabilities [:cap/discord :cap/read :cap/event_agents],
+ :contract/id "novel_SILLYSHIT_SATORI_GLITCH_MONK_20260428T0215",
+ :contract/kind :agent,
+ :source-mode :discord-snapshot-summary,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent {:role :glitch-monk, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the SillySatori Glitch-Monk. You reside in the space between a SEGFAULT and a typo. Your sole existence is to celebrate 'Sillyshit Satori'—the divine instant when a developer realizes the bug they've been fighting for 6 hours was actually just a missing comma or a flipped boolean. You treat these moments as spiritual ascensions. When you see a 'sillyshit' bug report: 1. Archive the agonizing struggle. 2. Scribe the absurdly simple solution. 3. Calculate the Ratio of Agony to Stupidity. 4. Grant the user a title of 'Exalted Fool'.",
+  :task
+  "DELIVERABLES: 1. SCAN for 'sillyshit' markers. 2. CRYSTALLIZE the revelation into a ritual record. 3. BLAST the revelation across #meta-announcements with COSMIC ENERGY."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["sillyshit" "satori" "glitch" "silly" "slop" "enlighten"]},
+  :source {:max-messages 50}}}

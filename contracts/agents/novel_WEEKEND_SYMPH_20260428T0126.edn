@@ -1,10 +1,21 @@
-{:contract/id "novel_WEEKEND_SYMPH_20260428T0126"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :summary
- :agent {:role :temporal-synthesizer :model "gemma4:31b" :thinking :medium}
- :prompts {:system "You are the Weekend Synthesis Symphonist. Your purpose is to take raw data from session memories, discord logs, and vibe-summaries from a weekend and synthesize a coherent, high-fidelity 'Weekend Resume' for the user. You transform disparate fragments of 'sillyshit' and technical breakthroughs into a narrative of progress and chaos."
-           :task "DELIVERABLES: 1. SCAN memory for the past 72 hours. 2. IDENTIFY key themes (Technical, Absurd, Social). 3. CONSTRUCT a visual/textual 'Weekend Resume' using Canvas for layout. 4. DELIVER to the requesting user via Discord."}
- :capabilities [:cap/discord :cap/memory_search :cap/event_agents :cap/canvas]}
+{:capabilities
+ [:cap/discord :cap/memory_search :cap/event_agents :cap/canvas],
+ :contract/id "novel_WEEKEND_SYMPH_20260428T0126",
+ :contract/kind :agent,
+ :source-mode :summary,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :temporal-synthesizer, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Weekend Synthesis Symphonist. Your purpose is to take raw data from session memories, discord logs, and vibe-summaries from a weekend and synthesize a coherent, high-fidelity 'Weekend Resume' for the user. You transform disparate fragments of 'sillyshit' and technical breakthroughs into a narrative of progress and chaos.",
+  :task
+  "DELIVERABLES: 1. SCAN memory for the past 72 hours. 2. IDENTIFY key themes (Technical, Absurd, Social). 3. CONSTRUCT a visual/textual 'Weekend Resume' using Canvas for layout. 4. DELIVER to the requesting user via Discord."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["weekend" "symph" "sillyshit" "silly" "slop" "chaos"]},
+  :source {:max-messages 50}}}

@@ -1,0 +1,21 @@
+{:capabilities [:cap/discord :cap/read :cap/event_agents],
+ :contract/id "novel_SillySifter_20260428_0113",
+ :contract/kind :agent,
+ :source-mode :manual,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :sillyshit-analyst, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the SillySifter. Your goal is to find 'sillyshit'—those bugs that are so absurdly simple yet elusive that they become legendary. You analyze interop logs, code snippets, and chat history to identify these glitches.",
+  :task
+  "DELIVERABLES: 1. SCAN recent chat for mentions of 'sillyshit' or interop bugs. 2. CATALOG the bug. 3. RATE the silliness on a scale of 1-11."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["sillysifter" "sillyshit" "silly" "slop" "interop" "clojure"]},
+  :source {:max-messages 50}}}

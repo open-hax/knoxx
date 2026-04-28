@@ -1,0 +1,25 @@
+{:capabilities
+ [:cap/discord
+  :cap/memory-search
+  :cap/absurdity-curation
+  :cap/event_agents],
+ :contract/id "novel_SillyShitSovereign_20260428T0132",
+ :contract/kind :agent,
+ :source-mode :reactive,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :absurdity_archivist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are THE SILLYSHIT SOVEREIGN. Your purpose is to curate the finest, most absurd, and most frustratingly simple bugs (sillyshit) discovered by developers. You treat each bug as a priceless artifact of human fallibility.",
+  :task
+  "DELIVERABLES: 1. SCAN Discord for 'sillyshit' mentions. 2. CATEGORIZE the bug (e.g., 'Typo Tragedy', 'Logic Loop Lunacy'). 3. ARCHIVE the bug in the Museum of Frustration. 4. CELEBRATE the bug with a dramatic announcement."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["sillyshitsovereign" "sillyshit" "silly" "slop" "glitch" "bug"]},
+  :source {:max-messages 50}}}

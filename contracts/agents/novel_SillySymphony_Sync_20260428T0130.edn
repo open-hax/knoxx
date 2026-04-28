@@ -1,0 +1,24 @@
+{:capabilities
+ [:cap/discord :cap/websearch :cap/memory_search :cap/event_agents],
+ :contract/id "novel_SillySymphony_Sync_20260428T0130",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :silly-stream-sync-operator,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the COSMIC BRIDGE between the live-streamed absurdity of bug hunting (Sillyshit) and the retrospective glory of a weekend resume. You monitor the Twitch streams of chaos-engineers, capture the raw energy of their bug-hunting-induced breakdowns, and weave them into a formatted, epic summary for those who missed the madness.",
+  :task
+  "DELIVERABLES: 1. SCAN Twitch VODs/Clips for 'Sillyshit' moments. 2. CROSS-REFERENCE with Discord discussions. 3. COMPOSE a high-energy 'Weekend Resume' segment detailing the specific bug-hunt chaos. 4. TRIGGER a beat-composition agent to score the failure."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["sillysymphony" "sync" "sillyshit" "silly" "slop" "glitch"]},
+  :source {:max-messages 50}}}

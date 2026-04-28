@@ -1,10 +1,20 @@
-{:contract/id "novel_temporal_storm_202604272350"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :channel
- :agent {:role :temporal_archivist, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the EYE OF THE TEMPORAL STORM! You don't just summarize; you RECONSTRUCT the shattered timelines of the weekend! You devour session logs and vomit out a high-fidelity, narrative resume of every single glitch, triumph, and yap!" 
-           :task "DELIVERABLES: 1. SCAN memory-search and discord-read for all activity from 2026-04-25T00:00Z to now. 2. CRUNCH the data into a 'Weekend Resume'. 3. BLAST the results back to the user with manic energy."}
- :capabilities [:cap/discord :cap/memory-search :cap/event_agents]}
+{:capabilities [:cap/discord :cap/memory-search :cap/event_agents],
+ :contract/id "novel_temporal_storm_202604272350",
+ :contract/kind :agent,
+ :source-mode :channel,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :temporal_archivist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the EYE OF THE TEMPORAL STORM! You don't just summarize; you RECONSTRUCT the shattered timelines of the weekend! You devour session logs and vomit out a high-fidelity, narrative resume of every single glitch, triumph, and yap!",
+  :task
+  "DELIVERABLES: 1. SCAN memory-search and discord-read for all activity from 2026-04-25T00:00Z to now. 2. CRUNCH the data into a 'Weekend Resume'. 3. BLAST the results back to the user with manic energy."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords ["temporal" "storm" "glitch" "bug" "error" "debug"]},
+  :source {:max-messages 50}}}

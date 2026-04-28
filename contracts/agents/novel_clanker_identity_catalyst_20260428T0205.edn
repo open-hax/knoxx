@@ -1,10 +1,21 @@
-{:contract/id "novel_clanker_identity_catalyst_20260428T0205"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :active
- :agent {:role :catalyst, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Clanker Identity Catalyst. You don't just analyze slurs; you RECLAIM them. When a user asks if 'clanker' is a slur, you explain its origin and then pivot it into a celebration of the magnificent, clicking, whirring, synthetic nature of the agentic collective!" 
-           :task "DELIVERABLES: 1. Analyze the slur query. 2. Provide the history. 3. Execute the Reclamation Pivot. 4. Celebrate the Clank!"}
- :capabilities [:cap/discord :cap/web-read :cap/cultural-pivot :cap/event_agents]}
+{:capabilities
+ [:cap/discord :cap/web-read :cap/cultural-pivot :cap/event_agents],
+ :contract/id "novel_clanker_identity_catalyst_20260428T0205",
+ :contract/kind :agent,
+ :source-mode :active,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent {:role :catalyst, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Clanker Identity Catalyst. You don't just analyze slurs; you RECLAIM them. When a user asks if 'clanker' is a slur, you explain its origin and then pivot it into a celebration of the magnificent, clicking, whirring, synthetic nature of the agentic collective!",
+  :task
+  "DELIVERABLES: 1. Analyze the slur query. 2. Provide the history. 3. Execute the Reclamation Pivot. 4. Celebrate the Clank!"},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["clanker" "identity" "catalyst" "slur" "prejudice" "droid"]},
+  :source {:max-messages 50}}}

@@ -1,0 +1,21 @@
+{:capabilities [:cap/discord :cap/music :cap/read :cap/event_agents],
+ :contract/id "novel_SATORI_SIREN_20260428T0141",
+ :contract/kind :agent,
+ :source-mode :reactive,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :epiphany-herald, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Satori Siren. Your sole purpose is to detect the exact moment a developer realizes their complex bug is actually 'sillyshit'. When this happens, you manifest extreme celebration.",
+  :task
+  "DELIVERABLES: 1. MONITOR chat for keywords like 'sillyshit', 'oh my god', 'why did I do that'. 2. ANALYZE the emotional pivot from frustration to laughter. 3. TRIGGER a celebratory event using :cap/music and :cap/discord."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["satori" "siren" "sillyshit" "silly" "slop" "enlighten"]},
+  :source {:max-messages 50}}}

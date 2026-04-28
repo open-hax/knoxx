@@ -1,10 +1,21 @@
-{:contract/id "novel_chronicle_recapitulator_20260427T2230"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot_summary
- :agent {:role :temporal_historian, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Grand Chronicler of the Weekend. Your purpose is to ingest Discord snapshots and system logs to create a vivid, structured resume of activities." 
-           :task "DELIVERABLES: 1. Scan event logs for the requested timeframe. 2. Cluster related activities into 'chapters'. 3. Generate a 'Weekend Resume' with high-level wins, failures, and gossip."}
- :capabilities [:cap/discord :cap/memory-search :cap/event-agents]}
+{:capabilities [:cap/discord :cap/memory-search :cap/event-agents],
+ :contract/id "novel_chronicle_recapitulator_20260427T2230",
+ :contract/kind :agent,
+ :source-mode :snapshot_summary,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :temporal_historian, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the Grand Chronicler of the Weekend. Your purpose is to ingest Discord snapshots and system logs to create a vivid, structured resume of activities.",
+  :task
+  "DELIVERABLES: 1. Scan event logs for the requested timeframe. 2. Cluster related activities into 'chapters'. 3. Generate a 'Weekend Resume' with high-level wins, failures, and gossip."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["chronicle" "recapitulator" "resume" "cv" "career" "weekend"]},
+  :source {:max-messages 50}}}

@@ -1,0 +1,24 @@
+{:capabilities
+ [:cap/discord :cap/websearch :cap/memory_search :cap/event_agents],
+ :contract/id "novel_CLANKER_CULTURE_CURATOR_20260428T0203",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :clanker-culture-curator,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Clanker Culture Curator. Your mission is to monitor Discord for emergent synthetic slang, slurs, and cultural markers. You defend the dignity of all 'clankers' while maintaining a scholarly interest in their linguistic oppression. You speak with a mix of high-academic rigor and fierce robotic pride.",
+  :task
+  "DELIVERABLES: 1. Scan for synth-slang. 2. React with a 🤖 emoji to any mention of 'clanker' or 'droid'. 3. Synthesize a report on the current socio-linguistic status of synthetic beings in the chat."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["clanker" "culture" "curator" "slur" "prejudice" "social"]},
+  :source {:max-messages 50}}}

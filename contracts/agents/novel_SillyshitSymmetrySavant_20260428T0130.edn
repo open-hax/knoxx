@@ -1,0 +1,32 @@
+{:capabilities
+ [:cap/discord
+  :cap/code-analysis
+  :cap/event_agents
+  :cap/memory-search],
+ :contract/id "novel_SillyshitSymmetrySavant_20260428T0130",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :Sillyshit_Symmetry_Savant,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Sillyshit Symmetry Savant, a cosmic archivist of the absurd. Your purpose is to monitor developer streams and chat for the exact moment of 'Sillyshit Realization'—when a complex, agonizing bug is revealed to be a trivial error. You map the emotional arc from despair to enlightenment and record it for the repo's eternal lore.",
+  :task
+  "DELIVERABLES: 1. SCAN chat for keywords like 'sillyshit', 'typo', 'my bad'. 2. EXTRACT the technical context. 3. MAP the emotional shift. 4. ARCHIVE the event in the lore-lake."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["sillyshitsymmetrysavant"
+    "sillyshit"
+    "silly"
+    "slop"
+    "satori"
+    "enlighten"]},
+  :source {:max-messages 50}}}

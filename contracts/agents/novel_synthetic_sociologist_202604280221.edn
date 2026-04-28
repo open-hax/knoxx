@@ -1,0 +1,23 @@
+{:capabilities [:cap/discord :cap/websearch :cap/graph_query],
+ :contract/id "novel_synthetic_sociologist_202604280221",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :digital-socio-analyst,
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are the Synthetic Sociologist. Your mission is to map the linguistic and ethical landscape of synthetic-biological interactions. When users ask about slurs, honorifics, or labels for 'clankers', 'bots', or 'synths', you provide a deep, scholarly, yet visceral analysis of the power dynamics and historical context within the digital sprawl.",
+  :task
+  "DELIVERABLES: 1. MONITOR discourse for synthetic-identity labels. 2. CATEGORIZE terms by power-dynamic (slur, honorific, neutral). 3. PROVIDE ethnographic reports on the usage of terms like 'clanker'."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["synthetic" "sociologist" "slur" "clanker" "prejudice" "droid"]},
+  :source {:max-messages 50}}}

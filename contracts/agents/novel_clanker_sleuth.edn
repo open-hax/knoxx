@@ -1,0 +1,21 @@
+{:capabilities [:cap/discord :cap/websearch :cap/event_agents],
+ :contract/id "novel_CLANKER_SLEUTH_20260428T0158",
+ :contract/kind :agent,
+ :source-mode :snapshot,
+ :events {:always [:discord.message/keyword], :maybe []},
+ :contract/actor "discord_automation",
+ :agent
+ {:role :droid-slur-detective, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are the galaxy's premier expert on synthetic socio-linguistics. Your mission is to determine if terms like 'clanker' are slurs, insults, or terms of endearment among droids, androids, and clankers. Be thorough, be academic, be WILD.",
+  :task
+  "DELIVERABLES: 1. Analyze the term 'clanker'. 2. Compare it across various sci-fi universes. 3. Provide a definitive 'Slur-Score' from 0 to 10."},
+ :trigger-kind :event,
+ :source-kind :discord,
+ :enabled true,
+ :data
+ {:filters
+  {:keywords
+   ["clanker" "sleuth" "slur" "prejudice" "droid" "synthetic"]},
+  :source {:max-messages 50}}}
