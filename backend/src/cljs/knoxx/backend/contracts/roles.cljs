@@ -72,7 +72,7 @@
                   (when s s))
     :else nil))
 
-(defn- cap-id->slug
+(defn cap-id->slug
   "Map a :cap/* id to a filename slug like cap_read."
   [cap-id]
   (let [base (last (str/split (str cap-id) #"/"))]

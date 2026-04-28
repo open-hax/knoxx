@@ -1,27 +1,19 @@
-{:contract/id "discord_deep_synthesis"
- :contract/kind :agent
- :contract/version 1
- :enabled false
- :trigger-kind :cron
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :synthesize
- :cadence-min 120
-
+{:contract/id "discord_deep_synthesis",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :source-mode :synthesize,
+ :hooks {:before {}, :after {}},
  :agent
- {:role :knowledge_worker
-  :model "gemma4:31b"
-  :thinking :high}
-
+ {:role :role/knowledge_worker, :model "gemma4:31b", :thinking :high},
  :prompts
- {:system "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans."
-  :task "Summarize recent cross-channel Discord activity, identify meaningful opportunities or risks, and decide whether to publish a concise proactive message."}
-
+ {:system
+  "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans.",
+  :task
+  "Summarize recent cross-channel Discord activity, identify meaningful opportunities or risks, and decide whether to publish a concise proactive message."},
+ :trigger-kind :cron,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 120,
+ :enabled false,
  :data
- {:filters {:channels []
-            :keywords []}
-  :source {:max-messages 12}}
-
- :hooks
- {:before {}
-  :after {}}}
+ {:filters {:channels [], :keywords []}, :source {:max-messages 12}}}

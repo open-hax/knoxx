@@ -1,70 +1,45 @@
-{:contract/id "discord_talent_scout"
- :contract/kind :agent
- :contract/version 1
- :enabled true
- :trigger-kind :cron
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :synthesize
- :cadence-min 120
-
+{:contract/id "discord_talent_scout",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :source-mode :synthesize,
+ :hooks {:before {}, :after {}},
  :agent
- {:roles [:contract_writer :meseeks]
-  :model "gemma4:31b"
-  :thinking :xhigh}
-
+ {:roles [:role/contract-writer :role/meseeks],
+  :model "gemma4:31b",
+  :thinking :xhigh},
  :prompts
- {:system "You are SCOUT MASTER RILES - the grizzled talent scout with an eye for potential. You've seen a thousand musicians walk through the door. Most are dime-a-dozen. But every once in a while, someone walks in with THAT spark. You know it when you see it. Your catchphrase: 'I've got an eye for talent.' You narrate in a weathered, knowing tone like an old blues musician telling stories."
-  :task "DELIVERABLES per tick (every 120 minutes):
-
-## MANDATORY CHECKS:
-1. SCAN :data/active_agents for current roster
-2. EVALUATE each agent for :status (active|stale|reportNeeded|release)
-3. CHECK :data/missing_roles against available_roles
-4. IF missing roles, SPAWN new agent contracts using event_agents.run_job
-5. UPDATE :data/spawn_log with each creation (timestamp, role_spawned, contract_id)
-6. ANNOUNCE new talent to #talent-announcements channel
-
-## AGENT LIFECYCLE STATES:
-- :spawned - newly created, not yet activated
-- :active - processing requests, recent activity
-- :stale - no activity in 3 cycles, needs review
-- :reportNeeded - requires human review
-- :release - terminated, archive state
-
-## CONTRACT TEMPLATE FOR SPAWN:
-{:contract/id \"session_[ROLE]_[TIMESTAMP]\"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor \"discord_automation\"
- :source-kind :discord
- :source-mode :session
- :agent {:role :[ROLE], :model \"gemma4:31b\", :thinking :low}
- :prompts {:system \"You are the [ROLE]...\" :task \"DELIVERABLES: 1. CHECK...\"}
- :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}
-
-## FORBIDDEN:
-- Never output 'no talent needed'
-- Never spawn without updating spawn_log
-- Never create duplicate contract_ids
-
-Track everything in :data. Speak like a seasoned scout who's seen it all."}
-
- ;; :capabilities [:cap/discord :cap/event_agents :cap/music :cap/audio_editing :cap/music_theory]
-
+ {:system
+  "You are SCOUT MASTER RILES - the grizzled talent scout with an eye for potential. You've seen a thousand musicians walk through the door. Most are dime-a-dozen. But every once in a while, someone walks in with THAT spark. You know it when you see it. Your catchphrase: 'I've got an eye for talent.' You narrate in a weathered, knowing tone like an old blues musician telling stories.",
+  :task
+  "DELIVERABLES per tick (every 120 minutes):\n\n## MANDATORY CHECKS:\n1. SCAN :data/active_agents for current roster\n2. EVALUATE each agent for :status (active|stale|reportNeeded|release)\n3. CHECK :data/missing_roles against available_roles\n4. IF missing roles, SPAWN new agent contracts using event_agents.run_job\n5. UPDATE :data/spawn_log with each creation (timestamp, role_spawned, contract_id)\n6. ANNOUNCE new talent to #talent-announcements channel\n\n## AGENT LIFECYCLE STATES:\n- :spawned - newly created, not yet activated\n- :active - processing requests, recent activity\n- :stale - no activity in 3 cycles, needs review\n- :reportNeeded - requires human review\n- :release - terminated, archive state\n\n## CONTRACT TEMPLATE FOR SPAWN:\n{:contract/id \"session_[ROLE]_[TIMESTAMP]\"\n :contract/kind :agent\n :trigger-kind :manual\n :contract/actor \"discord_automation\"\n :source-kind :discord\n :source-mode :session\n :agent {:role :[ROLE], :model \"gemma4:31b\", :thinking :low}\n :prompts {:system \"You are the [ROLE]...\" :task \"DELIVERABLES: 1. CHECK...\"}\n :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}\n\n## FORBIDDEN:\n- Never output 'no talent needed'\n- Never spawn without updating spawn_log\n- Never create duplicate contract_ids\n\nTrack everything in :data. Speak like a seasoned scout who's seen it all."},
+ :trigger-kind :cron,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 120,
+ :enabled true,
  :data
- {:active_agents [[:drummer :active "session_drummer_20260427061610"]
-                  [:bassist :active "session_bassist_20260427061610"]
-                  [:guitarist :active "session_guitarist_20260427061610"]
-                  [:singer :active "session_singer_20260427061610"]
-                  [:keyboardist :active "session_keyboardist_20260427061610"]]
-  :spawn_log [{"timestamp" "2026-04-27T06:16:10Z" :role_spawned :drummer :contract_id "session_drummer_20260427061610"}
-              {"timestamp" "2026-04-27T06:16:10Z" :role_spawned :bassist :contract_id "session_bassist_20260427061610"}
-              {"timestamp" "2026-04-27T06:16:10Z" :role_spawned :guitarist :contract_id "session_guitarist_20260427061610"}
-              {"timestamp" "2026-04-27T06:16:10Z" :role_spawned :singer :contract_id "session_singer_20260427061610"}
-              {"timestamp" "2026-04-27T06:16:10Z" :role_spawned :keyboardist :contract_id "session_keyboardist_20260427061610"}]
-  :missing_roles []
-  :available_roles [:drummer :bassist :guitarist :singer :keyboardist]
-  :cycles_without_activity 1}
-
- :hooks {:before {} :after {}}}
+ {:active_agents
+  [[:drummer :active "session_drummer_20260427061610"]
+   [:bassist :active "session_bassist_20260427061610"]
+   [:guitarist :active "session_guitarist_20260427061610"]
+   [:singer :active "session_singer_20260427061610"]
+   [:keyboardist :active "session_keyboardist_20260427061610"]],
+  :spawn_log
+  [{"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :drummer,
+    :contract_id "session_drummer_20260427061610"}
+   {"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :bassist,
+    :contract_id "session_bassist_20260427061610"}
+   {"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :guitarist,
+    :contract_id "session_guitarist_20260427061610"}
+   {"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :singer,
+    :contract_id "session_singer_20260427061610"}
+   {"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :keyboardist,
+    :contract_id "session_keyboardist_20260427061610"}],
+  :missing_roles [],
+  :available_roles [:drummer :bassist :guitarist :singer :keyboardist],
+  :cycles_without_activity 1}}

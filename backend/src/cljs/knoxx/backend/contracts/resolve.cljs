@@ -31,11 +31,18 @@
 (defn agent-extras [agent-contract]
   (contract-extras agent-contract known-agent-keys))
 
+(defn- read-edn-sync
+  [file-path]
+  (try
+    (some-> (.readFileSync fs file-path "utf8") str reader/read-string)
+    (catch :default _
+      nil)))
+
 (defn all-contract-extras
   [config actor-spec role-slugs capability-ids agent-contract]
   (let [actor-x (actor-extras (:actor actor-spec))
         role-x (map #(role-extras (roles/role-contract config %)) role-slugs)
-        cap-x (map #(capability-extras (read-edn-sync (loader/capability-file-path config %))) capability-ids)
+        cap-x (map #(capability-extras (read-edn-sync (loader/capability-file-path config (roles/cap-id->slug %)))) capability-ids)
         agent-x (agent-extras agent-contract)
         merged (reduce into {} (concat (filter seq role-x) (filter seq cap-x) (when agent-x [agent-x]) (when actor-x [actor-x])))]
     (when (seq merged) merged)))
@@ -52,17 +59,11 @@
 (defn- keywordish->capability-ref
   [value]
   (cond
-    (keyword? value) (name value)
+    (keyword? value) (str (namespace value) "/" (name value))
     (string? value) (some-> value str str/trim not-empty)
     (nil? value) nil
     :else (some-> value str str/trim not-empty)))
 
-(defn- read-edn-sync
-  [file-path]
-  (try
-    (some-> (.readFileSync fs file-path "utf8") str reader/read-string)
-    (catch :default _
-      nil)))
 
 (defn resolve-actor
   [config actor-id]
@@ -201,9 +202,11 @@
                    primary-role (or (first contract-role-slugs)
                                     (first actor-role-slugs)
                                     (:knoxx-default-role config))
-                   role-system-prompt-text (some-> (roles/role-system-prompt config primary-role)
-                                                   str str/trim not-empty)
-agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
+                    role-system-prompt-text (->> role-slugs
+                                                  (keep #(some-> (roles/role-system-prompt config %) str str/trim not-empty))
+                                                  distinct
+                                                  (str/join "\n\n"))
+                    agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
                     system-prompt (combine-system-prompts
                                    role-system-prompt-text
                                    (:system-prompt actor-spec)

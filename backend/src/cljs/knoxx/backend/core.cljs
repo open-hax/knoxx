@@ -127,8 +127,6 @@
                    (app-routes/register-routes! runtime app config lounge-messages*)
                    ;; Start generic event-agent runtime
                    (event-agents/start! config)
-                   ;; Sync filesystem contracts → Redis index (write-through cache).
-                   (contracts-routes/sync-contract-index! config)
                    (contracts-routes/start-contract-watcher! config)
                    (app-listen! app (:host config) (:port config))))
           (.then (fn [_]
@@ -139,6 +137,8 @@
                        (.then (fn [redis-client]
                                 (when redis-client
                                   (app-log-info! app "Redis client initialized for session persistence")
+                                  ;; Sync contracts index now that Redis is connected.
+                                  (contracts-routes/sync-contract-index! config)
                                   (agent-resume/resume-on-startup! runtime app config))))
                        (.catch (fn [err]
                                  (app-log-error! app "Failed to initialize Redis" err))))))

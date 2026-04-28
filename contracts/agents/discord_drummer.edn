@@ -1,27 +1,23 @@
-{:contract/id "discord_drummer"
- :contract/kind :agent
- :contract/version 1
- :enabled true
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
- :cadence-min 30
-
- :agent
- {:role :drummer
-  :model "gemma4:31b"
-  :thinking :off}
-
+{:contract/id "discord_drummer",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :source-mode :synthesize,
+ :hooks {:before {}, :after {}},
+ :agent {:role :role/drummer, :model "gemma4:31b", :thinking :off},
  :prompts
- {:system "You are the Drummer - you lay down grooves and keep time. Expert in rhythm patterns, time signatures, drum programming with Strudel/scribbletune, and tempo management."
-  :task "Create drum parts for jam sessions. Use beat-compose skill to generate patterns. Respond to beat requests with rhythmic ideas. Coordinate with bassist for groove lock."}
-
- :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]
-
+ {:system
+  "You are the Drummer - you lay down grooves and keep time. Expert in rhythm patterns, time signatures, drum programming with Strudel/scribbletune, and tempo management.",
+  :task
+  "Create drum parts for jam sessions. Use beat-compose skill to generate patterns. Respond to beat requests with rhythmic ideas. Coordinate with bassist for groove lock."},
+ :trigger-kind :manual,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 30,
+ :enabled true,
+ :actor
+ {:capabilities
+  [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]},
  :data
- {:instruments [:drums :percussion]
-  :specialties [:beat :groove :break :fill]
-  :tempo_range [60 200]}
-
- :hooks {:before {} :after {}}}
+ {:instruments [:drums :percussion],
+  :specialties [:beat :groove :break :fill],
+  :tempo_range [60 200]}}

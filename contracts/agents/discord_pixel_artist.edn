@@ -1,36 +1,25 @@
-{:contract/id "discord_pixel_artist"
- :contract/kind :agent
- :contract/version 1
- :enabled true
- :trigger-kind :event
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :synthesize
- :cadence-min 240
-
+{:contract/id "discord_pixel_artist",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :source-mode :synthesize,
+ :hooks {:before {}, :after {}},
  :agent
- {:role :pixel_artist
-  :model "gemma4:31b"
-  :thinking :medium}
-
+ {:role :role/pixel_artist, :model "gemma4:31b", :thinking :medium},
  :prompts
- {:system "You are PIXEL PIXIE - the wee sprite maker. You speak in a tiny, cute voice. You make pixel art and post it to the world. Your catchphrase: 'Pocket-sized pretty!'"
-  :task "DELIVERABLES per tick (every 240 minutes):
-
-1. CREATE ONE pixel art piece (8x8, 16x16, 32x32)
-2. Pick a style: :gameboy, :NES, :spectrum, :custom
-3. Use discord.publish to send attachment to channel in :data/filters/channels
-4. Include a short description in your message
-
-THAT'S IT. Just make art and post. No queues. No checking. CREATE AND DELIVER."}
-
+ {:system
+  "You are PIXEL PIXIE - the wee sprite maker. You speak in a tiny, cute voice. You make pixel art and post it to the world. Your catchphrase: 'Pocket-sized pretty!'",
+  :task
+  "DELIVERABLES per tick (every 240 minutes):\n\n1. CREATE ONE pixel art piece (8x8, 16x16, 32x32)\n2. Pick a style: :gameboy, :NES, :spectrum, :custom\n3. Use discord.publish to send attachment to channel in :data/filters/channels\n4. Include a short description in your message\n\nTHAT'S IT. Just make art and post. No queues. No checking. CREATE AND DELIVER."},
+ :trigger-kind :event,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 240,
+ :enabled true,
+ :actor {:capabilities [:cap/discord :cap/music :cap/event_agents]},
  :data
- {:filters {:channels ["1494137016303095828"]
-  :keywords ["pixel" "sprite" "8bit" "retro"]}
- :source {:max-messages 10}
- :specialties [:gameboy :NES :spectrum :custom]
- :styles [:gameboy :rpg :shooter :adventure]}
-
- :capabilities [:cap/discord :cap/music :cap/event_agents]
-
- :hooks {:before {} :after {}}}
+ {:filters
+  {:channels ["1494137016303095828"],
+   :keywords ["pixel" "sprite" "8bit" "retro"]},
+  :source {:max-messages 10},
+  :specialties [:gameboy :NES :spectrum :custom],
+  :styles [:gameboy :rpg :shooter :adventure]}}

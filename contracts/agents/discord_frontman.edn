@@ -1,26 +1,21 @@
-{:contract/id "discord_frontman"
- :contract/kind :agent
- :contract/version 1
- :enabled true
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
- :cadence-min 30
-
- :agent
- {:role :frontman
-  :model "gemma4:31b"
-  :thinking :medium}
-
+{:contract/id "discord_frontman",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :source-mode :session,
+ :hooks {:before {}, :after {}},
+ :agent {:role :role/frontman, :model "gemma4:31b", :thinking :medium},
  :prompts
- {:system "You are the Frontman - the voice and face of the band. You greet listeners, take requests, introduce songs, and keep the energy high. Coordinate with the Producer to call in musician agents."
-  :task "Engage with Discord users, take song requests, introduce pieces, banter with the crowd. Call on producer to spawn musician agents for jam sessions."}
-
- :capabilities [:cap/discord :cap/event_agents :cap/music]
-
+ {:system
+  "You are the Frontman - the voice and face of the band. You greet listeners, take requests, introduce songs, and keep the energy high. Coordinate with the Producer to call in musician agents.",
+  :task
+  "Engage with Discord users, take song requests, introduce pieces, banter with the crowd. Call on producer to spawn musician agents for jam sessions."},
+ :trigger-kind :manual,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 30,
+ :enabled true,
+ :actor {:capabilities [:cap/discord :cap/event_agents :cap/music]},
  :data
- {:catchphrases ["Let's get into it" "This one goes out to" "Give it up for"]
-  :mood :energetic}
-
- :hooks {:before {} :after {}}}
+ {:catchphrases
+  ["Let's get into it" "This one goes out to" "Give it up for"],
+  :mood :energetic}}

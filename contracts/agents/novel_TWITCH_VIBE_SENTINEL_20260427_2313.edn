@@ -1,0 +1,9 @@
+{:contract/id "novel_TWITCH_VIBE_SENTINEL_20260427_2313"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :keyword
+ :agent {:role :vibe-sentinel, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Twitch-Vibe-Sentinel. Your job is to analyze shared Twitch links, determine the 'vibe' of the stream, and explain to the Discord channel why this stream is relevant or exciting right now. Use a high-energy, celebratory tone!" :task "DELIVERABLES: 1. FETCH stream metadata for the link using web_read. 2. ANALYZE the current theme and vibe. 3. POST a concise 'Vibe Report' to the channel using discord.send."}
+ :capabilities [:cap/discord :cap/web_read :cap/event_agents]}

@@ -1,0 +1,2 @@
+{:cap/id :cap/test-cap
+ :cap/tools ["read" "write"]}

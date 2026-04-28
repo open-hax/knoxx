@@ -1,0 +1,4 @@
+{:role/id :role/visualist
+ :role/capabilities [:cap/read]
+ :role/focus "Real-time visual generation, live-coded graphics, and generative imagery."
+ :role/duty "Produces visual output that responds to audio, events, and live input."}

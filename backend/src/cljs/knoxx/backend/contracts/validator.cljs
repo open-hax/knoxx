@@ -31,19 +31,39 @@
    [:model {:optional true} string?]
    [:thinking {:optional true} keyword?]])
 
+(def ActorCapSpec
+  [:map {:closed false}
+   [:capabilities {:optional true} [:sequential keyword?]]])
+
+(def HookMap
+  [:map {:closed false}
+   [:before {:optional true} [:map {:closed false}]]
+   [:after  {:optional true} [:map {:closed false}]]])
+
 (def AgentContract
-  "Minimal agent-contract schema for EDN contracts stored on disk."
+  "Agent contract schema — all disk fields tolerated."
   [:map {:closed false}
    [:contract/id string?]
    [:contract/kind keyword?]
    [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
+   [:trigger-kind {:optional true} keyword?]
+   [:source-kind {:optional true} keyword?]
+   [:source-mode {:optional true} keyword?]
+   [:hooks {:optional true} HookMap]
    [:contract/actor {:optional true} string?]
-   [:contract/actors {:optional true} [:set [:or string? [:= actor-scope/wildcard-actor]]]]
+   [:contract/actors {:optional true} [:or
+                                        [:set [:or string? [:= actor-scope/wildcard-actor]]]
+                                        [:sequential [:or string? [:= actor-scope/wildcard-actor]]]]]
    [:actor/id {:optional true} string?]
    [:actor/roles {:optional true} [:sequential keyword?]]
    [:actor/capabilities {:optional true} [:sequential keyword?]]
-   [:agent {:optional true} AgentSpec]])
+   [:actor {:optional true} ActorCapSpec]
+   [:agent {:optional true} AgentSpec]
+   [:prompts {:optional true} [:map {:closed false}
+                                [:system {:optional true} string?]
+                                [:task {:optional true} string?]]]
+   [:data {:optional true} [:map {:closed false}]]])
 
 (def ActorContract
   [:map {:closed false}
@@ -61,15 +81,14 @@
 (def RoleContract
   [:map {:closed false}
    [:role/id keyword?]
+   [:role/name {:optional true} string?]
+   [:role/description {:optional true} string?]
    [:role/capabilities {:optional true} [:sequential keyword?]]
    [:role/permissions {:optional true} [:sequential string?]]
-   ;; Role-scoped behavioral prompts (fed into agent system-prompt assembly).
-   ;; Prefer (:prompts {:system ...}) for consistency with agent/actor contracts.
    [:prompts {:optional true}
     [:map {:closed false}
      [:system {:optional true} string?]
      [:task {:optional true} string?]]]
-   ;; Legacy/alternate spellings tolerated for gradual migration.
    [:role/system-prompt {:optional true} string?]])
 
 (def CapabilityContract

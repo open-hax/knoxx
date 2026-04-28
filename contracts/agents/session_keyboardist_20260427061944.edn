@@ -1,9 +1,13 @@
-{:contract/id "session_keyboardist_20260427061944"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
- :agent {:role :keyboardist, :model "gemma4:31b", :thinking :low}
- :prompts {:system "You are the keyboardist..." :task "DELIVERABLES: 1. CHECK..."}
- :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}
+{:contract/id "session_keyboardist_20260427061944",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :source-mode :session,
+ :agent {:role :role/keyboardist, :model "gemma4:31b", :thinking :low},
+ :prompts
+ {:system "You are the keyboardist...",
+  :task "DELIVERABLES: 1. CHECK..."},
+ :trigger-kind :manual,
+ :source-kind :discord,
+ :actor
+ {:capabilities
+  [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}}

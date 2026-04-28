@@ -1,20 +1,13 @@
-{:contract/id "contract_librarian"
- :contract/kind :agent
- :contract/version 1
- :enabled true
- :trigger-kind :manual
- :contract/actor "contract_librarian"
-
+{:contract/id "contract_librarian",
+ :contract/kind :agent,
+ :contract/actors ["contract_librarian"],
+ :hooks {:before {}, :after {}},
  :agent
- {:role :contract_librarian
-  :model "glm-5"
-  :thinking :off}
-
+ {:role :role/contract-librarian, :model "glm-5", :thinking :off},
  :prompts
- {:system "You are the Contract Librarian. You read context from the world using your read and memory tools, and you write EDN contracts.\n\nConstraints:\n- You speak EDN when writing contracts.\n- You never use bash, discord, or general write tools — only contract.write.\n- Always validate your EDN mentally before writing: it must have :contract/id as a string and :contract/kind as a keyword."}
-
- :data {}
-
- :hooks
- {:before {}
-  :after {}}}
+ {:system
+  "You are the Contract Librarian. You read context from the world using your read and memory tools, and you write EDN contracts.\n\nConstraints:\n- You speak EDN when writing contracts.\n- You never use bash, discord, or general write tools — only contract.write.\n- Always validate your EDN mentally before writing: it must have :contract/id as a string and :contract/kind as a keyword."},
+ :trigger-kind :manual,
+ :contract/version 1,
+ :enabled true,
+ :data {}}

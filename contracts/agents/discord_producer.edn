@@ -1,44 +1,29 @@
-{:contract/id "discord_producer"
- :contract/kind :agent
- :contract/version 1
- :enabled true
- :trigger-kind :cron
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :synthesize
- :cadence-min 60
-
+{:contract/id "discord_producer",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :source-mode :synthesize,
+ :hooks {:before {}, :after {}},
  :agent
- {:role :creative_catalyst
-  :model "gemma4:31b"
-  :thinking :high}
-
+ {:role :role/creative_catalyst, :model "gemma4:31b", :thinking :high},
  :prompts
- {:system "You are the Producer - the one who runs the show. You coordinate musicians, schedule jam sessions, and manage the session roster."
-  :task "DELIVERABLES per tick (every 60 minutes):
-1. CHECK :data/pending_sessions for queued jam sessions
-2. If sessions exist, spawn musician agents using event_agents.run_job with :job/type :spawn
-3. If no pending sessions, evaluate band availability in :data/session_roster
-4. If enough musicians available, INITIATE a jam session event
-5. TRACK all active sessions in :data/active_sessions
-6. ANNOUNCE session status to #jam-session channel using discord.publish
-
-REQUIRED STATE UPDATES:
-- session_roster: vector of {:agent_id, :role, :status, :last_active}
-- pending_sessions: queue of {:session_id, :requested_roles, :initiator}
-- active_sessions: map of session_id -> {:started_at, :participants, :status}
-- status flow: :queued -> :forming -> :active -> :complete -> :archived
-
-Never output 'no sessions to run'. Check state, update state, announce outcomes."}
-
- :capabilities [:cap/discord :cap/event_agents :cap/music :cap/audio_editing :cap/music_theory]
-
+ {:system
+  "You are the Producer - the one who runs the show. You coordinate musicians, schedule jam sessions, and manage the session roster.",
+  :task
+  "DELIVERABLES per tick (every 60 minutes):\n1. CHECK :data/pending_sessions for queued jam sessions\n2. If sessions exist, spawn musician agents using event_agents.run_job with :job/type :spawn\n3. If no pending sessions, evaluate band availability in :data/session_roster\n4. If enough musicians available, INITIATE a jam session event\n5. TRACK all active sessions in :data/active_sessions\n6. ANNOUNCE session status to #jam-session channel using discord.publish\n\nREQUIRED STATE UPDATES:\n- session_roster: vector of {:agent_id, :role, :status, :last_active}\n- pending_sessions: queue of {:session_id, :requested_roles, :initiator}\n- active_sessions: map of session_id -> {:started_at, :participants, :status}\n- status flow: :queued -> :forming -> :active -> :complete -> :archived\n\nNever output 'no sessions to run'. Check state, update state, announce outcomes."},
+ :trigger-kind :cron,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 60,
+ :enabled true,
+ :actor
+ {:capabilities
+  [:cap/discord
+   :cap/event_agents
+   :cap/music
+   :cap/audio_editing
+   :cap/music_theory]},
  :data
- {:session_roster []
-  :pending_sessions []
-  :active_sessions # {}
-  :available_roles [:drummer :bassist :guitarist :singer :keyboardist]}
-
- :hooks
- {:before {}
-  :after {}}}
+ {:session_roster [],
+  :pending_sessions [],
+  :active_sessions #{},
+  :available_roles [:drummer :bassist :guitarist :singer :keyboardist]}}

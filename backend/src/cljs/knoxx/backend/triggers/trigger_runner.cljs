@@ -36,12 +36,12 @@
 
 (defn- fire-pipeline!
   [config trigger-ctx pipeline-id]
-  (when-let [contract (loader/load-contract config "pipelines" pipeline-id)]
+  (when-let [contract (loader/load-contract! config "pipelines" pipeline-id)]
     (pipeline-runner/run-pipeline! config (assoc contract :trigger-ctx trigger-ctx))))
 
 (defn- fire-agent!
   [config trigger-ctx agent-id]
-  (when-let [contract (loader/load-contract config "agents" agent-id)]
+  (when-let [contract (loader/load-contract! config "agents" agent-id)]
     (let [ctx (merge (:context trigger-ctx) (:data/context contract))
           discord-ctx (select-keys trigger-ctx [:channelId :channelName
                                                  :authorUsername :content :reason])]
@@ -76,7 +76,7 @@
         id (js/setInterval
              (fn []
                (when @running?*
-                 (when-let [contract (loader/load-contract config "triggers" trigger-id)]
+                 (when-let [contract (loader/load-contract! config "triggers" trigger-id)]
                    (when (:enabled contract)
                      (let [target (:trigger/target contract)
                            ctx    (:data/context contract)]
@@ -97,7 +97,7 @@
     (reset! running?* true)
     (let [config (cfg)]
       (doseq [trigger-id (loader/list-contract-ids-sync config "triggers")]
-        (when-let [contract (loader/load-contract config "triggers" trigger-id)]
+        (when-let [contract (loader/load-contract! config "triggers" trigger-id)]
           (when (:enabled contract)
             (case (:trigger/kind contract)
               :cron (schedule-cron-trigger! config trigger-id (:trigger/schedule contract))
@@ -118,7 +118,7 @@
   ([trigger-id] (fire! trigger-id {}))
   ([trigger-id ctx]
    (let [config (cfg)
-         contract (loader/load-contract config "triggers" trigger-id)]
+         contract (loader/load-contract! config "triggers" trigger-id)]
      (if contract
        (let [target (:trigger/target contract)
              ctx'   (merge (:data/context contract) ctx)]
@@ -136,5 +136,5 @@
     {:running @running?*
      :triggers (->> (loader/list-contract-ids-sync config "triggers")
                    (mapv (fn [id]
-                           (when-let [c (loader/load-contract config "triggers" id)]
+                           (when-let [c (loader/load-contract! config "triggers" id)]
                               (select-keys c [:contract/id :trigger/kind :trigger/target :enabled])))))}))

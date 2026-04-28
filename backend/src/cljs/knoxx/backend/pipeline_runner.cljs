@@ -84,8 +84,8 @@
   "Execute one pipeline step. Returns Promise."
   [config step pipeline-ctx]
   (let [contract-id (:step/contract step)]
-    (if-let [contract (or (loader/load-contract (cfg) "actions" contract-id)
-                           (loader/load-contract (cfg) "agents" contract-id))]
+    (if-let [contract (or (loader/load-contract! (cfg) "actions" contract-id)
+                           (loader/load-contract! (cfg) "agents" contract-id))]
       (case (:contract/kind contract)
         :action (run-action-step! step)
         :agent  (run-agent-step! config step contract pipeline-ctx)

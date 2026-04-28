@@ -364,7 +364,11 @@ export interface AgentContractCatalogResponse {
   default_agent_contract?: string | null;
 }
 
-export type ContractsClass = "agents" | "actors" | "roles" | "capabilities" | "policies";
+export type ContractsClass =
+  | "agents" | "actors" | "roles" | "capabilities" | "policies"
+  | "model_families" | "models"
+  | "actions" | "pipelines" | "triggers"
+  | "devel" | "ensemble" | "knoxx-session";
 
 export interface EmailSendResponse {
   ok: boolean;

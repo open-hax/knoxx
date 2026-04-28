@@ -299,26 +299,20 @@
         (reset! contract-watch-running?* true)
         (println "[contracts] watching" (count watchers) "contract roots for live reload")))))
 
-(defn- handle-list-contracts
+(defn handle-list-contracts
+  "List all contracts, optionally filtered by contract-class.
+   Public so tests can call it directly."
   [do-json config contract-class]
-  (let [classes (if contract-class
-                  [(normalize-contract-class contract-class)]
-                  loader/contract-class-order)]
-    (-> (.all js/Promise
-              (clj->js
-               (map (fn [klass]
-                      (-> (loader/list-contract-ids! config klass)
-                          (.then (fn [ids]
-                                   (.all js/Promise (clj->js (map (partial contract-metadata! config klass) ids)))))))
-                    classes)))
-        (.then (fn [nested]
-                 (let [contracts (->> (js->clj nested :keywordize-keys true)
-                                      (mapcat identity)
-                                      (sort-by (juxt :contractClass :id))
-                                      vec)]
-                   (do-json 200 {:contracts contracts}))))
-        (.catch (fn [err]
-                  (do-json 500 {:detail (str "Failed to list contracts: " (.-message err))}))))))
+  (-> (loader/load-all-contracts! config)
+      (.then (fn [all]
+               (let [contracts (cond->> all
+                                 contract-class (filter #(= (:contractClass %)
+                                                            (normalize-contract-class contract-class)))
+                                 :always        (sort-by (juxt :contractClass :id))
+                                 :always        vec)]
+                 (do-json 200 {:contracts (mapv #(dissoc % :contract :edn-text :file-path :ok?) contracts)}))))
+      (.catch (fn [err]
+                (do-json 500 {:detail (str "Failed to list contracts: " (.-message err))})))))
 
 (defn- handle-get-contract
   [do-json config contract-class contract-id]

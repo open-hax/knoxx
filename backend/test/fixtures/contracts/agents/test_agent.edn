@@ -1,0 +1,15 @@
+{:contract/id "test_agent"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :manual
+ :source-kind :discord
+ :source-mode :test_agent
+ :hooks {:before {} :after {}}
+ :agent {:role :role/developer
+         :model "gpt-4o"
+         :thinking :medium}
+ :prompts {:system "You are a test agent."
+           :task "Do test things."}
+ :actor {:capabilities [:cap/read]}
+ :data {:last_mode nil}}

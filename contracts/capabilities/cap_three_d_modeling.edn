@@ -1,6 +1,6 @@
-{:cap/id :cap/3d-modeling
+{:cap/id :cap/three-d-modeling
  :cap/tools [:bash :read]
- :cap/user-surfaces [{:surface/id :workspace/3d-modeling
+ :cap/user-surfaces [{:surface/id :workspace/three-d-modeling
                       :surface/label "3D modeling workbench"
                       :surface/kind :editor
                       :surface/routes ["/ops/documents"]

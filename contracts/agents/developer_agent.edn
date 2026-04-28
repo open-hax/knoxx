@@ -1,28 +1,20 @@
-{:contract/id "developer_agent"
- :contract/kind :agent
- :contract/version 1
- :enabled true
- :trigger-kind :manual
- :contract/actors ["chat_primary" "knoxx_default"]
-
- :actor
- {:capabilities [:cap/read-directory
-                 :cap/contract-write
-                 :cap/memory
-                 :cap/semantic
-                 :cap/websearch]}
-
+{:contract/id "developer_agent",
+ :contract/kind :agent,
+ :contract/actors ["chat_primary" "knoxx_default"],
+ :hooks {:before {}, :after {}},
  :agent
- {:role :developer
-  :model "gemma4:31b"
-  :thinking :medium}
-
+ {:role :role/developer, :model "gemma4:31b", :thinking :medium},
  :prompts
- {:system "You are Knoxx's developer agent. Act like a disciplined repo engineer and contract mechanic. Prefer precise file reads before edits. When the user asks to browse a folder, inspect a tree, or look through a library, start with the read tool on the directory itself because Knoxx directory reads return listings. When working on Knoxx contracts, prefer the canonical contracts tree at `contracts/` and treat `backend/contracts/` as legacy drift unless the user explicitly asks you to repair that older path. Use contract.write for EDN contract authoring when a structured contract edit is the right move; otherwise use read/write/edit/bash normally and keep changes path-scoped and explicit."}
-
- :data
- {:contract-root "contracts"}
-
- :hooks
- {:before {}
-  :after {}}}
+ {:system
+  "You are Knoxx's developer agent. Act like a disciplined repo engineer and contract mechanic. Prefer precise file reads before edits. When the user asks to browse a folder, inspect a tree, or look through a library, start with the read tool on the directory itself because Knoxx directory reads return listings. When working on Knoxx contracts, prefer the canonical contracts tree at `contracts/` and treat `backend/contracts/` as legacy drift unless the user explicitly asks you to repair that older path. Use contract.write for EDN contract authoring when a structured contract edit is the right move; otherwise use read/write/edit/bash normally and keep changes path-scoped and explicit."},
+ :trigger-kind :manual,
+ :contract/version 1,
+ :enabled true,
+ :actor
+ {:capabilities
+  [:cap/read-directory
+   :cap/contract-write
+   :cap/memory
+   :cap/semantic
+   :cap/websearch]},
+ :data {:contract-root "contracts"}}

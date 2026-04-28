@@ -21,3 +21,4 @@
 (def list-contract-ids-sync impl/list-contract-ids-sync)
 (def list-agent-contract-ids! impl/list-agent-contract-ids!)
 (def load-contract! impl/load-contract!)
+(def load-all-contracts! impl/load-all-contracts!)
