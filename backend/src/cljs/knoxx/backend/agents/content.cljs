@@ -37,6 +37,12 @@
   [previous current]
   (let [previous (str (or previous ""))
         current (str (or current ""))
+        duplicated-first-token? (fn [appended]
+                                  (and (boolean (re-matches #"\S+" previous))
+                                       (str/starts-with? appended previous)
+                                       (let [remaining (.slice appended (count previous))]
+                                         (and (pos? (count remaining))
+                                              (boolean (re-find #"^[\s\W_]" remaining))))))
         max-overlap (fn [left right]
                       (loop [n (min (count left) (count right))]
                         (cond
@@ -47,7 +53,10 @@
       (str/blank? current) ""
       (str/blank? previous) current
       (= current previous) ""
-      (str/starts-with? current previous) (.slice current (count previous))
+      (str/starts-with? current previous) (let [appended (.slice current (count previous))]
+                                            (if (duplicated-first-token? appended)
+                                              (.slice appended (count previous))
+                                              appended))
       :else (.slice current (max-overlap previous current)))))
 
 (defn media-part-url

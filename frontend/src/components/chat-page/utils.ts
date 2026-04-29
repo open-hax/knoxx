@@ -337,7 +337,13 @@ export function novelAppendedText(previous: string, incoming: string): string {
   if (incoming.length === 0) return "";
   if (previous.length === 0) return incoming;
   if (incoming === previous) return "";
-  if (incoming.startsWith(previous)) return incoming.slice(previous.length);
+  if (incoming.startsWith(previous)) {
+    const appended = incoming.slice(previous.length);
+    const duplicatedFirstToken = /^\S+$/.test(previous)
+      && appended.startsWith(previous)
+      && /^[\s\p{P}\p{S}]/u.test(appended.slice(previous.length));
+    return duplicatedFirstToken ? appended.slice(previous.length) : appended;
+  }
 
   const max = Math.min(previous.length, incoming.length);
   for (let overlap = max; overlap > 0; overlap -= 1) {
