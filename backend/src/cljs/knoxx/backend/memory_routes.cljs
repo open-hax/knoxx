@@ -230,7 +230,7 @@
 
                    enrich-promises (mapv (partial enrich-row redis-client) page-rows)]
                (if-not redis-client
-                 (do (doseq [row page-rows] (warm-title-cache! (str (:session row))))
+                 (do (doseq [row page-rows] (warm-title-cache! (str (:session row)) config runtime))
                      (-> (.all js/Promise (clj->js enrich-promises))
                          (.then (fn [enriched-rows]
                                   (json-response! reply 200
@@ -265,7 +265,7 @@
                                                             :actor_id (:actor_id s)
                                                             :contract_id (get-in s [:agent_spec :contract_id])})))
                                      all-rows (vec (concat synthetic page-rows))]
-                                 (doseq [row all-rows] (warm-title-cache! (str (:session row))))
+                                 (doseq [row all-rows] (warm-title-cache! (str (:session row)) config runtime))
                                  (-> (.all js/Promise (clj->js (mapv (partial enrich-row redis-client) all-rows)))
                                      (.then (fn [enriched-rows]
                                               (json-response! reply 200
@@ -279,7 +279,7 @@
                                      (.catch (fn [err] (error-response! reply err 502) nil))))))
                             (.catch (fn [err] (error-response! reply err 502) nil)))))
                      (.catch (fn [_]
-                               (doseq [row page-rows] (warm-title-cache! (str (:session row))))
+                               (doseq [row page-rows] (warm-title-cache! (str (:session row)) config runtime))
                                (-> (.all js/Promise (clj->js enrich-promises))
                                    (.then (fn [enriched-rows]
                                             (json-response! reply 200
