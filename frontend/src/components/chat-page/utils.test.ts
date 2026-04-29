@@ -13,6 +13,8 @@ describe("novelAppendedText", () => {
     expect(novelAppendedText("hello", "hello world")).toBe(" world");
     expect(novelAppendedText("hello world", "world")).toBe("");
     expect(novelAppendedText("hello world", "world again")).toBe(" again");
+    expect(novelAppendedText("The", "TheThe model should reason once.")).toBe(" model should reason once.");
+    expect(novelAppendedText("ha", "haha")).toBe("ha");
   });
 });
 

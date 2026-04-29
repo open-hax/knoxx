@@ -1,0 +1,10 @@
+{:model-family/id "xiaomi-mimo"
+ :model-family/provider :proxx
+ :model-family/prefixes ["xiaomi/mimo-" "mimo-v2-"]
+ :model-family/allowlisted true
+ :model-family/reasoning true
+ :model-family/default-thinking :off
+ :model-family/thinking-levels [:off :minimal :low :medium :high]
+ :model-family/context-window 262144
+ :model-family/max-tokens 32000
+ :model-family/input [:text :image]}
