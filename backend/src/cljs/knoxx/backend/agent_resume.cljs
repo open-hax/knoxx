@@ -24,6 +24,7 @@
 (def STALE_THRESHOLD_MS (* 10 60 1000)) ; 10 minutes
 (def POST_DRAIN_GRACE_MS 1000)          ; let Redis writes flush after turns complete
 (def RECOVERY_INTERVAL_MS 15000)        ; periodic recovery tick
+(def STARTUP_RESUME_CONCURRENCY 2)      ; keep HTTP/event loop responsive after restart
 
 ;; ─── State ────────────────────────────────────────────────────────────
 
@@ -135,6 +136,30 @@
         :resumed false
         :reason "already_processing"}))))
 
+(defn- run-limited!
+  "Run promise-returning item-fn over items with bounded concurrency.
+   This keeps startup recovery active without launching hundreds of agent turns at once."
+  [items limit item-fn]
+  (let [queue (atom (vec items))
+        results (array)
+        worker (fn worker []
+                 (if-let [item (first @queue)]
+                   (do
+                     (swap! queue subvec 1)
+                     (-> (item-fn item)
+                         (.then (fn [result]
+                                  (.push results result)
+                                  (worker)))
+                         (.catch (fn [err]
+                                   (.push results {:error (str err)})
+                                   (worker)))))
+                   (js/Promise.resolve results)))
+        worker-count (min (max 1 limit) (count items))]
+    (if (zero? worker-count)
+      (js/Promise.resolve results)
+      (-> (.all js/Promise (clj->js (repeatedly worker-count worker)))
+          (.then (fn [_] results))))))
+
 ;; ─── Batch processing ─────────────────────────────────────────────────
 
 (defn- process-sessions!
@@ -150,7 +175,7 @@
                        (.catch (fn [err]
                                  (log-info! app "[agent-resume] abort batch error" err)
                                  nil)))
-                   (-> (.all js/Promise (clj->js (mapv #(resume-session! runtime config %) resumable-recent)))
+                   (-> (run-limited! resumable-recent STARTUP_RESUME_CONCURRENCY #(resume-session! runtime config %))
                        (.catch (fn [err]
                                  (log-info! app "[agent-resume] resume batch error" err)
                                  nil)))])
