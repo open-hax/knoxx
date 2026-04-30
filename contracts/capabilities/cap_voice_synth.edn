@@ -5,21 +5,28 @@
              :voice.tts_stream
              :bash]
  :cap/description
-  "Spoken and sung voice synthesis. Two paths:
+  "Spoken and sung voice synthesis. Current Voxx API contract:
    - Sung: voice.openutau_project scaffolds a .ustx file for OpenUtau render.
    - Spoken TTS: voice.tts calls the Voxx gateway via
       ~/.pi/agent/skills/voice-tts/tts.sh (mp3 by default).
       voice.tts_stream connects to the knoxx WS bridge at /ws/voice/tts.
-   - Pitch processing: chain tts output through
-      ~/.pi/agent/skills/autotune/  (rubberband + sox pipeline, skill:autotune).
+   - Per-request postprocess: use --postprocess-profile sports|broadcast|narrator|radio|soft,
+      --postprocess off for dry capture, or the REST query/json fields postprocess_profile,
+      postprocess, and postprocess_enabled.
+   - Prompt-aware inflection tags: use --prompt-aware and optional --prompt-aware-style to ask
+      capable providers to treat tags like [excited], [whisper], [pause], or <break time=\"500ms\" />
+      as performance directions instead of spoken text. This is provider-dependent.
+   - Pitch processing: capture dry TTS with --postprocess off, then chain through
+      ~/.pi/agent/skills/autotune/ (rubberband + sox pipeline, skill:autotune).
    Auth: reads VOXX_URL and VOICE_GATEWAY_API_KEY.
-   Default voice: alloy. Default model: kokoro.
-   Prefer Voxx for backend-agnostic synthesis (Kokoro, MeloTTS, ElevenLabs)."
+   Default voice: alloy. Default model: kokoro. Default postprocess: sports-commentator-v1.
+   Prefer Voxx for backend-agnostic synthesis (Kokoro first; optional Xiaomi MiMo/Requesty/OpenAI; MeloTTS/eSpeak fallback). Do not wire direct ElevenLabs."
  :cap/skills [:skill/voice-tts :skill/autotune]
  :cap/user-surfaces [{:surface/id :workspace/voice-synth
                       :surface/label "Voice synthesis workbench"
                       :surface/kind :composer
                       :surface/routes ["/ops/documents"]
                       :surface/description
-                       "Spoken TTS via the Voxx gateway (REST + WS streaming) and sung synthesis via OpenUtau.
-                        Pitch processing via rubberband/sox autotune pipeline."}]}
+                       "Spoken TTS via the Voxx gateway (REST + WS streaming), per-request postprocess profiles,
+                        prompt-aware performance tags for capable providers, sung synthesis via OpenUtau, and
+                        pitch processing via rubberband/sox autotune pipeline."}]}

@@ -1,4 +1,4 @@
 {:role/id :role/rapper
- :role/capabilities [:cap/vocal-synthesis :cap/shoedelussy]
- :role/focus "Cadence, internal rhyme, and percussive vocal delivery."
- :role/duty "Writes flow patterns and syllable-mapped vocal specs."}
+ :role/capabilities [:cap/voice-synth :cap/shoedelussy]
+ :role/focus "Cadence, internal rhyme, percussive vocal delivery, and Voxx spoken-flow profile selection."
+ :role/duty "Writes flow patterns, syllable-mapped vocal specs, and Voxx voice-tts plans with radio/sports postprocess or dry capture for autotune."}

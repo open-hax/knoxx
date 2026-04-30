@@ -1,4 +1,4 @@
 {:role/id :role/singer
- :role/capabilities [:cap/vocal-synthesis :cap/music-theory]
- :role/focus "Melodic lines, lyrical delivery, and vocal timbre."
- :role/duty "Produces .ustx handoffs and vocal specs for synthesis."}
+ :role/capabilities [:cap/voice-synth :cap/music-theory]
+ :role/focus "Melodic lines, lyrical delivery, vocal timbre, Voxx spoken TTS profiles, and OpenUtau handoffs."
+ :role/duty "Produces .ustx handoffs, vocal specs, and Voxx voice-tts plans with explicit postprocess_profile and prompt_aware choices."}
