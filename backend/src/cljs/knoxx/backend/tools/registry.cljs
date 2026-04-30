@@ -50,8 +50,8 @@
    "music.copyright_check" {:id "music.copyright_check" :label "Copyright Check" :description "Check copyright status of audio" :risk-level "medium"}
    "music.generate" {:id "music.generate" :label "Generate Music" :description "Synthesize a WAV file from a JSON music spec using the native Node.js audio engine" :risk-level "medium"}
    "voice.openutau_project" {:id "voice.openutau_project" :label "OpenUtau Project" :description "Create an OpenUtau .ustx singing project for human review and export" :risk-level "low"}
-   "voice.tts"        {:id "voice.tts"        :label "Text-to-Speech" :description "Synthesize speech via ElevenLabs REST TTS; writes MP3 to workspace"  :risk-level "low"}
-   "voice.tts_stream" {:id "voice.tts_stream" :label "TTS Stream"     :description "Return ElevenLabs WS streaming TTS session params for /ws/voice/tts" :risk-level "low"}
+   "voice.tts"        {:id "voice.tts"        :label "Text-to-Speech" :description "Synthesize speech via Voxx Gateway TTS; writes MP3 to workspace"  :risk-level "low"}
+   "voice.tts_stream" {:id "voice.tts_stream" :label "TTS Stream"     :description "Return Voxx WS streaming TTS session params for /ws/voice/tts" :risk-level "low"}
 
    "audio.spectrogram" {:id "audio.spectrogram" :label "Audio Spectrogram" :description "Generate spectrogram from audio" :risk-level "medium"}
    "audio.waveform" {:id "audio.waveform" :label "Audio Waveform" :description "Generate waveform from audio" :risk-level "medium"}

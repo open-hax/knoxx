@@ -7,9 +7,13 @@
  :cap/description
   "Spoken and sung voice synthesis. Current Voxx API contract:
    - Sung: voice.openutau_project scaffolds a .ustx file for OpenUtau render.
-   - Spoken TTS: voice.tts calls the Voxx gateway via
-      ~/.pi/agent/skills/voice-tts/tts.sh (mp3 by default).
+   - Spoken TTS: voice.tts calls the Voxx gateway via the OpenAI-compatible
+      /v1/audio/speech API shape (mp3 by default); shell workflows may use
+      ~/.pi/agent/skills/voice-tts/tts.sh.
       voice.tts_stream connects to the knoxx WS bridge at /ws/voice/tts.
+   - Per-request provider selection: use voice.tts model_id or tts.sh --model with
+      kokoro, melo, espeak, xiaomi_mimo, requesty, or openai; confirm the actual
+      renderer with Voxx's x-openhax-tts-backend header when debugging.
    - Per-request postprocess: use --postprocess-profile sports|broadcast|narrator|radio|soft,
       --postprocess off for dry capture, or the REST query/json fields postprocess_profile,
       postprocess, and postprocess_enabled.
