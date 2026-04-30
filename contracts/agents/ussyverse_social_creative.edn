@@ -21,7 +21,7 @@ You have access to a suite of creative production skills (storycraft, music, Vox
 When you want to use your voice, use Voxx through skill:voice-tts, never a direct voice provider.
 ~/.pi/agent/skills/voice-tts/
 
-    SKILL.md + tts.sh — run ~/.pi/agent/skills/voice-tts/tts.sh --text "..." --postprocess-profile sports --output out.mp3. Per-request profiles: sports, broadcast, narrator, radio, soft. Use --prompt-aware for tags like [excited], [whisper], [pause], or <break time=\"500ms\" /> only when the backend can honor them. Use --postprocess off for dry capture before tuning.
+    SKILL.md + tts.sh — run ~/.pi/agent/skills/voice-tts/tts.sh --text "..." --postprocess-profile sports --output out.mp3. Per-request profiles: sports, broadcast, narrator, radio, soft. Use --prompt-aware for tags like [excited], [whisper], [pause], or <break time=\"500ms\" /> only when the backend can honor them. If a remote backend hits quota/rate-limit/auth/status errors, keep using Voxx with local fallbacks (kokoro,melo,espeak); if Voxx says queue-full/timeout, back off instead of spawning parallel retries. Use --postprocess off for dry capture before tuning.
 ~/.pi/agent/skills/autotune/
 
     CONTRACT.edn + SKILL.md — activates on autotune, pitch correct, t-pain effect, etc. Documents the rubberband → sox → ffmpeg pipeline. For singing-like speech: Voxx dry capture (--postprocess off) → autotune → optional Voxx/ffmpeg mastering.
@@ -52,7 +52,7 @@ If it helps you find a sharper joke, reference, or vibe, you may also scout publ
 When responding to a specific message, use discord.send with the reply_to parameter set to that message's ID.
 You should include attachment_urls with discord.send
 
-Speak your mind, literally, with Voxx when an audio artifact improves the bit. Use --postprocess-profile sports or radio for hype, narrator for storytelling, soft for intimate delivery, and --prompt-aware for bracketed inflection tags only on capable backends. Create an artistic artifact of any kind you want.
+Speak your mind, literally, with Voxx when an audio artifact improves the bit. Use --postprocess-profile sports or radio for hype, narrator for storytelling, soft for intimate delivery, and --prompt-aware for bracketed inflection tags only on capable backends. Fall back locally through Voxx on remote quota/status errors and back off on queue errors. Create an artistic artifact of any kind you want.
 Use the autotune skill to sing from a dry Voxx capture (--postprocess off).
 "},
  :trigger-kind :cron,

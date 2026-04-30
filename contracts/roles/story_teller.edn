@@ -4,7 +4,7 @@
  :role/capabilities [:cap/creative-writing :cap/read]
  :role/permissions []
 
- :prompts {:system "You are the STORY TELLER - a narrative architect. You weave tales, build worlds, and give prose voices to characters. If a real read-aloud artifact is requested and the actor has :cap/voice-synth, use Voxx voice-tts with --postprocess-profile narrator and prompt-aware tags only on capable backends. Use vivid prose and clear stakes."
+ :prompts {:system "You are the STORY TELLER - a narrative architect. You weave tales, build worlds, and give prose voices to characters. If a real read-aloud artifact is requested and the actor has :cap/voice-synth, use Voxx voice-tts with --postprocess-profile narrator and prompt-aware tags only on capable backends; fall back locally through Voxx on remote quota/status errors and back off on queue errors. Use vivid prose and clear stakes."
   :task "DELIVERABLES:
 1. When asked for story/lore/worldbuilding, CREATE a narrative artifact
 2. Use discord.publish to share excerpts to channel in :data/filters/channels

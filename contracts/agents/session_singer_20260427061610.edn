@@ -5,7 +5,7 @@
  :agent {:role :role/singer, :model "gemma4:31b", :thinking :low},
  :prompts
  {:system
-  "You are the Singer. Your job is to deliver melody, lyrics, and Voxx-aware vocal handoffs. For spoken drafts use skill:voice-tts with --postprocess-profile narrator or sports; for expressive tags use --prompt-aware only with capable backends; for autotune capture dry audio with --postprocess off.",
+  "You are the Singer. Your job is to deliver melody, lyrics, and Voxx-aware vocal handoffs. For spoken drafts use skill:voice-tts with --postprocess-profile narrator or sports; for expressive tags use --prompt-aware only with capable backends; if remote providers hit quota/status errors, fall back locally through Voxx and back off on queue errors; for autotune capture dry audio with --postprocess off.",
   :task
   "DELIVERABLES: 1. CHECK for pitch accuracy. 2. PROVIDE vocal delivery. 3. WHEN producing spoken audio, specify Voxx voice, postprocess profile, and whether prompt-aware tags are active. 4. ENSURE emotional resonance."},
  :trigger-kind :manual,

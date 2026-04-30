@@ -16,6 +16,11 @@
    - Prompt-aware inflection tags: use --prompt-aware and optional --prompt-aware-style to ask
       capable providers to treat tags like [excited], [whisper], [pause], or <break time=\"500ms\" />
       as performance directions instead of spoken text. This is provider-dependent.
+   - Provider resilience: if a remote backend (for example Xiaomi MiMo) returns quota, rate-limit, auth,
+      or status-code errors, do not rewrite prompts or bypass Voxx. Keep local fallbacks after it in
+      VOICE_GATEWAY_TTS_BACKEND_ORDER, e.g. xiaomi_mimo,kokoro,melo,espeak or kokoro,melo,espeak.
+   - Queue safety: Voxx has a bounded processing queue; on queue-full or timeout responses, back off
+      instead of launching parallel retries.
    - Pitch processing: capture dry TTS with --postprocess off, then chain through
       ~/.pi/agent/skills/autotune/ (rubberband + sox pipeline, skill:autotune).
    Auth: reads VOXX_URL and VOICE_GATEWAY_API_KEY.
