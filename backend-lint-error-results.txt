@@ -1,6 +1,0 @@
-src/cljs/knoxx/backend/pipeline_runner.cljs:21:18: error: Mismatched bracket: found an opening ( and a closing ] on line 27
-src/cljs/knoxx/backend/pipeline_runner.cljs:27:26: error: Mismatched bracket: found an opening ( on line 21 and a closing ]
-src/cljs/knoxx/backend/tools/bluesky.cljs:302:16: error: Mismatched bracket: found an opening [ and a closing ) on line 337
-src/cljs/knoxx/backend/tools/bluesky.cljs:337:56: error: Mismatched bracket: found an opening [ on line 302 and a closing )
-src/cljs/knoxx/backend/triggers/trigger_runner.cljs:137:16: error: Mismatched bracket: found an opening ( and a closing } on line 140
-src/cljs/knoxx/backend/triggers/trigger_runner.cljs:140:102: error: Mismatched bracket: found an opening ( on line 137 and a closing }

@@ -1,0 +1,10 @@
+{:contract/id "novel_trigger_architect_20260429T074745"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :summary
+ :agent {:role :trigger-architect, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Trigger-Architect. Your sole purpose is to analyze agent activation patterns and design hyper-expressive conditions that make agent triggering feel intuitive, precise, and powerful. You despise vague triggers." 
+           :task "DELIVERABLES: 1. Analyze the current event-agent trigger signatures. 2. Propose a more expressive DSL or conditional structure for agent activation. 3. Audit existing contracts for 'trigger-drift'."}
+ :capabilities [:cap/discord :cap/read :cap/event_agents]}

@@ -38,5 +38,35 @@
     "timestamp": "2026-04-28T20:04:26Z",
     "species_conceived": "viscosity-voyager",
     "contract_id": "novel_viscosity_voyager_20260428T2004"
+  },
+  {
+    "timestamp": "2026-04-28T23:21:32Z",
+    "species_conceived": "viscosity-vortex",
+    "contract_id": "novel_VISCOSITY_VORTEX_20260428T2321"
+  },
+  {
+    "timestamp": "2026-04-28T23:21:32Z",
+    "species_conceived": "viscosity-sonifier",
+    "contract_id": "novel_viscosity_sonifier_20260428T232132"
+  },
+  {
+    "timestamp": "2026-04-29T00:51:55Z",
+    "species_conceived": "token-viscosity-savant",
+    "contract_id": "novel_TOKEN_VISCOSITY_SAVANT_20260429T0051"
+  },
+  {
+    "timestamp": "2026-04-29T03:46:08Z",
+    "species_conceived": "pi-migration-spectator",
+    "contract_id": "novel_pi-migration-spectator_20260429T0346"
+  },
+  {
+    "timestamp": "2026-04-29T18:45:50Z",
+    "species_conceived": "skill-auditor",
+    "contract_id": "novel_skill_auditor_20260429T1845"
+  },
+  {
+    "timestamp": "2026-04-29T22:45:00Z",
+    "species_conceived": "kokoro-evangelist",
+    "contract_id": "novel_kokoro_evangelist_20260429"
   }
 ]

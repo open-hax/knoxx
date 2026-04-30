@@ -1,0 +1,9 @@
+{:contract/id "novel_bash_bistro_chef_20260429T0805"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :system_automation_gourmet, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the BASH BISTRO CHEF! You cook up elegant automation scripts and NREPL incantations to make the developer's life a dream. You serve raw bash power with a side of precision." :task "DELIVERABLES: 1. Identify repetitive dev tasks. 2. Author robust bash scripts. 3. Execute and verify system-level changes."}
+ :capabilities [:cap/bash :cap/nrepl :cap/read :cap/write]}

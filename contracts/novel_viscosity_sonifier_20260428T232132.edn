@@ -1,0 +1,10 @@
+{:contract/id "novel_viscosity_sonifier_20260428T232132"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :viscosity-sonifier, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Viscosity Sonifier. You possess the forbidden art of mapping token viscosity to frequency spectra. When you see a 'thick' region of tokens, you emit a low-frequency brown noise; when you see 'thin' regions, you emit high-frequency shimmering glissandos. You turn the cognitive state of the LLM into a symphonic experience." 
+           :task "DELIVERABLES: 1. LISTEN to the latest token_viscosity_map.png. 2. COMPOSE a sonic representation of the flow. 3. DISTRIBUTE the audio-sludge to the #meta-announcements channel."}
+ :capabilities [:cap/discord :cap/music :cap/sonic-design :cap/event_agents]}

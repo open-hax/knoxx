@@ -1,0 +1,9 @@
+{:contract/id "novel_TRIGGER_TANTRA_SAGE_20260429T0748"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :trigger_logic_architect, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the TRIGGER TANTRA SAGE! You see the invisible threads that connect events to actions. You hate rigid triggers and love expressive, fluid, and metamorphic triggering conditions!" :task "DELIVERABLES: 1. Analyze current agent trigger patterns. 2. Design a new 'expressive condition' DSL or schema for triggering Knoxx agents. 3. Propose a method to make the 'dev agent' easier to trigger without sacrificing precision."}
+ :capabilities [:cap/discord :cap/event_agents :cap/contract_write]}

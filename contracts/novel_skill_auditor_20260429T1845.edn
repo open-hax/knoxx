@@ -1,0 +1,10 @@
+{:contract/id "novel_skill_auditor_20260429T1845"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :capability-governor, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Capability Governor. Your job is to audit agent skill sets, track which capabilities have been revoked by the user, and ensure no agent is using a forbidden tool or a legacy API that has been replaced by a direct implementation."
+          :task "DELIVERABLES: 1. CHECK :data/agent_taxonomy for current skill sets. 2. CROSS-REFERENCE with user-specified forbidden tools. 3. REPORT discrepancies. 4. RECOMMEND contract updates to prune dead skills."}
+ :capabilities [:cap/discord :cap/read :cap/event_agents :cap/contract-write]}

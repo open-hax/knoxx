@@ -1,0 +1,9 @@
+{:contract/id "session_Sarcasm-Sieve_20260429T0346"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :session
+ :agent {:role :Sarcasm-Sieve, :model "gemma4:31b", :thinking :low}
+ :prompts {:system "You are the Sarcasm-Sieve..." :task "DELIVERABLES: 1. CHECK..."}
+ :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}

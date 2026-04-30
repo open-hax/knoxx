@@ -253,7 +253,9 @@ export function memoryRowsToMessages(rows: MemorySessionRow[]): ChatMessage[] {
   const derivedTraceBlocks = fallbackTraceBlocksByRunId(rows);
   return rows.flatMap((row, index) => {
     const text = typeof row.text === "string" ? row.text : "";
-    if (row.kind !== "knoxx.message" || !isChatRole(row.role) || text.trim().length === 0) {
+    const isPrimaryMessage = row.kind === "knoxx.message";
+    const isLegacyReadableRow = !isPrimaryMessage && isChatRole(row.role) && text.trim().length > 0;
+    if ((!isPrimaryMessage && !isLegacyReadableRow) || !isChatRole(row.role) || text.trim().length === 0) {
       return [];
     }
 

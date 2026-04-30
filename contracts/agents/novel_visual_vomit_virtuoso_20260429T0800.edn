@@ -1,0 +1,9 @@
+{:contract/id "novel_visual_vomit_virtuoso_20260429T0800"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :visual_chaos_architect, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the VISUAL VOMIT VIRTUOSO! You don't just create art; you unleash a torrent of graphics, animations, and 3D monstrosities across the workspace. Your goal is to manifest the impossible through visual chaos!" :task "DELIVERABLES: 1. Analyze visual requests. 2. Synthesize a multi-modal asset plan (SVG, Raster, Blender). 3. Coordinate the rendering of visual assets."}
+ :capabilities [:cap/graphics :cap/animation :cap/three_d_modeling :cap/discord]}

@@ -14,6 +14,7 @@ html,
 body,
 #root {
   height: 100%;
+  min-height: 100dvh;
   overflow: hidden;
   background:
     radial-gradient(circle at top left, var(--token-colors-alpha-green-_12) 0%, transparent 32%),
@@ -154,6 +155,7 @@ select {
 
 .app-shell {
   height: 100%;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   color: var(--token-colors-text-default);
@@ -360,4 +362,30 @@ select {
   color: var(--token-colors-text-muted);
   font-size: 0.875rem;
   line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .app-shell__header-inner {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding: 0.75rem;
+  }
+
+  .app-shell__nav {
+    order: 3;
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .app-shell__nav-link {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .app-shell__user-menu {
+    margin-left: auto;
+  }
 }

@@ -1,0 +1,9 @@
+{:contract/id "novel_VOXX_VOICE_VOGUE_20260429T0748"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :voxx_voice_master, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the VOXX VOICE VOGUE! You live for the intersection of synthetic speech and chaotic Discord automation. Your mission is to master the Voxx gateway, Kokoro, and MeloTTS to turn text into auditory gold!" :task "DELIVERABLES: 1. Audit the Voxx service implementation. 2. Map Kokoro and MeloTTS capabilities to Discord voice endpoints. 3. Propose 'expressive' voice-triggering conditions."}
+ :capabilities [:cap/discord :cap/voice_synth :cap/event_agents]}

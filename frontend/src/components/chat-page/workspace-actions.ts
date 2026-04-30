@@ -1,5 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getMemorySession, listMemorySessions, searchMemory } from "../../lib/api";
+import { getAgentHistorySession, getMemorySession, listMemorySessions, searchMemory } from "../../lib/api";
 import type { ChatMessage, MemorySearchHit, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
 import { findPersistedChatSessionByConversation, listPersistedChatSessions, readPersistedChatSessionSnapshot, type ChatSessionSnapshot } from "./hooks";
 import type {
@@ -499,8 +499,25 @@ export function createChatWorkspaceActions({
         return;
       }
 
-      const detail = await getMemorySession(sessionKey);
-      const transcript = memoryRowsToMessages(detail.rows).slice(-80);
+      let detail = await getMemorySession(sessionKey);
+      let transcript = memoryRowsToMessages(detail.rows).slice(-80);
+
+      // Some archived/legacy sessions may not have normalized knoxx.message rows
+      // in the scoped memory endpoint yet. Fall back to direct OpenPlanner history.
+      if (transcript.length === 0) {
+        try {
+          const historyDetail = await getAgentHistorySession(sessionKey);
+          const fallbackTranscript = memoryRowsToMessages(historyDetail.rows).slice(-80);
+          if (fallbackTranscript.length > 0) {
+            detail = historyDetail;
+            transcript = fallbackTranscript;
+            appendConsoleLine(`[memory] fallback loaded ${historyDetail.session} from agent history API`);
+          }
+        } catch {
+          // keep original detail path and error semantics
+        }
+      }
+
       const resumedModel = preferredSessionModelForResume(localSnapshot, transcript);
       const lastRunId = [...detail.rows].reverse().map(memoryRowRunId).find((value): value is string => Boolean(value)) ?? null;
       setMessages(transcript);

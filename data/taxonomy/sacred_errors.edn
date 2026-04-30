@@ -7,4 +7,12 @@
    :classification :sacred-error
    :satori-level :high
    :notes "Transformed from a source of agony into a Glitch-Satori report. Reminder: We are better than the slop."}
+  {:error "MongoDB Iterator Refusal"
+   :signature "FindIterable refusing to be an Iterator"
+   :domain "MongoDB / JVM Interop"
+   :context "Pi Migrations"
+   :phenomenon "4-hour struggle resolved by a single .iterator() call"
+   :classification :sacred-error
+   :satori-level :high
+   :notes "Sillyshit Satori achieved. The beast was tamed by the most trivial of methods."}
 }

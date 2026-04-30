@@ -1,37 +1,27 @@
-# Π Last — Knoxx Backend MJS Extraction
+# Π Last — Knoxx recursive OpenPlanner snapshot
 
-**Date**: 2026-04-17
-**Branch**: main
-**Head**: ef6a5de4
+**Timestamp:** 2026-04-30T06:20:36Z
+**Branch:** feat/discord-attachments
+**Head before snapshot:** 2af86068
+**Tag:** Π/knoxx-openplanner-recursive-2026-04-30
+**Mode:** recursive fork tax for OpenPlanner submodules
 
-## What was done
+## What was preserved
 
-1. **Tool args preview fix**: `value->preview-text` now guarantees a JSON.stringify fallback for non-nil, non-scalar objects. `agent_turns.cljs` handler-level fallback with `"{}"` skip guard.
-
-2. **PM2 rename**: `knoxx-cepalon` → `knoxx`, switched to `shadow-cljs watch app`, persisted via `ecosystem.config.cjs`.
-
-3. **mcp_gateway.mjs → mcp_bridge.cljs**: Full 419-line port. Server connections, tool catalog, tool calls, SSE parsing — all in CLJS. `mcp_gateway.mjs` deleted. `import './mcp_gateway.mjs'` removed from `server.mjs`.
-
-4. **discord_gateway.cljs**: CLJS API wrapper around `globalThis.knoxxDiscordGateway`. Full inline blocked by discord.js's `node:events` requires which shadow-cljs `:js-provider :import` cannot resolve. Updated 3 consumers to use `dg/` namespace.
-
-5. **HoneySQL dependency added**: `com.github.seancorfield/honeysql 2.7.1368` in `shadow-cljs.edn`, ready for policy-db port.
-
-## Concurrent dirt (not absorbed)
-
-- `app_routes.cljs`, `app_shapes.cljs`, `discord_cron.cljs`, `runtime_config.cljs`, `session_recovery.cljs`, `session_store.cljs`, `tooling.cljs` — likely concurrent work
-- Various frontend changes
-- `docs/knoxx-demo-prep-explainer.md` — deleted
-
-## Remaining mjs files
-
-| File | Lines | Status |
-|------|-------|--------|
-| `discord-gateway.mjs` | 302 | Stays (node:events) |
-| `policy-db.mjs` | 1457 | Ready for HoneySQL port |
-| `pi-session-ingester.mjs` | 732 | Deferred |
-| `server.mjs` | ~170 | Slim down last |
+- CLJS backend route/tool updates, including Twitch tool scaffold and OpenPlanner/Proxx/voice configuration paths.
+- Contract/agent capability updates and generated novel/session contracts.
+- Frontend chat/contracts/admin page updates and CSS changes.
+- PM2 ecosystem/runtime configuration changes.
+- Spawn/taxonomy runtime data snapshots.
+- Prior staged lint/test output files.
+- `test.shadow.results.txt` had an unresolved both-added stash conflict; both sides and the conflicted worktree were preserved in `.ημ/conflicts/`, then the tracked result file was resolved to the `updated-upstream` side to make the repo committable.
 
 ## Verification
 
-- Shadow-cljs compile: passes (0 errors, 174 warnings — all infer-warnings)
-- PM2: `knoxx` online
+- `cd backend && pnpm test` exited 0. Output captured at `.ημ/verification/knoxx-backend-test-20260430T000000Z.txt`.
+- Secret-pattern scan found only environment-variable names/placeholders and prose mentions; no literal credentials were intentionally absorbed.
+
+## Concurrent dirt / blockers
+
+- All observed dirty Knoxx paths were treated as in-scope for the requested recursive OpenPlanner fork tax.
+- No repo-wide reset/restore/clean was used.

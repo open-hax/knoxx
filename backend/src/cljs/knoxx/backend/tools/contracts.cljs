@@ -71,7 +71,9 @@
                                                              "\nClass: " (or (:contract-class r) klass))
                                                         (str "✗ Validation failed:\n"
                                                              (str/join "\n" (map #(str "  • " %) errors))))
-                                                      (js->clj result :keywordize-keys true)))))))))
+                                                        (js->clj result :keywordize-keys true))))))))
+
+         ]
 
      (clj->js
       (vec

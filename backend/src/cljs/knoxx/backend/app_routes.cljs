@@ -220,6 +220,12 @@
     (or (nil? stamp-ms)
         (> (- (.now js/Date) stamp-ms) SESSION_RECOVERY_STALE_MS))))
 
+(defn- dev-hmr-response
+  []
+  {:ok true
+   :version "v2"
+   :at (now-iso)})
+
 (defn register-routes!
   [runtime app config lounge-messages*]
   (ensure-settings! config)
@@ -265,6 +271,12 @@
                             (json-response! reply 503 {:status "unhealthy"
                                                        :service "knoxx-backend-cljs"
                                                        :error (str err)})))))))
+
+  ;; Dev-only endpoint used to verify shadow-cljs hot-reload against a live
+  ;; long-running Node runtime (shadow owns the process).
+  (route! app "GET" "/api/dev/hmr"
+          (fn [_request reply]
+            (json-response! reply 200 (dev-hmr-response))))
 
   (route! app "GET" "/api/config"
           (fn [request reply]

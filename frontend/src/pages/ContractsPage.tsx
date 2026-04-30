@@ -249,6 +249,7 @@ interface AgentSidebarEntry {
   contractClass: ContractsClass;
   label: string;
   title?: string;
+  version?: number;
   status: "running" | "idle" | "disabled" | "error" | "unknown";
   triggerKind: string;
   sourceKind: string;
@@ -387,6 +388,7 @@ export default function ContractsPage() {
           contractClass: c.contractClass,
           label: c.id,
           title: c.title,
+          version: c.version,
           status: isEnabled ? (isRunning ? "running" : "idle") : "disabled",
           triggerKind: controlJob?.trigger?.kind ?? c.contractClass.slice(0, -1),
           sourceKind: controlJob?.source?.kind ?? c.contractClass,
@@ -580,12 +582,38 @@ export default function ContractsPage() {
         color: palette.fg.default,
       }}
     >
-      <div style={{ display: "flex", flex: "1 1 0%", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+      <div style={{ display: "flex", flex: "1 1 0%", minHeight: 0, minWidth: 0, overflow: "hidden", position: "relative" }}>
+        {isNarrow && showLeftPanel ? (
+          <button
+            type="button"
+            aria-label="Close contracts panel"
+            onClick={toggleLeftPanel}
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 14,
+              border: "none",
+              background: "rgba(0, 0, 0, 0.45)",
+              padding: 0,
+              cursor: "pointer",
+            }}
+          />
+        ) : null}
         {/* ── Left consolidated panel (contracts + metadata) ───────────── */}
         {showLeftPanel ? (
           <div style={{
-            width: 360, minWidth: 300, borderRight: `1px solid ${palette.fg.subtle}`,
-            display: "flex", flexDirection: "column", background: palette.bg.darker, overflow: "hidden",
+            width: isNarrow ? "min(88vw, 360px)" : 360,
+            minWidth: isNarrow ? "min(88vw, 320px)" : 300,
+            maxWidth: isNarrow ? "calc(100vw - 40px)" : undefined,
+            borderRight: `1px solid ${palette.fg.subtle}`,
+            display: "flex",
+            flexDirection: "column",
+            background: palette.bg.darker,
+            overflow: "hidden",
+            position: isNarrow ? "absolute" : "relative",
+            inset: isNarrow ? "0 auto 0 0" : undefined,
+            zIndex: isNarrow ? 15 : undefined,
+            boxShadow: isNarrow ? "0 12px 36px rgba(0, 0, 0, 0.45)" : undefined,
           }}>
         {/* Sidebar header */}
         <div style={{
@@ -689,7 +717,11 @@ export default function ContractsPage() {
                         <button
                           key={`${entry.contractClass}:${entry.id}`}
                           type="button"
-                          onClick={() => { setSelectedId(entry.id); setSelectedContractClass(entry.contractClass); }}
+                          onClick={() => {
+                            setSelectedId(entry.id);
+                            setSelectedContractClass(entry.contractClass);
+                            if (isNarrow) setShowLeftPanel(false);
+                          }}
                           style={{
                             width: "100%", padding: "10px 12px", textAlign: "left",
                             borderRadius: tokens.radius.md,
@@ -727,7 +759,7 @@ export default function ContractsPage() {
                           <div style={{ display: "flex", gap: 8, marginTop: 4, fontSize: tokens.fontSize.xs, color: palette.fg.muted }}>
                             <span>{entry.contractClass}</span>
                             <span>·</span>
-                            <span>v{entry.version}</span>
+                            <span>{entry.version != null ? `v${entry.version}` : "runtime"}</span>
                           </div>
                         </button>
                       );
@@ -739,7 +771,13 @@ export default function ContractsPage() {
               {/* New contract button */}
               <button
                 type="button"
-                onClick={() => { setSelectedId(null); setSelectedContractClass("agents"); setEdnDraft(DEFAULT_CONTRACT_EDN); setLastSavedEdn(null); }}
+                onClick={() => {
+                  setSelectedId(null);
+                  setSelectedContractClass("agents");
+                  setEdnDraft(DEFAULT_CONTRACT_EDN);
+                  setLastSavedEdn(null);
+                  if (isNarrow) setShowLeftPanel(false);
+                }}
                 style={{
                   width: "100%", padding: "10px 12px", textAlign: "center",
                   borderRadius: tokens.radius.md,
@@ -755,7 +793,7 @@ export default function ContractsPage() {
           )}
         </div>
           </div>
-        ) : (
+        ) : !isNarrow ? (
           <div
             style={{
               width: 38,
@@ -784,14 +822,19 @@ export default function ContractsPage() {
               Show
             </button>
           </div>
-        )}
+        ) : null}
 
         {/* ── Main content ────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
         {/* Header bar */}
         <div style={{
-          padding: "12px 20px", borderBottom: `1px solid ${palette.fg.subtle}`,
-          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+          padding: isNarrow ? "12px 14px" : "12px 20px",
+          borderBottom: `1px solid ${palette.fg.subtle}`,
+          display: "flex",
+          alignItems: isNarrow ? "flex-start" : "center",
+          justifyContent: "space-between",
+          gap: 16,
+          flexDirection: isNarrow ? "column" : "row",
           background: palette.bg.darker,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
@@ -807,7 +850,7 @@ export default function ContractsPage() {
               <span style={{ fontSize: tokens.fontSize.base, fontWeight: 600, color: palette.fg.default }}>New contract</span>
             )}
           </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", width: isNarrow ? "100%" : undefined }}>
             <button type="button" onClick={toggleLeftPanel}
               style={{ padding: "5px 12px", borderRadius: tokens.radius.sm, border: `1px solid ${showLeftPanel ? palette.accent.cyan : palette.fg.subtle}`, background: showLeftPanel ? "rgba(102, 217, 239, 0.08)" : palette.bg.default, color: showLeftPanel ? palette.accent.cyan : palette.fg.soft, fontSize: tokens.fontSize.xs, cursor: "pointer" }}>
               {showLeftPanel ? "✕ Left" : "☰ Left"}
@@ -1034,9 +1077,9 @@ export default function ContractsPage() {
       {/* ── Bottom chat panel (narrow) ───────────────────────────────── */}
       {isNarrow && showChat ? (
         <div style={{
-          height: "38vh",
-          minHeight: 260,
-          maxHeight: "55vh",
+          height: "42dvh",
+          minHeight: 240,
+          maxHeight: "60dvh",
           borderTop: `1px solid ${palette.fg.subtle}`,
           background: palette.bg.darker,
           display: "flex",

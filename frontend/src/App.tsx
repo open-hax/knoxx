@@ -38,7 +38,7 @@ function AppShell() {
       <header className="app-shell__header">
         <div className="app-shell__header-inner">
           <h1 className="app-shell__brand">Knoxx</h1>
-          <nav className="app-shell__nav">
+          <nav className="app-shell__nav" aria-label="Primary">
             <NavLink to="/" className={navLinkClass}>
               Chat
             </NavLink>
@@ -118,7 +118,7 @@ function UserMenu() {
   if (!auth?.user) return null;
 
   return (
-    <div className="relative ml-4">
+    <div className="app-shell__user-menu relative ml-4">
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800 transition"

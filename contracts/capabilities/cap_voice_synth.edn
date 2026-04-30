@@ -7,19 +7,19 @@
  :cap/description
   "Spoken and sung voice synthesis. Two paths:
    - Sung: voice.openutau_project scaffolds a .ustx file for OpenUtau render.
-   - Spoken TTS: voice.tts calls ElevenLabs REST via
-      ~/.pi/agent/skills/voice-tts/tts.sh (mp3_44100_128 by default, all plans).
+   - Spoken TTS: voice.tts calls the Voxx gateway via
+      ~/.pi/agent/skills/voice-tts/tts.sh (mp3 by default).
       voice.tts_stream connects to the knoxx WS bridge at /ws/voice/tts.
    - Pitch processing: chain tts output through
       ~/.pi/agent/skills/autotune/  (rubberband + sox pipeline, skill:autotune).
-   Auth: reads KNOXX_ELEVENLABS_API_KEY (preferred) or ELEVENLABS_API_KEY.
-   Default voice: 21m00Tcm4TlvDq8ikWAM (Rachel). Default model: eleven_multilingual_v2.
-   Do NOT use pcm_44100 output format on free/Starter keys — it causes 403."
+   Auth: reads VOXX_URL and VOICE_GATEWAY_API_KEY.
+   Default voice: alloy. Default model: kokoro.
+   Prefer Voxx for backend-agnostic synthesis (Kokoro, MeloTTS, ElevenLabs)."
  :cap/skills [:skill/voice-tts :skill/autotune]
  :cap/user-surfaces [{:surface/id :workspace/voice-synth
                       :surface/label "Voice synthesis workbench"
                       :surface/kind :composer
                       :surface/routes ["/ops/documents"]
                       :surface/description
-                       "Spoken TTS via ElevenLabs (REST + WS streaming) and sung synthesis via OpenUtau.
+                       "Spoken TTS via the Voxx gateway (REST + WS streaming) and sung synthesis via OpenUtau.
                         Pitch processing via rubberband/sox autotune pipeline."}]}
