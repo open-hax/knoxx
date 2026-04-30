@@ -83,22 +83,11 @@
    :acoustid-api-key (env "ACOUSTID_API_KEY" "")
 
    ;; Voice / speech
+   :voxx-url (env "VOXX_URL" "http://127.0.0.1:8787")
+   :voxx-api-key (env "VOICE_GATEWAY_API_KEY" "dev-token")
+   :voxx-voice-id (env "KNOXX_VOXX_VOICE_ID" "alloy")
+   :voxx-model-id (env "KNOXX_VOXX_MODEL_ID" "kokoro")
    :stt-base-url (env "KNOXX_STT_BASE_URL" "")
-
-   ;; TTS (ElevenLabs)
-   ;; NOTE: support a few common env var names to reduce local drift.
-   :elevenlabs-api-key (or (aget js/process.env "KNOXX_ELEVENLABS_API_KEY")
-                           (aget js/process.env "KNOXX_ELEVENLABS_KEY")
-                           (aget js/process.env "ELEVENLABS_API_KEY")
-                           (aget js/process.env "ELEVEN_LABS_API_KEY")
-                           (aget js/process.env "XI_API_KEY")
-                           "")
-   :elevenlabs-voice-id (or (aget js/process.env "KNOXX_ELEVENLABS_VOICE_ID")
-                            (aget js/process.env "ELEVENLABS_VOICE_ID")
-                            "")
-   :elevenlabs-model-id (or (aget js/process.env "KNOXX_ELEVENLABS_MODEL_ID")
-                            (aget js/process.env "ELEVENLABS_MODEL_ID")
-                            "eleven_multilingual_v2")
 
    ;; Pi / agent runtime dir
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")

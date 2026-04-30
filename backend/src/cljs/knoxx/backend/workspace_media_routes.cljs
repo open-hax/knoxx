@@ -71,7 +71,7 @@
                   (when ctx
                     (ensure-tool! ctx "read"))
 
-                  (let [node-fs (aget runtime "fs")
+                  (let [^js node-fs (aget runtime "fs")
                         node-path (aget runtime "path")
                         raw-path (or (aget request "query" "path") "")
                         normalized (media/normalize-tool-path-arg raw-path)

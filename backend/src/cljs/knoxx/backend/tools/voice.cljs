@@ -18,17 +18,13 @@
 (defn- resolve-voice-key [config]
   (or (blank->nil (aget config "voxx-api-key"))
       (blank->nil (aget config "voxxApiKey"))
-      (blank->nil (aget config "elevenlabs-api-key"))
-      (blank->nil (aget config "elevenlabsApiKey"))
       (some-> js/process .-env (aget "VOICE_GATEWAY_API_KEY") blank->nil)
-      (some-> js/process .-env (aget "KNOXX_VOICE_GATEWAY_API_KEY") blank->nil)
-      (some-> js/process .-env (aget "KNOXX_ELEVENLABS_API_KEY") blank->nil)
-      (some-> js/process .-env (aget "ELEVENLABS_API_KEY") blank->nil)))
+      (some-> js/process .-env (aget "KNOXX_VOICE_GATEWAY_API_KEY") blank->nil)))
 
 (defn- voice-gateway-url [config]
   (or (blank->nil (aget config "voxx-url"))
       (some-> js/process .-env (aget "VOXX_URL") blank->nil)
-      "http://voxx:8080"))
+      "http://127.0.0.1:8787"))
 
 (defn- tts-url [config]
   (let [base (str/replace (voice-gateway-url config) #"/+$" "")]

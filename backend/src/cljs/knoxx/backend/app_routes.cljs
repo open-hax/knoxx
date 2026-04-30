@@ -290,11 +290,11 @@
               :stt_base_url (if (str/blank? (:stt-base-url config))
                               ""
                               (rewrite-localhost-url (:stt-base-url config) request))
-              :tts_enabled (not (str/blank? (str/trim (or (:elevenlabs-api-key config) ""))))
-              :tts_provider (if (not (str/blank? (str/trim (or (:elevenlabs-api-key config) ""))))
-                              "elevenlabs"
+              :tts_enabled (not (str/blank? (str/trim (or (:voxx-api-key config) ""))))
+              :tts_provider (if (not (str/blank? (str/trim (or (:voxx-api-key config) ""))))
+                              "voxx"
                               "")
-              :tts_default_voice_id (or (:elevenlabs-voice-id config) "")
+              :tts_default_voice_id (or (:voxx-voice-id config) "alloy")
               :proxx_enabled (and (not (str/blank? (:proxx-base-url config)))
                                   (not (str/blank? (:proxx-auth-token config))))
               :proxx_default_model (:llmModel @settings-state*)
