@@ -12,6 +12,7 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [session-titles*
+                                                  session-title-promises*
                                                   session-title-backfill*
                                                   session-title-seed-text
                                                   heuristic-session-title
@@ -146,23 +147,29 @@
                                       (contains? allowed-sessions (str (or (hit-session-id hit) "")))))
                             vec)))))))))
 
-(defn- warm-title-cache!  [session-id config runtime]
-  (when-not (contains? @session-titles* session-id)
-    (-> (fetch-openplanner-session-rows! config session-id)
-        (.then
-         (fn [title-rows]
-           (let [seed-text (session-title-seed-text title-rows)
-                 fallback-title (heuristic-session-title seed-text)]
-             (-> (resolve-session-title! config seed-text)
-                 (.then (fn [entry]
-                          (cache-session-title! runtime config session-id
-                                                (or (normalize-session-title (:title entry) fallback-title)
-                                                    fallback-title)
-                                                (:title_model entry))))
-                 (.catch (fn [_]
-                           (cache-session-title! runtime config session-id fallback-title nil)))))))
-        (.catch (fn [_]
-                  (cache-session-title! runtime config session-id "Untitled session" nil))))))
+(defn- warm-title-cache! [session-id config runtime]
+  (let [session-id (str (or session-id ""))]
+    (when (and (not (str/blank? session-id))
+               (not (contains? @session-titles* session-id))
+               (not (contains? @session-title-promises* session-id)))
+      (let [title-promise
+            (-> (fetch-openplanner-session-rows! config session-id)
+                (.then
+                 (fn [title-rows]
+                   (let [seed-text (session-title-seed-text title-rows)
+                         fallback-title (heuristic-session-title seed-text)]
+                     (-> (resolve-session-title! config seed-text)
+                         (.then (fn [entry]
+                                  (cache-session-title! runtime config session-id
+                                                        (or (normalize-session-title (:title entry) fallback-title)
+                                                            fallback-title)
+                                                        (:title_model entry))))
+                         (.catch (fn [_]
+                                   (cache-session-title! runtime config session-id fallback-title nil)))))))
+                (.catch (fn [_]
+                          (cache-session-title! runtime config session-id "Untitled session" nil))))]
+        (swap! session-title-promises* assoc session-id title-promise)
+        title-promise))))
 
 (defn- inactive-row [row]
   (assoc row

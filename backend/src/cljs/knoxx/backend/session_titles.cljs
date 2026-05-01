@@ -7,6 +7,7 @@
 
 (defonce session-titles* (atom {}))
 (defonce session-title-promises* (atom {}))
+(defonce session-title-generation-tail* (atom (js/Promise.resolve nil)))
 (defonce session-title-backfill* (atom {:active false
                                         :processed 0
                                         :total 0
@@ -27,6 +28,20 @@
   (js/Promise.resolve value))
 
 (declare generate-session-title!)
+
+(defn- enqueue-session-title-generation!
+  "Serialize Proxx-backed title generation so cache misses cannot fan out into
+   a provider request storm. The returned promise preserves the task result;
+   the queue tail always recovers so one failed naming request does not stall
+   later titles."
+  [task-fn]
+  (let [task (-> @session-title-generation-tail*
+                 (.catch (fn [_] nil))
+                 (.then (fn [] (task-fn))))]
+    (reset! session-title-generation-tail*
+            (-> task
+                (.catch (fn [_] nil))))
+    task))
 
 (defn sanitize-session-title
   [value]
@@ -293,7 +308,7 @@
 (defn resolve-session-title!
   [config seed-text]
   (let [fallback (heuristic-session-title seed-text)]
-    (-> (generate-session-title! config seed-text)
+    (-> (enqueue-session-title-generation! #(generate-session-title! config seed-text))
         (.then (fn [entry]
                  {:title (or (normalize-session-title (:title entry) fallback)
                              fallback)
