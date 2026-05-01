@@ -21,7 +21,7 @@
     "@fastify/formbody": "^8.0.2",
     "@fastify/multipart": "^9.2.1",
     "@fastify/websocket": "^11.2.0",
-    "@open-hax/eta-mu": "^0.1.0",
+    "@open-hax/eta-mu": "^0.1.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@resvg/resvg-js": "^2.6.2",
     "@sinclair/typebox": "^0.34.41",
