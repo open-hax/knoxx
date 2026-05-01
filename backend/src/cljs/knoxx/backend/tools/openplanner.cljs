@@ -3,8 +3,9 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
+            [knoxx.backend.document-state :refer [active-agent-profile]]
             [knoxx.backend.http :as backend-http :refer [http-error js-array-seq]]
-            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query!]]
+            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
             [knoxx.backend.text :refer [clip-text tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
@@ -80,6 +81,11 @@
                                     #js {:title (type-optional Type (.String Type #js {:description "Human-readable title for the new artifact."}))
                                          :path (type-optional Type (.String Type #js {:description "Relative path for the new file inside the active docs root."}))
                                          :content (type-optional Type (.String Type #js {:description "Initial markdown content to write into the new file."}))})
+         push-claim-params (.Object Type
+                               #js {:claim (.String Type #js {:description "The proposition or claim to add to the knowledge graph."})
+                                    :evidence (type-optional Type (.Array Type (.String Type) #js {:description "Supporting evidence or a chain of claims that lead to this conclusion."}))
+                                    :probability (type-optional Type (.Number Type #js {:description "Confidence score from 0.0 to 1.0." :minimum 0.0 :maximum 1.0}))
+                                    :source (type-optional Type (.String Type #js {:description "The source of the claim (e.g. \"web-research\", \"llm-inference\")."}))})
          node-fs (aget runtime "fs")
          node-path (aget runtime "path")
          slugify (fn [value]
@@ -182,6 +188,27 @@
                                                                      :title title
                                                                      :content content
                                                                      :canvas true}))))))
+         push-claim-execute (fn [_tool-call-id params a b c]
+                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+                                     claim (aget params "claim")
+                                     evidence (or (aget params "evidence") #js [])
+                                     p (or (aget params "probability") 0.5)
+                                     source (or (aget params "source") "llm-investigation")
+                                     profile (active-agent-profile runtime config auth-context)
+                                     event (openplanner-event config {:id (str "claim:" (.randomUUID js/crypto))
+                                                                      :kind "knoxx.claim"
+                                                                      :session (:sessionId auth-context)
+                                                                      :role "assistant"
+                                                                      :model (:model profile)
+                                                                      :text claim
+                                                                      :extra {:claim claim
+                                                                            :evidence (clj->js evidence)
+                                                                            :p p
+                                                                            :src source}})]
+                                 (maybe-tool-update! on-update (str "Pushing claim to graph: " claim "…"))
+                                 (-> (backend-http/openplanner-request! config "POST" "/v1/events" {:events [event]})
+                                     (.then (fn [resp]
+                                              (tool-text-result (str "Successfully pushed claim to graph: " claim) resp))))))
          ;; save_translation execute
          save-translation-execute (fn [_tool-call-id params a b c]
                                     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
@@ -297,7 +324,17 @@
                                  (aset "promptGuidelines" (clj->js ["Use create_new_file when the user wants to start an actual artifact or canvas-backed document."
                                                                     "Return a file path and initial markdown content so the chat canvas can open it immediately."]))
                                  (aset "parameters" create-file-params)
-                                 (aset "execute" create-new-file-execute))]
+                                 (aset "execute" create-new-file-execute))
+         push-claim-tool (doto (js-obj)
+                          (aset "name" "push_claim")
+                          (aset "label" "Push Claim")
+                          (aset "description" "Add a new claim or proposition to the knowledge graph. Use this when you discover a fact or derive an inference during an investigation.")
+                          (aset "promptSnippet" "Push a discovered claim or derived inference into the knowledge graph. Treat the graph as an evolving tapestry of hypotheses; the act of recording a discovery is as valuable as the discovery itself.")
+                          (aset "promptGuidelines" (clj->js ["Use push_claim when you uncover a new fact or derive a logical inference during investigation."
+                                                            "Don't obsess over binary truth; prioritize the capture of the epistemic trail."
+                                                            "Include all relevant evidence and a confidence probability."]))
+                          (aset "parameters" push-claim-params)
+                          (aset "execute" push-claim-execute))]
      (clj->js
      (vec
        (remove nil?
@@ -322,5 +359,8 @@
                   save-translation-tool)
                 (when (or (nil? auth-context)
                           (ctx-tool-allowed? auth-context "create_new_file"))
-                  create-new-file-tool)]))))))
+                  create-new-file-tool)
+                (when (or (nil? auth-context)
+                                 (ctx-tool-allowed? auth-context "push_claim"))
+                  push-claim-tool)]))))))
 

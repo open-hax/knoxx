@@ -18,12 +18,12 @@
 (defonce agent-sessions* (atom {}))
 
 ;; Proxx session affinity: Proxx uses prompt_cache_key to lock a session to an
-;; account+provider pair. pi-coding-agent does not emit prompt_cache_key by
-;; default, so we inject it via an always-on extension installed into the
-;; Knoxx agent runtime directory.
+;; account+provider pair. The eta-mu agent runtime does not emit
+;; prompt_cache_key by default, so we inject it via an always-on extension
+;; installed into the Knoxx agent runtime directory.
 (def ^:private proxx-session-affinity-extension-code
   (str
-   "import type { ExtensionAPI } from \"@mariozechner/pi-coding-agent\";\n\n"
+   "import type { ExtensionAPI } from \"@open-hax/eta-mu\";\n\n"
    "function isRecord(value: unknown): value is Record<string, unknown> {\n"
    "  return typeof value === 'object' && value !== null;\n"
    "}\n\n"

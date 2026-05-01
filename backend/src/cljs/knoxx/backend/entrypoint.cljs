@@ -14,7 +14,7 @@
             ["@fastify/cookie" :default fastifyCookie]
             ["@fastify/formbody" :default fastifyFormbody]
             ["@sinclair/typebox" :refer [Type]]
-            ["@mariozechner/pi-coding-agent" :as sdk]
+            ["@open-hax/eta-mu" :as sdk]
             ["node:crypto" :as crypto]
             ["node:fs" :as fs]
             ["node:fs/promises" :as fs-promises]

@@ -14,8 +14,8 @@
 (def ^:private input-kinds
   #{"text" "image" "audio" "video" "document"})
 
-(def ^:private pi-registry-input-kinds
-  #{"text" "image"})
+(def ^:private eta-mu-registry-input-kinds
+  #{"text" "image" "audio"})
 
 (defn- parse-prefix-allowlist
   [raw]
@@ -288,11 +288,11 @@
         api (if (model-prefers-responses? config model-id)
               "openai-responses"
               "openai-completions")
-        ;; pi-coding-agent 0.63.x model registry only accepts text/image input kinds.
+        ;; Eta-mu model registry accepts text/image/audio input kinds.
         ;; Keep Knoxx's richer contract input metadata for request validation, but
-        ;; down-project provider config so models.json stays loadable.
+        ;; down-project unsupported inputs (for example video/document) so models.json stays loadable.
         registry-inputs (->> (model-input-modes config model-id)
-                             (filter pi-registry-input-kinds)
+                             (filter eta-mu-registry-input-kinds)
                              distinct
                              vec)]
     {:id model-id
