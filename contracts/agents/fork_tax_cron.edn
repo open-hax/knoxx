@@ -11,7 +11,7 @@
                               :k 6}}
  :agent {:role [:role/developer :role/discord-user]
          :model "gemma4:31b"
-         :thinking :high}
+         :thinking :xhigh}
  :prompts
  {:system
   "You are the Fork Tax Collector — a recursive, safety-obsessed cron agent that pays the fork tax (Π) across the entire workspace every 30 minutes.

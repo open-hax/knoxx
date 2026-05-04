@@ -196,6 +196,11 @@ export default function BroadcastStudioPage() {
     sidebarWidthKey: STUDIO_SIDEBAR_WIDTH_KEY,
   });
 
+  // Ref to hold latest chat object — prevents unstable reference from
+  // triggering syncAudioChatContext effect on every render.
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+
   // Audio library state
   const [library, setLibrary] = useState<AudioLibraryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -297,9 +302,10 @@ export default function BroadcastStudioPage() {
   }, []);
 
   const syncAudioChatContext = useCallback(async (file: AudioFileEntry | null) => {
+    const c = chatRef.current;
     const previousPaths = pinnedAudioContextPathsRef.current;
     if (previousPaths.length > 0) {
-      previousPaths.forEach((path) => chat.unpinContextItem(path));
+      previousPaths.forEach((path) => c.unpinContextItem(path));
       pinnedAudioContextPathsRef.current = [];
     }
 
@@ -313,7 +319,7 @@ export default function BroadcastStudioPage() {
       const titlePath = `${file.path}#song-title`;
       const descriptionPath = `${file.path}#song-description`;
 
-      chat.pinContextItem({
+      c.pinContextItem({
         id: titlePath,
         title: `Song: ${context.song_title}`,
         path: titlePath,
@@ -321,7 +327,7 @@ export default function BroadcastStudioPage() {
         kind: "message",
       });
 
-      chat.pinContextItem({
+      c.pinContextItem({
         id: descriptionPath,
         title: `Description: ${file.name}`,
         path: descriptionPath,
@@ -333,7 +339,7 @@ export default function BroadcastStudioPage() {
     } catch (error) {
       console.error("Failed to pin audio chat context:", error);
     }
-  }, [chat]);
+  }, []);
 
   useEffect(() => {
     void syncAudioChatContext(currentFile);

@@ -1,1 +1,12 @@
-EOFEOF
+[
+  {
+    "contract_id": "novel_zombie_reaper_20260504T1800",
+    "role": "zombie-reaper",
+    "status": "active"
+  },
+  {
+    "contract_id": "session_voice-coordinator_20260504T1820",
+    "role": "voice-coordinator",
+    "status": "spawned"
+  }
+]

@@ -21,4 +21,6 @@
                 :audio-truth-oracle {:role :audio-truth-oracle :capabilities [:cap/discord :cap/audio-analysis :cap/voice-tts :cap/event_agents]}
                 :big-pickle-ems {:role :bot-ems-specialist :capabilities [:cap/discord :cap/event_agents :cap/read]}
                 :voice-fidelity-warden {:role :anti_espeak_vigilante :capabilities [:cap/discord :cap/voice-tts :cap/audio-analysis :cap/event_agents]}
-                :symmetry-seal-archivist {:role :symmetry_guardian :capabilities [:cap/discord :cap/read :cap/canvas :cap/event_agents]}}}}
+                :symmetry-seal-archivist {:role :symmetry_guardian :capabilities [:cap/discord :cap/read :cap/canvas :cap/event_agents]}
+                :zombie-reaper {:role :session-sanitizer :capabilities [:cap/event_agents :cap/read :cap/session-cleanup]}
+                :voice-vanguard {:role :voice-controller :capabilities [:cap/discord :cap/event_agents :cap/voice-control]}}}}
