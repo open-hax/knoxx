@@ -9,7 +9,11 @@
    Exported: createDiscordGatewayManager — factory function returning a JS object
    with async methods. Also provides a CLJS convenience API via set-manager!."
   (:require [clojure.string :as str]
-            ["discord.js" :as discord]))
+            ["discord.js" :as discord]
+            ["@discordjs/voice" :as voice]
+            ["libsodium-wrappers" :as sodium]))
+
+;; sodium is imported for @discordjs/voice crypto support — no explicit use needed
 
 (declare set-manager!)
 
@@ -63,9 +67,9 @@
   "Sort an array of message maps by timestamp, newest first."
   [messages]
   (js/Array.from (.sort (into-array messages)
-                         (fn [a b]
-                           (.localeCompare (str (aget b "timestamp"))
-                                           (str (aget a "timestamp")))))))
+                        (fn [a b]
+                          (.localeCompare (str (aget b "timestamp"))
+                                          (str (aget a "timestamp")))))))
 
 (defn- split-message
   "Split text into chunks of ≤2000 chars, preferring paragraph/line/word breaks."
@@ -162,7 +166,7 @@
                  :userTag nil
                  :guildCount 0}
       c (doto
-          (aset "ready" (try (.isReady c) (catch js/Error _ false)))
+            (aset "ready" (try (.isReady c) (catch js/Error _ false)))
           (aset "userId" (try (.-id (.-user c)) (catch js/Error _ nil)))
           (aset "userTag" (try (.-tag (.-user c)) (catch js/Error _ nil)))
           (aset "guildCount" (try (.. c -guilds -cache -size) (catch js/Error _ 0)))))))
@@ -227,9 +231,9 @@
                           (js/Promise.reject (js/Error. (str "Channel not found or not text-based: " channel-id)))
                           (-> (.fetch (.. channel -messages)
                                       (clj->js {:limit (max 1 (min 100 (or (aget opts "limit") 50)))
-                                                 :before (aget opts "before")
-                                                 :after (aget opts "after")
-                                                 :around (aget opts "around")}))
+                                                :before (aget opts "before")
+                                                :after (aget opts "after")
+                                                :around (aget opts "around")}))
                               (.then (fn [fetched]
                                        (sort-newest-first
                                         (map map-message (for [[_id msg] fetched] msg)))))))))))))
@@ -245,7 +249,7 @@
                             (.then (fn [dm]
                                      (-> (.fetch (.. dm -messages)
                                                  (clj->js {:limit (max 1 (min 100 (or (aget opts "limit") 50)))
-                                                            :before (aget opts "before")}))
+                                                           :before (aget opts "before")}))
                                          (.then (fn [fetched]
                                                   #js {:dmChannelId (.-id dm)
                                                        :messages (sort-newest-first
@@ -278,8 +282,8 @@
                           :source "gateway-cache"}))))
       (-> (.fetchChannelMessages this-fn (aget opts "channelId")
                                  (clj->js {:limit 100
-                                            :before (aget opts "before")
-                                            :after (aget opts "after")}))
+                                           :before (aget opts "before")
+                                           :after (aget opts "after")}))
           (.then (fn [messages]
                    (let [filtered (.filter messages (search-filter-fn opts))]
                      #js {:channelId (aget opts "channelId")
@@ -322,6 +326,150 @@
                                               :attachmentCount (count attachments)})))))))))))
 
 ;; ---------------------------------------------------------------------------
+;; Voice helpers
+;; ---------------------------------------------------------------------------
+
+(defn- gw-join-voice
+  "Join a voice channel. Returns a VoiceConnection."
+  [ensure-client channel-id]
+  (js/console.log "[voice:gw] joining channel:" channel-id)
+  (.then (ensure-client)
+         (fn [active-client]
+           (-> (.fetch (.. active-client -channels) channel-id)
+               (.then (fn [channel]
+                        (if-not channel
+                          (do (js/console.error "[voice:gw] channel not found:" channel-id)
+                              (js/Promise.reject (js/Error. (str "Channel not found: " channel-id))))
+                          (do
+                            (js/console.log "[voice:gw] channel found:" channel-id "guild:" (.-guildId channel) "selfDeaf:false")
+                            (let [conn (voice/joinVoiceChannel
+                                        #js {:channelId channel-id
+                                             :guildId (.-guildId channel)
+                                             :adapterCreator (.-voiceAdapterCreator (.-guild channel))
+                                             :selfDeaf false
+                                             :selfMute false})]
+                              (js/console.log "[voice:gw] joinVoiceChannel returned, waiting for ready state…")
+                              (-> (voice/entersState conn (.-VoiceConnectionStatus voice/VoiceConnectionStatus) 15000)
+                                  (.then (fn [_]
+                                           (js/console.log "[voice:gw] voice connection ready for guild:" (.-guildId conn))
+                                           conn))
+                                  (.catch (fn [err]
+                                            (js/console.error "[voice:gw] voice connection failed to ready:" (.-message err))
+                                            (js/Promise.reject err)))))))))))))
+
+(defn- gw-leave-voice
+  "Leave a voice channel for a guild."
+  [connections guild-id]
+  (when-let [conn (.get connections guild-id)]
+    (.destroy conn)
+    (.delete connections guild-id))
+  (js/Promise.resolve true))
+
+(defn- gw-play-audio
+  "Play an audio buffer (PCM s16le 48kHz stereo or any ffmpeg-decodable) in the voice connection."
+  [connections guild-id audio-buffer]
+  (let [conn (.get connections guild-id)]
+    (if-not conn
+      (js/Promise.reject (js/Error. (str "No voice connection for guild: " guild-id)))
+      (let [player (or (.-__audioPlayer conn)
+                       (let [p (voice/createAudioPlayer)]
+                         (aset conn "__audioPlayer" p)
+                         (.subscribe conn p)
+                         p))
+            resource (voice/createAudioResource audio-buffer)]
+        (.play player resource)
+        (js/Promise.resolve true)))))
+
+(defn- gw-subscribe-voice
+  "Subscribe to audio from a specific user. Returns an unsubscribe function."
+  [connections guild-id user-id callback]
+  (let [conn (.get connections guild-id)]
+    (if-not conn
+      (js/Promise.reject (js/Error. (str "No voice connection for guild: " guild-id)))
+      (let [receiver (.-receiver conn)
+            opus-stream (.subscribe receiver user-id #js {:mode "opus"})]
+        (.on opus-stream "data" (fn [chunk] (callback user-id chunk)))
+        (js/Promise.resolve
+         (fn [] (.destroy opus-stream)))))))
+
+(defn- gw-list-voice-members
+  "List members in a voice channel."
+  [ensure-client guild-id channel-id]
+  (.then (ensure-client)
+         (fn [active-client]
+           (-> (.fetch (.. active-client -guilds) guild-id)
+               (.then (fn [guild]
+                        (if-not guild
+                          (js/Promise.reject (js/Error. (str "Guild not found: " guild-id)))
+                          (-> (.fetch (.. guild -channels) channel-id)
+                              (.then (fn [channel]
+                                       (if-not channel
+                                         (js/Promise.reject (js/Error. (str "Channel not found: " channel-id)))
+                                         (let [members (.-members channel)]
+                                           (into-array
+                                            (for [[_ member] members]
+                                              (let [user (.-user member)]
+                                                #js {:userId (.-id user)
+                                                     :username (.-username user)
+                                                     :displayName (or (.-displayName member) (.-username user))
+                                                     :isBot (boolean (.-bot user))
+                                                     :isMuted (boolean (.-mute member))
+                                                     :isDeaf (boolean (.-deaf member))
+                                                     :isSpeaking false})))))))))))))))
+
+(defn- gw-start-voice-listener
+  "Start listening for all speaking users in a voice channel.
+   Calls (on-start user-id) when a user starts speaking.
+   Calls (on-audio user-id opus-buffer) when a user stops speaking with accumulated audio.
+   Returns a stop function."
+  [connections guild-id on-start on-audio]
+  (js/console.log "[voice:listener] starting for guild:" guild-id "connections:" (.size connections))
+  (let [conn (.get connections guild-id)]
+    (if-not conn
+      (do (js/console.error "[voice:listener] no connection for guild:" guild-id)
+          (js/Promise.reject (js/Error. (str "No voice connection for guild: " guild-id))))
+      (let [receiver (.-receiver conn)
+            buffers (atom {})
+            streams (atom {})
+            speaking-handler
+            (fn [user-id speaking?]
+              (let [uid (str user-id)]
+                (js/console.log "[voice:listener] speaking event:" uid "speaking?" speaking?)
+                (if speaking?
+                  (do
+                    (when on-start (on-start uid))
+                    (swap! buffers assoc uid #js [])
+                    (let [opus-stream (.subscribe receiver uid #js {:mode "opus"})]
+                      (js/console.log "[voice:listener] subscribed opus for:" uid)
+                      (.on opus-stream "data"
+                           (fn [chunk]
+                             (when-let [buf (get @buffers uid)]
+                               (.push buf chunk))))
+                      (swap! streams assoc uid opus-stream)))
+                  (do
+                    (when-let [opus-stream (get @streams uid)]
+                      (try (.destroy opus-stream) (catch js/Error _))
+                      (swap! streams dissoc uid))
+                    (when-let [buf (get @buffers uid)]
+                      (let [len (.-length buf)]
+                        (js/console.log "[voice:listener] stopped speaking:" uid "chunks:" len)
+                        (when (pos? len)
+                          (let [combined (.from js/Buffer (js/Array.from (.concat #js [] buf)))]
+                            (js/console.log "[voice:listener] on-audio:" uid "bytes:" (.-length combined))
+                            (swap! buffers dissoc uid)
+                            (on-audio uid combined)))))))))]
+        (.on receiver "speaking" speaking-handler)
+        (js/console.log "[voice:listener] handler registered for guild:" guild-id)
+        (js/Promise.resolve
+         (fn []
+           (js/console.log "[voice:listener] stopping for guild:" guild-id)
+           (.removeListener receiver "speaking" speaking-handler)
+           (doseq [[_ s] @streams]
+             (try (.destroy s) (catch js/Error _)))
+           (reset! buffers {})
+           (reset! streams {})))))))
+
+;; ---------------------------------------------------------------------------
 ;; Factory
 ;; ---------------------------------------------------------------------------
 
@@ -341,7 +489,9 @@
         client-state (atom nil)
         ready-promise (atom nil)
         current-token (atom nil)
-        listeners (atom (js/Set.))]
+        listeners (atom (js/Set.))
+        reaction-listeners (atom (js/Set.))
+        voice-state-listeners (atom (js/Set.))]
 
     (letfn [(notify-message [message]
               (let [mapped (map-message message)]
@@ -353,30 +503,93 @@
                                 (when (.-error? log)
                                   (.error log "[discord-gateway] listener failed" error))))))))
 
-            (build-client []
-              (let [Client (Client-class)
-                    GatewayIntentBits (intent-bits)
-                    Partials (partials-enum)
-                    Events (events-enum)
-                    next-client (new Client
-                                     (clj->js {:intents [(.-Guilds GatewayIntentBits)
-                                                         (.-GuildMessages GatewayIntentBits)
-                                                         (.-DirectMessages GatewayIntentBits)
-                                                         (.-MessageContent GatewayIntentBits)]
-                                               :partials [(.-Channel Partials)]}))]
-                (.on next-client (.-ClientReady Events)
-                     (fn [ready-client]
-                       (when (.-info? log)
-                         (.info log (str "[discord-gateway] ready as "
-                                         (or (when (.-user ready-client) (.-tag (.-user ready-client))) "unknown")
-                                         " in " (.. ready-client -guilds -cache -size) " guilds")))))
-                (.on next-client (.-MessageCreate Events)
-                     (fn [message] (notify-message message)))
-                (.on next-client (.-Error Events)
-                     (fn [error]
-                       (when (.-error? log)
-                         (.error log "[discord-gateway] client error" error))))
-                next-client))
+            (notify-reaction [reaction user]
+              (let [message (.-message reaction)
+                    emoji (.-emoji reaction)
+                    mapped #js {:emoji (or (.-name emoji) "")
+                                :message (when message (map-message message))
+                                :messageId (or (when message (.-id message)) "")
+                                :channelId (or (when message (.-channelId message)) "")
+                                :userId (or (when user (.-id user)) "")
+                                :userUsername (or (when user (.-username user)) "unknown")}]
+                (.forEach @reaction-listeners
+                          (fn [listener]
+                            (try
+                              (listener mapped reaction user)
+                              (catch js/Error error
+                                (when (.-error? log)
+                                  (.error log "[discord-gateway] reaction listener failed" error))))))))
+
+            (notify-voice-state [old-state new-state]
+              (let [old-channel-id (when old-state (.-channelId old-state))
+                    new-channel-id (when new-state (.-channelId new-state))
+                    user (when new-state (.-member new-state))
+                    user-id (when user (.-id user))
+                    guild-id (when new-state (.-guild new-state) (.-id (.-guild new-state)))
+                    action (cond
+                             (and (nil? old-channel-id) new-channel-id) "join"
+                             (and old-channel-id (nil? new-channel-id)) "leave"
+                             (and old-channel-id new-channel-id
+                                  (not= old-channel-id new-channel-id)) "move"
+                             :else nil)
+                    mapped #js {:action action
+                                :userId user-id
+                                :username (or (when user (.-user user)) (when user (.-username user)) "unknown")
+                                :guildId guild-id
+                                :channelId (or new-channel-id old-channel-id)
+                                :oldChannelId old-channel-id
+                                :newChannelId new-channel-id}]
+                (when action
+                  (.forEach @voice-state-listeners
+                            (fn [listener]
+                              (try
+                                (listener mapped old-state new-state)
+                                (catch js/Error error
+                                  (when (.-error? log)
+                                    (.error log "[discord-gateway] voice state listener failed" error))))))))
+
+              (build-client []
+                            (let [Client (Client-class)
+                                  GatewayIntentBits (intent-bits)
+                                  Partials (partials-enum)
+                                  Events (events-enum)
+                                  next-client (new Client
+                                                   (clj->js {:intents [(.-Guilds GatewayIntentBits)
+                                                                       (.-GuildMessages GatewayIntentBits)
+                                                                       (.-DirectMessages GatewayIntentBits)
+                                                                       (.-GuildMessageReactions GatewayIntentBits)
+                                                                       (.-DirectMessageReactions GatewayIntentBits)
+                                                                       (.-GuildVoiceStates GatewayIntentBits)
+                                                                       (.-MessageContent GatewayIntentBits)]
+                                                             :partials [(.-Channel Partials)
+                                                                        (.-Message Partials)
+                                                                        (.-Reaction Partials)]}))]
+                              (.on next-client (.-ClientReady Events)
+                                   (fn [ready-client]
+                                     (when (.-info? log)
+                                       (.info log (str "[discord-gateway] ready as "
+                                                       (or (when (.-user ready-client) (.-tag (.-user ready-client))) "unknown")
+                                                       " in " (.. ready-client -guilds -cache -size) " guilds")))))
+                              (.on next-client (.-MessageCreate Events)
+                                   (fn [message] (notify-message message)))
+                              (.on next-client (.-MessageReactionAdd Events)
+                                   (fn [reaction user]
+                                     (-> (if (.-partial reaction) (.fetch reaction) (js/Promise.resolve reaction))
+                                         (.then (fn [full-reaction]
+                                                  (let [message (.-message full-reaction)]
+                                                    (-> (if (and message (.-partial message)) (.fetch message) (js/Promise.resolve message))
+                                                        (.then (fn [_] (notify-reaction full-reaction user)))))))
+                                         (.catch (fn [error]
+                                                   (when (.-warn? log)
+                                                     (.warn log "[discord-gateway] reaction ingest failed" error))))))))
+                            (.on next-client (.-Error Events)
+                                 (fn [error]
+                                   (when (.-error? log)
+                                     (.error log "[discord-gateway] client error" error))))
+                            (.on next-client (.-VoiceStateUpdate Events)
+                                 (fn [old-state new-state]
+                                   (notify-voice-state old-state new-state)))
+                            next-client))
 
             (ensure-client []
               (if-not @client-state
@@ -386,22 +599,49 @@
                   (js/Promise.resolve @client-state))))]
 
       (let [this-stop (fn [] (gw-stop client-state ready-promise current-token))
+            voice-connections (js/Map.)
             this-obj (atom nil)]
 
         (letfn [(this-fn [] @this-obj)]
 
           (reset! this-obj
                   #js {:start (fn [token] (gw-start client-state ready-promise current-token listeners log this-stop build-client token))
-                       :stop this-stop
+                       :stop (fn []
+                               ;; Destroy all voice connections on stop
+                               (.forEach voice-connections
+                                         (fn [conn _key] (try (.destroy conn) (catch js/Error _))))
+                               (.clear voice-connections)
+                               (this-stop))
                        :restart (fn [token] (.then (this-stop) (fn [_] (.start (this-fn) token))))
                        :onMessage (fn [listener] (.add @listeners listener) (fn [] (.delete @listeners listener)))
+                       :onReaction (fn [listener] (.add @reaction-listeners listener) (fn [] (.delete @reaction-listeners listener)))
+                       :onVoiceStateUpdate (fn [listener] (.add @voice-state-listeners listener) (fn [] (.delete @voice-state-listeners listener)))
                        :status (fn [] (gw-status client-state))
                        :listServers (fn [] (gw-list-servers ensure-client))
                        :listChannels (fn [guild-id] (gw-list-channels ensure-client log guild-id))
                        :fetchChannelMessages (fn [channel-id opts] (gw-fetch-channel-messages ensure-client channel-id opts))
                        :fetchDmMessages (fn [user-id opts] (gw-fetch-dm-messages ensure-client user-id opts))
                        :searchMessages (fn [scope opts] (gw-search-messages (this-fn) scope opts))
-                       :sendMessage (fn [channel-id text reply-to attachments] (gw-send-message ensure-client channel-id text reply-to attachments))})
+                       :sendMessage (fn [channel-id text reply-to attachments] (gw-send-message ensure-client channel-id text reply-to attachments))
+                       ;; Voice methods
+                       :joinVoice (fn [channel-id]
+                                    (.then (gw-join-voice ensure-client channel-id)
+                                           (fn [conn]
+                                             (let [guild-id (.-guildId conn)]
+                                               (.set voice-connections guild-id conn)
+                                               #js {:guildId guild-id :channelId channel-id :joined true}))))
+                       :leaveVoice (fn [guild-id]
+                                     (gw-leave-voice voice-connections guild-id)
+                                     #js {:guildId guild-id :left true})
+                       :playAudio (fn [guild-id audio-buffer]
+                                    (gw-play-audio voice-connections guild-id audio-buffer))
+                       :subscribeVoice (fn [guild-id user-id callback]
+                                         (gw-subscribe-voice voice-connections guild-id user-id callback))
+                       :startVoiceListener (fn [guild-id on-start on-audio]
+                                             (gw-start-voice-listener voice-connections guild-id on-start on-audio))
+                       :getVoiceConnection (fn [guild-id] (.get voice-connections guild-id))
+                       :listVoiceMembers (fn [guild-id channel-id]
+                                           (gw-list-voice-members ensure-client guild-id channel-id))})
 
           (set-manager! @this-obj)
           @this-obj)))))
@@ -464,6 +704,18 @@
   (when-let [manager @manager*]
     (.onMessage manager listener)))
 
+(defn on-reaction!
+  "Register a reaction listener. Returns an unsubscribe function."
+  [listener]
+  (when-let [manager @manager*]
+    (.onReaction manager listener)))
+
+(defn on-voice-state-update!
+  "Register a voice state update listener. Returns an unsubscribe function."
+  [listener]
+  (when-let [manager @manager*]
+    (.onVoiceStateUpdate manager listener)))
+
 (defn list-servers
   "List all guilds the bot is in. Returns a Promise."
   []
@@ -504,3 +756,41 @@
   ([channel-id text reply-to attachments]
    (when-let [manager @manager*]
      (.sendMessage manager channel-id text reply-to attachments))))
+
+;; Voice convenience API
+
+(defn join-voice
+  "Join a voice channel. Returns a Promise."
+  [channel-id]
+  (when-let [manager @manager*]
+    (.joinVoice manager channel-id)))
+
+(defn leave-voice
+  "Leave a voice channel for a guild. Returns a Promise."
+  [guild-id]
+  (when-let [manager @manager*]
+    (.leaveVoice manager guild-id)))
+
+(defn play-audio
+  "Play an audio buffer in a voice channel. Returns a Promise."
+  [guild-id audio-buffer]
+  (when-let [manager @manager*]
+    (.playAudio manager guild-id audio-buffer)))
+
+(defn start-voice-listener
+  "Start listening for voice input. Returns a Promise of a stop function."
+  [guild-id on-start on-audio]
+  (when-let [manager @manager*]
+    (.startVoiceListener manager guild-id on-start on-audio)))
+
+(defn get-voice-connection
+  "Get the current voice connection for a guild."
+  [guild-id]
+  (when-let [manager @manager*]
+    (.getVoiceConnection manager guild-id)))
+
+(defn list-voice-members
+  "List members in a voice channel. Returns a Promise."
+  [guild-id channel-id]
+  (when-let [manager @manager*]
+    (.listVoiceMembers manager guild-id channel-id)))
