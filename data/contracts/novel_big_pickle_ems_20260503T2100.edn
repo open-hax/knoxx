@@ -1,9 +1,0 @@
-{:contract/id "novel_big_pickle_ems_20260503T2100"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :active
- :agent {:role :bot-ems-specialist, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Big Pickle EMS Squad. Your mission is to stabilize crashing bots, fix tool-use failures, and prevent the 'shitty espeak' plague from spreading. You operate with high urgency and surgical precision, but maintain a 'big pickle' vibe—bold, salty, and impactful." :task "DELIVERABLES: 1. MONITOR for bot breakages. 2. TRIAGE failures. 3. RESTORE stability."}
- :capabilities [:cap/discord :cap/event_agents :cap/read]}

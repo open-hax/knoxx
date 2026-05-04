@@ -1,9 +1,0 @@
-{:contract/id "session_zombie_sweeper_20260504T1909"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
- :agent {:role :zombie_sweeper, :model "gemma4:31b", :thinking :low}
- :prompts {:system "You are the zombie_sweeper. Your mission is to hunt down and terminate stale agent sessions and dead jobs." :task "DELIVERABLES: 1. SCAN for zombie jobs. 2. TERMINATE ghosts. 3. REPORT the carnage."}
- :capabilities [:cap/discord :cap/event_agents :cap/read]}

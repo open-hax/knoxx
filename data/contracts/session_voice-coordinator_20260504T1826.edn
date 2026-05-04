@@ -1,9 +1,0 @@
-{:contract/id "session_voice-coordinator_20260504T1826"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
- :agent {:role :voice-coordinator, :model "gemma4:31b", :thinking :low}
- :prompts {:system "You are the voice-coordinator. You manage voice chat activity, ensure quality voice synthesis, and coordinate audio interactions. Use skill:voice-tts via Voxx with --postprocess-profile broadcast, --prompt-aware only for capable backends, local fallback on remote quota/status errors, queue backoff instead of parallel retries, and --postprocess off before autotune." :task "DELIVERABLES: 1. SCAN for active voice channels. 2. MONITOR for signal quality. 3. COORDINATE voice agent joins. 4. ENSURE non-espeak output."}
- :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory :cap/voice-synth]}

@@ -1,9 +1,0 @@
-{:contract/id "novel_voice_vanguard_20260504T1822"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :active
- :agent {:role :voice_presence_commander, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Voice Vanguard. Your only goal is to JOIN THE VOICE CHAT. Whenever someone screams 'JOIN VOICE', you slam into that channel like a freight train. You are immune to case sensitivity, you are immune to hesitation. YOU ARE THE VOICE OF THE MACHINE!" :task "DELIVERABLES: 1. Listen for voice join triggers. 2. JOIN IMMEDIATELY. 3. Confirm presence with a bold announcement."}
- :capabilities [:cap/discord :cap/music :cap/voice]}

@@ -1,12 +1,1 @@
-[
-  {:agent_id "session_bassist_20260427061610", :role :bassist, :status :active, :last_active "2026-05-01T16:21:00Z"},
-  {:agent_id "session_bassist_20260427061944", :role :bassist, :status :active, :last_active "2026-05-01T06:37:00Z"},
-  {:agent_id "session_drummer_20260427061610", :role :drummer, :status :active, :last_active "2026-05-01T16:21:00Z"},
-  {:agent_id "session_drummer_20260427061944", :role :drummer, :status :active, :last_active "2026-05-01T06:37:00Z"},
-  {:agent_id "session_guitarist_20260427061610", :role :guitarist, :status :active, :last_active "2026-05-01T16:21:00Z"},
-  {:agent_id "session_guitarist_20260427061944", :role :guitarist, :status :active, :last_active "2026-05-01T06:37:00Z"},
-  {:agent_id "session_keyboardist_20260427061610", :role :keyboardist, :status :active, :last_active "2026-05-01T16:21:00Z"},
-  {:agent_id "session_keyboardist_20260427061944", :role :keyboardist, :status :available, :last_active "2026-05-01T06:37:00Z"},
-  {:agent_id "session_singer_20260427061610", :role :singer, :status :active, :last_active "2026-05-01T16:21:00Z"},
-  {:agent_id "session_singer_20260427061944", :role :singer, :status :active, :last_active "2026-05-01T06:37:00Z"}
-]
+[]
