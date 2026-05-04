@@ -24,8 +24,9 @@ NPU_COMPILER_TYPE = env("WHISPER_NPU_COMPILER_TYPE", "DRIVER")
 
 # Audio chunking for long recordings
 # Ensure CHUNK_DURATION_S < MAX_AUDIO_DURATION_S to avoid NPU KV cache issues
+# int4-quantized whisper-small on NPU has a small KV cache; 10s is safer than 20s.
 CHUNK_DURATION_S = min(
-    float(env("STT_CHUNK_DURATION_S", "20.0")),
+    float(env("STT_CHUNK_DURATION_S", "10.0")),
     MAX_AUDIO_DURATION_S - 1.0
 )
 CHUNK_OVERLAP_S = float(env("STT_CHUNK_OVERLAP_S", "1.0"))
@@ -122,11 +123,51 @@ def _acquire_pipe_lock(timeout: float = 30.0) -> bool:
     return _pipe_lock.acquire(timeout=timeout)
 
 
+def _is_garbage_text(text: str) -> bool:
+    """Detect repetitive/garbage output that indicates a stuck NPU KV cache."""
+    if not text:
+        return False
+    t = text.strip()
+    if len(t) < 2:
+        return False
+    # If the text is mostly the same character repeated (e.g. "᎒ ᎒ ᎒" or "გ გ გ")
+    unique_chars = set(t.replace(" ", ""))
+    if len(unique_chars) <= 2 and len(t) > 10:
+        return True
+    # If a single non-ASCII character dominates
+    ascii_count = sum(1 for c in t if c.isascii() or c.isspace())
+    if ascii_count < len(t) * 0.2 and len(t) > 15:
+        return True
+    return False
+
+
+def _recreate_pipeline() -> None:
+    """Recreate the Whisper pipeline to clear a corrupted KV cache."""
+    print("[stt-npu] Recreating pipeline to clear stuck KV cache…")
+    try:
+        pipe, device, _ = load_pipeline(REQUESTED_DEVICE)
+        app.config["PIPE"] = pipe
+        app.config["DEVICE"] = device
+        print("[stt-npu] Pipeline recreated successfully on", device)
+    except Exception as e:
+        print("[stt-npu] Failed to recreate pipeline:", e)
+        raise
+
+
 def _generate(audio: np.ndarray) -> str:
     """Run inference while holding the lock. Caller must have acquired the lock."""
     result = app.config["PIPE"].generate(audio)
     text = getattr(result, "text", None)
-    return text.strip() if text else str(result).strip()
+    text = text.strip() if text else str(result).strip()
+
+    # If the model produced garbage, try once more with a fresh pipeline.
+    if _is_garbage_text(text):
+        print("[stt-npu] Garbage detected (", text[:30], "…). Recreating pipeline and retrying…")
+        _recreate_pipeline()
+        result = app.config["PIPE"].generate(audio)
+        text = getattr(result, "text", None)
+        text = text.strip() if text else str(result).strip()
+    return text
 
 
 def _longest_common_suffix_prefix(a: str, b: str) -> int:

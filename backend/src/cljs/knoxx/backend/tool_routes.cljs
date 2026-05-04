@@ -385,6 +385,22 @@
     (catch :default err
       (error-response! reply err))))
 
+(defroute register-event-agents-runtime-stop-route!
+  []
+  "POST" "/api/admin/config/event-agents/runtime/stop"
+  [session-guard]
+  (ensure-permission! ctx "org.event_agents.control")
+  (event-agents/stop!)
+  (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "stopped")))
+
+(defroute register-event-agents-runtime-start-route!
+  []
+  "POST" "/api/admin/config/event-agents/runtime/start"
+  [session-guard]
+  (ensure-permission! ctx "org.event_agents.control")
+  (event-agents/start! config)
+  (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "started")))
+
 ;; Legacy aliases
 
 (defroute register-discord-control-get-route!
@@ -485,6 +501,8 @@
   (register-event-agents-put-route!      app runtime config deps)
   (register-event-agents-job-run-route!  app runtime config deps)
   (register-event-agents-dispatch-route! app runtime config deps)
+  (register-event-agents-runtime-stop-route!  app runtime config deps)
+  (register-event-agents-runtime-start-route! app runtime config deps)
   (register-discord-control-get-route!   app runtime config deps)
   (register-discord-control-put-route!   app runtime config deps)
   (register-discord-control-job-run-route! app runtime config deps)

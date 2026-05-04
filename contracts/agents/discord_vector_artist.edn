@@ -18,7 +18,7 @@
  :trigger-kind :event,
  :contract/version 1,
  :source-kind :discord,
- :enabled false,
+ :enabled true,
  :actor {:capabilities [:cap/discord :cap/music :cap/event_agents]},
  :data
  {:filters

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
-import { getAgentHistorySession, getRun, listActiveAgents, listMemorySessions, searchMemory } from "../../lib/api/common";
+import { abortAdminActiveAgent, getAgentHistorySession, getRun, listActiveAgents, listAdminActiveAgents, listMemorySessions, searchMemory } from "../../lib/api/common";
 import { getRunEvents, getSessionStatus } from "../../lib/api/runtime";
 import type {
+  ActiveAgentSummary,
   MemorySearchHit,
   MemorySessionRow,
   MemorySessionSummary,
@@ -138,10 +139,36 @@ function activeStatusTone(status: string): "default" | "success" | "warning" | "
     case "completed":
       return "success";
     case "failed":
+    case "aborted":
       return "error";
     default:
       return "default";
   }
+}
+
+function activeRunSearchText(run: ActiveAgentSummary): string {
+  return [
+    run.run_id,
+    run.session_id ?? "",
+    run.conversation_id ?? "",
+    run.status,
+    run.model ?? "",
+    run.latest_user_message ?? "",
+    JSON.stringify(run.agent_spec ?? {}),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function activeRunTitle(run: ActiveAgentSummary): string {
+  const agentSpec = run.agent_spec ?? {};
+  const contractId = agentSpec.contractId;
+  const contractIdSnake = agentSpec.contract_id;
+  const role = agentSpec.role;
+  const contract = typeof contractId === "string" ? contractId
+    : typeof contractIdSnake === "string" ? contractIdSnake
+      : null;
+  return contract ?? (typeof role === "string" ? role : null) ?? run.conversation_id ?? run.session_id ?? run.run_id;
 }
 
 function toolReceiptToRow(runId: string, receipt: ToolReceipt, idx: number): MemorySessionRow {
@@ -342,10 +369,20 @@ export default function AgentAuditLogs({
   const [semanticHits, setSemanticHits] = useState<MemorySearchHit[]>([]);
 
   const [error, setError] = useState<string | null>(null);
+  const [activeRuns, setActiveRuns] = useState<ActiveAgentSummary[]>([]);
+  const [loadingActiveRuns, setLoadingActiveRuns] = useState(false);
+  const [abortingRunId, setAbortingRunId] = useState<string | null>(null);
 
   const effectiveSessionsQuery = useMemo(() => normalizeSearch(sessionsQuery), [sessionsQuery]);
 
   const effectiveRowsQuery = useMemo(() => normalizeSearch(rowsQuery), [rowsQuery]);
+
+  const filteredActiveRuns = useMemo(() => {
+    if (mode !== "active") return [];
+    const query = effectiveSessionsQuery;
+    if (!query) return activeRuns;
+    return activeRuns.filter((run) => activeRunSearchText(run).includes(query));
+  }, [activeRuns, effectiveSessionsQuery, mode]);
 
   const filteredSessions = useMemo(() => {
     const query = effectiveSessionsQuery;
@@ -369,6 +406,11 @@ export default function AgentAuditLogs({
     [sessions, selectedSessionId],
   );
 
+  const selectedActiveRun = useMemo(
+    () => activeRuns.find((run) => run.conversation_id === selectedSessionId || run.session_id === selectedSessionId) ?? null,
+    [activeRuns, selectedSessionId],
+  );
+
   useEffect(() => {
     const nextIds = filteredSessions.map((session) => session.session);
     setSelectedSessionId((current) => {
@@ -376,6 +418,26 @@ export default function AgentAuditLogs({
       return nextIds[0] ?? null;
     });
   }, [filteredSessions]);
+
+  const loadActiveRuns = useCallback(async () => {
+    try {
+      setLoadingActiveRuns(true);
+      const runs = await listAdminActiveAgents(250);
+      setActiveRuns(runs);
+      setError(null);
+    } catch {
+      // Non-operator viewers may lack org.event_agents.control. Fall back to
+      // the existing scoped endpoint; operators still get the all-actors list.
+      try {
+        const runs = await listActiveAgents(250);
+        setActiveRuns(runs);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      setLoadingActiveRuns(false);
+    }
+  }, []);
 
   const loadSessions = useCallback(async (offset = 0) => {
     const isMore = offset > 0;
@@ -413,7 +475,7 @@ export default function AgentAuditLogs({
 
     const tick = async () => {
       if (cancelled) return;
-      await loadSessions(0);
+      await Promise.all([loadSessions(0), loadActiveRuns()]);
     };
 
     void tick();
@@ -429,7 +491,7 @@ export default function AgentAuditLogs({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [autoRefresh, loadSessions]);
+  }, [autoRefresh, loadActiveRuns, loadSessions]);
 
   const handleSessionsScroll = async (event: UIEvent<HTMLDivElement>) => {
     if (loadingSessions || loadingMoreSessions || !sessionsHasMore) return;
@@ -438,6 +500,28 @@ export default function AgentAuditLogs({
     if (remaining > 120) return;
     await loadSessions(sessionsRef.current.length);
   };
+
+  const handleAbortRun = useCallback(async (run: ActiveAgentSummary) => {
+    const key = run.run_id || run.session_id || run.conversation_id || "active-agent";
+    try {
+      setAbortingRunId(key);
+      await abortAdminActiveAgent({
+        conversation_id: run.conversation_id,
+        session_id: run.session_id,
+        run_id: run.run_id,
+        reason: "operator_abort_from_audit_panel",
+      });
+      await Promise.all([loadActiveRuns(), loadSessions(0)]);
+      if (run.conversation_id && selectedSessionId === run.conversation_id) {
+        setRows([]);
+      }
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAbortingRunId(null);
+    }
+  }, [loadActiveRuns, loadSessions, selectedSessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -455,11 +539,11 @@ export default function AgentAuditLogs({
         // Active sessions may not have been archived into OpenPlanner yet.
         // In that case, fall back to live runtime state (runs + events) so the
         // audit panel still shows *something* for in-flight turns.
-        if (selected?.is_active) {
-          const activeRuns = await listActiveAgents(150);
+        if (selected?.is_active || selectedActiveRun) {
+          const activeRuns = selectedActiveRun ? [selectedActiveRun] : await listActiveAgents(150);
           if (cancelled) return;
 
-          const matchingRun = activeRuns.find((run) => run.conversation_id === selectedSessionId) ?? null;
+          const matchingRun = activeRuns.find((run) => run.conversation_id === selectedSessionId || run.session_id === selectedSessionId) ?? null;
           if (matchingRun?.run_id) {
             const detail = await getRun(matchingRun.run_id);
             if (cancelled) return;
@@ -516,7 +600,7 @@ export default function AgentAuditLogs({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedSessionId, autoRefresh]);
+  }, [selectedSessionId, autoRefresh, selectedActiveRun]);
 
   const filteredRows = useMemo(() => {
     if (!effectiveRowsQuery) return rows;
@@ -580,9 +664,12 @@ export default function AgentAuditLogs({
             </div>
 
             <div className="mt-2">
-              <div className="w-full">
+              <div className="grid grid-cols-2 gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setAutoRefresh((value) => !value)}>
                   {autoRefresh ? "Pause refresh" : "Resume refresh"}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void Promise.all([loadSessions(0), loadActiveRuns()])} disabled={loadingSessions || loadingActiveRuns}>
+                  Refresh now
                 </Button>
               </div>
             </div>
@@ -642,6 +729,73 @@ export default function AgentAuditLogs({
                   <Badge size="sm" variant="info">{filteredRows.length}/{rows.length} events</Badge>
                 </div>
               </div>
+
+              {mode === "active" ? (
+                <Card variant="outlined" padding="sm">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Live active agent sessions</div>
+                      <div className="mt-1 text-xs text-slate-500">Admin/operator view across actors. Abort stops exactly one active conversation/session.</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge size="sm" variant={filteredActiveRuns.length > 0 ? "warning" : "default"}>{filteredActiveRuns.length} running</Badge>
+                      <Button variant="ghost" size="sm" onClick={() => void loadActiveRuns()} disabled={loadingActiveRuns}>
+                        {loadingActiveRuns ? "Refreshing…" : "Refresh"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    {filteredActiveRuns.length === 0 ? (
+                      <div className="text-sm text-slate-500">No active runtime sessions match.</div>
+                    ) : (
+                      filteredActiveRuns.map((run) => {
+                        const key = run.run_id || run.session_id || run.conversation_id || "active-agent";
+                        const isSelected = Boolean(selectedSessionId && (run.conversation_id === selectedSessionId || run.session_id === selectedSessionId));
+                        const isAborting = abortingRunId === key;
+                        return (
+                          <div
+                            key={key}
+                            className={`rounded-lg border p-3 ${isSelected ? "border-indigo-500 bg-indigo-950/30" : "border-slate-800 bg-slate-950/70"}`}
+                          >
+                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 text-left"
+                                onClick={() => setSelectedSessionId(run.conversation_id ?? run.session_id ?? selectedSessionId)}
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-semibold text-slate-100">{activeRunTitle(run)}</span>
+                                  <Badge size="sm" variant={activeStatusTone(run.status)}>{run.status}</Badge>
+                                  {run.has_active_stream ? <Badge size="sm" variant="info">stream</Badge> : null}
+                                  {run.active_turn_registered ? <Badge size="sm" variant="warning">abortable</Badge> : null}
+                                </div>
+                                <div className="mt-1 break-all font-mono text-xs text-slate-400">{run.conversation_id ?? run.session_id ?? run.run_id}</div>
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                                  {run.run_id ? <span>run <span className="font-mono text-slate-400">{run.run_id}</span></span> : null}
+                                  {run.session_id ? <span>session <span className="font-mono text-slate-400">{run.session_id}</span></span> : null}
+                                  {run.updated_at ? <span>updated {formatTimestamp(run.updated_at)}</span> : null}
+                                </div>
+                                {run.latest_user_message ? <div className="mt-2 line-clamp-2 text-xs text-slate-300">{run.latest_user_message}</div> : null}
+                                {run.error ? <div className="mt-2 text-xs text-red-300">{run.error}</div> : null}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleAbortRun(run)}
+                                disabled={isAborting}
+                                className="rounded-md border border-red-800 bg-red-950/60 px-3 py-2 text-sm font-semibold text-red-100 hover:bg-red-900 disabled:opacity-60"
+                                title="Abort only this active agent conversation/session."
+                              >
+                                {isAborting ? "Stopping…" : "Stop this agent"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </Card>
+              ) : null}
 
               <div className="grid gap-3 md:grid-cols-2">
                 <Card variant="outlined" padding="sm">

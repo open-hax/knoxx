@@ -82,7 +82,12 @@
   [app resolved-config]
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. Event agents and MCP discovery remain background work.
-  (-> (js/Promise.resolve nil)
+  ;;
+  ;; IMPORTANT: event-agents/start! expects redis/get-client to be ready so it
+  ;; can load persisted control config (disable/enable jobs) *before* scheduling.
+  ;; If we start event agents before redis/init-redis!, every restart will run
+  ;; the default job set, even if the admin panel disabled a crashing job.
+  (-> (redis/init-redis! (:redis-url resolved-config))
       (.then (fn [_]
                (event-agents/start! resolved-config)))
       (.then (fn [_]
@@ -125,23 +130,29 @@
                                 (done)))))
           (.then (fn []
                    (app-routes/register-routes! runtime app config lounge-messages*)
-                   ;; Start generic event-agent runtime
-                   (event-agents/start! config)
-                   (contracts-routes/start-contract-watcher! config)
-                   (app-listen! app (:host config) (:port config))))
-          (.then (fn [_]
-                   (reset! server* app)
-                   (app-log-info! app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))
-                   ;; Redis + session resume after listen — must not block startup.
+                   ;; Bring Redis up before any event-agent scheduling so we can
+                   ;; honor persisted control config (and avoid crash loops).
                    (-> (redis/init-redis! (:redis-url config))
                        (.then (fn [redis-client]
                                 (when redis-client
-                                  (app-log-info! app "Redis client initialized for session persistence")
-                                  ;; Sync contracts index now that Redis is connected.
-                                  (contracts-routes/sync-contract-index! config)
-                                  (agent-resume/resume-on-startup! runtime app config))))
+                                  (app-log-info! app "Redis client initialized")
+                                  (contracts-routes/sync-contract-index! config))
+                                nil))
                        (.catch (fn [err]
-                                 (app-log-error! app "Failed to initialize Redis" err))))))
+                                 (app-log-error! app "Failed to initialize Redis" err)
+                                 nil))
+                       (.then (fn [_]
+                                ;; Start generic event-agent runtime
+                                (event-agents/start! config)
+                                (contracts-routes/start-contract-watcher! config)
+                                (app-listen! app (:host config) (:port config)))))))
+          (.then (fn [_]
+                   (reset! server* app)
+                   (app-log-info! app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))
+                   ;; Session resume after listen — must not block startup.
+                   (-> (agent-resume/resume-on-startup! runtime app config)
+                       (.catch (fn [err]
+                                 (app-log-error! app "agent-resume failed" err))))))
           (.catch (fn [err]
                     (.error js/console "Knoxx backend CLJS failed to start" err)
                     (js/process.exit 1)))))))

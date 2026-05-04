@@ -54,17 +54,48 @@
 (defn- parse-stt-json-text [raw]
   ;; Some STT deployments respond as SSE-ish text where the JSON is prefixed with
   ;; "data: ", e.g. "data: {\"text\":...}". Accept both plain JSON and SSE.
-  (let [s (str/trim (str raw))
-        ;; If it's SSE, extract the last data: line (most likely the final payload)
-        data-line (when (str/includes? s "data:")
-                    (->> (str/split-lines s)
-                         (keep (fn [line]
-                                 (let [t (str/trim line)]
-                                   (when (str/starts-with? t "data:")
-                                     (str/trim (subs t 5))))))
-                         last))
-        json-text (str/trim (or data-line (when (str/starts-with? s "data:") (subs s 5)) s))]
-    (js/JSON.parse json-text)))
+  ;; For chunked (streaming) responses, concatenate all text segments.
+  (let [s (str/trim (str raw))]
+    (if (str/includes? s "data:")
+      ;; SSE format — collect all data: lines and merge text fields
+      (let [lines (->> (str/split-lines s)
+                       (keep (fn [line]
+                               (let [t (str/trim line)]
+                                 (when (str/starts-with? t "data:")
+                                   (str/trim (subs t 5)))))))
+            ;; Parse each line, collect non-empty text segments
+            segments (keep (fn [text]
+                             (when (seq text)
+                               (try
+                                 (let [j (js/JSON.parse text)
+                                       txt (or (.-text j) (.-transcription j) "")]
+                                   (when (seq txt) txt))
+                                 (catch js/Error _ nil))))
+                           lines)
+            final-segment (last (keep (fn [text]
+                                        (when (seq text)
+                                          (try
+                                            (js/JSON.parse text)
+                                            (catch js/Error _ nil))))
+                                      lines))
+            merged-text (str/trim (str/join " " segments))]
+        ;; Return a synthetic JS object with merged text and final flag
+        #js {:text merged-text
+             :final (or (when final-segment (.-final final-segment)) true)})
+      ;; Plain JSON
+      (js/JSON.parse s))))
+
+(defn- stt-text-garbage?
+  "Detect repetitive/garbage STT output (e.g. NPU KV-cache stuck)."
+  [text]
+  (when (seq text)
+    (let [t (str/trim text)]
+      (and (> (count t) 10)
+           ;; Fewer than 3 unique non-space characters = repetitive garbage
+           (let [chars (set (remove #(or (= % " ") (= % "\n")) t))]
+             (<= (count chars) 2))
+           ;; Contains no ASCII letters or digits
+           (not (re-find #"[a-zA-Z0-9]" t))))))
 
 (defn- transcribe! [config audio-buffer]
   ;; Knoxx STT service expects raw audio bytes (not multipart). It runs ffmpeg
@@ -87,8 +118,11 @@
                (let [j (parse-stt-json-text raw)]
                  (js/console.log "[voice:stt] JSON parsed:" (js/JSON.stringify j))
                  (let [text (or (.-text j) (.-transcription j) "")]
-                   (js/console.log "[voice:stt] extracted text:" (if (str/blank? text) "[EMPTY]" text))
-                   text))))
+                   (if (stt-text-garbage? text)
+                     (do (js/console.warn "[voice:stt] GARBAGE detected, discarding:" (.slice text 0 60))
+                         "")
+                     (do (js/console.log "[voice:stt] extracted text:" (if (str/blank? text) "[EMPTY]" text))
+                         text))))))
       (.catch (fn [err]
                 (js/console.error "[voice:stt] === TRANSCRIBE ERROR ===" (.-message err))
                 (throw err)))))

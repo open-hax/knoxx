@@ -634,9 +634,33 @@
                   (throw (js/Error. "prism-media Opus decoder unavailable")))
                 (new OpusDecoder #js {:rate 48000 :channels 2 :frameSize 960})))
 
+            ;; Debounce duration in ms — if a user pauses briefly we don’t
+            ;; immediately flush; we wait to see if they resume.
+            silence-debounce-ms 350
+
+            flush-audio!
+            (fn [uid]
+              (when-let [buf (get @pcm-buffers uid)]
+                (let [chunks (js/Array.from buf)
+                      pcm (js/Buffer.concat chunks)
+                      ;; 48000 Hz * 2 bytes * 2 channels = 192000 bytes per second
+                      duration-s (/ (.-length pcm) 48000 2 2)
+                      wav (pcm16le->wav-buffer pcm 48000 2)]
+                  (swap! pcm-buffers dissoc uid)
+                  (if (< duration-s 0.5)
+                    (js/console.log "[voice:listener] skipping very short audio for" uid "duration:" duration-s "s")
+                    (do
+                      (js/console.log "[voice:listener] calling on-audio for" uid "wav bytes:" (.-length wav) "duration:" duration-s "s")
+                      (on-audio uid wav))))))
+
             on-start-speaking
             (fn [user-id]
               (let [uid (str user-id)]
+                ;; Cancel any pending silence debounce for this user
+                (when-let [t (get @silence-timers uid)]
+                  (js/clearTimeout t)
+                  (swap! silence-timers dissoc uid))
+
                 (when-not (contains? @active-users uid)
                   (js/console.log "[voice:listener] >>> SPEAKING START:" uid)
                   (swap! active-users conj uid)
@@ -684,13 +708,9 @@
                   (try (.destroy decoder) (catch js/Error _))
                   (swap! decoders dissoc uid))
 
-                (when-let [buf (get @pcm-buffers uid)]
-                  (let [chunks (js/Array.from buf)
-                        pcm (js/Buffer.concat chunks)
-                        wav (pcm16le->wav-buffer pcm 48000 2)]
-                    (js/console.log "[voice:listener] calling on-audio for" uid "wav bytes:" (.-length wav))
-                    (swap! pcm-buffers dissoc uid)
-                    (on-audio uid wav)))))
+                ;; Debounce: wait a bit before flushing in case the user resumes
+                (let [t (js/setTimeout #(flush-audio! uid) silence-debounce-ms)]
+                  (swap! silence-timers assoc uid t))))
             ]
 
         (js/console.log "[voice:listener] attaching listeners")
@@ -709,8 +729,10 @@
              (try (.destroy s) (catch js/Error _)))
            (doseq [[_ d] @decoders]
              (try (.destroy d) (catch js/Error _)))
-           (doseq [[_ t] @silence-timers]
-             (js/clearTimeout t))
+           (doseq [[uid t] @silence-timers]
+             (js/clearTimeout t)
+             ;; Flush any pending audio immediately on stop
+             (flush-audio! uid))
 
            (reset! pcm-buffers {})
            (reset! streams {})

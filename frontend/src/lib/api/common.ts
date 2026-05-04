@@ -282,6 +282,26 @@ export async function listActiveAgents(limit = 25): Promise<ActiveAgentSummary[]
   return data.runs;
 }
 
+export async function listAdminActiveAgents(limit = 200): Promise<ActiveAgentSummary[]> {
+  const data = await request<{ runs: ActiveAgentSummary[] }>(`/api/admin/agents/active?limit=${limit}`);
+  return data.runs;
+}
+
+export async function abortAdminActiveAgent(payload: {
+  conversation_id?: string | null;
+  conversationId?: string | null;
+  session_id?: string | null;
+  sessionId?: string | null;
+  run_id?: string | null;
+  runId?: string | null;
+  reason?: string;
+}): Promise<{ ok: boolean; conversation_id?: string; session_id?: string; run_id?: string; error?: string; marked_aborted?: boolean }> {
+  return request<{ ok: boolean; conversation_id?: string; session_id?: string; run_id?: string; error?: string; marked_aborted?: boolean }>("/api/admin/agents/abort", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function listMemorySessions(params: { limit?: number; offset?: number; actorId?: string; excludeActorIds?: string[] } = {}): Promise<MemorySessionListResponse> {
   const query = new URLSearchParams();
   query.set("limit", String(params.limit ?? 12));

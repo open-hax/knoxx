@@ -122,7 +122,8 @@
 (defn- active-run-summary
   [run session]
   (let [messages   (vec (or (:request_messages run) []))
-        user-msg   (some #(when (= "user" (some-> (:role %) str/lower-case)) %) (reverse messages))]
+        user-msg   (some #(when (= "user" (some-> (:role %) str/lower-case)) %) (reverse messages))
+        conversation-id (:conversation_id run)]
     {:run_id (:run_id run)
      :session_id (:session_id run)
      :conversation_id (:conversation_id run)
@@ -139,6 +140,7 @@
      :event_count (count (or (:events run) []))
      :tool_receipt_count (count (or (:tool_receipts run) []))
      :has_active_stream (boolean (:has_active_stream session))
+     :active_turn_registered (boolean (and conversation-id (turn-control/active-turn conversation-id)))
      :agent_spec (get-in run [:settings :agentSpec])
      :resource_policies (get-in run [:resources :agentResourcePolicies])
      :latest_user_message (:content user-msg)
@@ -158,6 +160,64 @@
                                            :inputPreview :outputPreview :isError]))
                          (or (:trace_blocks run) []))
      :latest_event (some-> (:events run) last (select-keys [:type :status :tool_name :preview :at]))}))
+
+(defn- active-session-summary
+  [session]
+  (let [messages (vec (or (:messages session) []))
+        user-msg (some #(when (= "user" (some-> (:role %) str/lower-case)) %) (reverse messages))
+        conversation-id (:conversation_id session)]
+    {:run_id (:run_id session)
+     :session_id (:session_id session)
+     :conversation_id conversation-id
+     :status (:status session)
+     :model (:model session)
+     :created_at (:created_at session)
+     :updated_at (:updated_at session)
+     :error (:error session)
+     :event_count 0
+     :tool_receipt_count 0
+     :has_active_stream (boolean (:has_active_stream session))
+     :active_turn_registered (boolean (and conversation-id (turn-control/active-turn conversation-id)))
+     :agent_spec (or (:agent_spec session) (:agentSpec session))
+     :resource_policies (:resource_policies session)
+     :latest_user_message (:content user-msg)
+     :latest_event nil}))
+
+(defn- live-active-agent-summaries!
+  [limit include-all?]
+  (let [limit (max 1 (or limit 25))
+        redis-client (redis/get-client)
+        sessions-by-id (into {}
+                             (map (fn [session]
+                                    [(:session_id session) session]))
+                             (session-store/active-session-snapshots))
+        run-items (->> @run-order*
+                       (map #(get @runs* %))
+                       (filter some?)
+                       (filter #(contains? #{"queued" "running" "waiting_input"} (:status %)))
+                       (map (fn [run]
+                              (active-run-summary run (get sessions-by-id (:session_id run)))))
+                       vec)]
+    (if-not redis-client
+      (js/Promise.resolve (take limit run-items))
+      (-> (session-store/list-active-sessions redis-client)
+          (.then
+           (fn [ids]
+             (-> (.all js/Promise (clj->js (mapv #(session-store/get-session redis-client %) (vec ids))))
+                 (.then
+                  (fn [sessions-js]
+                    (let [run-session-ids (set (keep :session_id run-items))
+                          session-items (->> (vec (js->clj sessions-js :keywordize-keys true))
+                                             (filter some?)
+                                             (filter #(or include-all?
+                                                          (contains? #{"queued" "running" "waiting_input"} (:status %))))
+                                             (remove #(contains? run-session-ids (:session_id %)))
+                                             (map active-session-summary)
+                                             vec)]
+                      (->> (concat run-items session-items)
+                           (sort-by #(or (:updated_at %) (:created_at %) "") #(compare %2 %1))
+                           (take limit)
+                           vec)))))))))))
 
 (def SESSION_RECOVERY_STALE_MS 60000)
 
@@ -1187,6 +1247,83 @@
                                  vec)]
                   (json-response! reply 200 {:runs items
                                              :count (count items)}))))))
+
+  (route! app "GET" "/api/admin/agents/active"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (ensure-permission! ctx "org.event_agents.control")
+                (let [limit-raw (aget request "query" "limit")
+                      limit (or (parse-positive-int limit-raw) 200)]
+                  (-> (live-active-agent-summaries! limit false)
+                      (.then (fn [items]
+                               (json-response! reply 200 {:runs items
+                                                          :count (count items)})))
+                      (.catch (fn [err]
+                                (error-response! reply err 502)))))))))
+
+  (route! app "POST" "/api/admin/agents/abort"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (ensure-permission! ctx "org.event_agents.control")
+                (let [raw (or (aget request "body") #js {})
+                      requested-conversation-id (str (or (aget raw "conversation_id")
+                                                         (aget raw "conversationId")
+                                                         ""))
+                      requested-session-id (str (or (aget raw "session_id")
+                                                    (aget raw "sessionId")
+                                                    ""))
+                      requested-run-id (str (or (aget raw "run_id")
+                                                (aget raw "runId")
+                                                ""))
+                      reason (str (or (aget raw "reason") "operator_abort"))
+                      redis-client (redis/get-client)
+                      run (when-not (str/blank? requested-run-id)
+                            (get @runs* requested-run-id))
+                      session-id (or (some-> requested-session-id not-empty)
+                                     (:session_id run))]
+                  (-> (if (and redis-client (not (str/blank? (str session-id))))
+                        (session-store/get-session redis-client session-id)
+                        (js/Promise.resolve nil))
+                      (.then
+                       (fn [session]
+                         (let [conversation-id (str (or (some-> requested-conversation-id not-empty)
+                                                        (:conversation_id run)
+                                                        (:conversation_id session)
+                                                        ""))
+                               resolved-session-id (str (or session-id (:session_id session) ""))
+                               resolved-run-id (str (or requested-run-id (:run_id run) (:run_id session) ""))]
+                           (if (str/blank? conversation-id)
+                             (json-response! reply 400 {:ok false
+                                                        :error "conversation_id, session_id, or run_id is required"})
+                             (-> (turn-control/abort-active-turn! conversation-id reason)
+                                 (.then
+                                  (fn [abort-result]
+                                    (when-not (str/blank? resolved-run-id)
+                                      (run-state/update-run! resolved-run-id
+                                                             (fn [r]
+                                                               (-> r
+                                                                   (assoc :status "aborted"
+                                                                          :error reason
+                                                                          :updated_at (now-iso))))))
+                                    (-> (if (and redis-client (not (str/blank? resolved-session-id)))
+                                          (session-store/update-session! redis-client resolved-session-id
+                                                                         {:status "aborted"
+                                                                          :error reason
+                                                                          :has_active_stream false})
+                                          (js/Promise.resolve nil))
+                                        (.then
+                                         (fn [_]
+                                           (json-response! reply 200
+                                                           (assoc abort-result
+                                                                  :ok true
+                                                                  :conversation_id conversation-id
+                                                                  :session_id resolved-session-id
+                                                                  :run_id resolved-run-id
+                                                                  :marked_aborted true))))))))))))
+                      (.catch (fn [err]
+                                (error-response! reply err 409)))))))))
 
   ;; Session status endpoint for frontend resume detection
   (route! app "GET" "/api/knoxx/session/status"

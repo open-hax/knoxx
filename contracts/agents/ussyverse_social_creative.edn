@@ -63,7 +63,7 @@ Use the autotune skill to sing from a dry Voxx capture (--postprocess off).
  :contract/version 2,
  :source-kind :discord,
  :cadence-min 10,
- :enabled false,
+ :enabled true,
  :data
  {:filters
   {:publishChannels ["1494137016303095828" "1444189585373663417"]},

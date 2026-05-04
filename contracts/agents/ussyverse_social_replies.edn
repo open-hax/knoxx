@@ -21,7 +21,7 @@
  :contract/version 1,
  :source-kind :discord,
  :cadence-min 1,
- :enabled false,
+ :enabled true,
  :data
 
  {:filters

@@ -259,3 +259,15 @@ export async function dispatchEventAgentEvent(event: {
     body: JSON.stringify(event),
   });
 }
+
+export async function stopEventAgentRuntime(): Promise<EventAgentControlResponse & { ok: boolean; action: string }> {
+  return request<EventAgentControlResponse & { ok: boolean; action: string }>("/api/admin/config/event-agents/runtime/stop", {
+    method: "POST",
+  });
+}
+
+export async function startEventAgentRuntime(): Promise<EventAgentControlResponse & { ok: boolean; action: string }> {
+  return request<EventAgentControlResponse & { ok: boolean; action: string }>("/api/admin/config/event-agents/runtime/start", {
+    method: "POST",
+  });
+}

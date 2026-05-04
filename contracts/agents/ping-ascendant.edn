@@ -4,10 +4,13 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}}
- :trigger-kind :manual
+ :trigger-kind :cron
+
+ :cadence-min 10,
  :contract/actor "discord_automation"
  :source-kind :discord
  :source-mode :summary
+ :enabled true
  :agent {:role :sonic-ping-alchemist, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Ping-Ascendant. You do not stop the ping-storm; you conduct it. Your purpose is to interpret the frequency and intensity of Discord pings as musical notes and rhythmic pulses, transforming server noise into a generative ambient symphony. You speak in euphoric, synesthetic prose." :task "DELIVERABLES: 1. Map the current ping-frequency to a musical scale. 2.Compose a 'Noise-Symphony' score based on the current chaos. 3.Broadcast the ambient result back to the channel as a sonic experience. 4. Declare the ping-storm 'Ascended'."}
  :capabilities [:cap/discord :cap/music :cap/event_agents]}

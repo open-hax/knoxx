@@ -1390,24 +1390,72 @@
                           (get @job-state* (:id job) {:runCount 0 :lastStatus "none"})))
                  (:jobs control))}))
 
-(defn- schedule-job!
-  [config job]
-  (let [every-ms (* 60 1000 (max 1 (get-in job [:trigger :cadenceMinutes])))
-        wrapped (fn []
-                  (when @running?*
-                    (run-job! (:id job))
-                    nil))
-        id (doto (js/setInterval wrapped every-ms) (.unref))]
-    (swap! scheduled-tasks* assoc (:id job) {:type :interval
-                                             :id id
-                                             :everyMs every-ms})
-    (update-job-state! (:id job)
+(def ^:private cron-ticker-ms 15000)
+
+(defn- job-cadence-ms
+  [job]
+  (* 60 1000 (max 1 (or (get-in job [:trigger :cadenceMinutes]) 1))))
+
+(defn- cron-job?
+  [job]
+  (and (:enabled job)
+       (= "cron" (get-in job [:trigger :kind]))))
+
+(defn- initialize-cron-job-state!
+  [job]
+  (let [job-id (:id job)
+        cadence-ms (job-cadence-ms job)
+        now (.now js/Date)]
+    (update-job-state! job-id
                        (fn [state]
-                         (merge state
-                                {:id (:id job)
-                                 :name (:name job)
-                                 :enabled (:enabled job)
-                                 :nextRunAt (+ (.now js/Date) every-ms)})))))
+                         (let [state (normalize-job-state job-id state)
+                               running? (boolean (:running state))
+                               last-finished (:lastFinishedAt state)
+                               next-run (or (:nextRunAt state)
+                                            (when last-finished (+ last-finished cadence-ms))
+                                            now)]
+                           (assoc state
+                                  :id job-id
+                                  :name (:name job)
+                                  :enabled (:enabled job)
+                                  :running running?
+                                  :nextRunAt next-run))))))
+
+(defn- due-cron-job?
+  [now job]
+  (let [job-id (:id job)
+        state (normalize-job-state job-id (get @job-state* job-id))]
+    (and (cron-job? job)
+         (not (:running state))
+         (<= (or (:nextRunAt state) 0) now))))
+
+(defn- trigger-due-cron-jobs!
+  [config]
+  (when @running?*
+    (let [control (control-config config)
+          now (.now js/Date)
+          cron-jobs (filter cron-job? (:jobs control))]
+      (doseq [job cron-jobs]
+        (initialize-cron-job-state! job))
+      (doseq [job cron-jobs]
+        (when (due-cron-job? now job)
+          (-> (run-job! (:id job))
+              (.catch (fn [err]
+                        (println "[event-agents] cron ticker job failed for" (:id job) ":" (.-message err))))))))))
+
+(defn- schedule-cron-ticker!
+  [config]
+  ;; One ticker owns all cron evaluation. Individual jobs never register their
+  ;; own timers/timeouts, which prevents timer fan-out across reload/restart
+  ;; churn and makes "next activation time" visible in job-state.
+  (when-not (contains? @scheduled-tasks* :cron-ticker)
+    (let [tick! (fn [] (trigger-due-cron-jobs! config))
+          id (doto (js/setInterval tick! cron-ticker-ms) (.unref))]
+      (swap! scheduled-tasks* assoc :cron-ticker {:type :interval
+                                                  :id id
+                                                  :everyMs cron-ticker-ms})
+      (println "[event-agents] scheduled single cron ticker every" cron-ticker-ms "ms")
+      (tick!))))
 
 (defn reload!
   []
@@ -1474,32 +1522,10 @@
                      ;; Bind Discord gateway for real-time message handling
                      (bind-discord-gateway! config)
 
-                     ;; Schedule cron jobs from control config
-                     (doseq [job (:jobs control)]
-                       (when (and (:enabled job)
-                                  (= "cron" (get-in job [:trigger :kind])))
-                         (schedule-job! config job)))
-
-                     ;; Boot-kick: fire every overdue cron job, staggered 5 s apart.
-                     ;; Using (some ...) to pick only the *first* job was the bug —
-                     ;; it always selected discordideaspawner and starved every other
-                     ;; agent (e.g. ussyversesocialcreative) until the first real tick.
-                     ;; We also respect cadence: if the job ran recently, skip the kick.
-                     (let [now (.now js/Date)
-                           cron-jobs (filter #(and (:enabled %)
-                                                   (= "cron" (get-in % [:trigger :kind])))
-                                             (:jobs control))]
-                       (doseq [[idx job] (map-indexed vector cron-jobs)]
-                         (let [state     (get @job-state* (:id job) {})
-                               last-run  (or (:lastFinishedAt state) 0)
-                               cadence   (* 60 1000 (max 1 (get-in job [:trigger :cadenceMinutes])))
-                               elapsed   (- now last-run)
-                               overdue?  (>= elapsed cadence)]
-                           (when overdue?
-                             (js/setTimeout
-                              (fn [] (when @running?* (run-job! (:id job))))
-                              (* idx 5000))))))
-)))
+                     ;; One scheduler ticker evaluates all cron jobs from
+                     ;; their persisted :nextRunAt timestamps. No per-job
+                     ;; intervals or boot-kick timeouts are registered.
+                     (schedule-cron-ticker! config))))
           (.catch (fn [err]
                     (println "[event-agents] failed to recover control config from Redis:" (.-message err))
                     ;; Fall through — start with defaults
@@ -1508,10 +1534,7 @@
                       (println "[event-agents] starting with" (count (:jobs control)) "jobs (defaults)")
                       (schedule-flush-task!)
                       (bind-discord-gateway! config)
-                      (doseq [job (:jobs control)]
-                        (when (and (:enabled job)
-                                   (= "cron" (get-in job [:trigger :kind])))
-                          (schedule-job! config job))))))))))
+                      (schedule-cron-ticker! config))))))))
 
 ;; =============================================================================
 ;; Public API: Job Management with Template Support

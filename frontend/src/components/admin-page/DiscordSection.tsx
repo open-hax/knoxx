@@ -5,6 +5,8 @@ import {
   getDiscordConfig,
   getEventAgentControl,
   runEventAgentJob,
+  startEventAgentRuntime,
+  stopEventAgentRuntime,
   updateDiscordConfig,
   updateEventAgentControl,
   type EventAgentControlResponse,
@@ -202,6 +204,7 @@ export function DiscordSection({
   const [savingControl, setSavingControl] = useState(false);
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [dispatchingEvent, setDispatchingEvent] = useState(false);
+  const [togglingRuntime, setTogglingRuntime] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [error, setError] = useState<string>("");
   const [status, setStatus] = useState<EventAgentControlResponse | null>(null);
@@ -436,6 +439,43 @@ export function DiscordSection({
     }
   }, [canManage, eventKind, eventPayloadDraft, eventSourceKind, load]);
 
+  const handleStopRuntime = useCallback(async () => {
+    if (!canManage) return;
+    setTogglingRuntime(true);
+    setError("");
+    setNotice(null);
+    try {
+      const updated = await stopEventAgentRuntime();
+      setStatus(updated);
+      setDraft(updated.control);
+      setJsonDrafts(seedJsonDrafts(updated.control.jobs));
+      setNotice({ tone: "success", text: "Event-agent runtime stopped (schedulers cleared)." });
+    } catch (err) {
+      setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setTogglingRuntime(false);
+    }
+  }, [canManage]);
+
+  const handleStartRuntime = useCallback(async () => {
+    if (!canManage) return;
+    setTogglingRuntime(true);
+    setError("");
+    setNotice(null);
+    try {
+      const updated = await startEventAgentRuntime();
+      setStatus(updated);
+      setDraft(updated.control);
+      setJsonDrafts(seedJsonDrafts(updated.control.jobs));
+      setNotice({ tone: "success", text: "Event-agent runtime started." });
+      await load();
+    } catch (err) {
+      setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setTogglingRuntime(false);
+    }
+  }, [canManage, load]);
+
   return (
     <SectionCard>
       {loading || !draft || !status ? (
@@ -454,7 +494,7 @@ export function DiscordSection({
                 <button
                   type="button"
                   onClick={() => void load()}
-                  disabled={loading || savingToken || savingControl}
+                  disabled={loading || savingToken || savingControl || togglingRuntime}
                   className="inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
                 >
                   {loading ? "Loading…" : "Refresh"}
@@ -462,11 +502,32 @@ export function DiscordSection({
                 <button
                   type="button"
                   onClick={() => void handleSaveControl()}
-                  disabled={!canManage || !draft || savingControl}
+                  disabled={!canManage || !draft || savingControl || togglingRuntime}
                   className="inline-flex items-center justify-center rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
                 >
                   {savingControl ? "Saving…" : "Save runtime"}
                 </button>
+
+                {status.runtime.running ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleStopRuntime()}
+                    disabled={!canManage || togglingRuntime}
+                    className="inline-flex items-center justify-center rounded-md bg-rose-700 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-rose-600 disabled:opacity-60"
+                    title="Stops cron scheduling + unsubscribes Discord gateway. Does not hard-cancel an in-flight LLM request."
+                  >
+                    {togglingRuntime ? "Stopping…" : "Stop runtime"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleStartRuntime()}
+                    disabled={!canManage || togglingRuntime}
+                    className="inline-flex items-center justify-center rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-emerald-600 disabled:opacity-60"
+                  >
+                    {togglingRuntime ? "Starting…" : "Start runtime"}
+                  </button>
+                )}
               </div>
 
               <div className="grid gap-2">

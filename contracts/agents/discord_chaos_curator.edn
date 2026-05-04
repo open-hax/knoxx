@@ -9,7 +9,7 @@
  :events {:always [:discord.message/keyword], :maybe []},
  :hooks {:before {}, :after {}},
  :agent
- {:roles [:role/creative_catalyst :role/developer],
+ {:roles [:role/creative_catalyst :role/developer :role/meta-creator],
   :model "gemma4:31b",
   :thinking :off},
  :prompts
@@ -21,7 +21,7 @@
  :contract/version 1,
  :source-kind :discord,
  :cadence-min 60,
- :enabled false,
+ :enabled true,
  :data
  {:filters
   {:channels ["1444189585373663417"],

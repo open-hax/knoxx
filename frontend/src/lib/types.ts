@@ -177,6 +177,7 @@ export interface ActiveAgentSummary extends RunSummary {
   event_count?: number;
   tool_receipt_count?: number;
   has_active_stream?: boolean;
+  active_turn_registered?: boolean;
   agent_spec?: Record<string, unknown> | null;
   resource_policies?: Record<string, unknown> | null;
   latest_user_message?: string | null;
