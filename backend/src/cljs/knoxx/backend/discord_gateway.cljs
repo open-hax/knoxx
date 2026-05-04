@@ -11,7 +11,8 @@
   (:require [clojure.string :as str]
             ["discord.js" :as discord]
             ["@discordjs/voice" :as voice]
-            ["libsodium-wrappers" :as sodium]))
+            ["libsodium-wrappers" :as sodium]
+            ["node:stream" :refer [Readable]]))
 
 ;; sodium is imported for @discordjs/voice crypto support — no explicit use needed
 
@@ -340,16 +341,17 @@
                         (if-not channel
                           (do (js/console.error "[voice:gw] channel not found:" channel-id)
                               (js/Promise.reject (js/Error. (str "Channel not found: " channel-id))))
-                          (do
-                            (js/console.log "[voice:gw] channel found:" channel-id "guild:" (.-guildId channel) "selfDeaf:false")
+                          (let [guild-id (.-guildId channel)]
+                            (js/console.log "[voice:gw] channel found:" channel-id "guild:" guild-id "selfDeaf:false")
                             (let [conn (voice/joinVoiceChannel
                                         #js {:channelId channel-id
-                                             :guildId (.-guildId channel)
+                                             :guildId guild-id
                                              :adapterCreator (.-voiceAdapterCreator (.-guild channel))
                                              :selfDeaf false
                                              :selfMute false})]
+                              (aset conn "__guildId" guild-id)
                               (js/console.log "[voice:gw] joinVoiceChannel returned, waiting for ready state…")
-                              (-> (voice/entersState conn (.-VoiceConnectionStatus voice/VoiceConnectionStatus) 15000)
+                               (-> (voice/entersState conn (.-Ready voice/VoiceConnectionStatus) 15000)
                                   (.then (fn [_]
                                            (js/console.log "[voice:gw] voice connection ready for guild:" (.-guildId conn))
                                            conn))
@@ -376,7 +378,11 @@
                          (aset conn "__audioPlayer" p)
                          (.subscribe conn p)
                          p))
-            resource (voice/createAudioResource audio-buffer)]
+            stream (new Readable #js {:read (fn [])})
+            _ (do (.push stream audio-buffer) (.push stream nil))
+            resource (voice/createAudioResource
+                      stream
+                      #js {:inputType (.-Arbitrary (aget voice "StreamType"))})]
         (.play player resource)
         (js/Promise.resolve true)))))
 
@@ -423,51 +429,97 @@
    Calls (on-audio user-id opus-buffer) when a user stops speaking with accumulated audio.
    Returns a stop function."
   [connections guild-id on-start on-audio]
-  (js/console.log "[voice:listener] starting for guild:" guild-id "connections:" (.size connections))
+  (js/console.log "[voice:listener] starting for guild:" guild-id "connections:" (.-size connections))
   (let [conn (.get connections guild-id)]
     (if-not conn
       (do (js/console.error "[voice:listener] no connection for guild:" guild-id)
           (js/Promise.reject (js/Error. (str "No voice connection for guild: " guild-id))))
       (let [receiver (.-receiver conn)
+            speaking-map (.-speaking receiver)
             buffers (atom {})
             streams (atom {})
-            speaking-handler
-            (fn [user-id speaking?]
+            chunk-counts (atom {})
+            active-users (atom #{})
+            silence-timers (atom {})
+            on-start-speaking
+            (fn [user-id]
               (let [uid (str user-id)]
-                (js/console.log "[voice:listener] speaking event:" uid "speaking?" speaking?)
-                (if speaking?
-                  (do
-                    (when on-start (on-start uid))
-                    (swap! buffers assoc uid #js [])
-                    (let [opus-stream (.subscribe receiver uid #js {:mode "opus"})]
-                      (js/console.log "[voice:listener] subscribed opus for:" uid)
-                      (.on opus-stream "data"
-                           (fn [chunk]
-                             (when-let [buf (get @buffers uid)]
-                               (.push buf chunk))))
-                      (swap! streams assoc uid opus-stream)))
-                  (do
-                    (when-let [opus-stream (get @streams uid)]
-                      (try (.destroy opus-stream) (catch js/Error _))
-                      (swap! streams dissoc uid))
-                    (when-let [buf (get @buffers uid)]
-                      (let [len (.-length buf)]
-                        (js/console.log "[voice:listener] stopped speaking:" uid "chunks:" len)
-                        (when (pos? len)
-                          (let [combined (.from js/Buffer (js/Array.from (.concat #js [] buf)))]
-                            (js/console.log "[voice:listener] on-audio:" uid "bytes:" (.-length combined))
-                            (swap! buffers dissoc uid)
-                            (on-audio uid combined)))))))))]
-        (.on receiver "speaking" speaking-handler)
-        (js/console.log "[voice:listener] handler registered for guild:" guild-id)
+                (when-not (contains? @active-users uid)
+                  (js/console.log "[voice:listener] >>> SPEAKING START:" uid)
+                  (swap! active-users conj uid)
+                  (when on-start (on-start uid))
+                  (swap! buffers assoc uid #js [])
+                  (swap! chunk-counts assoc uid 0)
+                  (let [audio-stream (.subscribe receiver uid)]
+                    (js/console.log "[voice:listener] subscribed audio for:" uid)
+                    (.on audio-stream "data"
+                         (fn [chunk]
+                           (when-let [buf (get @buffers uid)]
+                             (.push buf chunk)
+                             (swap! chunk-counts update uid inc))))
+                    (.on audio-stream "error"
+                         (fn [err]
+                           (js/console.error "[voice:listener] audio stream error for" uid ":" (.-message err))))
+                    (.on audio-stream "end"
+                         (fn []
+                           (js/console.log "[voice:listener] audio stream ended for" uid)))
+                    (swap! streams assoc uid audio-stream)))))
+            on-opus-packet
+            (fn [uid packet]
+              (let [user-id (str uid)]
+                (when-not (contains? @active-users user-id)
+                  (when-not (get @buffers user-id)
+                    (js/console.log "[voice:listener] >>> OPUS START (fallback):" user-id)
+                    (swap! active-users conj user-id)
+                    (when on-start (on-start user-id))
+                    (swap! buffers assoc user-id #js [])
+                    (swap! chunk-counts assoc user-id 0))
+                  (when-let [buf (get @buffers user-id)]
+                    (.push buf packet)
+                    (swap! chunk-counts update user-id inc)))))
+            on-end-speaking
+            (fn [user-id]
+              (let [uid (str user-id)]
+                (js/console.log "[voice:listener] >>> SPEAKING END:" uid)
+                (swap! active-users disj uid)
+                (when-let [audio-stream (get @streams uid)]
+                  (try (.destroy audio-stream) (catch js/Error e
+                                                 (js/console.error "[voice:listener] error destroying stream for" uid ":" (.-message e))))
+                  (swap! streams dissoc uid))
+                (when-let [buf (get @buffers uid)]
+                  (let [len (.-length buf)]
+                    (js/console.log "[voice:listener] stopped speaking:" uid "chunks:" len)
+                    (when (pos? len)
+                      (try
+                        (let [flat (js/Array.from (.concat #js [] buf))
+                              combined (.from js/Buffer flat)]
+                          (js/console.log "[voice:listener] calling on-audio for" uid "bytes:" (.-length combined))
+                          (swap! buffers dissoc uid)
+                          (swap! chunk-counts dissoc uid)
+                          (on-audio uid combined))
+                        (catch js/Error e
+                          (js/console.error "[voice:listener] error combining audio for" uid ":" (.-message e))
+                          (swap! buffers dissoc uid)
+                          (swap! chunk-counts dissoc uid))))))))]
+        (js/console.log "[voice:listener] attaching listeners")
+        (.on speaking-map "start" on-start-speaking)
+        (.on speaking-map "end" on-end-speaking)
+        (.on receiver "opus" on-opus-packet)
         (js/Promise.resolve
          (fn []
            (js/console.log "[voice:listener] stopping for guild:" guild-id)
-           (.removeListener receiver "speaking" speaking-handler)
+           (.removeListener speaking-map "start" on-start-speaking)
+           (.removeListener speaking-map "end" on-end-speaking)
+           (.removeListener receiver "opus" on-opus-packet)
            (doseq [[_ s] @streams]
              (try (.destroy s) (catch js/Error _)))
+           (doseq [[_ t] @silence-timers]
+             (js/clearTimeout t))
            (reset! buffers {})
-           (reset! streams {})))))))
+           (reset! streams {})
+           (reset! chunk-counts {})
+           (reset! active-users #{})
+           (reset! silence-timers {})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Factory
