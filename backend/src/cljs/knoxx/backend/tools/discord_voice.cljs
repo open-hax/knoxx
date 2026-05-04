@@ -52,25 +52,28 @@
         (.then (fn [b] (.from js/Buffer (js/Uint8Array. b)))))))
 
 (defn- transcribe! [config audio-buffer]
+  ;; Knoxx STT service expects raw audio bytes (not multipart). It runs ffmpeg
+  ;; server-side, so WAV is the safest on-the-wire format.
   (js/console.log "[voice:stt] === TRANSCRIBE START ===" (.-length audio-buffer) "bytes from" (stt-url config))
-  (let [fd (js/FormData.)]
-    (.append fd "file" (js/Blob. #js [audio-buffer] #js {:type "audio/ogg"}) "audio.ogg")
-    (js/console.log "[voice:stt] sending POST to" (str (stt-url config) "/transcribe"))
-    (-> (js/fetch (str (stt-url config) "/transcribe") #js {:method "POST" :body fd})
-        (.then (fn [r]
-                 (js/console.log "[voice:stt] response received, status:" (.-status r) "ok:" (.-ok r))
-                 (if (.-ok r)
-                   (do (js/console.log "[voice:stt] parsing JSON response") (.json r))
-                   (do (js/console.error "[voice:stt] HTTP FAILED:" (.-status r))
-                       (throw (js/Error. (str "STT " (.-status r))))))))
-        (.then (fn [j]
-                 (js/console.log "[voice:stt] JSON parsed:" (js/JSON.stringify j))
-                 (let [text (or (.-text j) (.-transcription j) "")]
-                   (js/console.log "[voice:stt] extracted text:" (if (str/blank? text) "[EMPTY]" text))
-                   text)))
-        (.catch (fn [err]
-                  (js/console.error "[voice:stt] === TRANSCRIBE ERROR ===" (.-message err))
-                  (throw err))))))
+  (js/console.log "[voice:stt] sending POST to" (str (stt-url config) "/transcribe"))
+  (-> (js/fetch (str (stt-url config) "/transcribe")
+                #js {:method "POST"
+                     :headers #js {"Content-Type" "audio/wav"}
+                     :body audio-buffer})
+      (.then (fn [r]
+               (js/console.log "[voice:stt] response received, status:" (.-status r) "ok:" (.-ok r))
+               (if (.-ok r)
+                 (do (js/console.log "[voice:stt] parsing JSON response") (.json r))
+                 (do (js/console.error "[voice:stt] HTTP FAILED:" (.-status r))
+                     (throw (js/Error. (str "STT " (.-status r))))))))
+      (.then (fn [j]
+               (js/console.log "[voice:stt] JSON parsed:" (js/JSON.stringify j))
+               (let [text (or (.-text j) (.-transcription j) "")]
+                 (js/console.log "[voice:stt] extracted text:" (if (str/blank? text) "[EMPTY]" text))
+                 text)))
+      (.catch (fn [err]
+                (js/console.error "[voice:stt] === TRANSCRIBE ERROR ===" (.-message err))
+                (throw err)))))
 
 (defn- steer! [config session-id conversation-id text]
   (js/console.log "[voice:steer] injecting into session:" session-id "conv:" conversation-id "text:" (.slice text 0 60))

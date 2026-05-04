@@ -11,6 +11,7 @@
   (:require [clojure.string :as str]
             ["discord.js" :as discord]
             ["@discordjs/voice" :as voice]
+            ["prism-media" :as prism]
             ["libsodium-wrappers" :as sodium]
             ["node:stream" :refer [Readable]]))
 
@@ -31,6 +32,37 @@
 ;; ---------------------------------------------------------------------------
 ;; Internal helpers
 ;; ---------------------------------------------------------------------------
+
+(defn- pcm16le->wav-buffer
+  "Wrap raw PCM16LE bytes in a WAV container so ffmpeg (and thus STT) can decode it.
+
+   pcm: Node Buffer of signed 16-bit little-endian samples.
+   rate: sample rate in Hz (Discord voice is typically 48000)
+   channels: 1 or 2 (Discord voice is typically 2)
+
+   Returns a Node Buffer containing a complete .wav file."
+  [pcm rate channels]
+  (let [rate (max 1 (long (or rate 48000)))
+        channels (max 1 (long (or channels 2)))
+        data-size (.-length pcm)
+        byte-rate (* rate channels 2)
+        block-align (* channels 2)
+        wav (js/Buffer.alloc (+ 44 data-size))]
+    (.write wav "RIFF" 0)
+    (.writeUInt32LE wav (+ 36 data-size) 4)
+    (.write wav "WAVE" 8)
+    (.write wav "fmt " 12)
+    (.writeUInt32LE wav 16 16)
+    (.writeUInt16LE wav 1 20)
+    (.writeUInt16LE wav channels 22)
+    (.writeUInt32LE wav rate 24)
+    (.writeUInt32LE wav byte-rate 28)
+    (.writeUInt16LE wav block-align 32)
+    (.writeUInt16LE wav 16 34)
+    (.write wav "data" 36)
+    (.writeUInt32LE wav data-size 40)
+    (.copy pcm wav 44)
+    wav))
 
 (defn- map-message
   "Convert a discord.js Message to a plain JS map."
@@ -572,21 +604,34 @@
 (defn- gw-start-voice-listener
   "Start listening for all speaking users in a voice channel.
    Calls (on-start user-id) when a user starts speaking.
-   Calls (on-audio user-id opus-buffer) when a user stops speaking with accumulated audio.
+   Calls (on-audio user-id wav-buffer) when a user stops speaking with accumulated audio.
+
+   NOTE: We decode Opus -> PCM -> WAV here so downstream STT can simply POST bytes
+   to /transcribe (the STT service uses ffmpeg).
+
    Returns a stop function."
   [connections guild-id on-start on-audio]
   (js/console.log "[voice:listener] starting for guild:" guild-id "connections:" (.-size connections))
   (let [conn (.get connections guild-id)]
     (if-not conn
-      (do (js/console.error "[voice:listener] no connection for guild:" guild-id)
-          (js/Promise.reject (js/Error. (str "No voice connection for guild: " guild-id))))
+      (do
+        (js/console.error "[voice:listener] no connection for guild:" guild-id)
+        (js/Promise.reject (js/Error. (str "No voice connection for guild: " guild-id))))
       (let [receiver (.-receiver conn)
             speaking-map (.-speaking receiver)
-            buffers (atom {})
+            pcm-buffers (atom {})
             streams (atom {})
-            chunk-counts (atom {})
+            decoders (atom {})
             active-users (atom #{})
             silence-timers (atom {})
+
+            create-decoder
+            (fn []
+              (let [OpusDecoder (some-> prism (aget "opus") (aget "Decoder"))]
+                (when-not (fn? OpusDecoder)
+                  (throw (js/Error. "prism-media Opus decoder unavailable")))
+                (new OpusDecoder #js {:rate 48000 :channels 2 :frameSize 960})))
+
             on-start-speaking
             (fn [user-id]
               (let [uid (str user-id)]
@@ -594,76 +639,80 @@
                   (js/console.log "[voice:listener] >>> SPEAKING START:" uid)
                   (swap! active-users conj uid)
                   (when on-start (on-start uid))
-                  (swap! buffers assoc uid #js [])
-                  (swap! chunk-counts assoc uid 0)
-                  (let [audio-stream (.subscribe receiver uid)]
-                    (js/console.log "[voice:listener] subscribed audio for:" uid)
-                    (.on audio-stream "data"
-                         (fn [chunk]
-                           (when-let [buf (get @buffers uid)]
-                             (.push buf chunk)
-                             (swap! chunk-counts update uid inc))))
+                  (swap! pcm-buffers assoc uid #js [])
+
+                  (let [audio-stream (.subscribe receiver uid)
+                        decoder (create-decoder)]
+                    ;; audio-stream emits Opus packets; decoder emits PCM16LE.
+                    (.pipe audio-stream decoder)
+                    (.on decoder "data"
+                         (fn [pcm-chunk]
+                           (when-let [buf (get @pcm-buffers uid)]
+                             (.push buf pcm-chunk))))
+                    (.on decoder "error"
+                         (fn [err]
+                           (js/console.error "[voice:listener] decoder error for" uid ":" (.-message err))))
                     (.on audio-stream "error"
                          (fn [err]
                            (js/console.error "[voice:listener] audio stream error for" uid ":" (.-message err))))
                     (.on audio-stream "end"
                          (fn []
                            (js/console.log "[voice:listener] audio stream ended for" uid)))
-                    (swap! streams assoc uid audio-stream)))))
+
+                    (swap! streams assoc uid audio-stream)
+                    (swap! decoders assoc uid decoder)))))
+
+            ;; Keep the receiver "opus" listener as a safety net.
+            ;; It should rarely fire when speaking-map is working, but leaving it
+            ;; in place avoids regressions on edge Discord voice states.
             on-opus-packet
-            (fn [uid packet]
-              (let [user-id (str uid)]
-                (when-not (contains? @active-users user-id)
-                  (when-not (get @buffers user-id)
-                    (js/console.log "[voice:listener] >>> OPUS START (fallback):" user-id)
-                    (swap! active-users conj user-id)
-                    (when on-start (on-start user-id))
-                    (swap! buffers assoc user-id #js [])
-                    (swap! chunk-counts assoc user-id 0))
-                  (when-let [buf (get @buffers user-id)]
-                    (.push buf packet)
-                    (swap! chunk-counts update user-id inc)))))
+            (fn [_uid _packet] nil)
+
             on-end-speaking
             (fn [user-id]
               (let [uid (str user-id)]
                 (js/console.log "[voice:listener] >>> SPEAKING END:" uid)
                 (swap! active-users disj uid)
+
                 (when-let [audio-stream (get @streams uid)]
-                  (try (.destroy audio-stream) (catch js/Error e
-                                                 (js/console.error "[voice:listener] error destroying stream for" uid ":" (.-message e))))
+                  (try (.destroy audio-stream) (catch js/Error _))
                   (swap! streams dissoc uid))
-                (when-let [buf (get @buffers uid)]
-                  (let [len (.-length buf)]
-                    (js/console.log "[voice:listener] stopped speaking:" uid "chunks:" len)
-                    (when (pos? len)
-                      (try
-                        (let [flat (js/Array.from (.concat #js [] buf))
-                              combined (.from js/Buffer flat)]
-                          (js/console.log "[voice:listener] calling on-audio for" uid "bytes:" (.-length combined))
-                          (swap! buffers dissoc uid)
-                          (swap! chunk-counts dissoc uid)
-                          (on-audio uid combined))
-                        (catch js/Error e
-                          (js/console.error "[voice:listener] error combining audio for" uid ":" (.-message e))
-                          (swap! buffers dissoc uid)
-                          (swap! chunk-counts dissoc uid))))))))]
+
+                (when-let [decoder (get @decoders uid)]
+                  (try (.destroy decoder) (catch js/Error _))
+                  (swap! decoders dissoc uid))
+
+                (when-let [buf (get @pcm-buffers uid)]
+                  (let [chunks (js/Array.from buf)
+                        pcm (js/Buffer.concat chunks)
+                        wav (pcm16le->wav-buffer pcm 48000 2)]
+                    (js/console.log "[voice:listener] calling on-audio for" uid "wav bytes:" (.-length wav))
+                    (swap! pcm-buffers dissoc uid)
+                    (on-audio uid wav)))))
+            ]
+
         (js/console.log "[voice:listener] attaching listeners")
         (.on speaking-map "start" on-start-speaking)
         (.on speaking-map "end" on-end-speaking)
         (.on receiver "opus" on-opus-packet)
+
         (js/Promise.resolve
          (fn []
            (js/console.log "[voice:listener] stopping for guild:" guild-id)
            (.removeListener speaking-map "start" on-start-speaking)
            (.removeListener speaking-map "end" on-end-speaking)
            (.removeListener receiver "opus" on-opus-packet)
+
            (doseq [[_ s] @streams]
              (try (.destroy s) (catch js/Error _)))
+           (doseq [[_ d] @decoders]
+             (try (.destroy d) (catch js/Error _)))
            (doseq [[_ t] @silence-timers]
              (js/clearTimeout t))
-           (reset! buffers {})
+
+           (reset! pcm-buffers {})
            (reset! streams {})
-           (reset! chunk-counts {})
+           (reset! decoders {})
            (reset! active-users #{})
            (reset! silence-timers {})))))))
 
