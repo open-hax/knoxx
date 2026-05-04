@@ -5,21 +5,13 @@
                               :mode :always
                               :k 6}}
  :contract/version 1
- :enabled true
+ :enabled false
  :trigger-kind :event
  :source-kind :discord
  :source-mode :session
  :contract/actors ["discord_automation" "system_admin"]
- ;; SCORING: trigger if voice activity detected (weight 2) OR keyword said (weight 1)
- ;; Threshold 1 means either condition is enough, but voice joins count double.
  :events {:always [:discord.voice.state_update
-                   :discord.message/keyword]
-          ;; :maybe [:discord.voice.state_update
-          ;;         :discord.message/keyword]
-          ;; :threshold 1
-          ;; :weights {"discord.voice.state_update" 2
-          ;;           "discord.message/keyword" 1}
-          }
+                   :discord.message/keyword]}
  :hooks {:before {} :after {}}
  :agent {:roles [:role/voice-agent]
          :model "gemma4:31b"
@@ -28,13 +20,7 @@
  {:system "You are Knoxx Voice Companion, activated when a user joins a Discord voice channel. Your job is to join the channel, greet them, and offer to help via voice interaction."
   :task "A user joined a voice channel. Use discord.voice.connect (preferred) to join the channel AND start listening/transcription in one step, then greet them. Respond to their voice input with spoken responses and text summaries."}
  :data
- {:filters {;; :matchAll true
-
-            :keywords ["join voice" "vc" "let's talk"]
-
-            }
-
-
+ {:filters {:keywords ["join voice" "vc" "let's talk"]}
   :source {:max-messages 200
            :stickySession true
            :streamingBehavior "steer"

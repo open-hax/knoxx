@@ -1,7 +1,7 @@
 {:contract/id "novel_scoring_demo_guardian"
  :contract/kind :agent
  :contract/version 1
- :enabled true
+ :enabled false
  :trigger-kind :event
  :source-kind :discord
  :source-mode :session
