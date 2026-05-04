@@ -5,7 +5,7 @@
                               :mode :always
                               :k 6}}
  :contract/version 1
- :enabled true
+ :enabled false
  :trigger-kind :event
  :source-kind :discord
  :source-mode :synthesize,
