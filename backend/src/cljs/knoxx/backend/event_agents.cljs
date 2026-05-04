@@ -331,20 +331,28 @@
           flush-task        (fn []
                               (when @running?*
                                 (flush-dirty-jobs-to-sql!)))
-          id                (doto (js/setInterval flush-task flush-interval-ms) (.unref))]
-      (swap! scheduled-tasks* assoc :flush {:type :interval :id id})
+          flush-id          (doto (js/setInterval flush-task flush-interval-ms) (.unref))]
+      (swap! scheduled-tasks* assoc :flush {:type :interval :id flush-id})
       (println "[event-agents] scheduled SQL flush every 5 minutes")
 
       ;; Sliding-window sweep: cap dispatched-event-ids* at 500 entries so the
       ;; set doesn't grow unbounded across long uptimes.
-      (let [sweep-fn (fn []
+      ;;
+      ;; IMPORTANT: this interval must be tracked in scheduled-tasks* so stop!/reload!
+      ;; clears it. Otherwise every reload leaks another interval which all wake up
+      ;; again on the next start! (running?* becomes true), multiplying work.
+      (let [sweep-interval-ms (* 10 60 1000)
+            sweep-fn (fn []
                        (when @running?*
                          (swap! dispatched-event-ids*
                                 (fn [ids]
                                   (if (> (count ids) 500)
                                     (set (take-last 500 (vec ids)))
-                                    ids)))))]
-        (doto (js/setInterval sweep-fn (* 10 60 1000)) (.unref))))))
+                                    ids)))))
+            sweep-id (doto (js/setInterval sweep-fn sweep-interval-ms) (.unref))]
+        (swap! scheduled-tasks* assoc :dispatch-sweep {:type :interval
+                                                      :id sweep-id
+                                                      :everyMs sweep-interval-ms})))))
 
 (defn- update-job-state!
   [job-id f]
