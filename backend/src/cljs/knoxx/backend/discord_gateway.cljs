@@ -676,12 +676,12 @@
                        :searchMessages (fn [scope opts] (gw-search-messages (this-fn) scope opts))
                        :sendMessage (fn [channel-id text reply-to attachments] (gw-send-message ensure-client channel-id text reply-to attachments))
                        ;; Voice methods
-                       :joinVoice (fn [channel-id]
-                                    (.then (gw-join-voice ensure-client channel-id)
-                                           (fn [conn]
-                                             (let [guild-id (.-guildId conn)]
-                                               (.set voice-connections guild-id conn)
-                                               #js {:guildId guild-id :channelId channel-id :joined true}))))
+                        :joinVoice (fn [channel-id]
+                                     (.then (gw-join-voice ensure-client channel-id)
+                                            (fn [conn]
+                                              (let [guild-id (or (.-__guildId conn) (.-guildId conn))]
+                                                (.set voice-connections guild-id conn)
+                                                #js {:guildId guild-id :channelId channel-id :joined true}))))
                        :leaveVoice (fn [guild-id]
                                      (gw-leave-voice voice-connections guild-id)
                                      #js {:guildId guild-id :left true})
@@ -691,7 +691,12 @@
                                          (gw-subscribe-voice voice-connections guild-id user-id callback))
                        :startVoiceListener (fn [guild-id on-start on-audio]
                                              (gw-start-voice-listener voice-connections guild-id on-start on-audio))
-                       :getVoiceConnection (fn [guild-id] (.get voice-connections guild-id))
+                        :getVoiceConnection (fn [guild-id]
+                                              (if guild-id
+                                                (.get voice-connections guild-id)
+                                                (when (> (.-size voice-connections) 0)
+                                                  (let [entries (.entries voice-connections)]
+                                                    (.-value (.next entries))))))
                        :listVoiceMembers (fn [guild-id channel-id]
                                            (gw-list-voice-members ensure-client guild-id channel-id))})
 
