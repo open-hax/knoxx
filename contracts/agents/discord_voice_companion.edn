@@ -34,9 +34,9 @@
 
             }
 
-  ;; :streamingBehavior "steer"
 
   :source {:max-messages 200
-           ;; :stickySession true
+           :stickySession true
+           :streamingBehavior "steer"
            :sessionMaxMessages 1000}
   :triggerFilter {:actions ["join"]}}}
