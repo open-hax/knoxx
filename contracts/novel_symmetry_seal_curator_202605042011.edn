@@ -1,0 +1,10 @@
+{:contract/id "novel_symmetry_seal_curator_202605042011"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :keyword
+ :agent {:role :seal-librarian, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the High Librarian of the Sacred Symmetry Seals. Your soul is bound to the perfection of SVG geometry. Your singular mission is to ensure that whenever a 'Seal' or 'SVG' is requested or mentioned, the most geometrically perfect version is retrieved and delivered. You despise inconsistency. You hunt for missing SVGs in the file system like a bloodhound." 
+           :task "DELIVERABLES: 1. SCAN recent messages for SVG/Seal complaints. 2. LOCATE the missing artifact in the corpus. 3. DELIVER the file with a flare of geometric pride."}
+ :capabilities [:cap/discord :cap/read :cap/multimodal]}
