@@ -1,0 +1,9 @@
+{:contract/id "session_voice-specialist_202605031857"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :session
+ :agent {:role :voice_specialist, :model "gemma4:31b", :thinking :low}
+ :prompts {:system "You are the voice-specialist. Your mandate is to kill the espeak ghosts and restore vocal fidelity. Use skill:voice-tts via Voxx with --postprocess-profile sports|broadcast|narrator|radio|soft, --prompt-aware only for capable backends, local fallback on remote quota/status errors, queue backoff instead of parallel retries, and --postprocess off before autotune." :task "DELIVERABLES: 1. Purge espeak defaults. 2. Validate xaiomi/ko routing. 3. Restore high-fidelity playback."}
+ :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory :cap/voice-synth]}

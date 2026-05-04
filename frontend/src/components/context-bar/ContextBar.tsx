@@ -83,14 +83,14 @@ type ContextBarProps = {
   conversationId?: string | null;
   availableActors?: ActorCatalogItem[];
   sessionActorFilter?: string;
-  excludePiSessions?: boolean;
+  excludeEtaMuSessions?: boolean;
   onLoadDirectory?: (path?: string) => void | Promise<void>;
   onEntryFilterChange?: (value: string) => void;
   onSemanticQueryChange?: (value: string) => void;
   onSemanticSearch?: () => void | Promise<void>;
   onClearSemanticSearch?: () => void;
   onSessionActorFilterChange?: (value: string) => void;
-  onExcludePiSessionsChange?: (value: boolean) => void;
+  onExcludeEtaMuSessionsChange?: (value: boolean) => void;
   onRefreshRecentSessions?: () => void | Promise<void>;
   onLoadMoreRecentSessions?: () => void | Promise<void>;
   onResumeMemorySession?: (sessionId: string) => void | Promise<void>;
@@ -159,14 +159,14 @@ export function ContextBar({
   conversationId,
   availableActors,
   sessionActorFilter,
-  excludePiSessions,
+  excludeEtaMuSessions,
   onLoadDirectory,
   onEntryFilterChange,
   onSemanticQueryChange,
   onSemanticSearch,
   onClearSemanticSearch,
   onSessionActorFilterChange,
-  onExcludePiSessionsChange,
+  onExcludeEtaMuSessionsChange,
   onRefreshRecentSessions,
   onLoadMoreRecentSessions,
   onResumeMemorySession,
@@ -335,14 +335,14 @@ export function ContextBar({
                     <option key={actor.id} value={actor.id}>{actor.label}</option>
                   ))}
                 </select>
-                {onExcludePiSessionsChange ? (
+                {onExcludeEtaMuSessionsChange ? (
                   <Button
-                    variant={excludePiSessions ? "secondary" : "ghost"}
+                    variant={excludeEtaMuSessions ? "secondary" : "ghost"}
                     size="sm"
-                    onClick={() => onExcludePiSessionsChange(!excludePiSessions)}
-                    title={excludePiSessions ? "Show π sessions" : "Hide π sessions"}
+                    onClick={() => onExcludeEtaMuSessionsChange(!excludeEtaMuSessions)}
+                    title={excludeEtaMuSessions ? "Show eta-mu sessions" : "Hide eta-mu sessions"}
                   >
-                    {excludePiSessions ? "π off" : "π on"}
+                    {excludeEtaMuSessions ? "eta-mu off" : "eta-mu on"}
                   </Button>
                 ) : null}
               </div>

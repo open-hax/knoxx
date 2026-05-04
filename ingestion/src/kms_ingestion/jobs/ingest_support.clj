@@ -157,8 +157,8 @@
        :target :openplanner
        :lake tenant-id})))
 
-(defn ingest-pi-session-via-openplanner!
-  "Ingest a pi session's events via OpenPlanner /v1/events endpoint.
+(defn ingest-eta-mu-session-via-openplanner!
+  "Ingest a eta-mu session's events via OpenPlanner /v1/events endpoint.
    The :content of file-data is a JSON string with {:session-id, :cwd, :events [...]}.
    Events are already mapped to OpenPlanner EventEnvelopeV1 format."
   [_job-id tenant-id _source-id openplanner-url openplanner-api-key file]

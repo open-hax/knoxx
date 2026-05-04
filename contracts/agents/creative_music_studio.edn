@@ -1,6 +1,10 @@
 {:contract/id "creative_music_studio"
  :contract/kind :agent
  :contract/actors ["chat_primary" "knoxx_default"]
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :hooks {:before {} :after {}}
  :agent {:roles [:role/creative_catalyst :role/discord_user :role/knowledge_worker]
          :model "gemma4:31b"

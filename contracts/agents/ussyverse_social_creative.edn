@@ -1,6 +1,10 @@
 {:contract/id "ussyverse_social_creative",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :synthesize,
  :hooks {:before {}, :after {}},
  :agent
@@ -64,4 +68,4 @@ Use the autotune skill to sing from a dry Voxx capture (--postprocess off).
  {:filters
   {:publishChannels ["1494137016303095828" "1444189585373663417"]},
   :source
-  {:max-messages 50, :stickySession false, :sessionMaxMessages 1000}}}
+  {:max-messages 50, :stickySession true,:sessionMaxMessages 1000}}}

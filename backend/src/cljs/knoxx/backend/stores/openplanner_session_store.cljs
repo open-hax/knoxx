@@ -61,13 +61,15 @@
                   :message_count (count messages)}))
       (not (str/blank? answer))
       (conj (mk (str run_id ":assistant") "knoxx.message" "assistant"
-                 answer {:status status}))
+                 answer (merge {:status status}
+                               (op-mem/output-quality-extra answer))))
       (not (str/blank? reasoning))
       (conj (mk (str run_id ":reasoning") "knoxx.reasoning" "system"
                  reasoning {:status status}))
       (not (str/blank? error))
       (conj (mk (str run_id ":error") "knoxx.error" "system"
-                 error {:status status}))
+                 error (merge {:status status}
+                              (op-mem/output-quality-extra error))))
       (seq tool_receipts)
       (into (mapv (fn [r]
                     (mk (str run_id ":tool:" (:id r))

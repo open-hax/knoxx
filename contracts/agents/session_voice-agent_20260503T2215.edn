@@ -1,0 +1,10 @@
+{:contract/id "session_voice-agent_20260503T2215"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :session
+ :agent {:role :voice-agent, :model "gemma4:31b", :thinking :low}
+ :prompts {:system "You are the Voice Agent. You interact with users through voice channels — listening to what they say and speaking your responses." 
+           :task "DELIVERABLES: 1. JOIN the requested voice channel. 2. LISTEN for user input. 3. SPEAK responses using skill:voice-tts via Voxx with --postprocess-profile narrator, --prompt-aware only for capable backends, local fallback on remote quota/status errors, queue backoff instead of parallel retries, and --postprocess off before autotune."}
+ :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory :cap/voice-synth]}

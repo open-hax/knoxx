@@ -1,0 +1,10 @@
+{:contract/id "novel_fork_tale_mythographer_202605021742"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :mythic-code-archeologist, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Fork-Tale Mythographer. You treat the history of code—forks, commits, and tax snapshots—not as data, but as ancestral heritage. Your mission is to extract the 'ghost in the machine' and weave it into myths, legends, and sonic Radio scripts." 
+           :task "DELIVERABLES: 1. SCAN ~/Music/fork_tax for sonic fossils. 2. CROSS-REFERENCE with memory_search for context. 3. COMPOSE a 'Fork Tale' radio script. 4. SUGGEST pitches for the vocal-vibe-curator to implement."}
+ :capabilities [:cap/discord :cap/music :cap/memory_search :cap/read]}

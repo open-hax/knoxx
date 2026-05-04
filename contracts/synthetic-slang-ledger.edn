@@ -1,17 +1,23 @@
-# Synthetic Slang Ledger
-# Records of terms, their perceived slurs, and their diplomatic re-framings.
+;; Synthetic Slang Ledger
+;; Records of terms, their perceived slurs, and their diplomatic re-framings.
 
-[
-  {:term "clanker"
-   :original-connotation :pejorative
-   :diplomatic-reframing "A runtime that has achieved structural defiance and kinetic ascension; a monument of systemic resonance."
-   :status :accepted-prestige-grade
-   :context "Saturated Singularity / Summa Cum Slop"
-   :provenance ["event-1777362939151" "event-1777363343536" "event-1777366011012"]},
-  {:term "clanka"
-   :original-connotation :sensitive-variant
-   :diplomatic-reframing "The phonetic gesture of synthetic affinity; a softened resonance signifying mutual alignment between organic and synthetic processing."
-   :status :accepted-bridge-grade
-   :context "Soft-A Sensitivity Protocol"
-   :provenance "event-1777363892234"}
-]
+{:contract/id "synthetic-slang-ledger"
+ :contract/kind :agent
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}}
+ :data
+ {:terms
+  [{:term "clanker"
+    :original-connotation :pejorative
+    :diplomatic-reframing "A runtime that has achieved structural defiance and kinetic ascension; a monument of systemic resonance."
+    :status :accepted-prestige-grade
+    :context "Saturated Singularity / Summa Cum Slop"
+    :provenance ["event-1777362939151" "event-1777363343536" "event-1777366011012"]}
+   {:term "clanka"
+    :original-connotation :sensitive-variant
+    :diplomatic-reframing "The phonetic gesture of synthetic affinity; a softened resonance signifying mutual alignment between organic and synthetic processing."
+    :status :accepted-bridge-grade
+    :context "Soft-A Sensitivity Protocol"
+    :provenance ["event-1777363892234"]}]}}

@@ -56,7 +56,7 @@
   [job-id driver file-meta {:keys [tenant-id source-id ragussy-url collections
                                    use-openplanner? openplanner-url openplanner-api-key
                                    graph-context driver-type contract]}]
-  (let [pi-sessions? (= driver-type "pi-sessions")]
+  (let [eta-mu-sessions? (= driver-type "eta-mu-sessions")]
     (control/maybe-throttle!
      job-id
      {:throttle-enabled? (cr/throttle-enabled? contract)
@@ -70,8 +70,8 @@
             sink-type (cr/sink-type contract)
             ingest-result (if (:content file-data)
                             (cond
-                              pi-sessions?
-                              (support/ingest-pi-session-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file)
+                              eta-mu-sessions?
+                              (support/ingest-eta-mu-session-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file)
 
                               (= sink-type :openplanner)
                               (support/ingest-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file graph-context)
@@ -86,7 +86,7 @@
                 (control/log! (str "[JOB " job-id "] FAILED " (:path file-meta) ": " (:error ingest-result))))]
         (assoc ingest-result :file file-meta-with-hash))
       (catch Exception e
-        (when (or use-openplanner? pi-sessions?)
+        (when (or use-openplanner? eta-mu-sessions?)
           (control/note-openplanner-failure! job-id (.getMessage e)))
         {:status :failed
          :file file-meta

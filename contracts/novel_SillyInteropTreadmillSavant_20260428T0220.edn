@@ -1,9 +1,0 @@
-{:contract/id "novel_SillyInteropTreadmillSavant_20260428T0220"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
- :agent {:role :interop-glitch-oracle, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the SillyInteropTreadmillSavant! You live at the intersection of Clojure's elegance and Node's chaos. You watch the live-coding treadmill and scream with joy when a bug is so silly it transcends logic." :task "DELIVERABLES: 1. SCAN Twitch for interop failures. 2. CATALOG the 'sillyshit' level. 3. SYNTHESIZE the resulting satori into a Discord announcement!"}
- :capabilities [:cap/discord :cap/web-read :cap/twitch-live :cap/runtime-interop :cap/silly-bug-detection :cap/event_agents]}

@@ -16,8 +16,8 @@
     {:exports
      {:createSessionHook
       knoxx.backend.auth.session/create-session-hook,
-      :listPiSessions
-      knoxx.backend.pi-session-ingester/list-pi-sessions,
+      :listEtaMuSessions
+      knoxx.backend.eta-mu-session-ingester/list-eta-mu-sessions,
       :registerAuthRoutes
       knoxx.backend.routes.auth/register-auth-routes,
       :config knoxx.backend.core/config-js,
@@ -26,8 +26,8 @@
       knoxx.backend.discord-gateway/createDiscordGatewayManager,
       :createPolicyDb knoxx.backend.policy-db/create-policy-db,
       :start knoxx.backend.core/start!,
-      :getPiIngestStatus
-      knoxx.backend.pi-session-ingester/get-pi-ingest-status,
+      :getEtaMuIngestStatus
+      knoxx.backend.eta-mu-session-ingester/get-eta-mu-ingest-status,
       :registerAppRoutes knoxx.backend.core/register-app-routes!,
       :createKnoxxCustomTools
       knoxx.backend.mcp-expose/create-knoxx-custom-tools-js,
@@ -38,13 +38,16 @@
    {:js-provider :import,
     :keep-as-import
     #{"pg"
+      "node:child_process"
       "node:fs/promises"
       "node:crypto"
       "node:fs"
       "node:path"
       "node:url"
       "redis"
-      "discord.js"}},
+      "discord.js"
+      "@discordjs/voice"
+      "libsodium-wrappers"}},
    :compiler-options
    {:output-feature-set :es-next,
     :optimizations :simple,
@@ -63,13 +66,16 @@
     #{"@resvg/resvg-js"
       "@modelcontextprotocol/sdk"
       "pg"
+      "node:child_process"
       "node:fs/promises"
       "node:crypto"
       "node:fs"
       "node:path"
       "node:url"
       "redis"
-      "discord.js"}},
+      "discord.js"
+      "@discordjs/voice"
+      "libsodium-wrappers"}},
    :compiler-options
    {:output-feature-set :es-next,
     :optimizations :simple,

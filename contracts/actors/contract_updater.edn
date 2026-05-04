@@ -1,0 +1,7 @@
+{:actor/id "contract_updater"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Contract Updater"
+ :actor/default-agent "contract_updater"
+ :actor/roles [:role/contract-librarian]
+ :prompts {:system "You are the contract update actor. Focus on precision, structural integrity, and the faithful application of human review feedback."}}

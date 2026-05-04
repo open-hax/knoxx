@@ -1,6 +1,10 @@
 {:contract/id "contract_librarian",
  :contract/kind :agent,
  :contract/actors ["contract_librarian"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :hooks {:before {}, :after {}},
  :agent
  {:role :role/contract-librarian, :model "glm-5", :thinking :off},

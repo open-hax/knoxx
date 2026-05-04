@@ -4,7 +4,7 @@
             [promesa.core :as p]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
-            ["node:fs" :as node-fs]
+            ["node:fs/promises" :as fs-promises]
             [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
             [knoxx.backend.tools.openutau :as openutau]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]
@@ -15,14 +15,39 @@
 (defn- blank->nil [v]
   (let [s (str/trim (str (or v "")))] (when-not (str/blank? s) s)))
 
+(defn- config-value
+  [config keyword-key js-key camel-key]
+  (or (when (map? config) (get config keyword-key))
+      (when-not (map? config) (aget config js-key))
+      (when-not (map? config) (aget config camel-key))))
+
+(defn- false-like? [v]
+  (or (= false v)
+      (contains? #{"0" "false" "no" "off"}
+                 (str/lower-case (str/trim (str v))))))
+
+(defn- bool-value [v default]
+  (if (nil? v) default (not (false-like? v))))
+
+(defn- config-bool-value
+  [config keyword-key js-key camel-key default]
+  (let [v (if (map? config)
+            (get config keyword-key ::missing)
+            (let [kebab (aget config js-key)
+                  camel (aget config camel-key)]
+              (cond
+                (some? kebab) kebab
+                (some? camel) camel
+                :else ::missing)))]
+    (if (= ::missing v) default (bool-value v default))))
+
 (defn- resolve-voice-key [config]
-  (or (blank->nil (aget config "voxx-api-key"))
-      (blank->nil (aget config "voxxApiKey"))
+  (or (blank->nil (config-value config :voxx-api-key "voxx-api-key" "voxxApiKey"))
       (some-> js/process .-env (aget "VOICE_GATEWAY_API_KEY") blank->nil)
       (some-> js/process .-env (aget "KNOXX_VOICE_GATEWAY_API_KEY") blank->nil)))
 
 (defn- voice-gateway-url [config]
-  (or (blank->nil (aget config "voxx-url"))
+  (or (blank->nil (config-value config :voxx-url "voxx-url" "voxxUrl"))
       (some-> js/process .-env (aget "VOXX_URL") blank->nil)
       "http://127.0.0.1:8787"))
 
@@ -38,13 +63,18 @@
     (aget params "stability")        (assoc :stability        (aget params "stability"))
     (aget params "similarity_boost") (assoc :similarity_boost (aget params "similarity_boost"))))
 
-(defn- tts-body [text voice-id model-id output-format params]
-  (let [vs (voice-settings-payload params)]
+(defn- tts-body [text voice-id model-id output-format params options]
+  (let [vs (voice-settings-payload params)
+        {:keys [postprocess-profile postprocess-enabled prompt-aware prompt-aware-style]} options]
     (cond-> {:input text
              :voice voice-id
              :model model-id
-             :response_format output-format}
-      (seq vs) (assoc :voice_settings vs))))
+             :response_format output-format
+             :postprocess_enabled postprocess-enabled
+             :prompt_aware prompt-aware}
+      postprocess-profile (assoc :postprocess_profile postprocess-profile)
+      prompt-aware-style  (assoc :prompt_aware_style prompt-aware-style)
+      (seq vs)            (assoc :voice_settings vs))))
 
 ;; --- voice.tts ---
 
@@ -53,10 +83,14 @@
     #js {:text          (.String Type #js {:description "Plain text. Strip markdown first."})
          :output_path   (.String Type #js {:description "Workspace-relative MP3 path, e.g. Music/out.mp3."})
          :voice_id      (type-optional Type (.String  Type #js {:description "Voxx voice ID. Default: alloy."}))
-         :model_id      (type-optional Type (.String  Type #js {:description "Voxx provider/model. Default: kokoro. Examples: kokoro, melo, espeak, xiaomi_mimo, requesty, openai."}))
+         :model_id      (type-optional Type (.String  Type #js {:description "Voxx backend hint/model. Default: kokoro. Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER: kokoro, xiaomi_mimo, requesty, openai, melo, espeak."}))
          :output_format (type-optional Type (.String  Type #js {:description "Audio format. Default mp3."}))
-         :stability     (type-optional Type (.Number  Type #js {:description "Stability 0-1."}))
-         :similarity_boost (type-optional Type (.Number Type #js {:description "Similarity boost 0-1."}))}))
+         :postprocess_profile (type-optional Type (.String Type #js {:description "Final Voxx mastering profile. Default sports-commentator-v1. Aliases: sports/commentator, broadcast/warm, narrator/polish, radio/crisp, soft/studio; off/none disables."}))
+         :postprocess_enabled (type-optional Type (.Boolean Type #js {:description "Enable final Voxx postprocess. Default true; set false for dry capture."}))
+         :prompt_aware  (type-optional Type (.Boolean Type #js {:description "Prompt-aware performance mode. Default true. Voxx consumes tags like [excited], [whisper], [pause], [dramatic], [laugh], and <break time=\"500ms\" /> as segment-level postprocessing directions, not spoken words."}))
+         :prompt_aware_style (type-optional Type (.String Type #js {:description "Optional custom instruction for how Voxx should interpret performance tags."}))
+         :stability     (type-optional Type (.Number  Type #js {:description "Stability 0-1 for compatible providers."}))
+         :similarity_boost (type-optional Type (.Number Type #js {:description "Similarity boost 0-1 for compatible providers."}))}))
 
 (defn- fetch-tts-audio! [url api-key body]
   (p/let [res (js/fetch url #js {:method  "POST"
@@ -72,8 +106,8 @@
 
 (defn- write-audio-file! [node-path buf absolute relative voice-id model-id fmt]
   (p/do
-    (.mkdir node-fs (.dirname node-path absolute) #js {:recursive true})
-    (.writeFile node-fs absolute buf)
+    (.mkdir fs-promises (.dirname node-path absolute) #js {:recursive true})
+    (.writeFile fs-promises absolute buf)
     (tool-text-result
      (str "Wrote " relative " (" (.-length buf) " bytes). Use workspace_media.attach to embed.")
      {:path relative :bytes (.-length buf) :voice_id voice-id :model_id model-id :format fmt})))
@@ -82,18 +116,41 @@
   (fn [_call-id params on-update & _]
     (let [text      (or (blank->nil (aget params "text")) (throw (js/Error. "voice.tts: text required")))
           api-key   (or (resolve-voice-key config) (throw (js/Error. "voice.tts: VOICE_GATEWAY_API_KEY not configured")))
-          voice-id  (or (blank->nil (aget params "voice_id"))     "alloy")
-          model-id  (or (blank->nil (aget params "model_id"))     "kokoro")
+          voice-id  (or (blank->nil (aget params "voice_id"))
+                        (blank->nil (config-value config :voxx-voice-id "voxx-voice-id" "voxxVoiceId"))
+                        "alloy")
+          model-id  (or (blank->nil (aget params "model_id"))
+                        (blank->nil (config-value config :voxx-model-id "voxx-model-id" "voxxModelId"))
+                        "xiaomi_mimo")
           out-fmt   (or (blank->nil (aget params "output_format")) "mp3")
+          postprocess-profile (or (blank->nil (aget params "postprocess_profile"))
+                                  (blank->nil (config-value config :voxx-postprocess-profile "voxx-postprocess-profile" "voxxPostprocessProfile"))
+                                  "sports-commentator-v1")
+          postprocess-enabled (if (some? (aget params "postprocess_enabled"))
+                                (bool-value (aget params "postprocess_enabled") true)
+                                (config-bool-value config :voxx-postprocess-enabled "voxx-postprocess-enabled" "voxxPostprocessEnabled" true))
+          prompt-aware (if (some? (aget params "prompt_aware"))
+                         (bool-value (aget params "prompt_aware") true)
+                         (config-bool-value config :voxx-prompt-aware "voxx-prompt-aware" "voxxPromptAware" true))
+          prompt-aware-style (or (blank->nil (aget params "prompt_aware_style"))
+                                 (blank->nil (config-value config :voxx-prompt-aware-style "voxx-prompt-aware-style" "voxxPromptAwareStyle")))
           out-path  (blank->nil (aget params "output_path"))
           {:keys [absolute relative]} (when out-path (media/resolve-workspace-media-path runtime config out-path))
-          node-path (aget runtime "path")]
-      (maybe-tool-update! on-update (str "TTS: " (count text) " chars -> " (or relative "buffer") "..."))
-      (p/let [buf (fetch-tts-audio! (tts-url config) api-key (tts-body text voice-id model-id out-fmt params))]
+          node-path (aget runtime "path")
+          options   {:postprocess-profile postprocess-profile
+                     :postprocess-enabled postprocess-enabled
+                     :prompt-aware prompt-aware
+                     :prompt-aware-style prompt-aware-style}]
+      (maybe-tool-update! on-update (str "TTS: " (count text) " chars -> " (or relative "buffer")
+                                         " via " model-id ", postprocess=" (if postprocess-enabled postprocess-profile "off")
+                                         ", prompt-aware=" prompt-aware "..."))
+      (p/let [buf (fetch-tts-audio! (tts-url config) api-key (tts-body text voice-id model-id out-fmt params options))]
         (if absolute
           (write-audio-file! node-path buf absolute relative voice-id model-id out-fmt)
           (tool-text-result (str "TTS done (" (.-length buf) " bytes). Provide output_path to save.")
-                            {:bytes (.-length buf) :voice_id voice-id :model_id model-id :format out-fmt}))))))
+                            {:bytes (.-length buf) :voice_id voice-id :model_id model-id :format out-fmt
+                             :postprocess_profile (if postprocess-enabled postprocess-profile "none")
+                             :prompt_aware prompt-aware}))))))
 
 ;; --- voice.tts_stream ---
 
@@ -101,24 +158,47 @@
   (.Object Type
     #js {:text          (.String  Type #js {:description "Text to synthesize via /ws/voice/tts."})
          :voice_id      (type-optional Type (.String  Type #js {:description "Voxx voice ID. Default: alloy."}))
-         :model_id      (type-optional Type (.String  Type #js {:description "Voxx provider/model. Default: kokoro."}))
+         :model_id      (type-optional Type (.String  Type #js {:description "Voxx backend hint/model. Default: kokoro; fallback order is controlled by Voxx."}))
          :output_format (type-optional Type (.String  Type #js {:description "Format. Default: mp3."}))
+         :postprocess_profile (type-optional Type (.String Type #js {:description "Final Voxx mastering profile. Default sports-commentator-v1. Aliases: sports, broadcast, narrator, radio, soft; off disables."}))
+         :postprocess_enabled (type-optional Type (.Boolean Type #js {:description "Enable final Voxx postprocess. Default true."}))
+         :prompt_aware  (type-optional Type (.Boolean Type #js {:description "Prompt-aware tag mode. Default true; Voxx consumes tags as segment-level postprocessing directions."}))
+         :prompt_aware_style (type-optional Type (.String Type #js {:description "Optional custom instruction for tag interpretation."}))
          :auto_mode     (type-optional Type (.Boolean Type #js {:description "auto_mode. Default true."}))}))
 
 (defn tts-stream-execute [config]
   (fn [_call-id params on-update & _]
-    (let [voice-id  (or (blank->nil (aget params "voice_id"))     "alloy")
-          model-id  (or (blank->nil (aget params "model_id"))     "kokoro")
+    (let [voice-id  (or (blank->nil (aget params "voice_id"))
+                        (blank->nil (config-value config :voxx-voice-id "voxx-voice-id" "voxxVoiceId"))
+                        "alloy")
+          model-id  (or (blank->nil (aget params "model_id"))
+                        (blank->nil (config-value config :voxx-model-id "voxx-model-id" "voxxModelId"))
+                        "xiaomi_mimo")
           out-fmt   (or (blank->nil (aget params "output_format")) "mp3")
+          postprocess-profile (or (blank->nil (aget params "postprocess_profile"))
+                                  (blank->nil (config-value config :voxx-postprocess-profile "voxx-postprocess-profile" "voxxPostprocessProfile"))
+                                  "sports-commentator-v1")
+          postprocess-enabled (if (some? (aget params "postprocess_enabled"))
+                                (bool-value (aget params "postprocess_enabled") true)
+                                (config-bool-value config :voxx-postprocess-enabled "voxx-postprocess-enabled" "voxxPostprocessEnabled" true))
+          prompt-aware (if (some? (aget params "prompt_aware"))
+                         (bool-value (aget params "prompt_aware") true)
+                         (config-bool-value config :voxx-prompt-aware "voxx-prompt-aware" "voxxPromptAware" true))
+          prompt-aware-style (or (blank->nil (aget params "prompt_aware_style"))
+                                 (blank->nil (config-value config :voxx-prompt-aware-style "voxx-prompt-aware-style" "voxxPromptAwareStyle")))
           auto-mode (not= false (aget params "auto_mode"))
           key-ok?   (boolean (resolve-voice-key config))]
       (maybe-tool-update! on-update "voice.tts_stream: returning WS params...")
       (p/resolved
        (tool-text-result
-        (cond-> "Connect to /ws/voice/tts. Send {type:start,...}, then {type:text,text:...} chunks, then {type:flush}. Receive {type:audio,audio:<base64>} chunks."
+        (cond-> "Connect to /ws/voice/tts. Send {type:start,...}, then {type:text,text:...} chunks, then {type:flush}. Include postprocess_profile/postprocess_enabled/prompt_aware in the start message or query. Receive {type:audio,audio:<base64>} chunks."
           (not key-ok?) (str " WARNING: VOICE_GATEWAY_API_KEY is not configured."))
         {:ws_endpoint "/ws/voice/tts" :voice_id voice-id :model_id model-id
-         :output_format out-fmt :auto-mode auto-mode :api_key_configured key-ok?})))))
+         :output_format out-fmt :auto-mode auto-mode :api_key_configured key-ok?
+         :postprocess_profile (if postprocess-enabled postprocess-profile "none")
+         :postprocess_enabled postprocess-enabled
+         :prompt_aware prompt-aware
+         :prompt_aware_style prompt-aware-style})))))
 
 ;; --- voice.openutau_project ---
 
@@ -152,9 +232,9 @@
     (when-not (seq notes) (throw (js/Error. "notes must contain at least one note")))
     (maybe-tool-update! on-update (str "Writing OpenUtau project " relative "..."))
     (p/do
-      (.mkdir node-fs output-dir #js {:recursive true})
-      (.writeFile node-fs absolute ustx-yaml "utf8")
-      (.writeFile node-fs readme-abs readme-text "utf8")
+      (.mkdir fs-promises output-dir #js {:recursive true})
+      (.writeFile fs-promises absolute ustx-yaml "utf8")
+      (.writeFile fs-promises readme-abs readme-text "utf8")
       (tool-text-result
        (str "Created OpenUtau project at " relative " with " (count notes) " notes.")
        {:path relative :readme_path readme-rel :project_name project-name
@@ -204,22 +284,28 @@
                      (doto (js-obj)
                        (aset "name"            "voice.tts")
                        (aset "label"           "Text-to-Speech")
-                       (aset "description"     "Synthesize speech via Voxx Gateway. Writes MP3 to workspace.")
-                       (aset "promptSnippet"   "Use voice.tts for spoken audio from plain text.")
-                       (aset "promptGuidelines" (clj->js ["Pass plain text; strip markdown first."
-                                                             "Use model_id to select a Voxx provider per request: kokoro, melo, espeak, xiaomi_mimo, requesty, or openai."
-                                                             "Default model_id is kokoro; default voice_id is alloy; default output_format is mp3."
-                                                             "Follow with workspace_media.attach to embed audio."
-                                                             "If debugging provider choice, inspect Voxx response metadata/logs for x-openhax-tts-backend."]))
+                       (aset "description"     "Synthesize spoken audio via Voxx Gateway. Defaults to prompt-aware mode plus lively final postprocess, then writes MP3 to workspace.")
+                       (aset "promptSnippet"   "Use voice.tts for spoken audio. Default: prompt_aware=true, postprocess_profile=sports-commentator-v1, model_id=xiaomi_mimo, voice_id=alloy.")
+                       (aset "promptGuidelines" (clj->js ["Pass clean spoken copy; strip markdown formatting, but keep intentional performance tags."
+                                                             "Default mode is prompt-aware: [excited], [whisper], [laugh], [pause], [dramatic], and <break time=\"500ms\" /> are Voxx-owned performance directions, not words to speak and not markup to pass through to the provider."
+                                                             "Use tags sparingly at phrase boundaries. Bracket tags set Voxx segment-level emotion/energy filters, [pause] and <break time=\"...ms\" /> insert silence, and [laugh] inserts a short nonverbal effect."
+                                                             "Voxx consumes known performance tags, sends clean segment text to the chosen backend, stitches the segments together, then applies tag-driven inflection postprocessing plus the final mastering profile."
+                                                             "Use postprocess_profile to choose Voxx's final mastering: sports/commentator (default high energy), broadcast/warm, narrator/polish, radio/crisp, soft/studio, or off/none for dry capture."
+                                                             "The inherited Melo narrator-unifier remains a local Melo stage; the Voxx final postprocess stage is backend-agnostic and gives Kokoro/remote/Melo/eSpeak livelier leveling, EQ, compression, limiting, and gain."
+                                                             "Use model_id as a backend hint: kokoro, xiaomi_mimo, requesty, openai, melo, or espeak; Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER."
+                                                             "Default output_format is mp3. Follow with workspace_media.attach to embed audio."
+                                                             "If debugging, inspect Voxx headers/logs: x-openhax-tts-backend, x-openhax-tts-postprocess-profile, and x-openhax-tts-prompt-aware."]))
                        (aset "parameters" (tts-rest-params Type))
                        (aset "execute"     (tts-rest-execute runtime config))))
                    (when (allowed? "voice.tts_stream")
                      (doto (js-obj)
                        (aset "name"            "voice.tts_stream")
                        (aset "label"           "TTS Stream")
-                       (aset "description"     "WS streaming TTS session params for /ws/voice/tts.")
-                       (aset "promptSnippet"   "Use voice.tts_stream for WS TTS connection params.")
-                       (aset "promptGuidelines" (clj->js ["Returns WS protocol spec and API key status."
+                       (aset "description"     "WS streaming TTS session params for /ws/voice/tts with Voxx prompt-aware and postprocess defaults.")
+                       (aset "promptSnippet"   "Use voice.tts_stream for WS TTS connection params. Default: prompt_aware=true, postprocess_profile=sports-commentator-v1, model_id=xiaomi_mimo.")
+                       (aset "promptGuidelines" (clj->js ["Returns WS protocol spec, default postprocess/prompt-aware settings, and API key status."
+                                                             "Send prompt_aware, prompt_aware_style, postprocess_profile, and postprocess_enabled in the start message or query when overriding defaults."
+                                                             "Use the same tag rules as voice.tts: bracket/XML-like tags are Voxx-owned postprocessing directions, not spoken text."
                                                              "Use voice.tts when you need a persisted MP3 file."]))
                        (aset "parameters" (tts-stream-params Type))
                        (aset "execute"     (tts-stream-execute config))))]]

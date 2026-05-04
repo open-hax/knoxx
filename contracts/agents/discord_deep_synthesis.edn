@@ -1,6 +1,10 @@
 {:contract/id "discord_deep_synthesis",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :synthesize,
  :hooks {:before {}, :after {}},
  :agent

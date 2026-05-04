@@ -1,6 +1,10 @@
 {:contract/id "discord_idea_spawner",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :synthesize,
  :agent
  {:role :role/meta_creator,

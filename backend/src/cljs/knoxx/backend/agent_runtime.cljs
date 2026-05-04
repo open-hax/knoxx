@@ -27,8 +27,8 @@
    "function isRecord(value: unknown): value is Record<string, unknown> {\n"
    "  return typeof value === 'object' && value !== null;\n"
    "}\n\n"
-   "export default function (pi: ExtensionAPI) {\n"
-   "  pi.on('before_provider_request', (event, ctx) => {\n"
+   "export default function (etaMu: ExtensionAPI) {\n"
+   "  etaMu.on('before_provider_request', (event, ctx) => {\n"
    "    // Only touch Knoxx→Proxx traffic.\n"
    "    if (ctx.model?.provider !== 'proxx') return;\n"
    "\n"
@@ -68,7 +68,7 @@
       :else (str base "/v1/models"))))
 
 (defn- fetch-proxx-model-ids!
-  "Fetch available model ids from Proxx /v1/models so Knoxx's pi model registry includes
+  "Fetch available model ids from Proxx /v1/models so Knoxx's eta-mu model registry includes
    local Ollama (gemma4, qwen, etc) as well as upstream hosted models.
 
    Returns a Promise of vector of strings."
@@ -111,9 +111,9 @@
     (case part-type
       "text" (when (not (str/blank? (str text)))
                #js {:type "text" :text text})
-      ;; Image part routing for pi SDK:
-      ;; pi requires {type "image" :data <RAW-base64-no-prefix> :mimeType "image/..."}.
-      ;; Never use image_url shape — pi does not handle it.
+      ;; Image part routing for the eta-mu SDK:
+      ;; eta-mu requires {type "image" :data <RAW-base64-no-prefix> :mimeType "image/..."}.
+      ;; Never use image_url shape — eta-mu does not handle it.
       ;; Remote URLs should have been materialized (fetched → data URI) before reaching here.
       "image" (cond
                 (and (string? data) (not (str/blank? data)) (str/starts-with? data "data:"))
@@ -278,12 +278,31 @@
 
 (defn- effective-tool-auth-context
   [auth-context allowed-tool-ids]
-(if-not auth-context
-     nil
-     (assoc auth-context
-            :toolPolicies (mapv (fn [tool-id]
-                                  {:toolId tool-id :effect "allow"})
-                                (sort (vec allowed-tool-ids))))))
+  (if-not auth-context
+    nil
+    (assoc auth-context
+           :toolPolicies (mapv (fn [tool-id]
+                                 {:toolId tool-id :effect "allow"})
+                               (sort (vec allowed-tool-ids))))))
+
+(defn- tool-runtime-name
+  "Return the eta-mu runtime name for a built-in/custom tool entry.
+   Built-ins are strings after eta-mu 0.70; custom tools are JS objects and may
+   have sanitized names such as discord_send with originalName=discord.send."
+  [tool]
+  (cond
+    (string? tool) (some-> tool str str/trim not-empty)
+    :else (or (some-> tool (aget "name") str str/trim not-empty)
+              (some-> tool (aget "id") str str/trim not-empty)
+              (some-> tool (aget "label") str str/trim not-empty))))
+
+(defn- enabled-tool-name-allowlist
+  [builtin-tools custom-tools]
+  (->> (concat (or builtin-tools [])
+               (if (array? custom-tools) (array-seq custom-tools) []))
+       (keep tool-runtime-name)
+       distinct
+       vec))
 
 (defn- path-resolve
   [^js node-path & parts]
@@ -475,6 +494,9 @@
                                                       (:contract-id agent-spec)
                                                       (:actor-id agent-spec))
                 tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
+                builtin-tools (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec))
+                custom-tools (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
+                tool-name-allowlist (enabled-tool-name-allowlist builtin-tools custom-tools)
                 create-session (fn [session-manager]
                                  (-> (createAgentSession
                                       #js {:cwd (:workspace-root config)
@@ -486,8 +508,8 @@
                                            :sessionManager session-manager
                                            :model model
                                            :thinkingLevel thinking-level
-                                           :tools (clj->js (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)))
-                                           :customTools (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)})
+                                           :tools (clj->js tool-name-allowlist)
+                                           :customTools custom-tools})
                                      (.then (fn [result]
                                               (let [session (aget result "session")]
                                                 (.setThinkingLevel session thinking-level)
@@ -495,9 +517,10 @@
                                                 ;; into the LLM context immediately. When the agent
                                                 ;; reads a Discord channel and encounters an image, it
                                                 ;; sees it inline — same as a human scrolling Discord.
-                                                (.setAfterToolCall
-                                                  (.-agent session)
-                                                  (fn [ctx _signal]
+                                                (when (fn? (some-> session (aget "agent") (aget "setAfterToolCall")))
+                                                  (.setAfterToolCall
+                                                   (aget session "agent")
+                                                   (fn [ctx _signal]
                                                     (let [result     (aget ctx "result")
                                                           details    (when result (aget result "details"))
                                                           raw-parts  (or (when details (aget details "content_parts"))
@@ -545,10 +568,10 @@
                                                                                merged   (clj->js (into (vec (array-seq existing)) good))]
                                                                            #js {:content merged})))))
                                                             (.catch (fn [_] nil)))
-                                                        (js/Promise.resolve nil)))))
+                                                        (js/Promise.resolve nil))))))
                                                 session)))))]
             (if (no-content? model)
-              (js/Promise.reject (js/Error. (str "No pi model configured for " model-id)))
+              (js/Promise.reject (js/Error. (str "No eta-mu model configured for " model-id)))
               (let [session-manager (.inMemory SessionManager (:workspace-root config))]
                 (when-not (str/blank? (str (or session-id "")))
                   (.newSession session-manager #js {:id (str session-id)}))
@@ -560,11 +583,7 @@
 
 (defn- visible-session-signature
   [runtime config auth-context agent-spec]
-  (let [name-of (fn [tool]
-                  (or (some-> tool (aget "name") str str/trim not-empty)
-                      (some-> tool (aget "id") str str/trim not-empty)
-                      (some-> tool (aget "label") str str/trim not-empty)))
-        allowed-tool-ids (allowed-tool-id-set config
+  (let [allowed-tool-ids (allowed-tool-id-set config
                                               (:role agent-spec)
                                               auth-context
                                               (:contract-id agent-spec)
@@ -575,7 +594,7 @@
                        (if (array? tools) (array-seq tools) [])
                        [])]
     (pr-str {:tools (->> (concat builtin-tools custom-tools)
-                         (keep name-of)
+                         (keep tool-runtime-name)
                          sort
                          distinct
                          vec)

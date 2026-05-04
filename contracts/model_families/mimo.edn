@@ -1,0 +1,12 @@
+{:model-family/id "mimo"
+ :model-family/provider :proxx
+ :model-family/prefixes ["mimo-v2-" "mimo-v2."
+                         "xiaomi/mimo-v2-" "xiaomi/mimo-v2."
+                         "xiaomimimo/mimo-v2-" "xiaomimimo/mimo-v2."]
+ :model-family/allowlisted true
+ :model-family/reasoning true
+ :model-family/default-thinking :medium
+ :model-family/thinking-levels [:off :minimal :low :medium :high :xhigh]
+ :model-family/context-window 1000000
+ :model-family/max-tokens 65536
+ :model-family/input [:text]}

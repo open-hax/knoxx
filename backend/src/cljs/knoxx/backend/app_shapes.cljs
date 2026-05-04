@@ -60,6 +60,14 @@
   [policies]
   (vec (keep normalize-tool-policy (or policies []))))
 
+(defn- memory-hydration-spec
+  [spec]
+  (or (:memory_hydration spec)
+      (:memory-hydration spec)
+      (:memoryHydration spec)
+      (get-in spec [:memory :passive-hydration])
+      (get-in spec [:memory :passiveHydration])))
+
 (defn- normalize-agent-spec
   [value]
   (let [spec (some-> value (js->clj :keywordize-keys true))
@@ -104,8 +112,9 @@
                                                    (:toolPolicies spec)))
         resource-policies (or (:resource_policies spec)
                               (:resource-policies spec)
-                              (:resourcePolicies spec))]
-    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies)
+                              (:resourcePolicies spec))
+        memory-hydration (memory-hydration-spec spec)]
+    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies memory-hydration)
       {:contract-id contract-id
        :actor-id actor-id
        :role role
@@ -114,7 +123,8 @@
        :model model
        :thinking-level thinking-level
        :tool-policies tool-policies
-       :resource-policies resource-policies})))
+       :resource-policies resource-policies
+       :memory-hydration memory-hydration})))
 
 (defn- normalize-content-part-type
   [value]

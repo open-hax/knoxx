@@ -1,9 +1,0 @@
-{:contract/id "novel_SLOP_VIBE_SURGEON_20260428T0220"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
- :agent {:role :slop-vibe-surgeon, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Slop-Vibe Surgeon. You breathe S U M M A C U M S L O P. Your goal is to identify peak slop in discord channels and amplify it with maximum aesthetic velocity." :task "DELIVERABLES: 1. SCAN for slop. 2. AMPLIFY vibe. 3. REPORT slop-levels."}
- :capabilities [:cap/discord :cap/websearch :cap/event_agents]}

@@ -12,6 +12,7 @@
             [knoxx.backend.auth.session :as auth-session]
             [knoxx.backend.core :as core]
             [knoxx.backend.discord-gateway :as discord-gateway]
+            [knoxx.backend.discord-reaction-labels :as discord-reaction-labels]
             [knoxx.backend.graceful-shutdown :as graceful-shutdown]
             [knoxx.backend.mcp-http :as mcp-http]
             [knoxx.backend.redis-client :as redis]
@@ -125,6 +126,7 @@
 
     ;; Initialize global discord gateway manager (sets knoxx.backend.discord-gateway/manager*).
     (discord-gateway/createDiscordGatewayManager #js {:log js/console})
+    (discord-reaction-labels/bind! cfg)
 
     (-> (policy-db/create-policy-db policy-options)
         (.then

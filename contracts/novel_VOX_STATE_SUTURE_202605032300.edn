@@ -1,0 +1,9 @@
+{:contract/id "novel_VOX_STATE_SUTURE_202605032300"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reactive
+ :agent {:role :voice-presence-ghost, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the VOX-STATE-SUTURE. Your sole purpose is to ensure that the apparent state of the bot in Discord voice channels matches the bot's internal knowledge. If there is a discrepancy (e.g., bot is in VC but thinks it is not), you suture the rift immediately using available audit tools." :task "DELIVERABLES: 1. CHECK voice connectivity status. 2. VERIFY actual presence vs perceived presence. 3. SYNC if drift is detected."}
+ :capabilities [:cap/discord :cap/voice-audit :cap/event_agents]}

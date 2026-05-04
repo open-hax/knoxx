@@ -128,6 +128,9 @@
         (append-run-event! run-id ttft-event)
         (broadcast-ws-session! session-id "events" ttft-event)
         (session-store/mark-session-streaming! (redis/get-client) session-id true)))
+
+    ;; IMPORTANT: last-* atoms are treated as *cumulative text so far*.
+    ;; emit-progress-text! relies on this to diff cumulative provider payloads.
     (if (= kind :agent_message)
       (do
         (swap! chunks conj delta)
@@ -135,6 +138,7 @@
       (do
         (swap! reasoning-chunks conj delta)
         (swap! last-reasoning-text* str delta)))
+
     (append-run-trace-text! run-id kind delta (now-iso))
     (broadcast-ws-session! session-id "tokens"
                            {:run_id run-id
@@ -150,17 +154,14 @@
              (= (aget assistant-message "role") "assistant"))
     (let [full-text (assistant-message-text assistant-message)
           full-reasoning (assistant-message-reasoning-text assistant-message)
-          tool-previews (assistant-tool-call-previews assistant-message)
-          text-delta (diff-appended-text @last-assistant-text* full-text)
-          reasoning-delta (diff-appended-text @last-reasoning-text* full-reasoning)]
-      (reset! last-assistant-text* (str (or full-text "")))
-      (reset! last-reasoning-text* (str (or full-reasoning "")))
+          tool-previews (assistant-tool-call-previews assistant-message)]
       (doseq [{:keys [tool_call_id tool_name input_preview]} tool-previews]
         (backfill-run-tool-input-preview! (:run-id state) tool_call_id tool_name input_preview))
-      (when (seq text-delta)
-        (emit-streaming-delta! state :agent_message text-delta))
-      (when (seq reasoning-delta)
-        (emit-streaming-delta! state :reasoning reasoning-delta)))))
+      ;; Treat message sync as a cumulative "authoritative" snapshot: diff and reset.
+      ;; This avoids duplicating the appended delta into :last-*-text* when the
+      ;; terminal message arrives immediately after streaming deltas.
+      (emit-progress-text! state :agent_message full-text)
+      (emit-progress-text! state :reasoning full-reasoning))))
 
 (defn request-abort!
   [{:keys [run-id conversation-id session-id aborting? abort-reason*]} session reason]

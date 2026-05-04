@@ -40,7 +40,7 @@ const PINNED_CONTEXT_KEY = "knoxx_pinned_context";
 const CHAT_SESSION_STATE_KEY = "knoxx_chat_session_state";
 const CHAT_SIDEBAR_WIDTH_KEY = "knoxx_chat_sidebar_width_px";
 const SESSION_ACTOR_FILTER_KEY = "knoxx_session_actor_filter";
-const EXCLUDE_PI_SESSIONS_KEY = "knoxx_exclude_pi_sessions";
+const EXCLUDE_ETA_MU_SESSIONS_KEY = "knoxx_exclude_eta_mu_sessions";
 const LAST_CHAT_SETTINGS_KEY = "knoxx_last_chat_settings";
 const DEFAULT_ROLE = "executive";
 const SEND_UI_GUARD_TIMEOUT_MS = 30 * 60 * 1000;
@@ -210,7 +210,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
   const [visibilityFilter, setVisibilityFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState("docs");
   const [sessionActorFilter, setSessionActorFilter] = useState(() => readStoredString(SESSION_ACTOR_FILTER_KEY, "all"));
-  const [excludePiSessions, setExcludePiSessions] = useState(() => readStoredBoolean(EXCLUDE_PI_SESSIONS_KEY, true));
+  const [excludeEtaMuSessions, setExcludeEtaMuSessions] = useState(() => readStoredBoolean(EXCLUDE_ETA_MU_SESSIONS_KEY, true));
   const sendTimeoutRef = useRef<number | null>(null);
   const pendingAssistantIdRef = useRef<string | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
@@ -419,7 +419,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     browseData,
     semanticQuery,
     sessionActorFilter,
-    excludePiSessions,
+    excludeEtaMuSessions,
     setBrowseData,
     setPreviewData,
     setLoadingBrowse,
@@ -464,7 +464,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     void refreshRecentSessions();
     // refreshRecentSessions is recreated each render; session/actor/agent catalog changes are the intended triggers.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, activeActorId, availableAgents, sessionActorFilter, excludePiSessions]);
+  }, [sessionId, activeActorId, availableAgents, sessionActorFilter, excludeEtaMuSessions]);
 
   useEffect(() => {
     if (!semanticQuery.trim()) {
@@ -478,16 +478,16 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     void runSemanticSearch(semanticQuery);
     // runSemanticSearch is recreated each render; actor filter changes are the intentional retrigger here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionActorFilter, excludePiSessions]);
+  }, [sessionActorFilter, excludeEtaMuSessions]);
 
   useEffect(() => {
     try {
       window.localStorage.setItem(SESSION_ACTOR_FILTER_KEY, sessionActorFilter);
-      window.localStorage.setItem(EXCLUDE_PI_SESSIONS_KEY, String(excludePiSessions));
+      window.localStorage.setItem(EXCLUDE_ETA_MU_SESSIONS_KEY, String(excludeEtaMuSessions));
     } catch {
       // ignore storage failures
     }
-  }, [excludePiSessions, sessionActorFilter]);
+  }, [excludeEtaMuSessions, sessionActorFilter]);
 
   useChatPageConfig({
     defaultRole,
@@ -663,8 +663,8 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     setKindFilter,
     sessionActorFilter,
     setSessionActorFilter,
-    excludePiSessions,
-    setExcludePiSessions,
+    excludeEtaMuSessions,
+    setExcludeEtaMuSessions,
     statsTotal,
     statsByVisibility,
     syncingWorkspace,

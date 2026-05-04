@@ -1,5 +1,9 @@
 {:contract/id "session_Mute-Void-Heralder_20260429T0346"
  :contract/kind :agent
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}}
  :trigger-kind :manual
  :contract/actor "discord_automation"
  :source-kind :discord

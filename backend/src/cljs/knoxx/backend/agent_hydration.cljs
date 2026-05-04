@@ -11,6 +11,7 @@
             [knoxx.backend.tools.shared :as shared]
             [knoxx.backend.tools.semantic :as semantic]
             [knoxx.backend.tools.discord :as discord]
+            [knoxx.backend.tools.discord-voice :as discord-voice]
             [knoxx.backend.tools.event-agents :as event-agents]
             [knoxx.backend.tools.openplanner :as openplanner]
             [knoxx.backend.tools.music :as music]
@@ -48,20 +49,56 @@
   (boolean (re-find #"(?i)\b(previous|earlier|before|remember|last time|prior|session|you said|you did|we talked|we discussed)\b"
                     (or message ""))))
 
+(defn- passive-memory-hydration-options
+  [agent-spec]
+  (or (:memory-hydration agent-spec)
+      (:memoryHydration agent-spec)
+      (get-in agent-spec [:memory :passive-hydration])
+      (get-in agent-spec [:memory :passiveHydration])
+      (get-in agent-spec [:memory_hydration])))
+
+(defn- passive-memory-hydration-mode
+  [opts]
+  (some-> (or (:mode opts) (:source-mode opts) (:sourceMode opts)) str str/trim str/lower-case not-empty))
+
+(defn- positive-int-or
+  [value fallback]
+  (let [parsed (js/parseInt value 10)]
+    (if (and (number? parsed) (not (js/isNaN parsed)) (pos? parsed))
+      parsed
+      fallback)))
+
+(defn- passive-memory-hydration-enabled?
+  [opts]
+  (and (not (false? (:enabled? opts)))
+       (not (false? (:enabled opts)))))
+
+(defn- passive-memory-hydration-should-run?
+  [message opts]
+  (let [mode (passive-memory-hydration-mode opts)]
+    (or (contains? #{"always" "eager" "on"} mode)
+        (and (not= "off" mode)
+             (memory-hydration-trigger? message)))))
+
 (defn passive-memory-hydration!
-  ([config conversation-id message] (passive-memory-hydration! config conversation-id message nil))
-  ([config conversation-id message auth-context]
-   (if (and (openplanner-enabled? config)
-            (memory-hydration-trigger? message))
-     (let [started-ms (.now js/Date)]
-       (-> (openplanner-memory-search! config {:query message :k 4})
-           (.then (fn [result]
-                    (-> (filter-authorized-memory-hits! config auth-context (:hits result))
-                        (.then (fn [hits]
-                                 (assoc result :hits hits
-                                               :elapsedMs (- (.now js/Date) started-ms)
-                                               :conversationId conversation-id))))))))
-     (js/Promise.resolve nil))))
+  ([config conversation-id message] (passive-memory-hydration! config conversation-id message nil nil))
+  ([config conversation-id message auth-context] (passive-memory-hydration! config conversation-id message auth-context nil))
+  ([config conversation-id message auth-context agent-spec]
+   (let [opts (or (passive-memory-hydration-options agent-spec) {})]
+     (if (and (openplanner-enabled? config)
+              (passive-memory-hydration-enabled? opts)
+              (passive-memory-hydration-should-run? message opts))
+       (let [started-ms (.now js/Date)
+             k (max 1 (min 12 (positive-int-or (or (:k opts) (:top-k opts) (:topK opts)) 6)))]
+         (-> (openplanner-memory-search! config {:query message :k k})
+             (.then (fn [result]
+                      (-> (filter-authorized-memory-hits! config auth-context (:hits result))
+                          (.then (fn [hits]
+                                   (assoc result :hits hits
+                                                 :mode (or (passive-memory-hydration-mode opts) "triggered")
+                                                 :elapsedMs (- (.now js/Date) started-ms)
+                                                 :conversationId conversation-id))))))))
+       (js/Promise.resolve nil)))))
 
 
 (defn passive-hydration-text
@@ -153,8 +190,9 @@
   ([runtime config auth-context allowed-tool-ids]
    (-> (shared/sanitize-custom-tools
         (.concat
-         (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (semantic/create-semantic-custom-tools runtime config auth-context)
+         (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (semantic/create-semantic-custom-tools runtime config auth-context)
                                                                                  (discord/create-discord-custom-tools runtime config auth-context))
+                                                                                 (discord-voice/create-discord-voice-custom-tools runtime config auth-context))
                                                                         (event-agents/create-event-agent-custom-tools runtime config auth-context))
                                                                (openplanner/create-openplanner-custom-tools runtime config auth-context))
                                                       (music/create-music-custom-tools runtime config auth-context))

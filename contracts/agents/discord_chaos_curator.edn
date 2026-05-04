@@ -1,6 +1,10 @@
 {:contract/id "discord_chaos_curator",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :respond,
  :events {:always [:discord.message/keyword], :maybe []},
  :hooks {:before {}, :after {}},

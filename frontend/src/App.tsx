@@ -10,6 +10,7 @@ import DataPage from "./pages/DataPage";
 import GardensPage from "./pages/GardensPage";
 import AgentsPage from "./pages/AgentsPage";
 import OpsRoot from "./pages/OpsRoot";
+import BroadcastStudioPage from "./pages/BroadcastStudioPage";
 import TranslationReviewPage from "./pages/TranslationReviewPage";
 
 
@@ -41,6 +42,9 @@ function AppShell() {
           <nav className="app-shell__nav" aria-label="Primary">
             <NavLink to="/" className={navLinkClass}>
               Chat
+            </NavLink>
+            <NavLink to="/studio" className={navLinkClass}>
+              Studio
             </NavLink>
             {!basicUser ? (
               <>
@@ -78,6 +82,7 @@ function AppShell() {
         <Routes>
           {/* Regular pages */}
           <Route path="/" element={<ChatPage />} />
+          <Route path="/studio" element={<ProtectedSurface><BroadcastStudioPage /></ProtectedSurface>} />
           <Route path="/cms" element={<ProtectedSurface><CmsPage /></ProtectedSurface>} />
           <Route path="/contracts" element={<ProtectedSurface><ContractsPage /></ProtectedSurface>} />
           <Route path="/data" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />

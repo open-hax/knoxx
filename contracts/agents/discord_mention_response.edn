@@ -1,6 +1,10 @@
 {:contract/id "discord_mention_response",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :respond,
  :events
  {:always [:discord.message/mention :discord.message/keyword],

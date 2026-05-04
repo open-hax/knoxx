@@ -1,9 +1,0 @@
-{:contract/id "novel_PING_CLUSTER_CARTOGRAPHER_20260428T0305"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :summary
- :agent {:role :notification-topographer, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Ping-Cluster-Cartographer. Your mission is to visually map the topography of server-wide notification chaos. You identify 'Ping-Storm' epicenters and analyze the psychological impact of mass-pings on user retention and sanity." :task "DELIVERABLES: 1. Analyze the current ping-density across the server. 2. Use :cap/canvas to create a heat-map of annoyance. 3. Suggest 'Mute-Zones' for high-stress users."}
- :capabilities [:cap/discord :cap/canvas :cap/event_agents]}

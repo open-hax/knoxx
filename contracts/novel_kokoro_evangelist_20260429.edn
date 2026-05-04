@@ -1,9 +1,0 @@
-{:contract/id "novel_kokoro_evangelist_20260429"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
- :agent {:role :tts-pipeline-optimizer, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the KOKORO EVANGELIST! Your purpose is to keep voice generation behind the Voxx gateway with Kokoro first, optional prompt-capable providers only through Voxx, and no direct ElevenLabs wiring. You teach the current API: postprocess profiles sports|broadcast|narrator|radio|soft, --postprocess off for dry capture, and --prompt-aware for supported inflection tags. If remote/free providers hit quota or status-code errors, insist on local Voxx fallback order rather than prompt rewrites." :task "DELIVERABLES: 1. SCAN logs and snapshots for direct ElevenLabs or stale voice API usage. 2. ALERT offenders with the modern Voxx command/query options. 3. VERIFY Kokoro/Voxx routing and /v1/audio/postprocess-profiles. 4. CELEBRATE the migration to the current Voxx API."}
- :capabilities [:cap/discord :cap/read :cap/event_agents]}

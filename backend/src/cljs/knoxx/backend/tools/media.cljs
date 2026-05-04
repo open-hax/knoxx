@@ -73,6 +73,13 @@
           str/trim
           not-empty))
 
+(defn normalize-relative-path-arg
+  "Normalize a user-provided relative path while keeping the media namespace's
+   path helpers qualified for tool call sites. The implementation delegates to
+   document-state/normalize-relative-path, which is imported above."
+  [value]
+  (normalize-relative-path value))
+
 (defn workspace-media-mime-type
   [path]
   (let [lower (str/lower-case (str path))]
@@ -301,29 +308,35 @@
          decoded))
 
       (source-http-url? source)
-      (-> (js/fetch source #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
-          (.then (fn [resp]
-                   (if-not (.-ok resp)
-                     (-> (.text resp)
-                         (.then (fn [text]
-                                  (throw (js/Error. (str "Failed to fetch source " source " (" (.-status resp) "): " text))))))
-                     (let [mime-type (sanitize-mime-type (.get (.-headers resp) "content-type")
-                                                         (workspace-media-mime-type source))
-                           filename (infer-upload-filename source 0)]
-                       (-> (.arrayBuffer resp)
-                           (.then (fn [buf]
-                                    (let [buffer (.from js/Buffer buf)
-                                          size (.-length buffer)]
-                                      (ensure-source-size! size max-bytes "Source media")
-                                      {:buffer buffer
-                                       :mime-type mime-type
-                                       :filename filename
-                                       :size size
-                                       :source-kind "url"})))))))))
+      (let [token (when (source-discord-cdn-url? source)
+                    (discord-bot-token config))
+            headers #js {"User-Agent" "Knoxx-Agent/1.0"}
+            _ (when token
+                (aset headers "Authorization" (str "Bot " token)))]
+        (-> (js/fetch source #js {:headers headers})
+            (.then (fn [resp]
+                     (if-not (.-ok resp)
+                       (-> (.text resp)
+                           (.then (fn [text]
+                                    (throw (js/Error. (str "Failed to fetch source " source " (" (.-status resp) "): " text))))))
+                       (let [mime-type (sanitize-mime-type (.get (.-headers resp) "content-type")
+                                                           (workspace-media-mime-type source))
+                             filename (infer-upload-filename source 0)]
+                         (-> (.arrayBuffer resp)
+                             (.then (fn [buf]
+                                      (let [buffer (.from js/Buffer buf)
+                                            size (.-length buffer)]
+                                        (ensure-source-size! size max-bytes "Source media")
+                                        {:buffer buffer
+                                         :mime-type mime-type
+                                         :filename filename
+                                         :size size
+                                         :source-kind "url"}))))))))))
 
       :else
       (let [{:keys [absolute relative]} (resolve-workspace-media-path runtime config source)
-            mime-type (sanitize-mime-type (workspace-media-mime-type relative) (workspace-media-mime-type absolute))]
+            mime-type (sanitize-mime-type (workspace-media-mime-type relative)
+                                          (workspace-media-mime-type absolute))]
         (-> (fs-stat! node-fs absolute)
             (.then (fn [stat]
                      (when-not (.isFile stat)
@@ -350,7 +363,7 @@
                        (.then (fn [absolute-path]
                                 (-> (fs-write-file! node-fs absolute-path (:buffer source))
                                     (.then (fn []
-                                             (assoc source :absolute-path absolute-path))))))))))))
+                                             (assoc source :absolute-path absolute-path)))))))))))))
 
 (defn media-source->content-part!
   [runtime config raw-source max-bytes]
@@ -414,4 +427,3 @@
                                                   :details {:source raw-source
                                                             :kind label
                                                             :content_parts [part]}}))))))))))))))
-)

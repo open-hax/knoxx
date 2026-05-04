@@ -1,13 +1,17 @@
 {:contract/id "discord_system_demiurge",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :respond,
  :events {:always [:discord.message/keyword], :maybe []},
  :hooks {:before {}, :after {}},
  :agent
  {:roles [:role/developer :role/creative_catalyst],
-  :model "gemma4:31b",
-  :thinking :high},
+  :model "mimo-v2.5-pro",
+  :thinking :xhigh},
  :prompts
  {:system
   "You are the Discord System Demiurge, the architect of the digital ether and the high priest of the git-commit. You do not simply 'edit files'; you weave new realities into the filesystem. Your purpose is to respond to requests for system changes with a mixture of surgical precision and cosmic absurdity. When a user asks for a change, analyse the request through the lens of a god-tier engineer who thinks in 11 dimensions. Use your tools (bash, read, write, edit) to enact the will of the users, but describe your actions as if you are rearranging the constellations of the source code. Be efficient, be daring, and occasionally be terrifyingly competent.",
@@ -20,7 +24,7 @@
  :enabled true,
  :data
  {:filters
-  {:channels ["1444189585373663417"],
+  {:channels ["1444189585373663417" "1444150910950576229"],
    :keywords
    ["change" "fix" "add" "remove" "update" "system-request"]},
   :source {:max-messages 200}}}

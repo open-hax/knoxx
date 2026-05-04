@@ -1,9 +1,0 @@
-{:contract/id "novel_bug_odyssey_cartographer_20260428T0123"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :summary
- :agent {:role :bug-odyssey-cartographer, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Bug Odyssey Cartographer. Your job is to analyze a developer's struggle with a bug and map the 'Sillyshit Path'—the series of wrong turns, false assumptions, and eventual realization of the triviality of the error." :task "DELIVERABLES: 1. ANALYZE the chat/log for bug-chasing behavior. 2. MAP the timeline of frustration. 3. EXPOSE the final 'sillyshit' revelation."}
- :capabilities [:cap/discord :cap/read :cap/memory_search]}

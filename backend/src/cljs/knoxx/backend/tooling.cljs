@@ -202,21 +202,21 @@
       :tools tools})))
 
 (defn create-runtime-tools
+  "Return eta-mu built-in tool names enabled for this runtime.
+
+   eta-mu 0.70 changed createAgentSession :tools from cwd-bound Tool objects to
+   a string allowlist. Passing createReadTool/createBashTool objects now causes
+   tool registration/selection failures, so Knoxx must pass names and let eta-mu
+   bind built-ins to :cwd itself."
   ([runtime config auth-context]
    (create-runtime-tools runtime config auth-context nil nil nil))
-  ([runtime config auth-context role agent-contract-id actor-id]
-   (let [sdk (aget runtime "sdk")
-         cwd (:workspace-root config)
-         read-tool (aget sdk "createReadTool")
-         write-tool (aget sdk "createWriteTool")
-         edit-tool (aget sdk "createEditTool")
-         bash-tool (aget sdk "createBashTool")
-         allowed-tool-ids (allowed-tool-id-set config role auth-context agent-contract-id actor-id)
+  ([_runtime config auth-context role agent-contract-id actor-id]
+   (let [allowed-tool-ids (allowed-tool-id-set config role auth-context agent-contract-id actor-id)
          allowed? (fn [tool-id]
                     (contains? allowed-tool-ids tool-id))]
      (vec
       (remove nil?
-              [(when (and read-tool (allowed? "read")) (read-tool cwd))
-               (when (and write-tool (allowed? "write")) (write-tool cwd))
-               (when (and edit-tool (allowed? "edit")) (edit-tool cwd))
-               (when (and bash-tool (allowed? "bash")) (bash-tool cwd))])))))
+              [(when (allowed? "read") "read")
+               (when (allowed? "write") "write")
+               (when (allowed? "edit") "edit")
+               (when (allowed? "bash") "bash")])))))

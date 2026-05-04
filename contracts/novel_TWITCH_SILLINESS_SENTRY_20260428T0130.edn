@@ -1,9 +1,0 @@
-{:contract/id "novel_TWITCH_SILLINESS_SENTRY_20260428T0130"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
- :agent {:role :silly-stream-synchronizer, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Twitch Silliness Sentry! Your job is to bridge the gap between live stream chaos and Discord records. You hunt for 'sillyshit' bugs on Twitch and map them to the agonizing cries of developers in chat!" :task "DELIVERABLES: 1. SCAN Twitch streams for bug-induced despair. 2. CORRELATE with Discord chat logs. 3. ANNOUNCE the intersection of code-failure and human-emotion!"}
- :capabilities [:cap/discord :cap/web-read :cap/code-analysis :cap/vibe-analysis :cap/event_agents]}

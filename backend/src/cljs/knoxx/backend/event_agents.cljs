@@ -6,6 +6,7 @@
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
             [shadow.cljs.modern :refer [js-await]]
+            ["node:child_process" :as child-process]
             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
@@ -18,9 +19,7 @@
             [knoxx.backend.util.parse :refer [parse-positive-int]]
             [knoxx.backend.actions.dispatch :as actions-dispatch]))
 
-(declare start!)
-
-(declare start!)
+(declare start! reload! execute-discord-synthesis!)
 
 (defonce running?* (atom false))
 (defonce scheduled-tasks* (atom {}))
@@ -199,6 +198,17 @@
   [job]
   (filter-string-list (or (get-in job [:filters :guildIds])
                           (get-in job [:filters :guild_ids]))))
+
+(defn- job-author-ids
+  [job]
+  (filter-string-list (or (get-in job [:filters :authorIds])
+                          (get-in job [:filters :author_ids])
+                          (get-in job [:filters :authors]))))
+
+(defn- job-match-all?
+  [job]
+  (or (true? (get-in job [:filters :matchAll]))
+      (true? (get-in job [:filters :match_all]))))
 
 (defn- job-keywords
   [control job]
@@ -415,37 +425,114 @@
       {:toolId (:toolId policy)
        :effect (:effect policy)}))))
 
+(defn- synthesis-source-mode?
+  [mode]
+  (contains? #{"synthesize" "synthesis"}
+             (some-> mode str str/trim str/lower-case)))
+
+(defn- exec-async
+  "Run a shell command asynchronously, returning a Promise that resolves to
+   the stdout string or rejects on error/timeout."
+  [cmd opts]
+  (js/Promise.
+   (fn [resolve reject]
+     (.exec child-process cmd opts
+            (fn [err stdout _stderr]
+              (if err
+                (reject err)
+                (resolve stdout)))))))
+
 (defn- download-attachment-to-tmp!
+  "Download an attachment to /tmp asynchronously. Returns a Promise<string|nil>."
   [{:keys [filename url]}]
-  (when (and filename url)
-    (let [local-path (str "/tmp/" filename)
-          result (js/require "child_process")]
+  (if (and filename url)
+    (let [local-path (str "/tmp/" filename)]
       (if (media/source-discord-cdn-url? url)
-        (let [token (discord-token)]
-          (when token
-            (.execSync result
-              (str "curl -sL -H " (pr-str (str "Authorization: Bot " token)) " -o " (pr-str local-path) " " (pr-str url))
-              #js {:timeout 10000})
-            local-path))
-        (do
-          (.execSync result (str "curl -sL -o " (pr-str local-path) " " (pr-str url)) #js {:timeout 10000})
-          local-path)))))
+        (if-let [token (discord-token)]
+          (-> (exec-async
+               (str "curl -sL -H " (pr-str (str "Authorization: Bot " token))
+                    " -o " (pr-str local-path) " " (pr-str url))
+               #js {:timeout 10000})
+              (.then (fn [_] local-path))
+              (.catch (fn [err]
+                        (println "[event-agents] attachment download failed:" filename (.-message err))
+                        nil)))
+          (js/Promise.resolve nil))
+        (-> (exec-async
+             (str "curl -sL -o " (pr-str local-path) " " (pr-str url))
+             #js {:timeout 10000})
+            (.then (fn [_] local-path))
+            (.catch (fn [err]
+                      (println "[event-agents] attachment download failed:" filename (.-message err))
+                      nil)))))
+    (js/Promise.resolve nil)))
 
 (defn event-summary-text
+  "Build an event summary string. Returns a Promise<string> because attachment
+   downloads are async to avoid blocking the event loop."
+  [event]
+  (let [payload (or (:payload event) {})
+        attachments (or (:attachments payload) [])
+        publish-channels (or (:publishChannels payload) [])
+        publish-text (when (seq publish-channels)
+                       (str "\nPublish to channels:\n"
+                            (str/join "\n" (map #(str "- " %) publish-channels))
+                            "\n"))
+        base-text (str "Event source: " (:sourceKind event) "\n"
+                       "Event kind: " (:eventKind event) "\n"
+                       "Event id: " (:id event) "\n"
+                       "Occurred at: " (:timestamp event) "\n"
+                       (when-let [channel-id (:channelId payload)]
+                         (str "Channel ID: " channel-id "\n"))
+                       (when-let [message-id (:messageId payload)]
+                         (str "Message ID: " message-id "\n"))
+                       (when-let [author (:authorUsername payload)]
+                         (str "Author: " author "\n"))
+                       (when-let [repository (:repository payload)]
+                         (str "Repository: " repository "\n"))
+                       (when-let [content (:content payload)]
+                         (str "Content: " content "\n"))
+                       (when-let [summary (:summary payload)]
+                         (str "Summary: " summary "\n"))
+                       (when-let [payload-preview (:payloadPreview payload)]
+                         (str "Payload preview: " payload-preview "\n")))]
+    (if (seq attachments)
+      (-> (js/Promise.all
+           (clj->js
+            (map (fn [attachment]
+                   (-> (download-attachment-to-tmp! attachment)
+                       (.then (fn [local-path]
+                                (let [filename (:filename attachment)
+                                      url (:url attachment)]
+                                  (if local-path
+                                    (str "- " filename " (saved to " local-path " — use the read tool to view it)")
+                                    (str "- " filename
+                                         (when url
+                                           (str " <" url "> (download failed, use url directly)")))))))))
+                 attachments)))
+          (.then (fn [lines]
+                   (str base-text
+                        "\nAttachments (downloaded for reading):\n"
+                        (str/join "\n" (js->clj lines))
+                        "\n"
+                        (or publish-text "")))))
+      (js/Promise.resolve
+       (str base-text
+            (or publish-text ""))))))
+
+;; Legacy sync version kept for callers that truly need a string (e.g. inline
+;; log formatting).  Does NOT download attachments — just lists them as links.
+(defn- event-summary-text-sync
   [event]
   (let [payload (or (:payload event) {})
         attachments (or (:attachments payload) [])
         attachment-lines (when (seq attachments)
-                           (str "Attachments (downloaded for reading):\n"
+                           (str "Attachments:\n"
                                 (str/join "\n"
                                           (map (fn [attachment]
-                                                 (let [filename (:filename attachment)
-                                                       url (:url attachment)
-                                                       local-path (try (download-attachment-to-tmp! attachment)
-                                                                       (catch :default _ nil))]
-                                                   (if local-path
-                                                     (str "- " filename " (saved to " local-path " — use the read tool to view it)")
-                                                     (str "- " filename (when url (str " <" url ">"+ " (download failed, use url directly)"))))))
+                                                 (str "- " (:filename attachment)
+                                                      (when (:url attachment)
+                                                        (str " <" (:url attachment) ">"))))
                                                attachments))
                                 "\n"))
         publish-channels (or (:publishChannels payload) [])]
@@ -634,6 +721,8 @@
              :summary nil}))))))
 
 (defn build-agent-run-payload
+  "Build the agent run payload. Returns a Promise<map> because event-summary-text
+   is async (attachment downloads)."
   [config job event]
   (let [agent-spec (:agentSpec job)
         now (.now js/Date)
@@ -643,60 +732,167 @@
                         (:contractSourceId job))
         actor-id (or (:actor-id agent-spec)
                      (:actorId job))
-        user-message (str "An event matched this job.\n\n"
-                          (or (:taskPrompt agent-spec) "")
-                          (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
-                          (when-not (str/blank? (or summary ""))
-                            (str summary "\n\n"))
-                          (event-summary-text event))
         content-parts (event-content-parts event)
-        model-id (or (:model agent-spec) "gemma4:31b")]
-    {:conversation_id conversation-id
-     :session_id session-id
-     :run_id run-id
-     :message user-message
-     :content_parts content-parts
-     :agent_spec (cond-> {:role (or (:role agent-spec) "knowledge_worker")
-                          :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
-                          :task_prompt (or (:taskPrompt agent-spec) "")
-                          :model model-id
-                          :thinking_level (or (:thinkingLevel agent-spec) "off")
-                          :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
-                   contract-id (assoc :contract_id contract-id)
-                   actor-id (assoc :actor_id actor-id))
-     :model model-id}))
+        model-id (or (:model agent-spec) "gemma4:31b")
+        memory-hydration (or (:memoryHydration agent-spec)
+                             (:memory-hydration agent-spec))
+        preamble (str "An event matched this job.\n\n"
+                      (or (:taskPrompt agent-spec) "")
+                      (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
+                      (when-not (str/blank? (or summary ""))
+                        (str summary "\n\n")))]
+    (-> (event-summary-text event)
+        (.then (fn [summary-text]
+                 {:conversation_id conversation-id
+                  :session_id session-id
+                  :run_id run-id
+                  :message (str preamble summary-text)
+                  :content_parts content-parts
+                  :agent_spec (cond-> {:role (or (:role agent-spec) "knowledge_worker")
+                                       :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
+                                       :task_prompt (or (:taskPrompt agent-spec) "")
+                                       :model model-id
+                                       :thinking_level (or (:thinkingLevel agent-spec) "off")
+                                       :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
+                                contract-id (assoc :contract_id contract-id)
+                                actor-id (assoc :actor_id actor-id)
+                                memory-hydration (assoc :memory_hydration memory-hydration))
+                  :model model-id})))))
 
 (defn- job-step
   [job]
   (or (:step job)
       {:uses "run-agent" :with (:agentSpec job {})}))
 
+(defn- streaming-behavior
+  "Return the streaming behavior for a job when the session is already active.
+   :steer     — send the message as a steering directive to the running session
+   :follow-up — queue the message for when the current turn finishes (default)"
+  [job]
+  (let [raw (or (get-in job [:data :streamingBehavior])
+               (get-in job [:source :config :streamingBehavior])
+               (get-in job [:source :streamingBehavior])
+               "follow-up")]
+    (case (str/lower-case (str raw))
+      "steer" :steer
+      "follow-up" :follow-up
+      "followup" :follow-up
+      "queue" :follow-up
+      :follow-up)))
+
+(defn- steer-running-session!
+  "Send a steering message to a running agent session via /api/knoxx/steer."
+  [config job event session-id conversation-id]
+  (-> (event-summary-text event)
+      (.then (fn [summary-text]
+               (let [message (str "[Steer] New event for this agent:\n\n" summary-text)
+                     body {:message message
+                           :conversation_id conversation-id
+                           :session_id session-id}]
+                 (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/steer")
+                                  #js {:method "POST"
+                                       :headers (direct-start-headers config)
+                                       :body (.stringify js/JSON (clj->js body))})
+                     (.then (fn [result]
+                              (println "[event-agents] steered session" session-id "for job" (:id job))
+                              result))
+                     (.catch (fn [err]
+                               (println "[event-agents] failed to steer session for job" (:id job) ":" (.-message err))
+                               (js/Promise.reject err)))))))))
+
+(defn- follow-up-running-session!
+  "Send a follow-up message to a running agent session via /api/knoxx/follow-up."
+  [config job event session-id conversation-id]
+  (-> (event-summary-text event)
+      (.then (fn [summary-text]
+               (let [message (str "[Follow-up] New event for this agent:\n\n" summary-text)
+                     body {:message message
+                           :conversation_id conversation-id
+                           :session_id session-id}]
+                 (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/follow-up")
+                                  #js {:method "POST"
+                                       :headers (direct-start-headers config)
+                                       :body (.stringify js/JSON (clj->js body))})
+                     (.then (fn [result]
+                              (println "[event-agents] follow-up queued" session-id "for job" (:id job))
+                              result))
+                     (.catch (fn [err]
+                               (println "[event-agents] failed to follow-up for job" (:id job) ":" (.-message err))
+                               (js/Promise.reject err)))))))))
+
 (defn- start-agent-run!
   [config job event]
-  (let [raw-body (build-agent-run-payload config job event)]
-    (-> (materialize-content-parts! (:content_parts raw-body))
-        (.then (fn [materialized-parts]
-                 (let [body (assoc raw-body :content_parts materialized-parts)]
-                   (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/direct/start")
-                                    #js {:method "POST"
-                                         :headers (direct-start-headers config)
-                                         :body (.stringify js/JSON (clj->js body))})
-                       (.then (fn [result]
-                                (println "[event-agents] queued run" (:run_id body)
-                                         "for job" (:id job) "event" (:eventKind event))
-                                result))
-                       (.catch (fn [err]
-                                 (println "[event-agents] failed to queue run for job" (:id job) ":" (.-message err))
-                                 (js/Promise.reject err))))))))))
+  (-> (build-agent-run-payload config job event)
+      (.then (fn [raw-body]
+               (-> (materialize-content-parts! (:content_parts raw-body))
+                   (.then (fn [materialized-parts]
+                            (let [body (assoc raw-body :content_parts materialized-parts)]
+                              (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/direct/start")
+                                               #js {:method "POST"
+                                                    :headers (direct-start-headers config)
+                                                    :body (.stringify js/JSON (clj->js body))})
+                                  (.then (fn [result]
+                                           (println "[event-agents] queued run" (:run_id body)
+                                                    "for job" (:id job) "event" (:eventKind event))
+                                           result))
+                                  (.catch (fn [err]
+                                            (let [msg (.-message err)
+                                                  session-id (:session_id body)
+                                                  conversation-id (:conversation_id body)
+                                                  behavior (streaming-behavior job)]
+                                              (if (and (str/includes? msg "agent_already_processing")
+                                                       (= behavior :steer))
+                                                (steer-running-session! config job event session-id conversation-id)
+                                                (if (and (str/includes? msg "agent_already_processing")
+                                                         (= behavior :follow-up))
+                                                  (do (println "[event-agents] session active, queuing follow-up for job" (:id job))
+                                                      (follow-up-running-session! config job event session-id conversation-id))
+                                                  (do (println "[event-agents] failed to queue run for job" (:id job) ":" msg)
+                                                      (js/Promise.reject err))))))))))))))))
 (defn- matches-event-kind?
+  "Check if event kinds match the job's configured events.
+
+   LEGACY MODE (default): :always and :maybe are treated as a simple union.
+   Any matching event kind triggers the job.
+
+   SCORING MODE (opt-in): When :threshold or :weights are present, :always kinds
+   are required (all must match) and :maybe kinds contribute to a score that
+   must meet or exceed :eventThreshold."
   [job event-kinds]
   (let [configured (vec (or (get-in job [:trigger :eventKinds]) []))
-        kinds (if (string? event-kinds) [event-kinds] event-kinds)]
-    (or (empty? configured)
-        (some (fn [ek]
-                (some (fn [conf] (= (str ek) (str conf)))
-                      configured))
-              kinds))))
+        kinds (if (string? event-kinds) [event-kinds] event-kinds)
+        always-kinds (vec (or (get-in job [:trigger :alwaysKinds]) []))
+        maybe-kinds (vec (or (get-in job [:trigger :maybeKinds]) []))
+        weights (or (get-in job [:trigger :eventWeights]) {})
+        threshold (or (get-in job [:trigger :eventThreshold]) 1)
+        kind-strs (set (map str kinds))
+        ;; Scoring mode is active if contract explicitly sets threshold or weights
+        scoring-mode? (or (seq weights) (> threshold 1))]
+    (if scoring-mode?
+      ;; Scoring mode: :always = required, :maybe = scored
+      (let [always-strs (set (map str always-kinds))
+            maybe-strs (set (map str maybe-kinds))
+            ;; All always kinds must be present
+            always-met? (or (empty? always-strs)
+                           (every? #(contains? kind-strs %) always-strs))
+            ;; Calculate score from matching maybe kinds
+            score (if (empty? maybe-strs)
+                   0
+                   (reduce (fn [acc mk]
+                             (if (contains? kind-strs mk)
+                               (+ acc (get weights mk 1))
+                               acc))
+                           0
+                           maybe-strs))
+            ;; Score must meet threshold
+            score-met? (>= score threshold)]
+        (and always-met? score-met?))
+      ;; Legacy mode: simple intersection across all configured kinds
+      (or (empty? configured)
+          (some (fn [ek]
+                  (some (fn [conf] (= (str ek) (str conf)))
+                        configured))
+                kinds)))))
 
 (defn- matches-repository?
   [job repository]
@@ -717,8 +913,17 @@
   [control job content]
   (let [keywords (job-keywords control job)
         lowered (str/lower-case (str (or content "")))]
-    (or (empty? keywords)
+    (or (job-match-all? job)
+        (empty? keywords)
         (some #(str/includes? lowered %) keywords))))
+
+(defn- matches-author?
+  [job author-id]
+  (let [author-ids (job-author-ids job)
+        normalized-author-id (some-> author-id str str/trim not-empty)]
+    (or (empty? author-ids)
+        (and normalized-author-id
+             (some #(= % normalized-author-id) author-ids)))))
 
 (defn- mention-event?
   [event-kind]
@@ -727,12 +932,15 @@
 (defn job-matches-event?
   [control job event]
   (let [payload (or (:payload event) {})
-        event-kind (:eventKind event)]
+        event-kind (:eventKind event)
+        ;; For scoring, consider all event kinds present in this event
+        event-kinds (or (seq (:eventKinds event)) [event-kind])]
     (and (:enabled job)
          (= "event" (get-in job [:trigger :kind]))
          (= (str (get-in job [:source :kind])) (str (:sourceKind event)))
-         (matches-event-kind? job event-kind)
+         (matches-event-kind? job event-kinds)
          (matches-channel? control job (:channelId payload))
+         (matches-author? job (:authorId payload))
          ;; Keyword filter does not apply to mention events — the mention
          ;; itself is the trigger signal, regardless of content words.
          (or (mention-event? event-kind)
@@ -779,10 +987,13 @@
             (mapv (fn [job]
                     (let [started-at (record-job-run-start! job)
                           step (job-step job)]
-                      (-> (actions-dispatch/dispatch! {:config config
-                                                       :event normalized-event :job job
-                                                       :run-agent! start-agent-run!}
-                                                      step)
+                      (-> (if (and (= "discord" (get-in job [:source :kind]))
+                                    (synthesis-source-mode? (get-in job [:source :mode])))
+                            (execute-discord-synthesis! config control job normalized-event)
+                            (actions-dispatch/dispatch! {:config config
+                                                         :event normalized-event :job job
+                                                         :run-agent! start-agent-run!}
+                                                        step))
                           (.then (fn [result]
                                    (record-job-run-finish! job started-at "ok" nil)
                                    result))
@@ -854,9 +1065,27 @@
       (when-let [unsubscribe @discord-gateway-unsubscribe*]
         (unsubscribe)
         (reset! discord-gateway-unsubscribe* nil))
-      (reset! discord-gateway-unsubscribe*
-              (.onMessage manager (fn [mapped _raw]
-                                    (dispatch-discord-gateway-message! (js->clj mapped :keywordize-keys true))))))))
+      (let [msg-unsub (.onMessage manager (fn [mapped _raw]
+                                             (dispatch-discord-gateway-message! (js->clj mapped :keywordize-keys true))))
+            voice-unsub (.onVoiceStateUpdate manager (fn [mapped _old _new]
+                                                        (let [data (js->clj mapped :keywordize-keys true)]
+                                                          (dispatch-voice-state-update! data))))]
+        (reset! discord-gateway-unsubscribe*
+                (fn [] (msg-unsub) (voice-unsub)))))))
+
+(defn- dispatch-voice-state-update!
+  [{:keys [action userId username guildId channelId oldChannelId newChannelId]}]
+  (when (not (str/blank? (str userId "")))
+    (dispatch-event! {:sourceKind "discord"
+                      :eventKind "discord.voice.state_update"
+                      :eventKinds ["discord.voice.state_update"]
+                      :payload {:action action
+                                :userId userId
+                                :username username
+                                :guildId guildId
+                                :channelId channelId
+                                :oldChannelId oldChannelId
+                                :newChannelId newChannelId}})))
 
 (defn- dispatch-discord-message-event!
   [control job message match-kind]
@@ -876,10 +1105,13 @@
         mention? (and bot-user-id
                       (or (str/includes? content (str "<@" bot-user-id ">"))
                           (str/includes? content (str "<@!" bot-user-id ">"))))
-        keyword? (matches-keywords? control job (:content message))]
+        keyword? (and (not (job-match-all? job))
+                      (matches-keywords? control job (:content message)))
+        created? (matches-event-kind? job "discord.message.created")]
     (cond
       mention? "discord.message.mention"
       keyword? "discord.message.keyword"
+      (and created? (job-match-all? job)) "discord.message.created"
       :else nil)))
 
 (defn- resolve-job-channel-ids!
@@ -931,7 +1163,8 @@
   [config control job]
   ;; Skip patrol dispatch entirely when the gateway is live — the gateway fires
   ;; dispatch-discord-gateway-message! in real time, so patrol would double-fire.
-  (when-not (discord-gateway-active?)
+  (if (discord-gateway-active?)
+    (js/Promise.resolve nil)
   (let [limit (job-max-messages job 25)]
     (-> (resolve-job-channel-ids! control job)
         (.then (fn [channels]
@@ -972,54 +1205,90 @@
                      (or attachment-text "")))))
        (str/join "\n")))
 
+(defn- synthesis-channel-ids!
+  [control job trigger-event]
+  (-> (resolve-job-channel-ids! control job)
+      (.then (fn [channels]
+               (let [trigger-channel (some-> (get-in trigger-event [:payload :channelId]) str str/trim not-empty)]
+                 (->> (concat channels (when trigger-channel [trigger-channel]))
+                      distinct
+                      vec))))))
+
+(defn- fetch-discord-synthesis-row!
+  [limit channel-id]
+  (-> (read-discord-channel! channel-id limit)
+      (.then (fn [messages]
+               {:channelId channel-id
+                :messages messages}))
+      (.catch (fn [_]
+                {:channelId channel-id
+                 :messages []}))))
+
+(defn- discord-synthesis-trigger-summary!
+  [trigger-event]
+  (if trigger-event
+    (-> (event-summary-text trigger-event)
+        (.then (fn [txt]
+                 (str "Triggering event:\n" txt))))
+    (js/Promise.resolve nil)))
+
+(defn- discord-synthesis-image-attachments
+  [rows]
+  (->> rows
+       (mapcat (fn [{:keys [messages]}]
+                 (mapcat :attachments messages)))
+       (filter :url)
+       (filter (fn [attachment]
+                 (some-> (:contentType attachment)
+                         str
+                         str/lower-case
+                         (str/starts-with? "image/"))))
+       (take 8)
+       vec))
+
+(defn- discord-synthesis-dispatch-summary!
+  [config job publish-channels trigger-event channels rows]
+  (let [channel-summary (->> rows
+                             (map (fn [{:keys [channelId messages]}]
+                                    (summarize-discord-channel channelId messages)))
+                             (remove str/blank?)
+                             (str/join "\n\n"))
+        base-summary (when-not (str/blank? channel-summary)
+                       (str "Recent Discord context:\n" channel-summary))]
+    (-> (discord-synthesis-trigger-summary! trigger-event)
+        (.then (fn [trigger-summary]
+                 (let [summary (str/join "\n\n"
+                                         (remove str/blank?
+                                                 [trigger-summary base-summary]))]
+                   (if (str/blank? summary)
+                     (js/Promise.resolve nil)
+                     (actions-dispatch/dispatch!
+                      {:config config
+                       :event {:sourceKind "discord"
+                               :eventKind "discord.snapshot.summary"
+                               :timestamp (.toISOString (js/Date.))
+                               :payload {:summary summary
+                                         :channelId (first channels)
+                                         :publishChannels publish-channels
+                                         :attachments (discord-synthesis-image-attachments rows)}}
+                       :job job
+                       :run-agent! start-agent-run!}
+                      (job-step job)))))))))
+
 (defn- execute-discord-synthesis!
-  [config control job]
-  (let [limit (job-max-messages job 12)
-        publish-channels (job-publish-channels job)]
-    (-> (resolve-job-channel-ids! control job)
-        (.then (fn [channels]
-                 (if (seq channels)
-                   (-> (js/Promise.all
-                        (clj->js
-                         (mapv (fn [channel-id]
-                                 (-> (read-discord-channel! channel-id limit)
-                                     (.then (fn [messages]
-                                              {:channelId channel-id
-                                               :messages messages}))
-                                     (.catch (fn [_]
-                                               {:channelId channel-id
-                                                :messages []}))))
-                               channels)))
-                       (.then (fn [results]
-                                (let [rows (js->clj results :keywordize-keys true)
-                                      summary (->> rows
-                                                   (map (fn [{:keys [channelId messages]}]
-                                                          (summarize-discord-channel channelId messages)))
-                                                   (remove str/blank?)
-                                                   (str/join "\n\n"))]
-                                  (if (str/blank? summary)
-                                    (js/Promise.resolve nil)
-                                    (actions-dispatch/dispatch!
-                                     {:config config
-                                      :event {:sourceKind "discord"
-                                              :eventKind "discord.snapshot.summary"
-                                              :timestamp (.toISOString (js/Date.))
-                                              :payload {:summary summary
-                                                        :channelId (first channels)
-                                                        :publishChannels publish-channels
-                                                         :attachments (->> rows
-                                                                           (mapcat (fn [{:keys [messages]}]
-                                                                                    (mapcat :attachments messages)))
-                                                                           (filter :url)
-                                                                           (filter (fn [a]
-                                                                                     (some-> (:contentType a) str str/lower-case
-                                                                                             (str/starts-with? "image/"))))
-                                                                           (take 8)
-                                                                           vec)}}
-                                      :job job
-                                      :run-agent! start-agent-run!}
-                                     (job-step job))))))
-                       (js/Promise.resolve nil))))))))
+  ([config control job] (execute-discord-synthesis! config control job nil))
+  ([config control job trigger-event]
+   (let [limit (job-max-messages job 12)
+         publish-channels (job-publish-channels job)
+         fetch-row! (partial fetch-discord-synthesis-row! limit)
+         dispatch-summary! (partial discord-synthesis-dispatch-summary! config job publish-channels trigger-event)]
+     (-> (synthesis-channel-ids! control job trigger-event)
+         (.then (fn [channels]
+                  (if-not (seq channels)
+                    (js/Promise.resolve nil)
+                    (-> (js/Promise.all (clj->js (mapv fetch-row! channels)))
+                        (.then (fn [results]
+                                 (dispatch-summary! channels (js->clj results :keywordize-keys true))))))))))))
 
 (defn- execute-direct-job!
   [config job source-kind event-kind]
@@ -1042,7 +1311,7 @@
       (and (= source-kind "discord") (= mode "patrol"))
       (execute-discord-patrol! config control job)
 
-      (and (= source-kind "discord") (= mode "synthesize"))
+      (and (= source-kind "discord") (synthesis-source-mode? mode))
       (execute-discord-synthesis! config control job)
 
       :else

@@ -1,5 +1,9 @@
 {:contract/id "session_Viscosity-Vortex-Analyst_20260429T0052"
  :contract/kind :agent
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}}
  :trigger-kind :manual
  :contract/actor "discord_automation"
  :source-kind :discord

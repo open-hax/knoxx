@@ -48,7 +48,7 @@
    (let [Type (aget runtime "Type")
          search-params (.Object Type
                                 #js {:query (.String Type #js {:description "Semantic memory search across prior Knoxx sessions and actions indexed in OpenPlanner."})
-                                     :k (type-optional Type (.Number Type #js {:description "Maximum number of memory hits to return." :minimum 1 :maximum 8}))
+                                     :k (type-optional Type (.Number Type #js {:description "Maximum number of memory hits to return (default 7, max 12). Reasoning traces are excluded by default." :minimum 1 :maximum 12}))
                                      :sessionId (type-optional Type (.String Type #js {:description "Optional conversation/session id to scope the search."}))})
          graph-params (.Object Type
                                #js {:query (.String Type #js {:description "Search text for canonical graph nodes across OpenPlanner lakes."})
@@ -171,7 +171,7 @@
                                          content (or (aget params "content") (str "# " title "\n\n"))
                                          profile (active-agent-profile runtime config auth-context)
                                          docs-path (:docsPath profile)
-                                         rel-path (media/normalize-relative-path requested-path)
+                                         rel-path (media/normalize-relative-path-arg requested-path)
                                          abs-path (media/path-resolve node-path docs-path rel-path)
                                          rel-to-root (media/path-relative node-path docs-path abs-path)
                                          parent (.dirname node-path abs-path)]
@@ -266,6 +266,7 @@
                               (aset "promptSnippet" "Search Knoxx long-term memory in OpenPlanner when the user asks about earlier sessions, prior decisions, or the agent's own past actions.")
                               (aset "promptGuidelines" (clj->js ["Use memory_search when the user references previous sessions, past work, or asks you to remember what happened before."
                                                                  "Prefer memory_search over guessing about prior conversations or actions."
+                                                                 "Reasoning traces are filtered out of memory_search by default; use memory_session only when exact transcript drill-down is required."
                                                                  "If one session looks relevant, follow with memory_session to inspect the full transcript slice."]))
                               (aset "parameters" search-params)
                               (aset "execute" memory-search-execute))

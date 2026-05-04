@@ -1,6 +1,10 @@
 {:contract/id "back_jack",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :back_jack,
  :hooks {:before {}, :after {}},
  :agent

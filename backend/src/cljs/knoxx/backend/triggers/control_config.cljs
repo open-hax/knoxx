@@ -76,11 +76,22 @@
     (cond-> {}
       (seq (or (:channels filters) [])) (assoc :channels (vec (:channels filters)))
       (seq (or (:keywords filters) [])) (assoc :keywords (vec (:keywords filters)))
+      (or (true? (:matchAll filters)) (true? (:match_all filters)))
+      (assoc :matchAll true)
       (seq (or (:publishChannels filters) (:publish_channels filters) []))
       (assoc :publishChannels (vec (or (:publishChannels filters) (:publish_channels filters))))
       (seq (or (:guildIds filters) (:guild_ids filters) []))
       (assoc :guildIds (vec (or (:guildIds filters) (:guild_ids filters))))
+      (seq (or (:authorIds filters) (:author_ids filters) (:authors filters) []))
+      (assoc :authorIds (vec (or (:authorIds filters) (:author_ids filters) (:authors filters))))
       (seq (or (:repositories filters) [])) (assoc :repositories (vec (:repositories filters))))))
+
+(defn- memory-hydration-from-contract
+  [contract]
+  (or (:memory-hydration contract)
+      (:memoryHydration contract)
+      (get-in contract [:memory :passive-hydration])
+      (get-in contract [:memory :passiveHydration])))
 
 (defn- contract->event-agent-job
   [config contract-id contract contract-hash]
@@ -99,14 +110,22 @@
             source-mode (or (keywordish->string (:source-mode contract))
                             "respond")
             cadence (max 1 (or (parse-positive-int (:cadence-min contract)) 5))
-            event-kinds (->> (concat (or (get-in contract [:events :always]) [])
-                                     (or (get-in contract [:events :maybe]) []))
+            always-kinds (->> (or (get-in contract [:events :always]) [])
+                              (map keywordish->event-kind)
+                              (remove nil?)
+                              distinct
+                              vec)
+            maybe-kinds (->> (or (get-in contract [:events :maybe]) [])
                              (map keywordish->event-kind)
                              (remove nil?)
                              distinct
                              vec)
+            event-kinds (vec (distinct (concat always-kinds maybe-kinds)))
+            event-weights (or (get-in contract [:events :weights]) {})
+            event-threshold (or (get-in contract [:events :threshold]) 1)
             filters (filters-from-contract contract)
             source-config (or (get-in contract [:data :source]) {})
+            memory-hydration (memory-hydration-from-contract contract)
             sticky-session? (or (true? (:stickySession source-config))
                                 (true? (:sticky_session source-config)))
             session-max-messages (or (parse-positive-int (:sessionMaxMessages source-config))
@@ -114,9 +133,13 @@
         {:id contract-id
          :name contract-id
          :enabled (not (false? (:enabled contract)))
-         :trigger {:kind trigger-kind
-                   :cadenceMinutes cadence
-                   :eventKinds event-kinds}
+          :trigger {:kind trigger-kind
+                    :cadenceMinutes cadence
+                    :eventKinds event-kinds
+                    :alwaysKinds always-kinds
+                    :maybeKinds maybe-kinds
+                    :eventWeights event-weights
+                    :eventThreshold event-threshold}
          :source {:kind source-kind
                   :mode source-mode
                   :config (cond-> {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
@@ -132,7 +155,8 @@
                                        "")
                      :taskPrompt (or (some-> (get-in contract [:prompts :task]) str not-empty) "")
                      :toolPolicies (vec (or (:tool-policies resolved)
-                                            (tool-policies-from-contract config role contract)))}
+                                            (tool-policies-from-contract config role contract)))
+                     :memoryHydration memory-hydration}
          :description (or (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
                           (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
                           contract-id)

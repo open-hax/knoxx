@@ -3,8 +3,23 @@
    Sanitization, TypeBox helpers, and generic tool-update callbacks."
   (:require [clojure.string :as str]
             [knoxx.backend.runtime.state :as runtime-state]
+            [malli.json-schema :as mjs]          ;; ← add this
             [knoxx.backend.http :refer [js-array-seq]]))
 
+;; ← add this
+(defn ->params
+  "Convert a Malli schema to a Pi tool :parameters JS object."
+  [schema]
+  (clj->js (mjs/transform schema)))
+(defn create-tool-obj [ name label description prompt prompt-guidelines params  execute  runtime config]
+
+  #js {:name name
+       :label label
+       :description description
+       :promptSnippet prompt
+       :promptGuidelines (clj->js prompt-guidelines)
+       :parameters (->params params)
+       :execute (partial execute runtime config)})
 (defn maybe-tool-update!
   "Call an on-update callback with a text status update."
   [f text]

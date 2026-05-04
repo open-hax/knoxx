@@ -152,21 +152,40 @@ const shoedelussyDmxShouldRunLocal =
   );
 
 const apps = [
-    // ── 1. Backend (shadow-cljs watch + Node runtime for hot reload) ───────
+    // ── 1. shadow-cljs watch ──────────────────────────────────────────
+    {
+      name: 'knoxx-shadow',
+      cwd: backendDir,
+      script: 'pnpm',
+      // Force source maps in the watch build so dist/*.map stays available
+      // even if the underlying shadow config drifts.
+      args: 'exec shadow-cljs --source-maps watch server',
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      env: {
+        NODE_ENV: 'development',
+      },
+    },
+
+    // ── 2. Backend (Node + compiled CLJS) ────────────────────────────
     {
       name: 'knoxx-backend',
-      cwd: knoxxRoot,
-      script: path.join(knoxxRoot, 'scripts', 'knoxx-backend-hot-dev.sh'),
-      interpreter: '/bin/bash',
-      // This PM2 app owns both the shadow-cljs watch compiler and the Node
-      // runtime. The runtime connects to shadow's dev WebSocket so CLJS file
-      // saves are pushed into the live process (no PM2 restart loop required).
-      watch: false,
+      cwd: backendDir,
+      // All-CLJS runtime entrypoint compiled by shadow-cljs (:server build).
+      // This keeps the backend fully CLJS-driven so nREPL can mutate the runtime.
+      script: 'dist/server.js',
+      node_args: '--enable-source-maps',
+      kill_timeout: 35000,
+      shutdown_with_message: true,
+      // Auto-restart when shadow-cljs produces new output
+      watch: ['dist'],
+      watch_delay: 800,
+      ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
       autorestart: true,
       max_restarts: 15,
       restart_delay: 3000,
-      kill_timeout: 35000,
-      shutdown_with_message: true,
       env: {
         NODE_ENV: 'development',
         HOST: '0.0.0.0',

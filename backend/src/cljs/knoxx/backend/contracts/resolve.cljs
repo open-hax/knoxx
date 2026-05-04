@@ -31,6 +31,13 @@
 (defn agent-extras [agent-contract]
   (contract-extras agent-contract known-agent-keys))
 
+(defn- memory-hydration-from-contract
+  [contract]
+  (or (:memory-hydration contract)
+      (:memoryHydration contract)
+      (get-in contract [:memory :passive-hydration])
+      (get-in contract [:memory :passiveHydration])))
+
 (defn- read-edn-sync
   [file-path]
   (try
@@ -231,6 +238,7 @@
                 :system-prompt system-prompt
                 :task-prompt (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
                 :trigger-kind (some-> (:trigger-kind contract) keywordish->role-slug)
+                :memory-hydration (memory-hydration-from-contract contract)
                 :tool-ids tool-ids
                 :tool-policies tool-policies
                  :extras all-extras}))))))))

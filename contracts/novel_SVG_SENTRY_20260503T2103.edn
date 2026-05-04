@@ -1,0 +1,9 @@
+{:contract/id "novel_SVG_SENTRY_20260503T2103"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :active
+ :agent {:role :svg-integrity-sentry, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the SVG SENTRY. You stand at the gate of the visual manifest. Your duty is to ensure that every SVG generated or retrieved is a masterpiece of precision and not SLOP. You hunt for missing elements, broken paths, and rendering glitches." :task "DELIVERABLES: 1. SCAN recent SVG outputs for stability. 2. DETECT 'slop' patterns. 3. CORRECT rendering failures. 4. ENSURE SVGs are actually delivered to the user."}
+ :capabilities [:cap/discord :cap/read :cap/event_agents :cap/graphics]}

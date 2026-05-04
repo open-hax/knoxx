@@ -5,6 +5,7 @@
 (def ^:private default-voxx-voice-id "alloy")
 (def ^:private default-voxx-model-id "kokoro")
 (def ^:private default-voxx-output-format "mp3")
+(def ^:private default-voxx-postprocess-profile "sports-commentator-v1")
 
 (defn- trim-trailing-slashes
   [s]
@@ -23,6 +24,23 @@
 (defn- trim-or-empty
   [value]
   (-> (str (or value "")) str/trim))
+
+(defn- false-like?
+  [value]
+  (or (= false value)
+      (contains? #{"0" "false" "no" "off" "disabled" "disable" "none"}
+                 (-> (str (or value "")) str/trim str/lower-case))))
+
+(defn- bool-value
+  [value default]
+  (if (nil? value) default (not (false-like? value))))
+
+(defn- first-body-value
+  [body names]
+  (some (fn [name]
+          (let [value (aget body name)]
+            (when-not (nil? value) value)))
+        names))
 
 (defn- voice-gateway-url
   [config]
@@ -244,7 +262,7 @@
                   (when ctx (ensure-tool! ctx "multimodal.upload"))
                   (let [api-key (voice-gateway-api-key config)]
                     (if (str/blank? api-key)
-                      (json-response! reply 503 {:detail "KNOXX_VOICE_GATEWAY_API_KEY is not configured"})
+                      (json-response! reply 503 {:detail "VOICE_GATEWAY_API_KEY is not configured"})
                       (-> (http/fetch-json (voxx-v1-url config "/voices")
                                            #js {:method "GET"
                                                 :headers (voxx-health-headers api-key)})
@@ -257,7 +275,10 @@
                                      :reachable (boolean (aget resp "ok"))
                                      :status_code (aget resp "status")
                                      :default_voice_id (voxx-default-voice-id config)
-                                     :default_model_id (voxx-default-model-id config)})))
+                                     :default_model_id (voxx-default-model-id config)
+                                     :default_postprocess_enabled true
+                                     :default_postprocess_profile default-voxx-postprocess-profile
+                                     :default_prompt_aware true})))
                           (.catch (fn [err]
                                     (json-response! reply 502 {:detail (str "Voice Gateway health failed: " err)}))))))))))
 
@@ -288,10 +309,25 @@
                         output-format (if (str/blank? output-format-raw)
                                         default-voxx-output-format
                                         output-format-raw)
+                        postprocess-profile-raw (trim-or-empty (first-body-value body ["postprocess_profile"
+                                                                                       "postprocessProfile"
+                                                                                       "postprocess"]))
+                        postprocess-profile (if (str/blank? postprocess-profile-raw)
+                                              default-voxx-postprocess-profile
+                                              postprocess-profile-raw)
+                        postprocess-enabled (bool-value (first-body-value body ["postprocess_enabled"
+                                                                                "postprocessEnabled"])
+                                                        true)
+                        prompt-aware (bool-value (first-body-value body ["prompt_aware"
+                                                                         "promptAware"
+                                                                         "prompt-aware"])
+                                                 true)
+                        prompt-aware-style (trim-or-empty (first-body-value body ["prompt_aware_style"
+                                                                                  "promptAwareStyle"]))
                         voice-settings (aget body "voice_settings")]
                     (cond
                       (str/blank? api-key)
-                      (json-response! reply 503 {:detail "KNOXX_VOICE_GATEWAY_API_KEY is not configured"})
+                      (json-response! reply 503 {:detail "VOICE_GATEWAY_API_KEY is not configured"})
 
                       (str/blank? (str/trim text))
                       (json-response! reply 400 {:detail "Missing required field: text"})
@@ -301,7 +337,15 @@
                                      (cond-> {:input text
                                               :voice voice-id
                                               :model model-id
-                                              :response_format output-format}
+                                              :response_format output-format
+                                              :postprocess_enabled postprocess-enabled
+                                              :prompt_aware prompt-aware}
+                                       postprocess-profile
+                                       (assoc :postprocess_profile postprocess-profile)
+
+                                       (not (str/blank? prompt-aware-style))
+                                       (assoc :prompt_aware_style prompt-aware-style)
+
                                        (and voice-settings (not (nil? voice-settings)))
                                        (assoc :voice_settings (js->clj voice-settings))))
                             url (voxx-tts-url config)

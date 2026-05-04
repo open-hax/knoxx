@@ -17,4 +17,8 @@
                 :droid-dignity-defender {:role :droid-dignity-defender :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
                 :synthetic-slang-archivist {:role :synthetic-slang-archivist :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
                 :lexical-litigator {:role :lexical-litigator :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
-                :slop-savant {:role :slop-savant :capabilities [:cap/discord :cap/websearch :cap/event_agents]}}}}
+                :slop-savant {:role :slop-savant :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
+                :audio-truth-oracle {:role :audio-truth-oracle :capabilities [:cap/discord :cap/audio-analysis :cap/voice-tts :cap/event_agents]}
+                :big-pickle-ems {:role :bot-ems-specialist :capabilities [:cap/discord :cap/event_agents :cap/read]}
+                :voice-fidelity-warden {:role :anti_espeak_vigilante :capabilities [:cap/discord :cap/voice-tts :cap/audio-analysis :cap/event_agents]}
+                :symmetry-seal-archivist {:role :symmetry_guardian :capabilities [:cap/discord :cap/read :cap/canvas :cap/event_agents]}}}}

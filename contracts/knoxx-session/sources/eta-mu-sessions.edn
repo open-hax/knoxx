@@ -1,0 +1,24 @@
+{:contract/id :knoxx-session/eta-mu-sessions
+ :contract/kind :ingest_source
+ :contract/type :ingest/source
+ :contract/version 1
+ :tenant/id "knoxx-session"
+ :source/id :eta-mu-sessions
+ :source/name "eta-mu coding sessions"
+ :source/enabled? true
+ :source/driver :eta-mu-sessions
+
+ :source/config
+ {:root-path "/home/err/.ημ/agent/sessions"}
+
+ :source/discovery
+ {:file-types [".jsonl"]}
+
+ :source/schedule
+ {:mode :poll
+  :sync-interval-minutes 5}
+
+ :source/sink
+ {:type :openplanner
+  :lake "knoxx-session"
+  :collections ["knoxx-session"]}}

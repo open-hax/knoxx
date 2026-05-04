@@ -7,7 +7,9 @@
    [kms-ingestion.api.query-support :as query]
    [kms-ingestion.api.workspace-support :as workspace]
    [kms-ingestion.config :as config]
+   [kms-ingestion.contracts.loader :as contracts]
    [kms-ingestion.db :as db]
+   [kms-ingestion.drivers.audio :as audio]
    [kms-ingestion.drivers.local :as local]
    [kms-ingestion.drivers.protocol :as protocol]
    [kms-ingestion.drivers.registry :as registry]
@@ -29,6 +31,52 @@
 (def semantic-file-search-handler workspace/semantic-file-search-handler)
 (def preview-file-handler workspace/preview-file-handler)
 (def write-file-handler workspace/write-file-handler)
+
+(defn get-audio-context-handler
+  [request]
+  (let [tenant-id (get-tenant-id request)
+        source-id (or (-> request :query-params :source_id)
+                      (get (:query-params request) "source_id"))
+        file-path (or (-> request :query-params :path)
+                      (get (:query-params request) "path"))]
+    (cond
+      (str/blank? source-id)
+      {:status 400
+       :body {:error "source_id is required"}}
+
+      (str/blank? file-path)
+      {:status 400
+       :body {:error "path is required"}}
+
+      :else
+      (let [contract (contracts/load-source-contract tenant-id source-id)]
+        (cond
+          (nil? contract)
+          {:status 404
+           :body {:error (str "Source contract not found: " source-id)}}
+
+          (not= "audio" (name (or (get-in contract [:source/driver]) :local)))
+          {:status 400
+           :body {:error (str "Source " source-id " is not an audio driver contract")}}
+
+          :else
+          (let [root-path (or (get-in contract [:source/config :root-path])
+                              (get-in contract [:source/config :root_path]))
+                chat-url (or (get-in contract [:source/config :chat-url])
+                             (get-in contract [:source/config :chat_url])
+                             "http://localhost:8082")
+                full-path (.getPath (java.io.File. ^String root-path ^String file-path))]
+            (if-not (.exists (java.io.File. full-path))
+              {:status 404
+               :body {:error (str "Audio file not found: " file-path)}}
+              (let [{:keys [song-title description content]} (audio/audio-context full-path chat-url)]
+                {:status 200
+                 :body {:ok true
+                        :path file-path
+                        :source_id source-id
+                        :song_title song-title
+                        :description description
+                        :content content}}))))))))
 
 (defn source-response
   ([source]
@@ -432,6 +480,9 @@
      {:get preview-file-handler
       :put write-file-handler}]
 
+    ["/audio-context"
+     {:get get-audio-context-handler}]
+
     ["/sources"
      {:get list-sources-handler
       :post create-source-handler}]
@@ -451,4 +502,34 @@
      {:get get-job-handler}]
 
     ["/jobs/:job_id/cancel"
-     {:post cancel-job-handler}]]])
+     {:post cancel-job-handler}]]
+
+   ;; Audio ingestion convenience endpoint
+   ["/api/audio/ingest"
+    {:post (fn [request]
+             (let [tenant-id (get-tenant-id request)
+                   body (request-body->map request)
+                   root-path (or (:root_path body) (:root-path body))
+                   chat-url (or (:chat_url body) (:chat-url body) "http://localhost:8082")
+                   name (or (:name body) "Audio Files")
+                   ;; Create audio source
+                   source (db/create-source!
+                           {:tenant-id tenant-id
+                            :driver-type "audio"
+                            :name name
+                            :config {:root_path root-path
+                                     :chat_url chat-url}
+                            :collections [tenant-id]
+                            :file-types [".mp3" ".wav" ".ogg" ".m4a" ".flac"]})
+                   source-id (uuid-str (:source_id source))
+                   ;; Create and queue job
+                   job (db/create-job! source-id tenant-id {:full_scan true})
+                   job-id (uuid-str (:job_id job))]
+               (db/mark-source-scanned! source-id)
+               (worker/queue-job! job-id source)
+               {:status 200
+                :body {:source_id source-id
+                       :job_id job-id
+                       :status "queued"
+                       :root_path root-path
+                       :chat_url chat-url}}))}]])

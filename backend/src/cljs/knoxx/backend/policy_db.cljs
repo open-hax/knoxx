@@ -785,6 +785,36 @@
       value TEXT NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Broadcast studio persistent state
+    CREATE TABLE IF NOT EXISTS studio_state (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL DEFAULT 'player',
+      state_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_id, org_id, kind)
+    );
+
+    CREATE INDEX IF NOT EXISTS studio_state_user_idx ON studio_state (user_id);
+    CREATE INDEX IF NOT EXISTS studio_state_org_idx ON studio_state (org_id);
+
+    CREATE TABLE IF NOT EXISTS studio_audio_assets (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      audio_path TEXT NOT NULL,
+      asset_type TEXT NOT NULL CHECK (asset_type IN ('waveform', 'spectrogram')),
+      image_data BYTEA NOT NULL,
+      mime_type TEXT NOT NULL DEFAULT 'image/png',
+      width INT,
+      height INT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (audio_path, asset_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS studio_audio_assets_path_idx ON studio_audio_assets (audio_path);
+    CREATE INDEX IF NOT EXISTS studio_audio_assets_type_idx ON studio_audio_assets (asset_type);
   " nil))
 
 (defn- insert-permission-seeds!

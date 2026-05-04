@@ -344,7 +344,7 @@
 (defn- ensure-sources-from-contracts!
   "Scan the contracts directory and ensure all discovered sources exist in the DB.
   This replaces the old hardcoded ensure-default-workspace-source! and
-  ensure-pi-sessions-source! functions."
+  ensure-eta-mu-sessions-source! functions."
   []
   (let [root (contracts/contracts-root)]
     (if root

@@ -1,6 +1,10 @@
 {:contract/id "ussyverse_social_replies",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :respond,
  :events
  {:always [:discord.message/mention :discord.message/keyword],
@@ -19,7 +23,9 @@
  :cadence-min 1,
  :enabled true,
  :data
+
  {:filters
   {:channels ["1494137016303095828" "1444189585373663417"],
+
    :keywords ["frankie" "yap" "music" "song" "slop" "ussy"]},
-  :source {:max-messages 20}}}
+  :source {:max-messages 50, :stickySession true, :sessionMaxMessages 1000}}}

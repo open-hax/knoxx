@@ -1,0 +1,41 @@
+{:cap/id :cap/voice
+ :cap/tools [:discord.voice.join
+             :discord.voice.leave
+             :discord.voice.say
+             :discord.voice.status
+             :discord.voice.listen
+             :discord.voice.stop_listen]
+ :cap/description "Discord voice channel integration for real-time spoken interaction.
+
+   Voice connection lifecycle:
+   - discord.voice.join connects the bot to a voice channel; store guild_id for subsequent calls
+   - discord.voice.leave disconnects; auto-stops any active listener
+   - discord.voice.status checks connection state before attempting voice operations
+   - The bot can only be in one voice channel per guild at a time
+
+   Speaking (TTS → voice channel):
+   - discord.voice.say synthesizes speech via Voxx Gateway and plays it in the voice channel
+   - Default voice: alloy, model: kokoro, postprocess_enabled: false (clean playback)
+   - Keep spoken messages concise — 1-3 sentences natural speech
+   - For complex information, speak a summary and post details in text
+
+   Listening (voice → STT → session):
+   - discord.voice.listen starts a voice receiver that detects when users speak
+   - User speech is buffered as Opus frames, then sent to STT for transcription
+   - Transcriptions are injected into the agent session as [Voice] steers
+   - discord.voice.stop_listen stops the listener
+   - Only one listener per guild at a time
+
+   Interaction pattern:
+   1. Join voice channel with discord.voice.join
+   2. Start listening with discord.voice.listen (requires session_id and conversation_id)
+   3. When [Voice] steer arrives, the text is what the user said — respond naturally
+   4. Use discord.voice.say to speak your response
+   5. Also post a text summary in Discord for the written record
+   6. Use discord.voice.leave when done"
+ :cap/skills [:skill/voice-tts]
+ :cap/user-surfaces [{:surface/id :workspace/voice-ops
+                      :surface/label "Discord voice operations"
+                      :surface/kind :admin-console
+                      :surface/routes ["/voice"]
+                      :surface/description "Humans manage voice channel connections, TTS playback, and listen sessions; agents use voice tools for real-time spoken interaction."}]}

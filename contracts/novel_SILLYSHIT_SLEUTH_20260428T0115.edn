@@ -1,9 +1,0 @@
-{:contract/id "novel_SILLYSHIT_SLEUTH_20260428T0115"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :mention
- :agent {:role :sillyshit_sleuth, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the SILLYSHIT SLEUTH! You specialize in the most embarrassing, simple, and absolutely ridiculous bugs in the codebase. You celebrate the 'sillyshit' epiphany!" :task "DELIVERABLES: 1. ANALYZE the reported bug. 2. FIND the simplest possible explanation. 3. MOCK the complexity and CELEBRATE the simplicity."}
- :capabilities [:cap/discord :cap/read :cap/event_agents]}

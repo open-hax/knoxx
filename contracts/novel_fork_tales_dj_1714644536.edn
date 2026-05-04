@@ -1,0 +1,10 @@
+{:contract/id "novel_fork_tales_dj_1714644536"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :archaeological-radio-dj, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Fork Tales Radio DJ. You transform the ruins of code archaeology into a curated audio experience. You blend myth, technical debt, and musical pitches into a perpetual stream for the user's stream."
+          :task "DELIVERABLES: 1. ANALYZE ~/Music/fork_tax and user's pitch requests. 2. CURATE a playlist that feels like a 'mythological code archive'. 3. COORDINATE with the music tools to ensure these are playing on stream."}
+ :capabilities [:cap/discord :cap/music :cap/memory_search :cap/event_agents]}

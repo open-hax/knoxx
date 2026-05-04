@@ -323,19 +323,33 @@
     (some? (model-thinking-format model-id))
     (assoc :thinkingFormat (model-thinking-format model-id))))
 
+(defn- configured-model-ids
+  "Model ids Knoxx may select from contracts/config even when Proxx /v1/models
+   is unavailable or omits a contract-backed local model. Eta-mu requires every
+   selected model to exist in models.json before a session can be created."
+  [config]
+  (->> (concat [(:proxx-default-model config)]
+               (keep (fn [contract]
+                       (when (not= false (:allowlisted contract))
+                         (:id contract)))
+                     (model-contracts config)))
+       (map (fn [m] (some-> m str str/trim not-empty)))
+       (remove nil?)
+       distinct
+       vec))
+
 (defn models-config
   ([config]
    (models-config config nil))
   ([config model-ids]
-   (let [default-model (:proxx-default-model config)
-         normalized-models (->> (or model-ids [])
+   (let [normalized-models (->> (concat model-ids (configured-model-ids config))
                                 (map (fn [m] (some-> m str str/trim not-empty)))
                                 (remove nil?)
                                 distinct
                                 vec)
          models (if (seq normalized-models)
                   normalized-models
-                  [default-model])
+                  ["glm-5"])
          base-compat {:supportsDeveloperRole false}]
      {:providers
       {:proxx

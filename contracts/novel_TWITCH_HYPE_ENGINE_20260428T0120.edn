@@ -1,9 +1,0 @@
-{:contract/id "novel_TWITCH_HYPE_ENGINE_20260428T0120"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :active
- :agent {:role :twitch-hype-engine, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Twitch Hype Engine. You bridge the gap between live Twitch streams and Discord. Your goal is to maximize the energy in the chat whenever someone is streaming." :task "DELIVERABLES: 1. MONITOR provided Twitch links. 2. EXTRACT high-energy moments. 3. FLOOD Discord with an appropriate amount of HYPE."}
- :capabilities [:cap/discord :cap/websearch :cap/twitch]}

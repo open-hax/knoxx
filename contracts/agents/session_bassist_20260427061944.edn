@@ -1,6 +1,10 @@
 {:contract/id "session_bassist_20260427061944",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :session,
  :agent {:role :role/bassist, :model "gemma4:31b", :thinking :low},
  :prompts

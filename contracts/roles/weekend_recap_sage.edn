@@ -1,5 +1,9 @@
 {:contract/id "novel_weekend_recap_sage_202604272350"
  :contract/kind :agent
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}}
  :trigger-kind :manual
  :contract/actor "discord_automation"
  :source-kind :discord

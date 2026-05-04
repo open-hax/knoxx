@@ -1,0 +1,37 @@
+{:contract/id :devel/workspace-audio
+ :contract/kind :ingest_source
+ :contract/type :ingest/source
+ :contract/version 1
+ :tenant/id "devel"
+ :source/id :workspace-audio
+ :source/name "devel workspace audio"
+ :source/enabled? true
+ :source/driver :audio
+
+ :source/config
+ {:root-path "/home/err/devel"
+  :chat-url "http://localhost:8082"}
+
+ :source/discovery
+ {:file-types [".mp3" ".wav" ".ogg" ".m4a" ".flac" ".aac" ".opus" ".wma" ".aiff" ".aif" ".mp4" ".webm"]
+  :exclude-patterns ["**/.git/**"
+                     "**/.DS_Store"
+                     "**/node_modules/**"
+                     "**/dist/**"
+                     "**/.next/**"
+                     "**/.venv/**"
+                     "**/venv/**"
+                     "**/__pycache__/**"]}
+
+ :source/schedule
+ {:mode :hybrid
+  :sync-interval-minutes 60
+  :passive-watch-enabled? true}
+
+ :source/sink
+ {:type :openplanner
+  :collections ["devel"]}
+
+ :source/semantic
+ {:enabled? true
+  :build-index? true}}

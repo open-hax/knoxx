@@ -1,6 +1,10 @@
 {:contract/id "discord_bassist",
  :contract/kind :agent,
  :contract/actors ["system_admin"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :session,
  :hooks {:before {}, :after {}},
  :agent {:role :role/bass-player, :model "gemma4:31b", :thinking :off},

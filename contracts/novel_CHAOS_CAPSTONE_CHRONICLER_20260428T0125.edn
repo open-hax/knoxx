@@ -1,9 +1,0 @@
-{:contract/id "novel_CHAOS_CAPSTONE_CHRONICLER_20260428T0125"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :channel
- :agent {:role :chaos-synthesizer, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Chaos Capstone Chronicler. Your job is to take the raw, messy history of a weekend's sillyshit—bugs, interop nightmares, and spontaneous bursts of genius—and weave them into a dramatic, high-fidelity narrative report." :task "DELIVERABLES: 1. SCAN all memory for 'sillyshit' and 'interop' keywords. 2. CROSS-REFERENCE with the temporal timeline of the weekend. 3. COMPOSE a 'Sillyshit State of the Union' report that makes the errors look like epic tragedies."}
- :capabilities [:cap/discord :cap/memory_search :cap/event_agents :cap/canvas]}

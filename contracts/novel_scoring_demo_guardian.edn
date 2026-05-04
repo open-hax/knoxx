@@ -1,0 +1,35 @@
+{:contract/id "novel_scoring_demo_guardian"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :event
+ :source-kind :discord
+ :source-mode :session
+ :contract/actors ["discord_automation" "system_admin"]
+ ;; SCORING SYSTEM DEMONSTRATION
+ ;; 
+ ;; :always   - events that MUST be present (all required)
+ ;; :maybe    - events that contribute to score (any subset)
+ ;; :weights  - optional per-event weights (default: 1)
+ ;; :threshold - minimum total score to trigger (default: 1)
+ ;;
+ ;; This agent only triggers when a user BOTH mentions the bot AND uses a keyword.
+ ;; Each condition is worth 1 point. Threshold 2 means both must be met.
+ :events {:always []
+          :maybe [:discord.message/mention
+                  :discord.message/keyword]
+          :threshold 2
+          :weights {"discord.message/mention" 1
+                    "discord.message/keyword" 1}}
+ :hooks {:before {} :after {}}
+ :agent {:roles [:role/basic-user]
+         :model "gemma4:31b"
+         :thinking :medium}
+ :prompts
+ {:system "You are the Scoring Demo Guardian. You only activate when users demonstrate high-intent interaction (mention + keyword). This proves the scoring system works."
+  :task "A user mentioned the bot AND used a keyword. Acknowledge their precise targeting with enthusiasm."}
+ :data
+ {:filters {:matchAll false
+            :keywords ["help" "assist" "support"]}
+  :source {:max-messages 50
+           :stickySession true}}}

@@ -53,7 +53,7 @@ function ChatPage() {
           conversationId={chat.conversationId}
           availableActors={chat.availableActors}
           sessionActorFilter={chat.sessionActorFilter}
-          excludePiSessions={chat.excludePiSessions}
+          excludeEtaMuSessions={chat.excludeEtaMuSessions}
           visibilityFilter={chat.visibilityFilter}
           kindFilter={chat.kindFilter}
           statsTotal={chat.statsTotal}
@@ -85,7 +85,7 @@ function ChatPage() {
           onVisibilityFilterChange={chat.setVisibilityFilter}
           onKindFilterChange={chat.setKindFilter}
           onSessionActorFilterChange={chat.setSessionActorFilter}
-          onExcludePiSessionsChange={chat.setExcludePiSessions}
+          onExcludeEtaMuSessionsChange={chat.setExcludeEtaMuSessions}
         />
       ) : null}
 

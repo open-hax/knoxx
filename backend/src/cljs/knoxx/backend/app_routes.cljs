@@ -27,6 +27,7 @@
             [knoxx.backend.turn-control :as turn-control]
             [knoxx.backend.voice-routes :as voice-routes]
             [knoxx.backend.workspace-media-routes :as workspace-media-routes]
+            [knoxx.backend.studio-routes :as studio-routes]
             [knoxx.backend.translation-routes :as translation-routes]
             [shadow.cljs.modern :refer (js-await)]
             ))
@@ -57,7 +58,7 @@
                                   (default-agent-contract-id config requested-actor-id))
         resolved (effective-agent-contract config requested-contract-id requested-actor-id)
         resolved-id (:id resolved)]
-    (cond-> (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies :contract-actor-ids])
+    (cond-> (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies :contract-actor-ids :memory-hydration])
                    requested)
       requested-actor-id (assoc :actor-id requested-actor-id)
       (seq (:contract-actor-ids resolved)) (assoc :contract-actors (:contract-actor-ids resolved))
@@ -455,6 +456,17 @@
                                                             :with-request-context! with-request-context!
                                                             :ensure-tool! ensure-tool!})
 
+  ;; Broadcast studio routes (audio library, player state, playlist)
+  (studio-routes/register-studio-routes! app runtime config
+                                         {:route! route!
+                                          :json-response! json-response!
+                                          :error-response! error-response!
+                                          :with-request-context! with-request-context!
+                                          :ensure-tool! ensure-tool!
+                                          :ensure-permission! ensure-permission!
+                                          :policy-db policy-db
+                                          :policy-db-promise policy-db-promise})
+
   (route! app "GET" "/api/knoxx/proxy/*"
           (fn [request reply]
             (let [path (aget request "params" "*")]
@@ -837,7 +849,7 @@
                                        :configured true
                                        :base_url (:knoxx-base-url config)
                                        :status_code 200
-                                       :details {:mode "shadow-cljs-pi-sdk"
+                                       :details {:mode "shadow-cljs-eta-mu-sdk"
                                                  :status "ok"
                                                  :project (:project-name config)
                                                  :collection {:name (:collection-name config)

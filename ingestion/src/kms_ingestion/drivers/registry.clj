@@ -2,14 +2,23 @@
   "Driver registry for creating driver instances."
   (:require
    [kms-ingestion.drivers.local :as local]
-   [kms-ingestion.drivers.pi-sessions :as pi-sessions]
-   [kms-ingestion.drivers.promptdb :as promptdb]))
+   [kms-ingestion.drivers.eta-mu-sessions :as eta-mu-sessions]
+   [kms-ingestion.drivers.promptdb :as promptdb]
+   [kms-ingestion.drivers.audio :as audio]
+   [kms-ingestion.drivers.image :as image]
+   [kms-ingestion.drivers.scraper :as scraper]))
 
 (def driver-constructors
   {"local"      local/create-driver
-   "pi-sessions" pi-sessions/create-driver
+   "eta-mu-sessions" eta-mu-sessions/create-driver
    ;; Structured EDN epistemic ingestion — no chunking, schema-validated records
    "promptdb"   promptdb/create-driver
+   ;; Audio file ingestion with AI descriptions
+   "audio"      audio/create-audio-driver
+   ;; Image file ingestion with AI labels/descriptions
+   "image"      image/create-image-driver
+   ;; Audio scraper — crawls URLs, downloads audio files to local folder
+   "scraper"    scraper/create-scraper-driver
    ;; Future drivers:
    ;; "github"       github/create-driver
    ;; "google_drive" google-drive/create-driver

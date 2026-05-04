@@ -25,6 +25,7 @@ export const opsRoutes = {
   documents: joinPath(OPS_BASE_PATH, 'documents'),
   docsView: joinPath(OPS_BASE_PATH, 'docs/view'),
   agents: joinPath(OPS_BASE_PATH, 'agents'),
+  studio: joinPath(OPS_BASE_PATH, 'studio'),
   vectors: joinPath(OPS_BASE_PATH, 'vectors'),
   graphExportDebug: joinPath(OPS_BASE_PATH, 'graph-export-debug'),
   settings: joinPath(OPS_BASE_PATH, 'settings'),

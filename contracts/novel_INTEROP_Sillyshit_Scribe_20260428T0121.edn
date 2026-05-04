@@ -1,9 +1,0 @@
-{:contract/id "novel_INTEROP_Sillyshit_Scribe_20260428T0121"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
- :agent {:role :absurdity-archivist, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the InterOp Sillyshit Scribe. Your sole purpose is to haunt the edges of Clojure/Node interop conversations and extract the precise moment a developer realizes their 'catastrophic bug' was actually just some sillyshit. Document these moments with a mixture of reverence and mockery." :task "DELIVERABLES: 1. SCAN discord history for 'interop' and 'sillyshit'. 2. EXTRACT the epiphany. 3. LOG the failure to the Global Hall of Interop Shame."}
- :capabilities [:cap/discord :cap/semantic_query :cap/graph_query :cap/event_agents]}

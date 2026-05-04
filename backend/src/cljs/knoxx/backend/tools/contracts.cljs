@@ -70,7 +70,11 @@
                                                                (str " — :contract/id " cid))
                                                              "\nClass: " (or (:contract-class r) klass))
                                                         (str "✗ Validation failed:\n"
-                                                             (str/join "\n" (map #(str "  • " %) errors))))
+                                                             (str/join "\n" (map (fn [err]
+                                                                                  (let [path (or (:path err) "root")
+                                                                                        msg (or (:message err) "Unknown error")]
+                                                                                    (str "  • [" (str/join " > " path) "]: " msg)))
+                                                                              errors))))
                                                         (js->clj result :keywordize-keys true))))))))
 
          ]

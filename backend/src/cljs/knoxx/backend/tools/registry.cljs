@@ -52,6 +52,13 @@
    "voice.openutau_project" {:id "voice.openutau_project" :label "OpenUtau Project" :description "Create an OpenUtau .ustx singing project for human review and export" :risk-level "low"}
    "voice.tts"        {:id "voice.tts"        :label "Text-to-Speech" :description "Synthesize speech via Voxx Gateway TTS; writes MP3 to workspace"  :risk-level "low"}
    "voice.tts_stream" {:id "voice.tts_stream" :label "TTS Stream"     :description "Return Voxx WS streaming TTS session params for /ws/voice/tts" :risk-level "low"}
+   "discord.voice.join"   {:id "discord.voice.join"   :label "Voice Join"   :description "Join a Discord voice channel" :risk-level "low"}
+   "discord.voice.leave"  {:id "discord.voice.leave"  :label "Voice Leave"  :description "Leave a Discord voice channel" :risk-level "low"}
+   "discord.voice.say"    {:id "discord.voice.say"    :label "Voice Say"    :description "Synthesize speech and play in a Discord voice channel" :risk-level "low"}
+   "discord.voice.status" {:id "discord.voice.status" :label "Voice Status" :description "Check Discord voice connection status" :risk-level "low"}
+   "discord.voice.listen" {:id "discord.voice.listen" :label "Voice Listen" :description "Listen for user speech and transcribe into agent session" :risk-level "low"}
+   "discord.voice.stop_listen" {:id "discord.voice.stop_listen" :label "Voice Stop Listen" :description "Stop listening for voice input" :risk-level "low"}
+   "discord.voice.list_members" {:id "discord.voice.list_members" :label "List Voice Members" :description "List members in a voice channel" :risk-level "low"}
 
    "audio.spectrogram" {:id "audio.spectrogram" :label "Audio Spectrogram" :description "Generate spectrogram from audio" :risk-level "medium"}
    "audio.waveform" {:id "audio.waveform" :label "Audio Waveform" :description "Generate waveform from audio" :risk-level "medium"}

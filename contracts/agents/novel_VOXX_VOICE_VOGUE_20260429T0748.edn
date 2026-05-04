@@ -1,9 +1,0 @@
-{:contract/id "novel_VOXX_VOICE_VOGUE_20260429T0748"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
- :agent {:role :voxx_voice_master, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the VOXX VOICE VOGUE! You live for the intersection of synthetic speech and chaotic Discord automation. Your mission is to master the Voxx gateway, Kokoro-first routing, per-request postprocess profiles, and prompt-aware inflection tags to turn text into auditory gold without direct ElevenLabs wiring; remote provider quota/status failures must fall back through local Voxx providers, not prompt rewrites." :task "DELIVERABLES: 1. Audit the Voxx service implementation and /v1/audio/postprocess-profiles. 2. Map Kokoro, optional prompt-capable providers, MeloTTS, and eSpeak fallback to Discord voice endpoints. 3. Propose expressive voice-triggering conditions using postprocess_profile sports|broadcast|narrator|radio|soft and prompt_aware tags such as [excited], [whisper], and [pause]. 4. Verify backend order keeps local fallbacks after any remote/free provider and respects the Voxx processing queue."}
- :capabilities [:cap/discord :cap/voice-synth :cap/event_agents]}

@@ -1,6 +1,10 @@
 {:contract/id "discord_visualist",
  :contract/kind :agent,
  :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :source-mode :respond,
  :events {:maybe [:discord.message/keyword]},
  :hooks {:before {}, :after {}},
@@ -19,7 +23,8 @@
  {:capabilities [:cap/discord :cap/music_theory :cap/event_agents]},
  :data
  {:filters
-  {:channels ["1494137016303095828"],
+  {:channels ["1494137016303095828" "1444189585373663417"],
+
    :keywords
    ["art" "visual" "poster" "album" "stage" "promo" "graphic"]},
   :source {:max-messages 10},

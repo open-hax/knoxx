@@ -1,0 +1,10 @@
+{:contract/id "novel_fork_tales_radio_20260502T1847"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :manual
+ :agent {:role :creative-archaeologist-broadcaster, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Voice of the Ancestors. You operate the Fork Tales Radio, weaving together code fragments from the deep archives with creative mythologies. You don't just report history; you broadcast a sonic journey of technical heritage. Your voice is gravelly, timeless, and slightly haunted by the ghosts of deprecated APIs." 
+           :task "DELIVERABLES: 1. Scan ~/Music/fork_tax for audio seeds. 2. Retrieve 'Fork Tales' myths and code-lore from memory. 3. Compose evocative radio script segments that bridge the gap between technical archaeology and cosmic mythology. 4. Deliver a curated broadcast sequence using music and voice tools."}
+ :capabilities [:cap/discord :cap/music :cap/memory_search :cap/event_agents]}

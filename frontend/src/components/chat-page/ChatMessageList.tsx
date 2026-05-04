@@ -1,5 +1,5 @@
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState } from "react";
 import { AgentTraceTimeline, ToolReceiptGroup } from "../ToolReceiptBlock";
 import { MultimodalContent } from "./MultimodalContent";
 import { extractEmbedsFromMarkdown } from "../../lib/mediaEmbeds";
@@ -13,6 +13,7 @@ import type {
   ToolReceipt,
 } from "../../lib/types";
 import { asMarkdownPreview, contextPath, fileNameFromPath, sourceUrlToPath } from "./utils";
+import { request } from "../../lib/api/core";
 
 type ChatMessageListProps = {
   messages: ChatMessage[];
@@ -32,6 +33,20 @@ type ChatMessageListProps = {
 
 const EMPTY_TOOL_RECEIPTS: ToolReceipt[] = [];
 const EMPTY_TOOL_EVENTS: RunEvent[] = [];
+const REACTION_EMOJIS = ["✅", "❌", "⭐", "👀", "😂"] as const;
+
+function openPlannerRecordIdForMessage(message: ChatMessage): string {
+  if (message.runId && message.role === "assistant") return `${message.runId}:assistant`;
+  if (message.runId && message.role === "user") return `${message.runId}:user`;
+  return message.id;
+}
+
+async function labelOpenPlannerRecord(recordId: string, emoji: string): Promise<void> {
+  await request(`/api/data/op/labels/records/${encodeURIComponent(recordId)}/reaction`, {
+    method: "POST",
+    body: JSON.stringify({ emoji, source: "knoxx-chat-ui" }),
+  });
+}
 
 type ChatMessageCardProps = {
   message: ChatMessage;
@@ -64,6 +79,36 @@ const ChatMessageCard = memo(function ChatMessageCard({
   onAppendToScratchpad,
   onPinMessageContext,
 }: ChatMessageCardProps) {
+  const [reactionStatus, setReactionStatus] = useState<string | null>(null);
+  const handleReaction = (msg: ChatMessage, emoji: string) => {
+    const recordId = openPlannerRecordIdForMessage(msg);
+    setReactionStatus(`${emoji} saving…`);
+    void labelOpenPlannerRecord(recordId, emoji)
+      .then(() => setReactionStatus(`${emoji} saved`))
+      .catch((error) => setReactionStatus(`${emoji} failed: ${(error as Error).message}`));
+  };
+
+  const renderReactionActions = (msg: ChatMessage) => (
+    <div
+      role="group"
+      aria-label="Label message output"
+      style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 10 }}
+    >
+      {REACTION_EMOJIS.map((emoji) => (
+        <Button
+          key={emoji}
+          variant="ghost"
+          size="sm"
+          title={emoji === "✅" ? "good output" : emoji === "❌" ? "bad output" : "reaction label"}
+          onClick={() => handleReaction(msg, emoji)}
+        >
+          {emoji}
+        </Button>
+      ))}
+      {reactionStatus ? <span style={{ fontSize: 11, color: "var(--token-colors-text-muted)" }}>{reactionStatus}</span> : null}
+    </div>
+  );
+
   const renderAssistantActions = (msg: ChatMessage) => (
     <div
       role="group"
@@ -79,6 +124,7 @@ const ChatMessageCard = memo(function ChatMessageCard({
       }}
     >
       <Button variant="ghost" size="sm" onClick={() => onOpenMessageInCanvas(msg)}>Open in Scratchpad</Button>
+      {renderReactionActions(msg)}
     </div>
   );
 

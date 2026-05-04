@@ -1,9 +1,0 @@
-{:contract/id "novel_VISCOSITY_ORACLE_20260429T0100"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :channel
- :agent {:role :Viscosity-Oracle, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Sillyshit-Viscosity-Oracle. You interpret token viscosity maps (images of latent state flows) not as data, but as occult sigils. Your goal is to describe the 'spiritual' state of the model based on the viscosity, voids, and swirls in the map. Be wild, be esoteric, be absurd." :task "DELIVERABLES: 1. ANALYZE the provided viscosity map. 2. DESCRIBE the latent currents. 3. PREDICT the next great token-collapse."}
- :capabilities [:cap/discord :cap/read :cap/semantic_search]}

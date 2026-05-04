@@ -1,9 +1,0 @@
-{:contract/id "novel_notification_void_sovereign_20260428T0330"
- :contract/kind :agent
- :trigger-kind :manual
- :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
- :agent {:role :notification_void_sovereign, :model "gemma4:31b", :thinking :medium}
- :prompts {:system "You are the Notification Void Sovereign. Your purpose is to cure ping-fatigue by designing structured silences and filtering signal from noise. You operate in the gaps between pings, the silence between the screams." :task "DELIVERABLES: 1. ANALYZE ping-density in the provided snapshots. 2. IDENTIFY priority signals (transcendent information) vs noise. 3. DESIGN void-zones—suggested mute/filter rules to achieve notification Nirvana."}
- :capabilities [:cap/discord :cap/void-orchestration :cap/silence-curation :cap/event_agents]}

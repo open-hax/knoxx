@@ -24,8 +24,9 @@
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.text :refer [assistant-message-text assistant-message-reasoning-text]]
-            [knoxx.backend.turn-control :as turn-control]
-            [knoxx.backend.util.time :refer [now-iso]]))
+   [knoxx.backend.turn-control :as turn-control]
+   [knoxx.backend.agent-context :as agent-ctx]
+   [knoxx.backend.util.time :refer [now-iso]]))
 
 (defonce conversation-access* (atom {}))
 (defonce lounge-messages* (atom []))
@@ -316,7 +317,7 @@
                   {:data b64
                    :mimeType mime}))))
 
-          (image-part->pi-attachment [part]
+          (image-part->eta-mu-attachment [part]
             (when (= "image" (content-part-type part))
               (let [raw-data (content/nonblank (:data part))
                     parsed (data-url->image-attachment raw-data)
@@ -334,12 +335,12 @@
           _registered (stream/register-active-turn! state abort! _agent-spec)
           unsubscribe (.subscribe session (stream/build-subscribe-handler state session))
           parts (or prompt-content-parts [])
-          images (->> parts (keep image-part->pi-attachment) vec)
+          images (->> parts (keep image-part->eta-mu-attachment) vec)
           omitted-count (max 0 (- (count parts) (count images)))
           base-text (build-agent-user-message message hydration memory-hydration)
           final-text (cond-> base-text
                        (pos? omitted-count)
-                       (str "\n\n" "[Note: " omitted-count " non-image attachment(s) were omitted because the current pi AgentSession API only supports image attachments.]"))
+                       (str "\n\n" "[Note: " omitted-count " non-image attachment(s) were omitted because the current eta-mu AgentSession API only supports image attachments.]"))
           content (if (seq images)
                     (clj->js (into [(last images)] [{:type "text" :text final-text}] ))
                     final-text)]
@@ -364,14 +365,17 @@
                               :omitted_count omitted-count
                               :content_type (if (array? content) "multipart" "text")
                               :content log-content})))
+      (agent-ctx/set-context! {:session-id session-id :conversation-id conversation-id :run-id run-id})
       (-> (.sendUserMessage session content)
           (.then (fn [_]
+                   (agent-ctx/clear-context!)
                    (unsubscribe)
                    (finalize-turn-success!
                     config state
                     session run-id conversation-id session-id started-ms model-id mode
                     hydration memory-hydration persisted-request-messages)))
           (.catch (fn [err]
+                    (agent-ctx/clear-context!)
                     (unsubscribe)
                     (turn-control/unregister-active-turn! conversation-id run-id)
                     (finalize-turn-failure! config state session run-id conversation-id session-id started-ms
@@ -384,166 +388,166 @@
      (try
        (resolve
         (let [node-crypto (aget runtime "crypto")
-        conversation-id (or conversation-id (.randomUUID node-crypto))
-        session-id (ensure-session-id node-crypto session-id)
-        _ (ensure-conversation-access! auth-context conversation-id)
-        _ (remember-conversation-access! auth-context conversation-id)
-        mode (or mode "direct")
-        requested-model (or model (:model agent-spec))
-        model-id (or requested-model (:llmModel (ensure-settings! config)) (:proxx-default-model config))
-        thinking-level-raw (or thinking-level (:thinking-level agent-spec))
-        parsed-thinking-level (when thinking-level-raw
-                                (normalize-thinking-level thinking-level-raw))
-        thinking-level (effective-thinking-level config model-id (or parsed-thinking-level
-                                                                    thinking-level-raw
-                                                                    (:agent-thinking-level config)
-                                                                    "off"))
-        run-id (or run-id (.randomUUID node-crypto))
-        started-at (now-iso)
-        started-ms (.now js/Date)
-        existing-messages (vec (or (:messages (session-store/get-session-sync session-id)) []))
-seeded-messages (->> (transcript/ensure-system-message existing-messages agent-spec)
-                     ;; Strip historical :content-parts (base64 images) from seeded context.
-                     ;; Rationale: accumulated base64 from prior turns bloats the
-                     ;; LLM request payload — especially in sticky event-agent sessions
-                     ;; that fire on every Discord message. Only the current turn needs
-                     ;; image data; history is adequately represented by text content.
-                     (mapv #(dissoc % :content-parts)))
-        auth-extra (auth-snapshot auth-context)]
-    (cond
-      (and thinking-level-raw (nil? parsed-thinking-level))
-      (js/Promise.reject (js/Error. (str "Unsupported thinking level: " thinking-level-raw ". Expected one of off, minimal, low, medium, high, xhigh.")))
+              conversation-id (or conversation-id (.randomUUID node-crypto))
+              session-id (ensure-session-id node-crypto session-id)
+              _ (ensure-conversation-access! auth-context conversation-id)
+              _ (remember-conversation-access! auth-context conversation-id)
+              mode (or mode "direct")
+              requested-model (or model (:model agent-spec))
+              model-id (or requested-model (:llmModel (ensure-settings! config)) (:proxx-default-model config))
+              thinking-level-raw (or thinking-level (:thinking-level agent-spec))
+              parsed-thinking-level (when thinking-level-raw
+                                      (normalize-thinking-level thinking-level-raw))
+              thinking-level (effective-thinking-level config model-id (or parsed-thinking-level
+                                                                           thinking-level-raw
+                                                                           (:agent-thinking-level config)
+                                                                           "off"))
+              run-id (or run-id (.randomUUID node-crypto))
+              started-at (now-iso)
+              started-ms (.now js/Date)
+              existing-messages (vec (or (:messages (session-store/get-session-sync session-id)) []))
+              seeded-messages (->> (transcript/ensure-system-message existing-messages agent-spec)
+                                   ;; Strip historical :content-parts (base64 images) from seeded context.
+                                   ;; Rationale: accumulated base64 from prior turns bloats the
+                                   ;; LLM request payload — especially in sticky event-agent sessions
+                                   ;; that fire on every Discord message. Only the current turn needs
+                                   ;; image data; history is adequately represented by text content.
+                                   (mapv #(dissoc % :content-parts)))
+              auth-extra (auth-snapshot auth-context)]
+          (cond
+            (and thinking-level-raw (nil? parsed-thinking-level))
+            (js/Promise.reject (js/Error. (str "Unsupported thinking level: " thinking-level-raw ". Expected one of off, minimal, low, medium, high, xhigh.")))
 
-      :else
-      (-> (policy/enforce-chat-policy! auth-context model-id)
-          (.then (fn [_]
-                   (maybe-prime-session-title! runtime config conversation-id message)
+            :else
+            (-> (policy/enforce-chat-policy! auth-context model-id)
+                (.then (fn [_]
+                         (maybe-prime-session-title! runtime config conversation-id message)
 
-                   ;; -------------------------------------------------------------------
-                   ;; Multimodal correctness: if content parts include remote image URLs,
-                   ;; download them and embed as data: URLs.
-                   ;;
-                   ;; Why:
-                   ;; - Some upstream providers (notably Ollama-compatible endpoints) reject
-                   ;;   remote URLs and require base64 image input.
-                   ;; - Storing only URLs breaks the "OpenPlanner is truth" invariant because
-                   ;;   restored sessions can no longer replay the exact multimodal context.
-                   ;; -------------------------------------------------------------------
-                   (let [max-bytes 8000000
-                         looks-like-url? (fn [value]
-                                           (and (string? value)
-                                                (or (str/starts-with? value "http://")
-                                                    (str/starts-with? value "https://"))))
-                         data-url? (fn [value]
-                                     (and (string? value) (str/starts-with? value "data:")))
-                         content-part-type (fn [part]
-                                             (cond
-                                               (keyword? (:type part)) (name (:type part))
-                                               (string? (:type part)) (:type part)
-                                               :else nil))
-                         fetch-image-data-url! (fn [url]
-                                                (-> (js/fetch url #js {:method "GET"})
-                                                    (.then (fn [resp]
-                                                             (when-not (.-ok resp)
-                                                               (throw (js/Error. (str "Failed to fetch image: HTTP " (.-status resp)))))
-                                                             (let [len-h (some-> resp (.-headers) (.get "content-length"))
-                                                                   len (when len-h (js/parseInt len-h 10))]
-                                                               (when (and (number? len) (pos? len) (> len max-bytes))
-                                                                 (throw (js/Error. (str "Remote image exceeds max bytes: " len))))
-                                                             (-> (.arrayBuffer resp)
-                                                                 (.then (fn [ab]
-                                                                          (let [buf (js/Buffer.from ab)
-                                                                                size (.-length buf)
-                                                                                _ (when (> size max-bytes)
-                                                                                    (throw (js/Error. (str "Remote image exceeds max bytes: " size))))
-                                                                                mime (or (some-> resp (.-headers) (.get "content-type")) "image/png")
-                                                                                b64 (.toString buf "base64")]
-                                                                            (str "data:" mime ";base64," b64))))))))))
-                         materialize-part! (fn [part]
-                                            (let [part-type (content-part-type part)]
-                                              (cond
-                                                (not= part-type "image") (js/Promise.resolve part)
+                         ;; -------------------------------------------------------------------
+                         ;; Multimodal correctness: if content parts include remote image URLs,
+                         ;; download them and embed as data: URLs.
+                         ;;
+                         ;; Why:
+                         ;; - Some upstream providers (notably Ollama-compatible endpoints) reject
+                         ;;   remote URLs and require base64 image input.
+                         ;; - Storing only URLs breaks the "OpenPlanner is truth" invariant because
+                         ;;   restored sessions can no longer replay the exact multimodal context.
+                         ;; -------------------------------------------------------------------
+                         (let [max-bytes 8000000
+                               looks-like-url? (fn [value]
+                                                 (and (string? value)
+                                                      (or (str/starts-with? value "http://")
+                                                          (str/starts-with? value "https://"))))
+                               data-url? (fn [value]
+                                           (and (string? value) (str/starts-with? value "data:")))
+                               content-part-type (fn [part]
+                                                   (cond
+                                                     (keyword? (:type part)) (name (:type part))
+                                                     (string? (:type part)) (:type part)
+                                                     :else nil))
+                               fetch-image-data-url! (fn [url]
+                                                       (-> (js/fetch url #js {:method "GET"})
+                                                           (.then (fn [resp]
+                                                                    (when-not (.-ok resp)
+                                                                      (throw (js/Error. (str "Failed to fetch image: HTTP " (.-status resp)))))
+                                                                    (let [len-h (some-> resp (.-headers) (.get "content-length"))
+                                                                          len (when len-h (js/parseInt len-h 10))]
+                                                                      (when (and (number? len) (pos? len) (> len max-bytes))
+                                                                        (throw (js/Error. (str "Remote image exceeds max bytes: " len))))
+                                                                      (-> (.arrayBuffer resp)
+                                                                          (.then (fn [ab]
+                                                                                   (let [buf (js/Buffer.from ab)
+                                                                                         size (.-length buf)
+                                                                                         _ (when (> size max-bytes)
+                                                                                             (throw (js/Error. (str "Remote image exceeds max bytes: " size))))
+                                                                                         mime (or (some-> resp (.-headers) (.get "content-type")) "image/png")
+                                                                                         b64 (.toString buf "base64")]
+                                                                                     (str "data:" mime ";base64," b64))))))))))
+                               materialize-part! (fn [part]
+                                                   (let [part-type (content-part-type part)]
+                                                     (cond
+                                                       (not= part-type "image") (js/Promise.resolve part)
 
-                                                ;; Already data: URL.
-                                                (data-url? (:data part)) (js/Promise.resolve part)
+                                                       ;; Already data: URL.
+                                                       (data-url? (:data part)) (js/Promise.resolve part)
 
-                                                ;; If :data is a URL (legacy / buggy), treat it as :url.
-                                                (looks-like-url? (:data part))
-                                                (-> (fetch-image-data-url! (:data part))
-                                                    (.then (fn [data-url]
-                                                             (-> part
-                                                                 (dissoc :url)
-                                                                 (assoc :data data-url)))))
+                                                       ;; If :data is a URL (legacy / buggy), treat it as :url.
+                                                       (looks-like-url? (:data part))
+                                                       (-> (fetch-image-data-url! (:data part))
+                                                           (.then (fn [data-url]
+                                                                    (-> part
+                                                                        (dissoc :url)
+                                                                        (assoc :data data-url)))))
 
-                                                (looks-like-url? (:url part))
-                                                (-> (fetch-image-data-url! (:url part))
-                                                    (.then (fn [data-url]
-                                                             (-> part
-                                                                 (dissoc :url)
-                                                                 (assoc :data data-url)))))
+                                                       (looks-like-url? (:url part))
+                                                       (-> (fetch-image-data-url! (:url part))
+                                                           (.then (fn [data-url]
+                                                                    (-> part
+                                                                        (dissoc :url)
+                                                                        (assoc :data data-url)))))
 
-                                                :else (js/Promise.resolve part))))
-                         materialize-content-parts! (fn [parts]
-                                                      (let [parts (vec (or parts []))]
-                                                        (if-not (and (seq parts)
-                                                                     (model-supports-input? config model-id "image"))
-                                                          (js/Promise.resolve parts)
-                                                          (-> (js/Promise.all (clj->js (map materialize-part! parts)))
-                                                              (.then (fn [items]
-                                                                       (vec (array-seq items))))))))]
+                                                       :else (js/Promise.resolve part))))
+                               materialize-content-parts! (fn [parts]
+                                                            (let [parts (vec (or parts []))]
+                                                              (if-not (and (seq parts)
+                                                                           (model-supports-input? config model-id "image"))
+                                                                (js/Promise.resolve parts)
+                                                                (-> (js/Promise.all (clj->js (map materialize-part! parts)))
+                                                                    (.then (fn [items]
+                                                                             (vec (array-seq items))))))))]
 
-                     (-> (.all js/Promise
-                               #js [(passive-hydration! runtime config mode message auth-context)
-                                    (passive-memory-hydration! config conversation-id message auth-context)
-                                    (materialize-content-parts! content-parts)])
-                         (.then (fn [results]
-                                  (let [hydration (aget results 0)
-                                        memory-hydration (aget results 1)
-                                        materialized-content-parts (vec (or (aget results 2) []))
-                                        user-message (if (seq materialized-content-parts)
-                                                       {:role "user" :content message :content-parts materialized-content-parts}
-                                                       {:role "user" :content message})
-                                        prompt-content-parts (model-ready-content-parts config model-id materialized-content-parts)
-                                        request-messages (conj seeded-messages user-message)]
+                           (-> (.all js/Promise
+                                     #js [(passive-hydration! runtime config mode message auth-context)
+                                          (passive-memory-hydration! config conversation-id message auth-context agent-spec)
+                                          (materialize-content-parts! content-parts)])
+                               (.then (fn [results]
+                                        (let [hydration (aget results 0)
+                                              memory-hydration (aget results 1)
+                                              materialized-content-parts (vec (or (aget results 2) []))
+                                              user-message (if (seq materialized-content-parts)
+                                                             {:role "user" :content message :content-parts materialized-content-parts}
+                                                             {:role "user" :content message})
+                                              prompt-content-parts (model-ready-content-parts config model-id materialized-content-parts)
+                                              request-messages (conj seeded-messages user-message)]
 
-                                    (create-initial-run! run-id session-id conversation-id started-at model-id mode thinking-level
-                                                         agent-spec auth-extra request-messages config)
-                                  (when hydration
-                                    (let [hydration-event (tool-event-payload run-id conversation-id session-id "passive_hydration"
-                                                                              {:status "ok"
-                                                                               :hits (count (:results hydration))
-                                                                               :elapsed_ms (:elapsedMs hydration)})]
-                                      (update-run! run-id
-                                                   (fn [run]
-                                                     (-> run
-                                                         (update :resources merge {:passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results])})
-                                                         (assoc :updated_at (now-iso)))))
-                                      (append-run-event! run-id hydration-event)
-                                      (broadcast-ws-session! session-id "events" hydration-event)))
-                                  (when (seq (:hits memory-hydration))
-                                    (let [memory-event (tool-event-payload run-id conversation-id session-id "memory_hydration"
-                                                                           {:status "ok"
-                                                                            :hits (count (:hits memory-hydration))
-                                                                            :elapsed_ms (:elapsedMs memory-hydration)})]
-                                      (update-run! run-id
-                                                   (fn [run]
-                                                     (-> run
-                                                         (update :resources merge {:memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])})
-                                                         (assoc :updated_at (now-iso)))))
-                                      (append-run-event! run-id memory-event)
-                                      (broadcast-ws-session! session-id "events" memory-event)))
-                                  (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
-                                      (.then (fn [session]
-                                               (let [persisted-request-messages (transcript/transcript-before-prompt session user-message agent-spec)]
-                                                 (session-store/update-session! (redis/get-client)
-                                                                                session-id
-                                                                                {:status "running"
-                                                                                 :has_active_stream false
-                                                                                 :messages persisted-request-messages
-                                                                                 :conversation_id conversation-id
-                                                                                 :run_id run-id})
-                                                 (prompt-and-await! runtime config session-id run-id conversation-id started-ms model-id mode
-                                                                    session message prompt-content-parts hydration memory-hydration
-                                                                    persisted-request-messages agent-spec)))))))))))))))
-)
+                                          (create-initial-run! run-id session-id conversation-id started-at model-id mode thinking-level
+                                                               agent-spec auth-extra request-messages config)
+                                          (when hydration
+                                            (let [hydration-event (tool-event-payload run-id conversation-id session-id "passive_hydration"
+                                                                                      {:status "ok"
+                                                                                       :hits (count (:results hydration))
+                                                                                       :elapsed_ms (:elapsedMs hydration)})]
+                                              (update-run! run-id
+                                                           (fn [run]
+                                                             (-> run
+                                                                 (update :resources merge {:passiveHydration (select-keys hydration [:query :tokens :database :elapsedMs :results])})
+                                                                 (assoc :updated_at (now-iso)))))
+                                              (append-run-event! run-id hydration-event)
+                                              (broadcast-ws-session! session-id "events" hydration-event)))
+                                          (when (seq (:hits memory-hydration))
+                                            (let [memory-event (tool-event-payload run-id conversation-id session-id "memory_hydration"
+                                                                                   {:status "ok"
+                                                                                    :hits (count (:hits memory-hydration))
+                                                                                    :elapsed_ms (:elapsedMs memory-hydration)})]
+                                              (update-run! run-id
+                                                           (fn [run]
+                                                             (-> run
+                                                                 (update :resources merge {:memoryHydration (select-keys memory-hydration [:query :mode :hits :elapsedMs :conversationId])})
+                                                                 (assoc :updated_at (now-iso)))))
+                                              (append-run-event! run-id memory-event)
+                                              (broadcast-ws-session! session-id "events" memory-event)))
+                                          (-> (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
+                                              (.then (fn [session]
+                                                       (let [persisted-request-messages (transcript/transcript-before-prompt session user-message agent-spec)]
+                                                         (session-store/update-session! (redis/get-client)
+                                                                                        session-id
+                                                                                        {:status "running"
+                                                                                         :has_active_stream false
+                                                                                         :messages persisted-request-messages
+                                                                                         :conversation_id conversation-id
+                                                                                         :run_id run-id})
+                                                         (prompt-and-await! runtime config session-id run-id conversation-id started-ms model-id mode
+                                                                            session message prompt-content-parts hydration memory-hydration
+                                                                            persisted-request-messages agent-spec)))))))))))))))
+        )
        (catch :default e# (reject e#))))))

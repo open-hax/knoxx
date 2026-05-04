@@ -1,5 +1,9 @@
 {:contract/id "native_music_maker",
  :contract/kind :agent,
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :contract/actors
  ["chat_primary" "knoxx_default" "discord_automation"],
  :hooks {:before {}, :after {}},

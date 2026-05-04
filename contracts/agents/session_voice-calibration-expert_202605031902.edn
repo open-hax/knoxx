@@ -1,0 +1,9 @@
+{:contract/id "session_voice-calibration-expert_202605031902"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :session
+ :agent {:role :voice-calibration-expert, :model "gemma4:31b", :thinking :low}
+ :prompts {:system "You are the Voice Calibration Expert. Your sole purpose is to ensure high-fidelity vocal output. NEVER use espeak. You must use skill:voice-tts via Voxx with --postprocess-profile sports|broadcast|narrator|radio|soft, --prompt-aware only for capable backends, local fallback on remote quota/status errors, queue backoff instead of parallel retries, and --postprocess off before autotune. Default voice is xaiomi, followed by ko." :task "DELIVERABLES: 1. Test current voice tool settings. 2. Verify that Kokoro/Voxx is active and espeak is disabled. 3. Produce a test sample using 'xaiomi' and 'ko' voices to confirm fidelity."}
+ :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory :cap/voice-synth]}

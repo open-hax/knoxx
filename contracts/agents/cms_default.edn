@@ -1,6 +1,10 @@
 {:contract/id "cms_default",
  :contract/kind :agent,
  :contract/actors ["cms_chat"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
  :hooks {:before {}, :after {}},
  :agent
  {:role :role/knowledge_worker,

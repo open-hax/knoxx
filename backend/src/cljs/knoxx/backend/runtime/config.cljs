@@ -89,7 +89,7 @@
    :voxx-model-id (env "KNOXX_VOXX_MODEL_ID" "kokoro")
    :stt-base-url (env "KNOXX_STT_BASE_URL" "")
 
-   ;; Pi / agent runtime dir
+   ;; eta-mu agent runtime dir
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
 
    ;; Sandbox container runtime
@@ -125,7 +125,7 @@
    :shoedelussy-mcp-tool-name (env "SHOEDELUSSY_MCP_TOOL_NAME" "shoedelussy")
    :shoedelussy-mcp-shared-secret (env "SHOEDELUSSY_MCP_SHARED_SECRET" "")
 
-   ;; Agent system prompt (pi-coding-agent override)
+   ;; Agent system prompt (eta-mu coding agent override)
    :agent-system-prompt (env
                          "KNOXX_AGENT_SYSTEM_PROMPT"
                          (str

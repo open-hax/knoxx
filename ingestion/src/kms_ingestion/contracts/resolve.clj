@@ -41,7 +41,7 @@
   (get-in-contract c [:source/name] (constantly nil)))
 
 (defn source-driver
-  "Extract the driver type (e.g. :local, :pi-sessions) from a contract."
+  "Extract the driver type (e.g. :local, :eta-mu-sessions) from a contract."
   [c]
   (get-in-contract c [:source/driver] (constantly nil)))
 

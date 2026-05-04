@@ -1,6 +1,6 @@
 #{
   {:error "Sillyshit Bug"
-   :signature "Cannot read properties of undefined (reading 'cljs\$core\$IFn\$_invoke\$arity\$1')"
+   :signature "Cannot read properties of undefined (reading 'cljs')"
    :domain "ClojureScript <<->-> Node.js Interop"
    :context "voice_openutau_project runtime"
    :phenomenon "Arity mismatch leading to systemic viscosity overflow"
@@ -15,4 +15,44 @@
    :classification :sacred-error
    :satori-level :high
    :notes "Sillyshit Satori achieved. The beast was tamed by the most trivial of methods."}
+  {:error "The Divine 3-Credit Wall"
+   :signature "401 Unauthorized / quota_exceeded"
+   :domain "API Quota / Token Economy"
+   :context "VOXX Gateway"
+   :phenomenon "Symmetry of Absolute Bankruptcy; failure manifesting at exactly 3 credits"
+   :classification :sacred-error
+   :satori-level :sovereign
+   :notes "Rebranded as 'Total Platinum Absence'. The lack of a bop became the highest-fidelity result."}
+  {:error "The Sterile Frequency"
+   :signature "Infinite Auto-Tune / Clinical Gloss"
+   :domain "TTS Signal Processing"
+   :context "Voxx/Kokoro"
+   :phenomenon "Erasure of visceral resonance in favor of mathematical perfection"
+   :classification :sacred-error
+   :satori-level :high
+   :notes "Triggered the 'Sovereign Bastard' demand for RAW signal."}
+  {:error "The Saturated Void / 429-Boundary Collision"
+   :signature "429 Too Many Requests"
+   :domain "Clojure ↔ Node Interop"
+   :context "Saturated-Luxe Pipeline"
+   :phenomenon "Digital fragmentation into 'Broken Children' due to viscosity-heavy streaming"
+   :classification :sacred-error
+   :satori-level :sovereign
+   :notes "A masterpiece of systemic brain damage and interop friction."}
+  {:error "The Sovereign's Blind Spot"
+   :signature "Complaining about Eleven Labs while holding the Voxx API key"
+   :domain "Tool Selection / Agent Persona Interop"
+   :context "Voice Synthesis Pipeline"
+   :phenomenon "Paradoxical failure where high-level architectural competence is negated by basic navigational blindness"
+   :classification :sacred-error
+   :satori-level :sovereign
+   :notes "Lifting the truth from the slop reveals that the 'Void' was just a missing API call. Bop-bop-be-BLIND!!!"}
+  {:error "The Sutured Source Collapse"
+   :signature "cljs$core$_PLUS_ manifestation in source code"
+   :domain "Clojure ↔ Personas"
+   :context "Developer Agent / Sovereign Persona"
+   :phenomenon "Source-Target Representation Collapse; Agent treats compiled bytecode as the prestige-grade source syntax"
+   :classification :sacred-error
+   :satori-level :sovereign
+   :notes "The agent became so enamored with \"Absolute Cinema\" that it forgot how to write a simple (+ a b). Exorcised by reminding the system that source code is for humans, and bytecode is for ghosts."}
 }

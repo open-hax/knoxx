@@ -8,7 +8,7 @@
             [knoxx.backend.contracts.actor-scope :as actor-scope]
             [knoxx.backend.core-memory :as core-memory]
             [knoxx.backend.http :as backend-http]
-            [knoxx.backend.pi-session-ingester :as pi]))
+            [knoxx.backend.eta-mu-session-ingester :as eta-mu-sessions]))
 
 (defn- enrich-session-summary!
   [config summary]
@@ -118,20 +118,20 @@
   [^js app config]
 
   ;; ---------------------------------------------------------------------------
-  ;; Pi Session Ingestion Routes
+  ;; eta-mu Session Ingestion Routes
   ;; ---------------------------------------------------------------------------
 
-  ;; GET /api/admin/pi-sessions/status — ingestion state overview
+  ;; GET /api/admin/eta-mu-sessions/status — ingestion state overview
   ;;
   ;; NOTE: There are *two* ingestion mechanisms:
-  ;; - legacy JS ingester state: ~/.knoxx/pi-ingest-state/ingested-sessions.json
-  ;; - current kms-ingestion service (pi-sessions driver)
-  (.get app "/api/admin/pi-sessions/status"
+  ;; - legacy JS ingester state: ~/.knoxx/eta-mu-ingest-state/ingested-sessions.json
+  ;; - current kms-ingestion service (eta-mu-sessions driver)
+  (.get app "/api/admin/eta-mu-sessions/status"
         (fn [_req reply]
           (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
                 kms-headers #js {"x-knoxx-user-email" "system-admin@open-hax.local"
                                 "x-knoxx-org-slug" "open-hax"}
-                legacy-p (-> (pi/get-pi-ingest-status)
+                legacy-p (-> (eta-mu-sessions/get-eta-mu-ingest-status)
                              (.catch (fn [err]
                                        #js {:ok false :error (.-message err)})))
                 kms-p (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
@@ -143,17 +143,17 @@
                           (.then
                            (fn [sources]
                              (let [sources (if (array? sources) sources #js [])
-                                   pi-source (.find sources (fn [s] (= (aget s "driver_type") "pi-sessions")))]
-                               (if-not pi-source
-                                 #js {:ok false :error "pi-sessions source not found" :sources sources}
-                                 (-> (js/fetch (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget pi-source "source_id"))
+                                   eta-mu-source (.find sources (fn [s] (= (aget s "driver_type") "eta-mu-sessions")))]
+                               (if-not eta-mu-source
+                                 #js {:ok false :error "eta-mu-sessions source not found" :sources sources}
+                                 (-> (js/fetch (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget eta-mu-source "source_id"))
                                                #js {:headers kms-headers
                                                     :signal (timeout-signal 15000)})
                                      (.then (fn [r]
                                               (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
                                      (.catch (fn [_] #js []))
                                      (.then (fn [jobs]
-                                              #js {:ok true :source pi-source :jobs jobs}))))))))]
+                                              #js {:ok true :source eta-mu-source :jobs jobs}))))))))]
             (-> (js/Promise.all #js [legacy-p kms-p])
                 (.then
                  (fn [parts]
@@ -168,15 +168,15 @@
                    (.code reply 500)
                    (.send reply #js {:ok false :error (.-message err)})))))))
 
-  ;; GET /api/admin/pi-sessions — list available pi sessions
-  (.get app "/api/admin/pi-sessions"
+  ;; GET /api/admin/eta-mu-sessions — list available eta-mu sessions
+  (.get app "/api/admin/eta-mu-sessions"
         (fn [req reply]
           (try
             (let [q (or (aget req "query") #js {})
                   limit (min (js/parseInt (or (aget q "limit") "50") 10) 200)
                   offset (js/parseInt (or (aget q "offset") "0") 10)
                   workspace (aget q "workspace")]
-              (-> (pi/list-pi-sessions {:limit limit :offset offset :workspace workspace})
+              (-> (eta-mu-sessions/list-eta-mu-sessions {:limit limit :offset offset :workspace workspace})
                   (.then (fn [result] (.send reply result)))
                   (.catch (fn [err]
                             (.code reply 500)
@@ -185,8 +185,8 @@
               (.code reply 500)
               (.send reply #js {:ok false :error (str err)})))))
 
-  ;; POST /api/admin/pi-sessions/ingest — proxy to ingestion service
-  (.post app "/api/admin/pi-sessions/ingest"
+  ;; POST /api/admin/eta-mu-sessions/ingest — proxy to ingestion service
+  (.post app "/api/admin/eta-mu-sessions/ingest"
          (fn [req reply]
            (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
                  kms-headers #js {"content-type" "application/json"
@@ -202,14 +202,14 @@
                  (.then
                   (fn [sources]
                     (let [sources (if (array? sources) sources #js [])
-                          pi-source (.find sources (fn [s] (= (aget s "driver_type") "pi-sessions")))]
-                      (if-not pi-source
+                          eta-mu-source (.find sources (fn [s] (= (aget s "driver_type") "eta-mu-sessions")))]
+                      (if-not eta-mu-source
                         (do (.code reply 404)
-                            (.send reply #js {:ok false :error "pi-sessions source not found in ingestion service"}))
+                            (.send reply #js {:ok false :error "eta-mu-sessions source not found in ingestion service"}))
                         (-> (js/fetch (str kms-base "/api/ingestion/jobs")
                                       #js {:method "POST"
                                            :headers kms-headers
-                                           :body (js/JSON.stringify #js {:source_id (aget pi-source "source_id")
+                                           :body (js/JSON.stringify #js {:source_id (aget eta-mu-source "source_id")
                                                                         :full_scan force?})
                                            :signal (timeout-signal 20000)})
                             (.then (fn [r] (if (.-ok r) (.json r) (safe-json r))))

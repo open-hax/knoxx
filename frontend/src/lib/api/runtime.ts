@@ -190,6 +190,10 @@ export async function voiceTtsSynthesize(payload: {
   voice_id?: string;
   model_id?: string;
   output_format?: string;
+  postprocess_profile?: string;
+  postprocess_enabled?: boolean;
+  prompt_aware?: boolean;
+  prompt_aware_style?: string;
   voice_settings?: Record<string, unknown>;
 }): Promise<Blob> {
   const response = await fetch(`${API_BASE}/api/voice/tts`, {
@@ -455,5 +459,171 @@ export async function handoffToShibboleth(payload: {
   return request<ShibbolethHandoffResponse>("/api/shibboleth/handoff", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+// ── Audio Library (Broadcast Studio) ────────────────────────────────
+
+export interface AudioFileEntry {
+  name: string;
+  path: string;
+  ext: string;
+  size: number;
+  modified: number;
+  mime: string;
+}
+
+export interface AudioLibraryResponse {
+  ok: boolean;
+  root: string;
+  count: number;
+  files: AudioFileEntry[];
+}
+
+export async function getAudioLibrary(options?: {
+  path?: string;
+  depth?: number;
+}): Promise<AudioLibraryResponse> {
+  const params = new URLSearchParams();
+  if (options?.path) params.set("path", options.path);
+  if (options?.depth != null) params.set("depth", String(options.depth));
+  const qs = params.toString();
+  return request<AudioLibraryResponse>(
+    `/api/studio/audio-library${qs ? `?${qs}` : ""}`
+  );
+}
+
+export async function ensureAudioDirectory(path: string): Promise<{ ok: boolean; path: string }> {
+  return request(`/api/studio/audio-library/ensure-dir`, {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
+export async function renameAudioFile(from: string, to: string): Promise<{ ok: boolean; from: string; to: string }> {
+  return request(`/api/studio/audio-library/rename`, {
+    method: "POST",
+    body: JSON.stringify({ from, to }),
+  });
+}
+
+export function getAudioStreamUrl(path: string): string {
+  const params = new URLSearchParams({ path });
+  return `${API_BASE}/api/studio/stream?${params.toString()}`;
+}
+
+export async function savePlaylistAsM3U(name: string, items: Array<{ path: string; name: string }>): Promise<{ ok: boolean; path: string; count: number }> {
+  return request("/api/studio/save-m3u", {
+    method: "POST",
+    body: JSON.stringify({ name, items }),
+  });
+}
+
+export function getM3UDownloadUrl(): string {
+  return `${API_BASE}/api/studio/download-m3u`;
+}
+
+// ── Audio Labels ──────────────────────────────────────────────────
+
+export async function getAudioLabels(filePath: string): Promise<{ ok: boolean; path: string; labels: string[] }> {
+  return request(`/api/studio/labels?path=${encodeURIComponent(filePath)}`);
+}
+
+export async function getAllLabels(): Promise<{ ok: boolean; labels: string[] }> {
+  return request(`/api/studio/labels?all=true`);
+}
+
+export async function addAudioLabel(filePath: string, label: string): Promise<{ ok: boolean; path: string; labels: string[] }> {
+  return request(`/api/studio/labels/add`, {
+    method: "POST",
+    body: JSON.stringify({ path: filePath, label }),
+  });
+}
+
+export async function removeAudioLabel(filePath: string, label: string): Promise<{ ok: boolean; path: string; labels: string[] }> {
+  return request(`/api/studio/labels/remove`, {
+    method: "POST",
+    body: JSON.stringify({ path: filePath, label }),
+  });
+}
+
+export async function getFilesByLabel(label: string): Promise<{ ok: boolean; label: string; files: string[] }> {
+  return request(`/api/studio/labels/by-label?label=${encodeURIComponent(label)}`);
+}
+
+export async function syncAudioSymlinks(): Promise<{ ok: boolean; symlinks: number }> {
+  return request(`/api/studio/sync-symlinks`, { method: "POST" });
+}
+
+export async function loadM3UPlaylist(filePath: string): Promise<{ ok: boolean; name: string; items: Array<{ path: string; name: string }> }> {
+  return request(`/api/studio/load-m3u?path=${encodeURIComponent(filePath)}`);
+}
+
+export async function listPlaylists(): Promise<{ ok: boolean; playlists: Array<{ name: string; path: string; filename: string }> }> {
+  return request(`/api/studio/playlists`);
+}
+
+export async function getAudioAssetUrl(audioPath: string, assetType: "waveform" | "spectrogram"): Promise<string> {
+  return `${API_BASE}/api/studio/audio-asset?path=${encodeURIComponent(audioPath)}&type=${assetType}`;
+}
+
+export async function saveAudioAsset(audioPath: string, assetType: "waveform" | "spectrogram", imageData: string, mimeType?: string, width?: number, height?: number): Promise<{ ok: boolean }> {
+  return request(`/api/studio/audio-asset`, {
+    method: "POST",
+    body: JSON.stringify({ path: audioPath, type: assetType, imageData, mimeType, width, height }),
+  });
+}
+
+export interface DiscordAudioScanResponse {
+  ok: boolean;
+  scanned_at: string;
+  import_root: string;
+  channels_scanned: number;
+  messages_scanned: number;
+  attachments_found: number;
+  imported_count: number;
+  skipped_count: number;
+  failed_count: number;
+  manifest_path?: string;
+}
+
+export async function scanDiscordAudio(options?: {
+  channel_ids?: string[];
+  since_hours?: number;
+  pages_per_channel?: number;
+  limit_per_page?: number;
+  max_channels?: number;
+  import_root?: string;
+}): Promise<DiscordAudioScanResponse> {
+  return request(`/api/studio/discord-audio-scan`, {
+    method: "POST",
+    body: JSON.stringify(options ?? {}),
+  });
+}
+
+export interface DiscordImageScanResponse {
+  ok: boolean;
+  scanned_at: string;
+  import_root: string;
+  channels_scanned: number;
+  messages_scanned: number;
+  attachments_found: number;
+  imported_count: number;
+  skipped_count: number;
+  failed_count: number;
+  manifest_path?: string;
+}
+
+export async function scanDiscordImages(options?: {
+  channel_ids?: string[];
+  since_hours?: number;
+  pages_per_channel?: number;
+  limit_per_page?: number;
+  max_channels?: number;
+  import_root?: string;
+}): Promise<DiscordImageScanResponse> {
+  return request(`/api/studio/discord-image-scan`, {
+    method: "POST",
+    body: JSON.stringify(options ?? {}),
   });
 }
