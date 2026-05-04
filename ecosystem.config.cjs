@@ -180,9 +180,11 @@ const apps = [
       kill_timeout: 35000,
       shutdown_with_message: true,
       // Auto-restart when shadow-cljs produces new output
-      watch: ['dist'],
-      watch_delay: 800,
-      ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
+        watch: false, // watching can become really problematic when agents are resuming. If we're doing active work on the project, the files might change several times for one change, put the thing in broken states, etc. Then we end up with all these zombie event agents.
+        // which is it's self a problem we have to figure out... but it's not going to make it easier to have 50+ jobs getting restarted, and leaking every time we make a change.
+      // watch: ['dist'],
+      // watch_delay: 800,
+      // ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
       autorestart: true,
       max_restarts: 15,
       restart_delay: 3000,

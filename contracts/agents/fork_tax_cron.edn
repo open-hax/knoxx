@@ -1,7 +1,7 @@
 {:contract/id "fork_tax_cron"
  :contract/kind :agent
  :contract/version 1
- :enabled false
+ :enabled true
  :trigger-kind :cron
  :cadence-min 30
  :contract/actors ["knoxx_default"]
@@ -9,7 +9,7 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}}
- :agent {:role [:role/developer :role/discord-user]
+ :agent {:role :role/developer
          :model "gemma4:31b"
          :thinking :xhigh}
  :prompts

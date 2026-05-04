@@ -51,6 +51,21 @@
         (.then (fn [r] (if (.-ok r) (.arrayBuffer r) (throw (js/Error. (str "TTS " (.-status r)))))))
         (.then (fn [b] (.from js/Buffer (js/Uint8Array. b)))))))
 
+(defn- parse-stt-json-text [raw]
+  ;; Some STT deployments respond as SSE-ish text where the JSON is prefixed with
+  ;; "data: ", e.g. "data: {\"text\":...}". Accept both plain JSON and SSE.
+  (let [s (str/trim (str raw))
+        ;; If it's SSE, extract the last data: line (most likely the final payload)
+        data-line (when (str/includes? s "data:")
+                    (->> (str/split-lines s)
+                         (keep (fn [line]
+                                 (let [t (str/trim line)]
+                                   (when (str/starts-with? t "data:")
+                                     (str/trim (subs t 5))))))
+                         last))
+        json-text (str/trim (or data-line (when (str/starts-with? s "data:") (subs s 5)) s))]
+    (js/JSON.parse json-text)))
+
 (defn- transcribe! [config audio-buffer]
   ;; Knoxx STT service expects raw audio bytes (not multipart). It runs ffmpeg
   ;; server-side, so WAV is the safest on-the-wire format.
@@ -58,19 +73,22 @@
   (js/console.log "[voice:stt] sending POST to" (str (stt-url config) "/transcribe"))
   (-> (js/fetch (str (stt-url config) "/transcribe")
                 #js {:method "POST"
-                     :headers #js {"Content-Type" "audio/wav"}
+                     :headers #js {"Content-Type" "audio/wav"
+                                   "Accept" "application/json, text/plain, text/event-stream"}
                      :body audio-buffer})
       (.then (fn [r]
                (js/console.log "[voice:stt] response received, status:" (.-status r) "ok:" (.-ok r))
                (if (.-ok r)
-                 (do (js/console.log "[voice:stt] parsing JSON response") (.json r))
+                 (do (js/console.log "[voice:stt] parsing response body") (.text r))
                  (do (js/console.error "[voice:stt] HTTP FAILED:" (.-status r))
                      (throw (js/Error. (str "STT " (.-status r))))))))
-      (.then (fn [j]
-               (js/console.log "[voice:stt] JSON parsed:" (js/JSON.stringify j))
-               (let [text (or (.-text j) (.-transcription j) "")]
-                 (js/console.log "[voice:stt] extracted text:" (if (str/blank? text) "[EMPTY]" text))
-                 text)))
+      (.then (fn [raw]
+               (js/console.log "[voice:stt] raw body prefix:" (.slice (str raw) 0 80))
+               (let [j (parse-stt-json-text raw)]
+                 (js/console.log "[voice:stt] JSON parsed:" (js/JSON.stringify j))
+                 (let [text (or (.-text j) (.-transcription j) "")]
+                   (js/console.log "[voice:stt] extracted text:" (if (str/blank? text) "[EMPTY]" text))
+                   text))))
       (.catch (fn [err]
                 (js/console.error "[voice:stt] === TRANSCRIBE ERROR ===" (.-message err))
                 (throw err)))))
