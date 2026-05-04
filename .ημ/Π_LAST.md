@@ -1,10 +1,11 @@
 # Π Fork Tax Snapshot
 
 **Timestamp**: 2026-05-04T20:56:59.930Z
-**Commit**: d34d8855
-**Tag**: Π/2026-05-04T20-56-59.930Z_2
+**Commit**: 89d60985
+**Tag**: Π/2026-05-04T20-56-59.930Z
 **Changes**:
-- Staged changes in `contracts/agents/`
-- Moved multiple novel/session agents to `.quarantined/`
-- Updated `contracts/agents/discord_admin_control.edn`
-- No submodules were found/processed.
+- Root snapshot of the workspace.
+- Updated metadata files in `.ημ/`.
+- Updated `data/active_sessions.edn` and `data/session_roster.edn`.
+- Removed 6 stale contract files in `data/contracts/`.
+- No submodules were found.
