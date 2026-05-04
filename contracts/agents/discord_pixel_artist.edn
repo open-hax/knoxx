@@ -18,7 +18,7 @@
  :contract/version 1,
  :source-kind :discord,
  :cadence-min 240,
- :enabled true,
+ :enabled false,
  :actor {:capabilities [:cap/discord :cap/music :cap/event_agents]},
  :data
  {:filters
