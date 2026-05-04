@@ -21,7 +21,7 @@
  :contract/version 1,
  :source-kind :discord,
  :cadence-min 300,
- :enabled true,
+ :enabled false,
  :data
  {:filters
   {:channels ["1444189585373663417"],

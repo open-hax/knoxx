@@ -1,7 +1,7 @@
 {:contract/id "fork_tax_cron"
  :contract/kind :agent
  :contract/version 1
- :enabled true
+ :enabled false
  :trigger-kind :cron
  :cadence-min 30
  :contract/actors ["knoxx_default"]

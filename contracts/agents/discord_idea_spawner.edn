@@ -20,4 +20,4 @@
  :contract/version 1,
  :source-kind :discord,
  :cadence-min 180,
- :enabled true}
+ :enabled false}

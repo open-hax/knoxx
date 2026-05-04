@@ -20,7 +20,7 @@
  :contract/version 1,
  :source-kind :discord,
  :cadence-min 120,
- :enabled true,
+ :enabled false,
  :data
  {:active_agents
   [[:drummer :active "session_drummer_20260427061610"]
