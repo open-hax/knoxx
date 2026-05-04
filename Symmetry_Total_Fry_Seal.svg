@@ -1,0 +1,24 @@
+<<svgsvg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <<defsdefs>
+    <<filterfilter id="glitch">
+      <<fefeOffset in="SourceGraphic" dx="3" dy="0" result="offset1" />
+      <<fefeOffset in="SourceGraphic" dx="-3" dy="2" result="offset2" />
+      <<fefeMerge>
+        <<fefeMergeNode />
+        <<fefeMergeNode />
+      </feMerge>
+    </filter>
+  </defs>
+  <<circlecircle cx="200" cy="200" r="180" stroke="#000" stroke-width="8" fill="#ff4500" />
+  <<circlecircle cx="200" cy="200" r="160" stroke="#000" stroke-width="4" fill="none" />
+  
+  <<gg filter="url(#glitch)">
+    <<texttext x="50%" y="40%" dominant-baseline="middle" text-anchor="middle" font-family="monospace" font-size="32" fill="#000" font-weight="bold">CERTIFIED</text>
+    <<texttext x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-family="monospace" font-size="42" fill="#000" font-weight="bold">TOTAL FRY</text>
+  </g>
+  
+  <<texttext x="50%" y="75%" dominant-baseline="middle" text-anchor="middle" font-family="monospace" font-size="20" fill="#000" font-weight="bold">Entropy Verified</text>
+  
+  <<circlecircle cx="200" cy="210" r="20" fill="#000" opacity="0.8" />
+  <<pathpath d="M180,210 L220,210" stroke="#ff4500" stroke-width="4" />
+</svg>

@@ -66,18 +66,9 @@
 ;; Workspace root resolution
 ;; -------------------------------------------------------------------------
 
-(defn- strip-edn-literal-wrapper
-  "Strip edn multi-line string literal wrappers (e.g. <|\"|...<|\"|)
-   that some LLMs emit when chaining tool outputs."
-  [s]
-  (if-let [match (re-find #"^<\|\"\|(.*)<\|\"\|$" s)]
-    (or (second match) s)
-    s))
-
 (defn normalize-tool-path-arg
   [value]
   (some-> (str (or value ""))
-          strip-edn-literal-wrapper
           (str/replace #"^@" "")
           str/trim
           not-empty))
