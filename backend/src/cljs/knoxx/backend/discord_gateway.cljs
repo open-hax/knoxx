@@ -531,7 +531,9 @@
                               (js/console.log "[voice:gw] joinVoiceChannel returned, waiting for ready state…")
                                (-> (voice/entersState conn (.-Ready voice/VoiceConnectionStatus) 15000)
                                   (.then (fn [_]
-                                           (js/console.log "[voice:gw] voice connection ready for guild:" (.-guildId conn))
+                                           (js/console.log "[voice:gw] voice connection ready for guild:" (or (.-__guildId conn)
+                                                                                                                    (some-> conn (.-joinConfig) (.-guildId))
+                                                                                                                    (.-guildId conn)))
                                            conn))
                                   (.catch (fn [err]
                                             (js/console.error "[voice:gw] voice connection failed to ready:" (.-message err))

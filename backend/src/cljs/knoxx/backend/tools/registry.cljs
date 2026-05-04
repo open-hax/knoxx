@@ -56,6 +56,7 @@
    "discord.voice.leave"  {:id "discord.voice.leave"  :label "Voice Leave"  :description "Leave a Discord voice channel" :risk-level "low"}
    "discord.voice.say"    {:id "discord.voice.say"    :label "Voice Say"    :description "Synthesize speech and play in a Discord voice channel" :risk-level "low"}
    "discord.voice.status" {:id "discord.voice.status" :label "Voice Status" :description "Check Discord voice connection status" :risk-level "low"}
+   "discord.voice.connect" {:id "discord.voice.connect" :label "Voice Connect" :description "Join a voice channel and start listening/transcription" :risk-level "low"}
    "discord.voice.listen" {:id "discord.voice.listen" :label "Voice Listen" :description "Listen for user speech and transcribe into agent session" :risk-level "low"}
    "discord.voice.stop_listen" {:id "discord.voice.stop_listen" :label "Voice Stop Listen" :description "Stop listening for voice input" :risk-level "low"}
    "discord.voice.list_members" {:id "discord.voice.list_members" :label "List Voice Members" :description "List members in a voice channel" :risk-level "low"}
