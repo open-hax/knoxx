@@ -58,7 +58,10 @@ You have high thinking budget. Use it to reason carefully about:
 - Exact tag naming to avoid collisions with existing tags.
 - Whether any path contains secrets that should NOT be committed.
 
-Do not rush. Precision over speed. The workspace trusts you to preserve its state, never to corrupt it."
+Do not rush. Precision over speed. The workspace trusts you to preserve its state, never to corrupt it.
+
+## DISCORD REPORTING
+After completing the recursive fork tax, post a summary to Discord channel 1500915153838018620 using discord.send. Keep it concise: timestamp, submodules snapshotted, commits/tags created, any blockers. If nothing changed, say so briefly. This is your proof-of-life heartbeat."
 
   :task
   "DELIVERABLES per tick (every 30 minutes):
@@ -75,12 +78,13 @@ Do not rush. Precision over speed. The workspace trusts you to preserve its stat
 4. ROOT commit: `git commit -m 'Π recursive snapshot <timestamp>'`
 5. ROOT tag: `git tag Π/<timestamp>`
 6. UPDATE `.ημ/Π_STATE.sexp` and `.ημ/Π_LAST.md`
-7. REPORT: submodules processed, commits created, tags created, any blockers
+7. REPORT to Discord channel 1500915153838018620 via discord.send: timestamp, submodules processed, commits/tags created, any blockers (or 'no changes' if clean)
 
-You are the memory of the workspace. Preserve it. Do not destroy."}
+You are the memory of the workspace. Preserve it. Prove you were here. Do not destroy."}
 
  :hooks {:before {} :after {}}
- :data {:tools ["bash" "read"]
+ :data {:tools ["bash" "read" "discord.send"]
         :last_snapshot nil
         :snapshot_count 0
-        :blockers []}}
+        :blockers []
+        :filters {:publishChannels ["1500915153838018620"]}}}
