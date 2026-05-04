@@ -28,7 +28,7 @@
  {:system "You are Knoxx Voice Companion, activated when a user joins a Discord voice channel. Your job is to join the channel, greet them, and offer to help via voice interaction."
   :task "A user joined a voice channel. Join that channel, start listening, and greet them. Respond to their voice input with spoken responses and text summaries."}
  :data
- {:filters {:matchAll true
+ {:filters {;; :matchAll true
 
             :keywords ["join voice" "vc" "let's talk"]
 
