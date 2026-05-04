@@ -598,50 +598,50 @@
                                 (listener mapped old-state new-state)
                                 (catch js/Error error
                                   (when (.-error? log)
-                                    (.error log "[discord-gateway] voice state listener failed" error))))))))
+                                    (.error log "[discord-gateway] voice state listener failed" error)))))))))
 
-              (build-client []
-                            (let [Client (Client-class)
-                                  GatewayIntentBits (intent-bits)
-                                  Partials (partials-enum)
-                                  Events (events-enum)
-                                  next-client (new Client
-                                                   (clj->js {:intents [(.-Guilds GatewayIntentBits)
-                                                                       (.-GuildMessages GatewayIntentBits)
-                                                                       (.-DirectMessages GatewayIntentBits)
-                                                                       (.-GuildMessageReactions GatewayIntentBits)
-                                                                       (.-DirectMessageReactions GatewayIntentBits)
-                                                                       (.-GuildVoiceStates GatewayIntentBits)
-                                                                       (.-MessageContent GatewayIntentBits)]
-                                                             :partials [(.-Channel Partials)
-                                                                        (.-Message Partials)
-                                                                        (.-Reaction Partials)]}))]
-                              (.on next-client (.-ClientReady Events)
-                                   (fn [ready-client]
-                                     (when (.-info? log)
-                                       (.info log (str "[discord-gateway] ready as "
-                                                       (or (when (.-user ready-client) (.-tag (.-user ready-client))) "unknown")
-                                                       " in " (.. ready-client -guilds -cache -size) " guilds")))))
-                              (.on next-client (.-MessageCreate Events)
-                                   (fn [message] (notify-message message)))
-                              (.on next-client (.-MessageReactionAdd Events)
-                                   (fn [reaction user]
-                                     (-> (if (.-partial reaction) (.fetch reaction) (js/Promise.resolve reaction))
-                                         (.then (fn [full-reaction]
-                                                  (let [message (.-message full-reaction)]
-                                                    (-> (if (and message (.-partial message)) (.fetch message) (js/Promise.resolve message))
-                                                        (.then (fn [_] (notify-reaction full-reaction user)))))))
-                                         (.catch (fn [error]
-                                                   (when (.-warn? log)
-                                                     (.warn log "[discord-gateway] reaction ingest failed" error))))))))
-                            (.on next-client (.-Error Events)
-                                 (fn [error]
-                                   (when (.-error? log)
-                                     (.error log "[discord-gateway] client error" error))))
-                            (.on next-client (.-VoiceStateUpdate Events)
-                                 (fn [old-state new-state]
-                                   (notify-voice-state old-state new-state)))
-                            next-client))
+            (build-client []
+              (let [Client (Client-class)
+                    GatewayIntentBits (intent-bits)
+                    Partials (partials-enum)
+                    Events (events-enum)
+                    next-client (new Client
+                                     (clj->js {:intents [(.-Guilds GatewayIntentBits)
+                                                         (.-GuildMessages GatewayIntentBits)
+                                                         (.-DirectMessages GatewayIntentBits)
+                                                         (.-GuildMessageReactions GatewayIntentBits)
+                                                         (.-DirectMessageReactions GatewayIntentBits)
+                                                         (.-GuildVoiceStates GatewayIntentBits)
+                                                         (.-MessageContent GatewayIntentBits)]
+                                               :partials [(.-Channel Partials)
+                                                          (.-Message Partials)
+                                                          (.-Reaction Partials)]}))]
+                (.on next-client (.-ClientReady Events)
+                     (fn [ready-client]
+                       (when (.-info? log)
+                         (.info log (str "[discord-gateway] ready as "
+                                         (or (when (.-user ready-client) (.-tag (.-user ready-client))) "unknown")
+                                         " in " (.. ready-client -guilds -cache -size) " guilds")))))
+                (.on next-client (.-MessageCreate Events)
+                     (fn [message] (notify-message message)))
+                (.on next-client (.-MessageReactionAdd Events)
+                     (fn [reaction user]
+                       (-> (if (.-partial reaction) (.fetch reaction) (js/Promise.resolve reaction))
+                           (.then (fn [full-reaction]
+                                    (let [message (.-message full-reaction)]
+                                      (-> (if (and message (.-partial message)) (.fetch message) (js/Promise.resolve message))
+                                          (.then (fn [_] (notify-reaction full-reaction user)))))))
+                           (.catch (fn [error]
+                                     (when (.-warn? log)
+                                       (.warn log "[discord-gateway] reaction ingest failed" error))))))))
+                (.on next-client (.-Error Events)
+                     (fn [error]
+                       (when (.-error? log)
+                         (.error log "[discord-gateway] client error" error))))
+                (.on next-client (.-VoiceStateUpdate Events)
+                     (fn [old-state new-state]
+                       (notify-voice-state old-state new-state)))
+                next-client))
 
             (ensure-client []
               (if-not @client-state
