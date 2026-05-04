@@ -68,4 +68,4 @@ Use the autotune skill to sing from a dry Voxx capture (--postprocess off).
  {:filters
   {:publishChannels ["1494137016303095828" "1444189585373663417"]},
   :source
-  {:max-messages 50, :stickySession true,:sessionMaxMessages 1000}}}
+  {:max-messages 50, :stickySession false,:sessionMaxMessages 1000}}}
