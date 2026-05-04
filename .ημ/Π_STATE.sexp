@@ -1,10 +1,10 @@
 (Π-state
   (repo "knoxx")
-  (timestamp "2026-04-30T06:20:36Z")
+  (timestamp "2026-05-04T17:49:06.560Z")
   (mode :recursive-openplanner-fork-tax)
   (branch "feat/discord-attachments")
-  (head-before "2af86068")
-  (tag "Π/knoxx-openplanner-recursive-2026-04-30")
+  (head-before "9ef2d6b0")
+  (tag "Π/2026-05-04T17-49-06.560Z")
   (verification
     (backend-pnpm-test :exit 0 :log ".ημ/verification/knoxx-backend-test-20260430T000000Z.txt"))
   (conflict-resolution

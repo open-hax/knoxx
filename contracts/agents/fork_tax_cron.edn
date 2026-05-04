@@ -9,7 +9,7 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}}
- :agent {:role :role/developer
+ :agent {:role [:role/developer :role/discord-user]
          :model "gemma4:31b"
          :thinking :high}
  :prompts
