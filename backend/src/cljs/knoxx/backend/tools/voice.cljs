@@ -7,7 +7,7 @@
             ["node:fs/promises" :as fs-promises]
             [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
             [knoxx.backend.tools.openutau :as openutau]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
             [knoxx.backend.document-state :refer [normalize-relative-path]]))
 
 ;; --- shared helpers ---
@@ -85,19 +85,19 @@
         safe-ts (str/replace ts #"[:.]" "-")]
     (str "Voice/tts-" safe-ts ".mp3")))
 
-(defn- tts-rest-params [Type]
-  (.Object Type
-    #js {:text          (.String Type #js {:description "Plain text. Strip markdown first."})
-         :output_path   (type-optional Type (.String Type #js {:description "Workspace-relative output path. Defaults to Voice/tts-<timestamp>.mp3. Use Voice/ for spoken output, Audio/ for clips and effects, Music/ for musical content."}))
-         :voice_id      (type-optional Type (.String  Type #js {:description "Voxx voice ID. Default: alloy."}))
-         :model_id      (type-optional Type (.String  Type #js {:description "Voxx backend hint/model. Default: kokoro. Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER: kokoro, xiaomi_mimo, requesty, openai, melo, espeak."}))
-         :output_format (type-optional Type (.String  Type #js {:description "Audio format. Default mp3."}))
-         :postprocess_profile (type-optional Type (.String Type #js {:description "Final Voxx mastering profile. Default sports-commentator-v1. Aliases: sports/commentator, broadcast/warm, narrator/polish, radio/crisp, soft/studio; off/none disables."}))
-         :postprocess_enabled (type-optional Type (.Boolean Type #js {:description "Enable final Voxx postprocess. Default true; set false for dry capture."}))
-         :prompt_aware  (type-optional Type (.Boolean Type #js {:description "Prompt-aware performance mode. Default true. Voxx consumes tags like [excited], [whisper], [pause], [dramatic], [laugh], and <break time=\"500ms\" /> as segment-level postprocessing directions, not spoken words."}))
-         :prompt_aware_style (type-optional Type (.String Type #js {:description "Optional custom instruction for how Voxx should interpret performance tags."}))
-         :stability     (type-optional Type (.Number  Type #js {:description "Stability 0-1 for compatible providers."}))
-         :similarity_boost (type-optional Type (.Number Type #js {:description "Similarity boost 0-1 for compatible providers."}))}))
+(def tts-rest-params
+  [:map
+   [:text {:description "Plain text. Strip markdown first."} :string]
+   [:output_path {:optional true :description "Workspace-relative output path. Defaults to Voice/tts-<timestamp>.mp3. Use Voice/ for spoken output, Audio/ for clips and effects, Music/ for musical content."} :string]
+   [:voice_id {:optional true :description "Voxx voice ID. Default: alloy."} :string]
+   [:model_id {:optional true :description "Voxx backend hint/model. Default: kokoro. Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER: kokoro, xiaomi_mimo, requesty, openai, melo, espeak."} :string]
+   [:output_format {:optional true :description "Audio format. Default mp3."} :string]
+   [:postprocess_profile {:optional true :description "Final Voxx mastering profile. Default sports-commentator-v1. Aliases: sports/commentator, broadcast/warm, narrator/polish, radio/crisp, soft/studio; off/none disables."} :string]
+   [:postprocess_enabled {:optional true :description "Enable final Voxx postprocess. Default true; set false for dry capture."} :boolean]
+   [:prompt_aware {:optional true :description "Prompt-aware performance mode. Default true. Voxx consumes tags like [excited], [whisper], [pause], [dramatic], [laugh], and <break time=\"500ms\" /> as segment-level postprocessing directions, not spoken words."} :boolean]
+   [:prompt_aware_style {:optional true :description "Optional custom instruction for how Voxx should interpret performance tags."} :string]
+   [:stability {:optional true :description "Stability 0-1 for compatible providers."} [:double {:min 0 :max 1}]]
+   [:similarity_boost {:optional true :description "Similarity boost 0-1 for compatible providers."} [:double {:min 0 :max 1}]]])
 
 (defn- fetch-tts-audio! [url api-key body]
   (p/let [res (js/fetch url #js {:method  "POST"
@@ -157,17 +157,40 @@
 
 ;; --- voice.tts_stream ---
 
-(defn- tts-stream-params [Type]
-  (.Object Type
-    #js {:text          (.String  Type #js {:description "Text to synthesize via /ws/voice/tts."})
-         :voice_id      (type-optional Type (.String  Type #js {:description "Voxx voice ID. Default: alloy."}))
-         :model_id      (type-optional Type (.String  Type #js {:description "Voxx backend hint/model. Default: kokoro; fallback order is controlled by Voxx."}))
-         :output_format (type-optional Type (.String  Type #js {:description "Format. Default: mp3."}))
-         :postprocess_profile (type-optional Type (.String Type #js {:description "Final Voxx mastering profile. Default sports-commentator-v1. Aliases: sports, broadcast, narrator, radio, soft; off disables."}))
-         :postprocess_enabled (type-optional Type (.Boolean Type #js {:description "Enable final Voxx postprocess. Default true."}))
-         :prompt_aware  (type-optional Type (.Boolean Type #js {:description "Prompt-aware tag mode. Default true; Voxx consumes tags as segment-level postprocessing directions."}))
-         :prompt_aware_style (type-optional Type (.String Type #js {:description "Optional custom instruction for tag interpretation."}))
-         :auto_mode     (type-optional Type (.Boolean Type #js {:description "auto_mode. Default true."}))}))
+(def tts-stream-params
+  [:map
+   [:text {:description "Text to synthesize via /ws/voice/tts."} :string]
+   [:voice_id {:optional true :description "Voxx voice ID. Default: alloy."} :string]
+   [:model_id {:optional true :description "Voxx backend hint/model. Default: kokoro; fallback order is controlled by Voxx."} :string]
+   [:output_format {:optional true :description "Format. Default: mp3."} :string]
+   [:postprocess_profile {:optional true :description "Final Voxx mastering profile. Default sports-commentator-v1. Aliases: sports, broadcast, narrator, radio, soft; off disables."} :string]
+   [:postprocess_enabled {:optional true :description "Enable final Voxx postprocess. Default true."} :boolean]
+   [:prompt_aware {:optional true :description "Prompt-aware tag mode. Default true; Voxx consumes tags as segment-level postprocessing directions."} :boolean]
+   [:prompt_aware_style {:optional true :description "Optional custom instruction for tag interpretation."} :string]
+   [:auto_mode {:optional true :description "auto_mode. Default true."} :boolean]])
+
+(def openutau-project-params
+  [:map
+   [:project_name {:description "Project name."} :string]
+   [:notes {:description "Ordered note plan."}
+    [:vector
+     [:map
+      [:lyric {:optional true :description "Lyric. Use + or +~ for slurs."} :string]
+      [:phonetic_hint {:optional true :description "Phonetic hint without brackets."} :string]
+      [:tone {:description "MIDI note number. C4 = 60."} :int]
+      [:duration {:description "Duration in ticks. 480 = 1 quarter note."} :int]
+      [:position {:optional true :description "Start tick. Sequential if omitted."} :int]]]]
+   [:tempo {:optional true :description "BPM. Default 120."} :int]
+   [:time_signature {:optional true}
+    [:map
+     [:beat_per_bar {:optional true :description "Numerator."} :int]
+     [:beat_unit {:optional true :description "Denominator."} :int]]]
+   [:singer_id {:optional true :description "Singer/voicebank folder."} :string]
+   [:phonemizer {:optional true :description "Phonemizer class/tag."} :string]
+   [:track_name {:optional true :description "Vocal track name."} :string]
+   [:part_name {:optional true :description "Voice part name."} :string]
+   [:output_path {:optional true :description "Output .ustx path."} :string]
+   [:comment {:optional true :description "Project comment."} :string]])
 
 (defn tts-stream-execute [config]
   (fn [_call-id params on-update & _]
@@ -242,76 +265,76 @@
        (str "Created OpenUtau project at " relative " with " (count notes) " notes.")
        {:path relative :readme_path readme-rel :project_name project-name
         :note_count (count notes) :tempo (or (aget params "tempo") 120)
-        :renderer openutau/default-renderer :headless_render_supported false
-        :content_parts [{:type "document" :data data-url :mimeType "text/yaml" :filename filename}]}))))
+       :renderer openutau/default-renderer :headless_render_supported false
+       :content_parts [{:type "document" :data data-url :mimeType "text/yaml" :filename filename}]}))))
+
+(defn voice-openutau-project-execute [runtime config call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))]
+    (openutau-project-execute runtime config call-id params on-update)))
+
+(defn voice-tts-execute [runtime config & args]
+  (apply (tts-rest-execute runtime config) args))
+
+(defn voice-tts-stream-execute [runtime config & args]
+  (apply (tts-stream-execute config) args))
+
+(def voice-openutau-project-tool
+  (partial create-tool-obj
+           "voice.openutau_project"
+           "OpenUtau Project"
+           "Create an OpenUtau .ustx singing project."
+           "Use for lyric-timed vocal synthesis via OpenUtau."
+           ["Provide notes with lyric, tone, duration."
+            "Export is UI-driven; do not claim audio rendered without a real file."
+            "WORLDLINE-R is the default safe renderer."]
+           openutau-project-params
+           voice-openutau-project-execute))
+
+(def voice-tts-tool
+  (partial create-tool-obj
+           "voice.tts"
+           "Text-to-Speech"
+           "Synthesize spoken audio via Voxx Gateway. Defaults to prompt-aware mode plus lively final postprocess, then writes MP3 to workspace."
+           "Use voice.tts for spoken audio. Default: prompt_aware=true, postprocess_profile=sports-commentator-v1, model_id=xiaomi_mimo, voice_id=alloy."
+           ["Pass clean spoken copy; strip markdown formatting, but keep intentional performance tags."
+            "Default mode is prompt-aware: [excited], [whisper], [laugh], [pause], [dramatic], and <break time=\"500ms\" /> are Voxx-owned performance directions, not words to speak and not markup to pass through to the provider."
+            "Use tags sparingly at phrase boundaries. Bracket tags set Voxx segment-level emotion/energy filters, [pause] and <break time=\"...ms\" /> insert silence, and [laugh] inserts a short nonverbal effect."
+            "Voxx consumes known performance tags, sends clean segment text to the chosen backend, stitches the segments together, then applies tag-driven inflection postprocessing plus the final mastering profile."
+            "Use postprocess_profile to choose Voxx's final mastering: sports/commentator (default high energy), broadcast/warm, narrator/polish, radio/crisp, soft/studio, or off/none for dry capture."
+            "The inherited Melo narrator-unifier remains a local Melo stage; the Voxx final postprocess stage is backend-agnostic and gives Kokoro/remote/Melo/eSpeak livelier leveling, EQ, compression, limiting, and gain."
+            "Use model_id as a backend hint: kokoro, xiaomi_mimo, requesty, openai, melo, or espeak; Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER."
+            "Default output_format is mp3. When output_path is omitted, files save to Voice/tts-<timestamp>.mp3 automatically."
+            "Use Voice/ for spoken TTS output, Audio/ for sound clips and effects, Music/ for musical or sung content."
+            "Follow with workspace_media.attach to embed audio."
+            "If debugging, inspect Voxx headers/logs: x-openhax-tts-backend, x-openhax-tts-postprocess-profile, and x-openhax-tts-prompt-aware."]
+           tts-rest-params
+           voice-tts-execute))
+
+(def voice-tts-stream-tool
+  (partial create-tool-obj
+           "voice.tts_stream"
+           "TTS Stream"
+           "WS streaming TTS session params for /ws/voice/tts with Voxx prompt-aware and postprocess defaults."
+           "Use voice.tts_stream for WS TTS connection params. Default: prompt_aware=true, postprocess_profile=sports-commentator-v1, model_id=xiaomi_mimo."
+           ["Returns WS protocol spec, default postprocess/prompt-aware settings, and API key status."
+            "Send prompt_aware, prompt_aware_style, postprocess_profile, and postprocess_enabled in the start message or query when overriding defaults."
+            "Use the same tag rules as voice.tts: bracket/XML-like tags are Voxx-owned postprocessing directions, not spoken text."
+            "Use voice.tts when you need a persisted MP3 file."]
+           tts-stream-params
+           voice-tts-stream-execute))
 
 ;; --- factory ---
 
 (defn create-voice-synth-custom-tools
   ([runtime config] (create-voice-synth-custom-tools runtime config nil))
   ([runtime config auth-context]
-   (let [Type     (aget runtime "Type")
-         allowed? (fn [id] (or (nil? auth-context) (ctx-tool-allowed? auth-context id)))
-         note-p   (.Object Type
-                    #js {:lyric         (type-optional Type (.String Type #js {:description "Lyric. Use + or +~ for slurs."}))
-                         :phonetic_hint (type-optional Type (.String Type #js {:description "Phonetic hint without brackets."}))
-                         :tone          (.Number Type #js {:description "MIDI note number. C4 = 60."})
-                         :duration      (.Number Type #js {:description "Duration in ticks. 480 = 1 quarter note."})
-                         :position      (type-optional Type (.Number Type #js {:description "Start tick. Sequential if omitted."}))})
-         time-sig (.Object Type
-                    #js {:beat_per_bar (type-optional Type (.Number Type #js {:description "Numerator."}))
-                         :beat_unit    (type-optional Type (.Number Type #js {:description "Denominator."}))})
-         ustx-p   (.Object Type
-                    #js {:project_name   (.String Type #js {:description "Project name."})
-                         :notes          (.Array  Type note-p #js {:description "Ordered note plan."})
-                         :tempo          (type-optional Type (.Number Type #js {:description "BPM. Default 120."}))
-                         :time_signature (type-optional Type time-sig)
-                         :singer_id      (type-optional Type (.String Type #js {:description "Singer/voicebank folder."}))
-                         :phonemizer     (type-optional Type (.String Type #js {:description "Phonemizer class/tag."}))
-                         :track_name     (type-optional Type (.String Type #js {:description "Vocal track name."}))
-                         :part_name      (type-optional Type (.String Type #js {:description "Voice part name."}))
-                         :output_path    (type-optional Type (.String Type #js {:description "Output .ustx path."}))
-                         :comment        (type-optional Type (.String Type #js {:description "Project comment."}))})
-         tools    [(when (allowed? "voice.openutau_project")
-                     (doto (js-obj)
-                       (aset "name"            "voice.openutau_project")
-                       (aset "label"           "OpenUtau Project")
-                       (aset "description"     "Create an OpenUtau .ustx singing project.")
-                       (aset "promptSnippet"   "Use for lyric-timed vocal synthesis via OpenUtau.")
-                       (aset "promptGuidelines" (clj->js ["Provide notes with lyric, tone, duration."
-                                                             "Export is UI-driven; do not claim audio rendered without a real file."
-                                                             "WORLDLINE-R is the default safe renderer."]))
-                       (aset "parameters" ustx-p)
-                       (aset "execute"     (fn [_call-id params on-update & _] (openutau-project-execute runtime config _call-id params on-update)))))
-                   (when (allowed? "voice.tts")
-                     (doto (js-obj)
-                       (aset "name"            "voice.tts")
-                       (aset "label"           "Text-to-Speech")
-                       (aset "description"     "Synthesize spoken audio via Voxx Gateway. Defaults to prompt-aware mode plus lively final postprocess, then writes MP3 to workspace.")
-                       (aset "promptSnippet"   "Use voice.tts for spoken audio. Default: prompt_aware=true, postprocess_profile=sports-commentator-v1, model_id=xiaomi_mimo, voice_id=alloy.")
-                       (aset "promptGuidelines" (clj->js ["Pass clean spoken copy; strip markdown formatting, but keep intentional performance tags."
-                                                             "Default mode is prompt-aware: [excited], [whisper], [laugh], [pause], [dramatic], and <break time=\"500ms\" /> are Voxx-owned performance directions, not words to speak and not markup to pass through to the provider."
-                                                             "Use tags sparingly at phrase boundaries. Bracket tags set Voxx segment-level emotion/energy filters, [pause] and <break time=\"...ms\" /> insert silence, and [laugh] inserts a short nonverbal effect."
-                                                             "Voxx consumes known performance tags, sends clean segment text to the chosen backend, stitches the segments together, then applies tag-driven inflection postprocessing plus the final mastering profile."
-                                                             "Use postprocess_profile to choose Voxx's final mastering: sports/commentator (default high energy), broadcast/warm, narrator/polish, radio/crisp, soft/studio, or off/none for dry capture."
-                                                             "The inherited Melo narrator-unifier remains a local Melo stage; the Voxx final postprocess stage is backend-agnostic and gives Kokoro/remote/Melo/eSpeak livelier leveling, EQ, compression, limiting, and gain."
-                                                             "Use model_id as a backend hint: kokoro, xiaomi_mimo, requesty, openai, melo, or espeak; Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER."
-                                                              "Default output_format is mp3. When output_path is omitted, files save to Voice/tts-<timestamp>.mp3 automatically."
-                                                              "Use Voice/ for spoken TTS output, Audio/ for sound clips and effects, Music/ for musical or sung content."
-                                                              "Follow with workspace_media.attach to embed audio."
-                                                              "If debugging, inspect Voxx headers/logs: x-openhax-tts-backend, x-openhax-tts-postprocess-profile, and x-openhax-tts-prompt-aware."]))
-                       (aset "parameters" (tts-rest-params Type))
-                       (aset "execute"     (tts-rest-execute runtime config))))
-                   (when (allowed? "voice.tts_stream")
-                     (doto (js-obj)
-                       (aset "name"            "voice.tts_stream")
-                       (aset "label"           "TTS Stream")
-                       (aset "description"     "WS streaming TTS session params for /ws/voice/tts with Voxx prompt-aware and postprocess defaults.")
-                       (aset "promptSnippet"   "Use voice.tts_stream for WS TTS connection params. Default: prompt_aware=true, postprocess_profile=sports-commentator-v1, model_id=xiaomi_mimo.")
-                       (aset "promptGuidelines" (clj->js ["Returns WS protocol spec, default postprocess/prompt-aware settings, and API key status."
-                                                             "Send prompt_aware, prompt_aware_style, postprocess_profile, and postprocess_enabled in the start message or query when overriding defaults."
-                                                             "Use the same tag rules as voice.tts: bracket/XML-like tags are Voxx-owned postprocessing directions, not spoken text."
-                                                             "Use voice.tts when you need a persisted MP3 file."]))
-                       (aset "parameters" (tts-stream-params Type))
-                       (aset "execute"     (tts-stream-execute config))))]]
-     (clj->js (vec (remove nil? tools))))))
+   (let [allowed? (fn [id] (or (nil? auth-context) (ctx-tool-allowed? auth-context id)))]
+     (clj->js
+      (vec
+       (remove nil?
+               [(when (allowed? "voice.openutau_project")
+                  (voice-openutau-project-tool runtime config))
+                (when (allowed? "voice.tts")
+                  (voice-tts-tool runtime config))
+                (when (allowed? "voice.tts_stream")
+                  (voice-tts-stream-tool runtime config))]))))))

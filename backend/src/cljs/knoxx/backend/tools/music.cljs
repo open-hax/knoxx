@@ -4,7 +4,7 @@
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
             [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
 
 (defn- music-audd-lookup!
   "Identify a song from an audio file using AudD API."
@@ -120,200 +120,218 @@
                                                           (let [result (js->clj (.parse js/JSON stdout) :keywordize-keys true)]
                                                             (assoc result :workspace-path relative :absolute-path absolute)))))))))))))))))
 
+(def identify-file-params
+  [:map
+   [:file_path {:description "Workspace path, URL, or data URL for the audio file to identify."} :string]])
+
+(def acoustid-params
+  [:map
+   [:fingerprint {:description "AcoustID fingerprint string."} :string]
+   [:duration {:optional true :description "Duration in seconds (default 25)."} :int]])
+
+(def musicbrainz-params
+  [:map
+   [:mbid {:description "MusicBrainz recording ID (MBID)."} :string]])
+
+(def copyright-params
+  [:map
+   [:audio_data_json {:description "JSON object containing audio metadata with ISRC fields from AudD or similar."} :string]])
+
+(def audio-params
+  [:map
+   [:source {:description "Path or URL to the audio file."} :string]
+   [:width {:optional true :description "Output width in pixels."} :int]
+   [:height {:optional true :description "Output height in pixels."} :int]
+   [:title {:optional true :description "Optional filename/title for the rendered image."} :string]])
+
+(def generate-params
+  [:map
+   [:spec_json {:description "JSON music specification describing BPM, tracks, instruments, patterns, and notes."} :string]
+   [:output_path {:optional true :description "Optional workspace-relative output path for the WAV file. Defaults to Music/generated/<uuid>.wav"} :string]])
+
+(defn identify-file-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        file-path (aget params "file_path")]
+    (maybe-tool-update! on-update (str "Identifying song from file: " file-path "…"))
+    (-> (music-audd-lookup! runtime config file-path)
+        (.then (fn [result]
+                 (tool-text-result
+                  (str "Music identification result: " (:status result)
+                       (when-let [song (get-in result [:result :title])]
+                         (str " - " song " by " (get-in result [:result :artist]))))
+                  result))))))
+
+(defn acoustid-execute [_runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        fingerprint (aget params "fingerprint")
+        duration (aget params "duration")]
+    (maybe-tool-update! on-update "Looking up AcoustID fingerprint…")
+    (-> (music-acoustid-lookup! config fingerprint duration)
+        (.then (fn [result]
+                 (tool-text-result
+                  (str "AcoustID lookup: " (:status result)
+                       (when-let [results (get-in result [:result :results])]
+                         (str " - found " (count results) " matches")))
+                  result))))))
+
+(defn musicbrainz-execute [_runtime _config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        mbid (aget params "mbid")]
+    (maybe-tool-update! on-update (str "Looking up MusicBrainz recording " mbid "…"))
+    (-> (music-musicbrainz-recording! mbid)
+        (.then (fn [result]
+                 (tool-text-result
+                  (str "MusicBrainz recording: " mbid
+                       (when-let [title (get-in result [:result :title])]
+                         (str " - " title)))
+                  result))))))
+
+(defn copyright-check-execute [_runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        audio-data-json (aget params "audio_data_json")
+        audio-data (try
+                     (js->clj (.parse js/JSON audio-data-json) :keywordize-keys true)
+                     (catch :default _ nil))]
+    (if (nil? audio-data)
+      (tool-text-result "Invalid audio_data_json" {:error "Invalid JSON"})
+      (let [result (music-copyright-check! config audio-data)]
+        (maybe-tool-update! on-update "Checking copyright status…")
+        (tool-text-result
+         (str "Copyright decision: " (:decision result) " - " (:reason result))
+         result)))))
+
+(defn spectrogram-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        source (aget params "source")
+        width (aget params "width")
+        height (aget params "height")
+        title (normalize-tool-path-arg (aget params "title"))]
+    (maybe-tool-update! on-update "Audio spectrogram generation…")
+    (media/audio-visualization-result! runtime config source {:kind :spectrogram
+                                                              :width width
+                                                              :height height
+                                                              :title title})))
+
+(defn waveform-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        source (aget params "source")
+        width (aget params "width")
+        height (aget params "height")
+        title (normalize-tool-path-arg (aget params "title"))]
+    (maybe-tool-update! on-update "Audio waveform generation…")
+    (media/audio-visualization-result! runtime config source {:kind :waveform
+                                                              :width width
+                                                              :height height
+                                                              :title title})))
+
+(defn generate-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        spec-json (aget params "spec_json")
+        output-path (media/normalize-tool-path-arg (aget params "output_path"))]
+    (maybe-tool-update! on-update "Generating music from spec…")
+    (-> (music-generate! runtime config spec-json output-path)
+        (.then (fn [result]
+                 (tool-text-result
+                  (str "Generated WAV: " (:workspace-path result)
+                       " (" (:durationSec result) "s, " (:sampleRate result) "Hz)")
+                  result))))))
+
+(def identify-file-tool
+  (partial create-tool-obj
+           "music.identify_file" "Music Identify File"
+           "Identify a song from an audio file using AudD API."
+           "Identify songs from audio files when you need to know what music is playing."
+           ["Use music.identify_file when you have an audio file and need to identify the song."
+            "Returns song title, artist, album, and ISRC when found."]
+           identify-file-params
+           identify-file-execute))
+
+(def acoustid-tool
+  (partial create-tool-obj
+           "music.acoustid_lookup" "AcoustID Lookup"
+           "Look up audio fingerprint via AcoustID API to identify recordings."
+           "Look up AcoustID fingerprints to identify music by its acoustic signature."
+           ["Use music.acoustid_lookup when you have a fingerprint from chromaprint or similar."
+            "Requires AcoustID API key in config."]
+           acoustid-params
+           acoustid-execute))
+
+(def musicbrainz-tool
+  (partial create-tool-obj
+           "music.musicbrainz_recording" "MusicBrainz Recording"
+           "Look up MusicBrainz recording metadata by MBID."
+           "Fetch detailed recording metadata from MusicBrainz."
+           ["Use music.musicbrainz_recording when you have a MusicBrainz ID (MBID)."
+            "Returns ISRCs, releases, release groups, and other metadata."
+            "Rate-limited to 1 request per second."]
+           musicbrainz-params
+           musicbrainz-execute))
+
+(def copyright-check-tool
+  (partial create-tool-obj
+           "music.copyright_check" "Music Copyright Check"
+           "Check if audio is likely copyrighted based on ISRC presence."
+           "Check copyright status of identified music before using it."
+           ["Use music.copyright_check after music identification to assess copyright risk."
+            "Returns BLOCK if ISRC found (commercially released), UNKNOWN otherwise."
+            "Pass audio_data_json from AudD or similar identification result."]
+           copyright-params
+           copyright-check-execute))
+
+(def spectrogram-tool
+  (partial create-tool-obj
+           "audio.spectrogram" "Audio Spectrogram"
+           "Generate a spectrogram image from an audio file using ffmpeg."
+           "Visualize audio as a spectrogram to see frequencies over time."
+           ["Use audio.spectrogram to visualize audio frequency content."
+            "This is especially useful when the active model can see images but cannot directly accept audio input."]
+           audio-params
+           spectrogram-execute))
+
+(def waveform-tool
+  (partial create-tool-obj
+           "audio.waveform" "Audio Waveform"
+           "Generate a waveform image from an audio file using ffmpeg."
+           "Visualize audio as a waveform to see amplitude over time."
+           ["Use audio.waveform to visualize audio amplitude."
+            "Pair with audio.spectrogram when you want both amplitude and frequency views."]
+           audio-params
+           waveform-execute))
+
+(def generate-tool
+  (partial create-tool-obj
+           "music.generate" "Generate Music"
+           "Synthesize a WAV file from a JSON music spec using the native Node.js audio engine."
+           "Generate original music and render it to a WAV file directly on the server."
+           ["Use music.generate when the user wants original synthesized music, beats, loops, or melodies."
+            "Construct a JSON spec with bpm, tracks, instruments, and patterns."
+            "Supported instruments: synth, bass, lead, pad, drum (kick, snare, hihat, clap, tom)."
+            "After generation, use workspace_media.attach to embed the WAV in the reply with a player."
+            "Default output path is Music/generated/<uuid>.wav."]
+           generate-params
+           generate-execute))
+
 (defn create-music-custom-tools
   "Create music/audio identification and analysis tools."
   ([runtime config] (create-music-custom-tools runtime config nil))
   ([runtime config auth-context]
-   (let [Type (aget runtime "Type")
-         allowed? (fn [tool-id]
+   (let [allowed? (fn [tool-id]
                     (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context tool-id)))
-
-         ;; Tool parameter schemas
-         identify-file-params (.Object Type
-                                       #js {:file_path (.String Type #js {:description "Workspace path, URL, or data URL for the audio file to identify."})})
-         acoustid-params (.Object Type
-                                  #js {:fingerprint (.String Type #js {:description "AcoustID fingerprint string."})
-                                       :duration (type-optional Type (.Number Type #js {:description "Duration in seconds (default 25)."}))})
-         musicbrainz-params (.Object Type
-                                     #js {:mbid (.String Type #js {:description "MusicBrainz recording ID (MBID)."})})
-         copyright-params (.Object Type
-                                   #js {:audio_data_json (.String Type #js {:description "JSON object containing audio metadata with ISRC fields from AudD or similar."})})
-
-         ;; Execute functions
-         identify-file-execute (fn [_tool-call-id params a b c]
-                                 (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                       file-path (aget params "file_path")]
-                                   (maybe-tool-update! on-update (str "Identifying song from file: " file-path "…"))
-                                   (-> (music-audd-lookup! runtime config file-path)
-                                       (.then (fn [result]
-                                                (tool-text-result
-                                                 (str "Music identification result: " (:status result)
-                                                      (when-let [song (get-in result [:result :title])]
-                                                        (str " - " song " by " (get-in result [:result :artist]))))
-                                                 result))))))
-
-         acoustid-execute (fn [_tool-call-id params a b c]
-                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                  fingerprint (aget params "fingerprint")
-                                  duration (aget params "duration")]
-                              (maybe-tool-update! on-update "Looking up AcoustID fingerprint…")
-                              (-> (music-acoustid-lookup! config fingerprint duration)
-                                  (.then (fn [result]
-                                           (tool-text-result
-                                            (str "AcoustID lookup: " (:status result)
-                                                 (when-let [results (get-in result [:result :results])]
-                                                   (str " - found " (count results) " matches")))
-                                            result))))))
-
-         musicbrainz-execute (fn [_tool-call-id params a b c]
-                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                     mbid (aget params "mbid")]
-                                 (maybe-tool-update! on-update (str "Looking up MusicBrainz recording " mbid "…"))
-                                 (-> (music-musicbrainz-recording! mbid)
-                                     (.then (fn [result]
-                                              (tool-text-result
-                                               (str "MusicBrainz recording: " mbid
-                                                    (when-let [title (get-in result [:result :title])]
-                                                      (str " - " title)))
-                                               result))))))
-
-         copyright-check-execute (fn [_tool-call-id params a b c]
-                                   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                         audio-data-json (aget params "audio_data_json")
-                                         audio-data (try
-                                                      (js->clj (.parse js/JSON audio-data-json) :keywordize-keys true)
-                                                      (catch :default _ nil))]
-                                     (if (nil? audio-data)
-                                       (tool-text-result "Invalid audio_data_json" {:error "Invalid JSON"})
-                                       (let [result (music-copyright-check! config audio-data)]
-                                         (maybe-tool-update! on-update "Checking copyright status…")
-                                         (tool-text-result
-                                          (str "Copyright decision: " (:decision result) " - " (:reason result))
-                                          result)))))
-
-         spectrogram-execute (fn [_tool-call-id params a b c]
-                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                     source (aget params "source")
-                                     width (aget params "width")
-                                     height (aget params "height")
-                                     title (normalize-tool-path-arg (aget params "title"))]
-                                 (maybe-tool-update! on-update "Audio spectrogram generation…")
-                                 (media/audio-visualization-result! runtime config source {:kind :spectrogram
-                                                                                     :width width
-                                                                                     :height height
-                                                                                     :title title})))
-
-         waveform-execute (fn [_tool-call-id params a b c]
-                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                  source (aget params "source")
-                                  width (aget params "width")
-                                  height (aget params "height")
-                                  title (normalize-tool-path-arg (aget params "title"))]
-                              (maybe-tool-update! on-update "Audio waveform generation…")
-                              (media/audio-visualization-result! runtime config source {:kind :waveform
-                                                                                  :width width
-                                                                                  :height height
-                                                                                  :title title})))
-
-         audio-params (.Object Type
-                               #js {:source (.String Type #js {:description "Path or URL to the audio file."})
-                                    :width (type-optional Type (.Number Type #js {:description "Output width in pixels."}))
-                                    :height (type-optional Type (.Number Type #js {:description "Output height in pixels."}))
-                                    :title (type-optional Type (.String Type #js {:description "Optional filename/title for the rendered image."}))})
-
-         generate-params (.Object Type
-                                  #js {:spec_json (.String Type #js {:description "JSON music specification describing BPM, tracks, instruments, patterns, and notes."})
-                                       :output_path (type-optional Type (.String Type #js {:description "Optional workspace-relative output path for the WAV file. Defaults to Music/generated/<uuid>.wav"}))})
-
-         generate-execute (fn [_tool-call-id params a b c]
-                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                  spec-json (aget params "spec_json")
-                                  output-path (media/normalize-tool-path-arg (aget params "output_path"))]
-                              (maybe-tool-update! on-update "Generating music from spec…")
-                              (-> (music-generate! runtime config spec-json output-path)
-                                  (.then (fn [result]
-                                           (tool-text-result
-                                            (str "Generated WAV: " (:workspace-path result)
-                                                 " (" (:durationSec result) "s, " (:sampleRate result) "Hz)")
-                                            result))))))]
-
+                        (ctx-tool-allowed? auth-context tool-id)))]
      (clj->js
       (vec
        (remove nil?
-                [(when (allowed? "music.identify_file")
-                   (doto (js-obj)
-                     (aset "name" "music.identify_file")
-                     (aset "label" "Music Identify File")
-                     (aset "description" "Identify a song from an audio file using AudD API.")
-                     (aset "promptSnippet" "Identify songs from audio files when you need to know what music is playing.")
-                     (aset "promptGuidelines" (clj->js ["Use music.identify_file when you have an audio file and need to identify the song."
-                                                        "Returns song title, artist, album, and ISRC when found."]))
-                     (aset "parameters" identify-file-params)
-                     (aset "execute" identify-file-execute)))
-                 (when (allowed? "music.acoustid_lookup")
-                   (doto (js-obj)
-                     (aset "name" "music.acoustid_lookup")
-                     (aset "label" "AcoustID Lookup")
-                     (aset "description" "Look up audio fingerprint via AcoustID API to identify recordings.")
-                     (aset "promptSnippet" "Look up AcoustID fingerprints to identify music by its acoustic signature.")
-                     (aset "promptGuidelines" (clj->js ["Use music.acoustid_lookup when you have a fingerprint from chromaprint or similar."
-                                                        "Requires AcoustID API key in config."]))
-                     (aset "parameters" acoustid-params)
-                     (aset "execute" acoustid-execute)))
-                 (when (allowed? "music.musicbrainz_recording")
-                   (doto (js-obj)
-                     (aset "name" "music.musicbrainz_recording")
-                     (aset "label" "MusicBrainz Recording")
-                     (aset "description" "Look up MusicBrainz recording metadata by MBID.")
-                     (aset "promptSnippet" "Fetch detailed recording metadata from MusicBrainz.")
-                     (aset "promptGuidelines" (clj->js ["Use music.musicbrainz_recording when you have a MusicBrainz ID (MBID)."
-                                                        "Returns ISRCs, releases, release groups, and other metadata."
-                                                        "Rate-limited to 1 request per second."]))
-                     (aset "parameters" musicbrainz-params)
-                     (aset "execute" musicbrainz-execute)))
-                 (when (allowed? "music.copyright_check")
-                   (doto (js-obj)
-                     (aset "name" "music.copyright_check")
-                     (aset "label" "Music Copyright Check")
-                     (aset "description" "Check if audio is likely copyrighted based on ISRC presence.")
-                     (aset "promptSnippet" "Check copyright status of identified music before using it.")
-                     (aset "promptGuidelines" (clj->js ["Use music.copyright_check after music identification to assess copyright risk."
-                                                        "Returns BLOCK if ISRC found (commercially released), UNKNOWN otherwise."
-                                                        "Pass audio_data_json from AudD or similar identification result."]))
-                     (aset "parameters" copyright-params)
-                     (aset "execute" copyright-check-execute)))
-                 (when (allowed? "audio.spectrogram")
-                   (doto (js-obj)
-                     (aset "name" "audio.spectrogram")
-                     (aset "label" "Audio Spectrogram")
-                     (aset "description" "Generate a spectrogram image from an audio file using ffmpeg.")
-                     (aset "promptSnippet" "Visualize audio as a spectrogram to see frequencies over time.")
-                     (aset "promptGuidelines" (clj->js ["Use audio.spectrogram to visualize audio frequency content."
-                                                        "This is especially useful when the active model can see images but cannot directly accept audio input."]))
-                     (aset "parameters" audio-params)
-                     (aset "execute" spectrogram-execute)))
-                 (when (allowed? "audio.waveform")
-                   (doto (js-obj)
-                     (aset "name" "audio.waveform")
-                     (aset "label" "Audio Waveform")
-                     (aset "description" "Generate a waveform image from an audio file using ffmpeg.")
-                     (aset "promptSnippet" "Visualize audio as a waveform to see amplitude over time.")
-                     (aset "promptGuidelines" (clj->js ["Use audio.waveform to visualize audio amplitude."
-                                                        "Pair with audio.spectrogram when you want both amplitude and frequency views."]))
-                     (aset "parameters" audio-params)
-                     (aset "execute" waveform-execute)))
-                 (when (allowed? "music.generate")
-                   (doto (js-obj)
-                     (aset "name" "music.generate")
-                     (aset "label" "Generate Music")
-                     (aset "description" "Synthesize a WAV file from a JSON music spec using the native Node.js audio engine.")
-                     (aset "promptSnippet" "Generate original music and render it to a WAV file directly on the server.")
-                     (aset "promptGuidelines" (clj->js ["Use music.generate when the user wants original synthesized music, beats, loops, or melodies."
-                                                        "Construct a JSON spec with bpm, tracks, instruments, and patterns."
-                                                        "Supported instruments: synth, bass, lead, pad, drum (kick, snare, hihat, clap, tom)."
-                                                        "After generation, use workspace_media.attach to embed the WAV in the reply with a player."
-                                                        "Default output path is Music/generated/<uuid>.wav."]))
-                     (aset "parameters" generate-params)
-                     (aset "execute" generate-execute)))]))))))
-
+               [(when (allowed? "music.identify_file")
+                  (identify-file-tool runtime config))
+                (when (allowed? "music.acoustid_lookup")
+                  (acoustid-tool runtime config))
+                (when (allowed? "music.musicbrainz_recording")
+                  (musicbrainz-tool runtime config))
+                (when (allowed? "music.copyright_check")
+                  (copyright-check-tool runtime config))
+                (when (allowed? "audio.spectrogram")
+                  (spectrogram-tool runtime config))
+                (when (allowed? "audio.waveform")
+                  (waveform-tool runtime config))
+                (when (allowed? "music.generate")
+                  (generate-tool runtime config))]))))))

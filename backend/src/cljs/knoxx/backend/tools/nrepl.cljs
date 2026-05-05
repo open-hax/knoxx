@@ -13,15 +13,20 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
             ["node:net" :as net]
             ["node:crypto" :as crypto]))
 
-;; NOTE: Some of the extra requires above may look odd in CLJS, but shadow
-;; aggressively tree-shakes; keep this file self-contained.
-
 (def ^:private default-host "127.0.0.1")
 (def ^:private default-port 4500)
+
+(def nrepl-eval-params
+  [:map
+   [:target {:optional true :description "Eval target: cljs (default) forwards into shadow.cljs.devtools.api/cljs-eval; clj evaluates on the JVM nREPL host."} :string]
+   [:build_id {:optional true :description "shadow-cljs build id when target=cljs (default: server)."} :string]
+   [:ns {:optional true :description "CLJS namespace string when target=cljs (default: cljs.user)."} :string]
+   [:code {:description "Code to evaluate. For target=cljs, this must be CLJS code as a string."} :string]
+   [:timeout_ms {:optional true :description "Timeout in milliseconds (default 15000)."} [:int {:min 1}]]])
 
 (defn- env
   [k]
@@ -30,30 +35,17 @@
 (defn- nrepl-host [] (or (env "KNOXX_NREPL_HOST") default-host))
 (defn- nrepl-port [] (js/parseInt (or (env "KNOXX_NREPL_PORT") (str default-port)) 10))
 
-(defn- uuid
+(defn- uuid-str
   []
   (try
     (.randomUUID crypto)
     (catch :default _
       (str (random-uuid)))))
 
-;; ---------------------------------------------------------------------------
-;; Minimal bencode codec (enough for nREPL request/response maps)
-;; ---------------------------------------------------------------------------
-
-(defn- bencode-bytes
-  [s]
+(defn- bencode-bytes [s]
   (.from js/Buffer (str s) "utf8"))
 
-(defn- bencode-encode
-  "Encode a JS-friendly value into a Buffer.
-
-   Supports:
-   - string
-   - number (int)
-   - array/vector
-   - map/object (string keys only)"
-  [v]
+(defn- bencode-encode [v]
   (cond
     (string? v)
     (let [b (bencode-bytes v)]
@@ -70,7 +62,6 @@
     (let [m (cond
               (map? v) v
               :else (js->clj v))
-          ;; nREPL expects string keys; bencode dict keys must be sorted.
           entries (->> m
                        (map (fn [[k vv]] [(str k) vv]))
                        (sort-by first))
@@ -84,14 +75,12 @@
     :else
     (bencode-encode (pr-str v))))
 
-(defn- parse-int
-  [buf start end]
+(defn- parse-int [buf start end]
   (js/parseInt (.toString buf "utf8" start end) 10))
 
 (declare bencode-decode*)
 
-(defn- bencode-decode-string*
-  [buf idx]
+(defn- bencode-decode-string* [buf idx]
   (let [colon (.indexOf buf (int (.charCodeAt ":" 0)) idx)]
     (when (neg? colon)
       (throw (js/Error. "Invalid bencode string: missing ':'")))
@@ -101,16 +90,14 @@
           s (.toString buf "utf8" start end)]
       [s end])))
 
-(defn- bencode-decode-int*
-  [buf idx]
+(defn- bencode-decode-int* [buf idx]
   (let [end (.indexOf buf (int (.charCodeAt "e" 0)) idx)]
     (when (neg? end)
       (throw (js/Error. "Invalid bencode int: missing 'e'")))
     (let [n (parse-int buf (inc idx) end)]
       [n (inc end)])))
 
-(defn- bencode-decode-list*
-  [buf idx]
+(defn- bencode-decode-list* [buf idx]
   (loop [pos (inc idx) acc []]
     (when (>= pos (.-length buf))
       (throw (js/Error. "Invalid bencode list: unexpected EOF")))
@@ -119,8 +106,7 @@
       (let [[item next-pos] (bencode-decode* buf pos)]
         (recur next-pos (conj acc item))))))
 
-(defn- bencode-decode-dict*
-  [buf idx]
+(defn- bencode-decode-dict* [buf idx]
   (loop [pos (inc idx) acc {}]
     (when (>= pos (.-length buf))
       (throw (js/Error. "Invalid bencode dict: unexpected EOF")))
@@ -130,8 +116,7 @@
             [v next-pos2] (bencode-decode* buf next-pos)]
         (recur next-pos2 (assoc acc (str k) v))))))
 
-(defn- bencode-decode*
-  [buf idx]
+(defn- bencode-decode* [buf idx]
   (when (>= idx (.-length buf))
     (throw (js/Error. "Invalid bencode: unexpected EOF")))
   (let [ch (.toString buf "utf8" idx (inc idx))]
@@ -142,10 +127,7 @@
       (re-matches #"[0-9]" ch) (bencode-decode-string* buf idx)
       :else (throw (js/Error. (str "Invalid bencode prefix: " ch))))))
 
-(defn- bencode-decode-all
-  "Decode as many bencode values as possible from the given buffer.
-   Returns [values remaining-buffer]."
-  [buf]
+(defn- bencode-decode-all [buf]
   (loop [pos 0 values []]
     (if (>= pos (.-length buf))
       [values (.subarray buf pos)]
@@ -153,17 +135,11 @@
                       (bencode-decode* buf pos)
                       (catch :default _ nil))]
         (if (nil? decoded)
-          ;; partial frame; keep remaining bytes
           [values (.subarray buf pos)]
           (let [[v next-pos] decoded]
             (recur next-pos (conj values v))))))))
 
-;; ---------------------------------------------------------------------------
-;; nREPL client
-;; ---------------------------------------------------------------------------
-
-(defn- connect-socket!
-  []
+(defn- connect-socket! []
   (js/Promise.
    (fn [resolve reject]
      (let [socket (.createConnection net #js {:host (nrepl-host)
@@ -171,14 +147,10 @@
        (.once socket "connect" (fn [] (resolve socket)))
        (.once socket "error" reject)))))
 
-(defn- socket-write!
-  [socket msg]
+(defn- socket-write! [socket msg]
   (.write socket (bencode-encode msg)))
 
-(defn- collect-responses!
-  "Collect response maps for a given :id until a status contains \"done\".
-   Resolves to a vector of decoded response maps (string-keyed)."
-  [socket id timeout-ms]
+(defn- collect-responses! [socket id timeout-ms]
   (js/Promise.
    (fn [resolve reject]
      (let [timeout-ms (or timeout-ms 15000)
@@ -235,9 +207,8 @@
        (.on socket "error" on-error)
        (.on socket "close" on-close)))))
 
-(defn- nrepl-clone!
-  [socket timeout-ms]
-  (let [id (uuid)
+(defn- nrepl-clone! [socket timeout-ms]
+  (let [id (uuid-str)
         msg {"op" "clone" "id" id}]
     (socket-write! socket msg)
     (-> (collect-responses! socket id timeout-ms)
@@ -250,9 +221,8 @@
                      (throw (js/Error. (str "nREPL clone did not return a session: " (pr-str responses)))))
                    session))))))
 
-(defn- nrepl-eval!
-  [socket session code {:keys [timeout-ms]}]
-  (let [id (uuid)
+(defn- nrepl-eval! [socket session code {:keys [timeout-ms]}]
+  (let [id (uuid-str)
         msg {"op" "eval"
              "id" id
              "session" session
@@ -260,8 +230,7 @@
     (socket-write! socket msg)
     (collect-responses! socket id timeout-ms)))
 
-(defn- summarize-eval
-  [responses]
+(defn- summarize-eval [responses]
   (let [values (->> responses (keep #(get % "value")) (map str) vec)
         out (->> responses (keep #(get % "out")) (map str) (apply str))
         err (->> responses (keep #(get % "err")) (map str) (apply str))
@@ -288,14 +257,10 @@
      :status statuses
      :response_count (count responses)}))
 
-(defn- escape-clj-string
-  "Use EDN printing to safely embed an arbitrary string literal in CLJ code."
-  [s]
+(defn- escape-clj-string [s]
   (pr-str (str s)))
 
-(defn- shadow-cljs-eval-form
-  [{:keys [build-id ns code]}]
-  ;; NOTE: shadow expects opts map. ns can be string.
+(defn- shadow-cljs-eval-form [{:keys [build-id ns code]}]
   (str "(do "
        "(require (quote [shadow.cljs.devtools.api :as api])) "
        "(api/cljs-eval "
@@ -306,86 +271,78 @@
        "{:ns " (escape-clj-string (or ns "cljs.user")) "})"
        ")"))
 
-;; ---------------------------------------------------------------------------
-;; Tool
-;; ---------------------------------------------------------------------------
+(defn nrepl-eval-execute [_runtime _config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a)
+                      (when (fn? b) b)
+                      (when (fn? c) c))
+        target (some-> (or (aget params "target") "cljs") str str/lower-case)
+        build-id (or (aget params "build_id") (aget params "buildId") "server")
+        ns (or (aget params "ns") "cljs.user")
+        code (or (aget params "code") "")
+        timeout-ms (let [t (or (aget params "timeout_ms") (aget params "timeoutMs"))]
+                     (when (some? t) (js/Math.trunc t)))]
+    (when (str/blank? (str code))
+      (throw (js/Error. "code is required")))
+    (maybe-tool-update! on-update (str "Connecting to nREPL at " (nrepl-host) ":" (nrepl-port) "…"))
+    (-> (connect-socket!)
+        (.then
+         (fn [socket]
+           (-> (nrepl-clone! socket timeout-ms)
+               (.then
+                (fn [session]
+                  (maybe-tool-update! on-update (str "nREPL session ready; evaluating " target "…"))
+                  (let [eval-code (if (= target "clj")
+                                    code
+                                    (shadow-cljs-eval-form {:build-id build-id
+                                                           :ns ns
+                                                           :code code}))]
+                    (-> (nrepl-eval! socket session eval-code {:timeout-ms timeout-ms})
+                        (.then
+                         (fn [responses]
+                           (.end socket)
+                           (let [summary (summarize-eval responses)
+                                 [clipped-out _] (clip-text (:out summary) 20000)
+                                 [clipped-err _] (clip-text (:err summary) 20000)
+                                 headline (str "nREPL " target " eval"
+                                               (when (= target "cljs") (str " build=" build-id " ns=" ns))
+                                               ": " (or (:value summary) "(no value)"))]
+                             (tool-text-result
+                              (str headline
+                                   (when-not (str/blank? clipped-out) (str "\n\n[stdout]\n" clipped-out))
+                                   (when-not (str/blank? clipped-err) (str "\n\n[stderr]\n" clipped-err)))
+                              (assoc summary
+                                     :target target
+                                     :build_id build-id
+                                     :ns ns
+                                     :code code)))))
+                        (.catch (fn [err]
+                                  (.end socket)
+                                  (throw err)))))))
+               (.catch (fn [err]
+                         (.end socket)
+                         (throw err)))))))))
+
+(def nrepl-eval-tool
+  (partial create-tool-obj
+           "nrepl.eval"
+           "nREPL Eval"
+           "Evaluate CLJ or CLJS against the live shadow-cljs runtime via nREPL. Developer-only."
+           "Evaluate code in the live Knoxx runtime via shadow-cljs nREPL (dangerous)."
+           ["Use for live runtime experimentation against the running Knoxx backend."
+            "Default target=cljs forwards to shadow.cljs.devtools.api/cljs-eval build=server."
+            "Prefer small, reversible changes; avoid long-running loops."
+            "After experimentation, persist changes into source files and commit them."]
+           nrepl-eval-params
+           nrepl-eval-execute))
 
 (defn create-nrepl-custom-tools
   ([runtime config] (create-nrepl-custom-tools runtime config nil))
-  ([runtime _config auth-context]
-   (let [Type (aget runtime "Type")
-         allowed? (fn [tool-id]
+  ([runtime config auth-context]
+   (let [allowed? (fn [tool-id]
                     (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context tool-id)))
-         params (.Object Type
-                         #js {:target (type-optional Type (.String Type #js {:description "Eval target: cljs (default) forwards into shadow.cljs.devtools.api/cljs-eval; clj evaluates on the JVM nREPL host."}))
-                              :build_id (type-optional Type (.String Type #js {:description "shadow-cljs build id when target=cljs (default: server)."}))
-                              :ns (type-optional Type (.String Type #js {:description "CLJS namespace string when target=cljs (default: cljs.user)."}))
-                              :code (.String Type #js {:description "Code to evaluate. For target=cljs, this must be CLJS code as a string."})
-                              :timeout_ms (type-optional Type (.Number Type #js {:description "Timeout in milliseconds (default 15000)."}))})
-         execute (fn [_tool-call-id params a b c]
-                   (let [on-update (or (when (fn? a) a)
-                                       (when (fn? b) b)
-                                       (when (fn? c) c))
-                         target (some-> (or (aget params "target") "cljs") str str/lower-case)
-                         build-id (or (aget params "build_id") (aget params "buildId") "server")
-                         ns (or (aget params "ns") "cljs.user")
-                         code (or (aget params "code") "")
-                         timeout-ms (let [t (or (aget params "timeout_ms") (aget params "timeoutMs"))]
-                                      (when (some? t) (js/Math.trunc t)))]
-                     (when (str/blank? (str code))
-                       (throw (js/Error. "code is required")))
-                     (maybe-tool-update! on-update (str "Connecting to nREPL at " (nrepl-host) ":" (nrepl-port) "…"))
-                     (-> (connect-socket!)
-                         (.then
-                          (fn [socket]
-                            (-> (nrepl-clone! socket timeout-ms)
-                                (.then
-                                 (fn [session]
-                                   (maybe-tool-update! on-update (str "nREPL session ready; evaluating " target "…"))
-                                   (let [eval-code (if (= target "clj")
-                                                     code
-                                                     (shadow-cljs-eval-form {:build-id build-id
-                                                                            :ns ns
-                                                                            :code code}))]
-                                     (-> (nrepl-eval! socket session eval-code {:timeout-ms timeout-ms})
-                                         (.then
-                                          (fn [responses]
-                                            (.end socket)
-                                            (let [summary (summarize-eval responses)
-                                                  [clipped-out _] (clip-text (:out summary) 20000)
-                                                  [clipped-err _] (clip-text (:err summary) 20000)
-                                                  headline (str "nREPL " target " eval"
-                                                                (when (= target "cljs") (str " build=" build-id " ns=" ns))
-                                                                ": " (or (:value summary) "(no value)"))]
-                                              (tool-text-result
-                                               (str headline
-                                                    (when-not (str/blank? clipped-out) (str "\n\n[stdout]\n" clipped-out))
-                                                    (when-not (str/blank? clipped-err) (str "\n\n[stderr]\n" clipped-err)))
-                                               (assoc summary
-                                                      :target target
-                                                      :build_id build-id
-                                                      :ns ns
-                                                      :code code)))))
-                                         (.catch (fn [err]
-                                                   (.end socket)
-                                                   (throw err)))))))
-                                (.catch (fn [err]
-                                          (.end socket)
-                                          (throw err)))))))))
-         ]
+                        (ctx-tool-allowed? auth-context tool-id)))]
      (clj->js
       (vec
        (remove nil?
                [(when (allowed? "nrepl.eval")
-                  (doto (js-obj)
-                    (aset "name" "nrepl.eval")
-                    (aset "label" "nREPL Eval")
-                    (aset "description" "Evaluate CLJ or CLJS against the live shadow-cljs runtime via nREPL. Developer-only." )
-                    (aset "promptSnippet" "Evaluate code in the live Knoxx runtime via shadow-cljs nREPL (dangerous).")
-                    (aset "promptGuidelines" (clj->js ["Use for live runtime experimentation against the running Knoxx backend."
-                                                       "Default target=cljs forwards to shadow.cljs.devtools.api/cljs-eval build=server."
-                                                       "Prefer small, reversible changes; avoid long-running loops."
-                                                       "After experimentation, persist changes into source files and commit them."]))
-                    (aset "parameters" params)
-                    (aset "execute" execute)))]))))))
+                  (nrepl-eval-tool runtime config))]))))))

@@ -3,24 +3,52 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
 
-(defn- env-nonblank
-  [k]
+(def publish-params
+  [:map
+   [:text {:description "Bluesky post text. Keep it concise and under platform limits."} :string]])
+
+(def profile-params
+  [:map
+   [:actor {:optional true :description "Optional Bluesky handle or DID. Defaults to the authenticated account."} :string]])
+
+(def search-params
+  [:map
+   [:query {:description "Search query for Bluesky posts or actors."} :string]
+   [:kind {:optional true :description "posts or actors. Defaults to posts."} :string]
+   [:limit {:optional true :description "Maximum results to return."} [:int {:min 1 :max 25}]]])
+
+(def feed-params
+  [:map
+   [:actor {:description "Bluesky handle or DID whose feed should be read."} :string]
+   [:limit {:optional true :description "Maximum posts to return."} [:int {:min 1 :max 25}]]])
+
+(def timeline-params
+  [:map
+   [:limit {:optional true :description "Maximum timeline posts to return."} [:int {:min 1 :max 25}]]
+   [:cursor {:optional true :description "Optional pagination cursor from a previous bluesky.timeline call."} :string]])
+
+(defn- env-nonblank [k]
   (some-> (aget js/process.env k) str str/trim not-empty))
 
-(defn- bluesky-service-base-url
-  []
+(defn- bluesky-service-base-url []
   (or (env-nonblank "BLUESKY_SERVICE_URL")
       "https://bsky.social"))
 
-(defn- bluesky-public-base-url
-  []
+(defn- bluesky-public-base-url []
   (or (env-nonblank "BLUESKY_PUBLIC_API_URL")
       "https://public.api.bsky.app"))
 
-(defn- bluesky-json-fetch!
-  [url options label]
+(defn- query-url [base params]
+  (let [search (js/URLSearchParams.)]
+    (doseq [[k v] params]
+      (when-not (or (nil? v) (and (string? v) (str/blank? v)))
+        (.append search (name k) (str v))))
+    (let [query (.toString search)]
+      (if (str/blank? query) base (str base "?" query)))))
+
+(defn- bluesky-json-fetch! [url options label]
   (-> (js/fetch url options)
       (.then (fn [resp]
                (if (.-ok resp)
@@ -29,43 +57,45 @@
                      (.then (fn [text]
                               (throw (js/Error. (str label " error " (.-status resp) ": " text)))))))))))
 
-(defn- bluesky-auth-config
-  []
+(defn- bluesky-auth-config []
   (let [identifier (env-nonblank "BLUESKY_IDENTIFIER")
         password (env-nonblank "BLUESKY_APP_PASSWORD")]
     (when (or (nil? identifier) (nil? password))
       (throw (js/Error. "Bluesky credentials not configured. Set BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD.")))
-    {:identifier identifier
-     :password password}))
+    {:identifier identifier :password password}))
 
-(defn- bluesky-create-session!
-  []
+(defn- bluesky-create-session! []
   (let [{:keys [identifier password]} (bluesky-auth-config)]
     (bluesky-json-fetch!
      (str (bluesky-service-base-url) "/xrpc/com.atproto.server.createSession")
      #js {:method "POST"
           :headers #js {"Content-Type" "application/json"
                         "User-Agent" "Knoxx-Agent/1.0"}
-          :body (.stringify js/JSON #js {:identifier identifier
-                                         :password password})}
+          :body (.stringify js/JSON #js {:identifier identifier :password password})}
      "Bluesky auth")))
 
-(defn- bluesky-post-url
-  [handle uri]
+(defn- bluesky-post-url [handle uri]
   (let [post-id (some-> uri str (str/split #"/") last)]
     (when (and (not (str/blank? (str handle)))
                (not (str/blank? (str post-id))))
       (str "https://bsky.app/profile/" handle "/post/" post-id))))
 
-(defn- bluesky-search!
-  [query kind limit]
+(defn- format-posts [prefix rows]
+  (let [lines (->> rows
+                   (map (fn [{:keys [displayName handle text url]}]
+                          (str "- " (or (not-empty displayName) handle "unknown")
+                               (when (not (str/blank? (str handle))) (str " (@" handle ")"))
+                               ": " (clip-text (or text "") 220)
+                               (when (not (str/blank? (str url))) (str "\n  " url)))))
+                   (str/join "\n"))]
+    (str prefix (when-not (str/blank? lines) (str "\n" lines)))))
+
+(defn- bluesky-search! [query kind limit]
   (let [kind (if (= kind "actors") "actors" "posts")
-        endpoint (if (= kind "actors")
-                   "app.bsky.actor.searchActors"
-                   "app.bsky.feed.searchPosts")]
+        endpoint (if (= kind "actors") "app.bsky.actor.searchActors" "app.bsky.feed.searchPosts")]
     (-> (bluesky-json-fetch!
-         (discord-query-url (str (bluesky-public-base-url) "/xrpc/" endpoint)
-                            {:q query :limit limit})
+         (query-url (str (bluesky-public-base-url) "/xrpc/" endpoint)
+                    {:q query :limit limit})
          #js {:method "GET"
               :headers #js {"Accept" "application/json"
                             "User-Agent" "Knoxx-Agent/1.0"}}
@@ -98,20 +128,18 @@
                                                  :url (bluesky-post-url handle (aget post "uri"))}))))]
                      {:kind kind :results results})))))))
 
-(defn- bluesky-profile!
-  [actor]
+(defn- bluesky-profile! [actor]
   (let [actor (some-> actor str str/trim)
         actor-promise (if (str/blank? actor)
                         (-> (bluesky-create-session!)
                             (.then (fn [session]
-                                     (or (aget session "handle")
-                                         (aget session "did")))))
+                                     (or (aget session "handle") (aget session "did")))))
                         (js/Promise.resolve actor))]
     (-> actor-promise
         (.then (fn [resolved-actor]
                  (bluesky-json-fetch!
-                  (discord-query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.actor.getProfile")
-                                     {:actor resolved-actor})
+                  (query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.actor.getProfile")
+                             {:actor resolved-actor})
                   #js {:method "GET"
                        :headers #js {"Accept" "application/json"
                                      "User-Agent" "Knoxx-Agent/1.0"}}
@@ -127,11 +155,10 @@
                   :url (when-let [handle (some-> (aget profile "handle") str not-empty)]
                          (str "https://bsky.app/profile/" handle))})))))
 
-(defn- bluesky-author-feed!
-  [actor limit]
+(defn- bluesky-author-feed! [actor limit]
   (-> (bluesky-json-fetch!
-       (discord-query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.feed.getAuthorFeed")
-                          {:actor actor :limit limit})
+       (query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.feed.getAuthorFeed")
+                  {:actor actor :limit limit})
        #js {:method "GET"
             :headers #js {"Accept" "application/json"
                           "User-Agent" "Knoxx-Agent/1.0"}}
@@ -153,13 +180,12 @@
                                              :url (bluesky-post-url handle (aget post "uri"))}))))]
                  {:actor actor :results results})))))
 
-(defn- bluesky-timeline!
-  [limit cursor]
+(defn- bluesky-timeline! [limit cursor]
   (-> (bluesky-create-session!)
       (.then (fn [session]
                (bluesky-json-fetch!
-                (discord-query-url (str (bluesky-service-base-url) "/xrpc/app.bsky.feed.getTimeline")
-                                   {:limit limit :cursor cursor})
+                (query-url (str (bluesky-service-base-url) "/xrpc/app.bsky.feed.getTimeline")
+                           {:limit limit :cursor cursor})
                 #js {:method "GET"
                      :headers #js {"Accept" "application/json"
                                    "User-Agent" "Knoxx-Agent/1.0"
@@ -182,8 +208,7 @@
                                              :url (bluesky-post-url handle (aget post "uri"))}))))]
                  {:cursor (aget payload "cursor") :results results})))))
 
-(defn- bluesky-publish!
-  [text]
+(defn- bluesky-publish! [text]
   (-> (bluesky-create-session!)
       (.then (fn [session]
                (-> (bluesky-json-fetch!
@@ -192,146 +217,144 @@
                          :headers #js {"Content-Type" "application/json"
                                        "User-Agent" "Knoxx-Agent/1.0"
                                        "Authorization" (str "Bearer " (aget session "accessJwt"))}
-                         :body (.stringify js/JSON #js {:repo (aget session "did")
-                                                        :collection "app.bsky.feed.post"
-                                                        :record #js {"$type" "app.bsky.feed.post"
-                                                                     :text text
-                                                                     :createdAt (.toISOString (js/Date.))}})}
+                         :body (.stringify js/JSON
+                                           #js {:repo (aget session "did")
+                                                :collection "app.bsky.feed.post"
+                                                :record #js {"$type" "app.bsky.feed.post"
+                                                             :text text
+                                                             :createdAt (.toISOString (js/Date.))}})}
                     "Bluesky publish")
                    (.then (fn [result]
                             (let [uri (or (aget result "uri") "")]
                               {:uri uri
                                :cid (or (aget result "cid") "")
-                               :url (or (bluesky-post-url (aget session "handle") uri)
-                                        "")}))))))))
+                               :url (or (bluesky-post-url (aget session "handle") uri) "")}))))))))
 
+(defn publish-execute [_runtime _config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        text (or (aget params "text") "")]
+    (when (str/blank? (str/trim text))
+      (throw (js/Error. "text is required")))
+    (maybe-tool-update! on-update "Publishing to Bluesky…")
+    (-> (bluesky-publish! text)
+        (.then (fn [result]
+                 (tool-text-result (str "Published Bluesky post\n" (or (:url result) (:uri result) ""))
+                                   result))))))
+
+(defn profile-execute [_runtime _config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        actor (or (aget params "actor") "")]
+    (maybe-tool-update! on-update "Reading Bluesky profile…")
+    (-> (bluesky-profile! actor)
+        (.then (fn [profile]
+                 (tool-text-result
+                  (str "Bluesky profile: " (or (:displayName profile) (:handle profile) "unknown")
+                       (when-not (str/blank? (str (:handle profile))) (str " (@" (:handle profile) ")"))
+                       "\nFollowers: " (:followersCount profile)
+                       " | Following: " (:followsCount profile)
+                       " | Posts: " (:postsCount profile)
+                       (when-not (str/blank? (str (:description profile)))
+                         (str "\n\n" (:description profile)))
+                       (when-not (str/blank? (str (:url profile)))
+                         (str "\n\n" (:url profile))))
+                  profile))))))
+
+(defn search-execute [_runtime _config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        query (or (aget params "query") "")
+        kind (or (aget params "kind") "posts")
+        limit (max 1 (min 25 (or (aget params "limit") 5)))]
+    (when (str/blank? (str/trim query))
+      (throw (js/Error. "query is required")))
+    (maybe-tool-update! on-update "Searching Bluesky…")
+    (-> (bluesky-search! query kind limit)
+        (.then (fn [result]
+                 (tool-text-result (format-posts (str "Bluesky search (" (:kind result) ")") (:results result))
+                                   result))))))
+
+(defn author-feed-execute [_runtime _config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        actor (or (aget params "actor") "")
+        limit (max 1 (min 25 (or (aget params "limit") 8)))]
+    (when (str/blank? (str/trim actor))
+      (throw (js/Error. "actor is required")))
+    (maybe-tool-update! on-update (str "Reading Bluesky feed for " actor "…"))
+    (-> (bluesky-author-feed! actor limit)
+        (.then (fn [result]
+                 (tool-text-result (format-posts (str "Bluesky author feed: " actor) (:results result))
+                                   result))))))
+
+(defn timeline-execute [_runtime _config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        limit (max 1 (min 25 (or (aget params "limit") 8)))
+        cursor (or (aget params "cursor") "")]
+    (maybe-tool-update! on-update "Reading authenticated Bluesky timeline…")
+    (-> (bluesky-timeline! limit cursor)
+        (.then (fn [result]
+                 (tool-text-result (format-posts "Bluesky timeline" (:results result))
+                                   result))))))
+
+(def publish-tool
+  (partial create-tool-obj
+           "bluesky.publish" "Bluesky Publish"
+           "Publish a post to Bluesky using the configured account."
+           "Post a concise update to Bluesky when public social publishing is useful."
+           []
+           publish-params
+           publish-execute))
+
+(def profile-tool
+  (partial create-tool-obj
+           "bluesky.profile" "Bluesky Profile"
+           "Read a Bluesky profile by handle or DID, or default to the authenticated account."
+           "Read a Bluesky profile by handle or DID, or default to the authenticated account."
+           []
+           profile-params
+           profile-execute))
+
+(def search-tool
+  (partial create-tool-obj
+           "bluesky.search" "Bluesky Search"
+           "Search public Bluesky posts or actors."
+           "Search public Bluesky posts or actors."
+           []
+           search-params
+           search-execute))
+
+(def author-feed-tool
+  (partial create-tool-obj
+           "bluesky.author.feed" "Bluesky Author Feed"
+           "Read recent posts from a specific Bluesky author."
+           "Read recent posts from a specific Bluesky author."
+           []
+           feed-params
+           author-feed-execute))
+
+(def timeline-tool
+  (partial create-tool-obj
+           "bluesky.timeline" "Bluesky Timeline"
+           "Read the authenticated account's Bluesky timeline."
+           "Read the authenticated account's Bluesky timeline."
+           []
+           timeline-params
+           timeline-execute))
 
 (defn create-bluesky-custom-tools
   ([runtime config] (create-bluesky-custom-tools runtime config nil))
-  ([runtime _config auth-context]
-   (let [Type (aget runtime "Type")
-         allowed? (fn [tool-id]
+  ([runtime config auth-context]
+   (let [allowed? (fn [tool-id]
                     (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context tool-id)))
-         publish-params (.Object Type
-                                 #js {:text (.String Type #js {:description "Bluesky post text. Keep it concise and under platform limits."})})
-         profile-params (.Object Type
-                                 #js {:actor (type-optional Type (.String Type #js {:description "Optional Bluesky handle or DID. Defaults to the authenticated account."}))})
-         search-params (.Object Type
-                                #js {:query (.String Type #js {:description "Search query for Bluesky posts or actors."})
-                                     :kind (type-optional Type (.String Type #js {:description "posts or actors. Defaults to posts."}))
-                                     :limit (type-optional Type (.Number Type #js {:description "Maximum results to return." :minimum 1 :maximum 25}))})
-         feed-params (.Object Type
-                              #js {:actor (.String Type #js {:description "Bluesky handle or DID whose feed should be read."})
-                                   :limit (type-optional Type (.Number Type #js {:description "Maximum posts to return." :minimum 1 :maximum 25}))})
-         timeline-params (.Object Type
-                                  #js {:limit (type-optional Type (.Number Type #js {:description "Maximum timeline posts to return." :minimum 1 :maximum 25}))
-                                       :cursor (type-optional Type (.String Type #js {:description "Optional pagination cursor from a previous bluesky.timeline call."}))})
-         format-posts (fn [prefix rows]
-                        (let [lines (->> rows
-                                         (map (fn [{:keys [displayName handle text url]}]
-                                                (str "- " (or (not-empty displayName) handle "unknown")
-                                                     (when (not (str/blank? (str handle))) (str " (@" handle ")"))
-                                                     ": " (clip-text (or text "") 220)
-                                                     (when (not (str/blank? (str url))) (str "\n  " url)))))
-                                         (str/join "\n"))]
-                          (str prefix (when-not (str/blank? lines) (str "\n" lines)))))
-         publish-execute (fn [_tool-call-id params a b c]
-                           (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                 text (or (aget params "text") "")]
-                             (when (str/blank? (str/trim text))
-                               (throw (js/Error. "text is required")))
-                             (maybe-tool-update! on-update "Publishing to Bluesky…")
-                             (-> (bluesky-publish! text)
-                                 (.then (fn [result]
-                                          (tool-text-result (str "Published Bluesky post\n" (or (:url result) (:uri result) ""))
-                                                            result))))))
-         profile-execute (fn [_tool-call-id params a b c]
-                           (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                 actor (or (aget params "actor") "")]
-                             (maybe-tool-update! on-update "Reading Bluesky profile…")
-                             (-> (bluesky-profile! actor)
-                                 (.then (fn [profile]
-                                          (tool-text-result
-                                           (str "Bluesky profile: " (or (:displayName profile) (:handle profile) "unknown")
-                                                (when-not (str/blank? (str (:handle profile))) (str " (@" (:handle profile) ")"))
-                                                "\nFollowers: " (:followersCount profile)
-                                                " | Following: " (:followsCount profile)
-                                                " | Posts: " (:postsCount profile)
-                                                (when-not (str/blank? (str (:description profile)))
-                                                  (str "\n\n" (:description profile)))
-                                                (when-not (str/blank? (str (:url profile)))
-                                                  (str "\n\n" (:url profile))))
-                                           profile))))))
-         search-execute (fn [_tool-call-id params a b c]
-                          (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                query (or (aget params "query") "")
-                                kind (or (aget params "kind") "posts")
-                                limit (max 1 (min 25 (or (aget params "limit") 5)))]
-                            (when (str/blank? (str/trim query))
-                              (throw (js/Error. "query is required")))
-                            (maybe-tool-update! on-update "Searching Bluesky…")
-                            (-> (bluesky-search! query kind limit)
-                                (.then (fn [result]
-                                         (tool-text-result (format-posts (str "Bluesky search (" (:kind result) ")") (:results result))
-                                                           result))))))
-         author-feed-execute (fn [_tool-call-id params a b c]
-                               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                     actor (or (aget params "actor") "")
-                                     limit (max 1 (min 25 (or (aget params "limit") 8)))]
-                                 (when (str/blank? (str/trim actor))
-                                   (throw (js/Error. "actor is required")))
-                                 (maybe-tool-update! on-update (str "Reading Bluesky feed for " actor "…"))
-                                 (-> (bluesky-author-feed! actor limit)
-                                     (.then (fn [result]
-                                              (tool-text-result (format-posts (str "Bluesky author feed: " actor) (:results result))
-                                                                result))))))
-         timeline-execute (fn [_tool-call-id params a b c]
-                            (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                                  limit (max 1 (min 25 (or (aget params "limit") 8)))
-                                  cursor (or (aget params "cursor") "")]
-                              (maybe-tool-update! on-update "Reading authenticated Bluesky timeline…")
-                              (-> (bluesky-timeline! limit cursor)
-                                  (.then (fn [result]
-                                           (tool-text-result (format-posts "Bluesky timeline" (:results result))
-                                                             result))))))
-         ]
+                        (ctx-tool-allowed? auth-context tool-id)))]
      (clj->js
       (vec
        (remove nil?
                [(when (allowed? "bluesky.publish")
-                  (doto (js-obj)
-                    (aset "name" "bluesky.publish")
-                    (aset "label" "Bluesky Publish")
-                    (aset "description" "Publish a post to Bluesky using the configured account.")
-                    (aset "promptSnippet" "Post a concise update to Bluesky when public social publishing is useful.")
-                    (aset "parameters" publish-params)
-                    (aset "execute" publish-execute)))
+                  (publish-tool runtime config))
                 (when (allowed? "bluesky.profile")
-                  (doto (js-obj)
-                    (aset "name" "bluesky.profile")
-                    (aset "label" "Bluesky Profile")
-                    (aset "description" "Read a Bluesky profile by handle or DID, or default to the authenticated account.")
-                    (aset "parameters" profile-params)
-                    (aset "execute" profile-execute)))
+                  (profile-tool runtime config))
                 (when (allowed? "bluesky.search")
-                  (doto (js-obj)
-                    (aset "name" "bluesky.search")
-                    (aset "label" "Bluesky Search")
-                    (aset "description" "Search public Bluesky posts or actors.")
-                    (aset "parameters" search-params)
-                    (aset "execute" search-execute)))
+                  (search-tool runtime config))
                 (when (allowed? "bluesky.author.feed")
-                  (doto (js-obj)
-                    (aset "name" "bluesky.author.feed")
-                    (aset "label" "Bluesky Author Feed")
-                    (aset "description" "Read recent posts from a specific Bluesky author.")
-                    (aset "parameters" feed-params)
-                    (aset "execute" author-feed-execute)))
+                  (author-feed-tool runtime config))
                 (when (allowed? "bluesky.timeline")
-                  (doto (js-obj)
-                    (aset "name" "bluesky.timeline")
-                    (aset "label" "Bluesky Timeline")
-                    (aset "description" "Read the authenticated account's Bluesky timeline.")
-                    (aset "parameters" timeline-params)
-                    (aset "execute" timeline-execute)))]))))))
+                  (timeline-tool runtime config))]))))))

@@ -3,10 +3,42 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
 
 (def ^:private sandbox-label-prefix "openhax.knoxx.sandbox")
 (def ^:private sandbox-max-buffer-bytes (* 2 1024 1024))
+
+(def create-params
+  [:map
+   [:ttl_seconds {:optional true :description "Requested sandbox lifetime in seconds."} [:int {:min 60 :max 86400}]]
+   [:image {:optional true :description "Optional container image override."} :string]])
+
+(def id-params
+  [:map
+   [:sandbox_id {:description "Sandbox id returned by sandbox_container.create."} :string]])
+
+(def exec-params
+  [:map
+   [:sandbox_id {:description "Sandbox id returned by sandbox_container.create."} :string]
+   [:command {:description "Shell command to execute inside the sandbox workdir."} :string]
+   [:timeout_ms {:optional true :description "Command timeout in milliseconds."} [:int {:min 1000 :max 300000}]]])
+
+(def read-params
+  [:map
+   [:sandbox_id {:description "Sandbox id returned by sandbox_container.create."} :string]
+   [:path {:description "Relative path inside the sandbox workdir."} :string]
+   [:max_chars {:optional true :description "Maximum characters to return."} [:int {:min 200 :max 20000}]]])
+
+(def write-params
+  [:map
+   [:sandbox_id {:description "Sandbox id returned by sandbox_container.create."} :string]
+   [:path {:description "Relative path inside the sandbox workdir."} :string]
+   [:content {:description "UTF-8 text content to write."} :string]])
+
+(def commit-params
+  [:map
+   [:sandbox_id {:description "Sandbox id returned by sandbox_container.create."} :string]
+   [:message {:description "Git commit message."} :string]])
 
 (defn- shell-single-quote
   [value]
@@ -167,7 +199,6 @@
                                     (when-not build-ok
                                       (throw (js/Error. (str "docker build failed: " (or build-error build-stderr)))))
                                     true)))
-                       ;; Non-default images should be pulled by `docker run`.
                        true)
                      (throw (js/Error. (str "docker image inspect failed: " (or error stderr)))))))))))
 
@@ -203,7 +234,6 @@
                                      :ttlSeconds (if (pos? expires-at)
                                                    (max 0 (int (/ (- expires-at (.now js/Date)) 1000)))
                                                    0)})))))))))))
-
 
 (defn- sandbox-destroy!
   [runtime config sandbox-id]
@@ -275,23 +305,23 @@
         (.then (fn [{:keys [ok stderr error]}]
                  (when-not ok
                    (throw (js/Error. (str "docker run failed: " (or error stderr)))))
-                  (-> (write-sandbox-metadata! runtime config sandbox-id {:sandboxId sandbox-id
+                 (-> (write-sandbox-metadata! runtime config sandbox-id {:sandboxId sandbox-id
                                                                           :image image
                                                                           :createdAtMs created-at-ms
                                                                           :maxExpiresAt max-expires-at
                                                                           :ttlSeconds ttl
                                                                           :createdAt (.toISOString (js/Date.))
                                                                           :expiresAt expires-at})
-                      (.then (fn [_]
-                               (ensure-live-sandbox! runtime config sandbox-id)))))))))
+                     (.then (fn [_]
+                              (ensure-live-sandbox! runtime config sandbox-id)))))))))
 
 (defn- sandbox-exec!
   [runtime config sandbox-id command timeout-ms]
   (-> (ensure-live-sandbox! runtime config sandbox-id)
       (.then (fn [info]
                (-> (docker-command! runtime config
-                                   ["exec" "-w" (:workdir info) (:containerName info) "sh" "-lc" command]
-                                   {:timeout (or timeout-ms 120000)})
+                                    ["exec" "-w" (:workdir info) (:containerName info) "sh" "-lc" command]
+                                    {:timeout (or timeout-ms 120000)})
                    (.then (fn [result]
                             (assoc result
                                    :sandboxId sandbox-id
@@ -299,192 +329,202 @@
                                    :workdir (:workdir info)
                                    :ttlSeconds (:ttlSeconds info)))))))))
 
+(defn sandbox-create-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))]
+    (maybe-tool-update! on-update "Creating sandbox container…")
+    (-> (sandbox-create! runtime config {:ttl-seconds (aget params "ttl_seconds")
+                                         :image (aget params "image")})
+        (.then (fn [result]
+                 (tool-text-result
+                  (str "Created sandbox " (:sandboxId result)
+                       " using " (:image result)
+                       " with ~" (:ttlSeconds result) "s remaining.")
+                  result))))))
+
+(defn sandbox-status-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")]
+    (maybe-tool-update! on-update (str "Inspecting sandbox " sandbox-id "…"))
+    (-> (ensure-live-sandbox! runtime config sandbox-id)
+        (.then (fn [result]
+                 (if result
+                   (tool-text-result
+                    (str "Sandbox " sandbox-id " status=" (:status result)
+                         ", ttl=" (:ttlSeconds result) "s")
+                    result)
+                   (tool-text-result
+                    (str "Sandbox " sandbox-id " not found.")
+                    {:sandboxId sandbox-id :exists false})))))))
+
+(defn sandbox-exec-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
+        command (or (aget params "command") "")
+        timeout-ms (aget params "timeout_ms")]
+    (when (str/blank? sandbox-id)
+      (throw (js/Error. "sandbox_id is required")))
+    (when (str/blank? (str/trim command))
+      (throw (js/Error. "command is required")))
+    (maybe-tool-update! on-update (str "Executing in sandbox " sandbox-id "…"))
+    (-> (sandbox-exec! runtime config sandbox-id command timeout-ms)
+        (.then (fn [result]
+                 (tool-text-result
+                  (str "Sandbox exec exit=" (:exitCode result)
+                       (when-not (str/blank? (:stdout result))
+                         (str "\n\nstdout:\n" (first (clip-text (:stdout result) 8000))))
+                       (when-not (str/blank? (:stderr result))
+                         (str "\n\nstderr:\n" (first (clip-text (:stderr result) 8000)))))
+                  result))))))
+
+(defn sandbox-read-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
+        path (normalize-sandbox-path (aget params "path"))
+        max-chars (max 200 (min 20000 (or (aget params "max_chars") 6000)))
+        command (str "cat " (shell-single-quote path))]
+    (maybe-tool-update! on-update (str "Reading sandbox file " path "…"))
+    (-> (sandbox-exec! runtime config sandbox-id command 60000)
+        (.then (fn [result]
+                 (let [[content _] (clip-text (:stdout result) max-chars)]
+                   (tool-text-result
+                    (str "Sandbox file " path "\n\n" content)
+                    (assoc result :path path :content content))))))))
+
+(defn sandbox-write-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
+        path (normalize-sandbox-path (aget params "path"))
+        content (or (aget params "content") "")
+        encoded (base64-utf8 content)
+        command (str "mkdir -p $(dirname -- " (shell-single-quote path) ") && printf %s "
+                     (shell-single-quote encoded)
+                     " | base64 -d > " (shell-single-quote path))]
+    (maybe-tool-update! on-update (str "Writing sandbox file " path "…"))
+    (-> (sandbox-exec! runtime config sandbox-id command 60000)
+        (.then (fn [result]
+                 (tool-text-result
+                  (str "Wrote sandbox file " path)
+                  (assoc result :path path :bytes (count content))))))))
+
+(defn sandbox-commit-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
+        message (or (aget params "message") "sandbox update")
+        command (str "if [ ! -d .git ]; then git init -q .; fi && "
+                     "git config user.email sandbox@knoxx.local && "
+                     "git config user.name 'Knoxx Sandbox' && "
+                     "git add -A && "
+                     "if git diff --cached --quiet; then echo 'No staged changes to commit'; "
+                     "else git commit -m " (shell-single-quote message) "; fi && "
+                     "git status --short --branch")]
+    (maybe-tool-update! on-update (str "Committing sandbox workspace for " sandbox-id "…"))
+    (-> (sandbox-exec! runtime config sandbox-id command 120000)
+        (.then (fn [result]
+                 (tool-text-result
+                  (str "Sandbox commit exit=" (:exitCode result)
+                       (when-not (str/blank? (:stdout result))
+                         (str "\n\n" (first (clip-text (:stdout result) 8000)))))
+                  result))))))
+
+(defn sandbox-destroy-execute [runtime config _tool-call-id params a b c]
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")]
+    (maybe-tool-update! on-update (str "Destroying sandbox " sandbox-id "…"))
+    (-> (sandbox-destroy! runtime config sandbox-id)
+        (.then (fn [result]
+                 (tool-text-result (str "Destroyed sandbox " sandbox-id)
+                                   result))))))
+
+(def sandbox-create-tool
+  (partial create-tool-obj
+           "sandbox_container.create"
+           "Sandbox Create"
+           "Create a TTL-bound sandbox container for isolated development work."
+           "Create a temporary docker-backed sandbox when you need coding or shell access without touching the live Knoxx source tree."
+           []
+           create-params
+           sandbox-create-execute))
+
+(def sandbox-status-tool
+  (partial create-tool-obj
+           "sandbox_container.status"
+           "Sandbox Status"
+           "Inspect sandbox container runtime status and remaining TTL."
+           "Inspect sandbox container runtime status and remaining TTL."
+           []
+           id-params
+           sandbox-status-execute))
+
+(def sandbox-exec-tool
+  (partial create-tool-obj
+           "sandbox_container.exec"
+           "Sandbox Exec"
+           "Execute a shell command inside the sandbox workdir using docker exec."
+           "Execute a shell command inside the sandbox workdir using docker exec."
+           []
+           exec-params
+           sandbox-exec-execute))
+
+(def sandbox-read-tool
+  (partial create-tool-obj
+           "sandbox_container.read"
+           "Sandbox Read"
+           "Read a UTF-8 text file from the sandbox workdir."
+           "Read a UTF-8 text file from the sandbox workdir."
+           []
+           read-params
+           sandbox-read-execute))
+
+(def sandbox-write-tool
+  (partial create-tool-obj
+           "sandbox_container.write"
+           "Sandbox Write"
+           "Write a UTF-8 text file into the sandbox workdir."
+           "Write a UTF-8 text file into the sandbox workdir."
+           []
+           write-params
+           sandbox-write-execute))
+
+(def sandbox-commit-tool
+  (partial create-tool-obj
+           "sandbox_container.commit"
+           "Sandbox Commit"
+           "Create a git commit inside the sandbox workdir."
+           "Create a git commit inside the sandbox workdir."
+           []
+           commit-params
+           sandbox-commit-execute))
+
+(def sandbox-destroy-tool
+  (partial create-tool-obj
+           "sandbox_container.destroy"
+           "Sandbox Destroy"
+           "Destroy a sandbox container and remove its temporary workspace."
+           "Destroy a sandbox container and remove its temporary workspace."
+           []
+           id-params
+           sandbox-destroy-execute))
+
 (defn create-sandbox-custom-tools
   ([runtime config] (create-sandbox-custom-tools runtime config nil))
   ([runtime config auth-context]
-   (let [Type (aget runtime "Type")
-         allowed? (fn [tool-id]
+   (let [allowed? (fn [tool-id]
                     (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context tool-id)))
-         create-params (.Object Type #js {:ttl_seconds (type-optional Type (.Number Type #js {:description "Requested sandbox lifetime in seconds." :minimum 60 :maximum 86400}))
-                                          :image (type-optional Type (.String Type #js {:description "Optional container image override."}))})
-         id-params (.Object Type #js {:sandbox_id (.String Type #js {:description "Sandbox id returned by sandbox_container.create."})})
-         exec-params (.Object Type #js {:sandbox_id (.String Type #js {:description "Sandbox id returned by sandbox_container.create."})
-                                        :command (.String Type #js {:description "Shell command to execute inside the sandbox workdir."})
-                                        :timeout_ms (type-optional Type (.Number Type #js {:description "Command timeout in milliseconds." :minimum 1000 :maximum 300000}))})
-         read-params (.Object Type #js {:sandbox_id (.String Type #js {:description "Sandbox id returned by sandbox_container.create."})
-                                        :path (.String Type #js {:description "Relative path inside the sandbox workdir."})
-                                        :max_chars (type-optional Type (.Number Type #js {:description "Maximum characters to return." :minimum 200 :maximum 20000}))})
-         write-params (.Object Type #js {:sandbox_id (.String Type #js {:description "Sandbox id returned by sandbox_container.create."})
-                                         :path (.String Type #js {:description "Relative path inside the sandbox workdir."})
-                                         :content (.String Type #js {:description "UTF-8 text content to write."})})
-         commit-params (.Object Type #js {:sandbox_id (.String Type #js {:description "Sandbox id returned by sandbox_container.create."})
-                                          :message (.String Type #js {:description "Git commit message."})})]
-     (letfn [(create-execute [_tool-call-id params a b c]
-               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))]
-                 (maybe-tool-update! on-update "Creating sandbox container…")
-                 (-> (sandbox-create! runtime config {:ttl-seconds (aget params "ttl_seconds")
-                                                      :image (aget params "image")})
-                     (.then (fn [result]
-                              (tool-text-result
-                               (str "Created sandbox " (:sandboxId result)
-                                    " using " (:image result)
-                                    " with ~" (:ttlSeconds result) "s remaining.")
-                               result))))))
-
-             (status-execute [_tool-call-id params a b c]
-               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                     sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")]
-                 (maybe-tool-update! on-update (str "Inspecting sandbox " sandbox-id "…"))
-                 (-> (ensure-live-sandbox! runtime config sandbox-id)
-                     (.then (fn [result]
-                              (if result
-                                (tool-text-result
-                                 (str "Sandbox " sandbox-id " status=" (:status result)
-                                      ", ttl=" (:ttlSeconds result) "s")
-                                 result)
-                                (tool-text-result
-                                 (str "Sandbox " sandbox-id " not found.")
-                                 {:sandboxId sandbox-id :exists false})))))))
-
-             (exec-execute [_tool-call-id params a b c]
-               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                     sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
-                     command (or (aget params "command") "")
-                     timeout-ms (aget params "timeout_ms")]
-                 (when (str/blank? sandbox-id)
-                   (throw (js/Error. "sandbox_id is required")))
-                 (when (str/blank? (str/trim command))
-                   (throw (js/Error. "command is required")))
-                 (maybe-tool-update! on-update (str "Executing in sandbox " sandbox-id "…"))
-                 (-> (sandbox-exec! runtime config sandbox-id command timeout-ms)
-                     (.then (fn [result]
-                              (tool-text-result
-                               (str "Sandbox exec exit=" (:exitCode result)
-                                    (when-not (str/blank? (:stdout result))
-                                      (str "
-
-stdout:
-" (first (clip-text (:stdout result) 8000))))
-                                    (when-not (str/blank? (:stderr result))
-                                      (str "
-
-stderr:
-" (first (clip-text (:stderr result) 8000)))))
-                               result))))))
-
-             (read-execute [_tool-call-id params a b c]
-               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                     sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
-                     path (normalize-sandbox-path (aget params "path"))
-                     max-chars (max 200 (min 20000 (or (aget params "max_chars") 6000)))
-                     command (str "cat " (shell-single-quote path))]
-                 (maybe-tool-update! on-update (str "Reading sandbox file " path "…"))
-                 (-> (sandbox-exec! runtime config sandbox-id command 60000)
-                     (.then (fn [result]
-                              (let [[content _] (clip-text (:stdout result) max-chars)]
-                                (tool-text-result
-                                 (str "Sandbox file " path "
-
-" content)
-                                 (assoc result :path path :content content))))))))
-
-             (write-execute [_tool-call-id params a b c]
-               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                     sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
-                     path (normalize-sandbox-path (aget params "path"))
-                     content (or (aget params "content") "")
-                     encoded (base64-utf8 content)
-                     command (str "mkdir -p $(dirname -- " (shell-single-quote path) ") && printf %s "
-                                  (shell-single-quote encoded)
-                                  " | base64 -d > " (shell-single-quote path))]
-                 (maybe-tool-update! on-update (str "Writing sandbox file " path "…"))
-                 (-> (sandbox-exec! runtime config sandbox-id command 60000)
-                     (.then (fn [result]
-                              (tool-text-result
-                               (str "Wrote sandbox file " path)
-                               (assoc result :path path :bytes (count content))))))))
-
-             (commit-execute [_tool-call-id params a b c]
-               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                     sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")
-                     message (or (aget params "message") "sandbox update")
-                     command (str "if [ ! -d .git ]; then git init -q .; fi && "
-                                  "git config user.email sandbox@knoxx.local && "
-                                  "git config user.name 'Knoxx Sandbox' && "
-                                  "git add -A && "
-                                  "if git diff --cached --quiet; then echo 'No staged changes to commit'; "
-                                  "else git commit -m " (shell-single-quote message) "; fi && "
-                                  "git status --short --branch")]
-                 (maybe-tool-update! on-update (str "Committing sandbox workspace for " sandbox-id "…"))
-                 (-> (sandbox-exec! runtime config sandbox-id command 120000)
-                     (.then (fn [result]
-                              (tool-text-result
-                               (str "Sandbox commit exit=" (:exitCode result)
-                                    (when-not (str/blank? (:stdout result))
-                                      (str "
-
-" (first (clip-text (:stdout result) 8000)))))
-                               result))))))
-
-             (destroy-execute [_tool-call-id params a b c]
-               (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-                     sandbox-id (or (aget params "sandbox_id") (aget params "sandboxId") "")]
-                 (maybe-tool-update! on-update (str "Destroying sandbox " sandbox-id "…"))
-                 (-> (sandbox-destroy! runtime config sandbox-id)
-                     (.then (fn [result]
-                              (tool-text-result (str "Destroyed sandbox " sandbox-id)
-                                                result))))))]
-       (clj->js
-        (vec
-         (remove nil?
-                 [(when (allowed? "sandbox_container.create")
-                    (doto (js-obj)
-                      (aset "name" "sandbox_container.create")
-                      (aset "label" "Sandbox Create")
-                      (aset "description" "Create a TTL-bound sandbox container for isolated development work.")
-                      (aset "promptSnippet" "Create a temporary docker-backed sandbox when you need coding or shell access without touching the live Knoxx source tree.")
-                      (aset "parameters" create-params)
-                      (aset "execute" create-execute)))
-                  (when (allowed? "sandbox_container.status")
-                    (doto (js-obj)
-                      (aset "name" "sandbox_container.status")
-                      (aset "label" "Sandbox Status")
-                      (aset "description" "Inspect sandbox container runtime status and remaining TTL.")
-                      (aset "parameters" id-params)
-                      (aset "execute" status-execute)))
-                  (when (allowed? "sandbox_container.exec")
-                    (doto (js-obj)
-                      (aset "name" "sandbox_container.exec")
-                      (aset "label" "Sandbox Exec")
-                      (aset "description" "Execute a shell command inside the sandbox workdir using docker exec.")
-                      (aset "parameters" exec-params)
-                      (aset "execute" exec-execute)))
-                  (when (allowed? "sandbox_container.read")
-                    (doto (js-obj)
-                      (aset "name" "sandbox_container.read")
-                      (aset "label" "Sandbox Read")
-                      (aset "description" "Read a UTF-8 text file from the sandbox workdir.")
-                      (aset "parameters" read-params)
-                      (aset "execute" read-execute)))
-                  (when (allowed? "sandbox_container.write")
-                    (doto (js-obj)
-                      (aset "name" "sandbox_container.write")
-                      (aset "label" "Sandbox Write")
-                      (aset "description" "Write a UTF-8 text file into the sandbox workdir.")
-                      (aset "parameters" write-params)
-                      (aset "execute" write-execute)))
-                  (when (allowed? "sandbox_container.commit")
-                    (doto (js-obj)
-                      (aset "name" "sandbox_container.commit")
-                      (aset "label" "Sandbox Commit")
-                      (aset "description" "Create a git commit inside the sandbox workdir.")
-                      (aset "parameters" commit-params)
-                      (aset "execute" commit-execute)))
-                  (when (allowed? "sandbox_container.destroy")
-                    (doto (js-obj)
-                      (aset "name" "sandbox_container.destroy")
-                      (aset "label" "Sandbox Destroy")
-                      (aset "description" "Destroy a sandbox container and remove its temporary workspace.")
-                      (aset "parameters" id-params)
-                      (aset "execute" destroy-execute)))])))))))
+                        (ctx-tool-allowed? auth-context tool-id)))]
+     (clj->js
+      (vec
+       (remove nil?
+               [(when (allowed? "sandbox_container.create")
+                  (sandbox-create-tool runtime config))
+                (when (allowed? "sandbox_container.status")
+                  (sandbox-status-tool runtime config))
+                (when (allowed? "sandbox_container.exec")
+                  (sandbox-exec-tool runtime config))
+                (when (allowed? "sandbox_container.read")
+                  (sandbox-read-tool runtime config))
+                (when (allowed? "sandbox_container.write")
+                  (sandbox-write-tool runtime config))
+                (when (allowed? "sandbox_container.commit")
+                  (sandbox-commit-tool runtime config))
+                (when (allowed? "sandbox_container.destroy")
+                  (sandbox-destroy-tool runtime config))]))))))
