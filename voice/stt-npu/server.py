@@ -23,11 +23,11 @@ REQUESTED_DEVICE = env("WHISPER_DEVICE", "NPU")
 NPU_COMPILER_TYPE = env("WHISPER_NPU_COMPILER_TYPE", "DRIVER")
 
 # Audio chunking for long recordings
-# Ensure CHUNK_DURATION_S < MAX_AUDIO_DURATION_S to avoid NPU KV cache issues
-# int4-quantized whisper-small on NPU has a small KV cache; 10s is safer than 20s.
+# The NPU model (whisper-small-int4) works best with full 20-25s clips.
+# Shorter chunks (e.g. 10s) cause KV-cache corruption and garbage output.
 CHUNK_DURATION_S = min(
-    float(env("STT_CHUNK_DURATION_S", "10.0")),
-    MAX_AUDIO_DURATION_S - 1.0
+    float(env("STT_CHUNK_DURATION_S", "25.0")),
+    MAX_AUDIO_DURATION_S
 )
 CHUNK_OVERLAP_S = float(env("STT_CHUNK_OVERLAP_S", "1.0"))
 SAMPLE_RATE = 16000

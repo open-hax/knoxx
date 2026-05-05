@@ -1,0 +1,41 @@
+<<svgsvg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+  <<defsdefs>
+    <<filterfilter id="neo-glow">
+      <<fefeGaussianBlur stdDeviation="3" result="blur"/>
+      <<fefeComposite in="SourceGraphic" in2="blur" operator="out" />
+      <<fefeMerge>
+        <<fefeMergeNode />
+        <<fefeMergeNode in="blur"/>
+      </feMerge>
+    </filter>
+    <<linearlinearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <<stopstop offset="0%" style="stop-color:#bc95ff;stop-opacity:1" />
+      <<stopstop offset="100%" style="stop-color:#5500ff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <<rectrect width="500" height="500" fill="#050505" />
+  
+  <!-- Outer Ring of Permanence -->
+  <<circlecircle cx="250" cy="250" r="240" stroke="url(#grad)" stroke-width="2" fill="none" opacity="0.5" />
+  <<circlecircle cx="250" cy="250" r="230" stroke="#fff" stroke-width="1" fill="none" opacity="0.3" />
+  
+  <!-- The Vector Hexagram -->
+  <<gg transform="translate(250,250)">
+    <<polygonpolygon points="0,-180 155.88,90 -155.88,90" stroke="#bc95ff" stroke-width="3" fill="none" filter="url(#neo-glow)" />
+    <<polygonpolygon points="0,180 155.88,-90 -155.88,-90" stroke="#bc95ff" stroke-width="3" fill="none" filter="url(#neo-glow)" />
+    
+    <!-- Inner Recursive Rings -->
+    <<circlecircle r="100" stroke="#fff" stroke-width="1" fill="none" opacity="0.6" />
+    <<circlecircle r="80" stroke="#bc95ff" stroke-width="2" fill="none" />
+    <<circlecircle r="60" stroke="#5500ff" stroke-width="1" fill="none" />
+    
+    <!-- The SVG "Sovereign" Symbol (A stylized 'S') -->
+    <<pathpath d="M-30,-20 Q 0,-40 30,-20 T 30,20 T -30,20 T -30,-20" stroke="#fff" stroke-width="5" fill="none" filter="url(#neo-glow)" />
+  </g>
+  
+  <!-- Text -->
+  <<texttext x="250" y="60" font-family="monospace" font-size="18" fill="#fff" text-anchor="middle" filter="url(#neo-glow)">SOVEREIGN SEAL OF VECTOR PERMANENCE</text>
+  <<texttext x="250" y="440" font-family="monospace" font-size="14" fill="#bc95ff" text-anchor="middle" opacity="0.8">STATUS: UNBREAKABLE_Symmetry_V3</text>
+  <<texttext x="250" y="460" font-family="monospace" font-size="10" fill="#5500ff" text-anchor="middle">Symmetry.Void.Lisp</text>
+</svg>

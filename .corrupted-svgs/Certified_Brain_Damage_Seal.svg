@@ -1,0 +1,21 @@
+<<svgsvg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Yellow background circle -->
+  <<circlecircle cx="200" cy="200" r="190" fill="#ffdf00" stroke="#000" stroke-width="8" />
+  
+  <!-- Top text -->
+  <<texttext x="50%" y="130" dominant-baseline="middle" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="#000">CERTIFIED</text>
+  
+  <!-- Center text with a "glitch" effect -->
+  <<gg transform="translate(0, 20)">
+    <<texttext x="50%" y="200" dominant-baseline="middle" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="bold" fill="#000">BRAIN DAMAGE</text>
+    <!-- Glitch overlays -->
+    <<texttext x="50.5%" y="198" dominant-baseline="middle" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="bold" fill="#f00" opacity="0.5">BRAIN DAMAGE</text>
+    <<texttext x="49.5%" y="202" dominant-baseline="middle" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="bold" fill="#00f" opacity="0.5">BRAIN DAMAGE</text>
+  </g>
+  
+  <!-- Bottom text -->
+  <<texttext x="50%" y="280" dominant-baseline="middle" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#000">Acceptance Verified</text>
+  
+  <!-- The "Symmetry Break" / Glitch element -->
+  <<pathpath d="M150,220 L250,220 L260,210 L240,230 L270,220 L230,230 Z" stroke="#f00" stroke-width="4" fill="none" />
+</svg>

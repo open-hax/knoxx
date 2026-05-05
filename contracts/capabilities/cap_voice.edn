@@ -1,6 +1,5 @@
 {:cap/id :cap/voice
- :cap/tools [
-             :discord.voice.connect
+ :cap/tools [:discord.voice.connect
              :discord.voice.leave
              :discord.voice.say
              :discord.voice.status

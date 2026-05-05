@@ -16,6 +16,7 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
             [knoxx.backend.tools.media :as media]
+            [knoxx.backend.text :refer [sanitize-svg-content]]
             [knoxx.backend.util.parse :refer [parse-positive-int]]
             [knoxx.backend.actions.dispatch :as actions-dispatch]))
 
@@ -40,15 +41,22 @@
 ;; discordideaspawner repeatedly.
 (defonce ^:private reload-timer* (atom nil))
 
-(defn- debounced-reload!
-  "Coalesce rapid reload! calls into one, firing 2 s after the last call."
+;; Lock to prevent overlapping reload executions. start! is async; without
+;; this, rapid successive reload! calls spawn multiple concurrent start!
+;; recoveries, each finding the same Redis sessions and resuming them —
+;; the root cause of zombie job accumulation.
+(defonce ^:private reload-lock* (atom nil))
+
+(defn debounced-reload!
+  "Coalesce rapid reload! calls into one, firing 2 s after the last call.
+   Public so contract watchers and admin routes can use it."
   []
   (when-let [t @reload-timer*] (js/clearTimeout t))
   (reset! reload-timer*
           (js/setTimeout (fn []
                            (reset! reload-timer* nil)
                            (reload!))
-                         2000)))
+                          2000)))
 
 
 (defn- mark-event-dispatched!
@@ -450,29 +458,55 @@
                 (reject err)
                 (resolve stdout)))))))
 
+(defn- sanitize-svg-file!
+  "Read an SVG file, repair corruption if present, and write it back.
+   Returns a Promise resolving to true if repaired, false otherwise."
+  [local-path]
+  (if (str/ends-with? (str/lower-case local-path) ".svg")
+    (-> (js/Promise.resolve (js/require "node:fs"))
+        (.then (fn [fs]
+                 (.readFile fs local-path "utf8")))
+        (.then (fn [content]
+                 (if-let [repaired (sanitize-svg-content content)]
+                   (-> (js/Promise.resolve (js/require "node:fs"))
+                       (.then (fn [fs]
+                                (.writeFile fs local-path repaired "utf8")))
+                       (.then (fn [_]
+                                (println "[event-agents] repaired corrupted SVG:" local-path)
+                                true)))
+                   false)))
+        (.catch (fn [err]
+                  (println "[event-agents] SVG sanitization failed for" local-path ":" (.-message err))
+                  false)))
+    (js/Promise.resolve false)))
+
 (defn- download-attachment-to-tmp!
   "Download an attachment to /tmp asynchronously. Returns a Promise<string|nil>."
   [{:keys [filename url]}]
   (if (and filename url)
     (let [local-path (str "/tmp/" filename)]
-      (if (media/source-discord-cdn-url? url)
-        (if-let [token (discord-token)]
-          (-> (exec-async
-               (str "curl -sL -H " (pr-str (str "Authorization: Bot " token))
-                    " -o " (pr-str local-path) " " (pr-str url))
-               #js {:timeout 10000})
-              (.then (fn [_] local-path))
-              (.catch (fn [err]
-                        (println "[event-agents] attachment download failed:" filename (.-message err))
-                        nil)))
-          (js/Promise.resolve nil))
-        (-> (exec-async
-             (str "curl -sL -o " (pr-str local-path) " " (pr-str url))
-             #js {:timeout 10000})
-            (.then (fn [_] local-path))
-            (.catch (fn [err]
-                      (println "[event-agents] attachment download failed:" filename (.-message err))
-                      nil)))))
+      (-> (if (media/source-discord-cdn-url? url)
+            (if-let [token (discord-token)]
+              (-> (exec-async
+                   (str "curl -sL -H " (pr-str (str "Authorization: Bot " token))
+                        " -o " (pr-str local-path) " " (pr-str url))
+                   #js {:timeout 10000})
+                  (.then (fn [_] local-path))
+                  (.catch (fn [err]
+                            (println "[event-agents] attachment download failed:" filename (.-message err))
+                            nil)))
+              (js/Promise.resolve nil))
+            (-> (exec-async
+                 (str "curl -sL -o " (pr-str local-path) " " (pr-str url))
+                 #js {:timeout 10000})
+                (.then (fn [_] local-path))
+                (.catch (fn [err]
+                          (println "[event-agents] attachment download failed:" filename (.-message err))
+                          nil))))
+          (.then (fn [path]
+                   (when path
+                     (sanitize-svg-file! path))
+                   path))))
     (js/Promise.resolve nil)))
 
 (defn event-summary-text
@@ -778,6 +812,7 @@
    :follow-up — queue the message for when the current turn finishes (default)"
   [job]
   (let [raw (or (get-in job [:data :streamingBehavior])
+               (get-in job [:data :source :streamingBehavior])
                (get-in job [:source :config :streamingBehavior])
                (get-in job [:source :streamingBehavior])
                "follow-up")]
@@ -947,7 +982,11 @@
          (= "event" (get-in job [:trigger :kind]))
          (= (str (get-in job [:source :kind])) (str (:sourceKind event)))
          (matches-event-kind? job event-kinds)
-         (matches-channel? control job (:channelId payload))
+         ;; Voice-state events carry voice-channel IDs in :channelId.
+         ;; A job's default :channels are text channels for message monitoring;
+         ;; applying those to voice channels would never match, so skip it.
+         (or (str/starts-with? (str event-kind) "discord.voice")
+             (matches-channel? control job (:channelId payload)))
          (matches-author? job (:authorId payload))
          ;; Keyword filter does not apply to mention events — the mention
          ;; itself is the trigger signal, regardless of content words.
@@ -1044,22 +1083,28 @@
                       (or (str/includes? content (str "<@" bot-user-id ">"))
                           (str/includes? content (str "<@!" bot-user-id ">"))))
         keyword? (some #(str/includes? content %) (discord-union-keywords control))
-        payload {:channelId (:channelId message)
-                 :authorId (:authorId message)
-                 :authorUsername (:authorUsername message)
-                 :authorIsBot (:authorIsBot message)
-                 :content (:content message)
-                 :messageId (:id message)
-                 :attachments (vec (or (:attachments message) []))
-                 :embeds (vec (or (:embeds message) []))}]
-    (when-not (:authorIsBot message)
-      (remember-discord-latest! (:channelId message) [message])
-      (dispatch-event! {:sourceKind  "discord"
-                        :eventKind   "discord.message.created"
-                        :eventKinds  (cond-> ["discord.message.created"]
-                                       mention? (conj "discord.message.mention")
-                                       keyword? (conj "discord.message.keyword"))
-                        :payload     payload}))))
+         guild-id (:guildId message)
+         author-id (:authorId message)
+         author-voice-channel (when-not (str/blank? (str guild-id ""))
+                                (get-in @source-state* [:discord :voice-states guild-id author-id]))
+         payload {:channelId (:channelId message)
+                  :guildId guild-id
+                  :authorId author-id
+                  :authorUsername (:authorUsername message)
+                  :authorIsBot (:authorIsBot message)
+                  :authorVoiceChannelId author-voice-channel
+                  :content (:content message)
+                  :messageId (:id message)
+                  :attachments (vec (or (:attachments message) []))
+                  :embeds (vec (or (:embeds message) []))}]
+     (when-not (:authorIsBot message)
+       (remember-discord-latest! (:channelId message) [message])
+       (dispatch-event! {:sourceKind  "discord"
+                         :eventKind   "discord.message.created"
+                         :eventKinds  (cond-> ["discord.message.created"]
+                                        mention? (conj "discord.message.mention")
+                                        keyword? (conj "discord.message.keyword"))
+                         :payload     payload}))))
 
 (defn- bind-discord-gateway!
   [config]
@@ -1084,6 +1129,13 @@
 (defn- dispatch-voice-state-update!
   [{:keys [action userId username guildId channelId oldChannelId newChannelId]}]
   (when (not (str/blank? (str userId "")))
+    ;; Track user voice states so message events can include the author's voice channel
+    (when-not (str/blank? (str guildId ""))
+      (if (str/blank? (str newChannelId ""))
+        ;; User left/moved out - remove their voice state
+        (swap! source-state* update-in [:discord :voice-states guildId] dissoc userId)
+        ;; User joined/moved in - record their voice channel
+        (swap! source-state* assoc-in [:discord :voice-states guildId userId] newChannelId)))
     (dispatch-event! {:sourceKind "discord"
                       :eventKind "discord.voice.state_update"
                       :eventKinds ["discord.voice.state_update"]
@@ -1458,13 +1510,33 @@
       (tick!))))
 
 (defn reload!
+  "Stop then start the event-agent runtime. Returns a promise.
+   Prevents concurrent reloads — if a reload is already in progress,
+   returns the existing promise."
   []
-  (stop!)
-  (start! nil))
+  ;; Cancel any pending debounced reload
+  (when-let [t @reload-timer*]
+    (js/clearTimeout t)
+    (reset! reload-timer* nil))
+
+  ;; If already reloading, return existing promise
+  (or @reload-lock*
+      (let [p (-> (js/Promise.resolve (stop!))
+                  (.then (fn []
+                           ;; Clear sticky session state to prevent cross-reload leaks.
+                           ;; Old sessions are orphaned; agent-resume cooldown keeps
+                           ;; recovery from immediately resuming them.
+                           (reset! job-state* {})
+                           (reset! user-job-state* {})
+                           (start! nil)))
+                  (.finally (fn []
+                              (reset! reload-lock* nil))))]
+        (reset! reload-lock* p)
+        p)))
 
 (defn start!
   [_config]
-  (when (compare-and-set! running?* false true)
+  (if (compare-and-set! running?* false true)
     ;; =======================================================================
     ;; Persistence: Recover event-agent-control overrides from Redis FIRST.
     ;; This is the primary fix for "changes not sticking" — the admin panel

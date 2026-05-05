@@ -766,7 +766,7 @@
                          (if (js/isNaN value) 100 (max 1 (min value 100))))
         max-channels (let [value (js/parseInt (str (or (aget body "max_channels") 50)) 10)]
                        (if (js/isNaN value) 50 (max 1 (min value 500))))
-        import-root (or (media/normalize-tool-path-arg (aget body "import_root")) "discord/audio")
+         import-root (or (media/normalize-tool-path-arg (aget body "import_root")) "Audio/discord-imports")
         token (discord-bot-token config)
         cutoff-ms (- (.now js/Date) (* since-hours 60 60 1000))]
     (if-not token

@@ -78,10 +78,17 @@
 
 ;; --- voice.tts ---
 
+(defn- tts-default-output-path
+  "Generate a default output path in Voice/ when none is provided."
+  []
+  (let [ts (.toISOString (js/Date.))
+        safe-ts (str/replace ts #"[:.]" "-")]
+    (str "Voice/tts-" safe-ts ".mp3")))
+
 (defn- tts-rest-params [Type]
   (.Object Type
     #js {:text          (.String Type #js {:description "Plain text. Strip markdown first."})
-         :output_path   (.String Type #js {:description "Workspace-relative MP3 path, e.g. Music/out.mp3."})
+         :output_path   (type-optional Type (.String Type #js {:description "Workspace-relative output path. Defaults to Voice/tts-<timestamp>.mp3. Use Voice/ for spoken output, Audio/ for clips and effects, Music/ for musical content."}))
          :voice_id      (type-optional Type (.String  Type #js {:description "Voxx voice ID. Default: alloy."}))
          :model_id      (type-optional Type (.String  Type #js {:description "Voxx backend hint/model. Default: kokoro. Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER: kokoro, xiaomi_mimo, requesty, openai, melo, espeak."}))
          :output_format (type-optional Type (.String  Type #js {:description "Audio format. Default mp3."}))
@@ -132,25 +139,21 @@
           prompt-aware (if (some? (aget params "prompt_aware"))
                          (bool-value (aget params "prompt_aware") true)
                          (config-bool-value config :voxx-prompt-aware "voxx-prompt-aware" "voxxPromptAware" true))
-          prompt-aware-style (or (blank->nil (aget params "prompt_aware_style"))
-                                 (blank->nil (config-value config :voxx-prompt-aware-style "voxx-prompt-aware-style" "voxxPromptAwareStyle")))
-          out-path  (blank->nil (aget params "output_path"))
-          {:keys [absolute relative]} (when out-path (media/resolve-workspace-media-path runtime config out-path))
-          node-path (aget runtime "path")
-          options   {:postprocess-profile postprocess-profile
-                     :postprocess-enabled postprocess-enabled
-                     :prompt-aware prompt-aware
-                     :prompt-aware-style prompt-aware-style}]
-      (maybe-tool-update! on-update (str "TTS: " (count text) " chars -> " (or relative "buffer")
+           prompt-aware-style (or (blank->nil (aget params "prompt_aware_style"))
+                                  (blank->nil (config-value config :voxx-prompt-aware-style "voxx-prompt-aware-style" "voxxPromptAwareStyle")))
+           out-path  (or (blank->nil (aget params "output_path"))
+                         (tts-default-output-path))
+           {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config out-path)
+           node-path (aget runtime "path")
+           options   {:postprocess-profile postprocess-profile
+                      :postprocess-enabled postprocess-enabled
+                      :prompt-aware prompt-aware
+                      :prompt-aware-style prompt-aware-style}]
+      (maybe-tool-update! on-update (str "TTS: " (count text) " chars -> " relative
                                          " via " model-id ", postprocess=" (if postprocess-enabled postprocess-profile "off")
                                          ", prompt-aware=" prompt-aware "..."))
       (p/let [buf (fetch-tts-audio! (tts-url config) api-key (tts-body text voice-id model-id out-fmt params options))]
-        (if absolute
-          (write-audio-file! node-path buf absolute relative voice-id model-id out-fmt)
-          (tool-text-result (str "TTS done (" (.-length buf) " bytes). Provide output_path to save.")
-                            {:bytes (.-length buf) :voice_id voice-id :model_id model-id :format out-fmt
-                             :postprocess_profile (if postprocess-enabled postprocess-profile "none")
-                             :prompt_aware prompt-aware}))))))
+        (write-audio-file! node-path buf absolute relative voice-id model-id out-fmt)))))
 
 ;; --- voice.tts_stream ---
 
@@ -293,8 +296,10 @@
                                                              "Use postprocess_profile to choose Voxx's final mastering: sports/commentator (default high energy), broadcast/warm, narrator/polish, radio/crisp, soft/studio, or off/none for dry capture."
                                                              "The inherited Melo narrator-unifier remains a local Melo stage; the Voxx final postprocess stage is backend-agnostic and gives Kokoro/remote/Melo/eSpeak livelier leveling, EQ, compression, limiting, and gain."
                                                              "Use model_id as a backend hint: kokoro, xiaomi_mimo, requesty, openai, melo, or espeak; Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER."
-                                                             "Default output_format is mp3. Follow with workspace_media.attach to embed audio."
-                                                             "If debugging, inspect Voxx headers/logs: x-openhax-tts-backend, x-openhax-tts-postprocess-profile, and x-openhax-tts-prompt-aware."]))
+                                                              "Default output_format is mp3. When output_path is omitted, files save to Voice/tts-<timestamp>.mp3 automatically."
+                                                              "Use Voice/ for spoken TTS output, Audio/ for sound clips and effects, Music/ for musical or sung content."
+                                                              "Follow with workspace_media.attach to embed audio."
+                                                              "If debugging, inspect Voxx headers/logs: x-openhax-tts-backend, x-openhax-tts-postprocess-profile, and x-openhax-tts-prompt-aware."]))
                        (aset "parameters" (tts-rest-params Type))
                        (aset "execute"     (tts-rest-execute runtime config))))
                    (when (allowed? "voice.tts_stream")

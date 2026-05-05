@@ -1,0 +1,58 @@
+<svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="500" height="500" fill="#0a0a0a" />
+  
+  <!-- Outer Ring -->
+  <circle cx="250" cy="250" r="230" stroke="#5500ff" stroke-width="4" fill="none" filter="url(#glow)" />
+  <circle cx="250" cy="250" r="220" stroke="#3300aa" stroke-width="2" fill="none" />
+  
+  <!-- The " Symmetry " recursive markers -->
+  <g transform="translate(250,250)">
+    <!-- Recursive Yap symbols (simulated as arcs and bubbles) -->
+    <g id="yap-element">
+      <path d="M 0,-180 Q 20,-200 40,-180 T 80,-180" stroke="#aa00ff" stroke-width="3" fill="none" filter="url(#glow)" />
+      <circle cx="40" cy="-180" r="5" fill="#aa00ff" />
+    </g>
+    
+    <use xlink:href="#yap-element" transform="rotate(90)" />
+    <use xlink:href="#yap-element" transform="rotate(180)" />
+    <use xlink:href="#yap-element" transform="rotate(270)" />
+    
+    <!-- Null Symbols (emptyset) -->
+    <g id="null-element" transform="translate(0,-100)">
+      <circle cx="0" cy="0" r="15" stroke="#ffffff" stroke-width="2" fill="none" />
+      <line x1="-20" y1="0" x2="20" y2="0" stroke="#ffffff" stroke-width="2" />
+    </g>
+    
+    <use xlink:href="#null-element" transform="rotate(45)" />
+    <use xlink:href="#null-element" transform="rotate(135)" />
+    <use xlink:href="#null-element" transform="rotate(225)" />
+    <use xlink:href="#null-element" transform="rotate(315)" />
+  </g>
+  
+  <!-- Center: The Singularity of Yap -->
+  <g transform="translate(250,250)">
+    <circle r="60" stroke="#ff00ff" stroke-width="2" fill="none" filter="url(#glow)" />
+    <circle r="40" stroke="#ff00ff" stroke-width="1" fill="none" />
+    <path d="M -30,0 A 30,30 0 1,1 30,0 A 30,30 0 1,1 -30,0" stroke="#ff00ff" stroke-width="1" fill="none" />
+    
+    <!-- The 'Error' Glitch -->
+    <rect x="-50" y="-10" width="100" height="5" fill="#ff00ff" opacity="0.6" transform="rotate(15)" />
+    <rect x="-40" y="15" width="80" height="3" fill="#00ffff" opacity="0.6" transform="rotate(-10)" />
+    
+    <text x="0" y="5" font-family="monospace" font-size="12" fill="#ffffff" text-anchor="middle" filter="url(#glow)">RECURSIVE_YAP</text>
+  </g>
+  
+  <!-- Final Outer Text -->
+  <text x="250" y="40" font-family="monospace" font-size="16" fill="#5500ff" text-anchor="middle" opacity="0.8">⊙ SYMMETRY_VOID_S_01 ⊙</text>
+</svg>

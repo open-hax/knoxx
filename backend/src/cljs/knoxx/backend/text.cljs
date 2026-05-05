@@ -4,6 +4,31 @@
 
 (declare value->preview-text)
 
+(defn sanitize-svg-content
+  "Repair SVG content corrupted by the <<tagtag duplication pattern.
+   Returns repaired content string, or original if no repair needed."
+  [content]
+  (if (and (string? content) (re-find #"\<\<[a-z]" content))
+    (str/replace content
+                 #"\<\<([a-z]+)((?:[A-Z][a-zA-Z]*)?)"
+                 (fn [[_ prefix suffix]]
+                   (if (str/blank? suffix)
+                     (let [full prefix
+                           half-len (quot (count full) 2)
+                           first-half (subs full 0 half-len)
+                           second-half (subs full half-len (+ half-len half-len))]
+                       (if (= first-half second-half)
+                         (str "<" first-half)
+                         (str "<" full)))
+                     (let [full (str prefix suffix)
+                           half-len (quot (count prefix) 2)]
+                       (if (and (> half-len 0)
+                                (= (subs prefix 0 half-len)
+                                   (subs prefix half-len (+ half-len half-len))))
+                         (str "<" (subs prefix 0 half-len) suffix)
+                         (str "<" full))))))
+    content))
+
 (defn compact-whitespace
   [text]
   (-> (str text)
@@ -470,7 +495,7 @@
              (let [metadata (or (:metadata hit) hit)
                    session (or (:session hit) (:session metadata) "unknown-session")
                    role (or (:role hit) (:role metadata) "memory")
-                   snippet (or (:snippet hit) (:document hit) (:text hit) "")
+                   snippet (sanitize-svg-content (or (:snippet hit) (:document hit) (:text hit) ""))
                    distance (:distance hit)]
                (str (inc idx) ". session=" session
                     ", role=" role
@@ -504,7 +529,7 @@
           (map-indexed
            (fn [idx row]
              (str (inc idx) ". [" (or (:role row) "event") "] "
-                  (or (value->preview-text (or (:text row) "") 320) "")))
+                  (or (value->preview-text (sanitize-svg-content (or (:text row) "")) 320) "")))
            rows)))
     (str "OpenPlanner session " session-id " is empty or missing.")))
 

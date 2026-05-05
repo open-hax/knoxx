@@ -129,10 +129,15 @@
 
 (defn- steer! [config session-id conversation-id text]
   (js/console.log "[voice:steer] injecting into session:" session-id "conv:" conversation-id "text:" (.slice text 0 60))
-  (let [body {:message (str "[Voice] " text) :conversation_id conversation-id :session_id session-id}]
+  (let [body {:message (str "[Voice] " text) :conversation_id conversation-id :session_id session-id}
+        api-key (knoxx-key config)
+        headers #js {"Content-Type" "application/json"
+                     "x-knoxx-user-email" "system-admin@open-hax.local"}]
+    (when-not (str/blank? api-key)
+      (aset headers "X-API-Key" api-key))
     (-> (js/fetch (str (knoxx-base config) "/api/knoxx/steer")
                   #js {:method "POST"
-                       :headers #js {"Content-Type" "application/json" "Authorization" (str "Bearer " (or (knoxx-key config) ""))}
+                       :headers headers
                        :body (.stringify js/JSON (clj->js body))})
         (.then (fn [r]
                  (if (.-ok r)
@@ -152,10 +157,15 @@
 (defn voice-join-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
-        ch (or (aget params "channel_id") (aget params "channelId") "")]
+        ch (or (aget params "channel_id") (aget params "channelId") "")
+        {:keys [sid cid]} (resolve-session-context! params)]
     (when-not m (throw (js/Error. "Gateway not started")))
     (when (str/blank? ch) (throw (js/Error. "channel_id required")))
     (js/console.log "[voice:tool] discord.voice.join channel:" ch)
+    ;; Persist session context so a subsequent discord.voice.listen can find it
+    ;; even if the global agent context has been cleared.
+    (when (and m (seq sid) (seq cid))
+      (aset m "__voiceSessionContext" #js {:sessionId sid :conversationId cid}))
     (maybe-tool-update! on-update (str "Joining voice " ch "…"))
     (-> (.joinVoice m ch)
         (.then (fn [r]
@@ -182,6 +192,9 @@
     (when (str/blank? g) (throw (js/Error. "guild_id required")))
     (maybe-tool-update! on-update (str "Leaving voice " g "…"))
     (when-let [sf (aget m "__voiceListener")] (try (sf) (catch js/Error _)))
+    (when m
+      (aset m "__voiceListener" nil)
+      (aset m "__voiceSessionContext" nil))
     (-> (.leaveVoice m g)
         (.then (fn [r] (tool-text-result (str "Left voice in guild " g) (js->clj r :keywordize-keys true)))))))
 
@@ -263,13 +276,29 @@
    [:conversation_id {:optional true :description "Agent conversation ID for the session. Auto-detected if omitted."} :string]])
 
 (defn- resolve-session-context!
-  "Resolve (session-id, conversation-id) either from explicit params or the current agent context." 
+  "Resolve (session-id, conversation-id) either from explicit params, the current agent context,
+   or the last known voice session context stored on the gateway manager."
   [params]
-  (let [explicit-sid (or (aget params "session_id") (aget params "sessionId") "")
-        explicit-cid (or (aget params "conversation_id") (aget params "conversationId") "")
+  (let [explicit-sid (or (when-not (str/blank? (aget params "session_id")) (aget params "session_id"))
+                         (when-not (str/blank? (aget params "sessionId")) (aget params "sessionId")))
+        explicit-cid (or (when-not (str/blank? (aget params "conversation_id")) (aget params "conversation_id"))
+                         (when-not (str/blank? (aget params "conversationId")) (aget params "conversationId")))
         agent-context (agent-ctx/get-context)
-        sid (or explicit-sid (:session-id agent-context) "")
-        cid (or explicit-cid (:conversation-id agent-context) "")]
+        ;; Fallback to stored voice session context if agent context is gone
+        ;; (e.g. async listener callback fires after turn completes).
+        stored-ctx (some-> (gw) (aget "__voiceSessionContext"))
+        sid (or explicit-sid
+                (:session-id agent-context)
+                (when stored-ctx (aget stored-ctx "sessionId"))
+                "")
+        cid (or explicit-cid
+                (:conversation-id agent-context)
+                (when stored-ctx (aget stored-ctx "conversationId"))
+                "")]
+    (js/console.log "[voice:tool] resolve-session-context explicit-sid:" explicit-sid
+                    "agent-context:" (when agent-context (js/JSON.stringify (clj->js agent-context)))
+                    "stored-sid:" (when stored-ctx (aget stored-ctx "sessionId"))
+                    "resolved-sid:" sid)
     {:sid sid
      :cid cid
      :auto? (and (str/blank? explicit-sid) (str/blank? explicit-cid))}))
@@ -285,27 +314,79 @@
             (str "conversation_id required (auto-detect failed; no active agent turn context). "
                  "If calling manually, provide session_id and conversation_id explicitly.")))))
 
+(defn- flush-voice-buffer!
+  "Send accumulated transcription text for a user as a single steer."
+  [config sid cid uid]
+  (let [m (gw)
+        buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
+        user-buf (when buf-obj (aget buf-obj uid))]
+    (when user-buf
+      (let [texts (aget user-buf "texts")]
+        (when (and texts (.-length texts))
+          (let [merged (str/trim (str/join " " (js/Array.from texts)))]
+            (js/console.log "[voice:tool] >>> FLUSHING buffer for" uid "concatenated:" (if (str/blank? merged) "[EMPTY]" merged))
+            (when-not (str/blank? merged)
+              (-> (steer! config sid cid merged)
+                  (.catch (fn [e]
+                            (js/console.error "[voice:tool] steer FAILED for" uid ":" (.-message e))))))))
+        ;; Clear the buffer
+        (aset user-buf "texts" #js [])
+        (aset user-buf "timer" nil)))))
+
 (defn voice-listen-execute
   [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")
-        {:keys [sid cid auto?]} (resolve-session-context! params)]
+        {:keys [sid cid auto?]} (resolve-session-context! params)
+        ;; Debounce: wait this many ms after last audio before steering.
+        ;; Longer than the gateway's silence debounce (350ms) so we catch
+        ;; rapid start/stop/start from the same utterance.
+        steer-debounce-ms 1500]
     (when-not m (throw (js/Error. "Gateway not started")))
     (when (str/blank? g) (throw (js/Error. "guild_id required")))
     (ensure-session-context! sid cid)
+    ;; Persist session context on the gateway manager so async listener callbacks
+    ;; can still resolve it even if the global agent context has been cleared.
+    (when m
+      (aset m "__voiceSessionContext" #js {:sessionId sid :conversationId cid})
+      ;; Initialize transcription buffer
+      (when-not (aget m "__voiceTranscriptionBuffer")
+        (aset m "__voiceTranscriptionBuffer" #js {})))
     (maybe-tool-update! on-update (str "Listening in guild " g "…"))
     (js/console.log "[voice:tool] discord.voice.listen guild:" g "session:" sid "conv:" cid "auto-detect?" auto?)
     (-> (.startVoiceListener
          m g
-         (fn [uid] (js/console.log "[voice:tool] >>> on-start callback fired for user:" uid))
+         (fn [uid]
+           (js/console.log "[voice:tool] >>> on-start callback fired for user:" uid)
+           ;; Cancel any pending flush for this user when they start speaking again
+           (let [buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
+                 user-buf (when buf-obj (aget buf-obj uid))]
+             (when user-buf
+               (when-let [t (aget user-buf "timer")]
+                 (js/clearTimeout t)
+                 (aset user-buf "timer" nil)))))
          (fn [uid buf]
            (js/console.log "[voice:tool] >>> on-audio callback fired for user:" uid "buffer length:" (.-length buf) "bytes")
            (-> (transcribe! config buf)
                (.then (fn [t]
                         (js/console.log "[voice:tool] transcription result for" uid ":" (if (str/blank? t) "[EMPTY]" t))
                         (when-not (str/blank? t)
-                          (steer! config sid cid t))))
+                          (let [buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
+                                _ (when (and m (not buf-obj))
+                                    (aset m "__voiceTranscriptionBuffer" #js {}))
+                                buf-obj (or buf-obj (aget m "__voiceTranscriptionBuffer"))
+                                user-buf (or (aget buf-obj uid) #js {:texts #js [] :timer nil})]
+                            ;; Append text to buffer
+                            (.push (aget user-buf "texts") t)
+                            (aset buf-obj uid user-buf)
+                            ;; Reset flush timer
+                            (when-let [old-timer (aget user-buf "timer")]
+                              (js/clearTimeout old-timer))
+                            (let [new-timer (js/setTimeout
+                                             #(flush-voice-buffer! config sid cid uid)
+                                             steer-debounce-ms)]
+                              (aset user-buf "timer" new-timer))))))
                (.catch (fn [e]
                          (js/console.error "[voice:tool] transcription/steering pipeline FAILED for" uid ":" (.-message e)))))))
         (.then (fn [stop]
@@ -322,6 +403,10 @@
     (when-not m (throw (js/Error. "Gateway not started")))
     (when (str/blank? ch) (throw (js/Error. "channel_id required")))
     (ensure-session-context! sid cid)
+    ;; Persist session context on the gateway manager so async listener callbacks
+    ;; can still resolve it even if the global agent context has been cleared.
+    (when m
+      (aset m "__voiceSessionContext" #js {:sessionId sid :conversationId cid}))
     (maybe-tool-update! on-update (str "Connecting voice + listener for channel " ch "…"))
     (-> (.joinVoice m ch)
         (.then (fn [r]
@@ -364,7 +449,9 @@
   (let [m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")]
     (when-let [sf (when m (aget m "__voiceListener"))] (sf))
-    (when m (aset m "__voiceListener" nil))
+    (when m
+      (aset m "__voiceListener" nil)
+      (aset m "__voiceSessionContext" nil))
     (tool-text-result (str "Stopped listening in guild " g) {:guildId g :listening false})))
 
 (def voice-stop-listen-tool (partial create-tool-obj "discord.voice.stop_listen" "Stop Voice Listen"

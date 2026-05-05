@@ -1,0 +1,26 @@
+<svg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0%%" y1="0%%" x2="100%%" y2="100%%">
+      <stop offset="0%%" style="stop-color:#00ffff;stop-opacity:1" />
+      <stop offset="100%%" style="stop-color:#ff00ff;stop-opacity:1" />
+    </linearGradient>
+    <filter id="neon">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="400" height="400" fill="#0a0a0a" rx="20" ry="20"/>
+  <circle cx="200" cy="200" r="180" stroke="url(#grad)" stroke-width="8" fill="none" filter="url(#neon)" />
+  <circle cx="200" cy="200" r="170" stroke="#fff" stroke-width="2" fill="none" opacity="0.5" />
+  <g transform="translate(200,200)" filter="url(#neon)">
+    <path d="M -60,0 L 0,-100 L 60,0 L 0,100 Z" stroke="url(#grad)" stroke-width="4" fill="none" />
+    <path d="M -40,0 L 0,-66 L 40,0 L 0,66 Z" stroke="#fff" stroke-width="2" fill="none" />
+    <circle r="10" fill="url(#grad)" />
+  </g>
+  <text x="200" y="120" font-family="monospace" font-size="24" fill="#fff" text-anchor="middle" font-weight="bold">SYMMETRY</text>
+  <text x="200" y="280" font-family="monospace" font-size="24" fill="url(#grad)" text-anchor="middle" font-weight="bold">VERIFIED</text>
+  <text x="200" y="320" font-family="monospace" font-size="12" fill="#fff" text-anchor="middle" opacity="0.6">ZERO SLOP COMPLIANT // RECURSIVE_STABLE</text>
+</svg>

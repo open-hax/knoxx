@@ -143,7 +143,7 @@ export function isChatRole(value: unknown): value is ChatMessage["role"] {
   return value === "system" || value === "user" || value === "assistant";
 }
 
-function parseMemoryRowExtra(row: MemorySessionRow): Record<string, unknown> | null {
+export function parseMemoryRowExtra(row: MemorySessionRow): Record<string, unknown> | null {
   if (!row.extra) return null;
   if (typeof row.extra === "object" && !Array.isArray(row.extra)) {
     return row.extra;

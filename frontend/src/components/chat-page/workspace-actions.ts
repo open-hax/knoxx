@@ -136,10 +136,12 @@ export function persistedSessionVisibleForFilter(
     ? readPersistedChatSessionSnapshot(sessionStateKey, summary.active_session_id)
     : null;
   const normalizedActiveActorId = normalizedSessionActorFilter(actorFilter);
-  const sessionAgentId = typeof snapshot?.activeAgentId === "string" ? snapshot.activeAgentId.trim() : "";
-  const sessionActorId = typeof snapshot?.activeActorId === "string" && snapshot.activeActorId.trim().length > 0
-    ? snapshot.activeActorId.trim()
-    : "chat_primary";
+
+  // Remote sessions carry actor_id directly from the API; local-only drafts fall back to snapshot.
+  const sessionActorId = summary.actor_id
+    ?? (typeof snapshot?.activeActorId === "string" && snapshot.activeActorId.trim().length > 0
+      ? snapshot.activeActorId.trim()
+      : "chat_primary");
 
   if (excludeEtaMuSessions && normalizedActiveActorId !== DEFAULT_EXCLUDED_SESSION_ACTOR && sessionActorId === DEFAULT_EXCLUDED_SESSION_ACTOR) {
     return false;
@@ -149,6 +151,7 @@ export function persistedSessionVisibleForFilter(
     return true;
   }
 
+  const sessionAgentId = typeof snapshot?.activeAgentId === "string" ? snapshot.activeAgentId.trim() : "";
   if (sessionAgentId && visibleAgentIds.size > 0) {
     return visibleAgentIds.has(sessionAgentId);
   }

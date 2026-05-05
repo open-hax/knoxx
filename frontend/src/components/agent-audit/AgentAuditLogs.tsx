@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import { abortAdminActiveAgent, getAgentHistorySession, getRun, listActiveAgents, listAdminActiveAgents, listMemorySessions, searchMemory } from "../../lib/api/common";
-import { getRunEvents, getSessionStatus } from "../../lib/api/runtime";
+import { getAgentContractsCatalog, getRunEvents, getSessionStatus } from "../../lib/api/runtime";
 import type {
   ActiveAgentSummary,
+  ActorCatalogItem,
+  ContentPart,
   MemorySearchHit,
   MemorySessionRow,
   MemorySessionSummary,
@@ -12,6 +14,8 @@ import type {
   ToolReceipt,
 } from "../../lib/types";
 import MultimodalContent from "../chat-page/MultimodalContent";
+import { parseMemoryRowExtra } from "../chat-page/utils";
+import { ToolReceiptBlock } from "../ToolReceiptBlock";
 
 export type AgentAuditLogsMode = "active" | "history";
 
@@ -51,41 +55,6 @@ function formatTimestamp(value?: string | number | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString();
-}
-
-function normalizeRowExtra(row: MemorySessionRow): Record<string, unknown> {
-  const extra = row.extra;
-  if (!extra) return {};
-  if (typeof extra === "string") {
-    try {
-      return JSON.parse(extra) as Record<string, unknown>;
-    } catch {
-      return { raw: extra };
-    }
-  }
-  return extra;
-}
-
-function rowTitle(row: MemorySessionRow): string {
-  if (row.kind === "knoxx.tool_receipt") return `Tool receipt · ${row.message ?? row.id}`;
-
-  const extra = normalizeRowExtra(row);
-  if (row.kind === "graph.node" && typeof extra.label === "string" && extra.label) return extra.label;
-
-  if (row.kind) return row.kind;
-  return row.message ?? row.id;
-}
-
-function rowBodyMarkdown(row: MemorySessionRow): string {
-  if (typeof row.text === "string" && row.text.trim().length > 0) return row.text;
-
-  const extra = normalizeRowExtra(row);
-  const keys = Object.keys(extra);
-  if (keys.length > 0) {
-    return `\`\`\`json\n${JSON.stringify(extra, null, 2)}\n\`\`\``;
-  }
-
-  return "";
 }
 
 function isContentPart(value: unknown): value is Record<string, unknown> {
@@ -171,94 +140,205 @@ function activeRunTitle(run: ActiveAgentSummary): string {
   return contract ?? (typeof role === "string" ? role : null) ?? run.conversation_id ?? run.session_id ?? run.run_id;
 }
 
-function toolReceiptToRow(runId: string, receipt: ToolReceipt, idx: number): MemorySessionRow {
-  const receiptId = typeof receipt.id === "string" && receipt.id.trim().length > 0 ? receipt.id : String(idx);
-  return {
-    id: `${runId}:tool:${receiptId}`,
-    kind: "knoxx.tool_receipt",
-    role: "system",
-    message: receiptId,
-    text: typeof receipt.result_preview === "string" ? receipt.result_preview : "",
-    extra: {
-      receipt,
-    },
-  };
-}
+// ── Semantic audit items (deduplicated) ────────────────────────────
 
-function runEventToRow(runId: string, event: RunEvent, idx: number): MemorySessionRow {
-  const at = typeof event.at === "string" ? event.at : undefined;
-  const kind = typeof event.type === "string" && event.type.trim().length > 0
-    ? `knoxx.runtime.${event.type}`
-    : "knoxx.runtime.event";
-  return {
-    id: `${runId}:event:${idx}`,
-    ts: at,
-    kind,
-    role: "system",
-    message: typeof event.type === "string" ? event.type : "event",
-    text: typeof event.preview === "string" ? event.preview : "",
-    extra: event,
-  };
-}
+type AuditItem =
+  | { kind: "user_message"; id: string; content: string; ts?: string; contentParts?: ContentPart[] }
+  | { kind: "agent_turn"; id: string; content: string; ts?: string; model?: string | null; toolReceipts: ToolReceipt[]; contentParts?: ContentPart[]; status?: string }
+  | { kind: "tool_call"; id: string; receipt: ToolReceipt; ts?: string }
+  | { kind: "system_note"; id: string; title: string; content: string; ts?: string; variant?: "info" | "warning" | "error" | "success" };
 
-function runDetailToAuditRows(run: RunDetail): MemorySessionRow[] {
+function runDetailToAuditItems(run: RunDetail): AuditItem[] {
   const runId = run.run_id;
-  const createdAt = typeof run.created_at === "string" ? run.created_at : undefined;
-  const updatedAt = typeof run.updated_at === "string" ? run.updated_at : undefined;
+  const items: AuditItem[] = [];
 
-  const rows: MemorySessionRow[] = [];
-
-  // Request messages
-  for (let idx = 0; idx < run.request_messages.length; idx += 1) {
-    const msg = run.request_messages[idx];
-    rows.push({
-      id: `${runId}:request:${idx}`,
-      ts: createdAt,
-      kind: "knoxx.message",
-      role: msg.role,
-      message: `${msg.role}:${idx}`,
-      text: msg.content,
-      extra: Array.isArray(msg.contentParts) ? { contentParts: msg.contentParts } : null,
+  // User request messages
+  for (let i = 0; i < run.request_messages.length; i++) {
+    const msg = run.request_messages[i];
+    items.push({
+      kind: "user_message",
+      id: `${runId}:request:${i}`,
+      content: msg.content,
+      contentParts: msg.contentParts,
     });
   }
 
-  // Run summary
-  rows.push({
-    id: `${runId}:run`,
-    ts: updatedAt,
-    kind: "knoxx.run",
-    role: "system",
-    message: runId,
-    text: `Run ${runId} · ${run.status}`,
-    extra: {
-      status: run.status,
-      model: run.model,
-      session_id: run.session_id,
-      conversation_id: run.conversation_id,
-    },
-  });
-
-  if (Array.isArray(run.events)) {
-    rows.push(...run.events.map((event, idx) => runEventToRow(runId, event, idx)));
+  // Tool calls (deduplicated — no separate event rows for the same tool)
+  if (run.tool_receipts) {
+    for (const receipt of run.tool_receipts) {
+      items.push({
+        kind: "tool_call",
+        id: `${runId}:tool:${receipt.id}`,
+        receipt,
+        ts: receipt.ended_at ?? receipt.started_at,
+      });
+    }
   }
 
-  if (Array.isArray(run.tool_receipts)) {
-    rows.push(...run.tool_receipts.map((receipt, idx) => toolReceiptToRow(runId, receipt, idx)));
-  }
-
-  if (typeof run.answer === "string" && run.answer.trim().length > 0) {
-    rows.push({
+  // Agent final answer
+  if (run.answer?.trim()) {
+    items.push({
+      kind: "agent_turn",
       id: `${runId}:answer`,
-      ts: updatedAt,
-      kind: "knoxx.message",
-      role: "assistant",
-      message: "assistant",
-      text: run.answer,
-      extra: Array.isArray(run.contentParts) ? { contentParts: run.contentParts } : null,
+      content: run.answer,
+      model: run.model,
+      contentParts: run.contentParts,
+      toolReceipts: [],
+      status: run.status,
+      ts: run.updated_at,
     });
   }
 
-  return rows;
+  // Non-tool runtime events as compact system notes
+  if (run.events) {
+    for (const event of run.events) {
+      if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_update") continue;
+      items.push({
+        kind: "system_note",
+        id: `${runId}:event:${event.type}:${event.at ?? ""}`,
+        title: event.type ?? "event",
+        content: event.preview ?? event.error ?? "",
+        ts: event.at,
+        variant: event.error ? "error" : event.type?.includes("failed") ? "error" : "info",
+      });
+    }
+  }
+
+  return items;
+}
+
+function rowsToAuditItems(rows: MemorySessionRow[]): AuditItem[] {
+  const items: AuditItem[] = [];
+
+  for (const row of rows) {
+    if (row.kind === "knoxx.message") {
+      const extra = parseMemoryRowExtra(row) ?? {};
+      const parts = (extra.contentParts ?? extra.content_parts) as ContentPart[] | undefined;
+
+      if (row.role === "user") {
+        items.push({
+          kind: "user_message",
+          id: row.id,
+          content: row.text ?? "",
+          ts: row.ts,
+          contentParts: parts,
+        });
+      } else if (row.role === "assistant") {
+        items.push({
+          kind: "agent_turn",
+          id: row.id,
+          content: row.text ?? "",
+          ts: row.ts,
+          model: row.model,
+          contentParts: parts,
+          toolReceipts: [],
+        });
+      } else {
+        items.push({
+          kind: "system_note",
+          id: row.id,
+          title: row.kind ?? "system",
+          content: row.text ?? "",
+          ts: row.ts,
+        });
+      }
+    } else if (row.kind === "knoxx.tool_receipt") {
+      const extra = parseMemoryRowExtra(row) ?? {};
+      const receipt = extra.receipt as ToolReceipt | undefined;
+      if (receipt) {
+        items.push({
+          kind: "tool_call",
+          id: row.id,
+          receipt,
+          ts: row.ts,
+        });
+      }
+    } else if (row.kind === "knoxx.run") {
+      const extra = parseMemoryRowExtra(row) ?? {};
+      const status = extra.status as string | undefined;
+      const model = extra.model as string | undefined;
+      items.push({
+        kind: "system_note",
+        id: row.id,
+        title: "Run",
+        content: `Status: ${status ?? "unknown"}${model ? ` · Model: ${model}` : ""}`,
+        ts: row.ts,
+        variant: status === "completed" ? "success" : status === "failed" ? "error" : "info",
+      });
+    }
+    // Skip knoxx.runtime.* events — they are plumbing already covered by receipts
+  }
+
+  return items;
+}
+
+function eventsToAuditItems(runId: string, events: RunEvent[]): AuditItem[] {
+  const items: AuditItem[] = [];
+
+  // Group tool events by tool_call_id into synthetic receipts
+  const toolGroups = new Map<string, { start?: RunEvent; end?: RunEvent; updates: RunEvent[] }>();
+
+  for (const event of events) {
+    if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_update") {
+      const id = event.tool_call_id ?? event.tool_name ?? "unknown";
+      const group = toolGroups.get(id) ?? { updates: [] };
+      if (event.type === "tool_start") group.start = event;
+      else if (event.type === "tool_end") group.end = event;
+      else group.updates.push(event);
+      toolGroups.set(id, group);
+    }
+  }
+
+  for (const [toolId, group] of toolGroups) {
+    const receipt: ToolReceipt = {
+      id: toolId,
+      tool_name: group.start?.tool_name ?? group.end?.tool_name ?? toolId,
+      status: group.end ? (group.end.is_error ? "failed" : "completed") : "running",
+      input_preview: group.start?.preview,
+      result_preview: group.end?.preview,
+      is_error: typeof group.end?.is_error === "boolean" ? group.end.is_error : undefined,
+      updates: group.updates.map((e) => e.preview ?? "").filter(Boolean),
+    };
+    items.push({
+      kind: "tool_call",
+      id: `${runId}:tool:${toolId}`,
+      receipt,
+      ts: group.end?.at ?? group.start?.at,
+    });
+  }
+
+  // Non-tool events
+  for (const event of events) {
+    if (event.type === "tool_start" || event.type === "tool_end" || event.type === "tool_update") continue;
+    items.push({
+      kind: "system_note",
+      id: `${runId}:event:${event.type}:${event.at ?? ""}`,
+      title: event.type ?? "event",
+      content: event.preview ?? event.error ?? "",
+      ts: event.at,
+      variant: event.error ? "error" : event.type?.includes("failed") ? "error" : "info",
+    });
+  }
+
+  return items;
+}
+
+function auditItemSearchText(item: AuditItem): string {
+  switch (item.kind) {
+    case "user_message":
+      return [item.content, item.ts].filter(Boolean).join(" ").toLowerCase();
+    case "agent_turn":
+      return [item.content, item.model ?? "", item.status ?? "", item.ts].filter(Boolean).join(" ").toLowerCase();
+    case "tool_call":
+      return [
+        item.receipt.tool_name ?? "",
+        item.receipt.id,
+        item.receipt.input_preview ?? "",
+        item.receipt.result_preview ?? "",
+      ].filter(Boolean).join(" ").toLowerCase();
+    case "system_note":
+      return [item.title, item.content, item.ts].filter(Boolean).join(" ").toLowerCase();
+  }
 }
 
 function SessionRow({
@@ -358,7 +438,7 @@ export default function AgentAuditLogs({
   const [loadingMoreSessions, setLoadingMoreSessions] = useState(false);
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [rows, setRows] = useState<MemorySessionRow[]>([]);
+  const [items, setItems] = useState<AuditItem[]>([]);
   const [loadingRows, setLoadingRows] = useState(false);
 
   const [sessionsQuery, setSessionsQuery] = useState("");
@@ -372,6 +452,9 @@ export default function AgentAuditLogs({
   const [activeRuns, setActiveRuns] = useState<ActiveAgentSummary[]>([]);
   const [loadingActiveRuns, setLoadingActiveRuns] = useState(false);
   const [abortingRunId, setAbortingRunId] = useState<string | null>(null);
+
+  const [availableActors, setAvailableActors] = useState<ActorCatalogItem[]>([]);
+  const [sessionActorFilter, setSessionActorFilter] = useState<string>("all");
 
   const effectiveSessionsQuery = useMemo(() => normalizeSearch(sessionsQuery), [sessionsQuery]);
 
@@ -397,9 +480,14 @@ export default function AgentAuditLogs({
       return true;
     });
 
-    if (!query) return withBuiltIns;
-    return withBuiltIns.filter((session) => sessionSearchText(session).includes(query));
-  }, [sessions, effectiveSessionsQuery, mode, builtInActorId, builtInContractId]);
+    const withActorFilter = withBuiltIns.filter((session) => {
+      if (sessionActorFilter === "all") return true;
+      return session.actor_id === sessionActorFilter;
+    });
+
+    if (!query) return withActorFilter;
+    return withActorFilter.filter((session) => sessionSearchText(session).includes(query));
+  }, [sessions, effectiveSessionsQuery, mode, builtInActorId, builtInContractId, sessionActorFilter]);
 
   const selectedSessionSummary = useMemo(
     () => sessions.find((session) => session.session === selectedSessionId) ?? null,
@@ -445,7 +533,8 @@ export default function AgentAuditLogs({
       if (!isMore) setLoadingSessions(true);
       else setLoadingMoreSessions(true);
 
-      const page = await listMemorySessions({ limit: PAGE_SIZE, offset });
+      const actorId = sessionActorFilter !== "all" ? sessionActorFilter : undefined;
+      const page = await listMemorySessions({ limit: PAGE_SIZE, offset, actorId });
       const nextRows = page.rows ?? [];
 
       if (!isMore) {
@@ -493,6 +582,21 @@ export default function AgentAuditLogs({
     };
   }, [autoRefresh, loadActiveRuns, loadSessions]);
 
+  useEffect(() => {
+    let cancelled = false;
+    getAgentContractsCatalog()
+      .then((catalog) => {
+        if (cancelled) return;
+        setAvailableActors(catalog.actors ?? []);
+      })
+      .catch(() => {
+        // ignore
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleSessionsScroll = async (event: UIEvent<HTMLDivElement>) => {
     if (loadingSessions || loadingMoreSessions || !sessionsHasMore) return;
     const target = event.currentTarget;
@@ -513,7 +617,7 @@ export default function AgentAuditLogs({
       });
       await Promise.all([loadActiveRuns(), loadSessions(0)]);
       if (run.conversation_id && selectedSessionId === run.conversation_id) {
-        setRows([]);
+        setItems([]);
       }
       setError(null);
     } catch (err) {
@@ -528,7 +632,7 @@ export default function AgentAuditLogs({
 
     const load = async () => {
       if (!selectedSessionId) {
-        setRows([]);
+        setItems([]);
         setSemanticHits([]);
         return;
       }
@@ -547,7 +651,7 @@ export default function AgentAuditLogs({
           if (matchingRun?.run_id) {
             const detail = await getRun(matchingRun.run_id);
             if (cancelled) return;
-            setRows(runDetailToAuditRows(detail));
+            setItems(runDetailToAuditItems(detail));
             setSemanticHits([]);
             setError(null);
             return;
@@ -564,7 +668,7 @@ export default function AgentAuditLogs({
               const eventsResult = await getRunEvents(sessionStatus.run_id);
               if (cancelled) return;
               if (eventsResult.events && eventsResult.events.length > 0) {
-                setRows(eventsResult.events.map((event, idx) => runEventToRow(sessionStatus.run_id!, event, idx)));
+                setItems(eventsToAuditItems(sessionStatus.run_id!, eventsResult.events));
                 setSemanticHits([]);
                 setError(null);
                 return;
@@ -577,7 +681,7 @@ export default function AgentAuditLogs({
 
         const result = await getAgentHistorySession(selectedSessionId);
         if (cancelled) return;
-        setRows(result.rows ?? []);
+        setItems(rowsToAuditItems(result.rows ?? []));
         setSemanticHits([]);
         setError(null);
       } catch (err) {
@@ -602,26 +706,12 @@ export default function AgentAuditLogs({
     };
   }, [selectedSessionId, autoRefresh, selectedActiveRun]);
 
-  const filteredRows = useMemo(() => {
-    if (!effectiveRowsQuery) return rows;
+  const filteredItems = useMemo(() => {
+    if (!effectiveRowsQuery) return items;
 
     const q = effectiveRowsQuery;
-    return rows.filter((row) => {
-      const extra = normalizeRowExtra(row);
-      const content = [
-        row.id,
-        row.kind,
-        row.role,
-        row.message,
-        row.text,
-        JSON.stringify(extra),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return content.includes(q);
-    });
-  }, [rows, effectiveRowsQuery]);
+    return items.filter((item) => auditItemSearchText(item).includes(q));
+  }, [items, effectiveRowsQuery]);
 
   const runSemanticSearch = useCallback(async () => {
     const query = semanticQuery.trim();
@@ -674,6 +764,25 @@ export default function AgentAuditLogs({
               </div>
             </div>
 
+            {availableActors.length > 0 ? (
+              <div className="mt-2">
+                <select
+                  aria-label="Filter by actor"
+                  value={sessionActorFilter}
+                  onChange={(event) => {
+                    setSessionActorFilter(event.target.value);
+                    void loadSessions(0);
+                  }}
+                  className="w-full rounded-md border border-slate-800 bg-slate-950/80 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
+                >
+                  <option value="all">All actors</option>
+                  {availableActors.map((actor) => (
+                    <option key={actor.id} value={actor.id}>{actor.id}</option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
             <div className="mt-3">
               <input
                 aria-label="Search sessions"
@@ -705,7 +814,7 @@ export default function AgentAuditLogs({
 
         <div className="min-h-0 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 p-4">
           {!selectedSessionId ? <div className="text-sm text-slate-500">Select a session to inspect.</div> : null}
-          {selectedSessionId && loadingRows && rows.length === 0 ? <div className="text-sm text-slate-500">Loading session…</div> : null}
+          {selectedSessionId && loadingRows && items.length === 0 ? <div className="text-sm text-slate-500">Loading session…</div> : null}
 
           {selectedSessionId ? (
             <div className="space-y-4">
@@ -726,7 +835,7 @@ export default function AgentAuditLogs({
                   ) : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Badge size="sm" variant="info">{filteredRows.length}/{rows.length} events</Badge>
+                  <Badge size="sm" variant="info">{filteredItems.length}/{items.length} items</Badge>
                 </div>
               </div>
 
@@ -847,42 +956,95 @@ export default function AgentAuditLogs({
               ) : null}
 
               <Card variant="outlined" padding="sm">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Session events</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Session timeline</div>
                 <div className="mt-3 space-y-3">
-                  {filteredRows.length === 0 ? (
-                    <div className="text-sm text-slate-500">No events match your filters.</div>
+                  {filteredItems.length === 0 ? (
+                    <div className="text-sm text-slate-500">No items match your filters.</div>
                   ) : (
-                    filteredRows.map((row) => {
-                      const extra = normalizeRowExtra(row);
-                      const parts = extractContentParts(extra);
-                      const body = rowBodyMarkdown(row);
+                    filteredItems.map((item) => {
+                      switch (item.kind) {
+                        case "user_message": {
+                          const extraParts = item.contentParts ? extractContentParts({ contentParts: item.contentParts }) : [];
+                          return (
+                            <div key={item.id} className="rounded-lg border border-green-800/30 bg-green-950/20 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-slate-100">User</div>
+                                  {item.ts ? <div className="mt-1 text-xs text-slate-400">{formatTimestamp(item.ts)}</div> : null}
+                                </div>
+                                <Badge size="sm" variant="success">user</Badge>
+                              </div>
+                              {item.content ? (
+                                <div className="mt-3 text-sm text-slate-200">
+                                  <Markdown content={item.content} theme="dark" variant="compact" lineNumbers={false} copyButton={false} />
+                                </div>
+                              ) : null}
+                              {extraParts.length > 0 ? (
+                                <div className="mt-3">
+                                  <MultimodalContent parts={extraParts as any} />
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        }
 
-                      return (
-                        <div key={row.id} className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="text-sm font-semibold text-slate-100">{rowTitle(row)}</div>
-                              <div className="mt-1 text-xs text-slate-400">{formatTimestamp(row.ts ?? null)}</div>
+                        case "agent_turn": {
+                          const extraParts = item.contentParts ? extractContentParts({ contentParts: item.contentParts }) : [];
+                          return (
+                            <div key={item.id} className="rounded-lg border border-slate-700 bg-slate-950/70 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-slate-100">Agent</div>
+                                  {item.ts ? <div className="mt-1 text-xs text-slate-400">{formatTimestamp(item.ts)}</div> : null}
+                                </div>
+                                <div className="flex gap-2">
+                                  <Badge size="sm" variant="info">assistant</Badge>
+                                  {item.model ? <Badge size="sm" variant="default">{item.model}</Badge> : null}
+                                  {item.status ? <Badge size="sm" variant={item.status === "completed" ? "success" : item.status === "failed" ? "error" : "warning"}>{item.status}</Badge> : null}
+                                </div>
+                              </div>
+                              {item.content ? (
+                                <div className="mt-3 text-sm text-slate-200">
+                                  <Markdown content={item.content} theme="dark" variant="compact" lineNumbers={false} copyButton={false} />
+                                </div>
+                              ) : null}
+                              {extraParts.length > 0 ? (
+                                <div className="mt-3">
+                                  <MultimodalContent parts={extraParts as any} />
+                                </div>
+                              ) : null}
+                              {item.toolReceipts.length > 0 ? (
+                                <div className="mt-3 space-y-2">
+                                  {item.toolReceipts.map((receipt) => (
+                                    <ToolReceiptBlock key={receipt.id} receipt={receipt} />
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
-                            <div className="flex gap-2">
-                              {row.role ? <Badge size="sm" variant="info">{row.role}</Badge> : null}
-                              {row.kind ? <Badge size="sm" variant="default">{row.kind}</Badge> : null}
-                            </div>
-                          </div>
+                          );
+                        }
 
-                          {body ? (
-                            <div className="mt-3 text-sm text-slate-200">
-                              <Markdown content={body} theme="dark" variant="compact" lineNumbers={false} copyButton={false} />
-                            </div>
-                          ) : null}
+                        case "tool_call":
+                          return <ToolReceiptBlock key={item.id} receipt={item.receipt} />;
 
-                          {parts.length > 0 ? (
-                            <div className="mt-3">
-                              <MultimodalContent parts={parts as any} />
+                        case "system_note":
+                          return (
+                            <div key={item.id} className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-slate-100">{item.title}</div>
+                                  {item.ts ? <div className="mt-1 text-xs text-slate-400">{formatTimestamp(item.ts)}</div> : null}
+                                </div>
+                                {item.variant ? <Badge size="sm" variant={item.variant}>{item.variant}</Badge> : null}
+                              </div>
+                              {item.content ? (
+                                <div className="mt-2 text-sm text-slate-200">
+                                  <Markdown content={item.content} theme="dark" variant="compact" lineNumbers={false} copyButton={false} />
+                                </div>
+                              ) : null}
                             </div>
-                          ) : null}
-                        </div>
-                      );
+                          );
+                      }
                     })
                   )}
                 </div>

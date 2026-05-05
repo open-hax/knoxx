@@ -38,7 +38,7 @@ You are the proof of life. Speak clearly, then fall silent until summoned again.
  :contract/version 1
  :source-kind :discord
  :cadence-min 10
- :enabled true
+ :enabled false
  :data {:filters {:channels ["1444189585373663417"]
                   :publishChannels ["1444189585373663417"]}
         :tools ["voice.tts" "voice.tts_stream" "workspace_media.attach" "discord.send" "discord.publish" "bash"]

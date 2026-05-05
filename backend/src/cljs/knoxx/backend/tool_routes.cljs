@@ -6,6 +6,7 @@
             [knoxx.backend.macros :refer-macros [defroute]]
             [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.text :refer [sanitize-svg-content]]
             [knoxx.backend.triggers.control-config :as control-config]))
 
 ;; ── Private helpers ─────────────────────────────────────────────────────────
@@ -176,7 +177,10 @@
           node-fs   (aget runtime "fs")
           node-path (aget runtime "path")
           path-str  (resolve-workspace-path runtime config (or (aget body "path") ""))
-          content   (str (or (aget body "content") ""))
+          raw-content (str (or (aget body "content") ""))
+          content (if (re-find #"(?i)\.svg$" path-str)
+                    (sanitize-svg-content raw-content)
+                    raw-content)
           overwrite (not= false (aget body "overwrite"))
           create-parents (not= false (aget body "create_parents"))
           parent    (.dirname node-path path-str)

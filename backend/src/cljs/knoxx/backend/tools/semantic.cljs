@@ -5,7 +5,7 @@
             [knoxx.backend.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
             [knoxx.backend.http :as backend-http :refer [openplanner-enabled? js-array-seq]]
             [knoxx.backend.openplanner-memory :refer [openplanner-semantic-search!]]
-            [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-semantic-search-text]]
+             [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around value->preview-text tool-text-result semantic-search-result-text semantic-read-result-text openplanner-semantic-search-text sanitize-svg-content]]
             [knoxx.backend.tools.media :refer [path-relative path-basename path-resolve path-is-absolute? fs-read-file!]]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
 
@@ -31,20 +31,23 @@
                                   indexed-meta (indexed-meta runtime config db-id rel-path)]
                               (if (text-like-path? rel-path)
                                 (-> (fs-read-file! node-fs abs-path "utf8")
-                                    (.then (fn [content]
-                                             (let [[clipped _] (clip-text content 20000)
-                                                   score (semantic-score {:query query
-                                                                          :tokens tokens
-                                                                          :rel-path rel-path
-                                                                          :name name
-                                                                          :text clipped
-                                                                          :indexed (boolean indexed-meta)})]
-                                               {:path rel-path
-                                                :name name
-                                                :score score
-                                                :indexed (boolean indexed-meta)
-                                                :chunkCount (or (:chunkCount indexed-meta) 0)
-                                                :snippet (snippet-around clipped (str/lower-case (str query)) tokens max-snippet-chars)})))
+                                     (.then (fn [content]
+                                              (let [cleaned (if (re-find #"(?i)\.svg$" rel-path)
+                                                              (sanitize-svg-content content)
+                                                              content)
+                                                    [clipped _] (clip-text cleaned 20000)
+                                                    score (semantic-score {:query query
+                                                                           :tokens tokens
+                                                                           :rel-path rel-path
+                                                                           :name name
+                                                                           :text clipped
+                                                                           :indexed (boolean indexed-meta)})]
+                                                {:path rel-path
+                                                 :name name
+                                                 :score score
+                                                 :indexed (boolean indexed-meta)
+                                                 :chunkCount (or (:chunkCount indexed-meta) 0)
+                                                 :snippet (snippet-around clipped (str/lower-case (str query)) tokens max-snippet-chars)})))
                                     (.catch (fn [_err]
                                               {:path rel-path
                                                :name name
@@ -85,12 +88,15 @@
       (js/Promise.reject (js/Error. "Path escapes active docs root"))
       (-> (fs-read-file! node-fs abs-path "utf8")
           (.then (fn [content]
-                   (let [[clipped truncated?] (clip-text content max-chars)]
+                   (let [cleaned (if (re-find #"(?i)\.svg$" rel-path)
+                                   (sanitize-svg-content content)
+                                   content)
+                         [clipped truncated?] (clip-text cleaned max-chars)]
                      {:database {:id (:id profile)
                                  :name (:name profile)}
-                     :path rel-path
-                     :truncated truncated?
-                     :content clipped}))))))))
+                      :path rel-path
+                      :truncated truncated?
+                      :content clipped}))))))))
 
 
 (defn create-semantic-custom-tools

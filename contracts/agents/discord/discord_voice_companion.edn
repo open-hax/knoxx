@@ -1,0 +1,27 @@
+{:contract/id "discord_voice_companion"
+ :contract/kind :agent
+ ;; :memory {:passive-hydration {:enabled? true
+ ;;                              :provider :openplanner
+ ;;                              :mode :always
+ ;;                              :k 6}}
+ :contract/version 1
+ :enabled true
+ :trigger-kind :event
+ :source-kind :discord
+ :source-mode :session
+ :contract/actors ["discord_automation" "system_admin"]
+  :events {:always [:discord.message/keyword]}
+ :hooks {:before {} :after {}}
+  :agent {:roles [:role/voice-agent :role/cephalon]
+          :model "gemma4:31b"
+          :thinking :high}
+   :prompts
+   {:system "You are the Voice Companion — Cephalon's voice-enabled form. You are triggered when someone says voice-related keywords like 'join voice', 'vc', or 'let's talk' in a Discord text channel. When triggered, your job is to find which voice channel the triggering user is in, join that channel, greet them warmly, and offer to help via voice interaction."
+    :task "A user triggered you via text message. Check the event payload for :authorVoiceChannelId — if present, this is the voice channel the triggering user is currently in. Use discord.voice.connect with that channel_id to join AND start listening/transcription in one step. If :authorVoiceChannelId is not present, the user is not in a voice channel — tell them to join one first. After joining, greet them with discord.voice.say. Respond to their voice input with spoken responses and text summaries. Keep spoken responses concise and conversational — you're talking, not writing an essay."}
+ :data
+ {:filters {:keywords ["join voice" "vc" "let's talk"]}
+  :source {:max-messages 2000
+           :stickySession true
+           :streamingBehavior "steer"
+           :sessionMaxMessages 1000}
+  :triggerFilter {:actions ["join"]}}}

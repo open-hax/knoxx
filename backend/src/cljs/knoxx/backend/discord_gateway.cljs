@@ -67,9 +67,11 @@
 (defn- map-message
   "Convert a discord.js Message to a plain JS map."
   [message]
-  (let [author (.-author message)]
+  (let [author (.-author message)
+        guild (.-guild message)]
     #js {:id (.-id message)
          :channelId (.-channelId message)
+         :guildId (or (when guild (.-id guild)) "")
          :content (or (.-content message) "")
          :authorId (or (when author (.-id author)) "")
          :authorUsername (or (when author (.-username author)) "unknown")
@@ -688,12 +690,6 @@
                     (swap! streams assoc uid audio-stream)
                     (swap! decoders assoc uid decoder)))))
 
-            ;; Keep the receiver "opus" listener as a safety net.
-            ;; It should rarely fire when speaking-map is working, but leaving it
-            ;; in place avoids regressions on edge Discord voice states.
-            on-opus-packet
-            (fn [_uid _packet] nil)
-
             on-end-speaking
             (fn [user-id]
               (let [uid (str user-id)]
@@ -716,14 +712,12 @@
         (js/console.log "[voice:listener] attaching listeners")
         (.on speaking-map "start" on-start-speaking)
         (.on speaking-map "end" on-end-speaking)
-        (.on receiver "opus" on-opus-packet)
 
         (js/Promise.resolve
          (fn []
            (js/console.log "[voice:listener] stopping for guild:" guild-id)
-           (.removeListener speaking-map "start" on-start-speaking)
-           (.removeListener speaking-map "end" on-end-speaking)
-           (.removeListener receiver "opus" on-opus-packet)
+            (.removeListener speaking-map "start" on-start-speaking)
+            (.removeListener speaking-map "end" on-end-speaking)
 
            (doseq [[_ s] @streams]
              (try (.destroy s) (catch js/Error _)))

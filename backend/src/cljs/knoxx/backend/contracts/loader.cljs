@@ -241,6 +241,17 @@
   (let [klass (normalize-contract-class contract-class)]
     (mapv #(.join path % klass) (contract-root-paths config))))
 
+(defn- find-contract-file-recursive
+  "Search for {id}.edn under {root}/{class} recursively."
+  [root klass filename]
+  (try
+    (let [entries (.readdirSync node-fs (.join path root klass) #js {:withFileTypes true :recursive true})]
+      (some (fn [ent]
+              (when (and (.isFile ent) (= (.-name ent) filename))
+                (.join path (.-parentPath ent) (.-name ent))))
+            entries))
+    (catch :default _ nil)))
+
 (defn contract-file-path
   ([config contract-id]
    (contract-file-path config "agents" contract-id))
@@ -249,8 +260,7 @@
          id       (safe-path-segment! contract-id "contract-id")
          filename (str id ".edn")
          existing (some (fn [root]
-                          (let [candidate (.join path root klass filename)]
-                            (when (.existsSync node-fs candidate) candidate)))
+                          (find-contract-file-recursive root klass filename))
                         (contract-root-paths config))]
      (or existing
          (.join path (resolve-contracts-dir config) klass filename)))))
@@ -278,10 +288,11 @@
   [config contract-class]
   (->> (contract-class-dir-paths config contract-class)
        (mapcat (fn [dir]
-                 (try (->> (.readdirSync node-fs dir)
-                           (keep (fn [n]
-                                   (when (contract-edn-filename? n)
-                                     (subs n 0 (- (count n) 4))))))
+                 (try (->> (.readdirSync node-fs dir #js {:withFileTypes true :recursive true})
+                           (keep (fn [ent]
+                                   (when-let [fp (entry->file-path ent)]
+                                     (let [id (subs (.-name ent) 0 (- (count (.-name ent)) 4))]
+                                       id)))))
                       (catch :default _ []))))
        distinct sort vec))
 

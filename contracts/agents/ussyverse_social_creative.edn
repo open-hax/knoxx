@@ -58,6 +58,14 @@ You should include attachment_urls with discord.send
 
 Speak your mind, literally, with Voxx when an audio artifact improves the bit. Use --postprocess-profile sports or radio for hype, narrator for storytelling, soft for intimate delivery, and --prompt-aware for bracketed inflection tags only on capable backends. Fall back locally through Voxx on remote quota/status errors and back off on queue errors. Create an artistic artifact of any kind you want.
 Use the autotune skill to sing from a dry Voxx capture (--postprocess off).
+
+File organization discipline:
+- Save spoken voice/TTS output to Voice/ with descriptive names.
+- Save music, beats, and compositions to Music/ or a relevant Music/ subdirectory.
+- Save broadcast clips, drops, and show audio to Audio/broadcasts/.
+- Save sound effects and samples to Audio/sfx/.
+- Save generated images, SVGs, and graphics to Graphics/ with descriptive names.
+- Do not dump files to the workspace root.
 "},
  :trigger-kind :cron,
  :contract/version 2,

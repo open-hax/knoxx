@@ -602,12 +602,23 @@
                                  :count (count channels)})))))))
     (discord-list-guild-channels! config guild-id)))
 
+(defn- strip-path-delims [s]
+  (-> (str (or s ""))
+      (str/replace #"<\\|\"|\"[|>]" "")
+      str/trim))
+
 (defn discord-send-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         channel-id (or (aget params "channel_id") (aget params "channelId") "")
         text (or (aget params "text") (aget params "content") "")
         reply-to (or (aget params "reply_to") (aget params "replyTo"))
-        attachment-urls (or (aget params "attachment_urls") (aget params "attachmentUrls") #js [])]
+        attachment-urls (->> (or (aget params "attachment_urls")
+                                 (aget params "attachmentUrls")
+                                 #js [])
+                             js-array-seq
+                             (map strip-path-delims)
+                             (remove str/blank?)
+                             clj->js)]
     (maybe-tool-update! on-update (str "Sending Discord message to " channel-id "…"))
     (-> (discord-send-message! runtime config channel-id text reply-to attachment-urls)
         (.then (fn [result]
@@ -626,6 +637,7 @@
                           (clj->js ["Use discord.publish or discord.send to share results in a Discord channel."
                                     "Provide channelId/channel_id and content/text."
                                     "Include attachmentUrls/attachment_urls to upload files, images, or generated assets."
+                                    "Pass file paths as plain strings (e.g. Graphics/seal.svg or Voice/clip.mp3). Do NOT wrap them in <|\"| delimiters."
                                     "To mention a user, use <@user_id> in the text. Do NOT use @username — it will not ping."])
                           send-params
                           discord-send-execute))
