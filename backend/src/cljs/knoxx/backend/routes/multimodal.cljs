@@ -1,4 +1,4 @@
-(ns knoxx.backend.multimodal-routes
+(ns knoxx.backend.routes.multimodal
   "Routes for multimodal file uploads and content serving.
    
    Supports images, audio, video, and documents for multimodal AI interactions.

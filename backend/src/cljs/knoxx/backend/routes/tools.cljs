@@ -1,4 +1,4 @@
-(ns knoxx.backend.tool-routes
+(ns knoxx.backend.routes.tools
   (:require [clojure.string :as str]
             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.event-agents :as event-agents]

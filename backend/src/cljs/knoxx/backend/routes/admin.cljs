@@ -1,5 +1,5 @@
-(ns knoxx.backend.admin-routes
-  (:require [knoxx.backend.users.admin :as users-admin]))
+(ns knoxx.backend.routes.admin
+  (:require [knoxx.backend.routes.users.admin :as users-admin]))
 
 (defn register-admin-routes!
   [app runtime {:keys [route!

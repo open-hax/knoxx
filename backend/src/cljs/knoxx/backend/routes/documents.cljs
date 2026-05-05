@@ -1,4 +1,4 @@
-(ns knoxx.backend.document-routes
+(ns knoxx.backend.routes.documents
 
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
@@ -211,8 +211,8 @@
                                                (assoc doc :score score))))
                                       (filter #(pos? (:score %)))
                                       (sort-by :score >)
-                                      (take top-k)
-                                      vec)]
+                                       (take top-k)
+                                       vec)]
                      (json-response! reply 200 {:query query :topK top-k :results results}))))
           (.catch (fn [err]
                     (json-response! reply 500 {:detail (str "Retrieval debug failed: " err)})))))))
@@ -345,4 +345,20 @@
 
 (defn register-document-routes!
   [app runtime config deps]
-  nil)
+  (api-documents-list! app runtime config deps)
+  (api-documents-content! app runtime config deps)
+  (api-documents-delete! app runtime config deps)
+  (api-documents-ingest! app runtime config deps)
+  (api-documents-ingest-priority! app runtime config deps)
+  (api-documents-ingest-restart! app runtime config deps)
+  (api-documents-ingestion-progress! app runtime config deps)
+  (api-documents-ingestion-history! app runtime config deps)
+  (api-chat-retrieval-debug! app runtime config deps)
+  (api-graph-export! app runtime config deps)
+  (api-settings-databases-list! app runtime config deps)
+  (api-settings-databases-create! app runtime config deps)
+  (api-settings-databases-activate! app runtime config deps)
+  (api-settings-databases-update! app runtime config deps)
+  (api-settings-databases-delete! app runtime config deps)
+
+  )

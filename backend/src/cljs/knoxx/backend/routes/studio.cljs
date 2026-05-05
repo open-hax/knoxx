@@ -1,4 +1,4 @@
-(ns knoxx.backend.studio-routes
+(ns knoxx.backend.routes.studio
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
             [knoxx.backend.tools.media :as media]

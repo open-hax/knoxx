@@ -1,4 +1,4 @@
-(ns knoxx.backend.contracts-routes
+(ns knoxx.backend.routes.contracts
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cljs.reader :as reader]
@@ -261,10 +261,10 @@
                  (.catch (fn [err]
                            (println "[contracts] watcher sync failed:" (.-message err))
                            nil))
-                 (.then (fn [_]
-                          (event-agents/reload!)
-                          (println "[contracts] event-agent runtime reloaded after contract change")
-                          nil))
+                  (.then (fn [_]
+                           (event-agents/debounced-reload!)
+                           (println "[contracts] event-agent runtime reload scheduled after contract change")
+                           nil))
                  (.catch (fn [err]
                            (println "[contracts] watcher reload failed:" (.-message err))
                            nil))))

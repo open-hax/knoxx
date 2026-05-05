@@ -1,4 +1,4 @@
-(ns knoxx.backend.voice-routes
+(ns knoxx.backend.routes.voice
   (:require [clojure.string :as str]
             [knoxx.backend.http :as http]))
 

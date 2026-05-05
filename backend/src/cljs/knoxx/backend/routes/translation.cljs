@@ -1,4 +1,4 @@
-(ns knoxx.backend.translation-routes
+(ns knoxx.backend.routes.translation
   ;; NOTE: We import route! directly from app-shapes instead of receiving it as a parameter
   ;; to avoid a shadow-cljs :simple optimization bug where local bindings ending with `!`
   ;; get incorrectly compiled as namespace property references instead of closure captures.

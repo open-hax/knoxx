@@ -1,4 +1,4 @@
-(ns knoxx.backend.memory-routes
+(ns knoxx.backend.routes.memory
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
             [knoxx.backend.http :refer [json-response! error-response! http-error openplanner-enabled? openplanner-request!]]

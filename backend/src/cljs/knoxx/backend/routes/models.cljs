@@ -1,4 +1,4 @@
-(ns knoxx.backend.model-routes
+(ns knoxx.backend.routes.models
   (:require [clojure.string :as str]
             [knoxx.backend.agent-hydration :refer [settings-state*]]
             [knoxx.backend.app-shapes :refer [route!]]
