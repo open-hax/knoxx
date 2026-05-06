@@ -1,6 +1,6 @@
 (ns knoxx.backend.contracts-routes-test
   (:require [cljs.test :refer [deftest is testing async]]
-            [knoxx.backend.contracts-routes :as sut]
+            [knoxx.backend.routes.contracts :as sut]
             [knoxx.backend.redis-client :as redis]))
 
 ;; ---------------------------------------------------------------------------

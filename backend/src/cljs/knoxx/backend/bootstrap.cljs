@@ -14,12 +14,12 @@
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.discord-reaction-labels :as discord-reaction-labels]
             [knoxx.backend.graceful-shutdown :as graceful-shutdown]
-            [knoxx.backend.mcp-http :as mcp-http]
+            [knoxx.backend.routes.mcp :as mcp-http]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.routes.auth :as auth-routes]
-            [knoxx.backend.tools.proxy-routes :as proxy-routes]
+            [knoxx.backend.routes.tools.proxy :as proxy-routes]
             [knoxx.backend.agent-turns :refer [lounge-messages*]]
             [knoxx.backend.policy-db :as policy-db]))
 

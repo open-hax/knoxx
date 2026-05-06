@@ -438,8 +438,8 @@
 
 (defn- shibboleth-import-failed [reply resp]
   (json-response! reply 502 {:detail (str "Shibboleth import failed: "
-                                           (or (aget (aget resp "body") "raw")
-                                               (js/JSON.stringify (aget resp "body"))))}))
+                                          (or (aget (aget resp "body") "raw")
+                                              (js/JSON.stringify (aget resp "body"))))}))
 
 (defn- shibboleth-unreachable [reply err]
   (json-response! reply 502 {:detail (str "Shibboleth is unreachable: " err)}))
@@ -577,7 +577,7 @@
                    (.then (if (= "running" (:status session))
                             (latest-run-event! (:run_id session))
                             (js/Promise.resolve nil))
-                          (partial detect-zombies conversation-id session session-id queue-turn! reply can-send-result)))))
+                          (partial detect-zombies conversation-id session session-id queue-turn! can-send-result reply)))))
              (fn [err]
                (.error js/console "Session status check failed" err)
                (queue-turn! "Async direct agent chat failed"))))))
@@ -926,9 +926,11 @@
         query-idx (.indexOf raw-url "?")
         qs (if (>= query-idx 0) (subs raw-url query-idx) "")
         op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)]
+        op-key (:openplanner-api-key config)
+        tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/" path qs)
-                    #js {:headers #js {"Authorization" (str "Bearer " op-key)}})
+                    #js {:headers #js {"Authorization" (str "Bearer " op-key)
+                                        "X-Tenant-ID" tenant-id}})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -937,11 +939,42 @@
   (let [path (aget request "params" "*")
         body (aget request "body")
         op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)]
+        op-key (:openplanner-api-key config)
+        tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/" path)
                     #js {:method "POST"
                          :headers #js {"Content-Type" "application/json"
-                                       "Authorization" (str "Bearer " op-key)}
+                                       "Authorization" (str "Bearer " op-key)
+                                       "X-Tenant-ID" tenant-id}
+                         :body (js/JSON.stringify (or body #js {}))})
+        (.then (partial fetch-json-ok reply))
+        (.catch (partial fetch-json-err reply)))))
+
+(defroute api-data-op-delete! []
+  "DELETE" "/api/data/op/*"
+  (let [path (aget request "params" "*")
+        op-base (:openplanner-base-url config)
+        op-key (:openplanner-api-key config)
+        tenant-id (or (:session-project-name config) "knoxx-session")]
+    (-> (fetch-json (str op-base "/v1/" path)
+                    #js {:method "DELETE"
+                         :headers #js {"Authorization" (str "Bearer " op-key)
+                                       "X-Tenant-ID" tenant-id}})
+        (.then (partial fetch-json-ok reply))
+        (.catch (partial fetch-json-err reply)))))
+
+(defroute api-data-op-patch! []
+  "PATCH" "/api/data/op/*"
+  (let [path (aget request "params" "*")
+        body (aget request "body")
+        op-base (:openplanner-base-url config)
+        op-key (:openplanner-api-key config)
+        tenant-id (or (:session-project-name config) "knoxx-session")]
+    (-> (fetch-json (str op-base "/v1/" path)
+                    #js {:method "PATCH"
+                         :headers #js {"Content-Type" "application/json"
+                                       "Authorization" (str "Bearer " op-key)
+                                       "X-Tenant-ID" tenant-id}
                          :body (js/JSON.stringify (or body #js {}))})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
@@ -962,9 +995,10 @@
                     (.catch (fn [err] {:ok false :error (.-message err) :url url}))))]
     (-> (js/Promise.all
          (into-array
-          [(check (str op-base "/v1/health") #js {"Authorization" (str "Bearer " op-key)})
-           (check (str proxx-base "/health") #js {"Authorization" (str "Bearer " proxx-key)})
-           (check (str ingestion-base "/health") nil)
+           [(check (str op-base "/v1/health") #js {"Authorization" (str "Bearer " op-key)
+                                                     "X-Tenant-ID" (or (:session-project-name config) "knoxx-session")})
+            (check (str proxx-base "/health") #js {"Authorization" (str "Bearer " proxx-key)})
+            (check (str ingestion-base "/health") nil)
            (check "http://127.0.0.1:8796/api/status" nil)
            (check "http://127.0.0.1:3777/health" nil)
            (check "http://127.0.0.1:8787/v1/health" nil)
@@ -976,34 +1010,41 @@
 (defroute api-data-mongo-collections! []
   "GET" "/api/data/mongo/collections"
   (let [op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)]
+        op-key (:openplanner-api-key config)
+        tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (js/Promise.all
          (into-array
           [(fetch-json (str op-base "/v1/documents/stats")
-                       #js {:headers #js {"Authorization" (str "Bearer " op-key)}})
+                       #js {:headers #js {"Authorization" (str "Bearer " op-key)
+                                           "X-Tenant-ID" tenant-id}})
            (fetch-json (str op-base "/v1/graph/monitoring")
-                       #js {:headers #js {"Authorization" (str "Bearer " op-key)}})]))
+                       #js {:headers #js {"Authorization" (str "Bearer " op-key)
+                                           "X-Tenant-ID" tenant-id}})]))
         (.then (partial mongo-collections-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-mongo-list! []
   "GET" "/api/data/mongo/list"
   (let [op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)]
-     (-> (fetch-json (str op-base "/v1/mongo/collections")
-                     #js {:headers #js {"Authorization" (str "Bearer " op-key)}})
-         (.then (partial fetch-json-ok reply))
-         (.catch (partial fetch-json-err reply)))))
+        op-key (:openplanner-api-key config)
+        tenant-id (or (:session-project-name config) "knoxx-session")]
+    (-> (fetch-json (str op-base "/v1/mongo/collections")
+                    #js {:headers #js {"Authorization" (str "Bearer " op-key)
+                                        "X-Tenant-ID" tenant-id}})
+        (.then (partial fetch-json-ok reply))
+        (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-mongo-query! []
   "POST" "/api/data/mongo/query"
   (let [body (or (aget request "body") #js {})
         op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)]
+        op-key (:openplanner-api-key config)
+        tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/mongo/query")
                     #js {:method "POST"
                          :headers #js {"Content-Type" "application/json"
-                                       "Authorization" (str "Bearer " op-key)}
+                                       "Authorization" (str "Bearer " op-key)
+                                       "X-Tenant-ID" tenant-id}
                          :body (js/JSON.stringify body)})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
@@ -1022,11 +1063,13 @@
         k (or (aget body "k") 8)
         min-sim (or (aget body "minSimilarity") 0.3)
         op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)]
+        op-key (:openplanner-api-key config)
+        tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/jobs/build-semantic-edges")
                     #js {:method "POST"
                          :headers #js {"Content-Type" "application/json"
-                                       "Authorization" (str "Bearer " op-key)}
+                                       "Authorization" (str "Bearer " op-key)
+                                       "X-Tenant-ID" tenant-id}
                          :body (js/JSON.stringify #js {:k k :minSimilarity min-sim})})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
@@ -1181,7 +1224,7 @@
     (ensure-conversation-access! ctx (:conversation-id body))
     (-> (queue-agent-control! runtime config body)
         (.then (partial steer-ok reply))
-        (.catch (partial steer-err reply))))
+        (.catch (partial steer-err reply)))))
 
 (defroute api-knoxx-follow-up! []
   "POST" "/api/knoxx/follow-up"
@@ -1253,7 +1296,8 @@
                                                      :conversation_id conversation-id
                                                      :removed_count removed-count
                                                      :remaining_messages (count rewound-messages)})))))))))
-           (.catch (partial undo-session-err reply)))))))
+          (.catch (partial undo-session-err reply))))))
+
 
 (defn- build-active-runs [ctx limit]
   (let [sessions-by-id (into {}
@@ -1489,6 +1533,8 @@
   ;; OpenPlanner API proxy for documents, search, etc.
   (api-data-op-get! app runtime config deps)
   (api-data-op-post! app runtime config deps)
+  (api-data-op-patch! app runtime config deps)
+  (api-data-op-delete! app runtime config deps)
   (api-data-health! app runtime config deps)
   (api-data-mongo-collections! app runtime config deps)
   (api-data-mongo-list! app runtime config deps)

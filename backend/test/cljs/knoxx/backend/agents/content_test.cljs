@@ -12,6 +12,12 @@
     (is (= " model should reason once."
            (diff-appended-text "The" "TheThe model should reason once.")))
     (is (= " need one token."
-           (diff-appended-text "We" "WeWe need one token."))))
+           (diff-appended-text "We" "WeWe need one token.")))
+    (is (= " can I help?"
+           (diff-appended-text "Ready. How" "Ready. HowReady. How can I help?")))
+    (is (= ""
+           (diff-appended-text "Ready." "Ready.Ready")))
+    (is (= " How can I help?"
+           (diff-appended-text "Ready." "Ready.Ready. How can I help?"))))
   (testing "does not collapse intentional adjacent token continuation without a boundary"
     (is (= "ha" (diff-appended-text "ha" "haha")))))

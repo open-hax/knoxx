@@ -24,7 +24,57 @@
   (-> content
       (str/replace #"(?is)<script[^>]*>.*?</script>" "")
       (str/replace #"(?i)on[a-z]+\s*=\s*['\"].*?['\"]" "")))
-
+(defn hydrate-files [paths node-path docs-path runtime config db-id node-fs query tokens max-snippet-chars]
+  (clj->js
+   (for [abs-path paths]
+     (let [rel-path (normalize-relative-path (path-relative node-path docs-path abs-path))
+           name (path-basename node-path abs-path)
+           indexed-meta (indexed-meta runtime config db-id rel-path)]
+       (if (text-like-path? rel-path)
+         (-> (fs-read-file! node-fs abs-path "utf8")
+             (.then (fn [content]
+                      (let [cleaned (if (re-find #"(?i)\.svg$" rel-path)
+                                      (sanitize-svg-content content)
+                                      content)
+                            [clipped _] (clip-text cleaned 20000)
+                            score (semantic-score {:query query
+                                                   :tokens tokens
+                                                   :rel-path rel-path
+                                                   :name name
+                                                   :text clipped
+                                                   :indexed (boolean indexed-meta)})]
+                        {:path rel-path
+                         :name name
+                         :score score
+                         :indexed (boolean indexed-meta)
+                         :chunkCount (or (:chunkCount indexed-meta) 0)
+                         :snippet (snippet-around clipped (str/lower-case (str query)) tokens max-snippet-chars)})))
+             (.catch (fn [_err]
+                       {:path rel-path
+                        :name name
+                        :score 0
+                        :indexed false
+                        :chunkCount 0
+                        :snippet ""})))
+         (js/Promise.resolve {:path rel-path
+                              :name name
+                              :score 0
+                              :indexed false
+                              :chunkCount 0
+                              :snippet ""}))))))
+(defn rank-results [results top-k profile docs-path query tokens]
+  (let [ranked (->> (js-array-seq results)
+                    (filter #(pos? (:score %)))
+                    (sort-by (juxt (comp - :score) :path))
+                    (take top-k)
+                    vec)]
+    {:database {:id (:id profile)
+                :name (:name profile)
+                :docsPath docs-path}
+     :query query
+     :tokens tokens
+     :results ranked})
+  )
 (defn semantic-search-documents!
   ([runtime config opts] (semantic-search-documents! runtime config opts nil))
   ([runtime config {:keys [query top-k max-snippet-chars]} auth-context]
@@ -39,56 +89,26 @@
      (-> (ensure-dir! runtime docs-path)
          (.then (fn [] (list-files-recursive! runtime docs-path)))
          (.then (fn [paths]
-                  (.then (js/Promise.all
-                          (clj->js
-                           (for [abs-path paths]
-                             (let [rel-path (normalize-relative-path (path-relative node-path docs-path abs-path))
-                                   name (path-basename node-path abs-path)
-                                   indexed-meta (indexed-meta runtime config db-id rel-path)]
-                               (if (text-like-path? rel-path)
-                                 (-> (fs-read-file! node-fs abs-path "utf8")
-                                     (.then (fn [content]
-                                              (let [cleaned (if (re-find #"(?i)\.svg$" rel-path)
-                                                              (sanitize-svg-content content)
-                                                              content)
-                                                    [clipped _] (clip-text cleaned 20000)
-                                                    score (semantic-score {:query query
-                                                                           :tokens tokens
-                                                                           :rel-path rel-path
-                                                                           :name name
-                                                                           :text clipped
-                                                                           :indexed (boolean indexed-meta)})]
-                                                {:path rel-path
-                                                 :name name
-                                                 :score score
-                                                 :indexed (boolean indexed-meta)
-                                                 :chunkCount (or (:chunkCount indexed-meta) 0)
-                                                 :snippet (snippet-around clipped (str/lower-case (str query)) tokens max-snippet-chars)})))
-                                     (.catch (fn [_err]
-                                               {:path rel-path
-                                                :name name
-                                                :score 0
-                                                :indexed false
-                                                :chunkCount 0
-                                                :snippet ""})))
-                                 (js/Promise.resolve {:path rel-path
-                                                      :name name
-                                                      :score 0
-                                                      :indexed false
-                                                      :chunkCount 0
-                                                      :snippet ""})))))
-                         (fn [results]
-                           (let [ranked (->> (js-array-seq results)
-                                             (filter #(pos? (:score %)))
-                                             (sort-by (juxt (comp - :score) :path))
-                                             (take top-k)
-                                             vec)]
-                             {:database {:id (:id profile)
-                                         :name (:name profile)
-                                         :docsPath docs-path}
-                              :query query
-                              :tokens tokens
-                              :results ranked}))))))))))
+                  (js/Promise.all
+                   (hydrate-files
+                    paths
+                    node-path
+                    docs-path
+                    runtime
+                    config
+                    db-id
+                    node-fs
+                    query
+                    tokens
+                    max-snippet-chars))))
+         (.then (fn [results]
+                  (rank-results
+                   results
+                   top-k
+                   profile
+                   docs-path
+                   query
+                   tokens)))))))
 
 (defn semantic-read-document!
   ([runtime config opts] (semantic-read-document! runtime config opts nil))

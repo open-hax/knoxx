@@ -7,7 +7,8 @@
   (:require [clojure.string :as str]
             [shadow.cljs.modern :refer [js-await]]
             ["node:child_process" :as child-process]
-            [knoxx.backend.discord-gateway :as dg]
+             ["node:fs/promises" :as fs-promises]
+             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
@@ -463,14 +464,10 @@
    Returns a Promise resolving to true if repaired, false otherwise."
   [local-path]
   (if (str/ends-with? (str/lower-case local-path) ".svg")
-    (-> (js/Promise.resolve (js/require "node:fs"))
-        (.then (fn [fs]
-                 (.readFile fs local-path "utf8")))
+    (-> (.readFile fs-promises local-path "utf8")
         (.then (fn [content]
                  (if-let [repaired (sanitize-svg-content content)]
-                   (-> (js/Promise.resolve (js/require "node:fs"))
-                       (.then (fn [fs]
-                                (.writeFile fs local-path repaired "utf8")))
+                   (-> (.writeFile fs-promises local-path repaired "utf8")
                        (.then (fn [_]
                                 (println "[event-agents] repaired corrupted SVG:" local-path)
                                 true)))
@@ -1606,7 +1603,9 @@
                       (println "[event-agents] starting with" (count (:jobs control)) "jobs (defaults)")
                       (schedule-flush-task!)
                       (bind-discord-gateway! config)
-                      (schedule-cron-ticker! config))))))))
+                      (schedule-cron-ticker! config))))))
+    ;; Already running — return resolved promise so callers can chain uniformly
+    (js/Promise.resolve nil)))
 
 ;; =============================================================================
 ;; Public API: Job Management with Template Support

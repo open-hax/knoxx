@@ -86,6 +86,7 @@ function AppShell() {
           <Route path="/cms" element={<ProtectedSurface><CmsPage /></ProtectedSurface>} />
           <Route path="/contracts" element={<ProtectedSurface><ContractsPage /></ProtectedSurface>} />
           <Route path="/data" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />
+          <Route path="/data/:tab" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />
           <Route path="/gardens" element={<ProtectedSurface><GardensPage /></ProtectedSurface>} />
           <Route path="/translations" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />
           <Route path="/translations/:documentId/:targetLang" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />

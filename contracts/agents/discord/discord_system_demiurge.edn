@@ -6,7 +6,7 @@
                               :mode :always
                               :k 6}},
  :source-mode :respond,
- :events {:always [:discord.message/keyword], :maybe []},
+ :events {:always [], :maybe [:discord.message/keyword]},
  :hooks {:before {}, :after {}},
  :agent
  {:roles [:role/developer :role/creative_catalyst],

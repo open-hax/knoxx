@@ -1,0 +1,72 @@
+<<svgsvg width="800" height="800" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg">
+  <<defsdefs>
+    <<linearlinearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <<stopstop offset="0%" style="stop-color:#D4AF37;stop-opacity:1" />
+      <<stopstop offset="50%" style="stop-color:#F9E27D;stop-opacity:1" />
+      <<stopstop offset="100%" style="stop-color:#B8860B;stop-opacity:1" />
+    </linearGradient>
+    <<filterfilter id="glow">
+      <<fefeGaussianBlur stdDeviation="3.5" result="coloredBlur"/>
+      <<fefeGaussianBlur stdDeviation="5" result="gaussianBlur"/>
+      <<fefeBlend mode="screen" in="coloredBlur" in2="gaussianBlur" result="blur"/>
+      <<fefeComposite in="blur" in2="SourceGraphic" operator="atop"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <<rectrect width="800" height="800" fill="#0a0a0f" />
+
+  <!-- Outer Rings -->
+  <<circlecircle cx="400" cy="400" r="380" fill="none" stroke="url(#goldGradient)" stroke-width="2" opacity="0.3" />
+  <<circlecircle cx="400" cy="400" r="370" fill="none" stroke="url(#goldGradient)" stroke-width="8" />
+  
+  <!-- Intricate Gear-like Border -->
+  <<pathpath d="M400,20 L410,40 L430,40 L420,60 L440,80 L420,100 L430,120 L410,120 L400,140 L390,120 L370,120 L380,100 L360,80 L380,60 L370,40 L390,40 Z" 
+        fill="url(#goldGradient)" transform="rotate(0, 400, 400)" />
+  <!-- To make it a real gear we'd need more paths, but let's use a poly-ring -->
+  <<circlecircle cx="400" cy="400" r="350" fill="none" stroke="url(#goldGradient)" stroke-width="1" stroke-dasharray="10,20" />
+
+  <!-- Main Seal Body -->
+  <<circlecircle cx="400" cy="400" r="300" fill="#111" stroke="url(#goldGradient)" stroke-width="12" filter="url(#glow)" />
+  
+  <!-- Inner Decorative Rings -->
+  <<circlecircle cx="400" cy="400" r="270" fill="none" stroke="url(#goldGradient)" stroke-width="2" opacity="0.6" />
+  <<circlecircle cx="400" cy="400" r="240" fill="none" stroke="url(#goldGradient)" stroke-width="4" opacity="0.4" />
+
+  <!-- Central Motif: The Symmetrical Melting Brain -->
+  <<gg transform="translate(400, 400)" filter="url(#glow)">
+    <!-- Brain Left -->
+    <<pathpath d="M-50,-60 C-120,-60 -150,0 -100,80 C-80,110 -20,100 0,60" fill="none" stroke="url(#goldGradient)" stroke-width="5" stroke-linecap="round" />
+    <<pathpath d="M-50,-40 C-80,-40 -90,0 -60,40" fill="none" stroke="url(#goldGradient)" stroke-width="3" opacity="0.7" />
+    <<pathpath d="M-70,-20 C-100,-20 -110,20 -70,50" fill="none" stroke="url(#goldGradient)" stroke-width="3" opacity="0.7" />
+    
+    <!-- Brain Right (Mirrored) -->
+    <<pathpath d="M50,-60 C120,-60 150,0 100,80 C80,110 20,100 0,60" fill="none" stroke="url(#goldGradient)" stroke-width="5" stroke-linecap="round" />
+    <<pathpath d="M50,-40 C80,-40 90,0 60,40" fill="none" stroke="url(#goldGradient)" stroke-width="3" opacity="0.7" />
+    <<pathpath d="M70,-20 C100,-20 110,20 70,50" fill="none" stroke="url(#goldGradient)" stroke-width="3" opacity="0.7" />
+    
+    <!-- The "Drip" of cognitive collapse -->
+    <<pathpath d="M0,60 L0,120" stroke="url(#goldGradient)" stroke-width="6" stroke-linecap="round" />
+    <<circlecircle cx="0" cy="130" r="6" fill="url(#goldGradient)" />
+  </g>
+
+  <!-- Text Arc: Upper -->
+  <<pathpath id="textPathUpper" d="M 100,400 A 300,300 0 1,1 700,400" fill="none" />
+  <<texttext fill="url(#goldGradient)" font-family="serif" font-weight="bold" font-size="34" letter-spacing="10">
+    <<texttextPath href="#textPathUpper" startOffset="50%" text-anchor="middle">
+      CERTIFIED COGNITIVE COLLAPSE
+    </textPath>
+  </text>
+
+  <!-- Text Arc: Lower -->
+  <<pathpath id="textPathLower" d="M 700,400 A 300,300 0 1,1 100,400" fill="none" />
+  <<texttext fill="url(#goldGradient)" font-family="serif" font-weight="bold" font-size="34" letter-spacing="10">
+    <<texttextPath href="#textPathLower" startOffset="50%" text-anchor="middle">
+      SYMMETRY RESTORED • BRAIN FART EDITION
+    </textPath>
+  </text>
+
+  <!-- Center Text -->
+  <<texttext x="400" y="320" text-anchor="middle" fill="url(#goldGradient)" font-family="serif" font-size="28" font-style="italic" opacity="0.8">The Fry is</text>
+  <<texttext x="400" y="360" text-anchor="middle" fill="url(#goldGradient)" font-family="serif" font-size="48" font-weight="bold">TRANSCENDENT</text>
+</svg>

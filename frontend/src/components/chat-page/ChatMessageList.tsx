@@ -128,22 +128,28 @@ const ChatMessageCard = memo(function ChatMessageCard({
     </div>
   );
 
-  const { visibleTraceBlocks, showAssistantFinalCard } = useMemo(() => {
+  const { effectiveStatus, visibleTraceBlocks, showAssistantFinalCard } = useMemo(() => {
     const rawTraceBlocks = message.traceBlocks ?? [];
-    const visibleBlocks = message.role === "assistant"
-      && message.status === "done"
+    const allTraceBlocksDone = rawTraceBlocks.length > 0
+      && rawTraceBlocks.every((block) => block.status === "done");
+    const effectiveStatus = message.role === "assistant"
+      && message.status === "streaming"
+      && allTraceBlocksDone
+      && Boolean(message.content?.trim())
+      ? "done"
+      : message.status;
+    const isFinalAssistant = message.role === "assistant"
+      && effectiveStatus === "done"
       && rawTraceBlocks.length > 0
-      && rawTraceBlocks[rawTraceBlocks.length - 1]?.kind === "agent_message"
-      && (rawTraceBlocks[rawTraceBlocks.length - 1]?.content ?? "").trim() === (message.content ?? "").trim()
-      ? rawTraceBlocks.slice(0, -1)
+      && Boolean(message.content?.trim());
+    const visibleBlocks = isFinalAssistant
+      ? rawTraceBlocks.filter((block) => block.kind !== "agent_message")
       : rawTraceBlocks;
 
     return {
+      effectiveStatus,
       visibleTraceBlocks: visibleBlocks,
-      showAssistantFinalCard: message.role === "assistant"
-        && message.status === "done"
-        && rawTraceBlocks.length > 0
-        && Boolean(message.content?.trim()),
+      showAssistantFinalCard: isFinalAssistant,
     };
   }, [message.content, message.role, message.status, message.traceBlocks]);
 
@@ -180,7 +186,7 @@ const ChatMessageCard = memo(function ChatMessageCard({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: "var(--token-colors-text-muted)" }}>{message.role}</span>
           {message.model ? <Badge size="sm" variant="info">{message.model}</Badge> : null}
-          {message.status ? <Badge size="sm" variant={message.status === "done" ? "success" : message.status === "error" ? "error" : "warning"}>{message.status}</Badge> : null}
+          {effectiveStatus ? <Badge size="sm" variant={effectiveStatus === "done" ? "success" : effectiveStatus === "error" ? "error" : "warning"}>{effectiveStatus}</Badge> : null}
           {message.runId ? <Badge size="sm" variant="default">{message.runId.slice(0, 8)}</Badge> : null}
           {message.role === "assistant" ? (
             <Badge size="sm" variant={(message.sources?.length || message.contextRows?.length) ? "success" : "warning"}>
@@ -198,11 +204,11 @@ const ChatMessageCard = memo(function ChatMessageCard({
         <AgentTraceTimeline blocks={visibleTraceBlocks} />
       ) : null}
 
-      {message.role === "assistant" && visibleTraceBlocks.length === 0 && message.status === "streaming" && liveToolReceipts.length > 0 && (
+      {message.role === "assistant" && visibleTraceBlocks.length === 0 && effectiveStatus === "streaming" && liveToolReceipts.length > 0 && (
         <ToolReceiptGroup receipts={liveToolReceipts} liveEvents={liveToolEvents} defaultExpanded={false} />
       )}
 
-      {message.role === "assistant" && visibleTraceBlocks.length === 0 && message.status === "done" && message.runId && latestRun?.run_id === message.runId && latestToolReceipts.length > 0 && (
+      {message.role === "assistant" && visibleTraceBlocks.length === 0 && effectiveStatus === "done" && message.runId && latestRun?.run_id === message.runId && latestToolReceipts.length > 0 && (
         <details style={{ marginTop: 8, marginBottom: 8 }} open={false}>
           <summary style={{ cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--token-colors-text-muted)" }}>
             Tool calls ({latestToolReceipts.length})

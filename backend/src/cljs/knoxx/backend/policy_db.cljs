@@ -194,7 +194,7 @@
       [])))
 
 (defn- contract-tool-ids
-  "Return a set of tool ids found in contracts/capabilities/*.edn." 
+  "Return a set of tool ids found in contracts/capabilities/*.edn."
   []
   (try
     (let [cap-dir (.join path (contracts-dir) "capabilities")
@@ -217,7 +217,7 @@
 (defn- role-tool-policies-from-contracts
   "Return [{:toolId <id> :effect \"allow\"} ...] for the given role slug.
 
-   Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools." 
+   Uses contracts/roles/<role>.edn → contracts/capabilities/* to derive tools."
   [role-slug]
   (let [tool-ids (contracts-roles/role-tool-ids (contracts-config) role-slug)]
     (when (seq tool-ids)
@@ -351,7 +351,7 @@
                                                            :replace true})
                                    (.then (fn [_]
                                             (set-membership-actor-id! pool (aget membership "id") (:id actor-contract))))))))))))))
-        (js/Promise.resolve nil))))))
+          (js/Promise.resolve nil))))))
 
 (defn- sync-user-actors-from-contracts!
   [pool primary-org]
@@ -360,10 +360,10 @@
         (mapv (fn [actor-contract]
                 (if-let [email (:email actor-contract)]
                   (sync-user-from-actor-contract! pool primary-org
-                                                 #js {:email email
-                                                      :displayName (or (:label actor-contract) email)
-                                                      :authProvider "contract"
-                                                      :externalSubject nil})
+                                                  #js {:email email
+                                                       :displayName (or (:label actor-contract) email)
+                                                       :authProvider "contract"
+                                                       :externalSubject nil})
                   (js/Promise.resolve nil)))
               (list-user-actor-contracts))))
       (.then (fn [_] nil))))
@@ -444,13 +444,13 @@
     (cond
       (fn? (aget headers-like "get"))
       (str/trim (or (.get headers-like name)
-                     (.get headers-like (str/lower-case name))
-                     ""))
+                    (.get headers-like (str/lower-case name))
+                    ""))
 
       :else
       (str/trim (str (or (aget headers-like name)
-                          (aget headers-like (str/lower-case name))
-                          ""))))))
+                         (aget headers-like (str/lower-case name))
+                         ""))))))
 
 (defn- merge-toolPolicies
   [role-policies membership-policies]
@@ -1036,8 +1036,8 @@
 (defn- set-membership-roles!
   [pool membership-id {:keys [org-id role-ids role-slugs replace]}]
   (-> (resolve-role-ids pool {:org-id org-id
-                               :role-ids (or role-ids #js [])
-                               :role-slugs (or role-slugs #js [])})
+                              :role-ids (or role-ids #js [])
+                              :role-slugs (or role-slugs #js [])})
       (.then
        (fn [resolved-ids]
          (-> (if replace
@@ -1221,7 +1221,7 @@
              (-> (load-detailed-roles pool role-ids)
                  (.then
                   (fn [detailed-roles]
-                   (let [permissions (sort (unique (mapcat :permissions detailed-roles)))
+                    (let [permissions (sort (unique (mapcat :permissions detailed-roles)))
                           effective-tool-policies
                           (merge-toolPolicies
                            (mapcat :toolPolicies detailed-roles)
@@ -1336,8 +1336,8 @@
                    (.then
                     (fn [user]
                       (query-one! pool
-                                 "INSERT INTO memberships (user_id, org_id, status, is_default) VALUES ($1, $2, 'active', FALSE) ON CONFLICT (user_id, org_id) DO UPDATE SET updated_at = NOW() RETURNING *"
-                                 [(aget user "id") org-id])))
+                                  "INSERT INTO memberships (user_id, org_id, status, is_default) VALUES ($1, $2, 'active', FALSE) ON CONFLICT (user_id, org_id) DO UPDATE SET updated_at = NOW() RETURNING *"
+                                  [(aget user "id") org-id])))
                    (.then
                     (fn [membership]
                       (-> (js/Promise.all
@@ -1460,11 +1460,11 @@
   (let [uid (aget ^js bootstrap "user" "id")
         mid (aget ^js bootstrap "membership" "id")]
     (js/Promise.resolve
-      #js {:primaryOrg (->js-org primary-org)
-           :bootstrapUser #js {:id uid
-                               :email (aget ^js bootstrap "user" "email")
-                               :displayName (aget ^js bootstrap "user" "display_name")
-                               :membershipId mid}})))
+     #js {:primaryOrg (->js-org primary-org)
+          :bootstrapUser #js {:id uid
+                              :email (aget ^js bootstrap "user" "email")
+                              :displayName (aget ^js bootstrap "user" "display_name")
+                              :membershipId mid}})))
 
 (defn- factory-list-orgs
   [pool]
@@ -1677,7 +1677,7 @@
                                        :role-slugs (or (aget payload "roleSlugs") #js [])
                                        :replace (not= (aget payload "replace") false)})
                (.then
-               (fn [_]
+                (fn [_]
                   (let [requested-role-slugs (vec (or (aget payload "roleSlugs") #js []))
                         requested-actor-id (or (normalize-actor-id (aget payload "actorId"))
                                                (normalize-actor-id (aget ms "actor_id"))
@@ -1696,15 +1696,15 @@
                                    :display-name (aget membership-row "display_name")
                                    :org-slug (aget membership-row "org_slug")
                                    :role-slugs requested-role-slugs}))))))
-               (.then
-                (fn [_]
-                  (append-audit! pool {:actor-user-id uid
-                                       :actor-membership-id mid
-                                       :org-id (aget ms "org_id")
-                                       :action "membership.roles.update"
-                                       :resource-kind "membership"
-                                       :resource-id membership-id})))
-               (.then (fn [_] #js {:membership nil})))))))))
+                (.then
+                 (fn [_]
+                   (append-audit! pool {:actor-user-id uid
+                                        :actor-membership-id mid
+                                        :org-id (aget ms "org_id")
+                                        :action "membership.roles.update"
+                                        :resource-kind "membership"
+                                        :resource-id membership-id})))
+                (.then (fn [_] #js {:membership nil})))))))))
 
 (defn- factory-set-membership-tool-policies
   [pool uid mid membership-id payload]
@@ -1883,7 +1883,7 @@
                (let [count (or (aget result "rowCount") 0)]
                  (when (> count 0)
                    (.log js/console (str "[knoxx-policy-db] Cleaned up " count " expired sessions")))
-               count)))
+                 count)))
       (.catch (fn [_err] 0))))
 
 (defn- factory-create-invite

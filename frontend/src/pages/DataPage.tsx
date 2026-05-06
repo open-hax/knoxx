@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { GraphExplorer } from '../components/GraphExplorer';
 import {
   fetchIngestionSources, fetchIngestionJobs, fetchSourceAudit,
@@ -6,6 +7,7 @@ import {
   fetchDataMongoCollections, fetchDataMongoList, queryDataMongo, fetchDataPgTables, buildSemanticEdges, browseFiles, fetchFileContent,
   fetchOpenPlannerProxy, postOpenPlannerProxy,
 } from '../lib/nextApi';
+import { buildKnoxxAuthHeaders } from '../lib/api';
 import type { IngestionSource, IngestionJob, SourceAudit, ServiceHealth } from '../lib/nextApi';
 import type { GraphExportNode, GraphExportEdge } from '../lib/types';
 
@@ -1201,6 +1203,253 @@ function DatabaseTab() {
   );
 }
 
+function LabelsTab() {
+  const [labels, setLabels] = useState<any[]>([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [selectedLabel, setSelectedLabel] = useState<any>(null);
+  const [labeledNodes, setLabeledNodes] = useState<any[]>([]);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ label: '', slug: '', description: '', emoji: '', color: '#3b82f6' });
+  const [applyNodeId, setApplyNodeId] = useState('');
+
+  const loadLabels = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetchOpenPlannerProxy(`graph/labels?search=${encodeURIComponent(search)}&limit=200`);
+      setLabels(res.labels ?? []);
+    } catch (e) { console.error('Failed to load labels', e); }
+    finally { setLoading(false); }
+  }, [search]);
+
+  const loadLabelDetail = useCallback(async (labelId: string) => {
+    try {
+      const [labelData, nodesData] = await Promise.all([
+        fetchOpenPlannerProxy(`graph/labels/${encodeURIComponent(labelId)}`),
+        fetchOpenPlannerProxy(`graph/labels/${encodeURIComponent(labelId)}/nodes?limit=100`),
+      ]);
+      setSelectedLabel(labelData.label);
+      setLabeledNodes(nodesData.nodes ?? []);
+    } catch (e) { console.error('Failed to load label detail', e); }
+  }, []);
+
+  useEffect(() => { void loadLabels(); }, [loadLabels]);
+
+  const handleCreate = async () => {
+    try {
+      await postOpenPlannerProxy('graph/labels', {
+        label: createForm.label,
+        slug: createForm.slug || createForm.label,
+        description: createForm.description,
+        emoji: createForm.emoji || undefined,
+        color: createForm.color || undefined,
+      });
+      setShowCreate(false);
+      setCreateForm({ label: '', slug: '', description: '', emoji: '', color: '#3b82f6' });
+      await loadLabels();
+    } catch (e: any) { alert('Failed to create label: ' + e.message); }
+  };
+
+  const handleApply = async () => {
+    if (!selectedLabel || !applyNodeId.trim()) return;
+    try {
+      await postOpenPlannerProxy(`graph/labels/${encodeURIComponent(selectedLabel.label_id)}/apply`, { node_id: applyNodeId.trim() });
+      setApplyNodeId('');
+      await loadLabelDetail(selectedLabel.label_id);
+    } catch (e: any) { alert('Failed to apply label: ' + e.message); }
+  };
+
+  const handleRemove = async (nodeId: string) => {
+    if (!selectedLabel) return;
+    try {
+      await postOpenPlannerProxy(`graph/labels/${encodeURIComponent(selectedLabel.label_id)}/remove`, { node_id: nodeId });
+      await loadLabelDetail(selectedLabel.label_id);
+    } catch (e: any) { alert('Failed to remove label: ' + e.message); }
+  };
+
+  const handleDeleteLabel = async () => {
+    if (!selectedLabel) return;
+    if (!confirm(`Delete label "${selectedLabel.label}"?`)) return;
+    try {
+      const res = await fetch(`/api/data/op/graph/labels/${encodeURIComponent(selectedLabel.label_id)}`, {
+        method: 'DELETE',
+        headers: { ...buildKnoxxAuthHeaders() },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setSelectedLabel(null);
+      await loadLabels();
+    } catch (e: any) { alert('Failed to delete label: ' + e.message); }
+  };
+
+  return (
+    <div className="flex gap-4 h-[600px]">
+      {/* Label List */}
+      <div className="w-80 flex flex-col rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden">
+        <div className="shrink-0 p-3 border-b border-slate-700/30 flex items-center justify-between">
+          <input
+            type="text"
+            placeholder="Search labels..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="flex-1 bg-slate-900/50 border border-slate-700/50 rounded px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none"
+          />
+          <button onClick={() => setShowCreate(!showCreate)} className="ml-2 text-xs text-blue-400 hover:text-blue-300">
+            {showCreate ? 'Cancel' : '+ New'}
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="p-4 text-xs text-slate-500">Loading...</div>
+          ) : labels.length === 0 ? (
+            <div className="p-4 text-xs text-slate-500">No labels found</div>
+          ) : (
+            <div className="divide-y divide-slate-700/20">
+              {labels.map((label: any) => (
+                <button
+                  key={label.label_id}
+                  onClick={() => { setShowCreate(false); loadLabelDetail(label.label_id); }}
+                  className={`w-full flex items-start gap-3 px-3 py-2.5 hover:bg-slate-700/20 text-left ${selectedLabel?.label_id === label.label_id ? 'bg-blue-500/10' : ''}`}
+                >
+                  <span className="text-lg shrink-0 mt-0.5">{label.emoji || '🏷️'}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-slate-200">{label.label}</div>
+                    <div className="text-[10px] text-slate-500 leading-relaxed mt-0.5 break-words">{label.description || 'No description'}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Detail Panel */}
+      <div className="flex-1 rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden overflow-y-auto p-4">
+        {showCreate ? (
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-slate-200">Create New Label</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Label Name</label>
+                <input value={createForm.label} onChange={e => setCreateForm({ ...createForm, label: e.target.value })}
+                  className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-3 py-1.5 text-xs text-slate-200" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Slug (optional)</label>
+                <input value={createForm.slug} onChange={e => setCreateForm({ ...createForm, slug: e.target.value })}
+                  className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-3 py-1.5 text-xs text-slate-200" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Description</label>
+              <textarea value={createForm.description} onChange={e => setCreateForm({ ...createForm, description: e.target.value })}
+                rows={3} className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-3 py-1.5 text-xs text-slate-200 resize-none" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Emoji</label>
+                <input value={createForm.emoji} onChange={e => setCreateForm({ ...createForm, emoji: e.target.value })}
+                  className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-3 py-1.5 text-xs text-slate-200" placeholder="✅" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Color</label>
+                <input type="color" value={createForm.color} onChange={e => setCreateForm({ ...createForm, color: e.target.value })}
+                  className="w-full h-8 rounded border border-slate-700/50" />
+              </div>
+            </div>
+            <button onClick={handleCreate} disabled={!createForm.label.trim()}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white rounded text-xs font-medium">
+              Create Label
+            </button>
+          </div>
+        ) : selectedLabel ? (
+          <div className="space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">{selectedLabel.emoji || '🏷️'}</span>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-200">{selectedLabel.label}</h3>
+                  <code className="text-[10px] text-slate-500">{selectedLabel.label_id}</code>
+                </div>
+              </div>
+              <button onClick={handleDeleteLabel} className="text-xs text-rose-400 hover:text-rose-300">
+                Delete
+              </button>
+            </div>
+
+            <div className="bg-slate-900/30 rounded border border-slate-700/30 p-3">
+              <div className="text-xs text-slate-500 mb-1">Description</div>
+              <div className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{selectedLabel.description || 'No description'}</div>
+            </div>
+
+            <div className="bg-slate-900/30 rounded border border-slate-700/30 p-3">
+              <div className="text-xs text-slate-500 mb-2">Apply to Node</div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={applyNodeId}
+                  onChange={(e) => setApplyNodeId(e.target.value)}
+                  placeholder="node_id or event_id"
+                  className="flex-1 bg-slate-900/50 border border-slate-700/50 rounded px-3 py-1.5 text-xs text-slate-200"
+                />
+                <button onClick={handleApply} disabled={!applyNodeId.trim()}
+                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded text-xs">
+                  Apply
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs text-slate-500 mb-2">Labeled Nodes ({labeledNodes.length})</div>
+              {labeledNodes.length === 0 ? (
+                <div className="text-xs text-slate-600">No nodes have this label yet</div>
+              ) : (
+                <div className="space-y-2">
+                  {labeledNodes.map((node: any) => {
+                    const evt = node.event;
+                    const isDiscord = evt?.source === 'discord' || evt?.kind?.startsWith('discord');
+                    const title = evt?.title || evt?.data?.title || (isDiscord ? `#${evt?.extra?.channel_id || '?'}` : node.node_id);
+                    const type = evt?.kind || evt?.type || evt?.event_type || 'unknown';
+                    const snippet = evt?.text || evt?.message || evt?.data?.message || evt?.data?.content || evt?.data?.text || '';
+                    const author = isDiscord ? (evt?.extra?.author_username || evt?.author || 'unknown') : (evt?.author || evt?.role || '');
+                    const created = evt?.ts ? new Date(evt.ts).toLocaleDateString() : (evt?.created_at ? new Date(evt.created_at).toLocaleDateString() : '');
+                    return (
+                      <div key={node.node_id} className="p-3 bg-slate-900/20 rounded border border-slate-700/20">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium text-slate-200 truncate">{title}</div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">{type}</span>
+                              {author && <span className="text-[10px] text-slate-500">@{author}</span>}
+                              {created && <span className="text-[10px] text-slate-500">{created}</span>}
+                            </div>
+                            {snippet && (
+                              <div className="text-[11px] text-slate-300 mt-1.5 leading-relaxed whitespace-pre-wrap">
+                                {snippet}
+                              </div>
+                            )}
+                          </div>
+                          <button onClick={() => handleRemove(node.node_id)}
+                            className="shrink-0 text-xs text-rose-400 hover:text-rose-300">
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="h-full flex items-center justify-center text-xs text-slate-500">
+            Select a label to view details
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────
 
 const TABS = [
@@ -1209,6 +1458,7 @@ const TABS = [
   { id: 'files', label: 'Files', icon: '📁' },
   { id: 'documents', label: 'Documents', icon: '📄' },
   { id: 'graph', label: 'Graph', icon: '◇' },
+  { id: 'labels', label: 'Labels', icon: '🏷️' },
   { id: 'database', label: 'Database', icon: '▣' },
   { id: 'services', label: 'Services', icon: '⚡' },
 ] as const;
@@ -1216,7 +1466,10 @@ const TABS = [
 type TabId = typeof TABS[number]['id'];
 
 export default function DataPage() {
-  const [tab, setTab] = useState<TabId>('overview');
+  const { tab: urlTab } = useParams<{ tab?: string }>();
+  const navigate = useNavigate();
+  const tab: TabId = TABS.find(t => t.id === urlTab)?.id ?? 'overview';
+
   const [sources, setSources] = useState<IngestionSource[]>([]);
   const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [health, setHealth] = useState<ServiceHealth | null>(null);
@@ -1261,8 +1514,15 @@ export default function DataPage() {
     } catch {}
   }, []);
 
-  useEffect(() => { loadAll(); loadGraph(); }, []);
+  useEffect(() => { loadAll(); }, []);
   useEffect(() => { const i = setInterval(loadAll, 15000); return () => clearInterval(i); }, [loadAll]);
+
+  // Lazy-load graph only when viewing graph tab
+  useEffect(() => {
+    if (tab === 'graph' && !graphData) {
+      loadGraph();
+    }
+  }, [tab, graphData, loadGraph]);
 
   const handleSync = async (sourceId: string) => {
     setSyncing(p => ({ ...p, [sourceId]: true }));
@@ -1272,6 +1532,7 @@ export default function DataPage() {
   };
 
   const handleBuildEdges = () => { loadGraph(); loadAll(); };
+  const setTab = (id: TabId) => navigate(`/data/${id}`);
 
   if (loading) return <div className="p-6 text-sm text-slate-400">Loading data...</div>;
 
@@ -1283,7 +1544,7 @@ export default function DataPage() {
             <h1 className="text-base font-bold text-slate-100">Data</h1>
             <p className="text-xs text-slate-500 mt-0.5">Sources → Ingestion → OpenPlanner · Files · Documents · Graph · Database</p>
           </div>
-          <button onClick={() => { loadAll(); loadGraph(); }}
+          <button onClick={() => { loadAll(); if (tab === 'graph') loadGraph(); }}
             className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1 text-xs text-slate-300 hover:bg-slate-700">Refresh All</button>
         </div>
         <nav className="mt-2 flex gap-1 overflow-x-auto">
@@ -1303,6 +1564,7 @@ export default function DataPage() {
         {tab === 'files' && <FileExplorerTab />}
         {tab === 'documents' && <DocumentsTab />}
         {tab === 'graph' && <GraphExplorer nodes={graphData?.nodes || []} />}
+        {tab === 'labels' && <LabelsTab />}
         {tab === 'database' && <DatabaseTab />}
         {tab === 'services' && (
           <ServicesTab

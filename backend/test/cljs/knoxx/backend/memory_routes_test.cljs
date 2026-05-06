@@ -1,6 +1,6 @@
 (ns knoxx.backend.memory-routes-test
   (:require [cljs.test :refer [async deftest is]]
-            [knoxx.backend.memory-routes :as memory-routes]))
+            [knoxx.backend.routes.memory :as memory-routes]))
 
 (defn- offset-from-path
   [path]

@@ -31,7 +31,7 @@
     (let [model (models/provider-model-config test-config "gpt-5")]
       (is (= "openai-responses" (:api model)))
       (is (true? (:reasoning model)))
-      (is (= ["text" "image"] (:input model))))))
+      (is (= ["text" "image" "audio"] (:input model))))))
 
 (deftest provider-model-config-keeps-gemma-on-chat-completions
   (testing "gemma-family models stay on OpenAI-compatible chat completions while exposing reasoning"

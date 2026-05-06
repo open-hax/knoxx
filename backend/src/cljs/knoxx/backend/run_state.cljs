@@ -44,14 +44,38 @@
     {:input_tokens (or (aget usage "input") 0)
      :output_tokens (or (aget usage "output") 0)}))
 
+(defn- ensure-clj
+  "Defensive: coerce raw JS arrays/objects back to CLJS data before
+   storing in the in-memory run atom.  Redis round-trips and SDK
+   interop can leak raw #js [] / #js {} into fields."
+  [value]
+  (cond
+    (array? value) (js->clj value :keywordize-keys true)
+    :else value))
+
 (defn store-run!
   [run-id run]
-  (swap! runs* assoc run-id run)
-  (swap! run-order* (fn [order]
-                      (->> (cons run-id (remove #{run-id} order))
-                           (take 200)
-                           vec)))
-  run)
+  (let [clean (cond-> run
+                (array? (:tool_receipts run))
+                (update :tool_receipts ensure-clj)
+                (array? (:trace_blocks run))
+                (update :trace_blocks ensure-clj)
+                (array? (:content_parts run))
+                (update :content_parts ensure-clj)
+                (array? (:events run))
+                (update :events ensure-clj)
+                (array? (:request_messages run))
+                (update :request_messages ensure-clj)
+                (array? (:resources run))
+                (update :resources ensure-clj)
+                (array? (:settings run))
+                (update :settings ensure-clj))]
+    (swap! runs* assoc run-id clean)
+    (swap! run-order* (fn [order]
+                        (->> (cons run-id (remove #{run-id} order))
+                             (take 200)
+                             vec)))
+    clean))
 
 (defn summarize-run
   [run]

@@ -126,7 +126,8 @@
   (if (str/blank? (str (or session-id "")))
     (do (js/console.error "[session-store] update-session! called with nil/blank session-id; updates:" (pr-str updates))
         (js/Promise.resolve nil))
-    (let [current (or (get @session-cache* session-id) {})
+    (let [raw (or (get @session-cache* session-id) {})
+          current (if (array? raw) (js->clj raw :keywordize-keys true) raw)
           updated (merge current updates {:session_id session-id
                                           :updated_at (js/Date.now)})]
       (put-session! redis-client updated))))

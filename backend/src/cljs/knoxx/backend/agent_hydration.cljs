@@ -16,6 +16,7 @@
             [knoxx.backend.tools.openplanner :as openplanner]
             [knoxx.backend.tools.music :as music]
             [knoxx.backend.tools.voice :as voice]
+            [knoxx.backend.tools.bluesky :as bluesky]
             [knoxx.backend.tools.multimodal :as multimodal]
             [knoxx.backend.tools.workspace-media :as workspace-media]
             [knoxx.backend.tools.mcp :as mcp]
@@ -189,19 +190,19 @@
    (create-knoxx-custom-tools runtime config auth-context nil))
   ([runtime config auth-context allowed-tool-ids]
    (-> (shared/sanitize-custom-tools
-        (.concat
-         (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (semantic/create-semantic-custom-tools runtime config auth-context)
-                                                                                 (discord/create-discord-custom-tools runtime config auth-context))
-                                                                                 (discord-voice/create-discord-voice-custom-tools runtime config auth-context))
-                                                                        (event-agents/create-event-agent-custom-tools runtime config auth-context))
-                                                               (openplanner/create-openplanner-custom-tools runtime config auth-context))
-                                                      (music/create-music-custom-tools runtime config auth-context))
-                                             (voice/create-voice-synth-custom-tools runtime config auth-context))
-                                    (multimodal/create-multimodal-custom-tools runtime config auth-context))
-                           (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
-                    (mcp/create-mcp-custom-tools runtime config auth-context))
-           (session-mycology/create-session-mycology-tools runtime config auth-context))
-         (nrepl/create-nrepl-custom-tools runtime config auth-context)))
+        (-> (semantic/create-semantic-custom-tools runtime config auth-context)
+            (.concat (discord/create-discord-custom-tools runtime config auth-context))
+            (.concat (discord-voice/create-discord-voice-custom-tools runtime config auth-context))
+            (.concat (event-agents/create-event-agent-custom-tools runtime config auth-context))
+            (.concat (openplanner/create-openplanner-custom-tools runtime config auth-context))
+            (.concat (music/create-music-custom-tools runtime config auth-context))
+            (.concat (voice/create-voice-synth-custom-tools runtime config auth-context))
+            (.concat (bluesky/create-bluesky-custom-tools runtime config auth-context))
+            (.concat (multimodal/create-multimodal-custom-tools runtime config auth-context))
+            (.concat (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
+            (.concat (mcp/create-mcp-custom-tools runtime config auth-context))
+            (.concat (session-mycology/create-session-mycology-tools runtime config auth-context))
+            (.concat (nrepl/create-nrepl-custom-tools runtime config auth-context))))
        (shared/filter-custom-tools-by-allow-set allowed-tool-ids))))
 
 (defn agent-custom-tool-suite

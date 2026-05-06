@@ -228,6 +228,12 @@ const apps = [
         // STT (NPU service on host)
         KNOXX_STT_BASE_URL: sttNpuBaseUrl,
 
+        // Bluesky (ATProto)
+        BLUESKY_IDENTIFIER: hostEnv.BLUESKY_IDENTIFIER || process.env.BLUESKY_IDENTIFIER || '',
+        BLUESKY_APP_PASSWORD: hostEnv.BLUESKY_APP_PASSWORD || process.env.BLUESKY_APP_PASSWORD || '',
+        BLUESKY_SERVICE_URL: hostEnv.BLUESKY_SERVICE_URL || process.env.BLUESKY_SERVICE_URL || '',
+        BLUESKY_PUBLIC_API_URL: hostEnv.BLUESKY_PUBLIC_API_URL || process.env.BLUESKY_PUBLIC_API_URL || '',
+
         // TTS (ElevenLabs)
         // Accept historical/local key names from ~/.knoxx/.env.cephalon-host
         KNOXX_ELEVENLABS_API_KEY:

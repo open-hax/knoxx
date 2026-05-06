@@ -30,6 +30,7 @@
    :ttft-recorded? (atom false)
    :last-assistant-text* (atom "")
    :last-reasoning-text* (atom "")
+   :replay-suppression* (atom {})
    :think-tag-mode* (atom :off)
    :aborting? (atom false)
    :abort-reason* (atom nil)
@@ -112,44 +113,71 @@
         (swap! (:seen-tool-lifecycle-events* state) conj event-key))
       (not seen?))))
 
+(defn- suppress-replayed-prefix-delta!
+  [{:keys [last-assistant-text* last-reasoning-text* replay-suppression*]} kind delta]
+  (let [previous @(if (= kind :agent_message) last-assistant-text* last-reasoning-text*)
+        offset (long (get @replay-suppression* kind 0))
+        delta-len (count delta)
+        previous-len (count previous)
+        prior-has-boundary? (boolean (re-find #"[\s\W_]" previous))
+        advance! (fn [next-offset]
+                   (if (< next-offset previous-len)
+                     (swap! replay-suppression* assoc kind next-offset)
+                     (swap! replay-suppression* dissoc kind)))]
+    (cond
+      (str/blank? delta) ""
+      (pos? offset) (let [expected (.slice previous offset (min previous-len (+ offset delta-len)))]
+                      (cond
+                        (= delta expected) (do (advance! (+ offset delta-len)) "")
+                        (str/starts-with? delta expected) (do (advance! previous-len)
+                                                             (.slice delta (count expected)))
+                        :else (do (swap! replay-suppression* dissoc kind) delta)))
+      (and prior-has-boundary?
+           (not (boolean (re-find #"\s$" previous)))
+           (str/starts-with? previous delta)
+           (< delta-len previous-len)) (do (advance! delta-len) "")
+      :else delta)))
+
 (defn emit-streaming-delta!
   [{:keys [run-id conversation-id session-id started-ms ttft-recorded? chunks reasoning-chunks
-           last-assistant-text* last-reasoning-text*]}
+           last-assistant-text* last-reasoning-text*] :as state}
    kind delta]
-  (when (seq delta)
-    (when (and (= kind :agent_message)
-               (not @ttft-recorded?))
-      (reset! ttft-recorded? true)
-      (let [ttft-ms (- (.now js/Date) started-ms)
-            ttft-event (tool-event-payload run-id conversation-id session-id "assistant_first_token"
-                                           {:status "streaming"
-                                            :ttft_ms ttft-ms})]
-        (update-run! run-id #(assoc % :ttft_ms ttft-ms))
-        (append-run-event! run-id ttft-event)
-        (broadcast-ws-session! session-id "events" ttft-event)
-        (session-store/mark-session-streaming! (redis/get-client) session-id true)))
+  (let [delta (str (or delta ""))
+        delta (suppress-replayed-prefix-delta! state kind delta)
+        last* (if (= kind :agent_message) last-assistant-text* last-reasoning-text*)
+        delta (diff-appended-text @last* delta)]
+    (when (seq delta)
+      (when (and (= kind :agent_message)
+                 (not @ttft-recorded?))
+        (reset! ttft-recorded? true)
+        (let [ttft-ms (- (.now js/Date) started-ms)
+              ttft-event (tool-event-payload run-id conversation-id session-id "assistant_first_token"
+                                             {:status "streaming"
+                                              :ttft_ms ttft-ms})]
+          (update-run! run-id #(assoc % :ttft_ms ttft-ms))
+          (append-run-event! run-id ttft-event)
+          (broadcast-ws-session! session-id "events" ttft-event)
+          (session-store/mark-session-streaming! (redis/get-client) session-id true)))
 
-    ;; IMPORTANT: last-* atoms are treated as *cumulative text so far*.
-    ;; emit-progress-text! relies on this to diff cumulative provider payloads.
-    (if (= kind :agent_message)
-      (do
-        (swap! chunks conj delta)
-        (swap! last-assistant-text* str delta))
-      (do
-        (swap! reasoning-chunks conj delta)
-        (swap! last-reasoning-text* str delta)))
+      ;; IMPORTANT: last-* atoms are treated as *cumulative text so far*.
+      ;; emit-progress-text! relies on this to diff cumulative provider payloads.
+      (if (= kind :agent_message)
+        (do
+          (swap! chunks conj delta)
+          (swap! last-assistant-text* str delta))
+        (do
+          (swap! reasoning-chunks conj delta)
+          (swap! last-reasoning-text* str delta)))
 
-    (append-run-trace-text! run-id kind delta (now-iso))
-    (broadcast-ws-session! session-id "tokens"
-                           {:run_id run-id
-                            :conversation_id conversation-id
-                            :session_id session-id
-                            :kind (if (= kind :agent_message) "assistant_message" "reasoning")
-                            :token delta})))
-
+      (append-run-trace-text! run-id kind delta (now-iso))
+      (broadcast-ws-session! session-id "tokens"
+                             {:run_id run-id
+                              :conversation_id conversation-id
+                              :session_id session-id
+                              :kind (if (= kind :agent_message) "assistant_message" "reasoning")
+                              :token delta}))))
 (defn sync-assistant-message!
-  [{:keys [last-assistant-text* last-reasoning-text*] :as state}
-   assistant-message]
+  [state assistant-message]
   (when (and assistant-message
              (= (aget assistant-message "role") "assistant"))
     (let [full-text (assistant-message-text assistant-message)

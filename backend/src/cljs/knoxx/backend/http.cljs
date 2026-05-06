@@ -119,7 +119,8 @@
 (defn openplanner-headers
   [config]
   #js {"Content-Type" "application/json"
-       "Authorization" (str "Bearer " (:openplanner-api-key config))})
+       "Authorization" (str "Bearer " (:openplanner-api-key config))
+       "X-Tenant-ID" (or (:session-project-name config) "knoxx-session")})
 
 (defn openplanner-request!
   ([config method suffix] (openplanner-request! config method suffix nil))

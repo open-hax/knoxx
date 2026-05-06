@@ -25,6 +25,8 @@
 (def POST_DRAIN_GRACE_MS 1000)          ; let Redis writes flush after turns complete
 (def RECOVERY_INTERVAL_MS 15000)        ; periodic recovery tick
 (def STARTUP_RESUME_CONCURRENCY 2)      ; keep HTTP/event loop responsive after restart
+(def RECOVERY_COOLDOWN_MS 60000)        ; skip sessions touched within last 60s
+                                        ; prevents resuming runs orphaned by reload!
 
 ;; ─── State ────────────────────────────────────────────────────────────
 
@@ -76,10 +78,20 @@
         registered-turn? (some? (turn-control/active-turn conversation-id))]
     (or streaming? current-turn? registered-turn?)))
 
+(defn- session-hot?
+  "A session is 'hot' if it was updated very recently. Recovery skips hot
+   sessions so that in-flight runs (e.g. those orphaned by event-agents/reload!)
+   have time to finish naturally instead of being duplicated."
+  [session]
+  (let [last-ms (session-last-updated-ms session)]
+    (and (pos? last-ms)
+         (< (- (.now js/Date) last-ms) RECOVERY_COOLDOWN_MS))))
+
 (defn- session-resumable?
   [session]
   (let [conversation-id (str (or (:conversation_id session) ""))]
-    (not (runtime-processing-session? conversation-id))))
+    (and (not (session-hot? session))
+         (not (runtime-processing-session? conversation-id)))))
 
 ;; ─── Actions ──────────────────────────────────────────────────────────
 

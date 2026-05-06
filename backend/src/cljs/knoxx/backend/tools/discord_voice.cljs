@@ -4,6 +4,8 @@
             [knoxx.backend.agent-context :as agent-ctx]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.discord-gateway :as dg]
+            [knoxx.backend.http :as backend-http]
+            [knoxx.backend.openplanner-memory :as op-mem]
             [knoxx.backend.text :refer [tool-text-result]]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
 
@@ -26,19 +28,12 @@
       (str/ends-with? base "/v1") (str base "/audio/speech")
       :else (str base "/v1/audio/speech"))))
 
-(defn- stt-url [config]
-  (or (when (map? config) (get config :stt-url))
-      (some-> js/process .-env (aget "KNOXX_STT_URL"))
-      "http://127.0.0.1:8010"))
-
-(defn- knoxx-base [config]
-  (or (when (map? config) (get config :knoxx-base-url))
-      (some-> js/process .-env (aget "KNOXX_BASE_URL"))
-      "http://127.0.0.1:8000"))
-
-(defn- knoxx-key [config]
-  (or (when (map? config) (get config :knoxx-api-key))
-      (some-> js/process .-env (aget "KNOXX_API_KEY"))))
+(defn- proxx-chat-completions-url [config]
+  (str (str/replace (or (when (map? config) (get config :proxx-base-url))
+                        (some-> js/process .-env (aget "PROXX_BASE_URL"))
+                        "http://proxx:8789")
+                    #"/+$" "")
+       "/v1/chat/completions"))
 
 (defn- fetch-tts! [config text voice-id model-id]
   (let [api-key (or (resolve-voice-key config) (throw (js/Error. "VOICE_GATEWAY_API_KEY not configured")))
@@ -51,103 +46,11 @@
         (.then (fn [r] (if (.-ok r) (.arrayBuffer r) (throw (js/Error. (str "TTS " (.-status r)))))))
         (.then (fn [b] (.from js/Buffer (js/Uint8Array. b)))))))
 
-(defn- parse-stt-json-text [raw]
-  ;; Some STT deployments respond as SSE-ish text where the JSON is prefixed with
-  ;; "data: ", e.g. "data: {\"text\":...}". Accept both plain JSON and SSE.
-  ;; For chunked (streaming) responses, concatenate all text segments.
-  (let [s (str/trim (str raw))]
-    (if (str/includes? s "data:")
-      ;; SSE format — collect all data: lines and merge text fields
-      (let [lines (->> (str/split-lines s)
-                       (keep (fn [line]
-                               (let [t (str/trim line)]
-                                 (when (str/starts-with? t "data:")
-                                   (str/trim (subs t 5)))))))
-            ;; Parse each line, collect non-empty text segments
-            segments (keep (fn [text]
-                             (when (seq text)
-                               (try
-                                 (let [j (js/JSON.parse text)
-                                       txt (or (.-text j) (.-transcription j) "")]
-                                   (when (seq txt) txt))
-                                 (catch js/Error _ nil))))
-                           lines)
-            final-segment (last (keep (fn [text]
-                                        (when (seq text)
-                                          (try
-                                            (js/JSON.parse text)
-                                            (catch js/Error _ nil))))
-                                      lines))
-            merged-text (str/trim (str/join " " segments))]
-        ;; Return a synthetic JS object with merged text and final flag
-        #js {:text merged-text
-             :final (or (when final-segment (.-final final-segment)) true)})
-      ;; Plain JSON
-      (js/JSON.parse s))))
-
-(defn- stt-text-garbage?
-  "Detect repetitive/garbage STT output (e.g. NPU KV-cache stuck)."
-  [text]
-  (when (seq text)
-    (let [t (str/trim text)]
-      (and (> (count t) 10)
-           ;; Fewer than 3 unique non-space characters = repetitive garbage
-           (let [chars (set (remove #(or (= % " ") (= % "\n")) t))]
-             (<= (count chars) 2))
-           ;; Contains no ASCII letters or digits
-           (not (re-find #"[a-zA-Z0-9]" t))))))
-
-(defn- transcribe! [config audio-buffer]
-  ;; Knoxx STT service expects raw audio bytes (not multipart). It runs ffmpeg
-  ;; server-side, so WAV is the safest on-the-wire format.
-  (js/console.log "[voice:stt] === TRANSCRIBE START ===" (.-length audio-buffer) "bytes from" (stt-url config))
-  (js/console.log "[voice:stt] sending POST to" (str (stt-url config) "/transcribe"))
-  (-> (js/fetch (str (stt-url config) "/transcribe")
-                #js {:method "POST"
-                     :headers #js {"Content-Type" "audio/wav"
-                                   "Accept" "application/json, text/plain, text/event-stream"}
-                     :body audio-buffer})
-      (.then (fn [r]
-               (js/console.log "[voice:stt] response received, status:" (.-status r) "ok:" (.-ok r))
-               (if (.-ok r)
-                 (do (js/console.log "[voice:stt] parsing response body") (.text r))
-                 (do (js/console.error "[voice:stt] HTTP FAILED:" (.-status r))
-                     (throw (js/Error. (str "STT " (.-status r))))))))
-      (.then (fn [raw]
-               (js/console.log "[voice:stt] raw body prefix:" (.slice (str raw) 0 80))
-               (let [j (parse-stt-json-text raw)]
-                 (js/console.log "[voice:stt] JSON parsed:" (js/JSON.stringify j))
-                 (let [text (or (.-text j) (.-transcription j) "")]
-                   (if (stt-text-garbage? text)
-                     (do (js/console.warn "[voice:stt] GARBAGE detected, discarding:" (.slice text 0 60))
-                         "")
-                     (do (js/console.log "[voice:stt] extracted text:" (if (str/blank? text) "[EMPTY]" text))
-                         text))))))
-      (.catch (fn [err]
-                (js/console.error "[voice:stt] === TRANSCRIBE ERROR ===" (.-message err))
-                (throw err)))))
-
-(defn- steer! [config session-id conversation-id text]
-  (js/console.log "[voice:steer] injecting into session:" session-id "conv:" conversation-id "text:" (.slice text 0 60))
-  (let [body {:message (str "[Voice] " text) :conversation_id conversation-id :session_id session-id}
-        api-key (knoxx-key config)
-        headers #js {"Content-Type" "application/json"
-                     "x-knoxx-user-email" "system-admin@open-hax.local"}]
-    (when-not (str/blank? api-key)
-      (aset headers "X-API-Key" api-key))
-    (-> (js/fetch (str (knoxx-base config) "/api/knoxx/steer")
-                  #js {:method "POST"
-                       :headers headers
-                       :body (.stringify js/JSON (clj->js body))})
-        (.then (fn [r]
-                 (if (.-ok r)
-                   (js/console.log "[voice:steer] ok")
-                   (do (js/console.error "[voice:steer] failed:" (.-status r))
-                       (throw (js/Error. (str "Steer " (.-status r)))))))))))
-
 ;; ---------------------------------------------------------------------------
 ;; Hoisted tool definitions: params, execute, tool-obj per tool
 ;; ---------------------------------------------------------------------------
+
+(declare resolve-session-context! stop-existing-voice-loop!)
 
 (def voice-join-params
   [:map
@@ -191,9 +94,8 @@
     (when-not m (throw (js/Error. "Gateway not started")))
     (when (str/blank? g) (throw (js/Error. "guild_id required")))
     (maybe-tool-update! on-update (str "Leaving voice " g "…"))
-    (when-let [sf (aget m "__voiceListener")] (try (sf) (catch js/Error _)))
     (when m
-      (aset m "__voiceListener" nil)
+      (stop-existing-voice-loop! m)
       (aset m "__voiceSessionContext" nil))
     (-> (.leaveVoice m g)
         (.then (fn [r] (tool-text-result (str "Left voice in guild " g) (js->clj r :keywordize-keys true)))))))
@@ -239,7 +141,7 @@
                              "Synthesize speech and play in a voice channel."
                              "Speak text aloud in a connected voice channel."
                              (clj->js ["Use discord.voice.say to speak in a voice channel."
-                                       "Must be connected via discord.voice.join first."
+                                       "Must be in voice mode via discord.voice.connect first."
                                        "Provide guild_id and text. Optionally set voice_id and model_id."])
                              voice-say-params
                              voice-say-execute))
@@ -252,8 +154,13 @@
         m (gw)]
     (when-not m (throw (js/Error. "Gateway not started")))
     (maybe-tool-update! on-update "Checking voice…")
-    (let [c (.getVoiceConnection m)]
-      (tool-text-result (if c (str "Connected to guild " (or (.-__guildId c) (.-guildId c))) "Not connected") {:connected (some? c)}))))
+    (let [c (.getVoiceConnection m)
+          loop-state (aget m "__voiceGemmaLoop")]
+      (tool-text-result (if c (str "Connected to guild " (or (.-__guildId c) (.-guildId c))) "Not connected")
+                        {:connected (some? c)
+                         :gemmaLoop (some? loop-state)
+                         :modelId (when loop-state (aget loop-state "modelId"))
+                         :queuedAudioWindows (when loop-state (.-length (or (aget loop-state "audioWindows") #js [])))}))))
 
 (def voice-status-tool (partial create-tool-obj "discord.voice.status" "Voice Status"
                                 "Check voice connection status."
@@ -266,14 +173,26 @@
 (def voice-connect-params
   [:map
    [:channel_id {:description "Discord voice channel ID to join."} :string]
-   [:session_id {:optional true :description "Agent session ID to inject transcriptions into. Auto-detected if omitted."} :string]
-   [:conversation_id {:optional true :description "Agent conversation ID for the session. Auto-detected if omitted."} :string]])
+   [:session_id {:optional true :description "Optional session ID to attach voice memory events to. Auto-detected if omitted."} :string]
+   [:conversation_id {:optional true :description "Optional conversation ID to attach voice memory events to. Auto-detected if omitted."} :string]
+   [:model_id {:optional true :description "Multimodal cognitive core model. Default gemma4:e4b."} :string]
+   [:voice_id {:optional true :description "Voxx voice ID for say actions. Default alloy."} :string]
+   [:tts_model_id {:optional true :description "Voxx TTS model for say actions. Default kokoro."} :string]
+   [:tick_ms {:optional true :description "Mechanical loop cadence in ms. Default 1000."} :int]
+   [:heartbeat_ms {:optional true :description "Run an idle state tick at least this often even without new audio. Default 10000; 0 disables idle ticks."} :int]
+   [:min_say_interval_ms {:optional true :description "Host safety valve: minimum ms between spoken actions. Default 10000."} :int]])
 
 (def voice-listen-params
   [:map
    [:guild_id {:description "Guild ID with an active voice connection."} :string]
-   [:session_id {:optional true :description "Agent session ID to inject transcriptions into. Auto-detected if omitted."} :string]
-   [:conversation_id {:optional true :description "Agent conversation ID for the session. Auto-detected if omitted."} :string]])
+   [:session_id {:optional true :description "Optional session ID to attach voice memory events to. Auto-detected if omitted."} :string]
+   [:conversation_id {:optional true :description "Optional conversation ID to attach voice memory events to. Auto-detected if omitted."} :string]
+   [:model_id {:optional true :description "Multimodal cognitive core model. Default gemma4:e4b."} :string]
+   [:voice_id {:optional true :description "Voxx voice ID for say actions. Default alloy."} :string]
+   [:tts_model_id {:optional true :description "Voxx TTS model for say actions. Default kokoro."} :string]
+   [:tick_ms {:optional true :description "Mechanical loop cadence in ms. Default 1000."} :int]
+   [:heartbeat_ms {:optional true :description "Run an idle state tick at least this often even without new audio. Default 10000; 0 disables idle ticks."} :int]
+   [:min_say_interval_ms {:optional true :description "Host safety valve: minimum ms between spoken actions. Default 10000."} :int]])
 
 (defn- resolve-session-context!
   "Resolve (session-id, conversation-id) either from explicit params, the current agent context,
@@ -303,35 +222,159 @@
      :cid cid
      :auto? (and (str/blank? explicit-sid) (str/blank? explicit-cid))}))
 
-(defn- ensure-session-context!
-  [sid cid]
-  (when (str/blank? sid)
-    (throw (js/Error.
-            (str "session_id required (auto-detect failed; no active agent turn context). "
-                 "If calling manually, provide session_id and conversation_id explicitly."))))
-  (when (str/blank? cid)
-    (throw (js/Error.
-            (str "conversation_id required (auto-detect failed; no active agent turn context). "
-                 "If calling manually, provide session_id and conversation_id explicitly.")))))
+(defn- param-int [params key camel default]
+  (let [raw (or (aget params key) (aget params camel))
+        n (js/Number raw)]
+    (if (or (nil? raw) (js/isNaN n)) default n)))
 
-(defn- flush-voice-buffer!
-  "Send accumulated transcription text for a user as a single steer."
-  [config sid cid uid]
-  (let [m (gw)
-        buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
-        user-buf (when buf-obj (aget buf-obj uid))]
-    (when user-buf
-      (let [texts (aget user-buf "texts")]
-        (when (and texts (.-length texts))
-          (let [merged (str/trim (str/join " " (js/Array.from texts)))]
-            (js/console.log "[voice:tool] >>> FLUSHING buffer for" uid "concatenated:" (if (str/blank? merged) "[EMPTY]" merged))
-            (when-not (str/blank? merged)
-              (-> (steer! config sid cid merged)
-                  (.catch (fn [e]
-                            (js/console.error "[voice:tool] steer FAILED for" uid ":" (.-message e))))))))
-        ;; Clear the buffer
-        (aset user-buf "texts" #js [])
-        (aset user-buf "timer" nil)))))
+(defn- buffer->audio-window [uid audio-buffer]
+  #js {:speaker_id uid
+       :mimeType "audio/wav"
+       :bytes (.-length audio-buffer)
+       :received_at (.toISOString (js/Date.))
+       :data (.toString audio-buffer "base64")})
+
+(defn- voice-loop-system-prompt []
+  (str "You are Knoxx's single continuous audio cognition core inside a Discord voice channel. "
+       "There is no ASR layer and no steering agent. Treat audio as primary perception. "
+       "Each tick: listen to the latest audio windows, update compact internal state, "
+       "decide whether speaking is useful, and optionally write a short memory log. "
+       "Stay silent when nothing meaningful changed. Return strict JSON only with keys: "
+       "state_next (object), actions (array). Actions may be "
+       "{\"type\":\"say\",\"text\":\"...\"}, "
+       "{\"type\":\"memory_log\",\"text\":\"...\"}, or {\"type\":\"none\"}."))
+
+(defn- step-user-content [state audio-windows]
+  (let [summary {:state state
+                 :tick_ts (.toISOString (js/Date.))
+                 :audio_window_count (.-length audio-windows)
+                 :instruction "Process these audio windows directly. Do not transcribe as a prerequisite; only write memory if useful."}
+        content #js [#js {:type "text" :text (.stringify js/JSON (clj->js summary))}]]
+    (doseq [w (array-seq audio-windows)]
+      (.push content #js {:type "audio"
+                          :data (aget w "data")
+                          :mimeType (or (aget w "mimeType") "audio/wav")}))
+    content))
+
+(defn- parse-json-object-text [text]
+  (let [s (str/trim (str (or text "")))
+        unfenced (str/replace s #"(?s)^```(?:json)?\s*|\s*```$" "")]
+    (try
+      (js/JSON.parse unfenced)
+      (catch js/Error _
+        (let [start (.indexOf unfenced "{")
+              end (.lastIndexOf unfenced "}")]
+          (when (and (>= start 0) (> end start))
+            (js/JSON.parse (.slice unfenced start (inc end)))))))))
+
+(defn- gemma-audio-step! [config model-id state audio-windows]
+  (let [body {:model model-id
+              :temperature 0.2
+              :response_format {:type "json_object"}
+              :messages [{:role "system" :content (voice-loop-system-prompt)}
+                         {:role "user" :content (step-user-content state audio-windows)}]}]
+    (-> (js/fetch (proxx-chat-completions-url config)
+                  #js {:method "POST"
+                       :headers #js {"Content-Type" "application/json"}
+                       :body (.stringify js/JSON (clj->js body))})
+        (.then (fn [r]
+                 (-> (.text r)
+                     (.then (fn [text]
+                              (when-not (.-ok r)
+                                (throw (js/Error. (str "Gemma audio step " (.-status r) ": " text))))
+                              (let [payload (js/JSON.parse text)
+                                    content (or (aget payload "choices" 0 "message" "content") "")]
+                                (or (parse-json-object-text content)
+                                    #js {:state_next state :actions #js []}))))))))))
+
+(defn- append-voice-memory! [config sid model-id text extra]
+  (if (str/blank? (str text))
+    (js/Promise.resolve nil)
+    (let [event (op-mem/openplanner-event config {:id (str "voice:" (.randomUUID js/crypto))
+                                                  :kind "knoxx.voice.memory"
+                                                  :session sid
+                                                  :role "assistant"
+                                                  :model model-id
+                                                  :text text
+                                                  :extra extra})]
+      (-> (backend-http/openplanner-request! config "POST" "/v1/events" {:events [event]})
+          (.catch (fn [e]
+                    (js/console.warn "[voice:gemma-loop] memory_log not persisted:" (.-message e))))))))
+
+(defn- say-action! [config m guild-id text voice-id tts-model-id]
+  (-> (fetch-tts! config text voice-id tts-model-id)
+      (.then (fn [buf] (.playAudio m guild-id buf)))))
+
+(defn- handle-loop-action! [config m loop-state action]
+  (let [typ (or (aget action "type") "none")
+        text (str/trim (str (or (aget action "text") "")))
+        now (.now js/Date)
+        guild-id (aget loop-state "guildId")]
+    (cond
+      (and (= typ "say") (not (str/blank? text)))
+      (if (< (- now (or (aget loop-state "lastSayAt") 0)) (aget loop-state "minSayIntervalMs"))
+        (do (js/console.log "[voice:gemma-loop] say suppressed by min_say_interval_ms")
+            (js/Promise.resolve nil))
+        (do (aset loop-state "lastSayAt" now)
+            (say-action! config m guild-id text (aget loop-state "voiceId") (aget loop-state "ttsModelId"))))
+
+      (and (contains? #{"memory_log" "log"} typ) (not (str/blank? text)))
+      (append-voice-memory! config (aget loop-state "sessionId") (aget loop-state "modelId") text
+                            {:guildId guild-id :conversationId (aget loop-state "conversationId")})
+
+      :else (js/Promise.resolve nil))))
+
+(defn- handle-loop-actions! [config m loop-state actions]
+  (let [items (if (array? actions) (array-seq actions) [])]
+    (.reduce (clj->js items)
+             (fn [p action]
+               (.then p #(handle-loop-action! config m loop-state action)))
+             (js/Promise.resolve nil))))
+
+(defn- run-loop-step! [config m loop-state]
+  (let [queued (or (aget loop-state "audioWindows") #js [])
+        heartbeat-ms (aget loop-state "heartbeatMs")
+        idle? (zero? (.-length queued))
+        last-step (or (aget loop-state "lastStepAt") 0)
+        now (.now js/Date)]
+    (if (and idle? (or (zero? heartbeat-ms) (< (- now last-step) heartbeat-ms)))
+      (js/Promise.resolve nil)
+      (let [windows (.splice queued 0 (.-length queued))
+            state (or (aget loop-state "state") #js {})
+            model-id (aget loop-state "modelId")]
+        (aset loop-state "lastStepAt" now)
+        (-> (gemma-audio-step! config model-id state windows)
+            (.then (fn [result]
+                     (when-let [next-state (aget result "state_next")]
+                       (aset loop-state "state" next-state))
+                     (handle-loop-actions! config m loop-state (aget result "actions")))))))))
+
+(defn- schedule-loop-tick! [config m loop-state]
+  (when-not (aget loop-state "stopped")
+    (aset loop-state "timer"
+          (js/setTimeout
+           (fn []
+             (if (aget loop-state "running")
+               (schedule-loop-tick! config m loop-state)
+               (do
+                 (aset loop-state "running" true)
+                 (-> (run-loop-step! config m loop-state)
+                     (.catch (fn [e]
+                               (js/console.error "[voice:gemma-loop] step failed:" (.-message e))))
+                     (.finally (fn []
+                                 (aset loop-state "running" false)
+                                 (schedule-loop-tick! config m loop-state)))))))
+           (aget loop-state "tickMs")))))
+
+(defn- stop-existing-voice-loop! [m]
+  (when-let [loop-state (when m (aget m "__voiceGemmaLoop"))]
+    (aset loop-state "stopped" true)
+    (when-let [timer (aget loop-state "timer")]
+      (js/clearTimeout timer))
+    (when-let [stop (aget loop-state "listenerStop")]
+      (try (stop) (catch js/Error _)))
+    (aset m "__voiceGemmaLoop" nil)
+    (aset m "__voiceListener" nil)))
 
 (defn voice-listen-execute
   [runtime config _tool-call-id params a b c]
@@ -339,60 +382,52 @@
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")
         {:keys [sid cid auto?]} (resolve-session-context! params)
-        ;; Debounce: wait this many ms after last audio before steering.
-        ;; Longer than the gateway's silence debounce (350ms) so we catch
-        ;; rapid start/stop/start from the same utterance.
-        steer-debounce-ms 1500]
+        model-id (or (aget params "model_id") (aget params "modelId") "gemma4:e4b")
+        tick-ms (max 250 (param-int params "tick_ms" "tickMs" 1000))
+        heartbeat-ms (max 0 (param-int params "heartbeat_ms" "heartbeatMs" 10000))
+        min-say-ms (max 0 (param-int params "min_say_interval_ms" "minSayIntervalMs" 10000))]
     (when-not m (throw (js/Error. "Gateway not started")))
     (when (str/blank? g) (throw (js/Error. "guild_id required")))
-    (ensure-session-context! sid cid)
-    ;; Persist session context on the gateway manager so async listener callbacks
-    ;; can still resolve it even if the global agent context has been cleared.
+    ;; Persist optional session context for memory events; no steer endpoint is used.
     (when m
-      (aset m "__voiceSessionContext" #js {:sessionId sid :conversationId cid})
-      ;; Initialize transcription buffer
-      (when-not (aget m "__voiceTranscriptionBuffer")
-        (aset m "__voiceTranscriptionBuffer" #js {})))
-    (maybe-tool-update! on-update (str "Listening in guild " g "…"))
-    (js/console.log "[voice:tool] discord.voice.listen guild:" g "session:" sid "conv:" cid "auto-detect?" auto?)
+      (aset m "__voiceSessionContext" #js {:sessionId sid :conversationId cid}))
+    (stop-existing-voice-loop! m)
+    (maybe-tool-update! on-update (str "Starting continuous Gemma audio loop in guild " g "…"))
+    (js/console.log "[voice:tool] discord.voice.listen/gemma-loop guild:" g "session:" sid "conv:" cid
+                    "auto-detect?" auto? "model:" model-id "tick_ms:" tick-ms)
     (-> (.startVoiceListener
          m g
          (fn [uid]
-           (js/console.log "[voice:tool] >>> on-start callback fired for user:" uid)
-           ;; Cancel any pending flush for this user when they start speaking again
-           (let [buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
-                 user-buf (when buf-obj (aget buf-obj uid))]
-             (when user-buf
-               (when-let [t (aget user-buf "timer")]
-                 (js/clearTimeout t)
-                 (aset user-buf "timer" nil)))))
+           (js/console.log "[voice:gemma-loop] speaker start:" uid))
          (fn [uid buf]
-           (js/console.log "[voice:tool] >>> on-audio callback fired for user:" uid "buffer length:" (.-length buf) "bytes")
-           (-> (transcribe! config buf)
-               (.then (fn [t]
-                        (js/console.log "[voice:tool] transcription result for" uid ":" (if (str/blank? t) "[EMPTY]" t))
-                        (when-not (str/blank? t)
-                          (let [buf-obj (when m (aget m "__voiceTranscriptionBuffer"))
-                                _ (when (and m (not buf-obj))
-                                    (aset m "__voiceTranscriptionBuffer" #js {}))
-                                buf-obj (or buf-obj (aget m "__voiceTranscriptionBuffer"))
-                                user-buf (or (aget buf-obj uid) #js {:texts #js [] :timer nil})]
-                            ;; Append text to buffer
-                            (.push (aget user-buf "texts") t)
-                            (aset buf-obj uid user-buf)
-                            ;; Reset flush timer
-                            (when-let [old-timer (aget user-buf "timer")]
-                              (js/clearTimeout old-timer))
-                            (let [new-timer (js/setTimeout
-                                             #(flush-voice-buffer! config sid cid uid)
-                                             steer-debounce-ms)]
-                              (aset user-buf "timer" new-timer))))))
-               (.catch (fn [e]
-                         (js/console.error "[voice:tool] transcription/steering pipeline FAILED for" uid ":" (.-message e)))))))
+           (js/console.log "[voice:gemma-loop] audio window:" uid "bytes:" (.-length buf))
+           (when-let [loop-state (aget m "__voiceGemmaLoop")]
+             (.push (aget loop-state "audioWindows") (buffer->audio-window uid buf)))))
         (.then (fn [stop]
-                 (aset m "__voiceListener" stop)
-                 (tool-text-result (str "Listening in guild " g ". Transcriptions → session " sid)
-                                   {:guildId g :listening true}))))))
+                 (let [loop-state #js {:guildId g
+                                        :sessionId sid
+                                        :conversationId cid
+                                        :modelId model-id
+                                        :tickMs tick-ms
+                                        :heartbeatMs heartbeat-ms
+                                        :minSayIntervalMs min-say-ms
+                                        :voiceId (aget params "voice_id")
+                                        :ttsModelId (aget params "tts_model_id")
+                                        :audioWindows #js []
+                                        :state #js {:mode "continuous_audio_loop"}
+                                        :lastSayAt 0
+                                        :lastStepAt 0
+                                        :running false
+                                        :stopped false
+                                        :listenerStop stop}]
+                   (aset m "__voiceGemmaLoop" loop-state)
+                   ;; Keep __voiceListener truthy so discord.voice.say remains a voice-mode action.
+                   (aset m "__voiceListener" stop)
+                   (schedule-loop-tick! config m loop-state)
+                   (tool-text-result (str "Continuous Gemma audio loop active in guild " g " via " model-id)
+                                     {:guildId g :listening true :mode "gemma-audio-loop"
+                                      :modelId model-id :tickMs tick-ms :heartbeatMs heartbeat-ms
+                                      :sessionId sid :conversationId cid})))))))
 
 (defn voice-connect-execute
   [runtime config _tool-call-id params a b c]
@@ -402,21 +437,28 @@
         {:keys [sid cid auto?]} (resolve-session-context! params)]
     (when-not m (throw (js/Error. "Gateway not started")))
     (when (str/blank? ch) (throw (js/Error. "channel_id required")))
-    (ensure-session-context! sid cid)
-    ;; Persist session context on the gateway manager so async listener callbacks
-    ;; can still resolve it even if the global agent context has been cleared.
+    ;; Persist optional session context for memory events; no steer endpoint is used.
     (when m
       (aset m "__voiceSessionContext" #js {:sessionId sid :conversationId cid}))
-    (maybe-tool-update! on-update (str "Connecting voice + listener for channel " ch "…"))
+    (maybe-tool-update! on-update (str "Connecting voice + continuous Gemma loop for channel " ch "…"))
     (-> (.joinVoice m ch)
         (.then (fn [r]
                  (let [guild-id (or (aget r "guildId") "")]
                    (when (str/blank? guild-id)
                      (throw (js/Error. "joinVoice did not return guildId")))
                    (js/console.log "[voice:tool] discord.voice.connect joined" ch "guild" guild-id "auto-detect?" auto?)
-                   (voice-listen-execute runtime config _tool-call-id (clj->js {:guild_id guild-id
-                                                                              :session_id sid
-                                                                              :conversation_id cid}) a b c))))
+                   (voice-listen-execute runtime config _tool-call-id
+                                         (clj->js {:guild_id guild-id
+                                                   :session_id sid
+                                                   :conversation_id cid
+                                                   :model_id (or (aget params "model_id") (aget params "modelId"))
+                                                   :voice_id (or (aget params "voice_id") (aget params "voiceId"))
+                                                   :tts_model_id (or (aget params "tts_model_id") (aget params "ttsModelId"))
+                                                   :tick_ms (or (aget params "tick_ms") (aget params "tickMs"))
+                                                   :heartbeat_ms (or (aget params "heartbeat_ms") (aget params "heartbeatMs"))
+                                                   :min_say_interval_ms (or (aget params "min_say_interval_ms")
+                                                                            (aget params "minSayIntervalMs"))})
+                                         a b c))))
         (.then (fn [_]
                  (tool-text-result (str "Connected to voice " ch " and listening")
                                    {:channelId ch :listening true :sessionId sid :conversationId cid}))))))
@@ -424,20 +466,20 @@
 (def voice-connect-tool
   (partial create-tool-obj
            "discord.voice.connect" "Voice Connect"
-           "Join a Discord voice channel and start listening/transcription."
-           "Join voice + enable voice-to-text transcription in one operation."
+           "Join a Discord voice channel and start the continuous Gemma audio loop."
+           "Join voice + enable one-model audio cognition; no ASR or steer endpoint is used."
            (clj->js ["Use discord.voice.connect as the default voice entrypoint."
-                     "Provide channel_id. session_id and conversation_id are auto-detected when called during an agent run."
-                     "This will join the channel, then start listening in the resulting guild."])
+                     "Provide channel_id. session_id and conversation_id are optional and only tag memory events."
+                     "This will join the channel, then start the continuous Gemma audio loop in the resulting guild."])
            voice-connect-params
            voice-connect-execute))
 
 (def voice-listen-tool (partial create-tool-obj "discord.voice.listen" "Voice Listen"
-                                "Listen for user speech and transcribe into agent session."
-                                "Start listening for voice input and transcribe speech to text."
+                                "Start the continuous Gemma audio loop in an existing voice connection."
+                                "Listen directly with the multimodal cognitive core; no ASR or steering pass."
                                 (clj->js ["Use discord.voice.listen only when already connected via discord.voice.join."
-                                          "Provide guild_id. session_id and conversation_id are auto-detected."
-                                          "Transcriptions are steered into the agent session automatically."])
+                                          "Provide guild_id. session_id and conversation_id are optional memory tags."
+                                          "Audio windows are sent directly to Gemma; Gemma chooses say/memory/none actions."])
                                 voice-listen-params
                                 voice-listen-execute))
 
@@ -448,16 +490,15 @@
 (defn voice-stop-listen-execute [runtime config _tool-call-id params a b c]
   (let [m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")]
-    (when-let [sf (when m (aget m "__voiceListener"))] (sf))
     (when m
-      (aset m "__voiceListener" nil)
+      (stop-existing-voice-loop! m)
       (aset m "__voiceSessionContext" nil))
     (tool-text-result (str "Stopped listening in guild " g) {:guildId g :listening false})))
 
 (def voice-stop-listen-tool (partial create-tool-obj "discord.voice.stop_listen" "Stop Voice Listen"
-                                     "Stop listening for voice input."
-                                     "Stop the active voice listener in a guild."
-                                     (clj->js ["Use discord.voice.stop_listen to stop voice transcription."
+                                     "Stop the continuous Gemma audio loop."
+                                     "Stop the active voice listener/loop in a guild."
+                                     (clj->js ["Use discord.voice.stop_listen to stop the continuous Gemma audio loop."
                                                "Provide the guild_id of the active listener."])
                                      voice-stop-listen-params
                                      voice-stop-listen-execute))
