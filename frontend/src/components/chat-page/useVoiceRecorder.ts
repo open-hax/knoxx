@@ -68,7 +68,10 @@ function float32ToWavBlob(samples: Float32Array, sampleRate: number): Blob {
   view.setUint32(36, 0x617461, false); // "data"
   view.setUint32(40, samples.length * 4, true);
 
-  return new Blob([wavHeader, samples], { type: "audio/wav" });
+  const pcmBytes = new ArrayBuffer(samples.length * 4);
+  new Float32Array(pcmBytes).set(samples);
+
+  return new Blob([wavHeader, pcmBytes], { type: "audio/wav" });
 }
 
 function longestCommonSuffixPrefix(a: string, b: string): number {

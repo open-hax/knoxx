@@ -210,6 +210,9 @@ const apps = [
         PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
         PROXX_DEFAULT_MODEL: 'gemma4:31b',
         PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
+        KNOXX_PROVIDER_BASE_URLS: hostEnv.KNOXX_PROVIDER_BASE_URLS || 'llamacpp=http://127.0.0.1:8082',
+        KNOXX_PROVIDER_AUTH_TOKENS: hostEnv.KNOXX_PROVIDER_AUTH_TOKENS || 'llamacpp=LLAMACPP_API_KEY',
+        LLAMACPP_API_KEY: hostEnv.LLAMACPP_API_KEY || 'no-key',
         // OpenPlanner (on host via compose port-forward)
         OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
         OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
@@ -271,7 +274,7 @@ const apps = [
           WHISPER_MODEL_ID:
             process.env.WHISPER_MODEL_ID
             || hostEnv.WHISPER_MODEL_ID
-            || 'anubhav200/openai-whisper-small-openvino-int4',
+            || 'OpenVINO/whisper-medium.en-int8-ov',
           WHISPER_NPU_COMPILER_TYPE:
             process.env.WHISPER_NPU_COMPILER_TYPE
             || hostEnv.WHISPER_NPU_COMPILER_TYPE

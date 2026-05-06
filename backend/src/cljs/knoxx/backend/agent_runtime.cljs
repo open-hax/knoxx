@@ -6,7 +6,7 @@
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.run-state :refer [tool-event-payload append-run-event!]]
-            [knoxx.backend.runtime.models :refer [normalize-thinking-level effective-thinking-level models-config allowlisted-model-id?]]
+            [knoxx.backend.runtime.models :refer [normalize-thinking-level effective-thinking-level models-config allowlisted-model-id? resolve-model-contract]]
             [knoxx.backend.extension-runtime :as ext-runtime]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]))
@@ -100,6 +100,18 @@
                     ;; Keep Knoxx running even if Proxx is offline or auth fails.
                     (js/Promise.resolve [])))))))
 
+(defn- mime->audio-format [mime-type]
+  (let [mime (some-> mime-type str str/lower-case)]
+    (case mime
+      "audio/mpeg" "mp3"
+      "audio/mp4" "mp4"
+      "audio/wav" "wav"
+      "audio/x-wav" "wav"
+      "audio/ogg" "ogg"
+      "audio/flac" "flac"
+      "audio/aac" "aac"
+      (some-> mime (str/split #"/") second))))
+
 (defn- stored-content-part->agent-part
   [part]
   (let [part-type (some-> (:type part) str str/lower-case)
@@ -125,17 +137,37 @@
                   #js {:type "image" :data raw :mimeType mime})
 
                 (and (string? data) (not (str/blank? data)))
-                ;; Already raw base64.
                 #js {:type "image" :data data :mimeType (or mime-type "image/png")}
 
-                ;; Remote URL — materialize-part! should have inlined this already.
-                ;; Emit image_url as last resort for non-Ollama upstreams.
                 (and (string? url) (not (str/blank? url)))
                 #js {:type "image_url" :image_url #js {:url url}}
 
                 :else nil)
-      "audio" (when (not (str/blank? (str (or data url))))
-                 #js {:type "audio" :data (or data url) :mimeType mime-type})
+      "audio" (cond
+                 (and (string? data) (not (str/blank? data)) (str/starts-with? data "data:"))
+                 (let [comma (.indexOf data ",")
+                       raw   (if (>= comma 0) (.slice data (inc comma)) data)
+                       mime  (or mime-type
+                                 (second (re-find #"data:([^;,]+)" data))
+                                 "audio/mpeg")]
+                   #js {:type "audio"
+                        :data raw
+                        :mimeType mime
+                        :format (or (mime->audio-format mime) "mp3")})
+
+                 (and (string? data) (not (str/blank? data)))
+                 #js {:type "audio"
+                      :data data
+                      :mimeType mime-type
+                      :format (or (mime->audio-format mime-type) "mp3")}
+
+                 (and (string? url) (not (str/blank? url)))
+                 #js {:type "audio"
+                      :data url
+                      :mimeType mime-type
+                      :format (or (mime->audio-format mime-type) "mp3")}
+
+                 :else nil)
       "video" (when (not (str/blank? (str (or data url))))
                  #js {:type "video" :data (or data url) :mimeType mime-type})
       "document" (when (not (str/blank? (str (or data url))))
@@ -220,6 +252,72 @@
                  vec))
           (into [{:role "system" :content prompt}] items))))))
 
+(defn- context-policy
+  [agent-spec]
+  (or (:context-policy agent-spec)
+      (:contextPolicy agent-spec)
+      (:context agent-spec)
+      (get-in agent-spec [:extras :context])
+      (get-in agent-spec [:extras :context-policy])))
+
+(defn- positive-int-value
+  [value]
+  (let [n (js/Number value)]
+    (when (and (not (js/isNaN n)) (pos? n))
+      (js/Math.floor n))))
+
+(defn- message-text-size
+  [message]
+  (+ (count (str (or (:content message) "")))
+     (reduce + 0 (map #(count (str (or (:text %) (:filename %) (:url %) "")))
+                      (or (:content-parts message) (:contentParts message) [])))))
+
+(defn prune-session-messages
+  "Apply an agent contract context policy to stored transcript messages.
+
+   Supported contract shape:
+   :context {:max-messages 40
+             :max-chars 80000
+             :preserve-system true}
+
+   This is intentionally a deterministic sliding-window prune. Summary-based
+   compression can be layered later, but this prevents unbounded sticky sessions."
+  [agent-spec messages]
+  (let [items (vec (or messages []))
+        policy (context-policy agent-spec)]
+    (if-not policy
+      items
+      (let [max-messages (positive-int-value (or (:max-messages policy)
+                                                (:maxMessages policy)
+                                                (:max_messages policy)))
+            max-chars (positive-int-value (or (:max-chars policy)
+                                             (:maxChars policy)
+                                             (:max_chars policy)))
+            preserve-system? (not= false (or (:preserve-system policy)
+                                             (:preserveSystem policy)
+                                             (:preserve_system policy)))
+            system-messages (if preserve-system?
+                              (filterv #(= "system" (some-> (:role %) str str/lower-case)) items)
+                              [])
+            body-messages (if preserve-system?
+                            (remove #(= "system" (some-> (:role %) str str/lower-case)) items)
+                            items)
+            by-count (if max-messages
+                       (take-last max-messages (vec body-messages))
+                       (vec body-messages))
+            by-chars (if max-chars
+                       (loop [remaining (reverse by-count)
+                              total 0
+                              kept '()]
+                         (if-let [message (first remaining)]
+                           (let [size (message-text-size message)]
+                             (if (and (seq kept) (> (+ total size) max-chars))
+                               (vec kept)
+                               (recur (rest remaining) (+ total size) (conj kept message))))
+                           (vec kept)))
+                       (vec by-count))]
+        (vec (concat system-messages by-chars))))))
+
 (defn rehydrate-session-manager-from-redis!
   ([config session-manager conversation-id]
    (rehydrate-session-manager-from-redis! config session-manager conversation-id nil nil))
@@ -249,7 +347,8 @@
                   (let [openplanner-messages (vec (or (aget parts 0) []))
                         redis-messages (vec (or (aget parts 1) []))
                         merged-messages (-> (merge-restored-session-messages openplanner-messages redis-messages)
-                                            (sync-system-message (:system-prompt agent-spec)))]
+                                            (sync-system-message (:system-prompt agent-spec))
+                                            (#(prune-session-messages agent-spec %)))]
                     (doseq [message merged-messages]
                       (when-let [agent-message (stored-session-message->agent-message message)]
                         (.appendMessage session-manager agent-message)))
@@ -446,6 +545,12 @@
                          (let [auth-storage (.create AuthStorage auth-file)
                                _ (when-not (str/blank? (:proxx-auth-token config))
                                    (.setRuntimeApiKey auth-storage "proxx" (:proxx-auth-token config)))
+                               _ (doseq [[provider-id env-var] (or (:provider-auth-tokens config) {})]
+                                   (let [provider-id (some-> provider-id str str/trim not-empty)
+                                         env-var (some-> env-var str str/trim not-empty)
+                                         token (when env-var (aget js/process.env env-var))]
+                                     (when (and provider-id (string? token) (not (str/blank? token)))
+                                       (.setRuntimeApiKey auth-storage provider-id token))))
                                model-registry (ModelRegistry. auth-storage models-file)
                                loader (DefaultResourceLoader.
                                        #js {:cwd (:workspace-root config)
@@ -486,7 +591,10 @@
                                                                             thinking-level
                                                                             (:agent-thinking-level config)
                                                                             "off"))
-                model (or (.find model-registry "proxx" model-id)
+                model-provider-id (or (some-> (resolve-model-contract config model-id) :provider)
+                                      "proxx")
+                model (or (.find model-registry (str model-provider-id) model-id)
+                          (.find model-registry "proxx" model-id)
                           (.find model-registry "proxx" (:proxx-default-model config)))
                 allowed-tool-ids (allowed-tool-id-set config
                                                       (:role agent-spec)
@@ -575,7 +683,7 @@
               (let [session-manager (.inMemory SessionManager (:workspace-root config))]
                 (when-not (str/blank? (str (or session-id "")))
                   (.newSession session-manager #js {:id (str session-id)}))
-                (.appendModelChange session-manager "proxx" model-id)
+                (.appendModelChange session-manager (str model-provider-id) model-id)
                 (.appendThinkingLevelChange session-manager thinking-level)
                 (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id session-id agent-spec)
                     (.then (fn [result]
@@ -664,9 +772,8 @@
   (:session (get @agent-sessions* conversation-id)))
 
 (defn remove-agent-session!
-  "Keep completed conversation sessions warm in-process so follow-up turns retain live context.
-   Redis/OpenPlanner rehydration remains the fallback path across restarts or instance changes.
-   Dispatches session_shutdown to extensions before clearing."
+  "Dispatch session_shutdown to extensions, then release the in-process session entry.
+   Redis/OpenPlanner rehydration remains the fallback path across restarts or instance changes."
   [conversation-id]
   (when-let [entry (get @agent-sessions* conversation-id)]
     (let [ctx (ext-runtime/build-extension-ctx
@@ -676,6 +783,7 @@
       (ext-runtime/dispatch-event "session_shutdown"
                                   #js {:conversationId conversation-id}
                                   ctx)))
+  (swap! agent-sessions* dissoc conversation-id)
   nil)
 
 (defn queue-agent-control!

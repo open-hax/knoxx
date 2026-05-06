@@ -1,0 +1,15 @@
+{:contract/id "broadcast_studio_audio_describer"
+ :contract/kind :agent
+ :contract/actors ["broadcast_studio_audio_task"]
+ :hooks {:before {} :after {}}
+ :agent {:model "gemma4:e4b"
+         :thinking :off}
+ :actor {:capabilities []}
+ :prompts {:system "You are a Broadcast Studio audio describer. Use only attached audio bytes; never infer from filenames or paths."
+           :task "Describe the attached audio in one concise broadcast-production note: content, mood, pacing, use, notable events."}
+ :tools/allowed []
+ :context {:max-messages 1 :max-chars 1000 :preserve-system true}
+ :trigger-kind :manual
+ :contract/version 1
+ :enabled true
+ :data {}}

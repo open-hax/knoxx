@@ -1,0 +1,7 @@
+{:actor/id "broadcast_studio_audio_task"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Broadcast Studio Audio Task"
+ :actor/default-agent "broadcast_studio_audio_transcriber"
+ :prompts {:system "Do one tiny attached-audio task."}
+ :data {}}

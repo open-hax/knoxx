@@ -40,6 +40,12 @@
    [:before {:optional true} [:map {:closed false}]]
    [:after  {:optional true} [:map {:closed false}]]])
 
+(def ContextPolicy
+  [:map {:closed false}
+   [:max-messages {:optional true} int?]
+   [:max-chars {:optional true} int?]
+   [:preserve-system {:optional true} boolean?]])
+
 (def AgentContract
   "Agent contract schema — all disk fields tolerated."
   [:map {:closed false}
@@ -63,6 +69,8 @@
    [:prompts {:optional true} [:map {:closed false}
                                 [:system {:optional true} string?]
                                 [:task {:optional true} string?]]]
+   [:context {:optional true} ContextPolicy]
+   [:context-policy {:optional true} ContextPolicy]
    [:data {:optional true} [:map {:closed false}]]])
 
 (def ActorContract
@@ -112,6 +120,8 @@
   [:map {:closed false}
    [:model-family/id string?]
    [:model-family/provider {:optional true} keyword?]
+   [:model-family/api {:optional true} [:or string? keyword?]]
+   [:model-family/compat {:optional true} :map]
    [:model-family/prefixes [:sequential string?]]
    [:model-family/allowlisted {:optional true} boolean?]
    [:model-family/reasoning {:optional true} boolean?]
@@ -126,6 +136,8 @@
    [:model/id string?]
    [:model-family/id {:optional true} string?]
    [:model/provider {:optional true} keyword?]
+   [:model/api {:optional true} [:or string? keyword?]]
+   [:model/compat {:optional true} :map]
    [:model/label {:optional true} string?]
    [:model/default {:optional true} boolean?]
    [:model/allowlisted {:optional true} boolean?]
@@ -162,11 +174,35 @@
     [:source/projection {:optional true} [:map {:closed false}]]
     [:source/backpressure {:optional true} [:map {:closed false}]]])
 
+(def SubAgentContract
+  "Sub-agent contracts define lightweight agents that can be spawned by parent agents.
+   They inherit conversation lineage and may restrict or inherit capabilities."
+  [:map {:closed false}
+   [:contract/kind [:= :sub-agent]]
+   [:contract/id string?]
+   [:contract/version {:optional true} int?]
+   [:enabled {:optional true} boolean?]
+   [:sub-agent/parent-capabilities {:optional true} [:enum :inherit :restrict :none]]
+   [:sub-agent/capabilities {:optional true} [:vector any?]]
+   [:sub-agent/role {:optional true} string?]
+   [:sub-agent/model {:optional true} string?]
+   [:sub-agent/thinking {:optional true} string?]
+   [:sub-agent/timeout-ms {:optional true} int?]
+   [:sub-agent/mode {:optional true} [:enum :fire-and-forget :await :collect]]
+   [:agent {:optional true} AgentSpec]
+   [:prompts {:optional true} [:map {:closed false}
+                                [:system {:optional true} string?]
+                                [:task {:optional true} string?]]]
+   [:context {:optional true} [:map {:closed false}]]
+   [:data {:optional true} [:map {:closed false}]]])
+
 (defn- infer-contract-class
   [value]
   (cond
     (and (contains? value :contract/id)
          (= :policy (:contract/kind value))) "policies"
+    (and (contains? value :contract/id)
+         (= :sub-agent (:contract/kind value))) "sub_agents"
     (contains? value :contract/id) "agents"
     (contains? value :actor/id) "actors"
     (contains? value :role/id) "roles"
@@ -187,6 +223,7 @@
     "model_families" ModelFamilyContract
     "models" ModelContract
     "ingest_sources" IngestSourceContract
+    "sub_agents" SubAgentContract
     AgentContract))
 
 (defn- collect-humanized-errors

@@ -1,0 +1,15 @@
+{:contract/id "broadcast_studio_audio_labeler"
+ :contract/kind :agent
+ :contract/actors ["broadcast_studio_audio_task"]
+ :hooks {:before {} :after {}}
+ :agent {:model "gemma4:e4b"
+         :thinking :off}
+ :actor {:capabilities []}
+ :prompts {:system "You are a Broadcast Studio audio labeler. Use only attached audio bytes; never infer from filenames or paths."
+           :task "Suggest short reusable labels for the attached audio, grouped as Content, Mood, Function, Production."}
+ :tools/allowed []
+ :context {:max-messages 1 :max-chars 1000 :preserve-system true}
+ :trigger-kind :manual
+ :contract/version 1
+ :enabled true
+ :data {}}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Badge, tokens } from "@open-hax/uxx";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
@@ -8,11 +8,6 @@ import {
   savePlaylistAsM3U,
   loadM3UPlaylist,
   listPlaylists,
-  getAudioLabels,
-  addAudioLabel,
-  removeAudioLabel,
-  getAllLabels,
-  syncAudioSymlinks,
   saveAudioAsset,
   scanDiscordAudio,
   scanDiscordImages,
@@ -59,6 +54,194 @@ interface AudioChatContextResponse {
   song_title: string;
   description: string;
   content: string;
+}
+
+interface LabelNode {
+  label_id: string;
+  label: string;
+  emoji: string | null;
+  description: string;
+  color: string | null;
+}
+
+interface GraphEdgeQueryResponse {
+  edges?: Array<{
+    source: string;
+    target: string;
+    edgeKind: string;
+  }>;
+}
+
+interface LabelNodesResponse {
+  ok: boolean;
+  nodes?: Array<{
+    node_id: string;
+  }>;
+}
+
+interface BroadcastStudioAgentLaunchRequest {
+  id: string;
+  actorId: string;
+  contractId: string;
+  model: string;
+  contentParts?: Array<{
+    type: "audio";
+    url: string;
+    mimeType?: string;
+    filename?: string;
+  }>;
+  direct?: boolean;
+}
+
+interface CreateLabelResponse {
+  ok: boolean;
+  label: LabelNode;
+}
+
+const OPENPLANNER_BASE = "/api/openplanner/v1";
+
+const BROADCAST_STUDIO_AUDIO_TASK_ACTOR_ID = "broadcast_studio_audio_task";
+const BROADCAST_STUDIO_LABELER_CONTRACT_ID = "broadcast_studio_audio_labeler";
+
+const BROADCAST_STUDIO_AGENT_ACTIONS = [
+  {
+    id: "transcript",
+    label: "📝 Transcript",
+    contractId: "broadcast_studio_audio_transcriber",
+    model: "gemma4:e4b",
+  },
+  {
+    id: "description",
+    label: "📄 Description",
+    contractId: "broadcast_studio_audio_describer",
+    model: "gemma4:e4b",
+  },
+  {
+    id: "labels",
+    label: "🏷 Suggest labels",
+    contractId: "broadcast_studio_audio_labeler",
+    model: "gemma4:e4b",
+  },
+] as const;
+
+function audioFileNodeId(path: string): string {
+  return `devel:file:${path}`;
+}
+
+async function loadGraphLabels(search = ""): Promise<LabelNode[]> {
+  const res = await request<{ ok: boolean; labels: LabelNode[] }>(
+    `${OPENPLANNER_BASE}/graph/labels?search=${encodeURIComponent(search)}&limit=200`
+  );
+  return res.labels ?? [];
+}
+
+async function createGraphLabel(labelText: string): Promise<LabelNode> {
+  const trimmed = labelText.trim();
+  const res = await request<CreateLabelResponse>(`${OPENPLANNER_BASE}/graph/labels`, {
+    method: "POST",
+    body: JSON.stringify({
+      label: trimmed,
+      slug: trimmed,
+      tenant_id: "default",
+      description: "Created from Broadcast Studio",
+    }),
+  });
+  return res.label;
+}
+
+async function loadLabelIdsForNode(nodeId: string): Promise<string[]> {
+  const res = await request<GraphEdgeQueryResponse>(`${OPENPLANNER_BASE}/graph/edges/query`, {
+    method: "POST",
+    body: JSON.stringify({
+      nodeIds: [nodeId],
+      edgeKinds: ["has_label"],
+      includeBoundaryEdges: true,
+      limit: 500,
+    }),
+  });
+
+  return (res.edges ?? [])
+    .filter((edge) => edge.edgeKind === "has_label" && edge.source === nodeId)
+    .map((edge) => edge.target);
+}
+
+async function loadLabelsForAudioPath(path: string, catalog?: LabelNode[]): Promise<LabelNode[]> {
+  const [labels, appliedIds] = await Promise.all([
+    catalog ? Promise.resolve(catalog) : loadGraphLabels(),
+    loadLabelIdsForNode(audioFileNodeId(path)),
+  ]);
+  const appliedSet = new Set(appliedIds);
+  return labels.filter((label) => appliedSet.has(label.label_id));
+}
+
+async function applyGraphLabelToAudioPath(path: string, labelId: string): Promise<void> {
+  await request(`${OPENPLANNER_BASE}/graph/labels/${encodeURIComponent(labelId)}/apply`, {
+    method: "POST",
+    body: JSON.stringify({ node_id: audioFileNodeId(path) }),
+  });
+}
+
+async function removeGraphLabelFromAudioPath(path: string, labelId: string): Promise<void> {
+  await request(`${OPENPLANNER_BASE}/graph/labels/${encodeURIComponent(labelId)}/remove`, {
+    method: "POST",
+    body: JSON.stringify({ node_id: audioFileNodeId(path) }),
+  });
+}
+
+async function loadAudioPathsForLabelId(labelId: string): Promise<string[]> {
+  const res = await request<LabelNodesResponse>(
+    `${OPENPLANNER_BASE}/graph/labels/${encodeURIComponent(labelId)}/nodes?limit=10000`
+  );
+
+  return (res.nodes ?? [])
+    .map((node) => node.node_id)
+    .filter((nodeId) => nodeId.startsWith("devel:file:"))
+    .map((nodeId) => nodeId.slice("devel:file:".length));
+}
+
+function cleanSuggestedLabel(raw: string): string | null {
+  const cleaned = raw
+    .trim()
+    .replace(/^[-*•\d.()\s]+/, "")
+    .replace(/^labels?:\s*/i, "")
+    .replace(/^`|`$/g, "")
+    .replace(/^"|"$/g, "")
+    .replace(/^'|'$/g, "")
+    .trim();
+
+  if (!cleaned) return null;
+  if (cleaned.length > 64) return null;
+  return cleaned;
+}
+
+function extractSuggestedLabelsFromText(text: string): string[] {
+  const lines = text.split(/\r?\n/);
+  const candidates: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (/^[-*•]|^\d+[.)]/.test(trimmed)) {
+      const parts = trimmed.split(/[,|]/g);
+      for (const part of parts) {
+        const cleaned = cleanSuggestedLabel(part);
+        if (cleaned) candidates.push(cleaned);
+      }
+      continue;
+    }
+
+    if (/labels?/i.test(trimmed) && /[:,]/.test(trimmed)) {
+      const tail = trimmed.split(/:/, 2)[1] ?? trimmed;
+      const parts = tail.split(/[,|]/g);
+      for (const part of parts) {
+        const cleaned = cleanSuggestedLabel(part);
+        if (cleaned) candidates.push(cleaned);
+      }
+    }
+  }
+
+  return Array.from(new Set(candidates)).slice(0, 16);
 }
 
 // ── API helpers ──────────────────────────────────────────────────────
@@ -122,11 +305,31 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+const audioDurationCache = new Map<string, number>();
+
 function getAudioDuration(path: string): Promise<number> {
+  const cached = audioDurationCache.get(path);
+  if (cached !== undefined) return Promise.resolve(cached);
+
   return new Promise((resolve) => {
     const audio = new Audio();
-    audio.addEventListener("loadedmetadata", () => resolve(audio.duration));
-    audio.addEventListener("error", () => resolve(0));
+    audio.preload = "metadata";
+
+    const cleanup = (duration: number) => {
+      audioDurationCache.set(path, duration);
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata);
+      audio.removeEventListener("error", onError);
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      resolve(duration);
+    };
+
+    const onLoadedMetadata = () => cleanup(audio.duration);
+    const onError = () => cleanup(0);
+
+    audio.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
+    audio.addEventListener("error", onError, { once: true });
     audio.src = getAudioStreamUrl(path);
   });
 }
@@ -153,26 +356,24 @@ function WaveformVisualizer({ analyserRef, isPlaying }: { analyserRef: React.Ref
   useEffect(() => {
     const container = containerRef.current;
     const analyser = analyserRef.current;
-    if (!container || !analyser || !isPlaying) return;
+    if (!container || !analyser || !isPlaying || audioMotionRef.current) return;
 
-    // Create audioMotion instance
-    const audioMotion = new AudioMotionAnalyzer(container, {
+    audioMotionRef.current = new AudioMotionAnalyzer(container, {
       source: analyser,
       width: container.clientWidth,
       height: 50,
-      mode: 2, // Oscilloscope mode
-      gradient: 'classic',
+      mode: 2,
+      gradient: "classic",
       showScaleX: false,
       showScaleY: false,
       smoothing: 0.7,
     });
-    audioMotionRef.current = audioMotion;
-
-    return () => {
-      audioMotion.destroy();
-      audioMotionRef.current = null;
-    };
   }, [analyserRef, isPlaying]);
+
+  useEffect(() => () => {
+    audioMotionRef.current?.destroy();
+    audioMotionRef.current = null;
+  }, []);
 
   return (
     <div
@@ -182,10 +383,21 @@ function WaveformVisualizer({ analyserRef, isPlaying }: { analyserRef: React.Ref
   );
 }
 
-// ── Main Component ───────────────────────────────────────────────────
+const MemoChatWorkspacePane = memo(ChatWorkspacePane);
 
-export default function BroadcastStudioPage() {
-  // Chat workspace controller (right pane)
+function BroadcastStudioChatPane({
+  currentFile,
+  width,
+  onShowFiles,
+  launchRequest,
+  onApplySuggestedLabel,
+}: {
+  currentFile: AudioFileEntry | null;
+  width: number;
+  onShowFiles: () => void;
+  launchRequest: BroadcastStudioAgentLaunchRequest | null;
+  onApplySuggestedLabel: (labelText: string) => Promise<void> | void;
+}) {
   const chat = useChatWorkspaceController({
     initialShowCanvas: false,
     defaultActorId: "broadcast_studio",
@@ -196,11 +408,209 @@ export default function BroadcastStudioPage() {
     sidebarWidthKey: STUDIO_SIDEBAR_WIDTH_KEY,
   });
 
-  // Ref to hold latest chat object — prevents unstable reference from
-  // triggering syncAudioChatContext effect on every render.
   const chatRef = useRef(chat);
   chatRef.current = chat;
+  const lastLaunchIdRef = useRef<string | null>(null);
+  const [pendingLaunch, setPendingLaunch] = useState<BroadcastStudioAgentLaunchRequest | null>(null);
+  const pinnedAudioContextPathsRef = useRef<string[]>([]);
 
+  const syncAudioChatContext = useCallback(async (file: AudioFileEntry | null) => {
+    const controller = chatRef.current;
+    const previousPaths = pinnedAudioContextPathsRef.current;
+    if (previousPaths.length > 0) {
+      previousPaths.forEach((path) => controller.unpinContextItem(path));
+      pinnedAudioContextPathsRef.current = [];
+    }
+
+    if (!file) return;
+
+    try {
+      const context = await request<AudioChatContextResponse>(
+        `/api/ingestion/audio-context?source_id=${encodeURIComponent("workspace-audio")}&path=${encodeURIComponent(file.path)}`
+      );
+
+      const titlePath = `${file.path}#song-title`;
+      const descriptionPath = `${file.path}#song-description`;
+
+      controller.pinContextItem({
+        id: titlePath,
+        title: `Song: ${context.song_title}`,
+        path: titlePath,
+        snippet: context.song_title,
+        kind: "message",
+      });
+
+      controller.pinContextItem({
+        id: descriptionPath,
+        title: `Description: ${file.name}`,
+        path: descriptionPath,
+        snippet: context.description,
+        kind: "message",
+      });
+
+      pinnedAudioContextPathsRef.current = [titlePath, descriptionPath];
+    } catch (error) {
+      console.error("Failed to pin audio chat context:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void syncAudioChatContext(currentFile);
+  }, [currentFile, syncAudioChatContext]);
+
+  useEffect(() => {
+    if (!launchRequest || launchRequest.id === lastLaunchIdRef.current) return;
+    lastLaunchIdRef.current = launchRequest.id;
+    chat.setSelectedModel(launchRequest.model);
+    chat.setActiveActorId(launchRequest.actorId);
+    chat.setActiveAgentId(launchRequest.contractId);
+    chat.handleNewChat();
+    setPendingLaunch(launchRequest);
+  }, [chat, launchRequest]);
+
+  useEffect(() => {
+    if (!pendingLaunch) return;
+    if (chat.activeAgentId !== pendingLaunch.contractId) return;
+    if (chat.selectedModel !== pendingLaunch.model) return;
+    if (!chat.conversationId || chat.isSending) return;
+    setPendingLaunch(null);
+    void chat.handleSend("", pendingLaunch.contentParts, { direct: pendingLaunch.direct, omitSystemPrompt: true });
+  }, [chat.activeAgentId, chat.conversationId, chat.handleSend, chat.isSending, chat.selectedModel, pendingLaunch]);
+
+  const latestAssistantMessage = [...chat.messages].reverse().find((message) => message.role === "assistant" && (message.content?.trim() || message.status === "done")) ?? null;
+  const suggestedLabels = useMemo(() => {
+    if (chat.activeAgentId !== BROADCAST_STUDIO_LABELER_CONTRACT_ID) return [];
+    if (!latestAssistantMessage?.content) return [];
+    return extractSuggestedLabelsFromText(latestAssistantMessage.content);
+  }, [chat.activeAgentId, latestAssistantMessage?.content]);
+
+  return (
+    <aside style={{
+      width,
+      minWidth: 300,
+      maxWidth: 800,
+      display: "flex",
+      flexDirection: "column",
+      minHeight: 0,
+      overflow: "hidden",
+      background: "var(--token-colors-background-surface)",
+    }}>
+      {currentFile && suggestedLabels.length > 0 && (
+        <div style={{
+          padding: "8px 10px",
+          borderBottom: `1px solid var(--token-colors-border-subtle)`,
+          background: "var(--token-colors-background-base)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        }}>
+          <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)" }}>
+            Suggested labels from the labeler agent for {currentFile.name}:
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {suggestedLabels.map((label) => (
+              <button
+                key={label}
+                onClick={() => void onApplySuggestedLabel(label)}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: 10,
+                  fontSize: tokens.fontSize.xs,
+                  background: "var(--token-colors-alpha-white-05)",
+                  border: `1px solid var(--token-colors-border-default)`,
+                  cursor: "pointer",
+                }}
+              >
+                + {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <MemoChatWorkspacePane
+        controller={chat}
+        showFiles={false}
+        showCanvasToggle={false}
+        onShowFiles={onShowFiles}
+      />
+    </aside>
+  );
+}
+
+function PlaybackProgress({
+  audioRef,
+  duration,
+  initialTime,
+  onPersistTime,
+}: {
+  audioRef: React.RefObject<HTMLAudioElement | null>;
+  duration: number;
+  initialTime: number;
+  onPersistTime: (time: number) => void;
+}) {
+  const [currentTime, setCurrentTime] = useState(initialTime);
+
+  useEffect(() => {
+    setCurrentTime(initialTime);
+  }, [initialTime]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    let lastUiUpdate = 0;
+    const syncCurrentTime = () => {
+      const nextTime = audio.currentTime;
+      onPersistTime(nextTime);
+
+      const now = performance.now();
+      if (now - lastUiUpdate < 100) return;
+      lastUiUpdate = now;
+
+      setCurrentTime((previous) => (Math.abs(previous - nextTime) < 0.05 ? previous : nextTime));
+    };
+
+    audio.addEventListener("timeupdate", syncCurrentTime);
+    audio.addEventListener("seeking", syncCurrentTime);
+    audio.addEventListener("seeked", syncCurrentTime);
+
+    return () => {
+      audio.removeEventListener("timeupdate", syncCurrentTime);
+      audio.removeEventListener("seeking", syncCurrentTime);
+      audio.removeEventListener("seeked", syncCurrentTime);
+    };
+  }, [audioRef, onPersistTime]);
+
+  const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const time = parseFloat(e.target.value);
+    audio.currentTime = time;
+    setCurrentTime(time);
+    onPersistTime(time);
+  }, [audioRef, onPersistTime]);
+
+  return (
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 4 }}>
+      <input
+        type="range"
+        min={0}
+        max={duration || 0}
+        value={currentTime}
+        onChange={handleSeek}
+        style={{ width: "100%", accentColor: "var(--token-colors-accent-blue)" }}
+      />
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)" }}>
+        <span>{formatDuration(currentTime)}</span>
+        <span>{formatDuration(duration)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Component ───────────────────────────────────────────────────
+
+export default function BroadcastStudioPage() {
   // Audio library state
   const [library, setLibrary] = useState<AudioLibraryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -210,8 +620,9 @@ export default function BroadcastStudioPage() {
   // Player state
   const [currentFile, setCurrentFile] = useState<AudioFileEntry | null>(null);
   const [playerState, setPlayerState] = useState<PlayerState>("idle");
-  const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [initialSeekTime, setInitialSeekTime] = useState(0);
+  const currentTimeRef = useRef(0);
   const [volume, setVolume] = useState(1);
   const [playingFrom, setPlayingFrom] = useState<"library" | "playlist">("library");
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -221,7 +632,6 @@ export default function BroadcastStudioPage() {
   // Playlist
   const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
   const playlistIndexRef = useRef<number>(-1);
-  const pinnedAudioContextPathsRef = useRef<string[]>([]);
 
   // Sidebar state
   const [showSidebar, setShowSidebar] = useState(true);
@@ -301,50 +711,6 @@ export default function BroadcastStudioPage() {
     }
   }, []);
 
-  const syncAudioChatContext = useCallback(async (file: AudioFileEntry | null) => {
-    const c = chatRef.current;
-    const previousPaths = pinnedAudioContextPathsRef.current;
-    if (previousPaths.length > 0) {
-      previousPaths.forEach((path) => c.unpinContextItem(path));
-      pinnedAudioContextPathsRef.current = [];
-    }
-
-    if (!file) return;
-
-    try {
-      const context = await request<AudioChatContextResponse>(
-        `/api/ingestion/audio-context?source_id=${encodeURIComponent("workspace-audio")}&path=${encodeURIComponent(file.path)}`
-      );
-
-      const titlePath = `${file.path}#song-title`;
-      const descriptionPath = `${file.path}#song-description`;
-
-      c.pinContextItem({
-        id: titlePath,
-        title: `Song: ${context.song_title}`,
-        path: titlePath,
-        snippet: context.song_title,
-        kind: "message",
-      });
-
-      c.pinContextItem({
-        id: descriptionPath,
-        title: `Description: ${file.name}`,
-        path: descriptionPath,
-        snippet: context.description,
-        kind: "message",
-      });
-
-      pinnedAudioContextPathsRef.current = [titlePath, descriptionPath];
-    } catch (error) {
-      console.error("Failed to pin audio chat context:", error);
-    }
-  }, []);
-
-  useEffect(() => {
-    void syncAudioChatContext(currentFile);
-  }, [currentFile, syncAudioChatContext]);
-
   // ── Restore persisted state ──────────────────────────────────────
   useEffect(() => {
     const restore = async () => {
@@ -365,7 +731,11 @@ export default function BroadcastStudioPage() {
           const found = library.files.find(f => f.path === playerSaved.currentPath);
           if (found) {
             setCurrentFile(found);
-            if (playerSaved.currentTime) setCurrentTime(playerSaved.currentTime as number);
+            if (playerSaved.currentTime) {
+              const restoredTime = playerSaved.currentTime as number;
+              currentTimeRef.current = restoredTime;
+              setInitialSeekTime(restoredTime);
+            }
           }
         }
       } catch {
@@ -379,18 +749,18 @@ export default function BroadcastStudioPage() {
     }
   }, [library, stateRestored]);
 
-  // ── Persist player state (debounced) ─────────────────────────────
+  // ── Persist player state without forcing root re-renders ─────────
   useEffect(() => {
     if (!stateRestored) return;
-    const timeout = setTimeout(() => {
+    const interval = window.setInterval(() => {
       void saveStudioState("player", {
         currentPath: currentFile?.path ?? null,
-        currentTime,
+        currentTime: currentTimeRef.current,
         volume,
       });
     }, 1000);
-    return () => clearTimeout(timeout);
-  }, [currentFile, currentTime, volume, stateRestored]);
+    return () => window.clearInterval(interval);
+  }, [currentFile?.path, volume, stateRestored]);
 
   // ── Persist playlist (debounced) ─────────────────────────────────
   useEffect(() => {
@@ -443,6 +813,9 @@ export default function BroadcastStudioPage() {
     audio.src = getAudioStreamUrl(file.path);
     audio.load();
 
+    currentTimeRef.current = 0;
+    setInitialSeekTime(0);
+    setDuration(0);
     setCurrentFile(file);
     setPlayerState("loading");
     setPlayingFrom(source);
@@ -464,11 +837,8 @@ export default function BroadcastStudioPage() {
     }
   }, [currentFile, playerState]);
 
-  // Play a playlist item directly (doesn't require library lookup)
-  const playPlaylistItem = useCallback((index: number) => {
-    if (index < 0 || index >= playlist.length) return;
+  const playPlaylistEntry = useCallback((item: PlaylistItem, index: number) => {
     playlistIndexRef.current = index;
-    const item = playlist[index];
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -476,7 +846,6 @@ export default function BroadcastStudioPage() {
     audio.src = getAudioStreamUrl(item.path);
     audio.load();
 
-    // Create a minimal file entry for display
     const fileEntry: AudioFileEntry = {
       name: item.name,
       path: item.path,
@@ -485,6 +854,9 @@ export default function BroadcastStudioPage() {
       modified: 0,
       mime: "audio/mpeg",
     };
+    currentTimeRef.current = 0;
+    setInitialSeekTime(0);
+    setDuration(0);
     setCurrentFile(fileEntry);
     setPlayerState("loading");
     setPlayingFrom("playlist");
@@ -492,7 +864,15 @@ export default function BroadcastStudioPage() {
     audio.play()
       .then(() => setPlayerState("playing"))
       .catch(() => setPlayerState("idle"));
-  }, [playlist, setupAudioContext]);
+  }, [setupAudioContext]);
+
+  // Play a playlist item directly (doesn't require library lookup)
+  const playPlaylistItem = useCallback((index: number) => {
+    if (index < 0 || index >= playlist.length) return;
+    const item = playlist[index];
+    if (!item) return;
+    playPlaylistEntry(item, index);
+  }, [playPlaylistEntry, playlist]);
 
   const playNext = useCallback(() => {
     if (playlist.length === 0) {
@@ -520,29 +900,26 @@ export default function BroadcastStudioPage() {
     const audio = audioRef.current;
     if (!audio) return;
 
-    let lastTimeUpdate = 0;
-    const onTimeUpdate = () => {
-      const now = Date.now();
-      if (now - lastTimeUpdate < 250) return; // Throttle to 4 updates/sec
-      lastTimeUpdate = now;
-      setCurrentTime(audio.currentTime);
+    const onLoadedMetadata = () => {
+      setDuration(audio.duration);
+      if (initialSeekTime > 0) {
+        audio.currentTime = Math.min(initialSeekTime, audio.duration || initialSeekTime);
+        currentTimeRef.current = audio.currentTime;
+      }
     };
-    const onLoadedMetadata = () => setDuration(audio.duration);
     const onEnded = () => playNext();
     const onVolumeChange = () => setVolume(audio.volume);
 
-    audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("loadedmetadata", onLoadedMetadata);
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("volumechange", onVolumeChange);
 
     return () => {
-      audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("loadedmetadata", onLoadedMetadata);
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("volumechange", onVolumeChange);
     };
-  }, [playNext]);
+  }, [initialSeekTime, playNext]);
 
   // ── Volume control ───────────────────────────────────────────────
   useEffect(() => {
@@ -551,19 +928,42 @@ export default function BroadcastStudioPage() {
 
   // ── Playlist management ──────────────────────────────────────────
   const addToPlaylist = useCallback(async (file: AudioFileEntry) => {
-    const [duration, labelsRes] = await Promise.all([
+    const [duration, labels] = await Promise.all([
       getAudioDuration(file.path),
-      getAudioLabels(file.path).catch(() => ({ labels: [] })),
+      loadLabelsForAudioPath(file.path).catch(() => [] as LabelNode[]),
     ]);
     setPlaylist(prev => [
       ...prev,
-      { id: `${file.path}-${Date.now()}`, path: file.path, name: file.name, addedAt: Date.now(), duration, labels: labelsRes.labels },
+      { id: `${file.path}-${Date.now()}`, path: file.path, name: file.name, addedAt: Date.now(), duration, labels: labels.map((label) => label.label) },
     ]);
   }, []);
 
   const removeFromPlaylist = useCallback((id: string) => {
     setPlaylist(prev => prev.filter(item => item.id !== id));
   }, []);
+
+  const removeCurrentFromQueue = useCallback(() => {
+    const currentIndex = playlistIndexRef.current;
+    if (playingFrom !== "playlist" || currentIndex < 0 || currentIndex >= playlist.length) return;
+
+    const nextPlaylist = playlist.filter((_, index) => index !== currentIndex);
+    setPlaylist(nextPlaylist);
+
+    if (nextPlaylist.length === 0) {
+      playlistIndexRef.current = -1;
+      audioRef.current?.pause();
+      setCurrentFile(null);
+      setCurrentFileLabels([]);
+      setPlayerState("idle");
+      setPlayingFrom("library");
+      return;
+    }
+
+    const nextIndex = currentIndex >= nextPlaylist.length ? 0 : currentIndex;
+    const nextItem = nextPlaylist[nextIndex];
+    if (!nextItem) return;
+    playPlaylistEntry(nextItem, nextIndex);
+  }, [playingFrom, playPlaylistEntry, playlist]);
 
   const clearPlaylist = useCallback(() => {
     setPlaylist([]);
@@ -595,69 +995,143 @@ export default function BroadcastStudioPage() {
   const [savingPlaylist, setSavingPlaylist] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
 
-  // ── Label state ──────────────────────────────────────────────────
+  // ── Label + agent state ─────────────────────────────────────────
   const [centerTab, setCenterTab] = useState<"queue" | "labels">("queue");
-  const [selectedFileLabels, setSelectedFileLabels] = useState<string[]>([]);
-  const [allLabels, setAllLabels] = useState<string[]>([]);
-  const [newLabel, setNewLabel] = useState("");
+  const [currentFileLabels, setCurrentFileLabels] = useState<LabelNode[]>([]);
+  const [editingFileLabels, setEditingFileLabels] = useState<LabelNode[]>([]);
+  const [allLabels, setAllLabels] = useState<LabelNode[]>([]);
+  const [labelSearch, setLabelSearch] = useState("");
+  const [customLabelText, setCustomLabelText] = useState("");
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
+  const [labelMutationId, setLabelMutationId] = useState<string | null>(null);
+  const [creatingLabel, setCreatingLabel] = useState(false);
+  const [labelFilteredPaths, setLabelFilteredPaths] = useState<Set<string> | null>(null);
   const [labelingFile, setLabelingFile] = useState<AudioFileEntry | null>(null);
   const [savedPlaylists, setSavedPlaylists] = useState<Array<{ name: string; path: string; filename: string }>>([]);
   const [previewPlaylist, setPreviewPlaylist] = useState<{ name: string; items: Array<{ path: string; name: string }> } | null>(null);
+  const [agentLaunchRequest, setAgentLaunchRequest] = useState<BroadcastStudioAgentLaunchRequest | null>(null);
 
-  // Load all labels and playlists on mount
-  useEffect(() => {
-    void getAllLabels().then(res => setAllLabels(res.labels)).catch(() => {});
-    void listPlaylists().then(res => setSavedPlaylists(res.playlists)).catch(() => {});
+  const refreshLabelCatalog = useCallback(async () => {
+    try {
+      const labels = await loadGraphLabels();
+      setAllLabels(labels);
+      return labels;
+    } catch (error) {
+      console.error("Failed to load graph labels:", error);
+      setAllLabels([]);
+      return [] as LabelNode[];
+    }
   }, []);
 
-  // Load labels when selecting a file for labeling
+  const refreshLabelsForPath = useCallback(async (path: string) => {
+    try {
+      const labels = await loadLabelsForAudioPath(path, allLabels.length > 0 ? allLabels : undefined);
+      if (currentFile?.path === path) setCurrentFileLabels(labels);
+      if (labelingFile?.path === path) setEditingFileLabels(labels);
+      setPlaylist((prev) => prev.map((item) => (
+        item.path === path ? { ...item, labels: labels.map((label) => label.label) } : item
+      )));
+      return labels;
+    } catch (error) {
+      console.error("Failed to load labels for audio path:", error);
+      if (currentFile?.path === path) setCurrentFileLabels([]);
+      if (labelingFile?.path === path) setEditingFileLabels([]);
+      return [] as LabelNode[];
+    }
+  }, [allLabels, currentFile?.path, labelingFile?.path]);
+
+  useEffect(() => {
+    void refreshLabelCatalog();
+    void listPlaylists().then(res => setSavedPlaylists(res.playlists)).catch(() => {});
+  }, [refreshLabelCatalog]);
+
+  useEffect(() => {
+    if (!currentFile?.path) {
+      setCurrentFileLabels([]);
+      return;
+    }
+    void refreshLabelsForPath(currentFile.path);
+  }, [currentFile?.path, refreshLabelsForPath]);
+
+  useEffect(() => {
+    if (!labelFilter) {
+      setLabelFilteredPaths(null);
+      return;
+    }
+
+    let cancelled = false;
+    void loadAudioPathsForLabelId(labelFilter)
+      .then((paths) => {
+        if (!cancelled) setLabelFilteredPaths(new Set(paths));
+      })
+      .catch((error) => {
+        console.error("Failed to load label-filtered paths:", error);
+        if (!cancelled) setLabelFilteredPaths(new Set());
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [labelFilter]);
+
   const openLabelEditor = useCallback(async (file: AudioFileEntry) => {
     setLabelingFile(file);
     setCenterTab("labels");
     try {
-      const res = await getAudioLabels(file.path);
-      setSelectedFileLabels(res.labels);
+      const labels = await loadLabelsForAudioPath(file.path, allLabels.length > 0 ? allLabels : undefined);
+      setEditingFileLabels(labels);
     } catch {
-      setSelectedFileLabels([]);
+      setEditingFileLabels([]);
     }
-  }, []);
+  }, [allLabels]);
 
-  const handleAddLabel = useCallback(async () => {
-    if (!labelingFile || !newLabel.trim()) return;
-    try {
-      const res = await addAudioLabel(labelingFile.path, newLabel.trim());
-      setSelectedFileLabels(res.labels);
-      setNewLabel("");
-      // Refresh all labels
-      const allRes = await getAllLabels();
-      setAllLabels(allRes.labels);
-    } catch (err) {
-      console.error("Failed to add label:", err);
-    }
-  }, [labelingFile, newLabel]);
+  const toggleGraphLabel = useCallback(async (file: AudioFileEntry, label: LabelNode) => {
+    const currentHasLabel = (currentFile?.path === file.path && currentFileLabels.some((item) => item.label_id === label.label_id))
+      || (labelingFile?.path === file.path && editingFileLabels.some((item) => item.label_id === label.label_id));
 
-  const handleRemoveLabel = useCallback(async (label: string) => {
-    if (!labelingFile) return;
     try {
-      const res = await removeAudioLabel(labelingFile.path, label);
-      setSelectedFileLabels(res.labels);
-      // Refresh all labels
-      const allRes = await getAllLabels();
-      setAllLabels(allRes.labels);
-    } catch (err) {
-      console.error("Failed to remove label:", err);
+      setLabelMutationId(label.label_id);
+      if (currentHasLabel) {
+        await removeGraphLabelFromAudioPath(file.path, label.label_id);
+      } else {
+        await applyGraphLabelToAudioPath(file.path, label.label_id);
+      }
+      await refreshLabelsForPath(file.path);
+    } catch (error) {
+      console.error("Failed to toggle graph label:", error);
+    } finally {
+      setLabelMutationId(null);
     }
-  }, [labelingFile]);
+  }, [currentFile?.path, currentFileLabels, editingFileLabels, labelingFile?.path, refreshLabelsForPath]);
 
-  const handleSyncSymlinks = useCallback(async () => {
+  const ensureLabelAndApply = useCallback(async (file: AudioFileEntry, labelText: string) => {
+    const trimmed = labelText.trim();
+    if (!trimmed) return;
+
     try {
-      const res = await syncAudioSymlinks();
-      alert(`Synced ${res.symlinks} symlinks to ./audio/`);
-    } catch (err) {
-      console.error("Failed to sync symlinks:", err);
+      setCreatingLabel(true);
+      const existing = allLabels.find((label) => label.label.toLowerCase() === trimmed.toLowerCase());
+      const label = existing ?? await createGraphLabel(trimmed);
+      if (!existing) {
+        const refreshed = await refreshLabelCatalog();
+        const refreshedMatch = refreshed.find((item) => item.label_id === label.label_id) ?? label;
+        await toggleGraphLabel(file, refreshedMatch);
+      } else {
+        await toggleGraphLabel(file, label);
+      }
+      setCustomLabelText("");
+      setLabelSearch("");
+    } catch (error) {
+      console.error("Failed to create/apply graph label:", error);
+    } finally {
+      setCreatingLabel(false);
     }
-  }, []);
+  }, [allLabels, refreshLabelCatalog, toggleGraphLabel]);
+
+  const applySuggestedLabelToCurrentFile = useCallback(async (labelText: string) => {
+    if (!currentFile) return;
+    await ensureLabelAndApply(currentFile, labelText);
+  }, [currentFile, ensureLabelAndApply]);
 
   const generateVisualization = useCallback(async (audioPath: string, type: "waveform" | "spectrogram") => {
     try {
@@ -802,15 +1276,6 @@ export default function BroadcastStudioPage() {
     setPreviewPlaylist(null);
   }, [previewPlaylist]);
 
-  // Filter files by label
-  const filesFilteredByLabel = labelFilter
-    ? library?.files.filter(f => {
-        // This is a client-side filter; we'd need to track labels per file
-        // For now, just show all files when filtering
-        return true;
-      }) ?? []
-    : [];
-
   const savePlaylistToM3U = useCallback(async () => {
     if (playlist.length === 0) return;
     try {
@@ -828,48 +1293,55 @@ export default function BroadcastStudioPage() {
     }
   }, [playlist, playlistName]);
 
-  // ── Seek ─────────────────────────────────────────────────────────
-  const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const time = parseFloat(e.target.value);
-    audio.currentTime = time;
-    setCurrentTime(time);
+  const handlePersistCurrentTime = useCallback((time: number) => {
+    currentTimeRef.current = time;
   }, []);
 
   // ── Directory structure ──────────────────────────────────────────
   // Extract unique directories from files
-  const allDirectories = library?.files.reduce((dirs, file) => {
-    const parts = file.path.split('/');
-    // Add all parent directories
-    for (let i = 1; i < parts.length; i++) {
-      const dir = parts.slice(0, i).join('/');
-      if (dir && !dirs.includes(dir)) dirs.push(dir);
+  const allDirectories = useMemo(() => {
+    const files = library?.files ?? [];
+    const dirs = new Set<string>();
+    for (const file of files) {
+      const parts = file.path.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        const dir = parts.slice(0, i).join('/');
+        if (dir) dirs.add(dir);
+      }
     }
-    return dirs;
-  }, [] as string[]).sort() ?? [];
+    return Array.from(dirs).sort();
+  }, [library?.files]);
 
   // Current directory level - files directly in scanPath
   const currentDirPrefix = scanPath === '.' ? '' : `${scanPath}/`;
-  const directFiles = library?.files.filter(f => {
-    // File must be directly in current directory (no subdirectory)
-    if (!f.path.startsWith(currentDirPrefix)) return false;
-    const relative = f.path.slice(currentDirPrefix.length);
-    return !relative.includes('/');
-  }) ?? [];
+  const directFiles = useMemo(() => (
+    (library?.files ?? []).filter(f => {
+      if (!f.path.startsWith(currentDirPrefix)) return false;
+      const relative = f.path.slice(currentDirPrefix.length);
+      return !relative.includes('/');
+    })
+  ), [currentDirPrefix, library?.files]);
 
   // Subdirectories in current directory
-  const subdirectories = allDirectories
-    .filter(dir => {
-      if (scanPath === '.') return !dir.includes('/');
-      return dir.startsWith(scanPath + '/') && dir.slice(scanPath.length + 1).split('/').length === 1;
-    })
-    .map(dir => dir.split('/').pop()!);
+  const subdirectories = useMemo(() => (
+    allDirectories
+      .filter(dir => {
+        if (scanPath === '.') return !dir.includes('/');
+        return dir.startsWith(scanPath + '/') && dir.slice(scanPath.length + 1).split('/').length === 1;
+      })
+      .map(dir => dir.split('/').pop()!)
+  ), [allDirectories, scanPath]);
 
   // Filtered files (search applies to all files)
-  const filteredFiles = filterText
-    ? library?.files.filter(f => f.name.toLowerCase().includes(filterText.toLowerCase())) ?? []
-    : directFiles;
+  const filteredFiles = useMemo(() => {
+    const searchBase = filterText
+      ? (library?.files ?? []).filter(f => f.name.toLowerCase().includes(filterText.toLowerCase()))
+      : directFiles;
+
+    if (!labelFilter || !labelFilteredPaths) return searchBase;
+
+    return searchBase.filter((file) => labelFilteredPaths.has(file.path));
+  }, [directFiles, filterText, labelFilter, labelFilteredPaths, library?.files]);
 
   // ── Sidebar resize ───────────────────────────────────────────────
   const handleSidebarResize = useCallback((e: React.MouseEvent) => {
@@ -1041,9 +1513,9 @@ export default function BroadcastStudioPage() {
                 </div>
                 {allLabels.map(label => (
                   <div
-                    key={label}
+                    key={label.label_id}
                     onClick={() => {
-                      setLabelFilter(label);
+                      setLabelFilter(label.label_id);
                       document.getElementById("label-filter-dropdown")!.style.display = "none";
                     }}
                     style={{
@@ -1051,10 +1523,10 @@ export default function BroadcastStudioPage() {
                       fontSize: tokens.fontSize.xs,
                       cursor: "pointer",
                       borderRadius: 4,
-                      background: labelFilter === label ? "var(--token-colors-alpha-blue-10)" : "transparent",
+                      background: labelFilter === label.label_id ? "var(--token-colors-alpha-blue-10)" : "transparent",
                     }}
                   >
-                    {label}
+                    {label.emoji ? `${label.emoji} ` : ""}{label.label}
                   </div>
                 ))}
               </div>
@@ -1420,20 +1892,12 @@ export default function BroadcastStudioPage() {
               <WaveformVisualizer analyserRef={analyserRef} isPlaying={playerState === "playing"} />
 
               {/* Progress */}
-              <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 4 }}>
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || 0}
-                  value={currentTime}
-                  onChange={handleSeek}
-                  style={{ width: "100%", accentColor: "var(--token-colors-accent-blue)" }}
-                />
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)" }}>
-                  <span>{formatDuration(currentTime)}</span>
-                  <span>{formatDuration(duration)}</span>
-                </div>
-              </div>
+              <PlaybackProgress
+                audioRef={audioRef}
+                duration={duration}
+                initialTime={initialSeekTime}
+                onPersistTime={handlePersistCurrentTime}
+              />
 
               {/* Controls */}
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -1462,21 +1926,27 @@ export default function BroadcastStudioPage() {
               </div>
 
               {/* Current file labels */}
-              {currentFile && selectedFileLabels.length > 0 && labelingFile?.path === currentFile.path && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "center" }}>
-                  {selectedFileLabels.map(label => (
-                    <span
-                      key={label}
+              {currentFileLabels.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+                  {currentFileLabels.map(label => (
+                    <button
+                      key={label.label_id}
+                      onClick={() => currentFile && void toggleGraphLabel(currentFile, label)}
+                      disabled={labelMutationId === label.label_id}
                       style={{
                         padding: "2px 8px",
                         borderRadius: 10,
                         fontSize: tokens.fontSize.xs,
-                        background: "var(--token-colors-alpha-blue-10)",
-                        border: `1px solid var(--token-colors-alpha-blue-20)`,
+                        background: label.color ?? "var(--token-colors-alpha-blue-10)",
+                        border: `1px solid ${label.color ?? "var(--token-colors-alpha-blue-20)"}`,
+                        color: "white",
+                        cursor: "pointer",
+                        opacity: labelMutationId === label.label_id ? 0.6 : 1,
                       }}
+                      title="Click to remove label"
                     >
-                      {label}
-                    </span>
+                      {label.emoji ? `${label.emoji} ` : ""}{label.label} ×
+                    </button>
                   ))}
                 </div>
               )}
@@ -1496,7 +1966,7 @@ export default function BroadcastStudioPage() {
               </div>
 
               {/* Generate buttons */}
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
                 <Button variant="ghost" size="sm" onClick={() => {
                   if (!currentFile) return;
                   generateVisualization(currentFile.path, "spectrogram");
@@ -1509,35 +1979,93 @@ export default function BroadcastStudioPage() {
                 }}>
                   📈 Waveform
                 </Button>
+                {playingFrom === "playlist" && playlistIndexRef.current >= 0 && (
+                  <Button variant="ghost" size="sm" onClick={removeCurrentFromQueue}>
+                    ➖ Remove from queue
+                  </Button>
+                )}
               </div>
+
+              {/* Agent actions */}
+              {currentFile && (
+                <div style={{ width: "100%", maxWidth: 640 }}>
+                  <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 6, textAlign: "center" }}>
+                    Analyze in chat pane with a dedicated contract:
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                    {BROADCAST_STUDIO_AGENT_ACTIONS.map((action) => (
+                      <Button
+                        key={action.id}
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setAgentLaunchRequest({
+                          id: `${action.id}:${currentFile.path}:${Date.now()}`,
+                          actorId: BROADCAST_STUDIO_AUDIO_TASK_ACTOR_ID,
+                          contractId: action.contractId,
+                          model: action.model,
+                          contentParts: [{
+                            type: "audio",
+                            url: getAudioStreamUrl(currentFile.path),
+                            mimeType: currentFile.mime || undefined,
+                            filename: currentFile.name,
+                          }],
+                          direct: true,
+                        })}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Label suggestions */}
               {allLabels.length > 0 && currentFile && (
-                <div style={{ width: "100%", maxWidth: 500 }}>
+                <div style={{ width: "100%", maxWidth: 640 }}>
                   <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 6, textAlign: "center" }}>
-                    Suggested labels (click to add):
+                    Graph labels (click to toggle):
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                    <input
+                      type="text"
+                      value={customLabelText}
+                      onChange={(e) => setCustomLabelText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          void ensureLabelAndApply(currentFile, customLabelText);
+                        }
+                      }}
+                      placeholder="Create or toggle any text label..."
+                      style={{ flex: 1, padding: "6px 10px", fontSize: tokens.fontSize.sm, borderRadius: 6, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
+                    />
+                    <Button size="sm" onClick={() => void ensureLabelAndApply(currentFile, customLabelText)} disabled={creatingLabel || !customLabelText.trim()}>
+                      {creatingLabel ? "..." : "Add label"}
+                    </Button>
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
-                    {allLabels.slice(0, 10).map(label => (
-                      <button
-                        key={label}
-                        onClick={() => {
-                          setNewLabel(label);
-                          void handleAddLabel();
-                        }}
-                        style={{
-                          padding: "4px 10px",
-                          borderRadius: 12,
-                          fontSize: tokens.fontSize.xs,
-                          background: selectedFileLabels.includes(label) ? "var(--token-colors-alpha-blue-20)" : "var(--token-colors-alpha-white-05)",
-                          border: `1px solid ${selectedFileLabels.includes(label) ? "var(--token-colors-accent-blue)" : "var(--token-colors-border-default)"}`,
-                          cursor: "pointer",
-                          color: selectedFileLabels.includes(label) ? "var(--token-colors-accent-blue)" : "inherit",
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                    {allLabels.slice(0, 16).map(label => {
+                      const applied = currentFileLabels.some((item) => item.label_id === label.label_id);
+                      return (
+                        <button
+                          key={label.label_id}
+                          onClick={() => void toggleGraphLabel(currentFile, label)}
+                          disabled={labelMutationId === label.label_id}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: 12,
+                            fontSize: tokens.fontSize.xs,
+                            background: applied ? (label.color ?? "var(--token-colors-alpha-blue-20)") : "var(--token-colors-alpha-white-05)",
+                            border: `1px solid ${applied ? (label.color ?? "var(--token-colors-accent-blue)") : "var(--token-colors-border-default)"}`,
+                            cursor: "pointer",
+                            color: applied ? "white" : "inherit",
+                            opacity: labelMutationId === label.label_id ? 0.6 : 1,
+                          }}
+                          title={label.description || label.label}
+                        >
+                          {label.emoji ? `${label.emoji} ` : ""}{label.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1708,16 +2236,20 @@ export default function BroadcastStudioPage() {
                 {labelingFile ? (
                   <>
                     <div style={{ fontSize: tokens.fontSize.sm, fontWeight: 600, marginBottom: 12 }}>
-                      Labels for: {labelingFile.name}
+                      Graph labels for: {labelingFile.name}
                     </div>
-                    {/* Current labels */}
+                    <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 12 }}>
+                      These labels apply through the same OpenPlanner graph-label pipeline used by LabelsPage.
+                    </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
-                      {selectedFileLabels.length === 0 ? (
-                        <span style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", fontStyle: "italic" }}>No labels yet</span>
+                      {editingFileLabels.length === 0 ? (
+                        <span style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", fontStyle: "italic" }}>No graph labels applied yet</span>
                       ) : (
-                        selectedFileLabels.map(label => (
-                          <span
-                            key={label}
+                        editingFileLabels.map(label => (
+                          <button
+                            key={label.label_id}
+                            onClick={() => void toggleGraphLabel(labelingFile, label)}
+                            disabled={labelMutationId === label.label_id}
                             style={{
                               display: "inline-flex",
                               alignItems: "center",
@@ -1725,67 +2257,78 @@ export default function BroadcastStudioPage() {
                               padding: "4px 10px",
                               borderRadius: 12,
                               fontSize: tokens.fontSize.xs,
-                              background: "var(--token-colors-alpha-blue-10)",
-                              border: `1px solid var(--token-colors-alpha-blue-20)`,
+                              background: label.color ?? "var(--token-colors-alpha-blue-10)",
+                              border: `1px solid ${label.color ?? "var(--token-colors-alpha-blue-20)"}`,
+                              color: "white",
+                              cursor: "pointer",
+                              opacity: labelMutationId === label.label_id ? 0.6 : 1,
                             }}
+                            title="Click to remove label"
                           >
-                            {label}
-                            <button
-                              onClick={() => void handleRemoveLabel(label)}
-                              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 12, color: "var(--token-colors-accent-red)" }}
-                            >
-                              ×
-                            </button>
-                          </span>
+                            {label.emoji ? `${label.emoji} ` : ""}{label.label} ×
+                          </button>
                         ))
                       )}
                     </div>
-                    {/* Add label */}
-                    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                       <input
                         type="text"
-                        value={newLabel}
-                        onChange={e => setNewLabel(e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter") void handleAddLabel(); }}
-                        placeholder="Add label..."
+                        value={labelSearch}
+                        onChange={e => setLabelSearch(e.target.value)}
+                        placeholder="Filter available labels..."
                         style={{ flex: 1, padding: "6px 10px", fontSize: tokens.fontSize.sm, borderRadius: 6, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
                       />
-                      <Button size="sm" onClick={() => void handleAddLabel()}>Add</Button>
+                      <input
+                        type="text"
+                        value={customLabelText}
+                        onChange={e => setCustomLabelText(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") void ensureLabelAndApply(labelingFile, customLabelText); }}
+                        placeholder="New text label..."
+                        style={{ flex: 1, padding: "6px 10px", fontSize: tokens.fontSize.sm, borderRadius: 6, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
+                      />
+                      <Button size="sm" onClick={() => void ensureLabelAndApply(labelingFile, customLabelText)} disabled={creatingLabel || !customLabelText.trim()}>
+                        {creatingLabel ? "..." : "Create"}
+                      </Button>
                     </div>
-                    {/* Quick labels */}
                     {allLabels.length > 0 && (
                       <>
-                        <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 6 }}>Quick labels ({Math.min(allLabels.length, 20)}):</div>
+                        <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 6 }}>
+                          Toggle as many labels as you want:
+                        </div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {allLabels.slice(0, 20).map(label => (
-                            <button
-                              key={label}
-                              onClick={() => { setNewLabel(label); }}
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 10,
-                                fontSize: tokens.fontSize.xs,
-                                background: "var(--token-colors-alpha-white-05)",
-                                border: `1px solid var(--token-colors-border-default)`,
-                                cursor: "pointer",
-                              }}
-                            >
-                              {label}
-                            </button>
-                          ))}
+                          {allLabels
+                            .filter(label => label.label.toLowerCase().includes(labelSearch.toLowerCase()))
+                            .slice(0, 60)
+                            .map(label => {
+                              const applied = editingFileLabels.some((item) => item.label_id === label.label_id);
+                              return (
+                                <button
+                                  key={label.label_id}
+                                  onClick={() => void toggleGraphLabel(labelingFile, label)}
+                                  disabled={labelMutationId === label.label_id}
+                                  style={{
+                                    padding: "4px 8px",
+                                    borderRadius: 10,
+                                    fontSize: tokens.fontSize.xs,
+                                    background: applied ? (label.color ?? "var(--token-colors-alpha-blue-20)") : "var(--token-colors-alpha-white-05)",
+                                    border: `1px solid ${applied ? (label.color ?? "var(--token-colors-accent-blue)") : "var(--token-colors-border-default)"}`,
+                                    cursor: "pointer",
+                                    color: applied ? "white" : "inherit",
+                                    opacity: labelMutationId === label.label_id ? 0.6 : 1,
+                                  }}
+                                  title={label.description || label.label}
+                                >
+                                  {label.emoji ? `${label.emoji} ` : ""}{label.label}
+                                </button>
+                              );
+                            })}
                         </div>
                       </>
                     )}
-                    {/* Sync symlinks button */}
-                    <div style={{ marginTop: 16, borderTop: `1px solid var(--token-colors-border-subtle)`, paddingTop: 12 }}>
-                      <Button size="sm" onClick={() => void handleSyncSymlinks()}>
-                        📁 Sync symlinks to ./audio/
-                      </Button>
-                    </div>
                   </>
                 ) : (
                   <div style={{ padding: 24, textAlign: "center", color: "var(--token-colors-text-muted)", fontSize: tokens.fontSize.sm }}>
-                    Click 🏷 on a file in the library to add labels
+                    Click 🏷 on a file in the library to edit OpenPlanner graph labels
                   </div>
                 )}
               </div>
@@ -1808,22 +2351,13 @@ export default function BroadcastStudioPage() {
       />
 
       {/* Right: Chat */}
-      <aside style={{
-        width: chatPanelWidth,
-        minWidth: 300,
-        maxWidth: 800,
-        display: "flex",
-        minHeight: 0,
-        overflow: "hidden",
-        background: "var(--token-colors-background-surface)",
-      }}>
-        <ChatWorkspacePane
-          controller={chat}
-          showFiles={false}
-          showCanvasToggle={false}
-          onShowFiles={() => setShowSidebar(true)}
-        />
-      </aside>
+      <BroadcastStudioChatPane
+        currentFile={currentFile}
+        width={chatPanelWidth}
+        onShowFiles={() => setShowSidebar(true)}
+        launchRequest={agentLaunchRequest}
+        onApplySuggestedLabel={applySuggestedLabelToCurrentFile}
+      />
     </div>
   );
 }

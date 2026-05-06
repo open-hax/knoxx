@@ -24,6 +24,21 @@
       parsed
       default)))
 
+(defn- env-kv-map
+  [k]
+  (let [raw (some-> (aget js/process.env k) str str/trim)]
+    (if (str/blank? (or raw ""))
+      {}
+      (->> (str/split raw #",")
+           (map (fn [entry]
+                  (let [[left right] (str/split (str entry) #"=" 2)
+                        key (some-> left str str/trim not-empty)
+                        value (some-> right str str/trim not-empty)]
+                    (when (and key value)
+                      [key value]))))
+           (remove nil?)
+           (into {})))))
+
 (defn cfg
   "Read Knoxx backend runtime configuration from environment variables.
 
@@ -51,6 +66,9 @@
                           (when (and (string? value) (not (str/blank? value)))
                             value))
    :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")
+   :provider-base-urls (env-kv-map "KNOXX_PROVIDER_BASE_URLS")
+   :provider-auth-tokens (env-kv-map "KNOXX_PROVIDER_AUTH_TOKENS")
+   :provider-auth-headers (env-kv-map "KNOXX_PROVIDER_AUTH_HEADERS")
 
    :knoxx-admin-url (env "KNOXX_ADMIN_URL" "http://localhost")
    :knoxx-base-url (env "KNOXX_BASE_URL" "http://localhost:8000")

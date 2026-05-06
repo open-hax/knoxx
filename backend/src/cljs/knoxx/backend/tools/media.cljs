@@ -2,7 +2,8 @@
   "Shared media infrastructure: workspace path resolution, temp files,
    mime-type detection, data-URL decoding, and source loading."
   (:require [clojure.string :as str]
-            [knoxx.backend.document-state :refer [normalize-relative-path]]))
+            [knoxx.backend.document-state :refer [normalize-relative-path]]
+            [knoxx.backend.text :refer [tool-text-result]]))
 
 (def workspace-media-max-bytes (* 20 1024 1024))
 (def multimodal-upload-max-bytes (* 25 1024 1024))
@@ -399,31 +400,35 @@
     (when-not exec-file-async
       (throw (js/Error. "execFileAsync runtime dependency is not available")))
     (-> (materialize-media-source! runtime config raw-source audio-render-max-bytes)
-        (.then (fn [source]
-                 (let [base-name (or title
-                                     (some-> (:filename source) (str/replace #"\.[^.]+$" ""))
-                                     "audio")]
-                   (-> (temp-file-path! runtime "renders" ".png")
-                       (.then (fn [output-path]
-                                (let [filter-expr (if (= kind :waveform)
-                                                    (str "showwavespic=s=" out-width "x" out-height ":colors=0x7dd3fc")
-                                                    (str "showspectrumpic=s=" out-width "x" out-height ":legend=disabled"))
-                                      args (clj->js ["-y"
-                                                     "-i" (:absolute-path source)
-                                                     "-lavfi" filter-expr
-                                                     "-frames:v" "1"
-                                                     output-path])]
-                                  (-> (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576})
-                                      (.then (fn [_]
-                                               (fs-read-file! node-fs output-path)))
-                                      (.then (fn [buffer]
-                                               (let [filename (str base-name "-" label ".png")
-                                                     part {:type "image"
-                                                           :data (buffer->data-url buffer "image/png")
-                                                           :mimeType "image/png"
-                                                           :filename filename
-                                                           :size (.-length buffer)}]
-                                                 {:text (str "Rendered " label " for " (or (:filename source) (:relative source) raw-source) ".")
-                                                  :details {:source raw-source
-                                                            :kind label
-                                                            :content_parts [part]}}))))))))))))))
+        (.then
+         (fn [source]
+           (let [base-name (or title
+                               (some-> (:filename source) (str/replace #"\.[^.]+$" ""))
+                               "audio")]
+             (-> (temp-file-path! runtime "renders" ".png")
+                 (.then
+                  (fn [output-path]
+                    (let [filter-expr (if (= kind :waveform)
+                                        (str "showwavespic=s=" out-width "x" out-height ":colors=0x7dd3fc")
+                                        (str "showspectrumpic=s=" out-width "x" out-height ":legend=disabled"))
+                          args (clj->js ["-y"
+                                         "-i" (:absolute-path source)
+                                         "-lavfi" filter-expr
+                                         "-frames:v" "1"
+                                         output-path])]
+                      (-> (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576})
+                          (.then (fn [_]
+                                   (fs-read-file! node-fs output-path)))
+                          (.then
+                           (fn [buffer]
+                             (let [filename (str base-name "-" label ".png")
+                                   part {:type "image"
+                                         :data (buffer->data-url buffer "image/png")
+                                         :mimeType "image/png"
+                                         :filename filename
+                                         :size (.-length buffer)}]
+                               (tool-text-result
+                                (str "Rendered " label " for " (or (:filename source) (:relative source) raw-source) ".")
+                                {:source raw-source
+                                 :kind label
+                                 :content_parts [part]})))))))))))))))

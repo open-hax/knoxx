@@ -257,7 +257,7 @@ export function createChatRuntimeActions({
     }
   };
 
-  const handleSend = async (text: string, contentParts?: ContentPart[]) => {
+  const handleSend = async (text: string, contentParts?: ContentPart[], options?: { direct?: boolean; omitSystemPrompt?: boolean }) => {
     if (!sessionId) {
       appendConsoleLine('[chat] session not ready, retry in a second');
       return;
@@ -283,9 +283,7 @@ export function createChatRuntimeActions({
       traceBlocks: [],
       status: 'streaming',
     };
-    const requestText = systemPrompt.trim()
-      ? `${text}\n\nSession steering note:\n${systemPrompt.trim()}`
-      : text;
+    const trimmedSystemPrompt = systemPrompt.trim();
     pendingAssistantIdRef.current = assistantMessageId;
     activeRunIdRef.current = null;
     setLatestRun(null);
@@ -295,17 +293,19 @@ export function createChatRuntimeActions({
 
     try {
       const response = await knoxxChatStart({
-        message: requestText,
+        message: text,
         conversation_id: conversationId,
         session_id: sessionId,
         run_id: activeRunIdRef.current,
         model: selectedModel,
         thinkingLevel: selectedThinkingLevel,
+        direct: options?.direct,
         contentParts,
         agentSpec: {
           actor_id: activeActorId || undefined,
           contract_id: activeAgentId || undefined,
           role: activeRole,
+          system_prompt: options?.omitSystemPrompt ? undefined : trimmedSystemPrompt || undefined,
         },
       });
       const runId = response.run_id ?? activeRunIdRef.current;

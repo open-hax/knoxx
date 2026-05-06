@@ -594,6 +594,7 @@ export function useChatWorkspaceController(options: ChatWorkspaceControllerOptio
     // state
     activeRole,
     activeActorId,
+    setActiveActorId,
     availableActors,
     activeAgentId,
     setActiveAgentId,
