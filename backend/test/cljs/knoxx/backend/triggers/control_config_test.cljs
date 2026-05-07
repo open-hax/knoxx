@@ -17,6 +17,8 @@
                :toolPolicies [{:toolId "discord.read" :effect "allow"}]}
    :description "contract description"
    :contractSourceId "discord_patrol"
+   :contractSourceKind "agent"
+   :contractSourceKey "agent:discord_patrol"
    :contractHash 222
    :actorId "discord_automation"})
 
@@ -44,6 +46,8 @@
         (is (= "saved description" (:description job)))
         (is (= "saved system" (get-in job [:agentSpec :systemPrompt])))
         (is (= "saved task" (get-in job [:agentSpec :taskPrompt])))
+        (is (= "agent" (:contractSourceKind job)))
+        (is (= "agent:discord_patrol" (:contractSourceKey job)))
         (is (= 222 (:contractHash job)))))))
 
 (deftest event-agent-control-config-resets-contract-job-when-hash-drifts
@@ -63,6 +67,8 @@
         (is (= "contract description" (:description job)))
         (is (= "contract system" (get-in job [:agentSpec :systemPrompt])))
         (is (= "contract task" (get-in job [:agentSpec :taskPrompt])))
+        (is (= "agent" (:contractSourceKind job)))
+        (is (= "agent:discord_patrol" (:contractSourceKey job)))
         (is (= 222 (:contractHash job)))))))
 
 (deftest event-agent-control-config-resets-legacy-contract-job-without-hash
@@ -80,6 +86,8 @@
       (testing "old persisted rows without contract hashes are treated as drifted"
         (is (= "contract description" (:description job)))
         (is (= "contract system" (get-in job [:agentSpec :systemPrompt])))
+        (is (= "agent" (:contractSourceKind job)))
+        (is (= "agent:discord_patrol" (:contractSourceKey job)))
         (is (= 222 (:contractHash job)))))))
 
 (deftest event-agent-control-config-keeps-custom-jobs

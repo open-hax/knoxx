@@ -94,10 +94,37 @@ Fix: use `:role/contract-librarian` in both files.
   :thinking :off}                  ; :off | :medium | :high
 
  :prompts {:system "You are ..."}
+
+ ; Optional context overflow policy for long-running/sticky sessions.
+ ; Preserves system messages by default, then keeps the newest body messages.
+ :context {:max-messages 40          ; max non-system transcript messages to retain
+           :max-chars 80000          ; approximate text budget across retained body messages
+           :preserve-system true}    ; set false only if the system prompt may be pruned
+
  :data    {}                        ; arbitrary runtime config
  :hooks   {:before {} :after {}}}
 
 Roles are **composable**. Use `:role` for a single role or `:roles` for a vector of roles. Both feed into `agent-role-claims` which merges them. Tools and system prompts are composed across ALL declared roles.
+
+### Context overflow policy
+
+Agent contracts may define a top-level `:context` clause to prevent unbounded session transcript growth:
+
+```clojure
+:context {:max-messages 40
+          :max-chars 80000
+          :preserve-system true}
+```
+
+Runtime behavior:
+
+- The policy is applied when Knoxx rehydrates a session, before sending a prompt, and when persisting completed or failed turns.
+- `:max-messages` keeps the newest N non-system messages when `:preserve-system` is true.
+- `:max-chars` then keeps the newest messages whose approximate text/content-part size fits the budget, always retaining at least the newest body message.
+- System messages are preserved by default so the agent contract remains active after pruning.
+- This is deterministic sliding-window pruning, not summarization. Add summary memory separately if an agent must preserve older facts.
+
+Legacy aliases accepted by the runtime are `:context-policy`, `:contextPolicy`, `:maxMessages`, `:max_chars`, and `:preserveSystem`, but new EDN contracts should use the kebab-case `:context` form above.
 
 ### Common mistakes in agent contracts
 

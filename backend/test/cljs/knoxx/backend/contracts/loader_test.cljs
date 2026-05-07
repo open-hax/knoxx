@@ -125,13 +125,13 @@
 
 (deftest load-all-contracts-resolves-non-empty
   (async done
-    ;; fixtures: 2 valid agents + 1 role + 1 capability + 1 actor = 5 valid records
+    ;; fixtures: 2 valid agents + 1 role + 1 capability + 1 actor + 1 sub-agent = 6 valid records
     ;; broken.edn and no_identity.edn are silently dropped
     (let [config {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"}]
       (-> (sut/load-all-contracts! config)
           (.then (fn [contracts]
-                   (is (= 5 (count contracts))
-                       (str "expected 5 valid contracts, got " (count contracts) ": " (pr-str (mapv :id contracts))))
+                   (is (= 6 (count contracts))
+                       (str "expected 6 valid contracts, got " (count contracts) ": " (pr-str (mapv :id contracts))))
                    (done)))
           (.catch (fn [err]
                     (is false (str "rejected: " (.-message err)))

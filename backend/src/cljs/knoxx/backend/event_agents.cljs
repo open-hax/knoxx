@@ -13,6 +13,8 @@
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.session-store :as session-store]
+            [knoxx.backend.agents.runner :as agents-runner]
+            [knoxx.backend.events.cron :as events-cron]
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
@@ -21,7 +23,7 @@
             [knoxx.backend.util.parse :refer [parse-positive-int]]
             [knoxx.backend.actions.dispatch :as actions-dispatch]))
 
-(declare start! reload! execute-discord-synthesis!)
+(declare start! reload! execute-discord-synthesis! normalize-job-state run-job!)
 
 (defonce running?* (atom false))
 (defonce scheduled-tasks* (atom {}))
@@ -47,6 +49,8 @@
 ;; recoveries, each finding the same Redis sessions and resuming them —
 ;; the root cause of zombie job accumulation.
 (defonce ^:private reload-lock* (atom nil))
+
+(def ^:private event-agent-job-dirty-redis-key "event-agent:job-dirty")
 
 (defn debounced-reload!
   "Coalesce rapid reload! calls into one, firing 2 s after the last call.
@@ -96,6 +100,18 @@
 (defn- control-config
   [config]
   (control-config/event-agent-control-config config))
+
+(defn- schedule-events-cron-ticker!
+  [config]
+  (events-cron/schedule-cron-ticker!
+   {:scheduled-tasks* scheduled-tasks*
+    :job-state* job-state*
+    :running?* running?*
+    :control-config-fn control-config
+    :run-job! run-job!
+    :update-job-state! update-job-state!
+    :normalize-job-state normalize-job-state}
+   config))
 
 (defn- discord-token
   []
@@ -266,13 +282,87 @@
                 (take-last 30)
                 vec))))
 
+(defn- redis-keys!
+  [client pattern]
+  (-> (.keys client pattern)
+      (.then (fn [keys]
+               (if (array? keys)
+                 (vec (array-seq keys))
+                 [])))
+      (.catch (fn [err]
+                (println "[event-agents] Redis KEYS failed for" pattern ":" (.-message err))
+                []))))
+
+(defn- delete-redis-keys!
+  [client keys]
+  (let [keys' (->> (or keys [])
+                   (map #(some-> % str str/trim not-empty))
+                   (remove nil?)
+                   distinct
+                   vec)]
+    (if (seq keys')
+      (-> (js/Promise.all (clj->js (map #(redis/del client %) keys')))
+          (.then (fn [_] (count keys'))))
+      (js/Promise.resolve 0))))
+
+(defn- clear-runtime-state!
+  []
+  (reset! job-state* {})
+  (reset! user-job-state* {})
+  (reset! source-state* {:discord {:last-seen {}}})
+  (reset! recent-events* [])
+  (reset! job-specs* {})
+  (reset! dispatched-event-ids* #{}))
+
+(defn- disable-cron-jobs
+  [control]
+  (update control :jobs
+          (fn [jobs]
+            (mapv (fn [job]
+                    (if (= "cron" (get-in job [:trigger :kind]))
+                      (assoc job :enabled false)
+                      job))
+                  (or jobs [])))))
+
+(defn- recover-runtime-state!
+  [control]
+  (if-let [client (redis/get-client)]
+    (let [job-ids (map :id (:jobs control))
+          channels (or (:defaultChannels (discord-source-config control)) [])
+          recovery-promises
+          (concat
+           (for [job-id job-ids]
+             (-> (redis/get-json client (str "event-agent:job-state:" job-id))
+                 (.then (fn [state]
+                          (when state
+                            (swap! job-state* assoc job-id (normalize-job-state job-id state))
+                            (println "[event-agents] recovered state for" job-id))
+                          nil))))
+           (for [job-id job-ids]
+             (-> (redis/get-json client (str "event-agent:job-spec:" job-id))
+                 (.then (fn [redis-spec]
+                          (when redis-spec
+                            (swap! job-specs* assoc job-id redis-spec)
+                            (println "[event-agents] recovered spec for" job-id))
+                          nil))))
+           (for [channel-id channels]
+             (-> (redis/get-key client (str "event-agent:discord-last-seen:" channel-id))
+                 (.then (fn [last-id]
+                          (when last-id
+                            (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id)
+                            (println "[event-agents] recovered last-seen for channel" channel-id))
+                          nil)))))]
+      (-> (js/Promise.all (clj->js recovery-promises))
+          (.then (fn [_] nil))))
+    (js/Promise.resolve nil)))
+
 (defn- update-job-spec!
   "Update a job spec in Redis and mark it dirty for SQL flush.
    This is the canonical write path - all job updates go through here."
   [job-id spec]
   (when-let [client (redis/get-client)]
     (let [key (str "event-agent:job-spec:" job-id)
-          dirty-key "event-agent:job-dirty"]
+          dirty-key event-agent-job-dirty-redis-key]
       ;; Write the full spec to Redis (hot store)
       (redis/set-json client key spec)
       ;; Add to dirty set for write-behind flush to SQL
@@ -312,7 +402,7 @@
    For now, it logs the dirty jobs and clears the dirty marker."
   []
   (when-let [client (redis/get-client)]
-    (let [dirty-key "event-agent:job-dirty"]
+    (let [dirty-key event-agent-job-dirty-redis-key]
       (-> (redis/smembers client dirty-key)
           (.then (fn [job-ids]
                    (when (and job-ids (seq job-ids))
@@ -653,7 +743,11 @@
                            (js/Promise.resolve part)))
                        parts)))
       (.then (fn [arr] (vec (remove nil? (array-seq arr)))))))
-(defn- event-content-parts [_event] [])
+(defn- event-content-parts [event]
+  (let [payload (or (:payload event) {})]
+    (vec (or (:content_parts payload)
+             (:contentParts payload)
+             []))))
 
 (defn- sticky-session-enabled?
   [job]
@@ -773,11 +867,25 @@
                      (:actorId job))
         content-parts (event-content-parts event)
         model-id (or (:model agent-spec) "gemma4:31b")
+        task-prompt (or (:taskPrompt agent-spec)
+                        (:task-prompt agent-spec)
+                        "")
+        system-prompt (or (:systemPrompt agent-spec)
+                          (:system-prompt agent-spec)
+                          "You are a Knoxx event agent.")
+        thinking-level (or (:thinkingLevel agent-spec)
+                           (:thinking-level agent-spec)
+                           "off")
+        tool-policies (or (:toolPolicies agent-spec)
+                          (:tool-policies agent-spec))
         memory-hydration (or (:memoryHydration agent-spec)
                              (:memory-hydration agent-spec))
+        context-policy (or (:contextPolicy agent-spec)
+                           (:context-policy agent-spec)
+                           (:context agent-spec))
         preamble (str "An event matched this job.\n\n"
-                      (or (:taskPrompt agent-spec) "")
-                      (when-not (str/blank? (or (:taskPrompt agent-spec) "")) "\n\n")
+                      task-prompt
+                      (when-not (str/blank? task-prompt) "\n\n")
                       (when-not (str/blank? (or summary ""))
                         (str summary "\n\n")))]
     (-> (event-summary-text event)
@@ -788,14 +896,15 @@
                   :message (str preamble summary-text)
                   :content_parts content-parts
                   :agent_spec (cond-> {:role (or (:role agent-spec) "knowledge_worker")
-                                       :system_prompt (or (:systemPrompt agent-spec) "You are a Knoxx event agent.")
-                                       :task_prompt (or (:taskPrompt agent-spec) "")
+                                       :system_prompt system-prompt
+                                       :task_prompt task-prompt
                                        :model model-id
-                                       :thinking_level (or (:thinkingLevel agent-spec) "off")
-                                       :tool_policies (tool-policies->js (:toolPolicies agent-spec))}
+                                       :thinking_level thinking-level
+                                       :tool_policies (tool-policies->js tool-policies)}
                                 contract-id (assoc :contract_id contract-id)
                                 actor-id (assoc :actor_id actor-id)
-                                memory-hydration (assoc :memory_hydration memory-hydration))
+                                memory-hydration (assoc :memory_hydration memory-hydration)
+                                context-policy (assoc :context_policy context-policy))
                   :model model-id})))))
 
 (defn- job-step
@@ -818,6 +927,12 @@
       "follow-up" :follow-up
       "followup" :follow-up
       "queue" :follow-up
+      "idle-only" :idle-only
+      "idle_only" :idle-only
+      "drop-if-busy" :idle-only
+      "drop_if_busy" :idle-only
+      "ignore-if-busy" :idle-only
+      "ignore_if_busy" :idle-only
       :follow-up)))
 
 (defn- steer-running-session!
@@ -867,10 +982,7 @@
                (-> (materialize-content-parts! (:content_parts raw-body))
                    (.then (fn [materialized-parts]
                             (let [body (assoc raw-body :content_parts materialized-parts)]
-                              (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/direct/start")
-                                               #js {:method "POST"
-                                                    :headers (direct-start-headers config)
-                                                    :body (.stringify js/JSON (clj->js body))})
+                              (-> (agents-runner/spawn-direct! config body)
                                   (.then (fn [result]
                                            (println "[event-agents] queued run" (:run_id body)
                                                     "for job" (:id job) "event" (:eventKind event))
@@ -887,8 +999,12 @@
                                                          (= behavior :follow-up))
                                                   (do (println "[event-agents] session active, queuing follow-up for job" (:id job))
                                                       (follow-up-running-session! config job event session-id conversation-id))
-                                                  (do (println "[event-agents] failed to queue run for job" (:id job) ":" msg)
-                                                      (js/Promise.reject err))))))))))))))))
+                                                  (if (and (str/includes? msg "agent_already_processing")
+                                                           (= behavior :idle-only))
+                                                    (do (println "[event-agents] session busy, dropping idle-only event for job" (:id job))
+                                                        (js/Promise.resolve {:skipped true :reason "session_busy"}))
+                                                    (do (println "[event-agents] failed to queue run for job" (:id job) ":" msg)
+                                                        (js/Promise.reject err)))))))))))))))))
 (defn- matches-event-kind?
   "Check if event kinds match the job's configured events.
 
@@ -1129,8 +1245,12 @@
     ;; Track user voice states so message events can include the author's voice channel
     (when-not (str/blank? (str guildId ""))
       (if (str/blank? (str newChannelId ""))
-        ;; User left/moved out - remove their voice state
-        (swap! source-state* update-in [:discord :voice-states guildId] dissoc userId)
+        ;; User left/moved out - remove their voice state; clean up empty guild map
+        (swap! source-state* (fn [state]
+                               (let [updated (update-in state [:discord :voice-states guildId] dissoc userId)]
+                                 (if (empty? (get-in updated [:discord :voice-states guildId]))
+                                   (update-in updated [:discord :voice-states] dissoc guildId)
+                                   updated))))
         ;; User joined/moved in - record their voice channel
         (swap! source-state* assoc-in [:discord :voice-states guildId userId] newChannelId)))
     (dispatch-event! {:sourceKind "discord"
@@ -1414,13 +1534,52 @@
   (reset! job-specs* {})
   (println "[event-agents] stopped"))
 
-(defn- cadence-label
-  [minutes]
-  (cond
-    (= minutes 1) "Every minute"
-    (< minutes 60) (str "Every " minutes " minutes")
-    (= (mod minutes 60) 0) (str "Every " (/ minutes 60) " hours")
-    :else (str "Every " minutes " minutes")))
+(defn reset-runtime!
+  [config]
+  (let [live-config (or @runtime-state/config* config)
+        pending-reload (or @reload-lock* (js/Promise.resolve nil))
+        reset-control (-> (control-config/default-event-agent-control live-config)
+                          disable-cron-jobs)
+        redis-patterns ["event-agent:job-state:*"
+                        "event-agent:user-job-state:*"
+                        "event-agent:job-spec:*"
+                        "event-agent:discord-last-seen:*"]]
+    (-> pending-reload
+        (.then (fn []
+                 (when-let [t @reload-timer*]
+                   (js/clearTimeout t)
+                   (reset! reload-timer* nil))
+                 (stop!)))
+        (.then (fn []
+                 (clear-runtime-state!)
+                 (if-let [client (redis/get-client)]
+                   (-> (js/Promise.all (clj->js (map #(redis-keys! client %) redis-patterns)))
+                       (.then (fn [results]
+                                (let [matched (->> (js/Array.from results)
+                                                   (mapcat (fn [result]
+                                                             (if (array? result)
+                                                               (array-seq result)
+                                                               result)))
+                                                   distinct
+                                                   vec)]
+                                  (-> (delete-redis-keys! client matched)
+                                      (.then (fn [deleted-count]
+                                               (-> (delete-redis-keys! client [event-agent-job-dirty-redis-key])
+                                                   (.then (fn [_]
+                                                            {:deletedCount deleted-count}))))))))))
+                   (js/Promise.resolve {:deletedCount 0}))))
+        (.then (fn [{:keys [deletedCount]}]
+                 (swap! runtime-state/config*
+                        (fn [current]
+                          (assoc (or current live-config) :event-agent-control reset-control)))
+                 (-> (control-config/persist-event-agent-control! reset-control)
+                     (.then (fn [_]
+                              {:ok true
+                               :deletedCount deletedCount
+                               :disabledCronJobCount (count (filter #(= "cron" (get-in % [:trigger :kind])) (:jobs reset-control)))})))))
+        (.catch (fn [err]
+                  (clear-runtime-state!)
+                  (js/Promise.reject err))))))
 
 (defn status-snapshot
   [config]
@@ -1433,78 +1592,14 @@
                    (merge {:id (:id job)
                            :name (:name job)
                            :enabled (:enabled job)
+                           :contractSourceId (:contractSourceId job)
+                           :contractSourceKind (:contractSourceKind job)
+                           :contractSourceKey (:contractSourceKey job)
                            :trigger (:trigger job)
                            :source (:source job)
-                           :scheduleLabel (cadence-label (get-in job [:trigger :cadenceMinutes]))}
+                           :scheduleLabel (events-cron/cadence-label (get-in job [:trigger :cadenceMinutes]))}
                           (get @job-state* (:id job) {:runCount 0 :lastStatus "none"})))
                  (:jobs control))}))
-
-(def ^:private cron-ticker-ms 15000)
-
-(defn- job-cadence-ms
-  [job]
-  (* 60 1000 (max 1 (or (get-in job [:trigger :cadenceMinutes]) 1))))
-
-(defn- cron-job?
-  [job]
-  (and (:enabled job)
-       (= "cron" (get-in job [:trigger :kind]))))
-
-(defn- initialize-cron-job-state!
-  [job]
-  (let [job-id (:id job)
-        cadence-ms (job-cadence-ms job)
-        now (.now js/Date)]
-    (update-job-state! job-id
-                       (fn [state]
-                         (let [state (normalize-job-state job-id state)
-                               running? (boolean (:running state))
-                               last-finished (:lastFinishedAt state)
-                               next-run (or (:nextRunAt state)
-                                            (when last-finished (+ last-finished cadence-ms))
-                                            now)]
-                           (assoc state
-                                  :id job-id
-                                  :name (:name job)
-                                  :enabled (:enabled job)
-                                  :running running?
-                                  :nextRunAt next-run))))))
-
-(defn- due-cron-job?
-  [now job]
-  (let [job-id (:id job)
-        state (normalize-job-state job-id (get @job-state* job-id))]
-    (and (cron-job? job)
-         (not (:running state))
-         (<= (or (:nextRunAt state) 0) now))))
-
-(defn- trigger-due-cron-jobs!
-  [config]
-  (when @running?*
-    (let [control (control-config config)
-          now (.now js/Date)
-          cron-jobs (filter cron-job? (:jobs control))]
-      (doseq [job cron-jobs]
-        (initialize-cron-job-state! job))
-      (doseq [job cron-jobs]
-        (when (due-cron-job? now job)
-          (-> (run-job! (:id job))
-              (.catch (fn [err]
-                        (println "[event-agents] cron ticker job failed for" (:id job) ":" (.-message err))))))))))
-
-(defn- schedule-cron-ticker!
-  [config]
-  ;; One ticker owns all cron evaluation. Individual jobs never register their
-  ;; own timers/timeouts, which prevents timer fan-out across reload/restart
-  ;; churn and makes "next activation time" visible in job-state.
-  (when-not (contains? @scheduled-tasks* :cron-ticker)
-    (let [tick! (fn [] (trigger-due-cron-jobs! config))
-          id (doto (js/setInterval tick! cron-ticker-ms) (.unref))]
-      (swap! scheduled-tasks* assoc :cron-ticker {:type :interval
-                                                  :id id
-                                                  :everyMs cron-ticker-ms})
-      (println "[event-agents] scheduled single cron ticker every" cron-ticker-ms "ms")
-      (tick!))))
 
 (defn reload!
   "Stop then start the event-agent runtime. Returns a promise.
@@ -1556,45 +1651,22 @@
                          control (control-config config)]
                      (println "[event-agents] starting with" (count (:jobs control)) "jobs")
 
-                     ;; Recover remaining state from Redis (job state, specs, last-seen)
-                     (when-let [client (redis/get-client)]
-                       (println "[event-agents] recovering state from Redis...")
+                     ;; Recover remaining state from Redis (job state, specs,
+                     ;; last-seen) BEFORE the cron ticker starts. Otherwise a
+                     ;; reload can boot with empty in-memory state, mark every
+                     ;; cron job due "now", and duplicate scheduled runs.
+                     (-> (recover-runtime-state! control)
+                         (.then (fn [_]
+                                  ;; Schedule background SQL flush task
+                                  (schedule-flush-task!)
 
-                       ;; Recover operational state and specs for all configured jobs
-                       (let [job-ids (map :id (:jobs control))]
-                         (doseq [id job-ids]
-                           ;; Recover Operational State (Counts/Status)
-                           (-> (redis/get-json client (str "event-agent:job-state:" id))
-                               (.then (fn [state]
-                                        (when state
-                                          (swap! job-state* assoc id (normalize-job-state id state))
-                                          (println "[event-agents] recovered state for" id)))))
+                                  ;; Bind Discord gateway for real-time message handling
+                                  (bind-discord-gateway! config)
 
-                           ;; Recover Job Spec Overrides from Redis
-                           (-> (redis/get-json client (str "event-agent:job-spec:" id))
-                               (.then (fn [redis-spec]
-                                        (when redis-spec
-                                          (println "[event-agents] loaded Redis spec override for" id)))))))
-
-                       ;; Recover Discord last-seen markers
-                       (let [channels (or (:defaultChannels (discord-source-config control)) [])]
-                         (doseq [channel-id channels]
-                           (-> (redis/get-key client (str "event-agent:discord-last-seen:" channel-id))
-                               (.then (fn [last-id]
-                                        (when last-id
-                                          (swap! source-state* assoc-in [:discord :last-seen channel-id] last-id)
-                                          (println "[event-agents] recovered last-seen for channel" channel-id))))))))
-
-                     ;; Schedule background SQL flush task
-                     (schedule-flush-task!)
-
-                     ;; Bind Discord gateway for real-time message handling
-                     (bind-discord-gateway! config)
-
-                     ;; One scheduler ticker evaluates all cron jobs from
-                     ;; their persisted :nextRunAt timestamps. No per-job
-                     ;; intervals or boot-kick timeouts are registered.
-                     (schedule-cron-ticker! config))))
+                                  ;; One scheduler ticker evaluates all cron jobs from
+                                  ;; their persisted :nextRunAt timestamps. No per-job
+                                  ;; intervals or boot-kick timeouts are registered.
+                                  (schedule-events-cron-ticker! config)))))))
           (.catch (fn [err]
                     (println "[event-agents] failed to recover control config from Redis:" (.-message err))
                     ;; Fall through — start with defaults
@@ -1603,7 +1675,7 @@
                       (println "[event-agents] starting with" (count (:jobs control)) "jobs (defaults)")
                       (schedule-flush-task!)
                       (bind-discord-gateway! config)
-                      (schedule-cron-ticker! config))))))
+                      (schedule-events-cron-ticker! config))))))
     ;; Already running — return resolved promise so callers can chain uniformly
     (js/Promise.resolve nil)))
 

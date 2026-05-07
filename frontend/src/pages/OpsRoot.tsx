@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { EVENT_AGENTS_ROUTE, opsRoutes } from '../lib/app-routes';
+import { AGENTS_ROUTE, EVENT_AGENTS_ROUTE, opsRoutes } from '../lib/app-routes';
 import SettingsPage from './SettingsPage';
 import DocumentsPage from './DocumentsPage';
 import VectorsPage from './VectorsPage';
@@ -72,7 +72,7 @@ export default function OpsRoot() {
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="docs/view" element={<SourceDocPage />} />
             <Route path="vectors" element={<VectorsPage />} />
-            <Route path="agents" element={<Navigate to={`${EVENT_AGENTS_ROUTE}?tab=audit`} replace />} />
+            <Route path="agents" element={<Navigate to={`${AGENTS_ROUTE}?tab=audit`} replace />} />
             <Route path="event-agents" element={<Navigate to={EVENT_AGENTS_ROUTE} replace />} />
             <Route path="graph-export-debug" element={<RawGraphExportPage />} />
             <Route path="settings" element={<SettingsPage />} />

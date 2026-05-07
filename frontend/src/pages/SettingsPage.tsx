@@ -35,7 +35,8 @@ export default function SettingsPage() {
         <div className="space-y-2 text-sm">
           <StatusRow label="Backend API" url="/api/config" />
           <StatusRow label="Proxx Health" url="/api/proxx/health" />
-          <StatusRow label="Agents" url="/api/admin/config/event-agents" />
+          <StatusRow label="Events" url="/api/admin/config/events" />
+          <StatusRow label="Agents" url="/api/admin/agents/active?limit=1" />
         </div>
       </div>
 

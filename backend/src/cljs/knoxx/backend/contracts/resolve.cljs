@@ -38,6 +38,14 @@
       (get-in contract [:memory :passive-hydration])
       (get-in contract [:memory :passiveHydration])))
 
+(defn- context-policy-from-contract
+  [contract]
+  (or (:context contract)
+      (:context-policy contract)
+      (:contextPolicy contract)
+      (get-in contract [:data :context])
+      (get-in contract [:data :context-policy])))
+
 (defn- read-edn-sync
   [file-path]
   (try
@@ -239,6 +247,7 @@
                 :task-prompt (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
                 :trigger-kind (some-> (:trigger-kind contract) keywordish->role-slug)
                 :memory-hydration (memory-hydration-from-contract contract)
+                :context-policy (context-policy-from-contract contract)
                 :tool-ids tool-ids
                 :tool-policies tool-policies
                  :extras all-extras}))))))))

@@ -3,7 +3,10 @@
 (def well-known-actions
   {"run-agent" {:action/id "run-agent"
                 :action/kind :invoke/agent
-                :action/label "Run Knoxx Agent"}})
+                :action/label "Run Knoxx Agent"}
+   "invoke-sub-agent" {:action/id "invoke-sub-agent"
+                        :action/kind :invoke/sub-agent
+                        :action/label "Invoke Sub-Agent"}})
 
 (defn resolve-action!
   [_config {:keys [uses with] :as _step-spec}]

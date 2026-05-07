@@ -59,7 +59,7 @@
                                   (default-agent-contract-id config requested-actor-id))
         resolved (effective-agent-contract config requested-contract-id requested-actor-id)
         resolved-id (:id resolved)]
-    (cond-> (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies :contract-actor-ids :memory-hydration])
+    (cond-> (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies :contract-actor-ids :memory-hydration :context-policy])
                    requested)
       requested-actor-id (assoc :actor-id requested-actor-id)
       (seq (:contract-actor-ids resolved)) (assoc :contract-actors (:contract-actor-ids resolved))

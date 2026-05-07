@@ -149,6 +149,8 @@ export interface EventAgentJobControl {
   enabled: boolean;
   description?: string;
   contractSourceId?: string;
+  contractSourceKind?: string;
+  contractSourceKey?: string;
   contractHash?: number;
   actorId?: string;
   trigger: {
@@ -176,6 +178,9 @@ export interface EventAgentRuntimeJob {
   id: string;
   name: string;
   enabled: boolean;
+  contractSourceId?: string;
+  contractSourceKind?: string;
+  contractSourceKey?: string;
   scheduleLabel: string;
   trigger?: {
     kind: string;
@@ -233,18 +238,18 @@ export async function updateDiscordConfig(discordBotToken: string): Promise<Disc
 }
 
 export async function getEventAgentControl(): Promise<EventAgentControlResponse> {
-  return request<EventAgentControlResponse>("/api/admin/config/event-agents");
+  return request<EventAgentControlResponse>("/api/admin/config/events");
 }
 
 export async function updateEventAgentControl(control: EventAgentControlResponse["control"]): Promise<EventAgentControlResponse & { ok: boolean }> {
-  return request<EventAgentControlResponse & { ok: boolean }>("/api/admin/config/event-agents", {
+  return request<EventAgentControlResponse & { ok: boolean }>("/api/admin/config/events", {
     method: "PUT",
     body: JSON.stringify(control),
   });
 }
 
 export async function runEventAgentJob(jobId: string): Promise<{ ok: boolean; jobId: string }> {
-  return request<{ ok: boolean; jobId: string }>(`/api/admin/config/event-agents/jobs/${encodeURIComponent(jobId)}/run`, {
+  return request<{ ok: boolean; jobId: string }>(`/api/admin/config/events/jobs/${encodeURIComponent(jobId)}/run`, {
     method: "POST",
   });
 }
@@ -254,20 +259,42 @@ export async function dispatchEventAgentEvent(event: {
   eventKind: string;
   payload?: Record<string, unknown>;
 }): Promise<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }> {
-  return request<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }>("/api/admin/config/event-agents/events/dispatch", {
+  return request<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }>("/api/admin/config/events/dispatch", {
     method: "POST",
     body: JSON.stringify(event),
   });
 }
 
 export async function stopEventAgentRuntime(): Promise<EventAgentControlResponse & { ok: boolean; action: string }> {
-  return request<EventAgentControlResponse & { ok: boolean; action: string }>("/api/admin/config/event-agents/runtime/stop", {
+  return request<EventAgentControlResponse & { ok: boolean; action: string }>("/api/admin/config/events/runtime/stop", {
     method: "POST",
   });
 }
 
 export async function startEventAgentRuntime(): Promise<EventAgentControlResponse & { ok: boolean; action: string }> {
-  return request<EventAgentControlResponse & { ok: boolean; action: string }>("/api/admin/config/event-agents/runtime/start", {
+  return request<EventAgentControlResponse & { ok: boolean; action: string }>("/api/admin/config/events/runtime/start", {
+    method: "POST",
+  });
+}
+
+export async function resetEventAgentRuntime(): Promise<EventAgentControlResponse & {
+  ok: boolean;
+  action: string;
+  reset: {
+    ok: boolean;
+    deletedCount: number;
+    disabledCronJobCount: number;
+  };
+}> {
+  return request<EventAgentControlResponse & {
+    ok: boolean;
+    action: string;
+    reset: {
+      ok: boolean;
+      deletedCount: number;
+      disabledCronJobCount: number;
+    };
+  }>("/api/admin/config/events/runtime/reset", {
     method: "POST",
   });
 }

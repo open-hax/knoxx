@@ -22,9 +22,31 @@
     :else         default-ttl-ms))
 (defn- now-ms [] (.now js/Date))
 
+(def ^:private LOCAL_STORE_MAX 256)
+
 ;; ─── local fallback ────────────────────────────────────────────────────────────────────────
 
+(defn- sweep-expired!
+  "Remove expired entries from local-store*. Called on writes to prevent unbounded growth."
+  []
+  (let [now (now-ms)]
+    (swap! local-store*
+           (fn [store]
+             (if (<= (count store) LOCAL_STORE_MAX)
+               ;; Below cap: only sweep expired
+               (into {} (filter (fn [[_ {:keys [expires-at]}]]
+                                  (> expires-at now)))
+                     store)
+               ;; Over cap: sweep expired, then keep newest LOCAL_STORE_MAX
+               (->> store
+                    (filter (fn [[_ {:keys [expires-at]}]]
+                              (> expires-at now)))
+                    (sort-by (fn [[_ {:keys [expires-at]}]] (- expires-at)))
+                    (take LOCAL_STORE_MAX)
+                    (into {})))))))
+
 (defn- local-set! [k v ttl-ms]
+  (sweep-expired!)
   (swap! local-store* assoc k {:value v :expires-at (+ (now-ms) ttl-ms)})
   nil)
 

@@ -3,7 +3,8 @@
             [knoxx.backend.actions.loader :as loader]
             [knoxx.backend.actions.contract :as contract]
             [knoxx.backend.actions.registry :as registry]
-            [knoxx.backend.actions.invoke-agent]))  ;; side-effect: registers :invoke/agent defmethod
+            [knoxx.backend.actions.invoke-agent]        ;; side-effect: registers :invoke/agent defmethod
+            [knoxx.backend.actions.invoke-sub-agent]))  ;; side-effect: registers :invoke/sub-agent defmethod
 
 (defn dispatch!
   [ctx step-spec]

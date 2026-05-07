@@ -251,10 +251,12 @@ function fallbackTraceBlocksByRunId(rows: MemorySessionRow[]): Map<string, NonNu
 
 export function memoryRowsToMessages(rows: MemorySessionRow[]): ChatMessage[] {
   const derivedTraceBlocks = fallbackTraceBlocksByRunId(rows);
+  const hasPrimaryMessages = rows.some((row) => row.kind === "knoxx.message" && isChatRole(row.role) && typeof row.text === "string" && row.text.trim().length > 0);
+
   return rows.flatMap((row, index) => {
     const text = typeof row.text === "string" ? row.text : "";
     const isPrimaryMessage = row.kind === "knoxx.message";
-    const isLegacyReadableRow = !isPrimaryMessage && isChatRole(row.role) && text.trim().length > 0;
+    const isLegacyReadableRow = !hasPrimaryMessages && !isPrimaryMessage && isChatRole(row.role) && text.trim().length > 0;
     if ((!isPrimaryMessage && !isLegacyReadableRow) || !isChatRole(row.role) || text.trim().length === 0) {
       return [];
     }

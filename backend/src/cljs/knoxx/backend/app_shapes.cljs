@@ -68,6 +68,13 @@
       (get-in spec [:memory :passive-hydration])
       (get-in spec [:memory :passiveHydration])))
 
+(defn- context-policy-spec
+  [spec]
+  (or (:context_policy spec)
+      (:context-policy spec)
+      (:contextPolicy spec)
+      (:context spec)))
+
 (defn- normalize-agent-spec
   [value]
   (let [spec (some-> value (js->clj :keywordize-keys true))
@@ -113,8 +120,9 @@
         resource-policies (or (:resource_policies spec)
                               (:resource-policies spec)
                               (:resourcePolicies spec))
-        memory-hydration (memory-hydration-spec spec)]
-    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies memory-hydration)
+        memory-hydration (memory-hydration-spec spec)
+        context-policy (context-policy-spec spec)]
+    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies memory-hydration context-policy)
       {:contract-id contract-id
        :actor-id actor-id
        :role role
@@ -124,7 +132,8 @@
        :thinking-level thinking-level
        :tool-policies tool-policies
        :resource-policies resource-policies
-       :memory-hydration memory-hydration})))
+       :memory-hydration memory-hydration
+       :context-policy context-policy})))
 
 (defn- normalize-content-part-type
   [value]

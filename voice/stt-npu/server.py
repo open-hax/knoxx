@@ -1,5 +1,6 @@
 import os
 import time
+import json
 import subprocess
 import threading
 from typing import Tuple, Generator
@@ -18,7 +19,7 @@ def env(name: str, default: str) -> str:
 
 PORT = int(env("PORT", "8010"))
 MODEL_DIR = env("MODEL_DIR", "/data/models")
-MODEL_ID = env("WHISPER_MODEL_ID", "anubhav200/openai-whisper-small-openvino-int4")
+MODEL_ID = env("WHISPER_MODEL_ID", "OpenVINO/whisper-medium.en-int8-ov")
 REQUESTED_DEVICE = env("WHISPER_DEVICE", "NPU")
 NPU_COMPILER_TYPE = env("WHISPER_NPU_COMPILER_TYPE", "DRIVER")
 
@@ -31,6 +32,11 @@ CHUNK_DURATION_S = min(
 )
 CHUNK_OVERLAP_S = float(env("STT_CHUNK_OVERLAP_S", "1.0"))
 SAMPLE_RATE = 16000
+# Normalize Discord/browser voice captures before Whisper.  The filter chain is
+# intentionally conservative: remove rumble/ultrasonic room noise and smooth
+# uneven mic gain without changing speech timing. Set STT_AUDIO_FILTERS="" to
+# disable for A/B testing.
+AUDIO_FILTERS = env("STT_AUDIO_FILTERS", "highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15")
 
 def ensure_model(model_id: str, model_dir: str) -> None:
     os.makedirs(model_dir, exist_ok=True)
@@ -63,10 +69,10 @@ def decode_to_f32le_16k_mono(audio_bytes: bytes) -> np.ndarray:
         "1",
         "-ar",
         "16000",
-        "-f",
-        "f32le",
-        "pipe:1",
     ]
+    if AUDIO_FILTERS.strip():
+        cmd.extend(["-af", AUDIO_FILTERS])
+    cmd.extend(["-f", "f32le", "pipe:1"])
     proc = subprocess.run(
         cmd,
         input=audio_bytes,
@@ -179,6 +185,11 @@ def _longest_common_suffix_prefix(a: str, b: str) -> int:
     return 0
 
 
+def _sse_event(payload: dict) -> str:
+    """Encode one Server-Sent Events data line as valid JSON."""
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+
 def transcribe_chunked_gen(audio: np.ndarray) -> Generator[str, None, None]:
     """Split long audio into overlapping chunks, transcribe each, and yield."""
     total_samples = audio.shape[0]
@@ -231,6 +242,9 @@ def health():
             "device": app.config.get("DEVICE", REQUESTED_DEVICE),
             "available_devices": app.config.get("AVAILABLE_DEVICES", []),
             "init_error": app.config.get("INIT_ERROR"),
+            "chunk_duration_s": CHUNK_DURATION_S,
+            "chunk_overlap_s": CHUNK_OVERLAP_S,
+            "audio_filters": AUDIO_FILTERS,
         }
     )
 
@@ -255,20 +269,20 @@ def transcribe():
                 # Short audio — single inference
                 acquired = _acquire_pipe_lock(timeout=30.0)
                 if not acquired:
-                    yield f"data: {{\"error\": \"NPU busy\"}}\n\n"
+                    yield _sse_event({"error": "NPU busy"})
                     return
                 try:
                     text = _generate(audio)
-                    yield f"data: {{\"text\": \"{text}\", \"final\": true}}\n\n"
+                    yield _sse_event({"text": text, "final": True})
                 finally:
                     _pipe_lock.release()
             else:
                 # Long audio — chunked transcription stream
                 for segment in transcribe_chunked_gen(audio):
-                    yield f"data: {{\"text\": \"{segment}\", \"final\": false}}\n\n"
-                yield f"data: {{\"final\": true}}\n\n"
+                    yield _sse_event({"text": segment, "final": False})
+                yield _sse_event({"final": True})
         except Exception as e:
-            yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
+            yield _sse_event({"error": str(e)})
 
     return Response(stream_with_context(generate_stream()), mimetype="text/event-stream")
 

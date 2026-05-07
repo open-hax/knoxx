@@ -18,6 +18,7 @@
                                         :last_error nil}))
 
 (def SESSION_TITLE_TTL_SECONDS (* 60 60 24 7))
+(def ^:private SESSION_TITLES_CACHE_MAX 512)
 
 (defn session-title-key
   [session-id]
@@ -172,6 +173,25 @@
   (when-let [entry (some->> (or rows []) reverse (keep session-title-row-entry) first)]
     (assoc entry :session session-id)))
 
+(defn- evict-stale-titles!
+  "When session-titles* exceeds SESSION_TITLES_CACHE_MAX, evict oldest entries."
+  []
+  (swap! session-titles*
+         (fn [titles]
+           (if (<= (count titles) SESSION_TITLES_CACHE_MAX)
+             titles
+             (let [sorted (sort-by (fn [[_ entry]]
+                                     (or (:updated_at entry) ""))
+                                   titles)
+                   drop-n (- (count sorted) SESSION_TITLES_CACHE_MAX)]
+               (into {} (drop drop-n sorted))))))
+  (swap! session-title-promises*
+         (fn [promises]
+           (if (<= (count promises) SESSION_TITLES_CACHE_MAX)
+             promises
+             (let [known (set (keys @session-titles*))]
+               (select-keys promises known))))))
+
 (defn cache-session-title-entry!
   [session-id title title-model updated-at]
   (let [resolved {:title (or (normalize-session-title title) "Untitled session")
@@ -180,6 +200,7 @@
                   :updated_at (or updated-at (time/now-iso))}]
     (swap! session-titles* assoc session-id resolved)
     (swap! session-title-promises* dissoc session-id)
+    (evict-stale-titles!)
     (when-let [redis-client (redis/get-client)]
       (-> (redis/set-json redis-client
                           (session-title-key session-id)

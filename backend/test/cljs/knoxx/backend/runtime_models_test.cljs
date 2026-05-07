@@ -44,9 +44,10 @@
     (let [model (models/provider-model-config test-config "gemma4:e4b")]
       (is (= "openai-completions" (:api model)))
       (is (true? (:reasoning model)))
-      (is (= ["text" "image"] (:input model)))
+      (is (= ["text" "image" "audio"] (:input model)))
       (is (= {:supportsDeveloperRole false
-              :supportsReasoningEffort true}
+              :supportsReasoningEffort true
+              :thinkingFormat "qwen-chat-template"}
              (models/per-model-compat test-config "gemma4:e4b")))
       (is (= "off" (models/effective-thinking-level test-config "gemma4:e4b" nil)))
       (is (= "minimal" (models/effective-thinking-level test-config "gemma4:e4b" "minimal")))

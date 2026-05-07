@@ -29,6 +29,9 @@
    "event_agents.run_job" {:id "event_agents.run_job" :label "Event Agent Run Job" :description "Trigger a configured event-agent job immediately" :risk-level "low"}
    "event_agents.upsert_job" {:id "event_agents.upsert_job" :label "Event Agent Upsert Job" :description "Create or update a scheduled event-agent job" :risk-level "high"}
    "schedule_event_agent" {:id "schedule_event_agent" :label "Schedule Event Agent" :description "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config" :risk-level "high"}
+   "events.status" {:id "events.status" :label "Events Status" :description "Inspect generic events runtime state and trigger configuration" :risk-level "low"}
+   "events.dispatch" {:id "events.dispatch" :label "Events Dispatch" :description "Dispatch a normalized event into the generic events runtime" :risk-level "low"}
+   "agents.spawn" {:id "agents.spawn" :label "Agents Spawn" :description "Launch a one-off normal Knoxx agent run through the shared agent runtime" :risk-level "medium"}
 
    "sandbox_container.create" {:id "sandbox_container.create" :label "Sandbox Create" :description "Create a TTL-bound sandbox container for isolated development work" :risk-level "low"}
    "sandbox_container.status" {:id "sandbox_container.status" :label "Sandbox Status" :description "Inspect sandbox container runtime status and remaining TTL" :risk-level "low"}
@@ -106,21 +109,36 @@
 
     "memory.temp" {:id "memory.temp" :label "Temporary Memory" :description "Read or write short-lived keyed data with a TTL for pipeline steps" :risk-level "low"}})
 
-(defn get-tool
-  [tool-id]
-  (when-let [id (some-> tool-id str str/trim not-empty)]
-    (or (get tool-meta id)
-        {:id id
-         :label id
-         :description ""})))
-
 (defn known-tool-ids
   []
   (->> (keys tool-meta) sort vec))
+
+(defn- sanitized-alias
+  [tool-id]
+  (some-> tool-id
+          str
+          (str/replace #"[^A-Za-z0-9_-]" "_")
+          (str/replace #"_+" "_")))
 
 (defn normalize-tool-id
   [v]
   (cond
     (keyword? v) (name v)
-    (string? v) v
+    (string? v)
+    (let [trimmed (str/trim v)]
+      (cond
+        (contains? tool-meta trimmed) trimmed
+        :else (or (some (fn [tool-id]
+                          (when (= trimmed (sanitized-alias tool-id))
+                            tool-id))
+                        (keys tool-meta))
+                  trimmed)))
     :else (str v)))
+
+(defn get-tool
+  [tool-id]
+  (when-let [id (some-> tool-id normalize-tool-id str str/trim not-empty)]
+    (or (get tool-meta id)
+        {:id id
+         :label id
+         :description ""})))

@@ -26,10 +26,10 @@
 
 (def AgentSpec
   [:map {:closed false}
-   [:role {:optional true} keyword?]
-   [:roles {:optional true} [:sequential keyword?]]
-   [:model {:optional true} string?]
-   [:thinking {:optional true} keyword?]])
+   [:role {:optional true} [:or keyword? string?]]
+   [:roles {:optional true} [:sequential [:or keyword? string?]]]
+   [:model {:optional true} [:maybe string?]]
+   [:thinking {:optional true} [:or keyword? string?]]])
 
 (def ActorCapSpec
   [:map {:closed false}
@@ -185,7 +185,7 @@
    [:sub-agent/parent-capabilities {:optional true} [:enum :inherit :restrict :none]]
    [:sub-agent/capabilities {:optional true} [:vector any?]]
    [:sub-agent/role {:optional true} string?]
-   [:sub-agent/model {:optional true} string?]
+   [:sub-agent/model {:optional true} [:maybe string?]]
    [:sub-agent/thinking {:optional true} string?]
    [:sub-agent/timeout-ms {:optional true} int?]
    [:sub-agent/mode {:optional true} [:enum :fire-and-forget :await :collect]]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AGENTS_ROUTE, BASIC_USER_ROLE, EVENT_AGENTS_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, joinPath, opsRoutes, remapLegacyOpsPath } from './app-routes';
+import { AGENTS_ROUTE, BASIC_USER_ROLE, EVENTS_ROUTE, EVENT_AGENTS_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, joinPath, opsRoutes, remapLegacyOpsPath } from './app-routes';
 
 describe('app routes', () => {
   it('builds canonical ops routes without duplicate slashes', () => {
@@ -8,7 +8,8 @@ describe('app routes', () => {
     expect(opsRoutes.documents).toBe('/ops/documents');
     expect(opsRoutes.docsView).toBe('/ops/docs/view');
     expect(AGENTS_ROUTE).toBe('/agents');
-    expect(EVENT_AGENTS_ROUTE).toBe('/agents');
+    expect(EVENTS_ROUTE).toBe('/events');
+    expect(EVENT_AGENTS_ROUTE).toBe('/events');
     expect(LEGACY_EVENT_AGENTS_ROUTE).toBe('/event-agents');
   });
 

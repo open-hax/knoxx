@@ -12,7 +12,7 @@
 
 (def contract-class-order
   ["agents" "actors" "roles" "capabilities" "policies"
-   "model_families" "models" "ingest_sources" "actions" "pipelines" "triggers"])
+   "model_families" "models" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -87,6 +87,7 @@
       ("action" "actions") "actions"
       ("pipeline" "pipelines") "pipelines"
       ("trigger" "triggers") "triggers"
+      ("sub-agent" "sub-agents" "sub_agent" "sub_agents") "sub_agents"
       (throw (js/Error. (str "Unknown contract class: " value))))))
 
 ;; ── Stderr logging ─────────────────────────────────────────────────────────

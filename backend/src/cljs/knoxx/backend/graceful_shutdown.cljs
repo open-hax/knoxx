@@ -8,7 +8,7 @@
    - release timers/sockets so PM2 can restart cleanly"
   (:require [knoxx.backend.agent-resume :as agent-resume]
             [knoxx.backend.discord-gateway :as discord-gateway]
-            [knoxx.backend.event-agents :as event-agents]
+            [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.realtime :as realtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.turn-control :as turn-control]))
@@ -56,7 +56,7 @@
                        (swap! shutdown-state* assoc :in-progress? true :signal signal)
                        (log-info! app (str "[shutdown] received " signal "; draining Knoxx"))
                        (agent-resume/stop-periodic-recovery!)
-                       (event-agents/stop!)
+                       (events-runtime/stop!)
                        (discord-gateway/stop!)
                        (realtime/stop!)))
               (.then (fn [_]

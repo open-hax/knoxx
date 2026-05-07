@@ -2,7 +2,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cljs.reader :as reader]
-            [knoxx.backend.event-agents :as event-agents]
+            [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.runtime.contract-loader :as loader]
@@ -262,7 +262,7 @@
                            (println "[contracts] watcher sync failed:" (.-message err))
                            nil))
                   (.then (fn [_]
-                           (event-agents/debounced-reload!)
+                           (events-runtime/debounced-reload!)
                            (println "[contracts] event-agent runtime reload scheduled after contract change")
                            nil))
                  (.catch (fn [err]

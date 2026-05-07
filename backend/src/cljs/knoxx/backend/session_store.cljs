@@ -253,7 +253,10 @@
                    (if sticky?
                      nil
                      (js/setTimeout
-                      #(remove-session! redis-client session-id conversation-id)
+                      #(do
+                         ;; Evict from in-memory cache to prevent unbounded growth
+                         (swap! session-cache* dissoc session-id)
+                         (remove-session! redis-client session-id conversation-id))
                       60000)))
                  session)))))
 

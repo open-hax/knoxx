@@ -2,8 +2,8 @@
   "Discord I/O helpers. Pure API wrappers consumed by trigger-runner,
    pipeline-runner, and agent tools. No scheduling or job logic here."
   (:require [clojure.string :as str]
-            [knoxx.backend.runtime.config :as runtime-config]
-            [knoxx.backend.runtime.models :as runtime-models]))
+            [knoxx.backend.agents.runner :as agents-runner]
+            [knoxx.backend.runtime.config :as runtime-config]))
 
 (defn- discord-token
   []
@@ -99,7 +99,7 @@
                                :type (aget channel "type")}))))))))
 
 (defn start-agent-session!
-  "POST /api/knoxx/direct/start with a Discord-triggered payload.
+  "Launch a normal Knoxx direct-mode turn for a Discord-triggered payload.
    `opts` map accepts :channelId :channelName :authorUsername :content :reason."
   [config job {:keys [channelId channelName authorUsername content reason]}]
   (let [now (.now js/Date)
@@ -118,35 +118,27 @@
                           "Use discord.read, discord.search, discord.channels, and discord.guilds when they improve confidence. "
                           "If a response is warranted, send it with discord.publish to the target channel. "
                           "If not, stay silent.")
-        headers (let [api-key (:knoxx-api-key config)]
-                  (cond-> #js {"Content-Type" "application/json"
-                               "x-knoxx-user-email" "discord-cron@knoxx"}
-                    (not (str/blank? api-key))
-                    (aset "X-API-Key" api-key)))
-        body #js {:conversation_id conversation-id
-                  :session_id session-id
-                  :run_id run-id
-                  :message user-message
-                  :agent_spec #js {:role (or (:role job) "system_admin")
-                                   :system_prompt (or (:systemPrompt job)
-                                                       "You are Knoxx's Discord agent.")
-                                   :model (or (:model job)
-                                              (:proxx-default-model config)
-                                              "glm-5")
-                                   :thinking_level (or (:thinkingLevel job) "off")
-                                   :tool_policies #js [#js {:toolId "discord.read" :effect "allow"}
-                                                       #js {:toolId "discord.search" :effect "allow"}
-                                                       #js {:toolId "discord.publish" :effect "allow"}
-                                                       #js {:toolId "discord.guilds" :effect "allow"}
-                                                       #js {:toolId "memory_search" :effect "allow"}
-                                                       #js {:toolId "graph_query" :effect "allow"}]}
-                  :model (or (:model job)
-                             (:proxx-default-model config)
-                             "glm-5")}]
-    (-> (fetch-json! (str (:knoxx-base-url config) "/api/knoxx/direct/start")
-                     #js {:method "POST"
-                          :headers headers
-                          :body (.stringify js/JSON body)})
+        body {:conversation_id conversation-id
+              :session_id session-id
+              :run_id run-id
+              :message user-message
+              :agent_spec {:role (or (:role job) "system_admin")
+                           :system_prompt (or (:systemPrompt job)
+                                              "You are Knoxx's Discord agent.")
+                           :model (or (:model job)
+                                      (:proxx-default-model config)
+                                      "glm-5")
+                           :thinking_level (or (:thinkingLevel job) "off")
+                           :tool_policies [{:toolId "discord.read" :effect "allow"}
+                                           {:toolId "discord.search" :effect "allow"}
+                                           {:toolId "discord.publish" :effect "allow"}
+                                           {:toolId "discord.guilds" :effect "allow"}
+                                           {:toolId "memory_search" :effect "allow"}
+                                           {:toolId "graph_query" :effect "allow"}]}
+              :model (or (:model job)
+                         (:proxx-default-model config)
+                         "glm-5")}]
+    (-> (agents-runner/spawn-direct! config body)
         (.then (fn [result]
                  (println "[discord-io] queued agent run" run-id "for job" (:id job))
                  result))

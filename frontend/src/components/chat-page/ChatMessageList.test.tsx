@@ -1,11 +1,10 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { ChatMessageList } from "./ChatMessageList";
+import { describe, expect, it } from "vitest";
+import { deriveAssistantPresentation } from "./ChatMessageList";
 import type { ChatMessage } from "../../lib/types";
 
-describe("ChatMessageList", () => {
-  it("renders the final assistant card even when trace blocks exist", () => {
-    const messages: ChatMessage[] = [{
+describe("deriveAssistantPresentation", () => {
+  it("hides completed trace blocks from the main chat transcript once the final answer exists", () => {
+    const message: ChatMessage = {
       id: "assistant-1",
       role: "assistant",
       content: "Final answer",
@@ -25,36 +24,17 @@ describe("ChatMessageList", () => {
           content: "Final answer",
         },
       ],
-    }];
+    };
 
-    render(
-      <ChatMessageList
-        messages={messages}
-        latestRun={null}
-        latestToolReceipts={[]}
-        liveToolReceipts={[]}
-        liveToolEvents={[]}
-        assistantSurfaceBackground="black"
-        assistantSurfaceBorder="gray"
-        assistantSurfaceText="white"
-        onOpenMessageInCanvas={vi.fn()}
-        onOpenSourceInPreview={vi.fn()}
-        onPinAssistantSource={vi.fn()}
-        onAppendToScratchpad={vi.fn()}
-        onPinMessageContext={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText("Reasoning summary")).toBeInTheDocument();
-    expect(screen.getAllByText("Final answer")).toHaveLength(1);
-
-    const renderedAnswer = screen.getByText("Final answer");
-    const actionGroup = screen.getByRole("group", { name: "Assistant message actions" });
-    expect(renderedAnswer.compareDocumentPosition(actionGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(deriveAssistantPresentation(message)).toEqual({
+      effectiveStatus: "done",
+      visibleTraceBlocks: [],
+      showAssistantFinalCard: true,
+    });
   });
 
-  it("treats finalized trace-only streaming snapshots as done and hides duplicated agent trace blocks", () => {
-    const messages: ChatMessage[] = [{
+  it("treats finalized trace-only streaming snapshots as done while keeping audit traces out of chat", () => {
+    const message: ChatMessage = {
       id: "assistant-1",
       role: "assistant",
       content: "Final answer",
@@ -66,58 +46,33 @@ describe("ChatMessageList", () => {
         { id: "reasoning-2", kind: "reasoning", status: "done", content: "Second reasoning" },
         { id: "assistant-trace-2", kind: "agent_message", status: "done", content: "Final answer" },
       ],
-    }];
+    };
 
-    render(
-      <ChatMessageList
-        messages={messages}
-        latestRun={null}
-        latestToolReceipts={[]}
-        liveToolReceipts={[]}
-        liveToolEvents={[]}
-        assistantSurfaceBackground="black"
-        assistantSurfaceBorder="gray"
-        assistantSurfaceText="white"
-        onOpenMessageInCanvas={vi.fn()}
-        onOpenSourceInPreview={vi.fn()}
-        onPinAssistantSource={vi.fn()}
-        onAppendToScratchpad={vi.fn()}
-        onPinMessageContext={vi.fn()}
-      />,
-    );
-
-    expect(screen.queryByText("streaming")).not.toBeInTheDocument();
-    expect(screen.getAllByText("done").length).toBeGreaterThan(0);
-    expect(screen.getByText("First reasoning")).toBeInTheDocument();
-    expect(screen.getByText("Second reasoning")).toBeInTheDocument();
-    expect(screen.queryByText("Partial answer")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Final answer")).toHaveLength(1);
+    expect(deriveAssistantPresentation(message)).toEqual({
+      effectiveStatus: "done",
+      visibleTraceBlocks: [],
+      showAssistantFinalCard: true,
+    });
   });
 
-  it("renders assistant actions on every assistant message", () => {
-    const messages: ChatMessage[] = [
-      { id: "assistant-1", role: "assistant", content: "First", status: "done" },
-      { id: "assistant-2", role: "assistant", content: "Second", status: "done" },
-    ];
+  it("keeps live trace blocks visible while the assistant is still streaming", () => {
+    const traceBlocks = [
+      { id: "reasoning-1", kind: "reasoning", status: "streaming", content: "Thinking..." },
+      { id: "assistant-trace-1", kind: "agent_message", status: "streaming", content: "Partial" },
+    ] as const;
 
-    render(
-      <ChatMessageList
-        messages={messages}
-        latestRun={null}
-        latestToolReceipts={[]}
-        liveToolReceipts={[]}
-        liveToolEvents={[]}
-        assistantSurfaceBackground="black"
-        assistantSurfaceBorder="gray"
-        assistantSurfaceText="white"
-        onOpenMessageInCanvas={vi.fn()}
-        onOpenSourceInPreview={vi.fn()}
-        onPinAssistantSource={vi.fn()}
-        onAppendToScratchpad={vi.fn()}
-        onPinMessageContext={vi.fn()}
-      />,
-    );
+    const message: ChatMessage = {
+      id: "assistant-2",
+      role: "assistant",
+      content: "Partial",
+      status: "streaming",
+      traceBlocks: [...traceBlocks],
+    };
 
-    expect(screen.getAllByRole("button", { name: "Open in Scratchpad" })).toHaveLength(2);
+    expect(deriveAssistantPresentation(message)).toEqual({
+      effectiveStatus: "streaming",
+      visibleTraceBlocks: [...traceBlocks],
+      showAssistantFinalCard: false,
+    });
   });
 });

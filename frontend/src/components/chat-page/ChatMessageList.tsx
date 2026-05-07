@@ -35,6 +35,32 @@ const EMPTY_TOOL_RECEIPTS: ToolReceipt[] = [];
 const EMPTY_TOOL_EVENTS: RunEvent[] = [];
 const REACTION_EMOJIS = ["✅", "❌", "⭐", "👀", "😂"] as const;
 
+export function deriveAssistantPresentation(message: ChatMessage): {
+  effectiveStatus: ChatMessage["status"];
+  visibleTraceBlocks: NonNullable<ChatMessage["traceBlocks"]>;
+  showAssistantFinalCard: boolean;
+} {
+  const rawTraceBlocks = message.traceBlocks ?? [];
+  const allTraceBlocksDone = rawTraceBlocks.length > 0
+    && rawTraceBlocks.every((block) => block.status === "done");
+  const effectiveStatus = message.role === "assistant"
+    && message.status === "streaming"
+    && allTraceBlocksDone
+    && Boolean(message.content?.trim())
+    ? "done"
+    : message.status;
+  const showAssistantFinalCard = message.role === "assistant"
+    && effectiveStatus === "done"
+    && rawTraceBlocks.length > 0
+    && Boolean(message.content?.trim());
+
+  return {
+    effectiveStatus,
+    visibleTraceBlocks: showAssistantFinalCard ? [] : rawTraceBlocks,
+    showAssistantFinalCard,
+  };
+}
+
 function openPlannerRecordIdForMessage(message: ChatMessage): string {
   if (message.runId && message.role === "assistant") return `${message.runId}:assistant`;
   if (message.runId && message.role === "user") return `${message.runId}:user`;
@@ -128,30 +154,10 @@ const ChatMessageCard = memo(function ChatMessageCard({
     </div>
   );
 
-  const { effectiveStatus, visibleTraceBlocks, showAssistantFinalCard } = useMemo(() => {
-    const rawTraceBlocks = message.traceBlocks ?? [];
-    const allTraceBlocksDone = rawTraceBlocks.length > 0
-      && rawTraceBlocks.every((block) => block.status === "done");
-    const effectiveStatus = message.role === "assistant"
-      && message.status === "streaming"
-      && allTraceBlocksDone
-      && Boolean(message.content?.trim())
-      ? "done"
-      : message.status;
-    const isFinalAssistant = message.role === "assistant"
-      && effectiveStatus === "done"
-      && rawTraceBlocks.length > 0
-      && Boolean(message.content?.trim());
-    const visibleBlocks = isFinalAssistant
-      ? rawTraceBlocks.filter((block) => block.kind !== "agent_message")
-      : rawTraceBlocks;
-
-    return {
-      effectiveStatus,
-      visibleTraceBlocks: visibleBlocks,
-      showAssistantFinalCard: isFinalAssistant,
-    };
-  }, [message.content, message.role, message.status, message.traceBlocks]);
+  const { effectiveStatus, visibleTraceBlocks, showAssistantFinalCard } = useMemo(
+    () => deriveAssistantPresentation(message),
+    [message],
+  );
 
   const { embeddedMarkdown, mergedContentParts } = useMemo(() => {
     const { markdown, contentParts: embeddedParts } = extractEmbedsFromMarkdown(message.content || "");

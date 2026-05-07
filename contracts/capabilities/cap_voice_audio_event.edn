@@ -1,0 +1,22 @@
+{:cap/id :cap/voice-audio-event
+ :cap/tools [:discord.voice.agent_event.connect
+             :discord.voice.agent_event.listen
+             :discord.voice.say
+             :discord.voice.status
+             :discord.voice.stop_listen
+             :discord.voice.leave]
+ :cap/description "Contract-gated raw Discord voice event capability.
+
+   This is NOT the default ASR voice path.
+
+   Invariants:
+   - Only agents/contracts that explicitly hold :cap/voice-audio-event receive these tools.
+   - The event source emits real event-agent events of kind discord.voice.audio.window.
+   - The event source does not call a model provider directly and does not steer a running session.
+   - Matching event-agent contracts decide whether to speak, remember, or stay silent.
+   - Use discord.voice.say only from an active voice event/listen session."
+ :cap/user-surfaces [{:surface/id :workspace/voice-audio-events
+                      :surface/label "Voice audio event source"
+                      :surface/kind :admin-console
+                      :surface/routes ["/event-agents" "/voice"]
+                      :surface/description "Contract-gated raw Discord audio event source for event-agent voice perception."}]}

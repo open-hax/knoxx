@@ -129,7 +129,10 @@
             sticky-session? (or (true? (:stickySession source-config))
                                 (true? (:sticky_session source-config)))
             session-max-messages (or (parse-positive-int (:sessionMaxMessages source-config))
-                                     (parse-positive-int (:session_max_messages source-config)))]
+                                     (parse-positive-int (:session_max_messages source-config)))
+            streaming-behavior (some-> (or (:streamingBehavior source-config)
+                                           (:streaming_behavior source-config))
+                                       str str/trim not-empty)]
         {:id contract-id
          :name contract-id
          :enabled (not (false? (:enabled contract)))
@@ -145,7 +148,8 @@
                   :config (cond-> {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
                                                                    (get-in contract [:data :source :maxMessages]))}
                            sticky-session? (assoc :stickySession true)
-                           session-max-messages (assoc :sessionMaxMessages session-max-messages))}
+                           session-max-messages (assoc :sessionMaxMessages session-max-messages)
+                           streaming-behavior (assoc :streamingBehavior streaming-behavior))}
          :filters filters
          :agentSpec {:role (if (str/blank? (str (or role ""))) (:knoxx-default-role config) role)
                      :model model
@@ -161,6 +165,8 @@
                           (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
                           contract-id)
          :contractSourceId contract-id
+         :contractSourceKind "agent"
+         :contractSourceKey (str "agent:" contract-id)
          :contractHash contract-hash
          :actorId (:actor-id resolved)}))))
 
@@ -521,6 +527,10 @@
                                    (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job))))) }
      :contractSourceId (or (:contractSourceId source)
                            (:contractSourceId default-job))
+     :contractSourceKind (or (:contractSourceKind source)
+                             (:contractSourceKind default-job))
+     :contractSourceKey (or (:contractSourceKey source)
+                            (:contractSourceKey default-job))
      :contractHash (or (:contractHash default-job)
                        (:contractHash source))
 :actorId (or (:actorId source)

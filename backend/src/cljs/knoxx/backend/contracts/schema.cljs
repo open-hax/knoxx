@@ -94,3 +94,32 @@
     [:map
      [:context {:optional true} :map]
      [:filters {:optional true} :map]]]])
+
+;; ─── :sub-agent contract ─────────────────────────────────────────────────────
+;; A lightweight agent that can be spawned by a parent agent.
+;; Sub-agents inherit conversation lineage and may restrict capabilities.
+
+(def SubAgentContract
+  [:map
+   [:contract/kind   [:= :sub-agent]]
+   [:contract/id     ContractId]
+   [:enabled         {:optional true} :boolean]
+   [:sub-agent/parent-capabilities {:optional true}
+    [:enum :inherit :restrict :none]]
+   [:sub-agent/capabilities {:optional true} [:vector ToolId]]
+   [:sub-agent/role   {:optional true} :string]
+   [:sub-agent/model  {:optional true} [:maybe :string]]
+   [:sub-agent/thinking {:optional true} :string]
+   [:sub-agent/timeout-ms {:optional true} int?]
+   [:sub-agent/mode   {:optional true} [:enum :fire-and-forget :await :collect]]
+   [:agent {:optional true}
+    [:map
+     [:role {:optional true} :string]
+     [:model {:optional true} :string]
+     [:thinking {:optional true} :string]]]
+   [:prompts {:optional true}
+    [:map
+     [:system {:optional true} :string]
+     [:task {:optional true} :string]]]
+   [:context {:optional true} :map]
+   [:data {:optional true} :map]])

@@ -12,7 +12,7 @@
             [knoxx.backend.tools.semantic :as semantic]
             [knoxx.backend.tools.discord :as discord]
             [knoxx.backend.tools.discord-voice :as discord-voice]
-            [knoxx.backend.tools.event-agents :as event-agents]
+            [knoxx.backend.tools.events :as events]
             [knoxx.backend.tools.openplanner :as openplanner]
             [knoxx.backend.tools.music :as music]
             [knoxx.backend.tools.voice :as voice]
@@ -193,7 +193,7 @@
         (-> (semantic/create-semantic-custom-tools runtime config auth-context)
             (.concat (discord/create-discord-custom-tools runtime config auth-context))
             (.concat (discord-voice/create-discord-voice-custom-tools runtime config auth-context))
-            (.concat (event-agents/create-event-agent-custom-tools runtime config auth-context))
+            (.concat (events/create-events-custom-tools runtime config auth-context))
             (.concat (openplanner/create-openplanner-custom-tools runtime config auth-context))
             (.concat (music/create-music-custom-tools runtime config auth-context))
             (.concat (voice/create-voice-synth-custom-tools runtime config auth-context))

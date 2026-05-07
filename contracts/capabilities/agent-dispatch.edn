@@ -1,7 +1,7 @@
 {:cap/id :cap/agent-dispatch
- :cap/tools [:agent.dispatch]
+ :cap/tools [:agents.spawn :agent.dispatch]
  :cap/user-surfaces [{:surface/id :workspace/agent-dispatcher
                       :surface/label "Agent dispatcher"
                       :surface/kind :dispatcher
-                      :surface/routes ["/ops/event-agents"]
-                      :surface/description "Capability to delegate tasks to other specialized agents/roles across the ensemble."}]}
+                      :surface/routes ["/agents" "/ops/event-agents"]
+                      :surface/description "Capability to launch one-off specialized agent runs across the ensemble."}]}

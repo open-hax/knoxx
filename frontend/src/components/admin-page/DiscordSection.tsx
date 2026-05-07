@@ -4,6 +4,7 @@ import {
   dispatchEventAgentEvent,
   getDiscordConfig,
   getEventAgentControl,
+  resetEventAgentRuntime,
   runEventAgentJob,
   startEventAgentRuntime,
   stopEventAgentRuntime,
@@ -14,6 +15,7 @@ import {
   type EventAgentRuntimeJob,
 } from "../../lib/api/admin";
 import type { AdminToolDefinition } from "../../lib/types";
+import { EventAgentScheduleReview } from "./EventAgentScheduleReview";
 import { Badge, SectionCard, classNames } from "./common";
 
 type Notice = { tone: "success" | "error"; text: string } | null;
@@ -205,6 +207,7 @@ export function DiscordSection({
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [dispatchingEvent, setDispatchingEvent] = useState(false);
   const [togglingRuntime, setTogglingRuntime] = useState(false);
+  const [resettingRuntime, setResettingRuntime] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [error, setError] = useState<string>("");
   const [status, setStatus] = useState<EventAgentControlResponse | null>(null);
@@ -476,6 +479,27 @@ export function DiscordSection({
     }
   }, [canManage, load]);
 
+  const handleResetRuntime = useCallback(async () => {
+    if (!canManage) return;
+    setResettingRuntime(true);
+    setError("");
+    setNotice(null);
+    try {
+      const updated = await resetEventAgentRuntime();
+      setStatus(updated);
+      setDraft(updated.control);
+      setJsonDrafts(seedJsonDrafts(updated.control.jobs));
+      setNotice({
+        tone: "success",
+        text: `Event-agent runtime reset. Cleared ${updated.reset.deletedCount} persisted state key(s) and disabled ${updated.reset.disabledCronJobCount} cron job(s). Review schedules before restarting.`,
+      });
+    } catch (err) {
+      setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setResettingRuntime(false);
+    }
+  }, [canManage]);
+
   return (
     <SectionCard>
       {loading || !draft || !status ? (
@@ -494,7 +518,7 @@ export function DiscordSection({
                 <button
                   type="button"
                   onClick={() => void load()}
-                  disabled={loading || savingToken || savingControl || togglingRuntime}
+                  disabled={loading || savingToken || savingControl || togglingRuntime || resettingRuntime}
                   className="inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
                 >
                   {loading ? "Loading…" : "Refresh"}
@@ -502,7 +526,7 @@ export function DiscordSection({
                 <button
                   type="button"
                   onClick={() => void handleSaveControl()}
-                  disabled={!canManage || !draft || savingControl || togglingRuntime}
+                  disabled={!canManage || !draft || savingControl || togglingRuntime || resettingRuntime}
                   className="inline-flex items-center justify-center rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
                 >
                   {savingControl ? "Saving…" : "Save runtime"}
@@ -512,7 +536,7 @@ export function DiscordSection({
                   <button
                     type="button"
                     onClick={() => void handleStopRuntime()}
-                    disabled={!canManage || togglingRuntime}
+                    disabled={!canManage || togglingRuntime || resettingRuntime}
                     className="inline-flex items-center justify-center rounded-md bg-rose-700 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-rose-600 disabled:opacity-60"
                     title="Stops cron scheduling + unsubscribes Discord gateway. Does not hard-cancel an in-flight LLM request."
                   >
@@ -522,12 +546,22 @@ export function DiscordSection({
                   <button
                     type="button"
                     onClick={() => void handleStartRuntime()}
-                    disabled={!canManage || togglingRuntime}
+                    disabled={!canManage || togglingRuntime || resettingRuntime}
                     className="inline-flex items-center justify-center rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-emerald-600 disabled:opacity-60"
                   >
                     {togglingRuntime ? "Starting…" : "Start runtime"}
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => void handleResetRuntime()}
+                  disabled={!canManage || togglingRuntime || resettingRuntime || savingControl}
+                  className="inline-flex items-center justify-center rounded-md border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-900/60 disabled:opacity-60"
+                  title="Stop the runtime, clear persisted event-agent state, disable cron jobs, and leave the scheduler stopped for review."
+                >
+                  {resettingRuntime ? "Resetting…" : "Full reset"}
+                </button>
               </div>
 
               <div className="grid gap-2">
@@ -588,6 +622,19 @@ export function DiscordSection({
             </aside>
 
             <div className="space-y-4 min-w-0">
+              <CollapsiblePanel
+                title="Schedule review"
+                description="Review active schedule identity as contract-kind + contract-id, current cadence, and next-run timing before restarting cron jobs."
+                defaultOpen
+              >
+                <EventAgentScheduleReview
+                  jobs={draft.jobs}
+                  runtimeJobs={runtimeJobs}
+                  selectedJobId={selectedJob?.id ?? null}
+                  onSelectJob={(jobId) => setSelectedJobId(jobId)}
+                />
+              </CollapsiblePanel>
+
               {selectedJob ? (
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
                   <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
@@ -601,7 +648,7 @@ export function DiscordSection({
                       <p className="mt-2 text-sm text-slate-400">{selectedJob.description || "No description provided."}</p>
                       {selectedJob.contractSourceId ? (
                         <div className="mt-2 text-xs text-slate-500">
-                          Contract-backed from <code className="font-mono text-slate-300">{selectedJob.contractSourceId}</code>
+                          Contract-backed from <code className="font-mono text-slate-300">{selectedJob.contractSourceKind ?? "agent"}:{selectedJob.contractSourceId}</code>
                           {typeof selectedJob.contractHash === "number" ? (
                             <span> · hash <code className="font-mono text-slate-300">{selectedJob.contractHash}</code></span>
                           ) : null}

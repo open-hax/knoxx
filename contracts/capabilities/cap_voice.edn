@@ -19,6 +19,8 @@
 
    Speaking (TTS → voice channel):
    - discord.voice.say synthesizes speech via Voxx Gateway and plays it in the voice channel
+   - you *MUST* use the voice channel id
+   - you *MUST NOT* use text channel ids
    - Keep spoken messages concise — 1-3 sentences
 
    Listening (voice → STT → session):

@@ -81,6 +81,52 @@ describe("memoryRowsToMessages", () => {
       { id: "tool-1", kind: "tool_call", status: "done", content: undefined, at: undefined, toolName: "read", toolCallId: undefined, inputPreview: undefined, outputPreview: "Useful result", updates: undefined, isError: undefined },
     ]);
   });
+
+  it("ignores run summaries and reasoning rows when normalized chat messages are present", () => {
+    const rows: MemorySessionRow[] = [
+      {
+        id: "row-user",
+        kind: "knoxx.message",
+        role: "user",
+        text: "testing?",
+        session: "pi:test",
+        extra: { run_id: "run-2" },
+      },
+      {
+        id: "row-run",
+        kind: "knoxx.run",
+        role: "system",
+        text: "Run run-2 · completed Answer: Final answer",
+        session: "pi:test",
+        extra: { run_id: "run-2" },
+      },
+      {
+        id: "row-assistant",
+        kind: "knoxx.message",
+        role: "assistant",
+        text: "Final answer",
+        session: "pi:test",
+        extra: { run_id: "run-2" },
+      },
+      {
+        id: "row-reasoning",
+        kind: "knoxx.reasoning",
+        role: "system",
+        text: "Reasoning summary",
+        session: "pi:test",
+        extra: { run_id: "run-2" },
+      },
+    ];
+
+    const messages = memoryRowsToMessages(rows);
+
+    expect(messages).toHaveLength(2);
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(messages[1].content).toBe("Final answer");
+    expect(messages[1].traceBlocks).toEqual([
+      { id: "row-reasoning", kind: "reasoning", status: "done", at: undefined, content: "Reasoning summary" },
+    ]);
+  });
 });
 
 describe("rewindTranscriptTurns", () => {

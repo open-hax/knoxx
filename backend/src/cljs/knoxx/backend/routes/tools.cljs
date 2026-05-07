@@ -1,7 +1,8 @@
 (ns knoxx.backend.routes.tools
   (:require [clojure.string :as str]
             [knoxx.backend.discord-gateway :as dg]
-            [knoxx.backend.event-agents :as event-agents]
+            [knoxx.backend.events.dispatch :as events-dispatch]
+            [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.http :as backend-http]
             [knoxx.backend.macros :refer-macros [defroute]]
             [knoxx.backend.mcp-bridge :as mcp]
@@ -42,7 +43,7 @@
         token       (:discord-bot-token live-config)
         configured  (not (str/blank? token))
         control     (control-config/event-agent-control-config live-config)
-        runtime     (event-agents/status-snapshot live-config)]
+        runtime     (events-runtime/status-snapshot live-config)]
     {:configured       configured
      :tokenPreview     (if configured (masked-discord-token token) "")
      :availableRoles   (control-config/event-agent-role-options live-config)
@@ -328,7 +329,7 @@
           (aset js/process.env "DISCORD_BOT_TOKEN" new-token)
           (swap! runtime-state/config* (fn [c] (assoc (or c config) :discord-bot-token new-token)))
           (restart-discord-gateway! new-token)
-          (event-agents/reload!)
+          (events-runtime/reload!)
           (json-response! reply 200 {:ok true :configured true
                                      :tokenPreview (masked-discord-token new-token)}))))
     (catch :default err
@@ -353,7 +354,7 @@
                         (assoc live-config :event-agent-control body))]
       (swap! runtime-state/config* (fn [c] (assoc (or c config) :event-agent-control next-control)))
       (control-config/persist-event-agent-control! next-control)
-      (event-agents/reload!)
+      (events-runtime/reload!)
       (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
     (catch :default err
       (error-response! reply err))))
@@ -367,7 +368,7 @@
     (let [job-id (or (aget request "params" "jobId") "")]
       (if (str/blank? job-id)
         (json-response! reply 400 {:detail "jobId is required"})
-        (-> (event-agents/run-job! job-id)
+        (-> (events-runtime/run-job! job-id)
             (.then (fn [_] (json-response! reply 202 {:ok true :jobId job-id})))
             (.catch (fn [err] (error-response! reply err))))))
     (catch :default err
@@ -380,7 +381,7 @@
   (try
     (ensure-permission! ctx "org.event_agents.control")
     (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
-      (-> (event-agents/dispatch-event! body)
+      (-> (events-dispatch/dispatch! body)
           (.then (fn [result]
                    (json-response! reply 202 {:ok true
                                               :matchedJobs (:matchedJobs result)
@@ -394,7 +395,7 @@
   "POST" "/api/admin/config/event-agents/runtime/stop"
   [session-guard]
   (ensure-permission! ctx "org.event_agents.control")
-  (event-agents/stop!)
+  (events-runtime/stop!)
   (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "stopped")))
 
 (defroute register-event-agents-runtime-start-route!
@@ -402,8 +403,117 @@
   "POST" "/api/admin/config/event-agents/runtime/start"
   [session-guard]
   (ensure-permission! ctx "org.event_agents.control")
-  (event-agents/start! config)
+  (events-runtime/start! config)
   (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "started")))
+
+(defroute register-event-agents-runtime-reset-route!
+  []
+  "POST" "/api/admin/config/event-agents/runtime/reset"
+  [session-guard]
+  (try
+    (ensure-permission! ctx "org.event_agents.control")
+    (-> (events-runtime/reset-runtime! config)
+        (.then (fn [summary]
+                 (json-response! reply 200
+                                 (merge (event-agents-control-response config)
+                                        {:ok true
+                                         :action "reset"
+                                         :reset summary}))))
+        (.catch (fn [err]
+                  (error-response! reply err))))
+    (catch :default err
+      (error-response! reply err))))
+
+;; Events aliases — preferred vocabulary going forward.
+
+(defroute register-events-get-route!
+  []
+  "GET" "/api/admin/config/events"
+  [session-guard]
+  (ensure-permission! ctx "org.event_agents.control")
+  (json-response! reply 200 (event-agents-control-response config)))
+
+(defroute register-events-put-route!
+  []
+  "PUT" "/api/admin/config/events"
+  [session-guard]
+  (try
+    (ensure-permission! ctx "org.event_agents.control")
+    (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+          live-config (or @runtime-state/config* config)
+          next-control (control-config/event-agent-control-config
+                        (assoc live-config :event-agent-control body))]
+      (swap! runtime-state/config* (fn [c] (assoc (or c config) :event-agent-control next-control)))
+      (control-config/persist-event-agent-control! next-control)
+      (events-runtime/reload!)
+      (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
+    (catch :default err
+      (error-response! reply err))))
+
+(defroute register-events-job-run-route!
+  []
+  "POST" "/api/admin/config/events/jobs/:jobId/run"
+  [session-guard]
+  (try
+    (ensure-permission! ctx "org.event_agents.control")
+    (let [job-id (or (aget request "params" "jobId") "")]
+      (if (str/blank? job-id)
+        (json-response! reply 400 {:detail "jobId is required"})
+        (-> (events-runtime/run-job! job-id)
+            (.then (fn [_] (json-response! reply 202 {:ok true :jobId job-id})))
+            (.catch (fn [err] (error-response! reply err))))))
+    (catch :default err
+      (error-response! reply err))))
+
+(defroute register-events-dispatch-route!
+  []
+  "POST" "/api/admin/config/events/dispatch"
+  [session-guard]
+  (try
+    (ensure-permission! ctx "org.event_agents.control")
+    (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
+      (-> (events-dispatch/dispatch! body)
+          (.then (fn [result]
+                   (json-response! reply 202 {:ok true
+                                              :matchedJobs (:matchedJobs result)
+                                              :event (:event result)})))
+          (.catch (fn [err] (error-response! reply err)))))
+    (catch :default err
+      (error-response! reply err))))
+
+(defroute register-events-runtime-stop-route!
+  []
+  "POST" "/api/admin/config/events/runtime/stop"
+  [session-guard]
+  (ensure-permission! ctx "org.event_agents.control")
+  (events-runtime/stop!)
+  (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "stopped")))
+
+(defroute register-events-runtime-start-route!
+  []
+  "POST" "/api/admin/config/events/runtime/start"
+  [session-guard]
+  (ensure-permission! ctx "org.event_agents.control")
+  (events-runtime/start! config)
+  (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "started")))
+
+(defroute register-events-runtime-reset-route!
+  []
+  "POST" "/api/admin/config/events/runtime/reset"
+  [session-guard]
+  (try
+    (ensure-permission! ctx "org.event_agents.control")
+    (-> (events-runtime/reset-runtime! config)
+        (.then (fn [summary]
+                 (json-response! reply 200
+                                 (merge (event-agents-control-response config)
+                                        {:ok true
+                                         :action "reset"
+                                         :reset summary}))))
+        (.catch (fn [err]
+                  (error-response! reply err))))
+    (catch :default err
+      (error-response! reply err))))
 
 ;; Legacy aliases
 
@@ -426,7 +536,7 @@
                         (assoc live-config :event-agent-control body))]
       (swap! runtime-state/config* (fn [c] (assoc (or c config) :event-agent-control next-control)))
       (control-config/persist-event-agent-control! next-control)
-      (event-agents/reload!)
+      (events-runtime/reload!)
       (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
     (catch :default err
       (error-response! reply err))))
@@ -440,7 +550,7 @@
     (let [job-id (or (aget request "params" "jobId") "")]
       (if (str/blank? job-id)
         (json-response! reply 400 {:detail "jobId is required"})
-        (-> (event-agents/run-job! job-id)
+        (-> (events-runtime/run-job! job-id)
             (.then (fn [_] (json-response! reply 202 {:ok true :jobId job-id})))
             (.catch (fn [err] (error-response! reply err))))))
     (catch :default err
@@ -507,6 +617,14 @@
   (register-event-agents-dispatch-route! app runtime config deps)
   (register-event-agents-runtime-stop-route!  app runtime config deps)
   (register-event-agents-runtime-start-route! app runtime config deps)
+  (register-event-agents-runtime-reset-route! app runtime config deps)
+  (register-events-get-route!            app runtime config deps)
+  (register-events-put-route!            app runtime config deps)
+  (register-events-job-run-route!        app runtime config deps)
+  (register-events-dispatch-route!       app runtime config deps)
+  (register-events-runtime-stop-route!   app runtime config deps)
+  (register-events-runtime-start-route!  app runtime config deps)
+  (register-events-runtime-reset-route!  app runtime config deps)
   (register-discord-control-get-route!   app runtime config deps)
   (register-discord-control-put-route!   app runtime config deps)
   (register-discord-control-job-run-route! app runtime config deps)

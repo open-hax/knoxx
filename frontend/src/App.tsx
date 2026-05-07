@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { EVENT_AGENTS_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
+import { AGENTS_ROUTE, EVENTS_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import AuthBoundary from "./pages/AuthContext";
 import { useAuth } from "./pages/useAuth";
 import ChatPage from "./pages/ChatPage";
@@ -9,6 +9,7 @@ import ContractsPage from "./pages/ContractsPage";
 import DataPage from "./pages/DataPage";
 import GardensPage from "./pages/GardensPage";
 import AgentsPage from "./pages/AgentsPage";
+import EventsPage from "./pages/EventsPage";
 import OpsRoot from "./pages/OpsRoot";
 import BroadcastStudioPage from "./pages/BroadcastStudioPage";
 import TranslationReviewPage from "./pages/TranslationReviewPage";
@@ -63,7 +64,10 @@ function AppShell() {
                 <NavLink to="/translations" className={navLinkClass}>
                   Translations
                 </NavLink>
-                <NavLink to={EVENT_AGENTS_ROUTE} className={navLinkClass}>
+                <NavLink to={EVENTS_ROUTE} className={navLinkClass}>
+                  Events
+                </NavLink>
+                <NavLink to={AGENTS_ROUTE} className={navLinkClass}>
                   Agents
                 </NavLink>
                 <NavLink to={opsRoutes.admin} className={navLinkClass}>
@@ -90,8 +94,9 @@ function AppShell() {
           <Route path="/gardens" element={<ProtectedSurface><GardensPage /></ProtectedSurface>} />
           <Route path="/translations" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />
           <Route path="/translations/:documentId/:targetLang" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />
-          <Route path={EVENT_AGENTS_ROUTE} element={<ProtectedSurface><AgentsPage /></ProtectedSurface>} />
-          <Route path={LEGACY_EVENT_AGENTS_ROUTE} element={<Navigate to={EVENT_AGENTS_ROUTE} replace />} />
+          <Route path={EVENTS_ROUTE} element={<ProtectedSurface><EventsPage /></ProtectedSurface>} />
+          <Route path={AGENTS_ROUTE} element={<ProtectedSurface><AgentsPage /></ProtectedSurface>} />
+          <Route path={LEGACY_EVENT_AGENTS_ROUTE} element={<Navigate to={EVENTS_ROUTE} replace />} />
           <Route path="/ops/*" element={<ProtectedSurface><OpsRoot /></ProtectedSurface>} />
           <Route path="/next/*" element={<LegacyOpsRedirect />} />
           <Route path="*" element={<Navigate to="/" replace />} />

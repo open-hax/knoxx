@@ -19,6 +19,12 @@
 
 (declare set-manager!)
 
+(def ^:private voice-listener-sample-rate 48000)
+(def ^:private voice-listener-channels 2)
+(def ^:private voice-listener-bytes-per-sample 2)
+(def ^:private voice-listener-min-duration-s 0.8)
+(def ^:private voice-listener-silence-debounce-ms 900)
+
 ;; ---------------------------------------------------------------------------
 ;; discord.js imports
 ;; ---------------------------------------------------------------------------
@@ -637,19 +643,24 @@
                 (new OpusDecoder #js {:rate 48000 :channels 2 :frameSize 960})))
 
             ;; Debounce duration in ms — if a user pauses briefly we don’t
-            ;; immediately flush; we wait to see if they resume.
-            silence-debounce-ms 350
+            ;; immediately flush; we wait to see if they resume. This needs to
+            ;; be long enough for natural speech pauses; otherwise Whisper sees
+            ;; tiny fragments and loses context.
+            silence-debounce-ms voice-listener-silence-debounce-ms
 
             flush-audio!
             (fn [uid]
               (when-let [buf (get @pcm-buffers uid)]
                 (let [chunks (js/Array.from buf)
                       pcm (js/Buffer.concat chunks)
-                      ;; 48000 Hz * 2 bytes * 2 channels = 192000 bytes per second
-                      duration-s (/ (.-length pcm) 48000 2 2)
-                      wav (pcm16le->wav-buffer pcm 48000 2)]
+                      duration-s (/ (.-length pcm)
+                                    voice-listener-sample-rate
+                                    voice-listener-bytes-per-sample
+                                    voice-listener-channels)
+                      wav (pcm16le->wav-buffer pcm voice-listener-sample-rate voice-listener-channels)]
                   (swap! pcm-buffers dissoc uid)
-                  (if (< duration-s 0.5)
+                  (swap! silence-timers dissoc uid)
+                  (if (< duration-s voice-listener-min-duration-s)
                     (js/console.log "[voice:listener] skipping very short audio for" uid "duration:" duration-s "s")
                     (do
                       (js/console.log "[voice:listener] calling on-audio for" uid "wav bytes:" (.-length wav) "duration:" duration-s "s")
@@ -667,7 +678,12 @@
                   (js/console.log "[voice:listener] >>> SPEAKING START:" uid)
                   (swap! active-users conj uid)
                   (when on-start (on-start uid))
-                  (swap! pcm-buffers assoc uid #js [])
+                  ;; If the user resumed within the silence debounce window,
+                  ;; keep the previous PCM chunks so one sentence with short
+                  ;; pauses becomes one Whisper request instead of many lossy
+                  ;; fragments.
+                  (when-not (get @pcm-buffers uid)
+                    (swap! pcm-buffers assoc uid #js []))
 
                   (let [audio-stream (.subscribe receiver uid)
                         decoder (create-decoder)]

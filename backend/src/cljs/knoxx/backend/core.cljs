@@ -4,7 +4,7 @@
             [knoxx.backend.agent-turns :as agent-turns :refer [lounge-messages*]]
             [knoxx.backend.routes.app :as app-routes]
             [knoxx.backend.routes.contracts :as contracts-routes]
-            [knoxx.backend.event-agents :as event-agents]
+            [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.realtime :as realtime]
@@ -83,13 +83,13 @@
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. Event agents and MCP discovery remain background work.
   ;;
-  ;; IMPORTANT: event-agents/start! expects redis/get-client to be ready so it
+  ;; IMPORTANT: events-runtime/start! expects redis/get-client to be ready so it
   ;; can load persisted control config (disable/enable jobs) *before* scheduling.
   ;; If we start event agents before redis/init-redis!, every restart will run
   ;; the default job set, even if the admin panel disabled a crashing job.
   (-> (redis/init-redis! (:redis-url resolved-config))
       (.then (fn [_]
-               (event-agents/start! resolved-config)))
+               (events-runtime/start! resolved-config)))
       (.then (fn [_]
                (contracts-routes/start-contract-watcher! resolved-config)))
       (.then (fn [_]
@@ -102,6 +102,7 @@
   (let [resolved-config (runtime-models/enrich-config (if (map? config) config (runtime-config/cfg)))]
     (ensure-settings! resolved-config)
     (reset! runtime-state/config* resolved-config)
+    (reset! runtime-state/runtime* runtime)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
     (-> (prewarm-sdk-runtime! runtime app resolved-config)
         (.then (fn [_]
@@ -117,6 +118,7 @@
           fastify-multipart (aget runtime "fastifyMultipart")
           app (Fastify #js {:logger #js {:stream (.-stderr js/process)}})]
       (reset! runtime-state/config* config)
+      (reset! runtime-state/runtime* runtime)
       (ensure-settings! config)
       (-> (js/Promise.resolve nil)
           (.then (fn [] (load-session-titles! runtime config)))
@@ -143,7 +145,7 @@
                                  nil))
                        (.then (fn [_]
                                 ;; Start generic event-agent runtime
-                                (event-agents/start! config)
+                                (events-runtime/start! config)
                                 (contracts-routes/start-contract-watcher! config)
                                 (app-listen! app (:host config) (:port config)))))))
           (.then (fn [_]
