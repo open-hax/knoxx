@@ -4,7 +4,8 @@
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.http :as backend-http :refer [js-array-seq]]
-            [knoxx.backend.text :refer [tool-text-result]]
+            [knoxx.backend.quality-labels :as quality-labels]
+            [knoxx.backend.text :refer [sanitize-svg-content tool-text-result]]
 
             ["@resvg/resvg-js" :default resvg-mod]
             [knoxx.backend.tools.media :as media]
@@ -125,13 +126,11 @@
 
 (defn- discord-message-quality
   [message]
-  (get-in message [:openplannerLabels :quality]))
+  (quality-labels/quality-label message))
 
 (defn- drop-bad-discord-messages
   [messages]
-  (->> messages
-       (remove #(= "bad" (discord-message-quality %)))
-       vec))
+  (quality-labels/drop-bad messages))
 
 (defn- parse-hours
   [value default-hours]
@@ -155,8 +154,9 @@
 
 (defn- good-first-then-not-bad
   [messages]
-  (let [good (chronological-discord-messages (filter #(= "good" (discord-message-quality %)) messages))
-        not-bad (chronological-discord-messages (remove #(= "good" (discord-message-quality %)) messages))]
+  (let [non-bad (drop-bad-discord-messages messages)
+        good (chronological-discord-messages (filter #(= "good" (discord-message-quality %)) non-bad))
+        not-bad (chronological-discord-messages (remove #(= "good" (discord-message-quality %)) non-bad))]
     (vec (concat good not-bad))))
 
 (defn- label-for-record-id
@@ -168,7 +168,7 @@
 (defn- attach-openplanner-labels!
   [config messages]
   (if (or (empty? messages) (not (backend-http/openplanner-enabled? config)))
-    (js/Promise.resolve (drop-bad-discord-messages messages))
+    (js/Promise.resolve (good-first-then-not-bad messages))
     (let [ids (mapv discord-record-id messages)]
       (-> (backend-http/openplanner-request! config "POST" "/v1/labels/records/lookup" {:ids ids})
           (.then (fn [response]
@@ -176,10 +176,10 @@
                      (->> messages
                           (mapv (fn [message]
                                   (assoc message :openplannerLabels (label-for-record-id labels (discord-record-id message)))))
-                          drop-bad-discord-messages))))
+                          good-first-then-not-bad))))
           (.catch (fn [error]
-                    (.warn js/console "[discord-tools] OpenPlanner label lookup failed; returning unlabelled non-filtered messages" error)
-                    (vec messages)))))))
+                    (.warn js/console "[discord-tools] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad messages" error)
+                    []))))))
 (defn- discord-fetch-channel-messages!
   [config channel-id {:keys [limit before after around]}]
   (let [manager (discord-gateway-manager)]
@@ -299,7 +299,7 @@
  (fn [resolve reject]
    (try
      (let [Resvg (or (.-Resvg resvg-mod) resvg-mod)
-           svg-str (.toString svg-buffer "utf8")
+           svg-str (sanitize-svg-content (.toString svg-buffer "utf8"))
            renderer (new Resvg svg-str #js {:logLevel "off"})
            png-data (.asPng (.render renderer))]
        (resolve (.from js/Buffer png-data)))

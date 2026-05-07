@@ -6,6 +6,9 @@ const VITE_BACKEND_URL =
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
+  },
   server: {
     allowedHosts: true,
     host: "0.0.0.0",

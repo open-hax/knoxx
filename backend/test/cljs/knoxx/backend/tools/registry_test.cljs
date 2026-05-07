@@ -6,7 +6,8 @@
   (testing "dot tools can be called with underscore-sanitized ids"
     (is (= "discord.read" (registry/normalize-tool-id "discord_read")))
     (is (= "discord.voice.stop_listen" (registry/normalize-tool-id "discord_voice_stop_listen")))
-    (is (= "events.dispatch" (registry/normalize-tool-id "events_dispatch")))))
+    (is (= "events.dispatch" (registry/normalize-tool-id "events_dispatch")))
+    (is (= "actors.send-message" (registry/normalize-tool-id "actors_send-message")))))
 
 (deftest normalize-tool-id-preserves-canonical-underscore-tools
   (testing "canonical underscore ids stay unchanged"

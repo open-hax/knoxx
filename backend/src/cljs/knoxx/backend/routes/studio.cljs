@@ -427,8 +427,8 @@
   (let [node-fs (aget runtime "fs")
         node-path (aget runtime "path")
         subpath (or (aget request "query" "path") ".")
-        max-depth (let [d (js/parseInt (or (aget request "query" "depth") "3") 10)]
-                    (if (js/isNaN d) 3 (min d 8)))
+        max-depth (let [d (js/parseInt (or (aget request "query" "depth") "16") 10)]
+                    (if (js/isNaN d) 16 (max 0 (min d 64))))
         ;; For root path, use workspace root directly to avoid path validation issues
         is-root (or (= subpath ".") (= subpath "") (= subpath "/"))
         absolute (if is-root

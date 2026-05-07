@@ -3,7 +3,15 @@
    mime-type detection, data-URL decoding, and source loading."
   (:require [clojure.string :as str]
             [knoxx.backend.document-state :refer [normalize-relative-path]]
-            [knoxx.backend.text :refer [tool-text-result]]))
+            [knoxx.backend.text :refer [tool-text-result]]
+            ["node:child_process" :refer [execFile]]
+            ["node:crypto" :as crypto]
+            ["node:fs/promises" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            ["node:util" :refer [promisify]]))
+
+(def ^:private exec-file-async (promisify execFile))
 
 (def workspace-media-max-bytes (* 20 1024 1024))
 (def multimodal-upload-max-bytes (* 25 1024 1024))
@@ -155,8 +163,8 @@
       rel)))
 
 (defn resolve-workspace-media-path
-  [runtime config raw-path]
-  (let [node-path (aget runtime "path")
+  [_runtime config raw-path]
+  (let [node-path path
         normalized (normalize-tool-path-arg raw-path)
         safe-path (or normalized "")
         roots (allowed-media-root-records node-path config)
@@ -252,23 +260,18 @@
   (str "data:" (sanitize-mime-type mime-type "application/octet-stream") ";base64," (.toString buffer "base64")))
 
 (defn temp-media-dir!
-  [runtime name]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        node-os (aget runtime "os")
-        dir (.join node-path (os-tmpdir node-os) "knoxx-media" name)]
-    (-> (fs-mkdir! node-fs dir #js {:recursive true})
+  [_runtime name]
+  (let [dir (.join path (os-tmpdir os) "knoxx-media" name)]
+    (-> (fs-mkdir! fs dir #js {:recursive true})
         (.then (fn [] dir)))))
 
 (defn temp-file-path!
   [runtime name ext]
-  (let [node-path (aget runtime "path")
-        node-crypto (aget runtime "crypto")]
-    (-> (temp-media-dir! runtime name)
-        (.then (fn [dir]
-                 (.join node-path
-                        dir
-                        (str (.randomUUID node-crypto) (or ext ""))))))))
+  (-> (temp-media-dir! runtime name)
+      (.then (fn [dir]
+               (.join path
+                      dir
+                      (str (.randomUUID crypto) (or ext "")))))))
 
 (defn- decode-data-url-source
   [raw-source]
@@ -295,9 +298,7 @@
 
 (defn load-media-source!
   [runtime config raw-source max-bytes]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        source (or (normalize-tool-path-arg raw-source) raw-source "")]
+  (let [source (or (normalize-tool-path-arg raw-source) raw-source "")]
     (cond
       (str/blank? (str source))
       (js/Promise.reject (js/Error. "source is required"))
@@ -338,33 +339,32 @@
       (let [{:keys [absolute relative]} (resolve-workspace-media-path runtime config source)
             mime-type (sanitize-mime-type (workspace-media-mime-type relative)
                                           (workspace-media-mime-type absolute))]
-        (-> (fs-stat! node-fs absolute)
+        (-> (fs-stat! fs absolute)
             (.then (fn [stat]
                      (when-not (.isFile stat)
                        (throw (js/Error. (str relative " is not a file"))))
                      (ensure-source-size! (.-size stat) max-bytes relative)
-                     (fs-read-file! node-fs absolute)))
+                     (fs-read-file! fs absolute)))
             (.then (fn [buffer]
                      {:absolute-path absolute
                       :relative relative
                       :buffer buffer
                       :mime-type mime-type
-                      :filename (path-basename node-path absolute)
+                      :filename (path-basename path absolute)
                       :size (.-length buffer)
                       :source-kind "workspace"})))))))
 
 (defn materialize-media-source!
   [runtime config raw-source max-bytes]
-  (let [node-fs (aget runtime "fs")]
-    (-> (load-media-source! runtime config raw-source max-bytes)
-        (.then (fn [source]
-                 (if (:absolute-path source)
-                   source
-                   (-> (temp-file-path! runtime "inputs" (mime-type->extension (:mime-type source)))
-                       (.then (fn [absolute-path]
-                                (-> (fs-write-file! node-fs absolute-path (:buffer source))
-                                    (.then (fn []
-                                             (assoc source :absolute-path absolute-path)))))))))))))
+  (-> (load-media-source! runtime config raw-source max-bytes)
+      (.then (fn [source]
+               (if (:absolute-path source)
+                 source
+                 (-> (temp-file-path! runtime "inputs" (mime-type->extension (:mime-type source)))
+                     (.then (fn [absolute-path]
+                              (-> (fs-write-file! fs absolute-path (:buffer source))
+                                  (.then (fn []
+                                           (assoc source :absolute-path absolute-path))))))))))))
 
 (defn media-source->content-part!
   [runtime config raw-source max-bytes]
@@ -390,15 +390,11 @@
 
 (defn audio-visualization-result!
   [runtime config raw-source {:keys [kind width height title]}]
-  (let [exec-file-async (aget runtime "execFileAsync")
-        node-fs (aget runtime "fs")
-        label (case kind
+  (let [label (case kind
                 :waveform "waveform"
                 "spectrogram")
         out-width (clamp-dimension width (if (= kind :waveform) 1200 1024) 256 4096)
         out-height (clamp-dimension height (if (= kind :waveform) 320 640) 128 2048)]
-    (when-not exec-file-async
-      (throw (js/Error. "execFileAsync runtime dependency is not available")))
     (-> (materialize-media-source! runtime config raw-source audio-render-max-bytes)
         (.then
          (fn [source]
@@ -418,7 +414,7 @@
                                          output-path])]
                       (-> (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576})
                           (.then (fn [_]
-                                   (fs-read-file! node-fs output-path)))
+                                   (fs-read-file! fs output-path)))
                           (.then
                            (fn [buffer]
                              (let [filename (str base-name "-" label ".png")

@@ -2,6 +2,7 @@
  :cap/tools [:events.status
              :events.dispatch
              :agents.spawn
+             :actors.send-message
              :event_agents.status
              :event_agents.dispatch
              :event_agents.run_job

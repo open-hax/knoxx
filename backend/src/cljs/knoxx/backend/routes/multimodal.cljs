@@ -4,9 +4,11 @@
    Supports images, audio, video, and documents for multimodal AI interactions.
    Files are stored temporarily and served back to the frontend for preview/playback."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [with-request-context! ensure-tool!]]
-            [knoxx.backend.http :refer [json-response! js-array-seq]]
-            [knoxx.backend.util.time :refer [now-iso]]))
+            [knoxx.backend.authz :refer [ensure-tool!]]
+            [knoxx.backend.http :refer [js-array-seq]]
+            [knoxx.backend.util.time :refer [now-iso]]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]))
 
 (declare fs-mkdir!)
 
@@ -52,12 +54,10 @@
 
 (defn- ensure-upload-dir!
   "Ensure the upload directory exists."
-  [runtime]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        upload-path (.join node-path upload-dir)]
+  [_runtime]
+  (let [upload-path (.join path upload-dir)]
     (.then
-     (fs-mkdir! node-fs upload-path #js {:recursive true})
+     (fs-mkdir! fs upload-path #js {:recursive true})
      (fn [] upload-path))))
 
 (defn- fs-readdir!
@@ -87,31 +87,29 @@
 (defn- save-upload-file!
   "Save an uploaded file and return its metadata."
   [runtime _config file-part filename]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")]
-    (.then
-     (ensure-upload-dir! runtime)
-     (fn [upload-path]
-       (let [file-id (generate-file-id)
-             safe-name (sanitize-filename filename)
-             ext (if (str/includes? safe-name ".")
-                   (let [dot-idx (str/last-index-of safe-name ".")]
-                     (subs safe-name dot-idx))
-                   "")
-            stored-name (str file-id ext)
-            abs-path (.join node-path upload-path stored-name)]
-         (.then
-          (.arrayBuffer (js/Response. (aget file-part "file")))
-          (fn [buf]
-            (.then
-             (fs-write-buffer! node-fs abs-path (.from js/Buffer buf))
-             (fn []
-               {:file_id file-id
-                :filename safe-name
-                :stored_name stored-name
-                :path abs-path
-                :url (str "/api/multimodal/files/" file-id)
-                :size (.-byteLength buf)})))))))))
+  (.then
+   (ensure-upload-dir! runtime)
+   (fn [upload-path]
+     (let [file-id (generate-file-id)
+           safe-name (sanitize-filename filename)
+           ext (if (str/includes? safe-name ".")
+                 (let [dot-idx (str/last-index-of safe-name ".")]
+                   (subs safe-name dot-idx))
+                 "")
+           stored-name (str file-id ext)
+           abs-path (.join path upload-path stored-name)]
+       (.then
+        (.arrayBuffer (js/Response. (aget file-part "file")))
+        (fn [buf]
+          (.then
+           (fs-write-buffer! fs abs-path (.from js/Buffer buf))
+           (fn []
+             {:file_id file-id
+              :filename safe-name
+              :stored_name stored-name
+              :path abs-path
+              :url (str "/api/multimodal/files/" file-id)
+              :size (.-byteLength buf)}))))))))
 
 (defn register-multimodal-routes!
   "Register routes for multimodal file handling."
@@ -169,16 +167,14 @@
   ;; Serve uploaded files
   (route! app "GET" "/api/multimodal/files/:fileId"
           (fn [request reply]
-            (let [node-fs (aget runtime "fs")
-                  node-path (aget runtime "path")
-                  file-id (aget request "params" "fileId")]
-              (-> (fs-readdir! node-fs (.join node-path upload-dir))
+            (let [file-id (aget request "params" "fileId")]
+              (-> (fs-readdir! fs (.join path upload-dir))
                   (.then
                    (fn [files]
                      (let [matching (first (filter #(str/starts-with? % file-id) (js-array-seq files)))]
                        (if matching
-                         (let [abs-path (.join node-path upload-dir matching)]
-                           (-> (fs-read-file! node-fs abs-path)
+                         (let [abs-path (.join path upload-dir matching)]
+                           (-> (fs-read-file! fs abs-path)
                                (.then
                                 (fn [buf]
                                   (let [ext (if (str/includes? matching ".")
@@ -212,16 +208,14 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-tool! ctx "multimodal.upload"))
-                (let [node-fs (aget runtime "fs")
-                      node-path (aget runtime "path")
-                      file-id (aget request "params" "fileId")]
-                  (-> (fs-readdir! node-fs (.join node-path upload-dir))
+                (let [file-id (aget request "params" "fileId")]
+                  (-> (fs-readdir! fs (.join path upload-dir))
                       (.then
                        (fn [files]
                          (let [matching (first (filter #(str/starts-with? % file-id) (js-array-seq files)))]
                            (if matching
-                             (let [abs-path (.join node-path upload-dir matching)]
-                               (-> (fs-rm! node-fs abs-path)
+                             (let [abs-path (.join path upload-dir matching)]
+                               (-> (fs-rm! fs abs-path)
                                    (.then
                                     (fn []
                                       (json-response! reply 200

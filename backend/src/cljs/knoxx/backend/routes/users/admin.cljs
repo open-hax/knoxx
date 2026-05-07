@@ -60,6 +60,36 @@
                     (policy-db-promise runtime reply 201 (.createUser db payload)))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"}))))
 
+  (route! app "PATCH" "/api/admin/users/:userId"
+          (fn [request reply]
+            (if-let [db (policy-db runtime)]
+              (let [user-id (or (aget request "params" "userId") "")
+                    body (or (aget request "body") #js {})
+                    org-id (or (aget body "orgId") (aget body "org_id") "")]
+                (with-request-context! runtime request reply
+                  (fn [ctx]
+                    (when (str/blank? (str org-id))
+                      (throw (http-error 400 "org_required" "orgId is required")))
+                    (ensure-org-scope! ctx org-id "org.members.update")
+                    (policy-db-promise runtime reply 200 (.updateUserActor db user-id body)))))
+              (json-response! reply 503 {:detail "Knoxx policy database is not configured"}))))
+
+  (route! app "PUT" "/api/admin/users/:userId/credentials/:provider"
+          (fn [request reply]
+            (if-let [db (policy-db runtime)]
+              (let [user-id (or (aget request "params" "userId") "")
+                    provider (or (aget request "params" "provider") "")
+                    body (or (aget request "body") #js {})
+                    org-id (or (aget body "orgId") (aget body "org_id") "")
+                    payload (.assign js/Object #js {} body (clj->js {:provider provider}))]
+                (with-request-context! runtime request reply
+                  (fn [ctx]
+                    (when (str/blank? (str org-id))
+                      (throw (http-error 400 "org_required" "orgId is required")))
+                    (ensure-org-scope! ctx org-id "org.user_policy.update")
+                    (policy-db-promise runtime reply 200 (.upsertActorCredential db user-id payload)))))
+              (json-response! reply 503 {:detail "Knoxx policy database is not configured"}))))
+
   (route! app "GET" "/api/admin/orgs/:orgId/memberships"
           (fn [request reply]
             (if-let [db (policy-db runtime)]

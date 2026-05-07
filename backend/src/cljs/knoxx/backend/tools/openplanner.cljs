@@ -8,7 +8,9 @@
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
             [knoxx.backend.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
             [knoxx.backend.tools.media :as media]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]))
 
 (def memory-search-params
   [:map
@@ -172,25 +174,23 @@
 
 (defn make-create-new-file-execute [auth-context]
   (fn [runtime config _tool-call-id params a b c]
-    (let [node-fs (aget runtime "fs")
-          node-path (aget runtime "path")
-          on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+    (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           title (or (aget params "title") "Untitled Canvas")
           requested-path (or (aget params "path") (str "notes/canvas/" (slugify title) ".md"))
           content (or (aget params "content") (str "# " title "\n\n"))
           profile (active-agent-profile runtime config auth-context)
           docs-path (:docsPath profile)
           rel-path (normalize-relative-path requested-path)
-          abs-path (media/path-resolve node-path docs-path rel-path)
-          rel-to-root (media/path-relative node-path docs-path abs-path)
-          parent (.dirname node-path abs-path)]
+          abs-path (media/path-resolve path docs-path rel-path)
+          rel-to-root (media/path-relative path docs-path abs-path)
+          parent (.dirname path abs-path)]
       (when (str/blank? rel-path)
         (throw (js/Error. "path is required for create_new_file")))
-      (when (or (str/starts-with? rel-to-root "..") (media/path-is-absolute? node-path rel-to-root))
+      (when (or (str/starts-with? rel-to-root "..") (media/path-is-absolute? path rel-to-root))
         (throw (js/Error. "Path escapes active docs root")))
       (maybe-tool-update! on-update (str "Creating canvas file " rel-path "…"))
-      (-> (media/fs-mkdir! node-fs parent #js {:recursive true})
-          (.then (fn [] (media/fs-write-file! node-fs abs-path content "utf8")))
+      (-> (media/fs-mkdir! fs parent #js {:recursive true})
+          (.then (fn [] (media/fs-write-file! fs abs-path content "utf8")))
           (.then (fn []
                    (tool-text-result (str "Created canvas file at " rel-path)
                                      {:path rel-path :title title :content content :canvas true})))))))

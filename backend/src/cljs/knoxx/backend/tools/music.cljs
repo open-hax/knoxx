@@ -4,7 +4,14 @@
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
             [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            ["node:child_process" :refer [execFile]]
+            ["node:crypto" :as crypto]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]
+            ["node:util" :refer [promisify]]))
+
+(def ^:private exec-file-async (promisify execFile))
 
 (defn- music-audd-lookup!
   "Identify a song from an audio file using AudD API."
@@ -99,20 +106,15 @@
 (defn- music-generate!
   "Generate a WAV file from a JSON music spec using the native Node.js synthesis engine."
   [runtime config spec-json output-path]
-  (let [exec-file-async (aget runtime "execFileAsync")
-        node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        script-path (media/path-resolve node-path (or (.cwd js/process) "/") "scripts" "synthesize-music.mjs")]
-    (when-not exec-file-async
-      (throw (js/Error. "execFileAsync runtime dependency is not available")))
+  (let [script-path (media/path-resolve path (or (.cwd js/process) "/") "scripts" "synthesize-music.mjs")]
     (-> (media/temp-file-path! runtime "music-specs" ".json")
         (.then (fn [spec-path]
-                 (-> (media/fs-write-file! node-fs spec-path spec-json)
+                 (-> (media/fs-write-file! fs spec-path spec-json)
                      (.then (fn []
                               (let [out-path (or output-path
-                                                 (str "Music/generated/" (.randomUUID (aget runtime "crypto")) ".wav"))
+                                                 (str "Music/generated/" (.randomUUID crypto) ".wav"))
                                     {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config out-path)]
-                                (-> (media/fs-mkdir! node-fs (media/path-resolve node-path absolute "..") #js {:recursive true})
+                                (-> (media/fs-mkdir! fs (media/path-resolve path absolute "..") #js {:recursive true})
                                     (.then (fn []
                                              (-> (exec-file-async "node" #js [script-path spec-path absolute]
                                                                  #js {:timeout 120000 :maxBuffer 1048576})

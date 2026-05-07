@@ -28,4 +28,5 @@
   {:channels ["1494137016303095828" "1444189585373663417"],
 
    :keywords ["frankie" "yap" "music" "song" "slop" "ussy"]},
-  :source {:max-messages 50, :stickySession true, :sessionMaxMessages 1000}}}
+  :source {:max-messages 1000, :stickySession true, :sessionMaxMessages 1000
+           }}}

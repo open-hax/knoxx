@@ -53,6 +53,8 @@
     (array? value) (js->clj value :keywordize-keys true)
     :else value))
 
+(def MAX_RUNS 200)
+
 (defn store-run!
   [run-id run]
   (let [clean (cond-> run
@@ -72,9 +74,17 @@
                 (update :settings ensure-clj))]
     (swap! runs* assoc run-id clean)
     (swap! run-order* (fn [order]
-                        (->> (cons run-id (remove #{run-id} order))
-                             (take 200)
-                             vec)))
+                        (let [new-order (->> (cons run-id (remove #{run-id} order))
+                                             (take MAX_RUNS)
+                                             vec)]
+                          ;; Evict stale entries from runs* to prevent unbounded memory growth.
+                          ;; run-order* is the canonical set of live run ids; anything not in it
+                          ;; is a stale ghost that was trimmed and should be released.
+                          (when (> (count order) MAX_RUNS)
+                            (let [stale-ids (remove (set new-order) (keys @runs*))]
+                              (when (seq stale-ids)
+                                (swap! runs* #(apply dissoc % stale-ids)))))
+                          new-order)))
     clean))
 
 (defn summarize-run

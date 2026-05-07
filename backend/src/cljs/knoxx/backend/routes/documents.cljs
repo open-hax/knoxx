@@ -24,7 +24,9 @@
                      active-record
                      start-document-ingestion!
                      priority-ingest-workspace-files!]]
-            [knoxx.backend.util.time :as time]))
+            [knoxx.backend.util.time :as time]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]))
 
 (defn- path-is-absolute?
   [^js node-path value]
@@ -64,17 +66,17 @@
   (.fromAsync js/Array (.parts request)))
 
 (defn- process-file-part
-  [^js node-fs ^js node-path ^string docs-path part]
+  [^string docs-path part]
   (let [safe-name (sanitize-upload-name (or (aget part "filename") "upload.bin"))
-        abs-path (.join node-path docs-path safe-name)
-        rel-path (normalize-relative-path (path-relative node-path docs-path abs-path))]
+        abs-path (.join path docs-path safe-name)
+        rel-path (normalize-relative-path (path-relative path docs-path abs-path))]
     (js-await [buf (.arrayBuffer (js/Response. (aget part "file")))]
-              (fs-write-buffer! node-fs abs-path (.from js/Buffer buf))
+              (fs-write-buffer! fs abs-path (.from js/Buffer buf))
               rel-path)))
 
 (defn- upload-files
-  [^js node-fs ^js node-path ^string docs-path file-parts]
-  (let [promises (mapv #(process-file-part node-fs node-path docs-path %) file-parts)]
+  [^string docs-path file-parts]
+  (let [promises (mapv #(process-file-part docs-path %) file-parts)]
     (js-await [written (js/Promise.all (clj->js promises))]
               (vec (js-array-seq written)))))
 
@@ -88,31 +90,27 @@
   "GET" "/api/documents/content/*"
   (when ctx (ensure-permission! ctx "datalake.read"))
   (let [profile (active-database-profile runtime config request ctx)
-        node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
         rel-path (normalize-relative-path (aget request "params" "*"))
-        abs-path (.resolve node-path (:docsPath profile) rel-path)
-        rel-to-root (.relative node-path (:docsPath profile) abs-path)]
+        abs-path (.resolve path (:docsPath profile) rel-path)
+        rel-to-root (.relative path (:docsPath profile) abs-path)]
     (if (or (str/starts-with? rel-to-root "..")
-            (path-is-absolute? node-path rel-to-root))
+            (path-is-absolute? path rel-to-root))
       (json-response! reply 403 {:detail "Path escapes active docs root"})
-      (js-await [content (fs-read-file! node-fs abs-path "utf8")]
+      (js-await [content (fs-read-file! fs abs-path "utf8")]
                 (json-response! reply 200 {:path rel-path :content content})))))
 
 (defroute api-documents-delete! [openplanner-graph-export!]
   "DELETE" "/api/documents/*"
   (when ctx (ensure-permission! ctx "datalake.write"))
   (let [profile (active-database-profile runtime config request ctx)
-        node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
         rel-path (normalize-relative-path (aget request "params" "*"))
-        abs-path (.resolve node-path (:docsPath profile) rel-path)
-        rel-to-root (path-relative node-path (:docsPath profile) abs-path)
+        abs-path (.resolve path (:docsPath profile) rel-path)
+        rel-to-root (path-relative path (:docsPath profile) abs-path)
         db-id (:id profile)]
     (if (or (str/starts-with? rel-to-root "..")
-            (path-is-absolute? node-path rel-to-root))
+            (path-is-absolute? path rel-to-root))
       (json-response! reply 403 {:detail "Path escapes active docs root"})
-      (-> (fs-rm! node-fs abs-path #js {:force true})
+      (-> (fs-rm! fs abs-path #js {:force true})
           (.then (fn []
                    (swap! database-state* update-in [:records db-id :indexed] dissoc rel-path)
                    (json-response! reply 200 {:ok true :path rel-path})))

@@ -1,12 +1,11 @@
 (ns knoxx.backend.bootstrap
-  "Single bootstrap entrypoint for hosting the Knoxx CLJS backend inside Node/Fastify.
+  "Startup orchestration for the Knoxx CLJS backend.
 
    Contract:
-   - The Node host shim (src/server.mjs) should ONLY import dependencies and call
-     this function.
-   - All HTTP routes, auth flows, and runtime wiring live in CLJS.
-   - Dependencies are passed in as a single JS object (deps) and then threaded
-     through request/runtime contexts."
+   - shadow-cljs calls knoxx.backend.entrypoint/init.
+   - Node/npm modules are required by the CLJS namespaces that consume them.
+   - This namespace orchestrates startup but should not be a dependency-injection
+     dump for the whole backend."
   (:require [clojure.string :as str]
             [knoxx.backend.agent-resume :as agent-resume]
             [knoxx.backend.auth.session :as auth-session]
@@ -14,14 +13,17 @@
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.discord-reaction-labels :as discord-reaction-labels]
             [knoxx.backend.graceful-shutdown :as graceful-shutdown]
-            [knoxx.backend.routes.mcp :as mcp-http]
+            [knoxx.backend.http-server :as http-server]
+            [knoxx.backend.lifecycle :as lifecycle]
+            [knoxx.backend.policy-db :as policy-db]
             [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.runtime.config :as runtime-config]
-            [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.routes.auth :as auth-routes]
+            [knoxx.backend.routes.mcp :as mcp-http]
             [knoxx.backend.routes.tools.proxy :as proxy-routes]
-            [knoxx.backend.agent-turns :refer [lounge-messages*]]
-            [knoxx.backend.policy-db :as policy-db]))
+            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.runtime.deps :as runtime-deps]
+            [knoxx.backend.runtime.models :as runtime-models]
+            [knoxx.backend.agent-turns :refer [lounge-messages*]]))
 
 (defn- env
   [k default]
@@ -52,156 +54,122 @@
         (.log js/console "[knoxx-bootstrap] process.send unavailable; skipping pm2 ready signal")
         false))))
 
-(defn- ensure-fastify-json-empty-body-parser!
-  "Allow Content-Type: application/json with empty bodies.
+(defn- policy-options
+  []
+  #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
+                             (aget js/process.env "DATABASE_URL")
+                             "")
+       :primaryOrgSlug (env "KNOXX_PRIMARY_ORG_SLUG" "open-hax")
+       :primaryOrgName (env "KNOXX_PRIMARY_ORG_NAME" "Open Hax")
+       :primaryOrgKind (env "KNOXX_PRIMARY_ORG_KIND" "platform_owner")
+       :bootstrapSystemAdminEmail (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL" "system-admin@open-hax.local")
+       :bootstrapSystemAdminName (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME" "Knoxx System Admin")
+       :bootstrapAllowlistEmails (env "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS" "")
+       :bootstrapAllowlistRoleSlugs (env "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS" "")})
 
-   Fastify's default parser throws FST_ERR_CTP_EMPTY_JSON_BODY, but some
-   endpoints are intentionally POST-without-body."  
-  [^js app]
-  (.addContentTypeParser app
-                         "application/json"
-                         #js {:parseAs "string"}
-                         (fn [_req body done]
-                           (try
-                             (done nil (if (= body "") #js {} (js/JSON.parse body)))
-                             (catch :default err
-                              (done err))))))
+(defn start-http!
+  "Create a fresh Fastify app and bind HTTP routes around durable runtime state."
+  [runtime cfg policyDb cookie-hook?]
+  (let [app (http-server/create-app!)]
+    (http-server/ensure-json-empty-body-parser! app)
 
-(defn- app-add-hook!
-  [^js app hook-name handler]
-  (.addHook app hook-name handler))
+    ;; Debug hook: log large requests before they hit 413.
+    (http-server/add-hook! app "onRequest"
+      (fn [req reply done]
+        (when (= (.-url req) "/api/dev/hmr")
+          (.header reply "x-knoxx-hmr-probe" "hmr-probe-2026-05-07-e")
+          (js/console.log "[knoxx-hot-reload-probe] hmr-probe-2026-05-07-e"))
+        (when-let [len (aget (.-headers req) "content-length")]
+          (when (> (js/parseInt len 10) (* 900 1024))
+            (js/console.warn "[knoxx] large request" (.-url req) len "bytes")))
+        (done)))
 
-(defn- app-listen!
-  [^js app host port]
-  (.listen app #js {:host host :port port}))
-
-(defn- make-runtime
-  "Build the runtime dependency bundle CLJS code expects.
-
-   NOTE: deps is a JS object created by the Node host shim."  
-  [deps policyDb]
-  #js {:Fastify (aget deps "Fastify")
-       :fastifyCors (aget deps "fastifyCors")
-       :fastifyWebsocket (aget deps "fastifyWebsocket")
-       :fastifyMultipart (aget deps "fastifyMultipart")
-       :fastifyCookie (aget deps "fastifyCookie")
-       :fastifyFormbody (aget deps "fastifyFormbody")
-       :Type (aget deps "Type")
-       :sdk (aget deps "sdk")
-       :crypto (aget deps "crypto")
-       :fs (aget deps "fs")
-       :path (aget deps "path")
-       :os (aget deps "os")
-       :execFileAsync (aget deps "execFileAsync")
-       :policyDb policyDb
-       :nodemailer (aget deps "nodemailer")
-       ;; MCP deps
-       :McpServer (aget deps "McpServer")
-       :StreamableHTTPServerTransport (aget deps "StreamableHTTPServerTransport")
-       :isInitializeRequest (aget deps "isInitializeRequest")
-       :z (aget deps "z")})
+    (-> (http-server/register-default-plugins! app)
+        ;; WS routes plugin.
+        (.then (fn []
+                 (.register app
+                            (fn [instance _opts done]
+                              (core/register-ws-routes! runtime instance)
+                              (done)))))
+        ;; Optional legacy session hook.
+        (.then (fn []
+                 (when cookie-hook?
+                   (http-server/add-hook! app "onRequest" (auth-session/create-session-hook policyDb)))))
+        ;; GitHub OAuth + cookie session auth routes.
+        (.then (fn []
+                 (auth-routes/register-auth-routes app #js {:policyDb policyDb
+                                                            :runtime runtime})))
+        ;; Core CLJS routes (/api/*, etc.).
+        (.then (fn []
+                 (core/register-app-routes! runtime app cfg lounge-messages*)))
+        ;; Extra host-level routes previously implemented in server.mjs.
+        (.then (fn []
+                 (proxy-routes/register-proxy-routes! app cfg)))
+        ;; MCP (server side) + OAuth consent UI.
+        (.then (fn []
+                 (mcp-http/register-mcp-http-routes! app runtime cfg)))
+        ;; Start listening.
+        (.then (fn []
+                 (http-server/listen! app (:host cfg) (:port cfg))))
+        (.then (fn [_]
+                 (lifecycle/remember-app! app)
+                 (graceful-shutdown/install! app cfg)
+                 (notify-ready!)
+                 (let [^js log (.-log app)]
+                   (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
+                   ;; Redis + session resume (non-blocking).
+                   (-> (redis/init-redis! (:redis-url cfg))
+                       (.then (fn [client]
+                                (when client
+                                  (.info log "Redis connected for session persistence")
+                                  ;; Fire-and-forget: must not block startup.
+                                  (agent-resume/resume-on-startup! runtime app cfg)
+                                  (agent-resume/start-periodic-recovery! runtime app cfg))))
+                       (.catch (fn [err]
+                                 (.warn log "Redis initialization failed" err))))
+                   app))))))
 
 (defn bootstrap!
-  "Main entrypoint called from src/server.mjs.
-
-   deps: JS object containing all imported Node/Fastify/MCP dependencies."  
-  [deps]
+  "Main entrypoint called by shadow-cljs."
+  []
   (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
-        ^js Fastify (aget deps "Fastify")
-        app (Fastify #js {:logger true
-                        :bodyLimit (* 50 1024 1024)
-                        :requestTimeout 600000 ; 10 min
-                        :connectionTimeout 600000})
-        policy-options #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
-                                                 (aget js/process.env "DATABASE_URL")
-                                                 "")
-                           :primaryOrgSlug (env "KNOXX_PRIMARY_ORG_SLUG" "open-hax")
-                           :primaryOrgName (env "KNOXX_PRIMARY_ORG_NAME" "Open Hax")
-                           :primaryOrgKind (env "KNOXX_PRIMARY_ORG_KIND" "platform_owner")
-                           :bootstrapSystemAdminEmail (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL" "system-admin@open-hax.local")
-                           :bootstrapSystemAdminName (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_NAME" "Knoxx System Admin")
-                           :bootstrapAllowlistEmails (env "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS" "")
-                           :bootstrapAllowlistRoleSlugs (env "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS" "")}
         cookie-hook? (truthy? (aget js/process.env "KNOXX_ENABLE_SESSION_HOOK"))]
-
-    ;; Initialize global discord gateway manager (sets knoxx.backend.discord-gateway/manager*).
+    ;; Initialize global durable process state once at process boot. The HTTP app
+    ;; can be closed/recreated by shadow-cljs lifecycle hooks without touching
+    ;; these durable services.
     (discord-gateway/createDiscordGatewayManager #js {:log js/console})
     (discord-reaction-labels/bind! cfg)
 
-    (-> (policy-db/create-policy-db policy-options)
-        (.then
-         (fn [policyDb]
-(let [runtime (make-runtime deps policyDb)]
-              (ensure-fastify-json-empty-body-parser! app)
-
-              ;; Debug hook: log large requests before they hit 413
-              (app-add-hook! app "onRequest"
-                (fn [req _reply done]
-                  (when-let [len (aget (.-headers req) "content-length")]
-                    (when (> (js/parseInt len 10) (* 900 1024))
-                      (js/console.warn "[knoxx] large request" (.-url req) len "bytes")))
-                  (done)))
-
-              ;; Fastify plugins
-             (-> (.register app (aget deps "fastifyCors") #js {:origin true})
-                 (.then (fn [] (.register app (aget deps "fastifyCookie"))))
-                 (.then (fn [] (.register app (aget deps "fastifyFormbody"))))
-                 (.then (fn [] (.register app (aget deps "fastifyMultipart")
-                       #js {:limits #js {:fileSize (* 50 1024 1024)
-                                         :fieldSize (* 1 1024 1024)
-                                         :files 10}})))
-                 (.then (fn [] (.register app (aget deps "fastifyWebsocket"))))
-
-                 ;; WS routes plugin
-                 (.then (fn []
-                          (.register app
-                                     (fn [instance _opts done]
-                                       (core/register-ws-routes! runtime instance)
-                                       (done)))))
-
-                 ;; Optional legacy session hook
-                 (.then (fn []
-                          (when cookie-hook?
-                            (app-add-hook! app "onRequest" (auth-session/create-session-hook policyDb)))))
-
-                 ;; GitHub OAuth + cookie session auth routes
-                 (.then (fn []
-                          (auth-routes/register-auth-routes app #js {:policyDb policyDb
-                                                                     :runtime runtime})))
-
-                 ;; Core CLJS routes (/api/*, etc.)
-                 (.then (fn []
-                          (core/register-app-routes! runtime app cfg lounge-messages*)))
-
-                 ;; Extra host-level routes previously implemented in server.mjs
-                 (.then (fn []
-                          (proxy-routes/register-proxy-routes! app cfg)))
-
-                 ;; MCP (server side) + OAuth consent UI
-                 (.then (fn []
-                          (mcp-http/register-mcp-http-routes! app runtime cfg)))
-
-                 ;; Start listening
-                 (.then (fn []
-                          (app-listen! app (:host cfg) (:port cfg))))
-                 (.then (fn [_]
-                          (graceful-shutdown/install! app cfg)
-                          (notify-ready!)
-                          (let [^js log (.-log app)]
-                            (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
-                            ;; Redis + session resume (non-blocking)
-                            (-> (redis/init-redis! (:redis-url cfg))
-                                (.then (fn [client]
-                                         (when client
-                                           (.info log "Redis connected for session persistence")
-                                           ;; Fire-and-forget: must not block startup
-                                           (agent-resume/resume-on-startup! runtime app cfg)
-                                           (agent-resume/start-periodic-recovery! runtime app cfg))))
-                                (.catch (fn [err]
-                                          (.warn log "Redis initialization failed" err)))))))
-                 (.catch (fn [err]
-                           (.error js/console "Knoxx backend CLJS failed to start" err)
-                           (js/process.exit 1)))))))
+    (-> (policy-db/create-policy-db (policy-options))
+        (.then (fn [policyDb]
+                 (let [runtime (runtime-deps/make-runtime policyDb)]
+                   (lifecycle/remember-context! runtime cfg policyDb cookie-hook?)
+                   (start-http! runtime cfg policyDb cookie-hook?))))
         (.catch (fn [err]
                   (.error js/console "Knoxx policy DB failed to initialize" err)
                   (js/process.exit 1))))))
+
+(defn ^:dev/before-load-async stop-http-before-load!
+  [done]
+  (.log js/console "[knoxx-hot-reload] before-load: closing HTTP server")
+  (-> (lifecycle/close-current-http!)
+      (.then (fn [_]
+               (.log js/console "[knoxx-hot-reload] before-load: HTTP server closed")))
+      (.catch (fn [err]
+                (.error js/console "[knoxx-hot-reload] failed to close HTTP server" err)))
+      (.finally done)))
+
+(defn ^:dev/after-load-async start-http-after-load!
+  [done]
+  (.log js/console "[knoxx-hot-reload] after-load: starting HTTP server")
+  (let [{:keys [runtime config policyDb cookie-hook?]} (lifecycle/context)]
+    (if (and runtime config policyDb)
+      (-> (start-http! runtime config policyDb cookie-hook?)
+          (.then (fn [_]
+                   (.log js/console "[knoxx-hot-reload] after-load: HTTP server started")))
+          (.catch (fn [err]
+                    (.error js/console "[knoxx-hot-reload] failed to restart HTTP server" err)))
+          (.finally done))
+      (do
+        (.warn js/console "[knoxx-hot-reload] no lifecycle context; skipping HTTP restart")
+        (done)))))

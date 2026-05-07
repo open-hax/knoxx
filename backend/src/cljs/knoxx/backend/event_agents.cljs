@@ -18,6 +18,8 @@
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
+            [knoxx.backend.http :as backend-http]
+            [knoxx.backend.quality-labels :as quality-labels]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.text :refer [sanitize-svg-content]]
             [knoxx.backend.util.parse :refer [parse-positive-int]]
@@ -175,14 +177,42 @@
   [messages]
   (sort-by :timestamp #(compare %2 %1) messages))
 
+(defn- discord-record-id
+  [message]
+  (str "discord:message:" (:channelId message) ":" (:id message)))
+
+(defn- label-for-record-id
+  [labels record-id]
+  (or (get labels record-id)
+      (get labels (keyword record-id))
+      {}))
+
+(defn- attach-openplanner-labels!
+  [config messages]
+  (if (or (empty? messages) (not (backend-http/openplanner-enabled? config)))
+    (js/Promise.resolve (quality-labels/good-first-then-not-bad messages))
+    (let [ids (mapv discord-record-id messages)]
+      (-> (backend-http/openplanner-request! config "POST" "/v1/labels/records/lookup" {:ids ids})
+          (.then (fn [response]
+                   (let [labels (:labels response)]
+                     (->> messages
+                          (mapv (fn [message]
+                                  (assoc message :openplannerLabels (label-for-record-id labels (discord-record-id message)))))
+                          quality-labels/good-first-then-not-bad))))
+          (.catch (fn [error]
+                    (.warn js/console "[event-agents] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad Discord context" error)
+                    []))))))
+
 (defn- read-discord-channel!
-  [channel-id limit]
+  [config channel-id limit]
   (if (discord-gateway-active?)
     (-> (.fetchChannelMessages (discord-gateway-manager) channel-id (clj->js {:limit (max 1 (min 100 (or limit 25)))}))
         (.then (fn [messages]
                  (->> (js->clj messages :keywordize-keys true)
                       sort-newest-first
-                      vec))))
+                      vec)))
+        (.then (fn [messages]
+                 (attach-openplanner-labels! config messages))))
     (let [token (discord-token)]
       (if (str/blank? token)
         (js/Promise.reject (js/Error. "Discord bot token not configured"))
@@ -194,7 +224,9 @@
                      (->> (if (array? payload) (array-seq payload) [])
                           (map map-discord-message)
                           sort-newest-first
-                          vec))))))))
+                          vec)))
+            (.then (fn [messages]
+                     (attach-openplanner-labels! config messages))))))))
 
 (defn- discord-source-config
   [control]
@@ -1349,7 +1381,7 @@
                    (js/Promise.all
                     (clj->js
                      (mapv (fn [channel-id]
-                             (-> (read-discord-channel! channel-id limit)
+                             (-> (read-discord-channel! config channel-id limit)
                                  (.then (fn [messages]
                                           (let [fresh (unseen-discord-messages channel-id messages)]
                                             (doseq [message fresh]
@@ -1392,8 +1424,8 @@
                       vec))))))
 
 (defn- fetch-discord-synthesis-row!
-  [limit channel-id]
-  (-> (read-discord-channel! channel-id limit)
+  [config limit channel-id]
+  (-> (read-discord-channel! config channel-id limit)
       (.then (fn [messages]
                {:channelId channel-id
                 :messages messages}))
@@ -1457,7 +1489,7 @@
   ([config control job trigger-event]
    (let [limit (job-max-messages job 12)
          publish-channels (job-publish-channels job)
-         fetch-row! (partial fetch-discord-synthesis-row! limit)
+         fetch-row! (partial fetch-discord-synthesis-row! config limit)
          dispatch-summary! (partial discord-synthesis-dispatch-summary! config job publish-channels trigger-event)]
      (-> (synthesis-channel-ids! control job trigger-event)
          (.then (fn [channels]

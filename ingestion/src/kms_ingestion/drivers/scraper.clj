@@ -45,10 +45,16 @@
       fname)))
 
 (defn- url->audio? [^String url]
-  (let [fname (url->filename url)
-        ext (last (str/split fname #"\."))]
-    (when (and ext (not (str/blank? ext)))
-      (audio-extension? ext))))
+  (try
+    (let [path (.getPath (URI. url))
+          fname (last (str/split (or path "") #"/"))]
+      (if (and (not (str/blank? fname))
+               (str/includes? fname "."))
+        (let [ext (last (str/split fname #"\."))]
+          (boolean (and (not (str/blank? ext))
+                        (audio-extension? ext))))
+        false))
+    (catch Exception _ false)))
 
 (defn- normalize-url [base relative]
   (try

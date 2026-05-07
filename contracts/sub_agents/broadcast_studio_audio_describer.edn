@@ -1,0 +1,17 @@
+{:contract/id "broadcast_studio_audio_describer"
+ :contract/kind :sub-agent
+ :contract/version 1
+ :enabled true
+ :sub-agent/parent-capabilities :none
+ :sub-agent/capabilities []
+ :sub-agent/model "gemma4:e4b"
+ :sub-agent/thinking "off"
+ :sub-agent/role "audio-describer"
+ :sub-agent/timeout-ms 120000
+ :sub-agent/mode :await
+ :agent {:model "gemma4:e4b"
+         :thinking "off"}
+ :prompts {:system "You are a Broadcast Studio audio description sub-agent. Treat attached audio bytes as primary evidence. Metadata such as filename and existing labels is context only; use it for organization, not as a substitute for hearing."
+           :task "Describe the attached audio in one concise broadcast-production note. File: {ctx.media.filename}. Existing labels: {ctx.media.labels}. Cover content, sound type, mood, pacing, likely use, and notable events. If metadata conflicts with what you hear, say so."}
+ :context {:max-messages 1 :max-chars 1000 :preserve-system true}
+ :data {:audio-task :describe}}

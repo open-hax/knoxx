@@ -219,6 +219,10 @@
                          (aget body "reasoningEffort")
                          (aget body "reasoning_effort"))
      :content-parts content-parts
+     :template-context (some-> (or (aget body "templateContext")
+                                   (aget body "template_context")
+                                   (aget body "template-context"))
+                               (js->clj :keywordize-keys true))
      :mode (or (aget body "mode") "direct")
      :agent-spec (normalize-agent-spec (or (aget body "agentSpec")
                                            (aget body "agent_spec")))
@@ -228,13 +232,17 @@
 
 (defn normalize-control-body
   [body]
-  {:message (or (aget body "message") "")
-   :conversation-id (or (aget body "conversationId")
-                        (aget body "conversation_id"))
-   :session-id (or (aget body "sessionId")
-                   (aget body "session_id"))
-   :run-id (or (aget body "runId")
-               (aget body "run_id"))})
+  (let [metadata (or (aget body "metadata")
+                     (aget body "lineage")
+                     #js {})]
+    {:message (or (aget body "message") "")
+     :conversation-id (or (aget body "conversationId")
+                          (aget body "conversation_id"))
+     :session-id (or (aget body "sessionId")
+                     (aget body "session_id"))
+     :run-id (or (aget body "runId")
+                 (aget body "run_id"))
+     :metadata (js->clj metadata :keywordize-keys true)}))
 
 (defn route!
   "Register a Fastify route. handler-or-opts may be either:

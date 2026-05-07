@@ -257,7 +257,7 @@ export function createChatRuntimeActions({
     }
   };
 
-  const handleSend = async (text: string, contentParts?: ContentPart[], options?: { direct?: boolean; omitSystemPrompt?: boolean }) => {
+  const handleSend = async (text: string, contentParts?: ContentPart[], options?: { direct?: boolean; omitSystemPrompt?: boolean; templateContext?: Record<string, unknown> }) => {
     if (!sessionId) {
       appendConsoleLine('[chat] session not ready, retry in a second');
       return;
@@ -301,6 +301,7 @@ export function createChatRuntimeActions({
         thinkingLevel: selectedThinkingLevel,
         direct: options?.direct,
         contentParts,
+        templateContext: options?.templateContext,
         agentSpec: {
           actor_id: activeActorId || undefined,
           contract_id: activeAgentId || undefined,

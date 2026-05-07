@@ -705,6 +705,23 @@
       CHECK (effect IN ('allow', 'deny'))
     );
 
+    CREATE TABLE IF NOT EXISTS actor_credentials (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'credential',
+      account_identifier TEXT,
+      secret_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_id, org_id, provider, kind)
+    );
+
+    CREATE INDEX IF NOT EXISTS actor_credentials_user_org_idx
+      ON actor_credentials (user_id, org_id, provider);
+
     CREATE TABLE IF NOT EXISTS data_lakes (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
@@ -785,6 +802,64 @@
       value TEXT NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Actor mailbox delivery projection. Canonical message/event content stays
+    -- in OpenPlanner/session/run logs; this table tracks addressing, delivery
+    -- state, retries, and audit pointers.
+    CREATE TABLE IF NOT EXISTS actor_mailbox_entries (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      kind TEXT NOT NULL DEFAULT 'actor-message',
+      status TEXT NOT NULL DEFAULT 'pending',
+      source_actor_id TEXT,
+      source_session_id TEXT,
+      source_conversation_id TEXT,
+      source_run_id TEXT,
+      source_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      target_kind TEXT NOT NULL DEFAULT 'unknown',
+      target_actor_id TEXT,
+      target_session_id TEXT,
+      target_conversation_id TEXT,
+      target_run_id TEXT,
+      target_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      delivery_mode TEXT NOT NULL DEFAULT 'follow-up',
+      attempts INT NOT NULL DEFAULT 0,
+      next_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      delivered_at TIMESTAMPTZ,
+      acknowledged_at TIMESTAMPTZ,
+      content_ref_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      preview TEXT,
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (status IN ('pending', 'delivered', 'failed', 'expired', 'superseded', 'acknowledged')),
+      CHECK (delivery_mode IN ('steer', 'follow-up', 'event', 'inbox-only', 'direct-run'))
+    );
+
+    CREATE INDEX IF NOT EXISTS actor_mailbox_status_next_idx ON actor_mailbox_entries (status, next_at);
+    CREATE INDEX IF NOT EXISTS actor_mailbox_target_actor_idx ON actor_mailbox_entries (target_actor_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS actor_mailbox_target_session_idx ON actor_mailbox_entries (target_session_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS actor_mailbox_source_run_idx ON actor_mailbox_entries (source_run_id, created_at DESC);
+
+    -- Latest live-route projection for actor-id -> conversation/session delivery.
+    CREATE TABLE IF NOT EXISTS actor_mailbox_routes (
+      actor_id TEXT PRIMARY KEY,
+      conversation_id TEXT,
+      session_id TEXT,
+      run_id TEXT,
+      contract_id TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      source_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      expires_at TIMESTAMPTZ,
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (status IN ('active', 'inactive'))
+    );
+
+    CREATE INDEX IF NOT EXISTS actor_mailbox_routes_session_idx ON actor_mailbox_routes (session_id);
+    CREATE INDEX IF NOT EXISTS actor_mailbox_routes_conversation_idx ON actor_mailbox_routes (conversation_id);
+    CREATE INDEX IF NOT EXISTS actor_mailbox_routes_status_seen_idx ON actor_mailbox_routes (status, last_seen_at DESC);
 
     -- Broadcast studio persistent state
     CREATE TABLE IF NOT EXISTS studio_state (
@@ -1139,6 +1214,7 @@
                (vec
                 (for [membership memberships]
                   {:id (aget membership "id")
+                   :userId (aget membership "user_id")
                    :orgId (aget membership "org_id")
                    :actorId (or (normalize-actor-id (aget membership "actor_id"))
                                 (default-membership-actor-id (map :slug (or (get @roles-by-m (aget membership "id")) []))))
@@ -1150,6 +1226,77 @@
                    :updatedAt (aget membership "updated_at")
                    :roles (or (get @roles-by-m (aget membership "id")) [])
                    :toolPolicies (or (get @tools-by-m (aget membership "id")) [])})))))))))
+
+(defn- js-json-map
+  [value]
+  (cond
+    (nil? value) {}
+    (map? value) value
+    :else (js->clj value :keywordize-keys true)))
+
+(defn- credential-provider-label
+  [provider]
+  (case provider
+    "bluesky" "Bluesky"
+    "twitch" "Twitch"
+    "discord_bot" "Discord bot"
+    "discord_oauth" "Discord OAuth"
+    provider))
+
+(defn- redact-credential-row
+  [row]
+  (let [secrets (js-json-map (aget row "secret_json"))]
+    {:id (aget row "id")
+     :provider (aget row "provider")
+     :label (credential-provider-label (aget row "provider"))
+     :kind (aget row "kind")
+     :accountIdentifier (aget row "account_identifier")
+     :status (aget row "status")
+     :configuredFields (->> secrets
+                            (keep (fn [[k v]]
+                                    (when-not (str/blank? (str (or v "")))
+                                      (name k))))
+                            sort
+                            vec)
+     :createdAt (aget row "created_at")
+     :updatedAt (aget row "updated_at")}))
+
+(defn- fetch-credentials-by-user!
+  [pool user-ids org-id]
+  (if (empty? user-ids)
+    (js/Promise.resolve {})
+    (-> (query! pool
+                "SELECT * FROM actor_credentials WHERE user_id = ANY($1::uuid[]) AND org_id = $2::uuid ORDER BY provider ASC, kind ASC"
+                [(into-array user-ids) org-id])
+        (.then
+         (fn [result]
+           (let [rows (aget result "rows")
+                 by-user (atom {})]
+             (doseq [i (range (.-length rows))]
+               (let [row (aget rows i)
+                     user-id (aget row "user_id")]
+                 (swap! by-user update user-id (fnil conj []) (redact-credential-row row))))
+             @by-user))))))
+
+(defn- actor-email-from-id
+  [actor-id]
+  (let [slug (-> (str actor-id)
+                 str/trim
+                 str/lower-case
+                 (str/replace #"[^a-z0-9._+-]+" "-")
+                 (str/replace #"^[-.]+|[-.]+$" ""))]
+    (when-not (str/blank? slug)
+      (str slug "@actors.local"))))
+
+(defn- nonblank-secret-map
+  [value]
+  (->> (js-json-map value)
+       (reduce-kv (fn [acc k v]
+                    (let [s (str/trim (str (or v "")))]
+                      (if (str/blank? s)
+                        acc
+                        (assoc acc (name k) s))))
+                  {})))
 
 ;; ---------------------------------------------------------------------------
 ;; Request Context
@@ -1567,23 +1714,43 @@
           (query! pool "SELECT * FROM users ORDER BY display_name ASC, email ASC" []))
         (.then
          (fn [user-result]
-           (let [users (aget user-result "rows")]
-             #js {:users (into-array
-                          (for [i (range (.-length users))]
-                            (let [u (aget users i)]
-                              #js {:id (aget u "id")
-                                   :email (aget u "email")
-                                   :displayName (aget u "display_name")
-                                   :authProvider (aget u "auth_provider")
-                                   :externalSubject (aget u "external_subject")
-                                   :status (aget u "status")
-                                   :createdAt (aget u "created_at")
-                                   :updatedAt (aget u "updated_at")
-                                   :memberships []})))}))))))
+           (let [users (vec (array-seq (aget user-result "rows")))
+                 user-ids (mapv #(aget % "id") users)
+                 memberships-promise (if org-id
+                                       (query! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = ANY($1::uuid[]) AND m.org_id = $2::uuid ORDER BY m.created_at ASC" [(into-array user-ids) org-id])
+                                       (query! pool "SELECT m.*, o.name AS org_name, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = ANY($1::uuid[]) ORDER BY o.name ASC, m.created_at ASC" [(into-array user-ids)]))
+                 credentials-promise (if org-id
+                                       (fetch-credentials-by-user! pool user-ids org-id)
+                                       (js/Promise.resolve {}))]
+             (-> (js/Promise.all [memberships-promise credentials-promise])
+                 (.then
+                  (fn [[membership-result credentials-by-user]]
+                    (-> (hydrate-memberships pool (array-seq (aget membership-result "rows")))
+                        (.then
+                         (fn [memberships]
+                           (let [memberships-by-user (atom {})]
+                             (doseq [membership memberships]
+                               (swap! memberships-by-user update (:userId membership) (fnil conj []) membership))
+                             #js {:users (into-array
+                                          (for [u users]
+                                            (let [user-id (aget u "id")]
+                                              #js {:id user-id
+                                                   :email (aget u "email")
+                                                   :displayName (aget u "display_name")
+                                                   :authProvider (aget u "auth_provider")
+                                                   :externalSubject (aget u "external_subject")
+                                                   :status (aget u "status")
+                                                   :createdAt (aget u "created_at")
+                                                   :updatedAt (aget u "updated_at")
+                                                   :credentials (clj->js (or (get credentials-by-user user-id) []))
+                                                   :memberships (clj->js (or (get @memberships-by-user user-id) []))})))})))))))))))))
 
 (defn- factory-create-user
   [pool uid mid payload]
-  (let [email (str/lower-case (str/trim (str (or (aget payload "email") ""))))
+  (let [requested-payload-actor-id (normalize-actor-id (aget payload "actorId"))
+        email (or (normalize-email (aget payload "email"))
+                  (actor-email-from-id requested-payload-actor-id)
+                  "")
         org-id (str/trim (str (or (aget payload "orgId")
                                   (aget payload "org_id") "")))]
     (cond
@@ -1593,7 +1760,7 @@
       (let [dn (str/trim (str (or (aget payload "displayName")
                                   (aget payload "display_name") email)))
             requested-role-slugs (vec (or (aget payload "roleSlugs") #js ["knowledge_worker"]))
-            requested-actor-id (or (normalize-actor-id (aget payload "actorId"))
+            requested-actor-id (or requested-payload-actor-id
                                    (some-> (find-user-actor-contract-by-email email) :id)
                                    (user-actor-id-from-email email)
                                    (default-membership-actor-id requested-role-slugs))]
@@ -1645,6 +1812,117 @@
                                            :resource-kind "user"
                                            :resource-id (aget user "id")})))
                    (.then (fn [_] #js {:user nil}))))))))))
+
+(defn- membership-role-slugs
+  [pool membership-id]
+  (-> (query! pool
+              "SELECT r.slug FROM membership_roles mr JOIN roles r ON r.id = mr.role_id WHERE mr.membership_id = $1::uuid ORDER BY r.slug ASC"
+              [membership-id])
+      (.then (fn [result]
+               (vec (for [row (array-seq (aget result "rows"))]
+                      (aget row "slug")))))))
+
+(defn- factory-update-user-actor
+  [pool uid mid user-id payload]
+  (let [org-id (str/trim (str (or (aget payload "orgId")
+                                  (aget payload "org_id") "")))
+        actor-id (normalize-actor-id (or (aget payload "actorId")
+                                         (aget payload "actor_id")))
+        display-name (some-> (or (aget payload "displayName")
+                                 (aget payload "display_name")) str str/trim not-empty)
+        email (normalize-email (aget payload "email"))
+        status (some-> (aget payload "status") str str/trim not-empty)
+        auth-provider (some-> (or (aget payload "authProvider")
+                                  (aget payload "auth_provider")) str str/trim not-empty)
+        external-subject (some-> (or (aget payload "externalSubject")
+                                     (aget payload "external_subject")) str str/trim not-empty)]
+    (cond
+      (str/blank? (str user-id)) (js/Promise.reject (js/Error. "userId is required"))
+      (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
+      :else
+      (-> (query-one! pool
+                      "SELECT m.*, o.slug AS org_slug FROM memberships m JOIN orgs o ON o.id = m.org_id WHERE m.user_id = $1::uuid AND m.org_id = $2::uuid"
+                      [user-id org-id])
+          (.then
+           (fn [membership]
+             (if-not membership
+               (js/Promise.reject (js/Error. "actor membership not found"))
+               (-> (query-one! pool
+                               "UPDATE users SET email = COALESCE($2, email), display_name = COALESCE($3, display_name), status = COALESCE($4, status), auth_provider = COALESCE($5, auth_provider), external_subject = COALESCE($6, external_subject), updated_at = NOW() WHERE id = $1::uuid RETURNING *"
+                               [user-id email display-name status auth-provider external-subject])
+                   (.then
+                    (fn [user]
+                      (let [resolved-actor-id (or actor-id
+                                                  (normalize-actor-id (aget membership "actor_id"))
+                                                  (user-actor-id-from-email (aget user "email")))]
+                        (-> (set-membership-actor-id! pool (aget membership "id") resolved-actor-id)
+                            (.then (fn [_] (membership-role-slugs pool (aget membership "id"))))
+                            (.then (fn [role-slugs]
+                                     (upsert-user-actor-contract!
+                                      {:actor-id resolved-actor-id
+                                       :email (aget user "email")
+                                       :display-name (aget user "display_name")
+                                       :org-slug (aget membership "org_slug")
+                                       :role-slugs role-slugs})))
+                            (.then (fn [_]
+                                     (append-audit! pool {:actor-user-id uid
+                                                          :actor-membership-id mid
+                                                          :org-id org-id
+                                                          :action "actor.update"
+                                                          :resource-kind "user"
+                                                          :resource-id user-id})))
+                            (.then (fn [_] #js {:user nil}))))))))))))))
+
+(defn- factory-upsert-actor-credential
+  [pool uid mid user-id payload]
+  (let [org-id (str/trim (str (or (aget payload "orgId")
+                                  (aget payload "org_id") "")))
+        provider (some-> (or (aget payload "provider")
+                             (aget payload "credentialProvider")) str str/trim not-empty)
+        kind (or (some-> (aget payload "kind") str str/trim not-empty) "credential")
+        account-identifier (some-> (or (aget payload "accountIdentifier")
+                                       (aget payload "account_identifier")) str str/trim not-empty)
+        status (or (some-> (aget payload "status") str str/trim not-empty) "active")
+        submitted-secrets (nonblank-secret-map (or (aget payload "credentials")
+                                                   (aget payload "secretJson")
+                                                   (aget payload "secret_json")
+                                                   #js {}))]
+    (cond
+      (str/blank? (str user-id)) (js/Promise.reject (js/Error. "userId is required"))
+      (str/blank? org-id) (js/Promise.reject (js/Error. "orgId is required"))
+      (str/blank? (str provider)) (js/Promise.reject (js/Error. "provider is required"))
+      :else
+      (-> (query-one! pool
+                      "SELECT id FROM memberships WHERE user_id = $1::uuid AND org_id = $2::uuid"
+                      [user-id org-id])
+          (.then
+           (fn [membership]
+             (if-not membership
+               (js/Promise.reject (js/Error. "actor membership not found"))
+               (-> (query-one! pool
+                               "INSERT INTO actor_credentials (user_id, org_id, provider, kind, account_identifier, secret_json, status)
+                                VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7)
+                                ON CONFLICT (user_id, org_id, provider, kind)
+                                DO UPDATE SET account_identifier = COALESCE(EXCLUDED.account_identifier, actor_credentials.account_identifier),
+                                              secret_json = actor_credentials.secret_json || EXCLUDED.secret_json,
+                                              status = EXCLUDED.status,
+                                              updated_at = NOW()
+                                RETURNING *"
+                               [user-id org-id provider kind account-identifier
+                                (js/JSON.stringify (clj->js submitted-secrets)) status])
+                   (.then
+                    (fn [credential]
+                      (-> (append-audit! pool {:actor-user-id uid
+                                               :actor-membership-id mid
+                                               :org-id org-id
+                                               :action "actor.credential.upsert"
+                                               :resource-kind "actor_credential"
+                                               :resource-id (aget credential "id")
+                                               :after {:provider provider
+                                                       :kind kind
+                                                       :accountIdentifier account-identifier
+                                                       :configuredFields (keys submitted-secrets)}})
+                          (.then (fn [_] #js {:credential (clj->js (redact-credential-row credential))})))))))))))))
 
 (defn- factory-list-memberships
   [pool opts]
@@ -2095,6 +2373,14 @@
                                  :createUser
                                  (fn [payload]
                                    (factory-create-user pool uid mid payload))
+
+                                 :updateUserActor
+                                 (fn [user-id payload]
+                                   (factory-update-user-actor pool uid mid user-id payload))
+
+                                 :upsertActorCredential
+                                 (fn [user-id payload]
+                                   (factory-upsert-actor-credential pool uid mid user-id payload))
 
                                  :listMemberships
                                  (fn [opts]

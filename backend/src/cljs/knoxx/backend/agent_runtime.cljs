@@ -1,5 +1,6 @@
 (ns knoxx.backend.agent-runtime
   (:require [clojure.string :as str]
+            [knoxx.backend.actor-mailbox :as actor-mailbox]
             [knoxx.backend.agent-hydration :refer [create-agent-custom-tools]]
             [knoxx.backend.http :as http]
             [knoxx.backend.http :refer [no-content? request-query-string request-forward-headers request-forward-body]]
@@ -712,6 +713,20 @@
              :system-prompt (some-> (:system-prompt agent-spec) str str/trim not-empty)
              :task-prompt (some-> (:task-prompt agent-spec) str str/trim not-empty)})))
 
+(defn- register-actor-live-route!
+  [runtime conversation-id session-id agent-spec]
+  (when-let [actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)]
+    (-> (actor-mailbox/register-live-session!
+         runtime
+         {:actor-id actor-id
+          :conversation-id conversation-id
+          :session-id session-id
+          :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
+          :source {:registeredBy "agent-runtime"
+                   :contractId (:contract-id agent-spec)}})
+        (.catch (fn [err]
+                  (.warn js/console "[actor-mailbox] failed to register live actor route" (.-message err)))))))
+
 (defn ensure-agent-session!
   ([runtime config conversation-id model-id] (ensure-agent-session! runtime config conversation-id model-id nil (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context] (ensure-agent-session! runtime config conversation-id model-id auth-context (:agent-thinking-level config)))
@@ -734,6 +749,7 @@
                   (= (str (or active-tool-signature "")) (str (or current-tool-signature ""))))
            (do
              (.setThinkingLevel session thinking-level)
+             (register-actor-live-route! runtime conversation-id session-id agent-spec)
              (js/Promise.resolve session))
            ;; Model or tool access changed mid-conversation: rebuild session so the requested runtime is respected.
            (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
@@ -749,7 +765,10 @@
                                                       ctx))
                         (swap! agent-sessions* assoc conversation-id {:session next-session
                                                                       :model-id model-id
-                                                                      :tool-signature current-tool-signature})
+                                                                      :tool-signature current-tool-signature
+                                                                      :session-id session-id
+                                                                      :actor-id (:actor-id agent-spec)})
+                        (register-actor-live-route! runtime conversation-id session-id agent-spec)
                         next-session)))))
        (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
            (.then (fn [session]
@@ -764,7 +783,10 @@
                                                   ctx))
                     (swap! agent-sessions* assoc conversation-id {:session session
                                                                   :model-id model-id
-                                                                  :tool-signature current-tool-signature})
+                                                                  :tool-signature current-tool-signature
+                                                                  :session-id session-id
+                                                                  :actor-id (:actor-id agent-spec)})
+                    (register-actor-live-route! runtime conversation-id session-id agent-spec)
                     session)))))))
 
 (defn active-agent-session
@@ -787,7 +809,7 @@
   nil)
 
 (defn queue-agent-control!
-  [_runtime _config {:keys [conversation-id session-id run-id message kind]}]
+  [_runtime _config {:keys [conversation-id session-id run-id message kind metadata]}]
   (cond
     (str/blank? conversation-id)
     (js/Promise.reject (js/Error. "conversation_id is required for live controls"))
@@ -804,6 +826,7 @@
                         message)
               event-type (if (= kind "follow_up") "follow_up_queued" "steer_queued")
               failure-type (if (= kind "follow_up") "follow_up_failed" "steer_failed")
+              metadata (or metadata {})
               invoke (if (= kind "follow_up")
                        #(.followUp session message)
                        #(.steer session message))]
@@ -811,7 +834,8 @@
               (.then (fn []
                        (let [event (tool-event-payload run-id conversation-id session-id event-type
                                                        {:status "queued"
-                                                        :preview preview})]
+                                                        :preview preview
+                                                        :metadata metadata})]
                          (when run-id
                            (append-run-event! run-id event))
                          (broadcast-ws-session! session-id "events" event)
@@ -824,7 +848,8 @@
                         (let [event (tool-event-payload run-id conversation-id session-id failure-type
                                                         {:status "failed"
                                                          :error (str err)
-                                                         :preview preview})]
+                                                         :preview preview
+                                                         :metadata metadata})]
                           (when run-id
                             (append-run-event! run-id event))
                           (broadcast-ws-session! session-id "events" event))

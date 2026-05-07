@@ -32,6 +32,31 @@
 (defonce conversation-access* (atom {}))
 (defonce lounge-messages* (atom []))
 
+(defn- flatten-template-values
+  ([value]
+   (flatten-template-values nil value))
+  ([prefix value]
+   (cond
+     (map? value)
+     (into {}
+           (mapcat (fn [[k v]]
+                     (let [key-name (cond
+                                      (keyword? k) (name k)
+                                      (string? k) k
+                                      :else (str k))
+                           next-prefix (if prefix (str prefix "." key-name) key-name)]
+                       (flatten-template-values next-prefix v))))
+           value)
+
+     (sequential? value)
+     (when prefix
+       {prefix (clojure.string/join ", " (map str value))})
+
+     (some? value)
+     (when prefix {prefix value})
+
+     :else {})))
+
 (defn- auth-context-template-values
   [auth-context]
   (let [user (:user auth-context)
@@ -65,16 +90,19 @@
                           (:id membership))}))
 
 (defn- render-task-prompt
-  [task-prompt auth-context]
+  ([task-prompt auth-context]
+   (render-task-prompt task-prompt auth-context nil))
+  ([task-prompt auth-context template-context]
   (when-let [template (content/nonblank task-prompt)]
-    (let [values (auth-context-template-values auth-context)]
+    (let [values (merge (auth-context-template-values auth-context)
+                        (flatten-template-values template-context))]
       (str/replace template #"\{ctx\.([A-Za-z0-9_.-]+)\}"
                    (fn [match]
                      (let [parts (if (vector? match) match [match])
                            full (first parts)
                            key (second parts)]
                        (or (some-> (get values key) str)
-                           full)))))))
+                           full))))))))
 
 (defn ensure-conversation-access!
   [ctx conversation-id]
@@ -471,7 +499,10 @@
                               :omitted_count omitted-count
                               :content_type (if (array? content) "multipart" "text")
                               :content log-content})))
-      (agent-ctx/set-context! {:session-id session-id :conversation-id conversation-id :run-id run-id})
+      (agent-ctx/set-context! {:session-id session-id
+                               :conversation-id conversation-id
+                               :run-id run-id
+                               :agent-spec agent-spec})
       (-> (.sendUserMessage session content)
           (.then (fn [_]
                    (agent-ctx/clear-context!)
@@ -488,7 +519,7 @@
                                             hydration memory-hydration persisted-request-messages agent-spec err)))))))
 
 (defn send-agent-turn!
-  [runtime config {:keys [conversation-id session-id message content-parts model mode run-id auth-context thinking-level agent-spec]}]
+  [runtime config {:keys [conversation-id session-id message content-parts template-context model mode run-id auth-context thinking-level agent-spec]}]
   (js/Promise.
    (fn [resolve reject]
      (try
@@ -675,7 +706,7 @@
                                                materialized-content-parts (vec (or (aget results 2) []))
                                                session (aget results 3)
                                                turn-message (or (content/nonblank message)
-                                                                (render-task-prompt (:task-prompt agent-spec) auth-context)
+                                                                (render-task-prompt (:task-prompt agent-spec) auth-context template-context)
                                                                 "")
                                                user-message (if (seq materialized-content-parts)
                                                               {:role "user" :content turn-message :content-parts materialized-content-parts}

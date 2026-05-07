@@ -23,7 +23,8 @@
             [knoxx.backend.authz :refer [ctx-permitted? system-admin? ensure-permission!]]
             [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.util.time :refer [now-iso]]
-            [shadow.cljs.modern :refer [js-await]]))
+            [shadow.cljs.modern :refer [js-await]]
+            ["node:crypto" :as crypto]))
 
 (defn interactive-session-id?
   [session-id]
@@ -416,7 +417,7 @@
     (cond
       (str/blank? session-id) (json-response! reply 400 {:detail "session_id is required"})
       (str/blank? text) (json-response! reply 400 {:detail "text is required"})
-      :else (let [msg {:id (str (.randomUUID (aget runtime "crypto")))
+      :else (let [msg {:id (str (.randomUUID crypto))
                        :timestamp (now-iso)
                        :session_id session-id
                        :alias (if (str/blank? alias) "anonymous" alias)

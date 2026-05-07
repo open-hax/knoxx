@@ -1,4 +1,8 @@
 import type {
+  ActorMailboxBox,
+  ActorMailboxEntry,
+  ActorMailboxListResponse,
+  ActorMailboxStatus,
   AgentContractCatalogResponse,
   AgentSource,
   ContentPart,
@@ -27,6 +31,54 @@ function asString(value: unknown): string | undefined {
 
 function asBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function normalizeMailboxEntry(value: unknown): ActorMailboxEntry | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = asString(value.id);
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    kind: asString(value.kind) ?? "actor-message",
+    status: asString(value.status) ?? "pending",
+    source: asRecord(value.source),
+    target: asRecord(value.target),
+    delivery: asRecord(value.delivery),
+    contentRef: asRecord(value.contentRef),
+    metadata: asRecord(value.metadata),
+    preview: asString(value.preview),
+    lastError: asString(value.lastError),
+    createdAt: asString(value.createdAt),
+    updatedAt: asString(value.updatedAt),
+    deliveredAt: asString(value.deliveredAt),
+    acknowledgedAt: asString(value.acknowledgedAt),
+    expiresAt: asString(value.expiresAt),
+  };
+}
+
+function normalizeMailboxListResponse(value: unknown, fallbackBox: ActorMailboxBox): ActorMailboxListResponse {
+  const record = isRecord(value) ? value : {};
+  const entries = Array.isArray(record.entries)
+    ? record.entries.map(normalizeMailboxEntry).filter((entry): entry is ActorMailboxEntry => entry !== null)
+    : [];
+
+  return {
+    ok: asBoolean(record.ok) ?? true,
+    box: (asString(record.box) === "outbox" ? "outbox" : asString(record.box) === "inbox" ? "inbox" : fallbackBox),
+    actorId: asString(record.actorId),
+    durable: asBoolean(record.durable) ?? asBoolean(record.durable_),
+    entries,
+  };
 }
 
 function normalizeStringArray(value: unknown): string[] | undefined {
@@ -165,6 +217,24 @@ export async function getAgentContractsCatalog(actorId?: string): Promise<AgentC
   const params = new URLSearchParams();
   if (actorId) params.set("actor", actorId);
   return request<AgentContractCatalogResponse>(`/api/knoxx/agents/catalog${params.toString() ? `?${params.toString()}` : ""}`);
+}
+
+export async function listActorMailbox(box: ActorMailboxBox, status?: ActorMailboxStatus | "all"): Promise<ActorMailboxListResponse> {
+  const params = new URLSearchParams();
+  params.set("box", box);
+  params.set("limit", "100");
+  if (status && status !== "all") {
+    params.set("status", status);
+  }
+  const response = await request<unknown>(`/api/actors/mailbox?${params.toString()}`);
+  return normalizeMailboxListResponse(response, box);
+}
+
+export async function acknowledgeActorMailboxEntry(mailboxId: string): Promise<{ ok: boolean; entry?: ActorMailboxEntry }> {
+  const response = await request<unknown>(`/api/actors/mailbox/${encodeURIComponent(mailboxId)}/ack`, { method: "POST" });
+  const record = isRecord(response) ? response : {};
+  const entry = normalizeMailboxEntry(record.entry);
+  return { ok: asBoolean(record.ok) ?? true, ...(entry ? { entry } : {}) };
 }
 
 export async function voiceSttTranscribe(blob: Blob, filename = "audio.webm"): Promise<SttTranscribeResponse> {
@@ -400,6 +470,7 @@ export async function knoxxChatStart(payload: {
   direct?: boolean;
   contentParts?: ContentPart[];
   agentSpec?: Record<string, unknown>;
+  templateContext?: Record<string, unknown>;
 }): Promise<{ ok: boolean; queued: boolean; run_id?: string | null; conversation_id?: string | null; session_id?: string | null; model?: string | null }> {
   const endpoint = payload.direct ? "/api/knoxx/direct/start" : "/api/knoxx/chat/start";
   return request<Record<string, unknown>>(endpoint, {
@@ -413,6 +484,7 @@ export async function knoxxChatStart(payload: {
       thinkingLevel: payload.thinkingLevel,
       contentParts: payload.contentParts,
       agentSpec: payload.agentSpec,
+      templateContext: payload.templateContext,
     }),
   }).then((response) => ({
     ok: Boolean(response.ok),

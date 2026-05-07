@@ -28,6 +28,12 @@
       (str/ends-with? base "/v1") (str base "/audio/speech")
       :else (str base "/v1/audio/speech"))))
 
+(defn- default-tts-speed [config]
+  (or (when (map? config) (get config :voxx-default-speed))
+      (some-> js/process .-env (aget "KNOXX_VOXX_DEFAULT_SPEED"))
+      (some-> js/process .-env (aget "VOICE_GATEWAY_TTS_DEFAULT_SPEED"))
+      "1.15"))
+
 (defn- stt-url [config]
   (or (when (map? config) (or (get config :stt-url)
                               (get config :stt-base-url)))
@@ -59,8 +65,8 @@
 
 (defn- fetch-tts! [config text voice-id model-id]
   (let [api-key (or (resolve-voice-key config) (throw (js/Error. "VOICE_GATEWAY_API_KEY not configured")))
-        body {:input text :voice (or voice-id "alloy") :model (or model-id "kokoro")
-              :response_format "mp3" :postprocess_enabled false}]
+        body {:input text :voice (or voice-id "af_jessica") :model (or model-id "kokoro")
+              :response_format "mp3" :speed (default-tts-speed config) :postprocess_enabled false}]
     (-> (js/fetch (tts-url config)
                   #js {:method "POST"
                        :headers #js {"Authorization" (str "Bearer " api-key) "Content-Type" "application/json" "Accept" "audio/mpeg"}
@@ -272,7 +278,7 @@
   [:map
    [:guild_id {:description "Guild ID with an active voice connection."} :string]
    [:text {:description "Text to synthesize and play in the voice channel."} :string]
-   [:voice_id {:optional true :description "Voxx voice ID. Default: alloy."} :string]
+   [:voice_id {:optional true :description "Voxx/Kokoro voice ID. Default: af_jessica."} :string]
    [:model_id {:optional true :description "Voxx model ID. Default: kokoro."} :string]])
 
 (defn voice-say-execute [runtime config _tool-call-id params a b c]

@@ -1,5 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button, Badge, tokens } from "@open-hax/uxx";
+import { CollapsedPanelTab } from "../components/CollapsedPanelTab";
+import { AudioSpectrumVisualizer as WaveformVisualizer, MusicPlayerView, PlaybackProgress } from "../components/studio/MusicPlayerView";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
 import {
@@ -16,7 +19,8 @@ import {
   type DiscordAudioScanResponse,
   type DiscordImageScanResponse,
 } from "../lib/api/runtime";
-import { request } from "../lib/api/core";
+import { API_BASE, buildKnoxxAuthHeaders, request } from "../lib/api/core";
+import { buildPlaylistPublicationDraft } from "../lib/cms/publicationDrafts";
 
 // ── Persistence keys ─────────────────────────────────────────────────
 
@@ -91,11 +95,34 @@ interface BroadcastStudioAgentLaunchRequest {
     filename?: string;
   }>;
   direct?: boolean;
+  templateContext?: Record<string, unknown>;
 }
 
 interface CreateLabelResponse {
   ok: boolean;
   label: LabelNode;
+}
+
+interface CmsDocumentCreateResponse {
+  doc_id: string;
+  title: string;
+  source_path: string | null;
+}
+
+interface CmsDocumentCreatePayload {
+  title: string;
+  content: string;
+  source_path: string;
+  visibility: "internal" | "review" | "public" | "archived";
+  metadata: Record<string, unknown>;
+  garden_id?: string;
+  defer_index?: boolean;
+}
+
+interface GardenSummary {
+  garden_id: string;
+  title: string;
+  status: string;
 }
 
 interface BroadcastStudioUiAction {
@@ -123,6 +150,7 @@ const OPENPLANNER_BASE = "/api/openplanner/v1";
 
 const BROADCAST_STUDIO_PAGE_ACTOR_ID = "broadcast_studio";
 const BROADCAST_STUDIO_LABELER_CONTRACT_ID = "broadcast_studio_audio_labeler";
+const QUEUE_RENDER_LIMIT = 250;
 
 function audioFileNodeId(path: string): string {
   return `devel:file:${path}`;
@@ -214,6 +242,22 @@ function cleanSuggestedLabel(raw: string): string | null {
   return cleaned;
 }
 
+function extractDescriptionLabels(text: string): string[] {
+  const candidates: string[] = [];
+  const numberedLabelLine = text.match(/(?:^|\n)\s*\(?3\)?[.)]?\s*([^\n]+)/i);
+  const explicitLabelLine = text.match(/(?:reusable\s+)?labels?\s*[:\-]\s*([^\n]+)/i);
+
+  for (const raw of [numberedLabelLine?.[1], explicitLabelLine?.[1]]) {
+    if (!raw) continue;
+    for (const part of raw.split(/[,|]/g)) {
+      const cleaned = cleanSuggestedLabel(part);
+      if (cleaned) candidates.push(cleaned);
+    }
+  }
+
+  return Array.from(new Set(candidates)).slice(0, 16);
+}
+
 function extractSuggestedLabelsFromText(text: string): string[] {
   const lines = text.split(/\r?\n/);
   const candidates: string[] = [];
@@ -245,6 +289,12 @@ function extractSuggestedLabelsFromText(text: string): string[] {
 }
 
 // ── API helpers ──────────────────────────────────────────────────────
+
+async function loadAudioChatContext(filePath: string): Promise<AudioChatContextResponse> {
+  return request<AudioChatContextResponse>(
+    `/api/ingestion/audio-context?source_id=${encodeURIComponent("workspace-audio")}&path=${encodeURIComponent(filePath)}`
+  );
+}
 
 async function loadStudioState(kind: string): Promise<Record<string, unknown>> {
   try {
@@ -288,6 +338,47 @@ async function savePlaylist(items: PlaylistItem[]): Promise<void> {
   } catch {
     // Silent fail
   }
+}
+
+async function findCmsDocumentBySourcePath(sourcePath: string): Promise<CmsDocumentCreateResponse | null> {
+  const normalize = (value: string | null | undefined) => (value ?? "").replace(/^\/+/, "");
+  const params = new URLSearchParams({ path_prefix: sourcePath, limit: "20" });
+  const response = await fetch(`${API_BASE}${OPENPLANNER_BASE}/cms/documents?${params.toString()}`, {
+    credentials: "include",
+    headers: buildKnoxxAuthHeaders(),
+  });
+  if (!response.ok) return null;
+  const body = (await response.json()) as { documents?: CmsDocumentCreateResponse[] };
+  return (body.documents ?? []).find((doc) => normalize(doc.source_path) === normalize(sourcePath)) ?? null;
+}
+
+async function createCmsPublicationDocument(payload: CmsDocumentCreatePayload): Promise<CmsDocumentCreateResponse | null> {
+  const response = await fetch(`${API_BASE}${OPENPLANNER_BASE}/cms/documents`, {
+    method: "POST",
+    credentials: "include",
+    headers: buildKnoxxAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(payload),
+  });
+
+  if (response.ok) {
+    return (await response.json()) as CmsDocumentCreateResponse;
+  }
+
+  const text = await response.text();
+  if (response.status === 503) {
+    try {
+      const parsed = JSON.parse(text) as { persisted?: boolean };
+      if (parsed.persisted) {
+        const found = await findCmsDocumentBySourcePath(payload.source_path);
+        if (found) return found;
+        throw new Error("CMS saved the draft but indexing timed out and the document could not be refetched yet. Try opening CMS again in a moment.");
+      }
+    } catch {
+      // fall through to the normal error below
+    }
+  }
+
+  throw new Error(text || `${response.status} ${response.statusText}`);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -345,56 +436,20 @@ function fileIcon(ext: string): string {
   }
 }
 
-// ── Waveform Visualizer (audioMotion) ───────────────────────────────
-
-import AudioMotionAnalyzer from "audiomotion-analyzer";
-
-function WaveformVisualizer({ analyserRef, isPlaying }: { analyserRef: React.RefObject<AnalyserNode | null>; isPlaying: boolean }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const audioMotionRef = useRef<AudioMotionAnalyzer | null>(null);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    const analyser = analyserRef.current;
-    if (!container || !analyser || !isPlaying || audioMotionRef.current) return;
-
-    audioMotionRef.current = new AudioMotionAnalyzer(container, {
-      source: analyser,
-      width: container.clientWidth,
-      height: 50,
-      mode: 2,
-      gradient: "classic",
-      showScaleX: false,
-      showScaleY: false,
-      smoothing: 0.7,
-    });
-  }, [analyserRef, isPlaying]);
-
-  useEffect(() => () => {
-    audioMotionRef.current?.destroy();
-    audioMotionRef.current = null;
-  }, []);
-
-  return (
-    <div
-      ref={containerRef}
-      style={{ width: "100%", height: 50, borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,0.2)" }}
-    />
-  );
-}
-
 const MemoChatWorkspacePane = memo(ChatWorkspacePane);
 
 function BroadcastStudioChatPane({
   currentFile,
   width,
   onShowFiles,
+  onHide,
   launchRequest,
   onApplySuggestedLabel,
 }: {
   currentFile: AudioFileEntry | null;
   width: number;
   onShowFiles: () => void;
+  onHide: () => void;
   launchRequest: BroadcastStudioAgentLaunchRequest | null;
   onApplySuggestedLabel: (labelText: string) => Promise<void> | void;
 }) {
@@ -425,9 +480,7 @@ function BroadcastStudioChatPane({
     if (!file) return;
 
     try {
-      const context = await request<AudioChatContextResponse>(
-        `/api/ingestion/audio-context?source_id=${encodeURIComponent("workspace-audio")}&path=${encodeURIComponent(file.path)}`
-      );
+      const context = await loadAudioChatContext(file.path);
 
       const titlePath = `${file.path}#song-title`;
       const descriptionPath = `${file.path}#song-description`;
@@ -474,7 +527,7 @@ function BroadcastStudioChatPane({
     if (chat.selectedModel !== pendingLaunch.model) return;
     if (!chat.conversationId || chat.isSending) return;
     setPendingLaunch(null);
-    void chat.handleSend("", pendingLaunch.contentParts, { direct: pendingLaunch.direct, omitSystemPrompt: true });
+    void chat.handleSend("", pendingLaunch.contentParts, { direct: pendingLaunch.direct, omitSystemPrompt: true, templateContext: pendingLaunch.templateContext });
   }, [chat.activeAgentId, chat.conversationId, chat.handleSend, chat.isSending, chat.selectedModel, pendingLaunch]);
 
   const latestAssistantMessage = [...chat.messages].reverse().find((message) => message.role === "assistant" && (message.content?.trim() || message.status === "done")) ?? null;
@@ -495,6 +548,21 @@ function BroadcastStudioChatPane({
       overflow: "hidden",
       background: "var(--token-colors-background-surface)",
     }}>
+      <div style={{
+        padding: "8px 10px",
+        borderBottom: `1px solid var(--token-colors-border-default)`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+        background: "var(--token-colors-background-surface)",
+        flexShrink: 0,
+      }}>
+        <div style={{ fontSize: tokens.fontSize.sm, fontWeight: 600 }}>Studio Chat</div>
+        <Button variant="ghost" size="sm" onClick={onHide} title="Collapse Studio Chat panel">
+          Collapse
+        </Button>
+      </div>
       {currentFile && suggestedLabels.length > 0 && (
         <div style={{
           padding: "8px 10px",
@@ -530,6 +598,7 @@ function BroadcastStudioChatPane({
       <MemoChatWorkspacePane
         controller={chat}
         showFiles={false}
+        showFilesToggle={false}
         showCanvasToggle={false}
         onShowFiles={onShowFiles}
       />
@@ -537,80 +606,11 @@ function BroadcastStudioChatPane({
   );
 }
 
-function PlaybackProgress({
-  audioRef,
-  duration,
-  initialTime,
-  onPersistTime,
-}: {
-  audioRef: React.RefObject<HTMLAudioElement | null>;
-  duration: number;
-  initialTime: number;
-  onPersistTime: (time: number) => void;
-}) {
-  const [currentTime, setCurrentTime] = useState(initialTime);
-
-  useEffect(() => {
-    setCurrentTime(initialTime);
-  }, [initialTime]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    let lastUiUpdate = 0;
-    const syncCurrentTime = () => {
-      const nextTime = audio.currentTime;
-      onPersistTime(nextTime);
-
-      const now = performance.now();
-      if (now - lastUiUpdate < 100) return;
-      lastUiUpdate = now;
-
-      setCurrentTime((previous) => (Math.abs(previous - nextTime) < 0.05 ? previous : nextTime));
-    };
-
-    audio.addEventListener("timeupdate", syncCurrentTime);
-    audio.addEventListener("seeking", syncCurrentTime);
-    audio.addEventListener("seeked", syncCurrentTime);
-
-    return () => {
-      audio.removeEventListener("timeupdate", syncCurrentTime);
-      audio.removeEventListener("seeking", syncCurrentTime);
-      audio.removeEventListener("seeked", syncCurrentTime);
-    };
-  }, [audioRef, onPersistTime]);
-
-  const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const time = parseFloat(e.target.value);
-    audio.currentTime = time;
-    setCurrentTime(time);
-    onPersistTime(time);
-  }, [audioRef, onPersistTime]);
-
-  return (
-    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 4 }}>
-      <input
-        type="range"
-        min={0}
-        max={duration || 0}
-        value={currentTime}
-        onChange={handleSeek}
-        style={{ width: "100%", accentColor: "var(--token-colors-accent-blue)" }}
-      />
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)" }}>
-        <span>{formatDuration(currentTime)}</span>
-        <span>{formatDuration(duration)}</span>
-      </div>
-    </div>
-  );
-}
-
 // ── Main Component ───────────────────────────────────────────────────
 
 export default function BroadcastStudioPage() {
+  const navigate = useNavigate();
+
   // Audio library state
   const [library, setLibrary] = useState<AudioLibraryResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -635,6 +635,8 @@ export default function BroadcastStudioPage() {
 
   // Sidebar state
   const [showSidebar, setShowSidebar] = useState(true);
+  const [showBottomPanel, setShowBottomPanel] = useState(true);
+  const [showChatPanel, setShowChatPanel] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = localStorage.getItem(STUDIO_SIDEBAR_WIDTH_KEY);
     return stored ? parseInt(stored, 10) : 280;
@@ -680,7 +682,7 @@ export default function BroadcastStudioPage() {
   const refreshLibrary = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await getAudioLibrary({ path: scanPath, depth: 3 });
+      const data = await getAudioLibrary({ path: scanPath, depth: 16 });
       setLibrary(data);
     } catch {
       // Silent fail
@@ -1013,6 +1015,11 @@ export default function BroadcastStudioPage() {
 
   const [savingPlaylist, setSavingPlaylist] = useState(false);
   const [playlistName, setPlaylistName] = useState("");
+  const [playlistPublicationDescription, setPlaylistPublicationDescription] = useState("");
+  const [publicationGardens, setPublicationGardens] = useState<GardenSummary[]>([]);
+  const [selectedPublicationGardenId, setSelectedPublicationGardenId] = useState("");
+  const [creatingPublicationDraft, setCreatingPublicationDraft] = useState(false);
+  const [publicationDraftMessage, setPublicationDraftMessage] = useState<string | null>(null);
 
   // ── Label + agent state ─────────────────────────────────────────
   const [centerTab, setCenterTab] = useState<"queue" | "labels">("queue");
@@ -1029,6 +1036,37 @@ export default function BroadcastStudioPage() {
   const [savedPlaylists, setSavedPlaylists] = useState<Array<{ name: string; path: string; filename: string }>>([]);
   const [previewPlaylist, setPreviewPlaylist] = useState<{ name: string; items: Array<{ path: string; name: string }> } | null>(null);
   const [agentLaunchRequest, setAgentLaunchRequest] = useState<BroadcastStudioAgentLaunchRequest | null>(null);
+  const [audioContextsByPath, setAudioContextsByPath] = useState<Record<string, AudioChatContextResponse>>({});
+  const [audioContextLoadingPaths, setAudioContextLoadingPaths] = useState<Set<string>>(() => new Set());
+  const audioContextRequestsRef = useRef<Record<string, Promise<AudioChatContextResponse | null>>>({});
+
+  const refreshAudioContextForPath = useCallback(async (path: string) => {
+    if (!path) return null;
+    const existingRequest = audioContextRequestsRef.current[path];
+    if (existingRequest) return existingRequest;
+
+    const requestPromise = (async () => {
+      setAudioContextLoadingPaths((prev) => new Set(prev).add(path));
+      try {
+        const context = await loadAudioChatContext(path);
+        setAudioContextsByPath((prev) => ({ ...prev, [path]: context }));
+        return context;
+      } catch (error) {
+        console.error("Failed to load audio description:", error);
+        return null;
+      } finally {
+        delete audioContextRequestsRef.current[path];
+        setAudioContextLoadingPaths((prev) => {
+          const next = new Set(prev);
+          next.delete(path);
+          return next;
+        });
+      }
+    })();
+
+    audioContextRequestsRef.current[path] = requestPromise;
+    return requestPromise;
+  }, []);
 
   const refreshLabelCatalog = useCallback(async () => {
     try {
@@ -1065,12 +1103,37 @@ export default function BroadcastStudioPage() {
   }, [refreshLabelCatalog]);
 
   useEffect(() => {
+    let cancelled = false;
+    void fetch(`${API_BASE}${OPENPLANNER_BASE}/gardens`, {
+      credentials: "include",
+      headers: buildKnoxxAuthHeaders(),
+    })
+      .then(async (response) => (response.ok ? (await response.json()) as { gardens?: GardenSummary[] } : { gardens: [] }))
+      .then((body) => {
+        if (cancelled) return;
+        const gardens = (body.gardens ?? []).filter((garden) => garden.status !== "archived");
+        setPublicationGardens(gardens);
+        setSelectedPublicationGardenId((current) => current || gardens[0]?.garden_id || "");
+      })
+      .catch((error) => {
+        console.error("Failed to load gardens for publication draft:", error);
+        if (!cancelled) setPublicationGardens([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!currentFile?.path) {
       setCurrentFileLabels([]);
       return;
     }
     void refreshLabelsForPath(currentFile.path);
-  }, [currentFile?.path, refreshLabelsForPath]);
+    if (!audioContextsByPath[currentFile.path]) {
+      void refreshAudioContextForPath(currentFile.path);
+    }
+  }, [audioContextsByPath, currentFile?.path, refreshAudioContextForPath, refreshLabelsForPath]);
 
   useEffect(() => {
     if (!labelFilter) {
@@ -1096,13 +1159,16 @@ export default function BroadcastStudioPage() {
   const openLabelEditor = useCallback(async (file: AudioFileEntry) => {
     setLabelingFile(file);
     setCenterTab("labels");
+    if (!audioContextsByPath[file.path]) {
+      void refreshAudioContextForPath(file.path);
+    }
     try {
       const labels = await loadLabelsForAudioPath(file.path, allLabels.length > 0 ? allLabels : undefined);
       setEditingFileLabels(labels);
     } catch {
       setEditingFileLabels([]);
     }
-  }, [allLabels]);
+  }, [allLabels, audioContextsByPath, refreshAudioContextForPath]);
 
   const toggleGraphLabel = useCallback(async (file: AudioFileEntry, label: LabelNode) => {
     const currentHasLabel = (currentFile?.path === file.path && currentFileLabels.some((item) => item.label_id === label.label_id))
@@ -1151,6 +1217,10 @@ export default function BroadcastStudioPage() {
     if (!currentFile) return;
     await ensureLabelAndApply(currentFile, labelText);
   }, [currentFile, ensureLabelAndApply]);
+
+  const applyDescriptionLabel = useCallback(async (file: AudioFileEntry, labelText: string) => {
+    await ensureLabelAndApply(file, labelText);
+  }, [ensureLabelAndApply]);
 
   const generateVisualization = useCallback(async (audioPath: string, type: "waveform" | "spectrogram") => {
     try {
@@ -1312,6 +1382,55 @@ export default function BroadcastStudioPage() {
     }
   }, [playlist, playlistName]);
 
+  const createPublicationDraftFromQueue = useCallback(async () => {
+    if (playlist.length === 0 || !selectedPublicationGardenId) return;
+    setCreatingPublicationDraft(true);
+    setPublicationDraftMessage(null);
+    try {
+      const title = playlistName.trim() || `Broadcast playlist ${new Date().toISOString().slice(0, 10)}`;
+      const garden = publicationGardens.find((item) => item.garden_id === selectedPublicationGardenId);
+      setPublicationDraftMessage(`Creating ${garden?.title ?? selectedPublicationGardenId} CMS draft from cached queue data…`);
+      const tracks = playlist.map((item) => ({
+        path: item.path,
+        name: item.name,
+        title: item.name,
+        duration: item.duration,
+        labels: item.labels ?? [],
+        description: audioContextsByPath[item.path]?.description,
+      }));
+      const draft = buildPlaylistPublicationDraft({
+        title,
+        description: playlistPublicationDescription,
+        tracks,
+      });
+
+      setPublicationDraftMessage(`Creating CMS block document in ${garden?.title ?? selectedPublicationGardenId}…`);
+      const doc = await createCmsPublicationDocument({
+        title: draft.title,
+        content: draft.content,
+        source_path: draft.sourcePath,
+        visibility: "review",
+        garden_id: selectedPublicationGardenId,
+        defer_index: true,
+        metadata: {
+          ...draft.metadata,
+          garden_id: selectedPublicationGardenId,
+        },
+      });
+
+      if (!doc?.doc_id) {
+        throw new Error("CMS did not return a document id for the draft.");
+      }
+      setPublicationDraftMessage(`Created ${garden?.title ?? selectedPublicationGardenId} CMS draft: ${doc.title}`);
+      navigate(`/cms?doc=${encodeURIComponent(doc.doc_id)}`);
+    } catch (err) {
+      console.error("Failed to create publication draft:", err);
+      setPublicationDraftMessage(`Failed to create publication draft: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setCreatingPublicationDraft(false);
+    }
+  }, [audioContextsByPath, navigate, playlist, playlistName, playlistPublicationDescription, publicationGardens, selectedPublicationGardenId]);
+
   const handlePersistCurrentTime = useCallback((time: number) => {
     currentTimeRef.current = time;
   }, []);
@@ -1425,6 +1544,22 @@ export default function BroadcastStudioPage() {
     document.addEventListener("mouseup", onMouseUp);
   }, [chatPanelWidth]);
 
+  const currentAudioContext = currentFile?.path ? audioContextsByPath[currentFile.path] : undefined;
+  const currentDescriptionLabels = useMemo(
+    () => currentAudioContext?.description ? extractDescriptionLabels(currentAudioContext.description) : [],
+    [currentAudioContext?.description]
+  );
+  const currentAudioContextLoading = Boolean(currentFile?.path && audioContextLoadingPaths.has(currentFile.path));
+
+  const labelingAudioContext = labelingFile?.path ? audioContextsByPath[labelingFile.path] : undefined;
+  const labelingDescriptionLabels = useMemo(
+    () => labelingAudioContext?.description ? extractDescriptionLabels(labelingAudioContext.description) : [],
+    [labelingAudioContext?.description]
+  );
+  const labelingAudioContextLoading = Boolean(labelingFile?.path && audioContextLoadingPaths.has(labelingFile.path));
+  const visiblePlaylistItems = useMemo(() => playlist.slice(0, QUEUE_RENDER_LIMIT), [playlist]);
+  const hiddenPlaylistItemCount = Math.max(0, playlist.length - visiblePlaylistItems.length);
+
   // ── Render ───────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
@@ -1432,6 +1567,9 @@ export default function BroadcastStudioPage() {
       <audio ref={audioRef} preload="auto" crossOrigin="anonymous" />
 
       {/* Left: Audio Library Sidebar */}
+      {!showSidebar && (
+        <CollapsedPanelTab label="Audio Library" edge="left" onExpand={() => setShowSidebar(true)} title="Show Audio Library panel" />
+      )}
       {showSidebar && (
         <aside
           style={{
@@ -1448,7 +1586,7 @@ export default function BroadcastStudioPage() {
           {/* Sidebar header */}
           <div style={{ padding: "12px 16px", borderBottom: `1px solid var(--token-colors-border-default)`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ fontSize: tokens.fontSize.sm, fontWeight: 600 }}>Audio Library</div>
-            <Button variant="ghost" size="sm" onClick={() => setShowSidebar(false)}>✕</Button>
+            <Button variant="ghost" size="sm" onClick={() => setShowSidebar(false)} title="Collapse Audio Library panel">Collapse</Button>
           </div>
 
           {/* Path selector */}
@@ -1812,11 +1950,6 @@ export default function BroadcastStudioPage() {
           background: "var(--token-colors-background-surface)",
           flexWrap: "wrap",
         }}>
-          {!showSidebar && (
-            <Button variant="ghost" size="sm" onClick={() => setShowSidebar(true)}>
-              ☰
-            </Button>
-          )}
           <div style={{ fontSize: tokens.fontSize.lg, fontWeight: 600 }}>Broadcast Studio</div>
           <Badge variant="default">{library?.count ?? 0} files</Badge>
           <Button variant="ghost" size="sm" onClick={() => void handleDiscordAudioScan()} disabled={scanningDiscordAudio}>
@@ -1877,236 +2010,201 @@ export default function BroadcastStudioPage() {
         )}
 
         {/* Player area (top half) */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, background: "var(--token-colors-background-base)" }}>
-          {currentFile ? (
-            <div style={{ width: "100%", maxWidth: 600, display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-              {/* Album art + track info side by side */}
-              <div style={{ display: "flex", alignItems: "center", gap: 24, width: "100%" }}>
-                <div style={{
-                  width: 120,
-                  height: 120,
-                  borderRadius: 12,
-                  background: "linear-gradient(135deg, var(--token-colors-accent-blue), var(--token-colors-accent-purple))",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 48,
-                  boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
-                  flexShrink: 0,
-                }}>
-                  {fileIcon(currentFile.ext)}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: tokens.fontSize.lg, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentFile.name}</div>
-                  <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {currentFile.path}
-                  </div>
-                  <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-accent-blue)", marginTop: 4 }}>
-                    {playingFrom === "playlist" ? "🎵 Playing from queue" : "📁 Playing from library"}
-                  </div>
-                </div>
+        <MusicPlayerView
+          track={currentFile}
+          playerState={playerState}
+          playingFrom={playingFrom}
+          permissions={{
+            canGoPrevious: true,
+            canPlayPause: true,
+            canGoNext: true,
+            canEditLabels: true,
+            canAdjustVolume: true,
+            canGenerateAssets: true,
+            canRemoveFromQueue: playingFrom === "playlist" && playlistIndexRef.current >= 0,
+          }}
+          volume={volume}
+          fileIcon={fileIcon}
+          onPrevious={playPrevious}
+          onTogglePlayPause={togglePlayPause}
+          onNext={playNext}
+          onEditLabels={() => currentFile && void openLabelEditor(currentFile)}
+          onVolumeChange={setVolume}
+          onGenerateSpectrogram={() => currentFile && generateVisualization(currentFile.path, "spectrogram")}
+          onGenerateWaveform={() => currentFile && generateVisualization(currentFile.path, "waveform")}
+          onRemoveFromQueue={removeCurrentFromQueue}
+          waveform={<WaveformVisualizer analyserRef={analyserRef} isPlaying={playerState === "playing"} />}
+          progress={<PlaybackProgress audioRef={audioRef} duration={duration} initialTime={initialSeekTime} onPersistTime={handlePersistCurrentTime} />}
+          heardDescription={currentFile && (currentAudioContext || currentAudioContextLoading) ? (
+            <div style={{
+              width: "100%",
+              maxWidth: 720,
+              padding: "8px 10px",
+              borderRadius: 10,
+              background: "var(--token-colors-background-surface)",
+              border: "1px solid var(--token-colors-border-subtle)",
+              fontSize: tokens.fontSize.xs,
+              color: "var(--token-colors-text-muted)",
+            }}>
+              <div style={{ fontWeight: 600, color: "var(--token-colors-text-default)", marginBottom: 4 }}>
+                Heard description
               </div>
-
-              {/* Waveform */}
-              <WaveformVisualizer analyserRef={analyserRef} isPlaying={playerState === "playing"} />
-
-              {/* Progress */}
-              <PlaybackProgress
-                audioRef={audioRef}
-                duration={duration}
-                initialTime={initialSeekTime}
-                onPersistTime={handlePersistCurrentTime}
-              />
-
-              {/* Controls */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <Button variant="ghost" onClick={playPrevious}>⏮</Button>
-                <button
-                  onClick={togglePlayPause}
-                  style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: "50%",
-                    background: "var(--token-colors-accent-blue)",
-                    border: "none",
-                    cursor: "pointer",
-                    fontSize: 20,
-                    color: "white",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-                  }}
-                >
-                  {playerState === "playing" ? "❚❚" : "▶"}
-                </button>
-                <Button variant="ghost" onClick={playNext}>⏭</Button>
-                <Button variant="ghost" onClick={() => currentFile && void openLabelEditor(currentFile)} title="Labels">🏷</Button>
+              <div style={{ lineHeight: 1.4 }}>
+                {currentAudioContextLoading && !currentAudioContext ? "Listening for description..." : currentAudioContext?.description}
               </div>
-
-              {/* Current file labels */}
-              {currentFileLabels.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
-                  {currentFileLabels.map(label => (
+              {currentDescriptionLabels.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  {currentDescriptionLabels.map((label) => (
                     <button
-                      key={label.label_id}
-                      onClick={() => currentFile && void toggleGraphLabel(currentFile, label)}
-                      disabled={labelMutationId === label.label_id}
+                      key={label}
+                      onClick={() => void applyDescriptionLabel(currentFile, label)}
                       style={{
                         padding: "2px 8px",
                         borderRadius: 10,
                         fontSize: tokens.fontSize.xs,
-                        background: label.color ?? "var(--token-colors-alpha-blue-10)",
-                        border: `1px solid ${label.color ?? "var(--token-colors-alpha-blue-20)"}`,
-                        color: "white",
+                        background: "var(--token-colors-alpha-white-05)",
+                        border: "1px solid var(--token-colors-border-default)",
                         cursor: "pointer",
-                        opacity: labelMutationId === label.label_id ? 0.6 : 1,
                       }}
-                      title="Click to remove label"
+                      title="Create/apply this heard label through OpenPlanner graph labels"
                     >
-                      {label.emoji ? `${label.emoji} ` : ""}{label.label} ×
+                      + {label}
                     </button>
                   ))}
                 </div>
               )}
-
-              {/* Volume */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, width: 200 }}>
-                <span style={{ fontSize: 14 }}>{volume === 0 ? "🔇" : volume < 0.5 ? "🔉" : "🔊"}</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={volume}
-                  onChange={e => setVolume(parseFloat(e.target.value))}
-                  style={{ flex: 1, accentColor: "var(--token-colors-accent-blue)" }}
-                />
+            </div>
+          ) : null}
+          currentLabels={currentFileLabels.length > 0 ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+              {currentFileLabels.map(label => (
+                <button
+                  key={label.label_id}
+                  onClick={() => currentFile && void toggleGraphLabel(currentFile, label)}
+                  disabled={labelMutationId === label.label_id}
+                  style={{
+                    padding: "2px 8px",
+                    borderRadius: 10,
+                    fontSize: tokens.fontSize.xs,
+                    background: label.color ?? "var(--token-colors-alpha-blue-10)",
+                    border: `1px solid ${label.color ?? "var(--token-colors-alpha-blue-20)"}`,
+                    color: "white",
+                    cursor: "pointer",
+                    opacity: labelMutationId === label.label_id ? 0.6 : 1,
+                  }}
+                  title="Click to remove label"
+                >
+                  {label.emoji ? `${label.emoji} ` : ""}{label.label} ×
+                </button>
+              ))}
+            </div>
+          ) : null}
+          agentActions={currentFile ? (
+            <div style={{ width: "100%", maxWidth: 640 }}>
+              <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 6, textAlign: "center" }}>
+                Analyze in chat pane with a dedicated contract:
               </div>
-
-              {/* Generate buttons */}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-                <Button variant="ghost" size="sm" onClick={() => {
-                  if (!currentFile) return;
-                  generateVisualization(currentFile.path, "spectrogram");
-                }}>
-                  📊 Spectrogram
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => {
-                  if (!currentFile) return;
-                  generateVisualization(currentFile.path, "waveform");
-                }}>
-                  📈 Waveform
-                </Button>
-                {playingFrom === "playlist" && playlistIndexRef.current >= 0 && (
-                  <Button variant="ghost" size="sm" onClick={removeCurrentFromQueue}>
-                    ➖ Remove from queue
-                  </Button>
-                )}
-              </div>
-
-              {/* Agent actions */}
-              {currentFile && (
-                <div style={{ width: "100%", maxWidth: 640 }}>
-                  <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 6, textAlign: "center" }}>
-                    Analyze in chat pane with a dedicated contract:
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-                    {studioUiActions.map((action) => {
-                      const contractId = action.agent?.contractId;
-                      const actorId = action.agent?.actorId;
-                      const model = action.agent?.model;
-                      if (!contractId || !actorId || !model) return null;
-                      return (
-                        <Button
-                          key={action.id}
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setAgentLaunchRequest({
-                            id: `${action.id}:${currentFile.path}:${Date.now()}`,
-                            actorId,
-                            contractId,
-                            model,
-                            contentParts: [{
-                              type: "audio",
-                              url: getAudioStreamUrl(currentFile.path),
-                              mimeType: currentFile.mime || undefined,
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                {studioUiActions.map((action) => {
+                  const contractId = action.agent?.contractId;
+                  const actorId = action.agent?.actorId;
+                  const model = action.agent?.model;
+                  if (!contractId || !actorId || !model) return null;
+                  return (
+                    <Button
+                      key={action.id}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowChatPanel(true);
+                        setAgentLaunchRequest({
+                          id: `${action.id}:${currentFile.path}:${Date.now()}`,
+                          actorId,
+                          contractId,
+                          model,
+                          contentParts: [{
+                            type: "audio",
+                            url: getAudioStreamUrl(currentFile.path),
+                            mimeType: currentFile.mime || undefined,
+                            filename: currentFile.name,
+                          }],
+                          direct: action.mode === "direct",
+                          templateContext: {
+                            media: {
                               filename: currentFile.name,
-                            }],
-                            direct: action.mode === "direct",
-                          })}
-                        >
-                          {action.label}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Label suggestions */}
-              {allLabels.length > 0 && currentFile && (
-                <div style={{ width: "100%", maxWidth: 640 }}>
-                  <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 6, textAlign: "center" }}>
-                    Graph labels (click to toggle):
-                  </div>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-                    <input
-                      type="text"
-                      value={customLabelText}
-                      onChange={(e) => setCustomLabelText(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          void ensureLabelAndApply(currentFile, customLabelText);
-                        }
+                              path: currentFile.path,
+                              mimeType: currentFile.mime || null,
+                              labels: currentFileLabels.map((label) => label.label),
+                              labelCount: currentFileLabels.length,
+                              size: currentFile.size,
+                            },
+                          },
+                        });
                       }}
-                      placeholder="Create or toggle any text label..."
-                      style={{ flex: 1, padding: "6px 10px", fontSize: tokens.fontSize.sm, borderRadius: 6, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
-                    />
-                    <Button size="sm" onClick={() => void ensureLabelAndApply(currentFile, customLabelText)} disabled={creatingLabel || !customLabelText.trim()}>
-                      {creatingLabel ? "..." : "Add label"}
+                    >
+                      {action.label}
                     </Button>
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
-                    {allLabels.slice(0, 16).map(label => {
-                      const applied = currentFileLabels.some((item) => item.label_id === label.label_id);
-                      return (
-                        <button
-                          key={label.label_id}
-                          onClick={() => void toggleGraphLabel(currentFile, label)}
-                          disabled={labelMutationId === label.label_id}
-                          style={{
-                            padding: "4px 10px",
-                            borderRadius: 12,
-                            fontSize: tokens.fontSize.xs,
-                            background: applied ? (label.color ?? "var(--token-colors-alpha-blue-20)") : "var(--token-colors-alpha-white-05)",
-                            border: `1px solid ${applied ? (label.color ?? "var(--token-colors-accent-blue)") : "var(--token-colors-border-default)"}`,
-                            cursor: "pointer",
-                            color: applied ? "white" : "inherit",
-                            opacity: labelMutationId === label.label_id ? 0.6 : 1,
-                          }}
-                          title={label.description || label.label}
-                        >
-                          {label.emoji ? `${label.emoji} ` : ""}{label.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ textAlign: "center", color: "var(--token-colors-text-muted)" }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🎧</div>
-              <div style={{ fontSize: tokens.fontSize.lg }}>Select a file to play</div>
-              <div style={{ fontSize: tokens.fontSize.sm, marginTop: 8 }}>
-                Browse the audio library on the left, or ask the studio agent
+                  );
+                })}
               </div>
             </div>
-          )}
-        </div>
+          ) : null}
+          graphLabelControls={allLabels.length > 0 && currentFile ? (
+            <div style={{ width: "100%", maxWidth: 640 }}>
+              <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 6, textAlign: "center" }}>
+                Graph labels (click to toggle):
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <input
+                  type="text"
+                  value={customLabelText}
+                  onChange={(e) => setCustomLabelText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      void ensureLabelAndApply(currentFile, customLabelText);
+                    }
+                  }}
+                  placeholder="Create or toggle any text label..."
+                  style={{ flex: 1, padding: "6px 10px", fontSize: tokens.fontSize.sm, borderRadius: 6, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
+                />
+                <Button size="sm" onClick={() => void ensureLabelAndApply(currentFile, customLabelText)} disabled={creatingLabel || !customLabelText.trim()}>
+                  {creatingLabel ? "..." : "Add label"}
+                </Button>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+                {allLabels.slice(0, 16).map(label => {
+                  const applied = currentFileLabels.some((item) => item.label_id === label.label_id);
+                  return (
+                    <button
+                      key={label.label_id}
+                      onClick={() => void toggleGraphLabel(currentFile, label)}
+                      disabled={labelMutationId === label.label_id}
+                      style={{
+                        padding: "4px 10px",
+                        borderRadius: 12,
+                        fontSize: tokens.fontSize.xs,
+                        background: applied ? (label.color ?? "var(--token-colors-alpha-blue-20)") : "var(--token-colors-alpha-white-05)",
+                        border: `1px solid ${applied ? (label.color ?? "var(--token-colors-accent-blue)") : "var(--token-colors-border-default)"}`,
+                        cursor: "pointer",
+                        color: applied ? "white" : "inherit",
+                        opacity: labelMutationId === label.label_id ? 0.6 : 1,
+                      }}
+                      title={label.description || label.label}
+                    >
+                      {label.emoji ? `${label.emoji} ` : ""}{label.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        />
 
         {/* Bottom tabs (Queue + Labels) */}
+        {!showBottomPanel && (
+          <CollapsedPanelTab label="Queue & Labels" edge="bottom" onExpand={() => setShowBottomPanel(true)} title="Show Queue and Labels panel" />
+        )}
+        {showBottomPanel && (
         <div style={{ borderTop: `1px solid var(--token-colors-border-default)`, display: "flex", flexDirection: "column", height: bottomPanelHeight, minHeight: 150 }}>
           {/* Resize handle */}
           <div
@@ -2126,7 +2224,7 @@ export default function BroadcastStudioPage() {
             onMouseLeave={e => e.currentTarget.style.background = "var(--token-colors-border-default)"}
           />
           {/* Tab bar */}
-          <div style={{ display: "flex", borderBottom: `1px solid var(--token-colors-border-subtle)`, background: "var(--token-colors-background-surface)" }}>
+          <div style={{ display: "flex", alignItems: "center", borderBottom: `1px solid var(--token-colors-border-subtle)`, background: "var(--token-colors-background-surface)" }}>
             <button
               onClick={() => setCenterTab("queue")}
               style={{
@@ -2157,6 +2255,10 @@ export default function BroadcastStudioPage() {
             >
               🏷 Labels
             </button>
+            <div style={{ flex: 1 }} />
+            <Button variant="ghost" size="sm" onClick={() => setShowBottomPanel(false)} title="Collapse Queue and Labels panel">
+              Collapse Queue & Labels
+            </Button>
           </div>
 
           {/* Tab content */}
@@ -2178,8 +2280,31 @@ export default function BroadcastStudioPage() {
                           placeholder="Playlist name..."
                           style={{ width: 120, padding: "2px 6px", fontSize: tokens.fontSize.xs, borderRadius: 4, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
                         />
+                        <input
+                          type="text"
+                          value={playlistPublicationDescription}
+                          onChange={e => setPlaylistPublicationDescription(e.target.value)}
+                          placeholder="Publication intro..."
+                          style={{ width: 180, padding: "2px 6px", fontSize: tokens.fontSize.xs, borderRadius: 4, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
+                        />
+                        <select
+                          value={selectedPublicationGardenId}
+                          onChange={e => setSelectedPublicationGardenId(e.target.value)}
+                          title="Garden/CMS destination"
+                          style={{ width: 160, padding: "2px 6px", fontSize: tokens.fontSize.xs, borderRadius: 4, border: `1px solid var(--token-colors-border-default)`, background: "var(--token-colors-background-input)" }}
+                        >
+                          <option value="">Select garden…</option>
+                          {publicationGardens.map((garden) => (
+                            <option key={garden.garden_id} value={garden.garden_id}>
+                              {garden.title || garden.garden_id}
+                            </option>
+                          ))}
+                        </select>
                         <Button variant="ghost" size="sm" onClick={() => void savePlaylistToM3U()} disabled={savingPlaylist}>
                           {savingPlaylist ? "..." : "💾 Save"}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => void createPublicationDraftFromQueue()} disabled={creatingPublicationDraft || !selectedPublicationGardenId} title={selectedPublicationGardenId ? "Create a review draft in this garden CMS" : "Select a garden first"}>
+                          {creatingPublicationDraft ? "Drafting…" : "Create garden draft"}
                         </Button>
                         <Button variant="ghost" size="sm" onClick={shufflePlaylist}>🔀</Button>
                         <Button variant="ghost" size="sm" onClick={clearPlaylist}>Clear</Button>
@@ -2187,6 +2312,11 @@ export default function BroadcastStudioPage() {
                     )}
                   </div>
                 </div>
+                {publicationDraftMessage && (
+                  <div style={{ padding: "6px 16px", borderBottom: `1px solid var(--token-colors-border-subtle)`, fontSize: tokens.fontSize.xs, color: publicationDraftMessage.startsWith("Created") ? "var(--token-colors-accent-green)" : publicationDraftMessage.startsWith("Failed") || publicationDraftMessage.includes("Error") ? "var(--token-colors-accent-red)" : "var(--token-colors-text-muted)" }}>
+                    {publicationDraftMessage}
+                  </div>
+                )}
                 <div style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
                   {playlist.length === 0 ? (
                     <div style={{ padding: 24, textAlign: "center", color: "var(--token-colors-text-muted)", fontSize: tokens.fontSize.sm }}>
@@ -2194,7 +2324,12 @@ export default function BroadcastStudioPage() {
                     </div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      {playlist.map((item, index) => (
+                      {hiddenPlaylistItemCount > 0 && (
+                        <div style={{ padding: "6px 8px", color: "var(--token-colors-text-muted)", fontSize: tokens.fontSize.xs }}>
+                          Large queue mode: showing first {visiblePlaylistItems.length} of {playlist.length} tracks here. The publication draft still includes the full queue snapshot.
+                        </div>
+                      )}
+                      {visiblePlaylistItems.map((item, index) => (
                         <div
                           key={item.id}
                           style={{
@@ -2266,6 +2401,47 @@ export default function BroadcastStudioPage() {
                     <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginBottom: 12 }}>
                       These labels apply through the same OpenPlanner graph-label pipeline used by LabelsPage.
                     </div>
+                    {(labelingAudioContext || labelingAudioContextLoading) && (
+                      <div style={{
+                        padding: 12,
+                        marginBottom: 16,
+                        borderRadius: 10,
+                        background: "var(--token-colors-background-surface)",
+                        border: "1px solid var(--token-colors-border-subtle)",
+                      }}>
+                        <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 700, marginBottom: 6 }}>
+                          Heard audio description
+                        </div>
+                        <div style={{ fontSize: tokens.fontSize.sm, lineHeight: 1.45, color: "var(--token-colors-text-muted)", whiteSpace: "pre-wrap" }}>
+                          {labelingAudioContextLoading && !labelingAudioContext ? "Listening for description..." : labelingAudioContext?.description}
+                        </div>
+                        {labelingDescriptionLabels.length > 0 && (
+                          <>
+                            <div style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", marginTop: 10, marginBottom: 6 }}>
+                              Suggested from description (click to create/apply as graph labels):
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                              {labelingDescriptionLabels.map((label) => (
+                                <button
+                                  key={label}
+                                  onClick={() => void applyDescriptionLabel(labelingFile, label)}
+                                  style={{
+                                    padding: "4px 8px",
+                                    borderRadius: 10,
+                                    fontSize: tokens.fontSize.xs,
+                                    background: "var(--token-colors-alpha-white-05)",
+                                    border: "1px solid var(--token-colors-border-default)",
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  + {label}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
                       {editingFileLabels.length === 0 ? (
                         <span style={{ fontSize: tokens.fontSize.xs, color: "var(--token-colors-text-muted)", fontStyle: "italic" }}>No graph labels applied yet</span>
@@ -2360,29 +2536,37 @@ export default function BroadcastStudioPage() {
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* Chat resize handle */}
-      <div
-        onMouseDown={handleChatResize}
-        style={{
-          width: 4,
-          cursor: "col-resize",
-          background: "var(--token-colors-border-default)",
-          transition: "background 0.15s",
-        }}
-        onMouseEnter={e => e.currentTarget.style.background = "var(--token-colors-accent-blue)"}
-        onMouseLeave={e => e.currentTarget.style.background = "var(--token-colors-border-default)"}
-      />
+      {showChatPanel && (
+        <div
+          onMouseDown={handleChatResize}
+          style={{
+            width: 4,
+            cursor: "col-resize",
+            background: "var(--token-colors-border-default)",
+            transition: "background 0.15s",
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = "var(--token-colors-accent-blue)"}
+          onMouseLeave={e => e.currentTarget.style.background = "var(--token-colors-border-default)"}
+        />
+      )}
 
       {/* Right: Chat */}
-      <BroadcastStudioChatPane
-        currentFile={currentFile}
-        width={chatPanelWidth}
-        onShowFiles={() => setShowSidebar(true)}
-        launchRequest={agentLaunchRequest}
-        onApplySuggestedLabel={applySuggestedLabelToCurrentFile}
-      />
+      {showChatPanel ? (
+        <BroadcastStudioChatPane
+          currentFile={currentFile}
+          width={chatPanelWidth}
+          onShowFiles={() => setShowSidebar(true)}
+          onHide={() => setShowChatPanel(false)}
+          launchRequest={agentLaunchRequest}
+          onApplySuggestedLabel={applySuggestedLabelToCurrentFile}
+        />
+      ) : (
+        <CollapsedPanelTab label="Studio Chat" edge="right" onExpand={() => setShowChatPanel(true)} title="Show Studio Chat panel" />
+      )}
     </div>
   );
 }

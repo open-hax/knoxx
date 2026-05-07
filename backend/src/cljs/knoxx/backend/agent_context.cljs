@@ -11,12 +11,13 @@
 
 (defn set-context!
   "Set the current agent turn context."
-  [{:keys [session-id conversation-id run-id]}]
+  [{:keys [session-id conversation-id run-id agent-spec]}]
   (reset! current-context*
         (when (and session-id conversation-id)
-          {:session-id session-id
-           :conversation-id conversation-id
-           :run-id run-id})))
+          (cond-> {:session-id session-id
+                   :conversation-id conversation-id
+                   :run-id run-id}
+            agent-spec (assoc :agent-spec agent-spec)))))
 
 (defn clear-context!
   "Clear the current agent turn context."

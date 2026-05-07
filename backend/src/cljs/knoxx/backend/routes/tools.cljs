@@ -8,16 +8,22 @@
             [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.text :refer [sanitize-svg-content]]
-            [knoxx.backend.triggers.control-config :as control-config]))
+            [knoxx.backend.triggers.control-config :as control-config]
+            ["node:child_process" :refer [execFile]]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]
+            ["node:util" :refer [promisify]]
+            ["nodemailer" :default nodemailer]))
+
+(def ^:private exec-file-async (promisify execFile))
 
 ;; ── Private helpers ─────────────────────────────────────────────────────────
 
 (defn- send-email!
   "Send an email via Gmail SMTP using nodemailer."
-  [runtime config to subject text-body cc bcc]
+  [_runtime config to subject text-body cc bcc]
   (let [email    (:gmail-app-email config)
-        password (:gmail-app-password config)
-        nodemailer (aget runtime "nodemailer")]
+        password (:gmail-app-password config)]
     (if (or (str/blank? email) (str/blank? password))
       (js/Promise.reject (js/Error. "Gmail credentials not configured"))
       (let [transporter (.createTransport nodemailer
@@ -137,21 +143,20 @@
     (let [body    (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "read" agent-contract-id)
-          node-fs (aget runtime "fs")
           path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
           offset  (max 1 (or (aget body "offset") 1))
           limit   (max 1 (or (aget body "limit") 400))]
-      (-> (.stat node-fs path-str)
+      (-> (.stat fs path-str)
           (.then (fn [stat]
                    (if (.isDirectory stat)
-                     (-> (.readdir node-fs path-str #js {:withFileTypes true})
+                     (-> (.readdir fs path-str #js {:withFileTypes true})
                          (.then (fn [entries]
                                   (let [content-lines (map (fn [e] (str (aget e "name") (when (.isDirectory e) "/")))
                                                            (array-seq entries))
                                         [content truncated] (clip-text (str/join "\n" content-lines))]
                                     (json-response! reply 200 {:ok true :role role :path path-str
                                                                :content content :truncated truncated})))))
-                     (-> (.readFile node-fs path-str "utf8")
+                     (-> (.readFile fs path-str "utf8")
                          (.then (fn [text]
                                   (let [lines   (str/split-lines text)
                                         start   (dec offset)
@@ -175,8 +180,6 @@
     (let [body    (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write" agent-contract-id)
-          node-fs   (aget runtime "fs")
-          node-path (aget runtime "path")
           path-str  (resolve-workspace-path runtime config (or (aget body "path") ""))
           raw-content (str (or (aget body "content") ""))
           content (if (re-find #"(?i)\.svg$" path-str)
@@ -184,17 +187,17 @@
                     raw-content)
           overwrite (not= false (aget body "overwrite"))
           create-parents (not= false (aget body "create_parents"))
-          parent    (.dirname node-path path-str)
+          parent    (.dirname path path-str)
           check-promise (if overwrite
                           (js/Promise.resolve nil)
-                          (-> (.stat node-fs path-str)
+                          (-> (.stat fs path-str)
                               (.then (fn [_] (js/Promise.reject (js/Error. (str "File exists and overwrite is false: " path-str)))))
                               (.catch (fn [_] (js/Promise.resolve nil)))))]
       (-> check-promise
           (.then (fn [] (if create-parents
-                          (.mkdir node-fs parent #js {:recursive true})
+                          (.mkdir fs parent #js {:recursive true})
                           (js/Promise.resolve nil))))
-          (.then (fn [] (.writeFile node-fs path-str content "utf8")))
+          (.then (fn [] (.writeFile fs path-str content "utf8")))
           (.then (fn [] (json-response! reply 200 {:ok true :role role :path path-str
                                                    :bytes_written (.-length (.from js/Buffer content "utf8"))})))
           (.catch (fn [err] (json-response! reply 409 {:detail (str err)})))))
@@ -209,12 +212,11 @@
     (let [body    (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "edit" agent-contract-id)
-          node-fs   (aget runtime "fs")
           path-str  (resolve-workspace-path runtime config (or (aget body "path") ""))
           old-string (str (or (aget body "old_string") ""))
           new-string (str (or (aget body "new_string") ""))
           replace-all (true? (aget body "replace_all"))]
-      (-> (.readFile node-fs path-str "utf8")
+      (-> (.readFile fs path-str "utf8")
           (.then (fn [current]
                    (if (= (.indexOf current old-string) -1)
                      (js/Promise.reject (js/Error. "old_string not found in file"))
@@ -222,7 +224,7 @@
                            updated      (if replace-all
                                           (str/replace current old-string new-string)
                                           (replace-first current old-string new-string))]
-                       (-> (.writeFile node-fs path-str updated "utf8")
+                       (-> (.writeFile fs path-str updated "utf8")
                            (.then (fn [] (json-response! reply 200 {:ok true :role role :path path-str
                                                                     :replacements replacements}))))))))
           (.catch (fn [err] (json-response! reply 409 {:detail (str err)})))))
@@ -240,8 +242,7 @@
           timeout-ms (min (max (or (aget body "timeout_ms") 120000) 1000) 600000)
           workdir  (if-let [raw-wd (aget body "workdir")]
                      (resolve-workspace-path runtime config raw-wd)
-                     (.resolve (aget runtime "path") (:workspace-root config)))
-          exec-file-async (aget runtime "execFileAsync")]
+                     (.resolve path (:workspace-root config)))]
       (-> (exec-file-async "/bin/bash"
                             #js ["-lc" (or (aget body "command") "")]
                             #js {:cwd workdir :timeout timeout-ms :maxBuffer 1048576})

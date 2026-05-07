@@ -52,6 +52,7 @@ type ContextBarProps = {
   onPathPrefixFilterChange?: (value: string) => void;
   // Actions
   onNewDocument?: () => void;
+  onNewVisualDraft?: () => void;
   // Chat workspace props (optional)
   currentPath?: string;
   currentParentPath?: string;
@@ -128,6 +129,7 @@ export function ContextBar({
   onPathPrefixFilterChange,
   // Actions
   onNewDocument,
+  onNewVisualDraft,
   // Chat workspace props
   currentPath,
   currentParentPath,
@@ -418,6 +420,11 @@ export function ContextBar({
             {onNewDocument && (
               <Button variant="primary" size="sm" fullWidth onClick={onNewDocument}>
                 + New Document
+              </Button>
+            )}
+            {onNewVisualDraft && (
+              <Button variant="secondary" size="sm" fullWidth onClick={onNewVisualDraft}>
+                + New Visual Draft
               </Button>
             )}
 

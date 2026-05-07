@@ -2,6 +2,9 @@
  :actor/kind :user
  :actor/email "foamy125@gmail.com"
  :actor/username "foamy125@gmail.com"
+ :actor/accounts {:discord {:username "error0815"
+                            :user-id "205909976768708608"}
+                  :bluesky {:handle "@37707.bsky.social"}}
  :actor/org "open-hax"
  :actor/label "foamy125@gmail.com"
  :actor/roles [:role/system-admin]

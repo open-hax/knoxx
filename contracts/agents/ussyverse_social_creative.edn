@@ -65,8 +65,14 @@ File organization discipline:
  :source-kind :discord,
  :cadence-min 10,
  :enabled true,
+
+ :context {:max-messages 1000
+           :max-chars 200000
+           :preserve-system true}
+ :sub-agents [:audio_agent :research_assistant :notifier]
  :data
  {:filters
   {:publishChannels ["1494137016303095828" "1444189585373663417"]},
   :source
-  {:max-messages 50, :stickySession false,:sessionMaxMessages 1000}}}
+  {:max-messages 500,
+   :sessionMaxMessages 2000}}}

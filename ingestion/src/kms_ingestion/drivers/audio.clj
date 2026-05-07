@@ -8,14 +8,19 @@
    [kms-ingestion.drivers.protocol :as protocol])
   (:import
    [java.nio.file Files FileVisitor FileVisitResult]
-   [java.security MessageDigest]))
+   [java.security MessageDigest]
+   [java.util Base64]))
 
 (def audio-extensions
-  #{".mp3" ".wav" ".ogg" ".m4a" ".flac" ".aac" ".opus" ".wma"})
+  #{"mp3" "wav" "ogg" "m4a" "flac" "aac" "opus" "wma" "aiff" "aif" "mp4" "webm"})
+
+(defn- normalized-extension [path]
+  (-> (or (fs/extension path) "")
+      str/lower-case
+      (str/replace #"^\." "")))
 
 (defn- audio-file? [path]
-  (let [ext (str/lower-case (or (fs/extension path) ""))]
-    (audio-extensions ext)))
+  (audio-extensions (normalized-extension path)))
 
 (defn- get-root-path [config]
   (or (:root-path config)
@@ -51,32 +56,81 @@
          "Size: " (human-audio-size size) "\n"
          "Path: " path)))
 
-(defn- gemma-audio-description
-  "Use gemma4:e4b to describe an audio file."
-  [path chat-url]
+(defn- audio-format [path]
+  (case (normalized-extension path)
+    "wav" "wav"
+    "mp3" "mp3"
+    "m4a" "mp4"
+    "mp4" "mp4"
+    "webm" "webm"
+    "ogg" "ogg"
+    "opus" "opus"
+    "flac" "flac"
+    "aac" "aac"
+    "aiff" "aiff"
+    "aif" "aiff"
+    "mp3"))
+
+(defn- audio-mime-type [path]
+  (case (normalized-extension path)
+    "wav" "audio/wav"
+    "mp3" "audio/mpeg"
+    "m4a" "audio/mp4"
+    "mp4" "audio/mp4"
+    "webm" "audio/webm"
+    "ogg" "audio/ogg"
+    "opus" "audio/opus"
+    "flac" "audio/flac"
+    "aac" "audio/aac"
+    "aiff" "audio/aiff"
+    "aif" "audio/aiff"
+    "audio/mpeg"))
+
+(defn- file->base64 [path]
+  (.encodeToString (Base64/getEncoder) (Files/readAllBytes (.toPath (fs/file path)))))
+
+(defn- audio-chat-content [path]
   (let [filename (fs/file-name path)
         ext (fs/extension path)
         size (fs/size path)]
-    (try
-      (let [response (http/post
-                      (str chat-url "/v1/chat/completions")
-                      {:headers {"Content-Type" "application/json"}
-                       :body (json/generate-string
-                              {:model "gemma4-e4b"
-                               :messages [{:role "system"
-                                           :content "You are an audio file analyzer. Given a filename and metadata, generate a brief description of what this audio file might contain. Focus on likely content based on the filename. Keep it to 2-3 sentences."}
-                                          {:role "user"
-                                           :content (str "Analyze this audio file:\nFilename: " filename "\nFormat: " ext "\nSize: " size " bytes\nSuggested song title: " (filename->song-title path))}]
-                               :max_tokens 200
-                               :temperature 0.7})
-                       :as :json
-                       :socket-timeout 30000
-                       :connection-timeout 30000})]
-        (when (= 200 (:status response))
-          (some-> (get-in response [:body :choices]) first (get-in [:message :content]) str/trim not-empty)))
-      (catch Exception e
-        (println "[audio-driver] gemma4 describe failed: " (.getMessage e))
-        nil))))
+    [{:type "text"
+      :text (str "Listen to the attached audio bytes as primary evidence. "
+                 "Do not infer from the filename alone. Return a compact library note with: "
+                 "(1) what is audible, (2) likely content type, (3) reusable labels.\n"
+                 "Filename: " filename "\n"
+                 "Format: " ext "\n"
+                 "MIME: " (audio-mime-type path) "\n"
+                 "Size: " size " bytes\n"
+                 "Fallback title from filename: " (filename->song-title path))}
+     {:type "input_audio"
+      :input_audio {:data (file->base64 path)
+                    :format (audio-format path)}}]))
+
+(defn- gemma-audio-description
+  "Use gemma4:e4b with the actual audio bytes, not filename-only metadata."
+  [path chat-url]
+  (try
+    (let [response (http/post
+                    (str chat-url "/v1/chat/completions")
+                    {:headers {"Content-Type" "application/json"}
+                     :body (json/generate-string
+                            {:model "gemma4-e4b"
+                             :messages [{:role "system"
+                                         :content "You are an audio-library analyzer. Hear the attached audio directly and produce truthful, reusable catalogue metadata. If the audio is unclear, say so."}
+                                        {:role "user"
+                                         :content (audio-chat-content path)}]
+                             :max_tokens 240
+                             :temperature 0.2
+                             :chat_template_kwargs {:enable_thinking false}})
+                     :as :json
+                     :socket-timeout 120000
+                     :connection-timeout 30000
+                     :throw-exceptions false})]
+      (when (= 200 (:status response))
+        (some-> (get-in response [:body :choices]) first (get-in [:message :content]) str/trim not-empty)))
+    (catch Exception e
+      (println "[audio-driver] gemma4 describe failed: " (.getMessage e))
+      nil)))
 
 (defn audio-context
   "Return a structured audio context map for UI pinning and ingestion content."

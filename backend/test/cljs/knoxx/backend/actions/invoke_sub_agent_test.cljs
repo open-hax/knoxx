@@ -79,7 +79,9 @@
                                  :role "knowledge_worker"
                                  :thinkingLevel "off"
                                  :toolPolicies [{:toolId "read" :effect "allow"}]}
-                     :data {:run-id "parent-run"}}
+                     :data {:run-id "parent-run"
+                            :conversation-id "parent-conversation"
+                            :session-id "parent-session"}}
                :run-agent! (fn [_config job event]
                              (swap! calls conj {:job job :event event})
                              (js/Promise.resolve {:queued true}))}
@@ -102,6 +104,9 @@
                   (is (str/includes? (:systemPrompt agent-spec) "You are a test sub-agent."))
                   (is (= "Do test sub-agent things." (:taskPrompt agent-spec)))
                   (is (= "test_sub_agent" (get-in job [:data :sub-agent-id])))
+                  (is (= "parent-conversation" (:parentConversationId agent-spec)))
+                  (is (= "parent-session" (:parentSessionId agent-spec)))
+                  (is (= "parent-run" (:parentRunId agent-spec)))
                   (is (str/includes? content "Do test sub-agent things."))
                   (is (str/includes? content "Parent event content"))
                   (done))))

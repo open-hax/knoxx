@@ -439,6 +439,36 @@ export interface ShibbolethHandoffResponse {
   imported_item_count: number;
 }
 
+export type ActorMailboxStatus = "pending" | "delivered" | "failed" | "expired" | "superseded" | "acknowledged";
+export type ActorMailboxBox = "inbox" | "outbox";
+
+export interface ActorMailboxEntry {
+  id: string;
+  kind: string;
+  status: ActorMailboxStatus | string;
+  source: Record<string, unknown>;
+  target: Record<string, unknown>;
+  delivery: Record<string, unknown>;
+  contentRef: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  preview?: string;
+  lastError?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  deliveredAt?: string;
+  acknowledgedAt?: string;
+  expiresAt?: string;
+}
+
+export interface ActorMailboxListResponse {
+  ok: boolean;
+  box?: ActorMailboxBox;
+  actorId?: string;
+  durable?: boolean;
+  durable_?: boolean;
+  entries: ActorMailboxEntry[];
+}
+
 export interface KnoxxAuthIdentity {
   userEmail: string;
   orgSlug: string;
@@ -480,6 +510,7 @@ export interface AdminRoleSummary {
 
 export interface AdminMembershipSummary {
   id: string;
+  userId?: string;
   orgId: string;
   actorId?: string;
   orgName?: string;
@@ -492,6 +523,18 @@ export interface AdminMembershipSummary {
   toolPolicies: AdminToolPolicy[];
 }
 
+export interface AdminActorCredentialSummary {
+  id: string;
+  provider: string;
+  label?: string;
+  kind: string;
+  accountIdentifier?: string | null;
+  status: string;
+  configuredFields: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface AdminUserSummary {
   id: string;
   email: string;
@@ -501,6 +544,7 @@ export interface AdminUserSummary {
   status: string;
   createdAt?: string;
   updatedAt?: string;
+  credentials?: AdminActorCredentialSummary[];
   memberships: AdminMembershipSummary[];
 }
 

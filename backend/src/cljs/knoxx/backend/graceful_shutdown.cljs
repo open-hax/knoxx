@@ -18,6 +18,9 @@
                                 :promise nil
                                 :signal nil}))
 
+(defonce shutdown-target* (atom {:app nil
+                                 :config nil}))
+
 (defn- log-info!
   [app message]
   (if-let [logger (some-> app (.-log))]
@@ -83,14 +86,26 @@
       (swap! shutdown-state* assoc :promise shutdown-promise)
       shutdown-promise)))
 
+(defn- begin-current-shutdown!
+  [signal]
+  (let [{:keys [app config]} @shutdown-target*]
+    (if app
+      (begin-shutdown! app config signal)
+      (do
+        (.warn js/console "[shutdown] no active HTTP app; exiting")
+        (js/process.exit 0)))))
+
 (defn install!
   [app config]
+  ;; Hot reload recreates the Fastify app without recreating the process. Keep
+  ;; process signal handlers stable, but always point them at the latest app.
+  (reset! shutdown-target* {:app app :config config})
   (when-not (:installed? @shutdown-state*)
     (swap! shutdown-state* assoc :installed? true)
-    (.on js/process "SIGINT" (fn [] (begin-shutdown! app config "SIGINT")))
-    (.on js/process "SIGTERM" (fn [] (begin-shutdown! app config "SIGTERM")))
+    (.on js/process "SIGINT" (fn [] (begin-current-shutdown! "SIGINT")))
+    (.on js/process "SIGTERM" (fn [] (begin-current-shutdown! "SIGTERM")))
     (.on js/process "message"
          (fn [message]
            (when (= (str message) "shutdown")
-             (begin-shutdown! app config "pm2:shutdown"))))
+             (begin-current-shutdown! "pm2:shutdown"))))
     true))

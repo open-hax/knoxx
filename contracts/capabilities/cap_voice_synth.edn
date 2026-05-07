@@ -8,7 +8,7 @@
   "Spoken and sung voice synthesis through Voxx and OpenUtau.
 
    Primary spoken path: voice.tts and voice.tts_stream call Voxx, not direct provider APIs.
-   Auth/config: VOXX_URL and VOICE_GATEWAY_API_KEY. Default voice_id: alloy. Default model_id/backend hint: kokoro.
+   Auth/config: VOXX_URL and VOICE_GATEWAY_API_KEY. Default voice_id: af_jessica. Default speed: 1.15. Default model_id/backend hint: kokoro.
 
    Voxx spoken modes agents should understand:
    - Prompt-aware performance mode is the default. voice.tts and /api/voice/tts send prompt_aware=true unless explicitly set false; Voxx also defaults TTS_PROMPT_AWARE_DEFAULT=1. Tags such as [excited], [whisper], [laugh], [pause], [dramatic], and <break time=\"500ms\" /> are Voxx-owned directions for timing, energy, emotion, and inflection, not words to speak.
@@ -17,7 +17,7 @@
    - Available postprocess profiles and aliases: sports-commentator-v1 (sports/commentator, high-energy broadcast default), broadcast-warm-v1 (broadcast/warm), narrator-polish-v1 (narrator/polish audiobook leveling), crisp-radio-v1 (radio/crisp), soft-studio-v1 (soft/studio), and off/none for dry capture.
    - The earlier Melo-only narrator-unifier remains available inside Voxx for local Melo and is configured globally with TTS_NARRATOR_UNIFIER_ENABLED, TTS_NARRATOR_TARGET_DBFS, TTS_NARRATOR_EN_PITCH, TTS_NARRATOR_JP_PITCH, TTS_NARRATOR_EN_VARIANCE_DEPTH, TTS_NARRATOR_VARIANCE_FREQ_HZ, TTS_NARRATOR_SWITCH_* and TTS_NARRATOR_ENVELOPE_* knobs. The final postprocess profiles are the cleaner cross-backend place to make voices feel less flat.
    - Per-request overrides accepted by voice.tts / Voxx JSON or query: postprocess_profile/postprocessProfile, postprocess, postprocess_enabled/postprocessEnabled, prompt_aware/promptAware, and prompt_aware_style/promptAwareStyle.
-   - Provider/backend selection: use model_id as a hint or tts.sh --model with kokoro, xiaomi_mimo, requesty, openai, melo, or espeak. Voxx falls back according to VOICE_GATEWAY_TTS_BACKEND_ORDER; keep local fallbacks at the end, e.g. xiaomi_mimo,kokoro,melo,espeak or kokoro,melo,espeak.
+   - Provider/backend selection: use model_id as a hint or tts.sh --model with kokoro, xiaomi_mimo, requesty, openai, melo, or espeak. Voxx falls back according to VOICE_GATEWAY_TTS_BACKEND_ORDER; keep local fallbacks at the end, e.g. xiaomi_mimo,kokoro,espeak or kokoro,espeak.
    - Debugging headers/logs: x-openhax-tts-backend shows the renderer, x-openhax-tts-postprocess-profile shows the active final profile, x-openhax-tts-prompt-aware shows whether prompt-aware instructions were active.
    - Queue safety: Voxx has a bounded processing queue. On queue-full or timeout responses, back off instead of launching parallel retries.
    - Dry/pitch workflows: use postprocess_enabled=false or postprocess_profile=off for dry capture, then chain through ~/.pi/agent/skills/autotune/ (rubberband + sox pipeline, skill:autotune).

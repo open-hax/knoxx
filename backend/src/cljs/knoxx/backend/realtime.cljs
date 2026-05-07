@@ -1,6 +1,12 @@
 (ns knoxx.backend.realtime
   (:require [clojure.string :as str]
-            [knoxx.backend.util.time :as time]))
+            [knoxx.backend.util.time :as time]
+            ["node:child_process" :refer [execFile]]
+            ["node:crypto" :as crypto]
+            ["node:os" :as os]
+            ["node:util" :refer [promisify]]))
+
+(def ^:private exec-file-async (promisify execFile))
 
 (defonce ws-clients* (atom {}))
 (defonce ws-stats-interval* (atom nil))
@@ -45,25 +51,22 @@
      :power_w (parse-float-safe power-w)}))
 
 (defn collect-nvidia-gpu-stats!
-  [runtime]
-  (if-let [exec-file-async (aget runtime "execFileAsync")]
-    (-> (exec-file-async "nvidia-smi" nvidia-smi-query-args #js {:timeout 1200})
-        (.then (fn [result]
-                 (->> (str/split-lines (or (aget result "stdout") ""))
-                      (map str/trim)
-                      (remove str/blank?)
-                      (mapv parse-nvidia-smi-line))))
-        (.catch (fn [_]
-                  (js/Promise.resolve []))))
-    (js/Promise.resolve [])))
+  [_runtime]
+  (-> (exec-file-async "nvidia-smi" nvidia-smi-query-args #js {:timeout 1200})
+      (.then (fn [result]
+               (->> (str/split-lines (or (aget result "stdout") ""))
+                    (map str/trim)
+                    (remove str/blank?)
+                    (mapv parse-nvidia-smi-line))))
+      (.catch (fn [_]
+                (js/Promise.resolve [])))))
 
 (defn system-stats!
   [runtime active-runs-count]
-  (let [node-os (aget runtime "os")
-        cpu-count (max 1 (.availableParallelism node-os))
-        load1 (or (aget (.loadavg node-os) 0) 0)
-        total-mem (or (.totalmem node-os) 1)
-        free-mem (or (.freemem node-os) 0)
+  (let [cpu-count (max 1 (.availableParallelism os))
+        load1 (or (aget (.loadavg os) 0) 0)
+        total-mem (or (.totalmem os) 1)
+        free-mem (or (.freemem os) 0)
         used-mem (max 0 (- total-mem free-mem))
         cpu-percent (min 100 (* 100 (/ load1 cpu-count)))
         mem-percent (min 100 (* 100 (- 1 (/ free-mem total-mem))))]
@@ -155,7 +158,7 @@
                               (.send #js {:error "WebSocket upgrade required"})))
                :wsHandler (fn [socket request]
                             (let [ws (or (aget socket "socket") socket)
-                                  client-id (.randomUUID (aget runtime "crypto"))
+                                  client-id (.randomUUID crypto)
                                   url-params (try
                                                (js/URL. (str "http://localhost" (or (aget request "url") "/ws/stream")))
                                                (catch :default _ nil))

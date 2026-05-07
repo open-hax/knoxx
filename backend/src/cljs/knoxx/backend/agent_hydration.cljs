@@ -13,6 +13,7 @@
             [knoxx.backend.tools.discord :as discord]
             [knoxx.backend.tools.discord-voice :as discord-voice]
             [knoxx.backend.tools.events :as events]
+            [knoxx.backend.tools.actors :as actors]
             [knoxx.backend.tools.openplanner :as openplanner]
             [knoxx.backend.tools.music :as music]
             [knoxx.backend.tools.voice :as voice]
@@ -194,6 +195,7 @@
             (.concat (discord/create-discord-custom-tools runtime config auth-context))
             (.concat (discord-voice/create-discord-voice-custom-tools runtime config auth-context))
             (.concat (events/create-events-custom-tools runtime config auth-context))
+            (.concat (actors/create-actors-custom-tools runtime config auth-context))
             (.concat (openplanner/create-openplanner-custom-tools runtime config auth-context))
             (.concat (music/create-music-custom-tools runtime config auth-context))
             (.concat (voice/create-voice-synth-custom-tools runtime config auth-context))

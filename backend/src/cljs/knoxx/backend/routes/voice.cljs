@@ -2,10 +2,11 @@
   (:require [clojure.string :as str]
             [knoxx.backend.http :as http]))
 
-(def ^:private default-voxx-voice-id "alloy")
+(def ^:private default-voxx-voice-id "af_jessica")
 (def ^:private default-voxx-model-id "kokoro")
+(def ^:private default-voxx-speed "1.15")
 (def ^:private default-voxx-output-format "mp3")
-(def ^:private default-voxx-postprocess-profile "sports-commentator-v1")
+(def ^:private default-voxx-postprocess-profile "off")
 
 (defn- trim-trailing-slashes
   [s]
@@ -82,6 +83,11 @@
   [config]
   (let [configured (trim-or-empty (:voxx-model-id config))]
     (if (str/blank? configured) default-voxx-model-id configured)))
+
+(defn- voxx-default-speed
+  [config]
+  (let [configured (trim-or-empty (:voxx-default-speed config))]
+    (if (str/blank? configured) default-voxx-speed configured)))
 
 (defn- voxx-headers
   [api-key]
@@ -276,7 +282,8 @@
                                      :status_code (aget resp "status")
                                      :default_voice_id (voxx-default-voice-id config)
                                      :default_model_id (voxx-default-model-id config)
-                                     :default_postprocess_enabled true
+                                     :default_speed (voxx-default-speed config)
+                                     :default_postprocess_enabled false
                                      :default_postprocess_profile default-voxx-postprocess-profile
                                      :default_prompt_aware true})))
                           (.catch (fn [err]
@@ -309,6 +316,10 @@
                         output-format (if (str/blank? output-format-raw)
                                         default-voxx-output-format
                                         output-format-raw)
+                        speed-raw (trim-or-empty (first-body-value body ["speed"]))
+                        speed (if (str/blank? speed-raw)
+                                (voxx-default-speed config)
+                                speed-raw)
                         postprocess-profile-raw (trim-or-empty (first-body-value body ["postprocess_profile"
                                                                                        "postprocessProfile"
                                                                                        "postprocess"]))
@@ -317,7 +328,7 @@
                                               postprocess-profile-raw)
                         postprocess-enabled (bool-value (first-body-value body ["postprocess_enabled"
                                                                                 "postprocessEnabled"])
-                                                        true)
+                                                        false)
                         prompt-aware (bool-value (first-body-value body ["prompt_aware"
                                                                          "promptAware"
                                                                          "prompt-aware"])
@@ -338,6 +349,7 @@
                                               :voice voice-id
                                               :model model-id
                                               :response_format output-format
+                                              :speed speed
                                               :postprocess_enabled postprocess-enabled
                                               :prompt_aware prompt-aware}
                                        postprocess-profile

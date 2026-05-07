@@ -32,6 +32,7 @@
    "events.status" {:id "events.status" :label "Events Status" :description "Inspect generic events runtime state and trigger configuration" :risk-level "low"}
    "events.dispatch" {:id "events.dispatch" :label "Events Dispatch" :description "Dispatch a normalized event into the generic events runtime" :risk-level "low"}
    "agents.spawn" {:id "agents.spawn" :label "Agents Spawn" :description "Launch a one-off normal Knoxx agent run through the shared agent runtime" :risk-level "medium"}
+   "actors.send-message" {:id "actors.send-message" :label "Actors Send Message" :description "Send an actor-to-actor message as steer, follow-up, or event with lineage metadata" :risk-level "medium"}
 
    "sandbox_container.create" {:id "sandbox_container.create" :label "Sandbox Create" :description "Create a TTL-bound sandbox container for isolated development work" :risk-level "low"}
    "sandbox_container.status" {:id "sandbox_container.status" :label "Sandbox Status" :description "Inspect sandbox container runtime status and remaining TTL" :risk-level "low"}

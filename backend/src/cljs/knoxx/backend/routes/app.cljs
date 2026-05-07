@@ -2,6 +2,7 @@
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
             [knoxx.backend.routes.admin :as admin-routes]
+            [knoxx.backend.routes.actors :as actor-routes]
             [knoxx.backend.agent-hydration :refer [ensure-settings! settings-state*]]
             [knoxx.backend.agent-runtime :refer [forward-knoxx-request! resolve-workspace-path active-agent-session queue-agent-control!]]
             [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access! ensure-session-id resume-recovered-session! validate-chat-policy!]]
@@ -31,6 +32,7 @@
             [knoxx.backend.routes.studio :as studio-routes]
             [knoxx.backend.routes.translation :as translation-routes]
             [shadow.cljs.modern :refer (js-await)]
+            ["node:crypto" :as crypto]
             ))
 
 
@@ -472,7 +474,7 @@
                                  :can_send false}))))
 
 (defn- handle-chat-start [runtime config reply ctx request]
-  (let [node-crypto (aget runtime "crypto")
+  (let [node-crypto crypto
         parsed0 (normalize-chat-body (or (aget request "body") #js {}))
         parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
         agent-ctx (effective-auth-context ctx parsed)
@@ -528,7 +530,7 @@
                     (queue-turn! "Async agent chat failed")))))))
 
 (defn- handle-direct-start [runtime config reply ctx request]
-  (let [node-crypto (aget runtime "crypto")
+  (let [node-crypto crypto
         parsed0 (normalize-chat-body (or (aget request "body") #js {}))
         parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
         agent-ctx (effective-auth-context ctx parsed)
@@ -749,7 +751,8 @@
     :tts_provider (if (not (str/blank? (str/trim (or (:voxx-api-key config) ""))))
                     "voxx"
                     "")
-    :tts_default_voice_id (or (:voxx-voice-id config) "alloy")
+    :tts_default_voice_id (or (:voxx-voice-id config) "af_jessica")
+    :tts_default_speed (or (:voxx-default-speed config) "1.15")
     :proxx_enabled (and (not (str/blank? (:proxx-base-url config)))
                         (not (str/blank? (:proxx-auth-token config))))
     :proxx_default_model (:llmModel @settings-state*)
@@ -1465,7 +1468,15 @@
                                         :replace-first replace-first
                                         :clip-text clip-text
                                         :session-guard session-guard
-                                        :optional-session-guard optional-session-guard}))
+                                        :optional-session-guard optional-session-guard})
+
+    (actor-routes/register-actor-routes! app runtime config
+                                         {:route! route!
+                                          :json-response! json-response!
+                                          :error-response! error-response!
+                                          :with-request-context! with-request-context!
+                                          :ensure-permission! ensure-permission!
+                                          :session-guard session-guard}))
 
   (contracts-routes/register-contracts-routes! app runtime config
                                                {:route! route!

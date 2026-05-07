@@ -152,6 +152,82 @@
   border-color: var(--token-colors-accent-cyan);
 }
 
+.cmsDocumentStrip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--token-spacing-150);
+  padding: var(--token-spacing-200) var(--token-spacing-400);
+  border-bottom: 1px solid var(--token-colors-border-default);
+  background: var(--token-colors-surface-primary);
+}
+
+.cmsDocumentStripHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--token-spacing-200);
+  color: var(--token-colors-text-secondary);
+  font-size: var(--token-font-size-sm);
+  font-weight: var(--token-font-weight-semibold);
+}
+
+.inlineButton {
+  padding: var(--token-spacing-100) var(--token-spacing-200);
+  border: 1px solid var(--token-colors-border-default);
+  border-radius: var(--token-radius-sm);
+  background: var(--token-colors-surface-tertiary);
+  color: var(--token-colors-text-secondary);
+  cursor: pointer;
+}
+
+.inlineButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cmsDocumentList {
+  display: flex;
+  gap: var(--token-spacing-150);
+  overflow-x: auto;
+  padding-bottom: var(--token-spacing-100);
+}
+
+.cmsDocumentChip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--token-spacing-150);
+  max-width: 280px;
+  padding: var(--token-spacing-100) var(--token-spacing-200);
+  border: 1px solid var(--token-colors-border-default);
+  border-radius: var(--token-radius-full);
+  background: var(--token-colors-surface-secondary);
+  color: var(--token-colors-text-secondary);
+  cursor: pointer;
+}
+
+.cmsDocumentChip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmsDocumentChip small {
+  color: var(--token-colors-text-muted);
+  font-size: var(--token-font-size-xs);
+}
+
+.cmsDocumentChipActive {
+  border-color: var(--token-colors-accent-cyan);
+  color: var(--token-colors-text-primary);
+  background: color-mix(in srgb, var(--token-colors-accent-cyan) 12%, var(--token-colors-surface-secondary));
+}
+
+.cmsDocumentEmpty {
+  color: var(--token-colors-text-muted);
+  font-size: var(--token-font-size-sm);
+}
+
 .editorLayout {
   display: flex;
   flex: 1;
@@ -180,4 +256,66 @@
 
 .bodyTextarea::placeholder {
   color: var(--token-colors-text-muted);
+}
+
+.previewPane {
+  width: min(48%, 640px);
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--token-colors-border-default);
+  background: var(--token-colors-surface-secondary);
+  overflow: hidden;
+}
+
+.previewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--token-spacing-200);
+  padding: var(--token-spacing-200) var(--token-spacing-300);
+  border-bottom: 1px solid var(--token-colors-border-default);
+  color: var(--token-colors-text-secondary);
+  font-size: var(--token-font-size-sm);
+  font-weight: var(--token-font-weight-semibold);
+}
+
+.previewBody {
+  flex: 1;
+  overflow: auto;
+  padding: var(--token-spacing-400);
+}
+
+.markdownPreview {
+  color: var(--token-colors-text-primary);
+  line-height: 1.6;
+}
+
+.markdownPreview h1,
+.markdownPreview h2,
+.markdownPreview h3 {
+  line-height: 1.2;
+}
+
+.markdownPreview code {
+  padding: 0.1rem 0.25rem;
+  border-radius: var(--token-radius-sm);
+  background: var(--token-colors-surface-tertiary);
+}
+
+.markdownPreview pre {
+  padding: var(--token-spacing-300);
+  overflow: auto;
+  border-radius: var(--token-radius-md);
+  background: var(--token-colors-surface-tertiary);
+}
+
+.emptyPreview {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--token-colors-text-muted);
+  font-size: var(--token-font-size-sm);
 }

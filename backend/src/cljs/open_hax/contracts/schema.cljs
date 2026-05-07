@@ -140,6 +140,19 @@
    [:actor/kind          [:enum :agent :user]]
    [:actor/email         {:optional true} string?]
    [:actor/username      {:optional true} string?]
+   [:actor/accounts      {:optional true}
+    [:map {:closed false}
+     [:discord {:optional true} [:map {:closed false}
+                                [:username {:optional true} string?]
+                                [:user-id {:optional true} string?]
+                                [:userid {:optional true} string?]]]
+     [:bluesky {:optional true} [:map {:closed false}
+                                [:handle {:optional true} string?]
+                                [:did {:optional true} string?]]]
+     [:twitch {:optional true} [:map {:closed false}
+                               [:username {:optional true} string?]
+                               [:user-id {:optional true} string?]
+                               [:userid {:optional true} string?]]]]]
    [:actor/org           {:optional true} string?]
    [:actor/label         {:optional true} string?]
    [:actor/contract      {:optional true} string?]

@@ -10,7 +10,10 @@
    no auth context exists (typical for local/dev)."
   (:require [clojure.string :as str]
             [promesa.core :as p]
-            [knoxx.backend.tools.media :as media]))
+            [knoxx.backend.tools.media :as media]
+            ["node:fs" :as node-fs]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]))
 
 (defn- reply-header!
   [^js reply name value]
@@ -85,22 +88,20 @@
                   (when ctx
                     (ensure-tool! ctx "read"))
 
-                  (let [node-fs (aget runtime "fs")
-                        node-path (aget runtime "path")
-                        raw-path (or (aget request "query" "path") "")
+                  (let [raw-path (or (aget request "query" "path") "")
                         normalized (media/normalize-tool-path-arg raw-path)
                         {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)
                         mime-type (mime-type-for-path relative absolute)
                         range-header (or (request-header request "range")
                                          (request-header request "Range"))]
-                    (-> (media/fs-stat! node-fs absolute)
+                    (-> (media/fs-stat! fs absolute)
                         (.then (fn [stat]
                                  (when-not (.isFile stat)
                                    (throw (js/Error. (str relative " is not a file"))))
                                  (let [total-size (.-size stat)
                                        range (when (and range-header (pos? total-size))
                                                (parse-range-header range-header total-size))
-                                       filename (media/path-basename node-path absolute)]
+                                       filename (media/path-basename path absolute)]
                                    (reply-header! reply "Content-Type" mime-type)
                                    (reply-header! reply "Accept-Ranges" "bytes")
                                    (reply-header! reply "Cache-Control" "private, max-age=0")
@@ -140,16 +141,16 @@
 
 (defn- walk-audio-files!
   "Recursively walk a directory and collect audio file metadata."
-  [node-fs node-path root-dir base-relative depth max-depth]
+  [root-dir base-relative depth max-depth]
   (if (> depth max-depth)
     (p/resolved [])
-    (-> (.readdir node-fs root-dir #js {:withFileTypes true})
+    (-> (.readdir fs root-dir #js {:withFileTypes true})
         (.then (fn [entries]
                  (let [entries-arr (vec (array-seq entries))
                        promises (mapv
                                  (fn [entry]
                                    (let [name (.-name entry)
-                                         abs-path (.join node-path root-dir name)
+                                         abs-path (.join path root-dir name)
                                          rel-path (if (str/blank? base-relative)
                                                     name
                                                     (str base-relative "/" name))]
@@ -160,13 +161,13 @@
 
                                        ;; Recurse into directories
                                        (.isDirectory entry)
-                                       (walk-audio-files! node-fs node-path abs-path rel-path (inc depth) max-depth)
+                                       (walk-audio-files! abs-path rel-path (inc depth) max-depth)
 
                                        ;; Collect audio files
                                        :else
-                                       (let [ext (str/lower-case (or (some-> (.extname node-path name) str/trim) ""))]
+                                       (let [ext (str/lower-case (or (some-> (.extname path name) str/trim) ""))]
                                          (if (contains? (audio-extensions) ext)
-                                           (-> (.stat node-fs abs-path)
+                                           (-> (.stat fs abs-path)
                                                (.then (fn [stat]
                                                         [{:name name
                                                           :path rel-path
@@ -202,9 +203,7 @@
                 (try
                   (when ctx
                     (ensure-tool! ctx "read"))
-                  (let [node-fs (aget runtime "fs")
-                        node-path (aget runtime "path")
-                        ;; Optional subdirectory filter (e.g. "Music" or "Music/midrolls")
+                  (let [;; Optional subdirectory filter (e.g. "Music" or "Music/midrolls")
                         subpath (or (aget request "query" "path") "")
                         max-depth (let [d (js/parseInt (or (aget request "query" "depth") "3") 10)]
                                     (if (js/isNaN d) 3 (min d 8)))
@@ -215,7 +214,7 @@
                                           {:keys [absolute]} (media/resolve-workspace-media-path runtime config normalized)]
                                       absolute))
                         rel-base (str/trim (or subpath ""))]
-                    (-> (walk-audio-files! node-fs node-path scan-root rel-base 0 max-depth)
+                    (-> (walk-audio-files! scan-root rel-base 0 max-depth)
                         (.then (fn [files]
                                  ;; Sort by modified desc (newest first)
                                  (let [sorted (vec (sort-by :modified > files))]
@@ -237,14 +236,13 @@
                 (try
                   (when ctx
                     (ensure-tool! ctx "write"))
-                  (let [node-fs (aget runtime "fs")
-                        body (or (aget request "body") #js {})
+                  (let [body (or (aget request "body") #js {})
                         dir-path (or (aget body "path") "")]
                     (if (str/blank? dir-path)
                       (json-response! reply 400 {:detail "path is required"})
                       (let [normalized (media/normalize-tool-path-arg dir-path)
                             {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)]
-                        (-> (.mkdir node-fs absolute #js {:recursive true})
+                        (-> (.mkdir fs absolute #js {:recursive true})
                             (.then (fn []
                                      (json-response! reply 200 {:ok true :path relative})))
                             (.catch (fn [err]
@@ -260,8 +258,7 @@
                 (try
                   (when ctx
                     (ensure-tool! ctx "write"))
-                  (let [node-fs (aget runtime "fs")
-                        body (or (aget request "body") #js {})
+                  (let [body (or (aget request "body") #js {})
                         from-path (or (aget body "from") "")
                         to-path (or (aget body "to") "")]
                     (cond
@@ -276,7 +273,7 @@
                             to-norm (media/normalize-tool-path-arg to-path)
                             {from-abs :absolute} (media/resolve-workspace-media-path runtime config from-norm)
                             {to-abs :absolute} (media/resolve-workspace-media-path runtime config to-norm)]
-                        (-> (.rename node-fs from-abs to-abs)
+                        (-> (.rename fs from-abs to-abs)
                             (.then (fn []
                                      (json-response! reply 200 {:ok true :from from-norm :to to-norm})))
                             (.catch (fn [err]

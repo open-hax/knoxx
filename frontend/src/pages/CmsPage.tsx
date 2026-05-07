@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Button, Badge } from "@open-hax/uxx";
+import ReactMarkdown from "react-markdown";
+import { CollapsedPanelTab } from "../components/CollapsedPanelTab";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
 import { ContextBar } from "../components/context-bar";
+import { PublicationBlocksRenderer, extractPublicationBlocks } from "../components/cms/PublicationBlocksRenderer";
+import { CreateVisualDraftModal } from "../components/cms/CreateVisualDraftModal";
+import type { CmsTemplateOption } from "../components/cms/CreateVisualDraftModal";
 import { listMemorySessions } from "../lib/api/common";
 import {
   type DocumentStatus,
@@ -27,13 +33,17 @@ type GardenSummary = {
   status: string;
 };
 
+type CmsDocMetadata = Record<string, unknown> & {
+  garden_publications?: Array<{ garden_id?: string }>;
+};
+
 type CmsDocSummary = {
   doc_id: string;
   title: string;
+  content?: string;
   source_path: string | null;
-  metadata?: {
-    garden_publications?: Array<{ garden_id?: string }>;
-  };
+  visibility?: "internal" | "review" | "public" | "archived";
+  metadata?: CmsDocMetadata;
 };
 
 const RECENT_SESSION_PAGE_SIZE = 10;
@@ -50,6 +60,8 @@ function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySes
 }
 
 function CmsPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const chat = useChatWorkspaceController({ initialShowCanvas: false, defaultActorId: "cms_chat" });
 
   // Editor state
@@ -62,11 +74,20 @@ function CmsPage() {
   const [lastSaveMessage, setLastSaveMessage] = useState<string | null>(null);
   const [gardens, setGardens] = useState<GardenSummary[]>([]);
   const [selectedGardenId, setSelectedGardenId] = useState("");
+  const [cmsDocuments, setCmsDocuments] = useState<CmsDocSummary[]>([]);
+  const [loadingCmsDocuments, setLoadingCmsDocuments] = useState(false);
   const [cmsDocId, setCmsDocId] = useState<string | null>(null);
+  const [cmsMetadata, setCmsMetadata] = useState<CmsDocMetadata>({});
   const [publishedGardenIds, setPublishedGardenIds] = useState<string[]>([]);
+
+  // Visual draft creation state
+  const [showCreateDraftModal, setShowCreateDraftModal] = useState(false);
+  const [cmsTemplates, setCmsTemplates] = useState<CmsTemplateOption[]>([]);
+  const [creatingDraft, setCreatingDraft] = useState(false);
 
   // ContextBar state
   const [showFiles, setShowFiles] = useState(true);
+  const [showChatPanel, setShowChatPanel] = useState(true);
   const [sidebarWidthPx, setSidebarWidthPx] = useState(() => {
     const stored = localStorage.getItem(CHAT_SIDEBAR_WIDTH_KEY);
     return stored ? parseInt(stored, 10) : 280;
@@ -117,7 +138,7 @@ function CmsPage() {
       setLoadingBrowse(true);
       try {
         const params = new URLSearchParams();
-        params.set("path", "docs");
+        params.set("path", "cms");
         const resp = await fetch(`/api/ingestion/browse?${params}`);
         if (resp.ok) {
           setBrowseData(await resp.json());
@@ -196,6 +217,41 @@ function CmsPage() {
     void loadWorkspaceStatus();
   }, []);
 
+  // Load CMS templates from contract
+  useEffect(() => {
+    const loadTemplates = async () => {
+      try {
+        const resp = await fetch("/api/ingestion/file?path=contracts/cms-templates.edn");
+        if (!resp.ok) return;
+        const data = (await resp.json()) as { content?: string };
+        const content = data.content ?? "";
+        // Simple EDN parsing: extract template keys and labels
+        const templates: CmsTemplateOption[] = [];
+        const templateMatches = content.matchAll(/:([\w-]+)\s+\{[^}]*:label\s+"([^"]+)"/g);
+        for (const match of templateMatches) {
+          templates.push({ value: match[1], label: match[2] });
+        }
+        if (templates.length === 0) {
+          // Fallback defaults if parsing fails
+          templates.push(
+            { value: "article-page", label: "Article" },
+            { value: "studio-playlist-page", label: "Studio Playlist Page" },
+            { value: "landing-page", label: "Landing Page" },
+          );
+        }
+        setCmsTemplates(templates);
+      } catch (err) {
+        console.error("Failed to load CMS templates:", err);
+        setCmsTemplates([
+          { value: "article-page", label: "Article" },
+          { value: "studio-playlist-page", label: "Studio Playlist Page" },
+          { value: "landing-page", label: "Landing Page" },
+        ]);
+      }
+    };
+    void loadTemplates();
+  }, []);
+
   const editorDirectory = editorPath?.includes("/") ? editorPath.slice(0, editorPath.lastIndexOf("/") + 1) : "";
   const isPublishedToSelectedGarden = useMemo(
     () => Boolean(selectedGardenId && publishedGardenIds.includes(selectedGardenId)),
@@ -208,6 +264,7 @@ function CmsPage() {
     const resp = await fetch(`/api/openplanner/v1/cms/documents?${params.toString()}`);
     if (!resp.ok) {
       setCmsDocId(null);
+      setCmsMetadata({});
       setPublishedGardenIds([]);
       setEditorStatus("draft");
       return null;
@@ -218,6 +275,7 @@ function CmsPage() {
     const match = (body.documents ?? []).find((doc) => normalizeSourcePath(doc.source_path) === normalizedPath) ?? null;
     if (!match) {
       setCmsDocId(null);
+      setCmsMetadata({});
       setPublishedGardenIds([]);
       setEditorStatus("draft");
       return null;
@@ -227,10 +285,68 @@ function CmsPage() {
       .map((publication) => publication.garden_id)
       .filter((gardenId): gardenId is string => typeof gardenId === "string" && gardenId.length > 0);
     setCmsDocId(match.doc_id);
+    setCmsMetadata(match.metadata ?? {});
     setPublishedGardenIds(gardenIds);
     setEditorStatus(gardenIds.includes(selectedGardenId) ? "published" : "draft");
     return match;
   }, [selectedGardenId]);
+
+  const applyCmsDocumentToEditor = useCallback((doc: CmsDocSummary, fallbackPath?: string) => {
+    const path = doc.source_path ?? fallbackPath ?? `cms/${doc.doc_id}.md`;
+    const gardenIds = (doc.metadata?.garden_publications ?? [])
+      .map((publication) => publication.garden_id)
+      .filter((gardenId): gardenId is string => typeof gardenId === "string" && gardenId.length > 0);
+    setEditorTitle(doc.title);
+    setEditorBody(doc.content ?? "");
+    setEditorPath(path);
+    setEditorStatus(gardenIds.includes(selectedGardenId) ? "published" : doc.visibility === "review" ? "review" : "draft");
+    setCmsDocId(doc.doc_id);
+    setCmsMetadata(doc.metadata ?? {});
+    setPublishedGardenIds(gardenIds);
+    setIsDirty(false);
+    setLastSaveMessage("Loaded CMS draft");
+    chat.pinContextItem({
+      id: path,
+      title: doc.title,
+      path,
+      snippet: (doc.content ?? "").slice(0, 240),
+      kind: "file",
+    });
+  }, [chat, selectedGardenId]);
+
+  const loadCmsDocuments = useCallback(async () => {
+    if (!selectedGardenId) {
+      setCmsDocuments([]);
+      return;
+    }
+    setLoadingCmsDocuments(true);
+    try {
+      const params = new URLSearchParams({ garden_id: selectedGardenId, limit: "100" });
+      const resp = await fetch(`/api/openplanner/v1/cms/documents?${params.toString()}`);
+      if (!resp.ok) return;
+      const body = (await resp.json()) as { documents?: CmsDocSummary[] };
+      setCmsDocuments(body.documents ?? []);
+    } catch (error) {
+      console.error("Failed to load CMS documents:", error);
+      setCmsDocuments([]);
+    } finally {
+      setLoadingCmsDocuments(false);
+    }
+  }, [selectedGardenId]);
+
+  useEffect(() => {
+    void loadCmsDocuments();
+  }, [loadCmsDocuments]);
+
+  const handleOpenCmsDocument = useCallback(async (docId: string) => {
+    try {
+      const resp = await fetch(`/api/openplanner/v1/cms/documents/${encodeURIComponent(docId)}`);
+      if (!resp.ok) return;
+      applyCmsDocumentToEditor((await resp.json()) as CmsDocSummary);
+    } catch (error) {
+      console.error("Failed to open CMS document:", error);
+    }
+  }, [applyCmsDocumentToEditor]);
 
   const upsertCmsDocument = useCallback(async (path: string) => {
     const existing = await syncCmsDocumentByPath(path);
@@ -239,6 +355,7 @@ function CmsPage() {
       content: editorBody,
       source_path: path,
       visibility: existing && publishedGardenIds.length > 0 ? "public" : "internal",
+      metadata: existing?.metadata ?? cmsMetadata,
     };
 
     const endpoint = existing
@@ -274,16 +391,65 @@ function CmsPage() {
     }
     const doc = (await resp.json()) as CmsDocSummary;
     setCmsDocId(doc.doc_id);
+    setCmsMetadata(doc.metadata ?? {});
     return doc.doc_id;
-  }, [editorBody, editorTitle, publishedGardenIds.length, syncCmsDocumentByPath]);
+  }, [cmsMetadata, editorBody, editorTitle, publishedGardenIds.length, syncCmsDocumentByPath]);
 
   const buildEditorPath = useCallback(() => {
     const fileName = editorTitle.trim().replace(/[\\/]+/g, "-");
     return `${editorDirectory}${fileName}`;
   }, [editorDirectory, editorTitle]);
 
+  const persistCmsDocumentOnly = useCallback(async (next: { publishState?: "published" | "draft" } = {}) => {
+    if (!cmsDocId) return null;
+    setIsSaving(true);
+    setLastSaveMessage(null);
+    try {
+      const visibility = next.publishState === "published"
+        ? "public"
+        : next.publishState === "draft"
+          ? "internal"
+          : editorStatus === "review"
+            ? "review"
+            : isPublishedToSelectedGarden
+              ? "public"
+              : "review";
+      const resp = await fetch(`/api/openplanner/v1/cms/documents/${encodeURIComponent(cmsDocId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: editorTitle.trim() || "Untitled",
+          content: editorBody,
+          source_path: editorPath,
+          visibility,
+          metadata: cmsMetadata,
+        }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        if (resp.status !== 503) throw new Error(text);
+        const parsed = JSON.parse(text) as { persisted?: boolean };
+        if (!parsed.persisted) throw new Error(text);
+      } else {
+        const doc = (await resp.json()) as CmsDocSummary;
+        setCmsMetadata(doc.metadata ?? {});
+      }
+      setIsDirty(false);
+      setLastSaveMessage(next.publishState === "published" ? "Published" : next.publishState === "draft" ? "Unpublished" : "Saved CMS draft");
+      await loadCmsDocuments();
+      return cmsDocId;
+    } finally {
+      setIsSaving(false);
+    }
+  }, [cmsDocId, cmsMetadata, editorBody, editorPath, editorStatus, editorTitle, isPublishedToSelectedGarden, loadCmsDocuments]);
+
   const persistEditorFile = useCallback(
     async (next: { publishState?: "published" | "draft" } = {}) => {
+      if (cmsDocId) {
+        await persistCmsDocumentOnly(next);
+        return editorPath;
+      }
+
       const nextPath = buildEditorPath();
       if (!nextPath) return null;
 
@@ -323,7 +489,7 @@ function CmsPage() {
         setIsSaving(false);
       }
     },
-    [buildEditorPath, editorBody, editorDirectory, editorPath, upsertCmsDocument],
+    [buildEditorPath, cmsDocId, editorBody, editorDirectory, editorPath, persistCmsDocumentOnly, upsertCmsDocument],
   );
 
   useEffect(() => {
@@ -400,6 +566,51 @@ function CmsPage() {
     }
   };
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const docId = params.get("doc");
+    const path = params.get("path");
+    if ((docId && cmsDocId === docId) || (!docId && path && editorPath === path)) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (docId) {
+          const resp = await fetch(`/api/openplanner/v1/cms/documents/${encodeURIComponent(docId)}`);
+          if (!resp.ok || cancelled) return;
+          applyCmsDocumentToEditor((await resp.json()) as CmsDocSummary, path ?? undefined);
+          return;
+        }
+
+        if (!path) return;
+        const resp = await fetch(`/api/ingestion/file?${new URLSearchParams({ path })}`);
+        if (!resp.ok || cancelled) return;
+        const data: PreviewResponse = await resp.json();
+        const name = path.split("/").pop() ?? path;
+        setEditorTitle(name);
+        setEditorBody(data.content);
+        setEditorPath(path);
+        setEditorStatus("draft");
+        setIsDirty(false);
+        setLastSaveMessage(null);
+        chat.pinContextItem({
+          id: path,
+          title: name,
+          path,
+          snippet: data.content.slice(0, 240),
+          kind: "file",
+        });
+        await syncCmsDocumentByPath(path);
+      } catch (err) {
+        console.error("Failed to load CMS document from URL:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyCmsDocumentToEditor, chat, cmsDocId, editorPath, location.search, syncCmsDocumentByPath]);
+
   const handleTitleChange = useCallback((title: string) => {
     setEditorTitle(title.replace(/[\\/]+/g, "-"));
     setEditorStatus((prev) => (prev === "published" ? "draft" : prev));
@@ -424,6 +635,74 @@ function CmsPage() {
     }
   }, [editorTitle, persistEditorFile]);
 
+  const handleCreateVisualDraft = useCallback(async (params: { slug: string; title: string; template: string }) => {
+    setCreatingDraft(true);
+    try {
+      const draftPath = `cms/drafts/${params.slug}`;
+
+      // Build default view-contract.edn content
+      const contractEdn = `{:view/id "${params.slug}"
+ :view/title "${params.title}"
+ :view/kind :${params.template}
+ :view/schema-version 1
+ :view/status :draft
+
+ :source
+ {:kind :manual
+  :imported-at "${new Date().toISOString()}"}
+
+ :layout
+ {:template :${params.template}
+  :zones
+  []}
+
+ :blocks
+ []
+
+ :editor
+ {:locked false
+  :allowed-actions [:drag :drop :duplicate :hide :delete :edit-props]
+  :default-panel :layout}
+
+ :publishing
+ {:last-published-at nil
+  :defer-index false
+  :skip-translation true}
+
+ :settings
+ {:language "en"
+  :allow-comments true
+  :chat-actor-id nil}}`;
+
+      // Create view-contract.edn
+      const contractResp = await fetch("/api/ingestion/file", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: `${draftPath}/view-contract.edn`, content: contractEdn }),
+      });
+      if (!contractResp.ok) throw new Error(await contractResp.text());
+
+      // Create empty content.md
+      const contentResp = await fetch("/api/ingestion/file", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: `${draftPath}/content.md`, content: "# " + params.title + "\n\nStart writing..." }),
+      });
+      if (!contentResp.ok) throw new Error(await contentResp.text());
+
+      setShowCreateDraftModal(false);
+      // Refresh browse data to show the new draft
+      await handleLoadDirectory("cms/drafts");
+      // Navigate to visual editor
+      navigate(`/cms/editor/${encodeURIComponent(draftPath)}`);
+    } catch (err) {
+      console.error("Failed to create visual draft:", err);
+      setLastSaveMessage(err instanceof Error ? err.message : "Failed to create draft");
+    } finally {
+      setCreatingDraft(false);
+    }
+  }, [navigate, handleLoadDirectory]);
+
   const handlePublishToggle = useCallback(async () => {
     if (!editorTitle.trim() || !selectedGardenId) {
       setLastSaveMessage("Select a garden");
@@ -432,11 +711,46 @@ function CmsPage() {
 
     const nextState = isPublishedToSelectedGarden ? "draft" : "published";
     try {
-      const savedPath = await persistEditorFile();
-      if (!savedPath) return;
-      const docId = cmsDocId ?? (await upsertCmsDocument(savedPath));
-      const endpoint = `/api/openplanner/v1/cms/publish/${encodeURIComponent(docId)}/${encodeURIComponent(selectedGardenId)}`;
-      const resp = await fetch(endpoint, { method: isPublishedToSelectedGarden ? "DELETE" : "POST" });
+      const docId = cmsDocId ?? null;
+      let savedPath = editorPath;
+      let publishDocId = docId;
+      if (publishDocId) {
+        if (isDirty) await persistCmsDocumentOnly();
+      } else if (cmsMetadata.block_schema_version === 1) {
+        const sourcePath = editorPath ?? `cms/${editorTitle.trim().replace(/[\\/]+/g, "-") || "untitled"}.md`;
+        const resp = await fetch("/api/openplanner/v1/cms/documents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: editorTitle.trim() || "Untitled",
+            content: editorBody,
+            source_path: sourcePath,
+            visibility: "review",
+            garden_id: selectedGardenId,
+            defer_index: true,
+            metadata: {
+              ...cmsMetadata,
+              garden_id: selectedGardenId,
+            },
+          }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        const doc = (await resp.json()) as CmsDocSummary;
+        applyCmsDocumentToEditor(doc, sourcePath);
+        publishDocId = doc.doc_id;
+        savedPath = sourcePath;
+      } else {
+        savedPath = await persistEditorFile();
+        if (!savedPath) return;
+        publishDocId = await upsertCmsDocument(savedPath);
+      }
+      const query = isPublishedToSelectedGarden ? "" : "?skip_translation=true&defer_index=true";
+      const endpoint = `/api/openplanner/v1/cms/publish/${encodeURIComponent(publishDocId)}/${encodeURIComponent(selectedGardenId)}${query}`;
+      const resp = await fetch(endpoint, {
+        method: isPublishedToSelectedGarden ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
       if (!resp.ok) {
         const text = await resp.text();
         let softSuccess = false;
@@ -455,7 +769,9 @@ function CmsPage() {
           throw new Error(text);
         }
       }
-      await syncCmsDocumentByPath(savedPath);
+      if (savedPath) await syncCmsDocumentByPath(savedPath);
+      if (publishDocId) await handleOpenCmsDocument(publishDocId);
+      await loadCmsDocuments();
       const nextGardenIds = isPublishedToSelectedGarden
         ? publishedGardenIds.filter((gardenId) => gardenId !== selectedGardenId)
         : [...new Set([...publishedGardenIds, selectedGardenId])];
@@ -467,9 +783,17 @@ function CmsPage() {
       setLastSaveMessage(nextState === "published" ? "Publish failed" : "Unpublish failed");
     }
   }, [
+    applyCmsDocumentToEditor,
     cmsDocId,
+    cmsMetadata,
+    editorBody,
     editorTitle,
     isPublishedToSelectedGarden,
+    editorPath,
+    handleOpenCmsDocument,
+    isDirty,
+    loadCmsDocuments,
+    persistCmsDocumentOnly,
     persistEditorFile,
     publishedGardenIds,
     selectedGardenId,
@@ -550,6 +874,13 @@ function CmsPage() {
   const activeEntryCount = filteredEntries.filter((e) => e.type === "file").length;
   const currentPath = browseData?.current_path ?? "";
   const currentParentPath = currentPath.includes("/") ? currentPath.split("/").slice(0, -1).join("/") : "";
+  const blockSchemaVersion = cmsMetadata.block_schema_version === 1 ? 1 : null;
+  const publicationBlocks = useMemo(
+    () => (blockSchemaVersion === 1 ? extractPublicationBlocks(cmsMetadata) : []),
+    [blockSchemaVersion, cmsMetadata],
+  );
+  const hasPublicationBlocks = publicationBlocks.length > 0;
+  const publicationKind = typeof cmsMetadata.publication_kind === "string" ? cmsMetadata.publication_kind : null;
 
   return (
     <div style={{ display: "flex", flex: "1 1 0%", gap: 0, minHeight: 0 }}>
@@ -577,10 +908,12 @@ function CmsPage() {
             setEditorPath(currentPath ? `${currentPath}/untitled.md` : "untitled.md");
             setEditorStatus("draft");
             setCmsDocId(null);
+            setCmsMetadata({});
             setPublishedGardenIds([]);
             setIsDirty(true);
             setLastSaveMessage(null);
           }}
+          onNewVisualDraft={() => setShowCreateDraftModal(true)}
           onStartSidebarPaneResize={startSidebarPaneResize}
           onStartSidebarWidthResize={startSidebarWidthResize}
           currentPath={currentPath}
@@ -623,16 +956,13 @@ function CmsPage() {
           onUnpinContextItem={chat.unpinContextItem}
           onPinSemanticResult={chat.pinSemanticResult}
         />
-      ) : null}
+      ) : (
+        <CollapsedPanelTab label="Files" edge="left" onExpand={() => setShowFiles(true)} title="Show Files panel" />
+      )}
 
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", minWidth: 0 }}>
         <header className={styles.header}>
           <div className={styles.titleRow}>
-            {!showFiles && (
-              <Button variant="ghost" size="sm" onClick={() => setShowFiles(true)}>
-                Files
-              </Button>
-            )}
             <div className={styles.pathEditor}>
               <span className={styles.pathPrefix}>{editorPath ? editorDirectory || "./" : ""}</span>
               <input
@@ -656,6 +986,15 @@ function CmsPage() {
                 <button className={styles.publishButton} onClick={() => void handlePublishToggle()} disabled={isSaving || !selectedGardenId}>
                   {isSaving ? (isPublishedToSelectedGarden ? "Unpublishing…" : "Publishing…") : isPublishedToSelectedGarden ? "Unpublish" : "Publish"}
                 </button>
+                {editorPath?.includes("view-contract.edn") ? (
+                  <button
+                    className={styles.visualEditorButton}
+                    onClick={() => navigate(`/cms/editor/${encodeURIComponent(editorPath.replace(/\/view-contract\.edn$/, ""))}`)}
+                    style={{ marginLeft: "8px", padding: "6px 12px", background: "#8b5cf6", color: "#fff", border: "none", borderRadius: "6px", fontSize: "13px", cursor: "pointer" }}
+                  >
+                    Visual Editor
+                  </button>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -683,6 +1022,35 @@ function CmsPage() {
             </select>
           </div>
         </div>
+
+        <section className={styles.cmsDocumentStrip}>
+          <div className={styles.cmsDocumentStripHeader}>
+            <span>Garden CMS documents</span>
+            <button type="button" className={styles.inlineButton} onClick={() => void loadCmsDocuments()} disabled={loadingCmsDocuments || !selectedGardenId}>
+              {loadingCmsDocuments ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+          {!selectedGardenId ? (
+            <div className={styles.cmsDocumentEmpty}>Select a garden to see its CMS drafts and publications.</div>
+          ) : cmsDocuments.length === 0 ? (
+            <div className={styles.cmsDocumentEmpty}>No CMS documents found for this garden yet.</div>
+          ) : (
+            <div className={styles.cmsDocumentList}>
+              {cmsDocuments.map((doc) => (
+                <button
+                  key={doc.doc_id}
+                  type="button"
+                  className={`${styles.cmsDocumentChip} ${doc.doc_id === cmsDocId ? styles.cmsDocumentChipActive : ""}`}
+                  onClick={() => void handleOpenCmsDocument(doc.doc_id)}
+                  title={doc.source_path ?? doc.title}
+                >
+                  <span>{doc.title}</span>
+                  <small>{doc.visibility ?? "internal"}</small>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
 
         <div className={styles.editorLayout}>
           <main className={styles.bodyEditor}>
@@ -713,36 +1081,86 @@ function CmsPage() {
               </div>
             )}
           </main>
+          {editorPath ? (
+            <aside className={styles.previewPane}>
+              <div className={styles.previewHeader}>
+                <span>{hasPublicationBlocks ? "Rendered output: block publication" : "Rendered output: markdown"}</span>
+                {publicationKind ? <Badge variant="default">{publicationKind}</Badge> : null}
+              </div>
+              <div className={styles.previewBody}>
+                {hasPublicationBlocks ? (
+                  <PublicationBlocksRenderer
+                    blocks={publicationBlocks}
+                    getAudioUrl={(path) => `/api/studio/stream?path=${encodeURIComponent(path)}`}
+                    maxInitialPlaylistTracks={100}
+                  />
+                ) : editorBody.trim() ? (
+                  <div className={styles.markdownPreview}>
+                    <ReactMarkdown>{editorBody}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <div className={styles.emptyPreview}>Preview appears here once the document has content.</div>
+                )}
+              </div>
+            </aside>
+          ) : null}
         </div>
       </div>
 
-      <aside
-        style={{
-          width: 460,
-          minWidth: 380,
-          borderLeft: "1px solid var(--token-colors-border-default)",
-          display: "flex",
-          minHeight: 0,
-          overflow: "hidden",
-          background: "var(--token-colors-background-surface)",
-        }}
-      >
-        <ChatWorkspacePane
-          controller={chat}
-          showFiles={showFiles}
-          showCanvasToggle={false}
-          onShowFiles={() => setShowFiles(true)}
-          onOpenHydrationSource={(source) =>
-            handleOpenFile({
-              name: source.title || source.path.split("/").pop() || source.path,
-              path: source.path,
-              type: "file",
-              previewable: true,
-            })
-          }
-          onOpenSourceInPreview={handleOpenChatSource}
-        />
-      </aside>
+      {showChatPanel ? (
+        <aside
+          style={{
+            width: 460,
+            minWidth: 380,
+            borderLeft: "1px solid var(--token-colors-border-default)",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            overflow: "hidden",
+            background: "var(--token-colors-background-surface)",
+          }}
+        >
+          <div style={{
+            padding: "8px 10px",
+            borderBottom: "1px solid var(--token-colors-border-default)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            flexShrink: 0,
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>CMS Chat</div>
+            <Button variant="ghost" size="sm" onClick={() => setShowChatPanel(false)} title="Collapse CMS Chat panel">
+              Collapse
+            </Button>
+          </div>
+          <ChatWorkspacePane
+            controller={chat}
+            showFiles={showFiles}
+            showCanvasToggle={false}
+            onShowFiles={() => setShowFiles(true)}
+            onOpenHydrationSource={(source) =>
+              handleOpenFile({
+                name: source.title || source.path.split("/").pop() || source.path,
+                path: source.path,
+                type: "file",
+                previewable: true,
+              })
+            }
+            onOpenSourceInPreview={handleOpenChatSource}
+          />
+        </aside>
+      ) : (
+        <CollapsedPanelTab label="CMS Chat" edge="right" onExpand={() => setShowChatPanel(true)} title="Show CMS Chat panel" />
+      )}
+
+      <CreateVisualDraftModal
+        open={showCreateDraftModal}
+        onClose={() => setShowCreateDraftModal(false)}
+        onCreate={handleCreateVisualDraft}
+        templates={cmsTemplates}
+        isCreating={creatingDraft}
+      />
     </div>
   );
 }

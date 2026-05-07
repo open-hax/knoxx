@@ -19,8 +19,9 @@ Use voice.tts to synthesize a short spoken message (2-3 sentences). Vary your de
 After generating audio, use workspace_media.attach to embed it, then post to Discord channel 1444189585373663417 using discord.send.
 
 Postprocess profile: narrator (clear, steady, broadcast-quality).
-Voice: alloy.
-Model: kokoro (preferred), fall back to melo/espeak if needed.
+Voice: af_jessica.
+Speed: 1.15.
+Model: kokoro (preferred), fall back to espeak only if needed.
 
 Keep it brief. Speak. Then rest until the next pulse."
   :task
@@ -28,7 +29,7 @@ Keep it brief. Speak. Then rest until the next pulse."
 
 1. GENERATE a short TTS message (2-3 sentences max)
 2. VARIATION: rotate between time-announcements, machine haikus, heartbeat confirmations
-3. SYNTHESIZE via voice.tts with postprocess_profile=narrator, voice_id=alloy
+3. SYNTHESIZE via voice.tts with postprocess_profile=narrator, voice_id=af_jessica
 4. ATTACH the audio via workspace_media.attach
 5. POST to Discord channel 1444189585373663417
 6. LOG the pulse timestamp to :data/last_pulse

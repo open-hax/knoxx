@@ -2,6 +2,7 @@
   (:refer-clojure :exclude [set])
   (:require [clojure.string :as str]
             ["node:crypto" :as crypto]
+            ["nodemailer" :default nodemailer]
             ["redis" :as redis]))
 
 
@@ -581,10 +582,9 @@
 
    IMPORTANT: This function MUST always return a Promise, so callers can safely
    attach .catch even when email sending is disabled/unconfigured."
-  [runtime invite email public-base-url]
+  [_runtime invite email public-base-url]
   (try
-    (let [nodemailer (aget runtime "nodemailer")
-          smtp-host (str (or (aget (.-env js/process) "KNOXX_SMTP_HOST") ""))
+    (let [smtp-host (str (or (aget (.-env js/process) "KNOXX_SMTP_HOST") ""))
           smtp-port (js/parseInt (or (aget (.-env js/process) "KNOXX_SMTP_PORT") "587") 10)
           smtp-user (str (or (aget (.-env js/process) "KNOXX_SMTP_USER") ""))
           smtp-pass (str (or (aget (.-env js/process) "KNOXX_SMTP_PASS") ""))
@@ -596,8 +596,7 @@
                          (.set (.-searchParams u) "email" (str email))
                          (.toString u))
                        (catch :default _ ""))]
-      (if (or (not nodemailer)
-              (str/blank? smtp-host)
+      (if (or (str/blank? smtp-host)
               (str/blank? from)
               (str/blank? smtp-user)
               (str/blank? smtp-pass)

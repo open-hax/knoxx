@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.stores.session-store-registry :as store-registry]
             [knoxx.backend.http :as backend-http]
+            [knoxx.backend.quality-labels :as quality-labels]
             [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.util.time :as time]))
 
@@ -223,12 +224,14 @@
 (defn- default-memory-hit?
   [hit]
   (and (not (reasoning-memory-hit? hit))
-       (not (operational-failure-memory-hit? hit))))
+       (not (operational-failure-memory-hit? hit))
+       (quality-labels/not-bad? hit)))
 
 (defn- default-memory-hits
   [hits limit]
   (->> (or hits [])
        (filter default-memory-hit?)
+       quality-labels/good-first-then-not-bad
        (take limit)
        vec))
 

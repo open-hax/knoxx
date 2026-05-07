@@ -126,7 +126,9 @@
               {:headers headers
                :body (json/generate-string payload)
                :as :json
-               :socket-timeout 60000
+               ;; Large source-backed documents may require many embedding chunks
+               ;; before OpenPlanner responds; keep the client timeout above nginx.
+               :socket-timeout 300000
                :connection-timeout 60000
                :throw-exceptions false})
         graph-events (graph/collect-devel-graph-events

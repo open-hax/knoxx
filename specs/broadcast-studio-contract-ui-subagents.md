@@ -360,22 +360,33 @@ Remaining verification:
 
 ### Phase 3 — Primary Broadcast Studio agent
 
-- Add `broadcast_studio_primary` contract using `gemma4:31b`.
-- Bind `broadcast_studio` actor default agent to primary.
-- Give primary agent read-only studio/media/label tools first.
+Partially implemented 2026-05-06:
 
-Verification:
+- Existing `broadcast_studio_default` (`gemma4:31b`) was upgraded into the page primary/orchestrator prompt.
+- The primary prompt now explicitly names the audio sub-agents and the mixed-library taxonomy: music, sound effects, ambience, spoken word, drops, bumpers, generated songs, and production assets.
+- The contract declares `:sub-agents` and `:data :audio-sub-agent-contracts` for the three audio sub-agent ids.
 
-- embedded chat starts as primary agent;
-- primary can discuss current track metadata/state without writing.
+Remaining:
+
+- Add/read-only studio/media/label tools to the primary agent in a policy-safe way.
+- Verify embedded chat primary can inspect current track metadata and label state without writing.
 
 ### Phase 4 — Sub-agent invocation tool
 
-- Implement narrow `agent.sub_agent.invoke` tool/action.
-- Restrict primary agent to allowed audio sub-agent contracts.
+Partially implemented 2026-05-06:
+
+- Added sub-agent contract wrappers for:
+  - `broadcast_studio_audio_transcriber`
+  - `broadcast_studio_audio_describer`
+  - `broadcast_studio_audio_labeler`
+- These mirror the lean `gemma4:e4b` audio contracts and keep parent capabilities `:none`.
+
+Remaining:
+
+- Wire the primary agent to invoke these sub-agents from chat/tool flow with the current audio bytes.
 - Return child run output as structured tool result and chat evidence.
 
-Verification:
+Verification remaining:
 
 - primary agent calls transcriber/describer/labeler on current audio;
 - child runs log `media_parts_count=1`, `omitted_count=0`;

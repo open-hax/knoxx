@@ -76,9 +76,16 @@
       "discord.js"
       "@discordjs/voice"
       "libsodium-wrappers"}},
+   :devtools
+   {:autoload true,
+    ;; This codebase has existing infer warnings; without ignore-warnings,
+    ;; shadow compiles but refuses to hot-load changed code.
+    :ignore-warnings true,
+    :before-load-async knoxx.backend.bootstrap/stop-http-before-load!,
+    :after-load-async knoxx.backend.bootstrap/start-http-after-load!},
    :compiler-options
    {:output-feature-set :es-next,
-    :optimizations :simple,
+    :optimizations :none,
     :source-map true,
     :infer-externs :auto,
     :macros {:knoxx.backend.macros true},

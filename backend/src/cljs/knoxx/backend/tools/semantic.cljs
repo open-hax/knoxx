@@ -7,7 +7,9 @@
             [knoxx.backend.openplanner-memory :refer [openplanner-semantic-search!]]
             [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around tool-text-result semantic-search-result-text semantic-read-result-text openplanner-semantic-search-text]]
             [knoxx.backend.tools.media :refer [path-relative path-basename path-resolve path-is-absolute? fs-read-file!]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as node-path]))
 
 (def query-params
   [:map
@@ -81,8 +83,6 @@
    (let [profile (active-agent-profile runtime config auth-context)
          db-id (:id profile)
          docs-path (:docsPath profile)
-         node-fs (aget runtime "fs")
-         node-path (aget runtime "path")
          tokens (search-tokens query)
          top-k (max 1 (min 10 (or top-k 5)))
          max-snippet-chars (max 160 (min 1200 (or max-snippet-chars 320)))]
@@ -97,7 +97,7 @@
                     runtime
                     config
                     db-id
-                    node-fs
+                    fs
                     query
                     tokens
                     max-snippet-chars))))
@@ -114,15 +114,13 @@
   ([runtime config opts] (semantic-read-document! runtime config opts nil))
   ([runtime config {:keys [path max-chars]} auth-context]
    (let [profile (active-agent-profile runtime config auth-context)
-         node-fs (aget runtime "fs")
-         node-path (aget runtime "path")
          rel-path (normalize-relative-path path)
          abs-path (path-resolve node-path (:docsPath profile) rel-path)
          rel-to-root (path-relative node-path (:docsPath profile) abs-path)
          max-chars (max 500 (min 20000 (or max-chars 6000)))]
      (if (or (str/starts-with? rel-to-root "..") (path-is-absolute? node-path rel-to-root))
        (js/Promise.reject (js/Error. "Path escapes active docs root"))
-       (-> (fs-read-file! node-fs abs-path "utf8")
+       (-> (fs-read-file! fs abs-path "utf8")
            (.then (fn [content]
                     (let [cleaned (if (re-find #"(?i)\.svg$" rel-path)
                                     (sanitize-svg-content content)

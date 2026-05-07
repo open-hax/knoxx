@@ -2,7 +2,9 @@
   "Workspace media attachment tools."
   (:require [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.tools.media :as media]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]))
 
 (def attach-params
   [:map
@@ -10,24 +12,22 @@
    [:title {:optional true :description "Optional human-readable label for the attachment."} :string]])
 
 (defn attach-execute [runtime config _tool-call-id params a b c]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         raw-path (or (aget params "path") "")
         title (media/normalize-tool-path-arg (aget params "title"))
         {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config raw-path)
         mime-type (media/workspace-media-mime-type relative)
-        filename (media/path-basename node-path absolute)]
+        filename (media/path-basename path absolute)]
     (when-not mime-type
       (throw (js/Error. (str "Unsupported workspace media type for " relative ". Supported formats: images, audio, video, pdf, txt, md, csv, json."))))
     (maybe-tool-update! on-update (str "Attaching workspace file " relative "…"))
-    (-> (media/fs-stat! node-fs absolute)
+    (-> (media/fs-stat! fs absolute)
         (.then (fn [stat]
                  (when-not (.isFile stat)
                    (throw (js/Error. (str relative " is not a file"))))
                  (when (> (.-size stat) media/workspace-media-max-bytes)
                    (throw (js/Error. (str "File exceeds " media/workspace-media-max-bytes " bytes. Choose a smaller file or summarize it instead."))))
-                 (media/fs-read-file! node-fs absolute)))
+                 (media/fs-read-file! fs absolute)))
         (.then (fn [buffer]
                  (let [size (.-length buffer)
                        data-url (str "data:" mime-type ";base64," (.toString buffer "base64"))

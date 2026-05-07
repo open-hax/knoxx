@@ -22,9 +22,16 @@
  :source-kind :discord,
  :cadence-min 30,
  :enabled true,
+
+ :context {:max-messages 10000
+           :max-chars 3500000
+           :preserve-system true}
  :data
  {:filters
   {:channels ["1444189585373663417" "1444150910950576229"],
    :keywords
    ["change" "fix" "add" "remove" "update" "system-request"]},
-  :source {:max-messages 200}}}
+  :source {:max-messages 200
+           :stickySession true
+           :streamingBehavior "steer"
+           :sessionMaxMessages 10000}}}

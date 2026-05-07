@@ -1,0 +1,77 @@
+{:view/id "error-coded-radio"
+ :view/title "Error Coded Radio"
+ :view/kind :playlist-page
+ :view/schema-version 1
+ :view/status :draft
+
+ :source
+ {:kind :markdown-import
+  :path "docs/notes/error-coded-radio.md"
+  :imported-at "2026-05-07T20:00:00Z"}
+
+ :garden
+ {:id "sonic"
+  :visibility :review}
+
+ :layout
+ {:template :studio-playlist-page
+  :zones
+  [{:id :hero
+    :label "Hero"
+    :accepts [:hero :rich-text :image]}
+   {:id :main
+    :label "Main content"
+    :accepts [:rich-text :playlist :track :callout :cta]}
+   {:id :aside
+    :label "Sidebar"
+    :accepts [:chat :labels :related-links]}]}
+
+ :blocks
+ [{:id "hero"
+   :type :hero
+   :zone :hero
+   :props
+   {:title "Error Coded Radio"
+    :subtitle "A playlist from Broadcast Studio"}}
+
+  {:id "intro"
+   :type :rich-text
+   :zone :main
+   :source {:kind :file :path "content.md"}}
+
+  {:id "playlist"
+   :type :playlist
+   :zone :main
+   :props
+   {:title "Signal Queue"
+    :description "Curated transmissions for the late shift."
+    :layout :cards
+    :tracks
+    [{:path "audio/a.mp3"
+      :title "Track A"
+      :duration 180
+      :labels ["broadcast" "ambient"]
+      :description "Opening transmission."}
+     {:path "audio/b.mp3"
+      :title "Track B"
+      :duration 240
+      :labels ["broadcast" "drop"]
+      :description "Main sequence."}]
+    :show_labels true
+    :show_descriptions true
+    :show_duration true}}]
+
+ :editor
+ {:locked false
+  :allowed-actions [:drag :drop :duplicate :hide :delete :edit-props]
+  :default-panel :layout}
+
+ :publishing
+ {:last-published-at nil
+  :defer-index true
+  :skip-translation true}
+
+ :settings
+ {:language "en"
+  :allow-comments true
+  :chat-actor-id nil}}

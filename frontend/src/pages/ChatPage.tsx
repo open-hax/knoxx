@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { CollapsedPanelTab } from "../components/CollapsedPanelTab";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
 import { ContextBar } from "../components/context-bar";
@@ -87,7 +88,9 @@ function ChatPage() {
           onSessionActorFilterChange={chat.setSessionActorFilter}
           onExcludeEtaMuSessionsChange={chat.setExcludeEtaMuSessions}
         />
-      ) : null}
+      ) : (
+        <CollapsedPanelTab label="Files" edge="left" onExpand={() => setShowFiles(true)} title="Show Files panel" />
+      )}
 
       <ChatWorkspacePane controller={chat} showFiles={showFiles} onShowFiles={() => setShowFiles(true)} />
     </div>

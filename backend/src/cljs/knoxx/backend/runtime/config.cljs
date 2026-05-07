@@ -103,8 +103,9 @@
    ;; Voice / speech
    :voxx-url (env "VOXX_URL" "http://127.0.0.1:8787")
    :voxx-api-key (env "VOICE_GATEWAY_API_KEY" "dev-token")
-   :voxx-voice-id (env "KNOXX_VOXX_VOICE_ID" "alloy")
+   :voxx-voice-id (env "KNOXX_VOXX_VOICE_ID" "af_jessica")
    :voxx-model-id (env "KNOXX_VOXX_MODEL_ID" "kokoro")
+   :voxx-default-speed (env "KNOXX_VOXX_DEFAULT_SPEED" (env "VOICE_GATEWAY_TTS_DEFAULT_SPEED" "1.15"))
    :stt-base-url (env "KNOXX_STT_BASE_URL" "")
 
    ;; eta-mu agent runtime dir

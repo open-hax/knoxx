@@ -4,7 +4,9 @@ import { AGENTS_ROUTE, EVENTS_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, i
 import AuthBoundary from "./pages/AuthContext";
 import { useAuth } from "./pages/useAuth";
 import ChatPage from "./pages/ChatPage";
+import MailPage from "./pages/MailPage";
 import CmsPage from "./pages/CmsPage";
+import { VisualCmsEditorPage } from "./pages/VisualCmsEditorPage";
 import ContractsPage from "./pages/ContractsPage";
 import DataPage from "./pages/DataPage";
 import GardensPage from "./pages/GardensPage";
@@ -43,6 +45,9 @@ function AppShell() {
           <nav className="app-shell__nav" aria-label="Primary">
             <NavLink to="/" className={navLinkClass}>
               Chat
+            </NavLink>
+            <NavLink to="/mail" className={navLinkClass}>
+              Mail
             </NavLink>
             <NavLink to="/studio" className={navLinkClass}>
               Studio
@@ -86,8 +91,10 @@ function AppShell() {
         <Routes>
           {/* Regular pages */}
           <Route path="/" element={<ChatPage />} />
+          <Route path="/mail" element={<MailPage />} />
           <Route path="/studio" element={<ProtectedSurface><BroadcastStudioPage /></ProtectedSurface>} />
           <Route path="/cms" element={<ProtectedSurface><CmsPage /></ProtectedSurface>} />
+          <Route path="/cms/editor/*" element={<ProtectedSurface><VisualCmsEditorPage /></ProtectedSurface>} />
           <Route path="/contracts" element={<ProtectedSurface><ContractsPage /></ProtectedSurface>} />
           <Route path="/data" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />
           <Route path="/data/:tab" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />

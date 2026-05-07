@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { useLocation } from "react-router-dom";
 import { Badge, Button, Card, Markdown } from "@open-hax/uxx";
 import { abortAdminActiveAgent, getAgentHistorySession, getRun, listActiveAgents, listAdminActiveAgents, listMemorySessions, searchMemory } from "../../lib/api/common";
 import { getAgentContractsCatalog, getRunEvents, getSessionStatus } from "../../lib/api/runtime";
@@ -460,6 +461,15 @@ export default function AgentAuditLogs({
   builtInContractId,
   className,
 }: AgentAuditLogsProps) {
+  const location = useLocation();
+  const focus = useMemo(() => {
+    const query = new URLSearchParams(location.search);
+    return {
+      runId: query.get("run") ?? query.get("runId"),
+      sessionId: query.get("session") ?? query.get("sessionId") ?? query.get("conversation") ?? query.get("conversationId"),
+    };
+  }, [location.search]);
+
   const [mode, setMode] = useState<AgentAuditLogsMode>(defaultMode);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
@@ -537,10 +547,10 @@ export default function AgentAuditLogs({
   useEffect(() => {
     const nextIds = filteredSessions.map((session) => session.session);
     setSelectedSessionId((current) => {
-      if (current && nextIds.includes(current)) return current;
+      if (current && (nextIds.includes(current) || focus.runId || focus.sessionId)) return current;
       return nextIds[0] ?? null;
     });
-  }, [filteredSessions]);
+  }, [filteredSessions, focus.runId, focus.sessionId]);
 
   const loadActiveRuns = useCallback(async () => {
     try {
@@ -619,6 +629,40 @@ export default function AgentAuditLogs({
 
   useEffect(() => {
     let cancelled = false;
+    const runId = focus.runId?.trim();
+    const sessionId = focus.sessionId?.trim();
+
+    if (runId) {
+      setMode("history");
+      setAutoRefresh(false);
+      setLoadingRows(true);
+      getRun(runId)
+        .then((run) => {
+          if (cancelled) return;
+          setSelectedSessionId(run.conversation_id ?? run.session_id ?? run.run_id);
+          setItems(runDetailToAuditItems(run));
+          setSemanticHits([]);
+          setError(null);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingRows(false);
+        });
+    } else if (sessionId) {
+      setMode("history");
+      setAutoRefresh(false);
+      setSelectedSessionId(sessionId);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [focus.runId, focus.sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
     getAgentContractsCatalog()
       .then((catalog) => {
         if (cancelled) return;
@@ -666,6 +710,7 @@ export default function AgentAuditLogs({
     let cancelled = false;
 
     const load = async () => {
+      if (focus.runId) return;
       if (!selectedSessionId) {
         setItems([]);
         setSemanticHits([]);
@@ -739,7 +784,7 @@ export default function AgentAuditLogs({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedSessionId, autoRefresh, selectedActiveRun]);
+  }, [selectedSessionId, autoRefresh, selectedActiveRun, focus.runId]);
 
   const filteredItems = useMemo(() => {
     if (!effectiveRowsQuery) return items;

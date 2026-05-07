@@ -6,7 +6,6 @@
             [knoxx.backend.routes.contracts :as contracts-routes]
             [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.mcp-bridge :as mcp]
-            [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.realtime :as realtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-resume :as agent-resume]
@@ -14,7 +13,11 @@
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.session-titles :refer [load-session-titles!]]))
+            [knoxx.backend.session-titles :refer [load-session-titles!]]
+            ["fastify" :default Fastify]
+            ["@fastify/cors" :default fastifyCors]
+            ["@fastify/websocket" :default fastifyWebsocket]
+            ["@fastify/multipart" :default fastifyMultipart]))
 
 (defonce server* (atom nil))
 
@@ -113,18 +116,15 @@
   [runtime]
   (when-not @server*
     (let [config (runtime-models/enrich-config (runtime-config/cfg))
-          Fastify (aget runtime "Fastify")
-          fastify-cors (aget runtime "fastifyCors")
-          fastify-multipart (aget runtime "fastifyMultipart")
           app (Fastify #js {:logger #js {:stream (.-stderr js/process)}})]
       (reset! runtime-state/config* config)
       (reset! runtime-state/runtime* runtime)
       (ensure-settings! config)
       (-> (js/Promise.resolve nil)
           (.then (fn [] (load-session-titles! runtime config)))
-          (.then (fn [] (.register app fastify-cors #js {:origin true})))
-          (.then (fn [] (.register app fastify-multipart)))
-          (.then (fn [] (.register app (aget runtime "fastifyWebsocket"))))
+          (.then (fn [] (.register app fastifyCors #js {:origin true})))
+          (.then (fn [] (.register app fastifyMultipart)))
+          (.then (fn [] (.register app fastifyWebsocket)))
           (.then (fn []
                    (.register app
                               (fn [instance _opts done]

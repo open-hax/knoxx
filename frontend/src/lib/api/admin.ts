@@ -39,13 +39,41 @@ export async function listOrgUsers(orgId: string): Promise<{ users: AdminUserSum
 }
 
 export async function createOrgUser(orgId: string, payload: {
-  email: string;
+  actorId?: string;
+  email?: string;
   displayName: string;
   roleSlugs: string[];
   toolPolicies?: AdminToolPolicy[];
 }): Promise<{ user: AdminUserSummary | null }> {
   return request<{ user: AdminUserSummary | null }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/users`, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAdminActor(userId: string, payload: {
+  orgId: string;
+  actorId?: string;
+  email?: string;
+  displayName?: string;
+  status?: string;
+  authProvider?: string;
+  externalSubject?: string;
+}): Promise<{ user: AdminUserSummary | null }> {
+  return request<{ user: AdminUserSummary | null }>(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function upsertAdminActorCredential(userId: string, provider: string, payload: {
+  orgId: string;
+  kind: string;
+  accountIdentifier?: string;
+  credentials: Record<string, string>;
+}): Promise<{ credential: unknown }> {
+  return request<{ credential: unknown }>(`/api/admin/users/${encodeURIComponent(userId)}/credentials/${encodeURIComponent(provider)}`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }

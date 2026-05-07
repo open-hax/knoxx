@@ -181,6 +181,10 @@
       :parent-agent-id (:id (:parent-job sub-agent-config))
       :parentRunId (:parent-run-id sub-agent-config)
       :parent-run-id (:parent-run-id sub-agent-config)
+      :parentConversationId (:parent-conversation-id sub-agent-config)
+      :parent-conversation-id (:parent-conversation-id sub-agent-config)
+      :parentSessionId (:parent-session-id sub-agent-config)
+      :parent-session-id (:parent-session-id sub-agent-config)
       :spawnKind "sub-agent"
       :spawn-kind "sub-agent"
       :parentCapabilitiesMode (:sub-agent/parent-capabilities sub-agent-contract)})))
@@ -200,7 +204,16 @@
         result-key (or (:result-key sub-agent-config) (id->string sub-agent-id))
         sub-agent-config (assoc sub-agent-config
                                 :parent-job parent-job
-                                :parent-run-id (get-in parent-job [:data :run-id]))
+                                :parent-run-id (or (get-in parent-job [:data :run-id])
+                                                   (get-in parent-job [:data :run_id]))
+                                :parent-conversation-id (or (get-in parent-job [:data :conversation-id])
+                                                            (get-in parent-job [:data :conversation_id])
+                                                            (get-in parent-event [:payload :conversationId])
+                                                            (get-in parent-event [:payload :conversation_id]))
+                                :parent-session-id (or (get-in parent-job [:data :session-id])
+                                                       (get-in parent-job [:data :session_id])
+                                                       (get-in parent-event [:payload :sessionId])
+                                                       (get-in parent-event [:payload :session_id])))
         agent-spec (merge-sub-agent-spec config parent-spec sub-agent-config sub-agent-contract full-system-prompt task-prompt)
         spawn-id (str "sub-agent-" (id->string sub-agent-id) "-" (:id parent-job) "-" (.now js/Date))
         timeout-ms (or (:sub-agent/timeout-ms sub-agent-contract)
