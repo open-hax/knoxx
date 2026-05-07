@@ -86,7 +86,27 @@
         context-policy (or (:context_policy spec)
                            (:context-policy spec)
                            (:contextPolicy spec)
-                           (:context spec))]
+                           (:context spec))
+        sub-agent-id (some-> (or (:sub_agent_id spec)
+                                 (:sub-agent-id spec)
+                                 (:subAgentId spec))
+                             str
+                             not-empty)
+        parent-agent-id (some-> (or (:parent_agent_id spec)
+                                    (:parent-agent-id spec)
+                                    (:parentAgentId spec))
+                                str
+                                not-empty)
+        parent-run-id (some-> (or (:parent_run_id spec)
+                                  (:parent-run-id spec)
+                                  (:parentRunId spec))
+                              str
+                              not-empty)
+        spawn-kind (some-> (or (:spawn_kind spec)
+                               (:spawn-kind spec)
+                               (:spawnKind spec))
+                           str
+                           not-empty)]
     (cond-> {}
       contract-id (assoc :contract-id contract-id)
       actor-id (assoc :actor-id actor-id)
@@ -98,7 +118,11 @@
       (seq tool-policies) (assoc :tool-policies tool-policies)
       resource-policies (assoc :resource-policies resource-policies)
       memory-hydration (assoc :memory-hydration memory-hydration)
-      context-policy (assoc :context-policy context-policy))))
+      context-policy (assoc :context-policy context-policy)
+      sub-agent-id (assoc :sub-agent-id sub-agent-id)
+      parent-agent-id (assoc :parent-agent-id parent-agent-id)
+      parent-run-id (assoc :parent-run-id parent-run-id)
+      spawn-kind (assoc :spawn-kind spawn-kind))))
 
 (defn direct-start-payload->turn-params
   [payload]

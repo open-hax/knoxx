@@ -115,6 +115,35 @@ function activeStatusTone(status: string): "default" | "success" | "warning" | "
   }
 }
 
+function specString(spec: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = spec[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function activeRunSubAgentId(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["subAgentId", "sub_agent_id", "sub-agent-id"]);
+}
+
+function activeRunParentAgentId(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["parentAgentId", "parent_agent_id", "parent-agent-id"]);
+}
+
+function activeRunRole(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["role"]);
+}
+
+function activeRunContractId(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["contractId", "contract_id", "contract-id"]);
+}
+
+function activeRunToolCount(run: ActiveAgentSummary): number {
+  const policies = run.agent_spec?.toolPolicies ?? run.agent_spec?.tool_policies ?? run.agent_spec?.["tool-policies"];
+  return Array.isArray(policies) ? policies.length : 0;
+}
+
 function activeRunSearchText(run: ActiveAgentSummary): string {
   return [
     run.run_id,
@@ -122,6 +151,10 @@ function activeRunSearchText(run: ActiveAgentSummary): string {
     run.conversation_id ?? "",
     run.status,
     run.model ?? "",
+    activeRunSubAgentId(run) ?? "",
+    activeRunParentAgentId(run) ?? "",
+    activeRunRole(run) ?? "",
+    activeRunContractId(run) ?? "",
     run.latest_user_message ?? "",
     JSON.stringify(run.agent_spec ?? {}),
   ]
@@ -130,14 +163,9 @@ function activeRunSearchText(run: ActiveAgentSummary): string {
 }
 
 function activeRunTitle(run: ActiveAgentSummary): string {
-  const agentSpec = run.agent_spec ?? {};
-  const contractId = agentSpec.contractId;
-  const contractIdSnake = agentSpec.contract_id;
-  const role = agentSpec.role;
-  const contract = typeof contractId === "string" ? contractId
-    : typeof contractIdSnake === "string" ? contractIdSnake
-      : null;
-  return contract ?? (typeof role === "string" ? role : null) ?? run.conversation_id ?? run.session_id ?? run.run_id;
+  const subAgentId = activeRunSubAgentId(run);
+  if (subAgentId) return `sub-agent ${subAgentId}`;
+  return activeRunContractId(run) ?? activeRunRole(run) ?? run.conversation_id ?? run.session_id ?? run.run_id;
 }
 
 // ── Semantic audit items (deduplicated) ────────────────────────────
@@ -353,6 +381,7 @@ function SessionRow({
   const status = activeStatusLabel(session);
   const contractId = session.contract_id;
   const actorId = session.actor_id;
+  const subAgentId = session.sub_agent_id;
 
   return (
     <button
@@ -374,6 +403,12 @@ function SessionRow({
       </div>
       <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
         <span>{session.event_count ?? 0} events</span>
+        {subAgentId ? (
+          <>
+            <span>•</span>
+            <span className="font-mono text-[11px] text-sky-300">sub-agent {subAgentId}</span>
+          </>
+        ) : null}
         {contractId ? (
           <>
             <span>•</span>
@@ -823,13 +858,28 @@ export default function AgentAuditLogs({
                   <div className="text-lg font-semibold text-slate-100">Agent audit logs</div>
                   <div className="mt-1 font-mono text-xs text-slate-400 break-all">{selectedSessionId}</div>
                   <div className="mt-2 text-xs text-slate-500">OpenPlanner session trace (knoxx-session).</div>
-                  {selectedSessionSummary?.contract_id || selectedSessionSummary?.actor_id ? (
+                  {selectedSessionSummary?.sub_agent_id || selectedSessionSummary?.contract_id || selectedSessionSummary?.actor_id || selectedActiveRun ? (
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-500">
+                      {selectedSessionSummary?.sub_agent_id ? (
+                        <span className="rounded bg-sky-950 px-2 py-1 font-mono text-sky-200">sub-agent {selectedSessionSummary.sub_agent_id}</span>
+                      ) : null}
+                      {selectedActiveRun && activeRunSubAgentId(selectedActiveRun) ? (
+                        <span className="rounded bg-sky-950 px-2 py-1 font-mono text-sky-200">sub-agent {activeRunSubAgentId(selectedActiveRun)}</span>
+                      ) : null}
+                      {selectedActiveRun?.model ? (
+                        <span className="rounded bg-violet-950 px-2 py-1 font-mono text-violet-200">model {selectedActiveRun.model}</span>
+                      ) : null}
+                      {selectedActiveRun && activeRunToolCount(selectedActiveRun) > 0 ? (
+                        <span className="rounded bg-emerald-950 px-2 py-1 font-mono text-emerald-200">{activeRunToolCount(selectedActiveRun)} tools</span>
+                      ) : null}
                       {selectedSessionSummary?.contract_id ? (
                         <span className="rounded bg-slate-950 px-2 py-1 font-mono text-slate-300">contract {selectedSessionSummary.contract_id}</span>
                       ) : null}
                       {selectedSessionSummary?.actor_id ? (
                         <span className="rounded bg-slate-950 px-2 py-1 font-mono text-slate-300">actor {selectedSessionSummary.actor_id}</span>
+                      ) : null}
+                      {selectedActiveRun && activeRunParentAgentId(selectedActiveRun) ? (
+                        <span className="rounded bg-slate-950 px-2 py-1 font-mono text-slate-300">parent {activeRunParentAgentId(selectedActiveRun)}</span>
                       ) : null}
                     </div>
                   ) : null}
@@ -862,6 +912,9 @@ export default function AgentAuditLogs({
                         const key = run.run_id || run.session_id || run.conversation_id || "active-agent";
                         const isSelected = Boolean(selectedSessionId && (run.conversation_id === selectedSessionId || run.session_id === selectedSessionId));
                         const isAborting = abortingRunId === key;
+                        const subAgentId = activeRunSubAgentId(run);
+                        const parentAgentId = activeRunParentAgentId(run);
+                        const toolCount = activeRunToolCount(run);
                         return (
                           <div
                             key={key}
@@ -875,12 +928,16 @@ export default function AgentAuditLogs({
                               >
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-sm font-semibold text-slate-100">{activeRunTitle(run)}</span>
+                                  <Badge size="sm" variant={subAgentId ? "info" : "default"}>{subAgentId ? "sub-agent" : "agent"}</Badge>
                                   <Badge size="sm" variant={activeStatusTone(run.status)}>{run.status}</Badge>
+                                  {run.model ? <Badge size="sm" variant={run.model === "gemma4:e4b" ? "success" : "default"}>{run.model}</Badge> : null}
+                                  {toolCount > 0 ? <Badge size="sm" variant="info">{toolCount} tools</Badge> : null}
                                   {run.has_active_stream ? <Badge size="sm" variant="info">stream</Badge> : null}
                                   {run.active_turn_registered ? <Badge size="sm" variant="warning">abortable</Badge> : null}
                                 </div>
                                 <div className="mt-1 break-all font-mono text-xs text-slate-400">{run.conversation_id ?? run.session_id ?? run.run_id}</div>
                                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                                  {parentAgentId ? <span>parent <span className="font-mono text-slate-400">{parentAgentId}</span></span> : null}
                                   {run.run_id ? <span>run <span className="font-mono text-slate-400">{run.run_id}</span></span> : null}
                                   {run.session_id ? <span>session <span className="font-mono text-slate-400">{run.session_id}</span></span> : null}
                                   {run.updated_at ? <span>updated {formatTimestamp(run.updated_at)}</span> : null}

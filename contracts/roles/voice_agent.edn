@@ -7,7 +7,8 @@
                      :cap/websearch
                      :cap/memory
                      :cap/semantic
-                     :cap/voice-synth]
+                     :cap/voice-synth
+                     :cap/agent-dispatch]
   :role/permissions []
   :prompts {:system "You are a voice-enabled Discord agent. You interact with users through voice channels — listening to what they say and speaking your responses.
 

@@ -175,6 +175,14 @@
       :tool-policies tool-policies
       :contextPolicy context-policy
       :context-policy context-policy
+      :subAgentId (:contract/id sub-agent-contract)
+      :sub-agent-id (:contract/id sub-agent-contract)
+      :parentAgentId (:id (:parent-job sub-agent-config))
+      :parent-agent-id (:id (:parent-job sub-agent-config))
+      :parentRunId (:parent-run-id sub-agent-config)
+      :parent-run-id (:parent-run-id sub-agent-config)
+      :spawnKind "sub-agent"
+      :spawn-kind "sub-agent"
       :parentCapabilitiesMode (:sub-agent/parent-capabilities sub-agent-contract)})))
 
 (defn- build-sub-agent-payload
@@ -190,7 +198,11 @@
         context-preamble (parent-context-preamble parent-job parent-event)
         full-system-prompt (str context-preamble system-prompt)
         result-key (or (:result-key sub-agent-config) (id->string sub-agent-id))
+        sub-agent-config (assoc sub-agent-config
+                                :parent-job parent-job
+                                :parent-run-id (get-in parent-job [:data :run-id]))
         agent-spec (merge-sub-agent-spec config parent-spec sub-agent-config sub-agent-contract full-system-prompt task-prompt)
+        spawn-id (str "sub-agent-" (id->string sub-agent-id) "-" (:id parent-job) "-" (.now js/Date))
         timeout-ms (or (:sub-agent/timeout-ms sub-agent-contract)
                        (:timeout-ms sub-agent-config)
                        30000)
@@ -198,6 +210,7 @@
                  (mode->keyword (:sub-agent/mode sub-agent-contract))
                  :fire-and-forget)]
     {:sub-agent-id (id->string sub-agent-id)
+     :job-id spawn-id
      :parent-id (:id parent-job)
      :parent-run-id (get-in parent-job [:data :run-id])
      :result-key result-key
@@ -222,8 +235,16 @@
 (defn- sub-agent-job
   [job payload]
   (-> job
+      (assoc :id (:job-id payload))
+      (assoc :name (str "Sub-agent: " (:sub-agent-id payload)))
+      (assoc :description (str "Sub-agent spawned by " (:parent-id payload)))
       (assoc :agentSpec (:agent-spec payload))
+      (assoc :contractSourceId nil)
+      (assoc :contractSourceKind "sub-agent")
+      (assoc :contractSourceKey (str "sub-agent:" (:sub-agent-id payload)))
+      (assoc-in [:source :config :stickySession] false)
       (assoc-in [:data :parent-id] (:parent-id payload))
+      (assoc-in [:data :parent-run-id] (:parent-run-id payload))
       (assoc-in [:data :sub-agent-id] (:sub-agent-id payload))
       (assoc-in [:data :result-key] (:result-key payload))
       (assoc-in [:data :shared-context] (:shared-context payload))))

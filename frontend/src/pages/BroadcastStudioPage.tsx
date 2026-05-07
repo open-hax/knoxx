@@ -98,31 +98,31 @@ interface CreateLabelResponse {
   label: LabelNode;
 }
 
+interface BroadcastStudioUiAction {
+  id: string;
+  label: string;
+  kind?: string;
+  intent?: string;
+  enabled?: boolean;
+  mode?: string;
+  agent?: {
+    actorId?: string;
+    contractId?: string;
+    model?: string;
+  };
+}
+
+interface BroadcastStudioUiActionsResponse {
+  actor_id?: string;
+  surface?: string;
+  default_agent_id?: string;
+  actions?: BroadcastStudioUiAction[];
+}
+
 const OPENPLANNER_BASE = "/api/openplanner/v1";
 
-const BROADCAST_STUDIO_AUDIO_TASK_ACTOR_ID = "broadcast_studio_audio_task";
+const BROADCAST_STUDIO_PAGE_ACTOR_ID = "broadcast_studio";
 const BROADCAST_STUDIO_LABELER_CONTRACT_ID = "broadcast_studio_audio_labeler";
-
-const BROADCAST_STUDIO_AGENT_ACTIONS = [
-  {
-    id: "transcript",
-    label: "📝 Transcript",
-    contractId: "broadcast_studio_audio_transcriber",
-    model: "gemma4:e4b",
-  },
-  {
-    id: "description",
-    label: "📄 Description",
-    contractId: "broadcast_studio_audio_describer",
-    model: "gemma4:e4b",
-  },
-  {
-    id: "labels",
-    label: "🏷 Suggest labels",
-    contractId: "broadcast_studio_audio_labeler",
-    model: "gemma4:e4b",
-  },
-] as const;
 
 function audioFileNodeId(path: string): string {
   return `devel:file:${path}`;
@@ -656,6 +656,25 @@ export default function BroadcastStudioPage() {
   const [discordImageScanStatus, setDiscordImageScanStatus] = useState<DiscordImageScanResponse | null>(null);
   const [scanningDiscordAudio, setScanningDiscordAudio] = useState(false);
   const [scanningDiscordImages, setScanningDiscordImages] = useState(false);
+  const [studioUiActions, setStudioUiActions] = useState<BroadcastStudioUiAction[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void request<BroadcastStudioUiActionsResponse>(
+      `/api/contracts/ui-actions?actor=${encodeURIComponent(BROADCAST_STUDIO_PAGE_ACTOR_ID)}&surface=${encodeURIComponent("broadcast-studio/now-playing")}`
+    )
+      .then((response) => {
+        if (cancelled) return;
+        setStudioUiActions((response.actions ?? []).filter((action) => action.enabled !== false && action.intent === "agent.run" && action.agent?.contractId));
+      })
+      .catch((error) => {
+        console.error("Failed to load Broadcast Studio UI actions:", error);
+        if (!cancelled) setStudioUiActions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── Load audio library ───────────────────────────────────────────
   const refreshLibrary = useCallback(async () => {
@@ -1993,28 +2012,34 @@ export default function BroadcastStudioPage() {
                     Analyze in chat pane with a dedicated contract:
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-                    {BROADCAST_STUDIO_AGENT_ACTIONS.map((action) => (
-                      <Button
-                        key={action.id}
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setAgentLaunchRequest({
-                          id: `${action.id}:${currentFile.path}:${Date.now()}`,
-                          actorId: BROADCAST_STUDIO_AUDIO_TASK_ACTOR_ID,
-                          contractId: action.contractId,
-                          model: action.model,
-                          contentParts: [{
-                            type: "audio",
-                            url: getAudioStreamUrl(currentFile.path),
-                            mimeType: currentFile.mime || undefined,
-                            filename: currentFile.name,
-                          }],
-                          direct: true,
-                        })}
-                      >
-                        {action.label}
-                      </Button>
-                    ))}
+                    {studioUiActions.map((action) => {
+                      const contractId = action.agent?.contractId;
+                      const actorId = action.agent?.actorId;
+                      const model = action.agent?.model;
+                      if (!contractId || !actorId || !model) return null;
+                      return (
+                        <Button
+                          key={action.id}
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setAgentLaunchRequest({
+                            id: `${action.id}:${currentFile.path}:${Date.now()}`,
+                            actorId,
+                            contractId,
+                            model,
+                            contentParts: [{
+                              type: "audio",
+                              url: getAudioStreamUrl(currentFile.path),
+                              mimeType: currentFile.mime || undefined,
+                              filename: currentFile.name,
+                            }],
+                            direct: action.mode === "direct",
+                          })}
+                        >
+                          {action.label}
+                        </Button>
+                      );
+                    })}
                   </div>
                 </div>
               )}

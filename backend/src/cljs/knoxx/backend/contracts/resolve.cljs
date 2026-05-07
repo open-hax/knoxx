@@ -8,10 +8,10 @@
             ["node:fs" :as fs]
             ["node:path" :as path]))
 
-(def known-actor-keys #{:id :kind :default-agent :role-slugs :capability-ids :system-prompt :task-prompt :thinking-level :model :contract-id :model-profile :tool-policies})
+(def known-actor-keys #{:id :kind :default-agent :role-slugs :capability-ids :system-prompt :task-prompt :thinking-level :model :contract-id :model-profile :tool-policies :ui/actions})
 (def known-role-keys #{:id :role/capabilities :role/permissions :role/prompts})
 (def known-capability-keys #{:id :capability/description :capability/tools})
-(def known-agent-keys #{:id :enabled :agent/model :agent/thinking :prompts/task :prompts/system :trigger-kind :contract/actor :contract/actors :contract/uses})
+(def known-agent-keys #{:id :enabled :agent/model :agent/thinking :prompts/task :prompts/system :trigger-kind :contract/actor :contract/actors :contract/uses :ui/actions})
 
 (defn contract-extras
   [contract-data known-set]
@@ -78,6 +78,69 @@
     (string? value) (some-> value str str/trim not-empty)
     (nil? value) nil
     :else (some-> value str str/trim not-empty)))
+
+(defn- keywordish->wire
+  [value]
+  (cond
+    (keyword? value) (if-let [ns (namespace value)]
+                       (str ns "/" (name value))
+                       (name value))
+    (string? value) (some-> value str str/trim not-empty)
+    (nil? value) nil
+    :else (some-> value str str/trim not-empty)))
+
+(defn- ui-action-surfaces
+  [action]
+  (let [single (keywordish->wire (:surface action))
+        many (->> (or (:surfaces action) [])
+                  (map keywordish->wire)
+                  (remove nil?))]
+    (vec (distinct (concat (when single [single]) many)))))
+
+(defn- normalize-ui-action
+  [source action]
+  (let [id (some-> (:id action) str str/trim not-empty)
+        label (some-> (:label action) str str/trim not-empty)
+        surfaces (ui-action-surfaces action)]
+    (when (and id label (not (false? (:enabled? action))))
+      (cond-> {:id id
+               :label label
+               :kind (or (keywordish->wire (:kind action)) "button")
+               :surfaces surfaces
+               :intent (or (keywordish->wire (:intent action)) "agent.run")
+               :requires (->> (or (:requires action) [])
+                              (map keywordish->wire)
+                              (remove nil?)
+                              vec)
+               :confirm (boolean (:confirm? action))
+               :enabled true
+               :source source}
+        (seq surfaces) (assoc :surface (first surfaces))
+        (:icon action) (assoc :icon (str (:icon action)))
+        (:agent/contract action) (assoc-in [:agent :contractId] (str (:agent/contract action)))
+        (:agent/actor action) (assoc-in [:agent :actorId] (str (:agent/actor action)))
+        (:tool/id action) (assoc-in [:tool :id] (str (:tool/id action)))
+        (:media/from action) (assoc-in [:media :from] (keywordish->wire (:media/from action)))
+        (:mode action) (assoc :mode (keywordish->wire (:mode action)))))))
+
+(defn- action-matches-surface?
+  [surface action]
+  (let [wanted (some-> surface str str/trim not-empty)
+        surfaces (:surfaces action)]
+    (or (nil? wanted)
+        (empty? surfaces)
+        (some #(= wanted %) surfaces))))
+
+(declare resolve-agent-contract)
+
+(defn- enrich-ui-action
+  [config action]
+  (if-let [contract-id (get-in action [:agent :contractId])]
+    (let [actor-id (get-in action [:agent :actorId])
+          resolved (resolve-agent-contract config contract-id actor-id)]
+      (cond-> action
+        (:model resolved) (assoc-in [:agent :model] (:model resolved))))
+    action))
 
 
 (defn resolve-actor
@@ -299,3 +362,27 @@
          (resolve-agent-contract config actor-default-id actor-id))
        (when-let [global-default-id (default-agent-contract-id config nil)]
          (resolve-agent-contract config global-default-id actor-id)))))
+
+(defn ui-actions-for-actor
+  "Resolve contract-declared UI actions for an actor and optional surface.
+   Actor actions are listed before default-agent actions; disabled actions are
+   omitted. This is intentionally a render contract, not an execution contract."
+  [config actor-id surface]
+  (let [effective-actor-id (or (some-> actor-id str str/trim not-empty)
+                               (default-actor-id config))
+        actor-spec (resolve-actor config effective-actor-id)
+        actor-actions (->> (get-in actor-spec [:actor :ui/actions])
+                           (keep #(normalize-ui-action "actor" %)))
+        default-agent-id (some-> (:default-agent actor-spec) str str/trim not-empty)
+        agent-spec (when default-agent-id
+                     (resolve-agent-contract config default-agent-id effective-actor-id))
+        agent-actions (->> (get-in agent-spec [:contract :ui/actions])
+                           (keep #(normalize-ui-action "agent" %)))
+        actions (->> (concat actor-actions agent-actions)
+                     (map #(enrich-ui-action config %))
+                     (filter #(action-matches-surface? surface %))
+                     vec)]
+    {:actor-id effective-actor-id
+     :surface (some-> surface str str/trim not-empty)
+     :default-agent-id default-agent-id
+     :actions actions}))

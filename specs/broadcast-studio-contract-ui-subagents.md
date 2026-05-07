@@ -1,6 +1,6 @@
 # Broadcast Studio Contract UI + Audio Sub-Agent Orchestration
 
-Status: draft
+Status: phase-1 implemented
 Owner: Knoxx / Broadcast Studio
 Created: 2026-05-06
 Frozen prerequisite: `pi-fork-tax-broadcast-audio-20260506T231041Z`
@@ -331,27 +331,32 @@ Every UI action execution should log:
 
 ### Phase 1 — Contract/UI action schema
 
-- Add schema support for `:ui/actions`.
-- Add resolver that returns policy-filtered actions for actor/surface.
-- Add tests with fixture contracts.
+Implemented 2026-05-06:
+
+- Added validator schema support for `:ui/actions` on actor and agent contracts.
+- Added `contracts.resolve/ui-actions-for-actor` for actor/default-agent action resolution.
+- Added `GET /api/contracts/ui-actions?actor=...&surface=...`.
+- Added Broadcast Studio now-playing actions to `contracts/actors/broadcast_studio.edn`.
+- Action responses include resolved agent contract, actor, and model.
 
 Verification:
 
-- schema validates actions;
-- resolver hides disabled/unauthorized actions;
-- frontend-independent API smoke returns Broadcast Studio actions.
+- `GET /api/contracts/ui-actions?actor=broadcast_studio&surface=broadcast-studio/now-playing` returns three enabled actions: transcribe, describe, suggest labels.
+- `clj-kondo` on touched CLJS files reports only pre-existing route/contract warnings.
+- `shadow-cljs compile server` exits 0 with existing infer warnings.
 
 ### Phase 2 — Broadcast Studio action rendering
 
-- Replace hardcoded action list with contract-loaded actions.
-- Preserve existing working direct audio payload shape.
-- Ensure blank message + media action still uses contract task prompt.
+Partially implemented 2026-05-06:
 
-Verification:
+- Broadcast Studio now loads now-playing actions from `/api/contracts/ui-actions`.
+- The hardcoded frontend action list was removed.
+- Existing working direct audio payload shape is preserved.
+- Frontend still sends blank user text, media content part, `direct`, and `omitSystemPrompt`.
 
-- TypeScript check;
-- browser/action API payload contains no task prompt;
-- backend logs still show multipart audio.
+Remaining verification:
+
+- Browser-click a contract-rendered action and confirm backend logs `media_parts_count=1`, `omitted_count=0`, `content_type=multipart`.
 
 ### Phase 3 — Primary Broadcast Studio agent
 

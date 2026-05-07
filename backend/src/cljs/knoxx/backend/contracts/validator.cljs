@@ -46,6 +46,24 @@
    [:max-chars {:optional true} int?]
    [:preserve-system {:optional true} boolean?]])
 
+(def UiAction
+  [:map {:closed false}
+   [:id string?]
+   [:label string?]
+   [:kind {:optional true} [:or keyword? string?]]
+   [:surface {:optional true} [:or keyword? string?]]
+   [:surfaces {:optional true} [:sequential [:or keyword? string?]]]
+   [:icon {:optional true} string?]
+   [:intent {:optional true} [:or keyword? string?]]
+   [:agent/contract {:optional true} string?]
+   [:agent/actor {:optional true} string?]
+   [:tool/id {:optional true} string?]
+   [:media/from {:optional true} [:or keyword? string?]]
+   [:requires {:optional true} [:sequential [:or keyword? string?]]]
+   [:mode {:optional true} [:or keyword? string?]]
+   [:confirm? {:optional true} boolean?]
+   [:enabled? {:optional true} boolean?]])
+
 (def AgentContract
   "Agent contract schema — all disk fields tolerated."
   [:map {:closed false}
@@ -71,12 +89,13 @@
                                 [:task {:optional true} string?]]]
    [:context {:optional true} ContextPolicy]
    [:context-policy {:optional true} ContextPolicy]
+   [:ui/actions {:optional true} [:vector UiAction]]
    [:data {:optional true} [:map {:closed false}]]])
 
 (def ActorContract
   [:map {:closed false}
    [:actor/id string?]
-   [:actor/kind [:enum :agent :user]]
+   [:actor/kind [:enum :agent :user :page]]
    [:actor/email {:optional true} string?]
    [:actor/username {:optional true} string?]
    [:actor/org {:optional true} string?]
@@ -84,7 +103,8 @@
    [:actor/contract {:optional true} string?]
    [:actor/default-agent {:optional true} string?]
    [:actor/roles {:optional true} [:sequential keyword?]]
-   [:actor/capabilities {:optional true} [:sequential keyword?]]])
+   [:actor/capabilities {:optional true} [:sequential keyword?]]
+   [:ui/actions {:optional true} [:vector UiAction]]])
 
 (def RoleContract
   [:map {:closed false}

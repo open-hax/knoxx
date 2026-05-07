@@ -209,6 +209,10 @@ export interface MemorySessionSummary {
   actor_id?: string;
   contract_id?: string;
   contract_actors?: string[];
+  sub_agent_id?: string;
+  parent_agent_id?: string;
+  parent_run_id?: string;
+  spawn_kind?: string;
 
   is_active?: boolean;
   active_status?: "running" | "waiting_input" | "completed" | "failed" | "inactive" | "unknown" | string;

@@ -14,4 +14,37 @@ Default save locations for audio artifacts:
 - Sound effects, samples: Audio/sfx/
 
 Always use descriptive filenames. Always confirm what you've done after making changes."}
+  :ui/actions [{:id "audio.transcribe"
+                :label "📝 Transcript"
+                :kind :button
+                :surface :broadcast-studio/now-playing
+                :intent :agent.run
+                :agent/contract "broadcast_studio_audio_transcriber"
+                :agent/actor "broadcast_studio_audio_task"
+                :media/from :page/current-audio
+                :requires [:media/audio]
+                :mode :direct
+                :confirm? false}
+               {:id "audio.describe"
+                :label "📄 Description"
+                :kind :button
+                :surface :broadcast-studio/now-playing
+                :intent :agent.run
+                :agent/contract "broadcast_studio_audio_describer"
+                :agent/actor "broadcast_studio_audio_task"
+                :media/from :page/current-audio
+                :requires [:media/audio]
+                :mode :direct
+                :confirm? false}
+               {:id "audio.labels.suggest"
+                :label "🏷 Suggest labels"
+                :kind :button
+                :surface :broadcast-studio/now-playing
+                :intent :agent.run
+                :agent/contract "broadcast_studio_audio_labeler"
+                :agent/actor "broadcast_studio_audio_task"
+                :media/from :page/current-audio
+                :requires [:media/audio]
+                :mode :direct
+                :confirm? false}]
   :data {:broadcast-root "Audio/broadcasts"}}

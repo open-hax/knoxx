@@ -431,11 +431,27 @@
                          not-empty)
         contract-actors (actor-scope/actor-claims->wire
                          (or (:contractActors agent-spec)
-                             (:contract-actors agent-spec)))]
+                             (:contract-actors agent-spec)))
+        sub-agent-id (some-> (or (:subAgentId agent-spec)
+                                 (:sub-agent-id agent-spec))
+                             str str/trim not-empty)
+        parent-agent-id (some-> (or (:parentAgentId agent-spec)
+                                    (:parent-agent-id agent-spec))
+                                str str/trim not-empty)
+        parent-run-id (some-> (or (:parentRunId agent-spec)
+                                  (:parent-run-id agent-spec))
+                              str str/trim not-empty)
+        spawn-kind (some-> (or (:spawnKind agent-spec)
+                               (:spawn-kind agent-spec))
+                           str str/trim not-empty)]
     (cond-> base
       contract-id (assoc :contract_id contract-id)
       actor-id (assoc :actor_id actor-id)
-      (seq contract-actors) (assoc :contract_actors contract-actors))))
+      (seq contract-actors) (assoc :contract_actors contract-actors)
+      sub-agent-id (assoc :sub_agent_id sub-agent-id)
+      parent-agent-id (assoc :parent_agent_id parent-agent-id)
+      parent-run-id (assoc :parent_run_id parent-run-id)
+      spawn-kind (assoc :spawn_kind spawn-kind))))
 
 (defn session-node-kind
   [node-type]

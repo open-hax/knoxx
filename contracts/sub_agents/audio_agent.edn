@@ -1,0 +1,25 @@
+{:contract/id      "audio_agent"
+ :contract/kind    :sub-agent
+ :contract/version 1
+ :enabled          true
+
+ ;; Inherit parent capabilities but restrict to audio-relevant tools
+ :sub-agent/parent-capabilities :restrict
+ :sub-agent/capabilities [:read :bash :semantic_query :websearch]
+
+ :sub-agent/model     "gemma4:e4b"
+ :sub-agent/thinking  "off"
+ :sub-agent/role      "audio-producer"
+ :sub-agent/timeout-ms 90000
+ :sub-agent/mode      :fire-and-forget
+
+ :agent {:model "gemma4:e4b"
+         :role "audio-producer"
+         :thinking "off"}
+
+ :prompts {:system "You are an audio production sub-agent. You generate, analyze, and manipulate audio artifacts. You can compose beats, render MIDI to audio, apply effects chains, generate sound design patches, and produce music. Use bash tools for FFmpeg, MIDI rendering, and audio processing. Report what you created with file paths and descriptions."
+           :task "Produce the audio artifact described by your parent agent. Save outputs to the appropriate directory (Music/, Audio/, Voice/)."}
+
+ :context {:max-messages 20
+           :max-chars 30000
+           :preserve-system true}}

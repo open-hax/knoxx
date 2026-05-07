@@ -2,6 +2,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cljs.reader :as reader]
+            [knoxx.backend.contracts.resolve :as contracts-resolve]
             [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.actor-scope :as actor-scope]
@@ -420,14 +421,38 @@
               (.catch (fn [err]
                         (do-text 500 (str ";; Failed to save contract: " (.-message err)))))))))))
 
+(defn- handle-ui-actions
+  [do-json config actor-id surface]
+  (let [resolved (contracts-resolve/ui-actions-for-actor config actor-id surface)]
+    (do-json 200 {:actor_id (:actor-id resolved)
+                  :surface (:surface resolved)
+                  :default_agent_id (:default-agent-id resolved)
+                  :actions (:actions resolved)})))
+
 (defn- register-agent-contract-routes!
   [app runtime config helpers]
   (let [do-route (:route! helpers)
+        do-json (:json-response! helpers)
         do-err (:error-response! helpers)
         do-ctx (:with-request-context! helpers)
         do-perm (:ensure-permission! helpers)
         do-text (fn [reply status text]
                   (.end reply (.status reply status) text #js {"Content-Type" "text/plain; charset=utf-8"}))]
+    (do-route app "GET" "/api/contracts/ui-actions"
+              (fn [request reply]
+                (do-ctx runtime request reply
+                  (fn [ctx]
+                    (try
+                      (when ctx (do-perm ctx "agent.chat.use"))
+                      (let [actor-id (or (aget request "query" "actor")
+                                         (aget request "query" "actor_id")
+                                         (aget request "query" "actorId"))
+                            surface (or (aget request "query" "surface")
+                                        (aget request "query" "surface_id")
+                                        (aget request "query" "surfaceId"))]
+                        (handle-ui-actions (partial do-json reply) config actor-id surface))
+                      (catch :default err
+                        (do-err reply err)))))))
     (do-route app "GET" "/api/agent/contracts"
               (fn [request reply]
                 (do-ctx runtime request reply

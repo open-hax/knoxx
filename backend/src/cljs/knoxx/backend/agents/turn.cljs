@@ -128,7 +128,11 @@
       (:task-prompt agent-spec) (assoc :hasTaskPrompt true)
       (seq (:tool-policies agent-spec)) (assoc :toolPolicies (vec (:tool-policies agent-spec)))
       (:resource-policies agent-spec) (assoc :resourcePolicies (:resource-policies agent-spec))
-      (:context-policy agent-spec) (assoc :contextPolicy (:context-policy agent-spec)))))
+      (:context-policy agent-spec) (assoc :contextPolicy (:context-policy agent-spec))
+      (:sub-agent-id agent-spec) (assoc :subAgentId (:sub-agent-id agent-spec))
+      (:parent-agent-id agent-spec) (assoc :parentAgentId (:parent-agent-id agent-spec))
+      (:parent-run-id agent-spec) (assoc :parentRunId (:parent-run-id agent-spec))
+      (:spawn-kind agent-spec) (assoc :spawnKind (:spawn-kind agent-spec)))))
 
 (defn- create-initial-run!
   [run-id session-id conversation-id started-at model-id mode thinking-level
@@ -516,6 +520,10 @@
                                    ;; media data; history is adequately represented by text content.
                                    (mapv #(dissoc % :content-parts))
                                    (prune-session-messages agent-spec))
+              auth-context (if (and (nil? auth-context) (seq (:tool-policies agent-spec)))
+                             {:toolPolicies (vec (:tool-policies agent-spec))
+                              :roleSlugs (cond-> [] (:role agent-spec) (conj (:role agent-spec)))}
+                             auth-context)
               auth-extra (auth-snapshot auth-context)]
           (cond
             (and thinking-level-raw (nil? parsed-thinking-level))
