@@ -6,6 +6,7 @@
    actors can address live or later-resolved targets without creating a second
    message transcript."
   (:require [clojure.string :as str]
+            [knoxx.backend.runtime.state :as runtime-state]
             ["node:crypto" :as crypto]))
 
 (def mailbox-statuses
@@ -100,11 +101,8 @@
       (nonblank expires-at) (assoc :mailbox/expires-at (nonblank expires-at)))))
 
 (defn- policy-db
-  [runtime]
-  (cond
-    (nil? runtime) nil
-    (map? runtime) (or (:policyDb runtime) (:policy-db runtime))
-    :else (try (aget runtime "policyDb") (catch :default _ nil))))
+  [_runtime]
+  (runtime-state/current-policy-db))
 
 (defn database-enabled?
   [runtime]

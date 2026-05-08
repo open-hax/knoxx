@@ -6,163 +6,54 @@ original: 2026.04.24.10.04.56.md
 status: note
 ---
 
- Signal
+## Signal
 
- (己, p=0.98) Root finding: shadow-cljs watch by itself will
- not run the Knoxx backend Node runtime. It only starts the
- shadow server/compiler/nREPL and watches builds. For a
- build-specific CLJS REPL, shadow also needs the actual JS
- runtime connected. For Node builds, that means a node
- dist/server.js process must be running and successfully
- connected back to shadow’s websocket.
+`shadow-cljs watch` is the compiler/control plane; it is not sufficient by itself to prove the Knoxx backend runtime is hot-reload-connected.
 
- (己, p=0.95) Your current state proves the problem:
+For the current ESM backend dev loop, Knoxx needs:
 
- - shadow-cljs nREPL is running on 4500.
- - shadow-cljs HTTP/websocket server is running on 9630.
- - Build workers are active for :server and :server-repl.
- - But (shadow/repl-runtimes :server) returns [].
- - No backend is listening on 8000.
- - Manual node dist/server.js currently crashes before
- connecting because shadow’s :esm :runtime :node devtools
- client imports ws, but ws is not installed in
- backend/package.json.
+1. a shadow JVM watching `:server-dev`, and
+2. a separate Node process loading `dist-dev/server.js`.
 
- (己, p=0.96) Tight loop architecture should be:
+The Node process must successfully connect back to the shadow websocket. The canonical health check is:
 
- 1. Shadow JVM process:
-     - shadow-cljs watch server
-     - owns compiler, nREPL, websocket relay
- 2. Node runtime process:
-     - node dist/server.js
-     - owns Fastify/backend runtime
-     - connects to shadow websocket
- 3. Agent nREPL tool:
-     - talks to shadow nREPL
-     - calls shadow.cljs.devtools.api/cljs-eval or selected
- CLJS REPL
-     - eval forwards into the connected Node runtime
+```clojure
+(require '[shadow.cljs.devtools.api :as shadow])
+(shadow/repl-runtimes :server-dev)
+;; healthy => non-empty
+```
 
- (己, p=0.9) The right mental model is not “only shadow-cljs”.
- It is “shadow-cljs owns the development control plane; Node
- owns the live application process; they are connected by
- shadow’s runtime websocket.”
+## Current architecture
 
- Evidence
+- `:server-dev`
+  - output: `backend/dist-dev/**`
+  - PM2 shadow command: `pnpm exec shadow-cljs --source-maps watch server-dev`
+  - PM2 backend command: `node --enable-source-maps dist-dev/server.js`
+  - includes devtools/autoload hooks for hot reload
+- `:server`
+  - output: `backend/dist/**`
+  - used by `pnpm typecheck` / `shadow-cljs compile server` and `pnpm build` / `shadow-cljs release server`
+  - not the PM2 dev runtime path
 
- (世, p=0.98) Official shadow docs say build-specific REPL
- requires both:
+## Evidence pattern for a broken loop
 
- - a running watch
- - the JS runtime for the target connected
+A broken loop usually looks like one or more of these:
 
- For Node builds, docs explicitly say “for node.js builds that
- means running the node process.”
+- `(shadow/repl-runtimes :server-dev)` returns `[]`.
+- The backend was restarted from `dist/server.js` instead of `dist-dev/server.js`.
+- PM2 logs show websocket disconnects, `ECONNREFUSED 127.0.0.1:9630`, stale output, or unexpected websocket responses.
+- A verification compile overwrote `dist/server.js`, and PM2 was still pointed at `dist/server.js`.
 
- Source: repl.adoc, fetched from shadow-cljs docs.
+## Countermoves
 
- (世, p=0.95) Official docs also distinguish node-repl from
- build REPL:
+- Do not enable PM2 file watch on `knoxx-backend`.
+- Do not point PM2 dev runtime at `dist/server.js`.
+- Do not treat a successful `shadow-cljs compile server` as proof that the live runtime is connected.
+- Do not use `node-repl` as the backend runtime; it is useful for scratch evaluation, not the app process.
 
- - node-repl starts a blank managed Node process.
- - It is not connected to a build.
- - It does not automatically rebuild/hot-reload when files
- change.
+## Recovery
 
- Source: repl.adoc.
-
- (世, p=0.95) Official Node script docs say long-running Node
- servers need hot-reload hooks if you want reload behavior for
- server resources:
-
- - :devtools {:before-load-async demo.script/stop :after-load
- demo.script/start}
-
- Source: target-node-script.adoc.
-
- (己, p=1.0) Live local check:
-
- ```clojure
-   {:active #{:server :server-repl}
-    :ids (:npm :app :server :server-repl :test :test-ci)
-    :worker true
-    :runtimes []}
- ```
-
- This means shadow workers exist, but no JS runtime is
- connected.
-
- (己, p=1.0) PM2 currently shows only knoxx-backend running
- as:
-
- ```bash
-   node ./node_modules/.bin/shadow-cljs --source-maps watch
- server server-repl
- ```
-
- That runs the compiler/watch, not the backend server.
-
- (己, p=1.0) Manual Node runtime attempt failed with:
-
- ```text
-   Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'ws'
- imported from
-   .../dist/cljs-runtime/shadow.esm.esm_import$ws.js
- ```
-
- (世, p=0.94) This matches the upstream shadow-cljs ESM Node
- support commit: :target :esm :runtime :node injects
- shadow.cljs.devtools.client.node-esm, which imports ws.
-
- Source: upstream commit d12811c, “add REPL for :target :esm
- with :runtime :node”.
-
- Frames
-
- (世, p=0.88) Frame 1: server vs server-repl is probably the
- wrong axis. The important axis is not build name; it is
- whether a Node process loaded the compiled output and
- connected to shadow’s websocket.
-
- (世, p=0.86) Frame 2: “No restart” does not mean “no Node
- process.” It means the Node process stays alive while shadow
- hot-loads changed JS/CLJS into it over the websocket.
-
- (世, p=0.8) Frame 3: Some changes can be live-patched
- directly with nREPL eval. But already-registered Fastify
- route handlers may hold old function references unless the
- server structure is designed for indirection or dev reload
- hooks. For route/table/server-shape changes, we likely need
- either:
- - explicit live mutation helpers, or
- - controlled before-load/after-load hooks that rebuild server
- registration.
-
- Countermoves
-
- (己, p=0.92) Do not keep trying shadow-cljs watch server
- server-repl alone. It can never produce a connected backend
- runtime by itself.
-
- (己, p=0.88) Do not use shadow-cljs node-repl as the main
- backend runtime. It is useful for scratch CLJS, but official
- docs say it is not build-connected and does not provide
- automatic rebuild/hot-reload.
-
- (己, p=0.86) Do not rely on PM2 file watching for this loop.
- Shadow should handle compilation/reload; PM2 should only keep
- the long-running control plane/runtime alive and restart on
- hard crash.
-
- (己, p=0.85) Do not assume source hot reload updates every
- registered server artifact. For stable live server structure,
- route handlers should either delegate through mutable
- vars/atoms or be rebuilt by a controlled reload hook.
-
- Next
-
- (己, p=0.94) Implement the dev loop patch: add ws to backend
- dependencies and replace the PM2 backend command with a small
- supervisor that starts shadow-cljs watch server, waits for
- dist/server.js, then starts node dist/server.js as the
- connected live runtime.
+1. Ensure `knoxx-shadow` is watching `server-dev`.
+2. Ensure `backend/dist-dev/server.js` exists and imports the shadow Node ESM devtools client.
+3. Restart `knoxx-backend` from `dist-dev/server.js`.
+4. Re-check `(shadow/repl-runtimes :server-dev)`.

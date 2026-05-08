@@ -7,6 +7,7 @@
             [knoxx.backend.auth.session :as auth-session]
             [knoxx.backend.mcp-expose :as mcp-expose]
             [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.runtime.state :as runtime-state]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
             ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
             ["node:crypto" :as crypto]
@@ -682,7 +683,7 @@
   [app runtime config]
   (let [redis-client (redis/get-client)
         base         (public-base-url config)
-        policy-db    (aget runtime "policyDb")
+        policy-db    (runtime-state/current-policy-db)
         code-ttl     (js/parseInt (env "KNOXX_MCP_CODE_TTL_SECONDS" "300") 10)
         token-ttl    (js/parseInt (env "KNOXX_MCP_TOKEN_TTL_SECONDS" (str (* 60 60 24 30))) 10)
         deps {:route!              route!

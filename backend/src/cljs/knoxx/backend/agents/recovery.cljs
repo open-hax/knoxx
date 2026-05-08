@@ -19,6 +19,7 @@
    :userId (:user_id session)
    :userEmail (:user_email session)
    :membershipId (:membership_id session)
+   :actorId (:actor_id session)
    :roleSlugs (vec (or (:role_slugs session) []))
    :permissions (vec (or (:permissions session) []))
    :toolPolicies (vec (or (:tool_policies session) []))
@@ -37,6 +38,7 @@
                                        :user_id
                                        :user_email
                                        :membership_id
+                                       :actor_id
                                        :role_slugs
                                        :permissions
                                        :tool_policies

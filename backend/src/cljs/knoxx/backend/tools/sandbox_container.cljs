@@ -3,7 +3,14 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
+            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            ["node:child_process" :refer [execFile]]
+            ["node:crypto" :as crypto]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]
+            ["node:util" :refer [promisify]]))
+
+(def ^:private exec-file-async (promisify execFile))
 
 (def ^:private sandbox-label-prefix "openhax.knoxx.sandbox")
 (def ^:private sandbox-max-buffer-bytes (* 2 1024 1024))
@@ -80,23 +87,19 @@
 
 (defn- sandbox-metadata-path
   [runtime config sandbox-id]
-  (let [node-path (aget runtime "path")]
-    (path-resolve node-path (sandbox-host-dir runtime config sandbox-id) ".knoxx-sandbox.json")))
+  (path-resolve path (sandbox-host-dir runtime config sandbox-id) ".knoxx-sandbox.json"))
 
 (defn- sandbox-build-context
-  [runtime config]
-  (let [node-path (aget runtime "path")]
-    (path-resolve node-path (.cwd js/process) (or (:sandbox-build-context config) "."))))
+  [_runtime config]
+  (path-resolve path (.cwd js/process) (or (:sandbox-build-context config) ".")))
 
 (defn- sandbox-dockerfile
-  [runtime config]
-  (let [node-path (aget runtime "path")]
-    (path-resolve node-path (.cwd js/process) (or (:sandbox-dockerfile config) "docker/sandbox/Dockerfile"))))
+  [_runtime config]
+  (path-resolve path (.cwd js/process) (or (:sandbox-dockerfile config) "docker/sandbox/Dockerfile")))
 
 (defn- sandbox-host-dir
-  [runtime config sandbox-id]
-  (let [node-path (aget runtime "path")]
-    (path-resolve node-path (:sandbox-root-dir config) sandbox-id)))
+  [_runtime config sandbox-id]
+  (path-resolve path (:sandbox-root-dir config) sandbox-id))
 
 (defn- sandbox-workdir
   [config]
@@ -141,26 +144,21 @@
                  :error (or (.-message err) (str err))}))))
 
 (defn- docker-command!
-  [runtime config args opts]
-  (let [exec-file-async (aget runtime "execFileAsync")]
-    (when-not exec-file-async
-      (throw (js/Error. "execFileAsync runtime dependency is not available")))
-    (exec-file-result! exec-file-async (docker-bin config) args opts)))
+  [_runtime config args opts]
+  (exec-file-result! exec-file-async (docker-bin config) args opts))
 
 (defn- sandbox-metadata!
   [runtime config sandbox-id]
-  (let [node-fs (aget runtime "fs")
-        metadata-path (sandbox-metadata-path runtime config sandbox-id)]
-    (-> (fs-read-file! node-fs metadata-path "utf8")
+  (let [metadata-path (sandbox-metadata-path runtime config sandbox-id)]
+    (-> (fs-read-file! fs metadata-path "utf8")
         (.then (fn [text]
                  (js->clj (.parse js/JSON (str text)) :keywordize-keys true)))
         (.catch (fn [_] nil)))))
 
 (defn- write-sandbox-metadata!
   [runtime config sandbox-id metadata]
-  (let [node-fs (aget runtime "fs")
-        metadata-path (sandbox-metadata-path runtime config sandbox-id)]
-    (-> (fs-write-file! node-fs metadata-path (.stringify js/JSON (clj->js metadata) nil 2) "utf8")
+  (let [metadata-path (sandbox-metadata-path runtime config sandbox-id)]
+    (-> (fs-write-file! fs metadata-path (.stringify js/JSON (clj->js metadata) nil 2) "utf8")
         (.then (fn [] metadata)))))
 
 (defn- refresh-sandbox-ttl!
@@ -237,14 +235,13 @@
 
 (defn- sandbox-destroy!
   [runtime config sandbox-id]
-  (let [node-fs (aget runtime "fs")
-        host-dir (sandbox-host-dir runtime config sandbox-id)
+  (let [host-dir (sandbox-host-dir runtime config sandbox-id)
         container-name (sandbox-container-name sandbox-id)]
     (-> (docker-command! runtime config ["rm" "-f" container-name] {:timeout 30000})
         (.then (fn [_]
-                 (.rm node-fs host-dir #js {:recursive true :force true})))
+                 (.rm fs host-dir #js {:recursive true :force true})))
         (.catch (fn [_]
-                  (.rm node-fs host-dir #js {:recursive true :force true})))
+                  (.rm fs host-dir #js {:recursive true :force true})))
         (.then (fn [_]
                  {:sandboxId sandbox-id
                   :containerName container-name
@@ -269,9 +266,7 @@
 
 (defn sandbox-create!
   [runtime config {:keys [ttl-seconds image]}]
-  (let [node-fs (aget runtime "fs")
-        node-crypto (aget runtime "crypto")
-        sandbox-id (.randomUUID node-crypto)
+  (let [sandbox-id (.randomUUID crypto)
         ttl (clamp-ttl-seconds config ttl-seconds)
         created-at-ms (.now js/Date)
         max-ttl-seconds (clamp-ttl-seconds config (:sandbox-max-ttl-seconds config))
@@ -285,7 +280,7 @@
         keepalive-cmd "trap 'exit 0' TERM INT; while true; do sleep 3600; done"]
     (-> (ensure-sandbox-image! runtime config image)
         (.then (fn [_]
-                 (fs-mkdir! node-fs host-dir #js {:recursive true})))
+                 (fs-mkdir! fs host-dir #js {:recursive true})))
         (.then (fn []
                  (docker-command!
                   runtime

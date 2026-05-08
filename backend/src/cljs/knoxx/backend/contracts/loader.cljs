@@ -12,7 +12,7 @@
 
 (def contract-class-order
   ["agents" "actors" "roles" "capabilities" "policies"
-   "model_families" "models" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents"])
+   "model_families" "models" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents" "cms"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -84,6 +84,9 @@
       ("model-family" "model-families" "model_family" "model_families") "model_families"
       ("model" "models") "models"
       ("ingest-source" "ingest-sources" "ingest_source" "ingest_sources") "ingest_sources"
+      ("cms" "cms-config" "cms-configs" "cms_config" "cms_configs"
+       "cms-block-registry" "cms-block-registries" "cms-template-registry"
+       "cms-template-registries" "cms-templates" "cms-template" "cms-templates-registry") "cms"
       ("action" "actions") "actions"
       ("pipeline" "pipelines") "pipelines"
       ("trigger" "triggers") "triggers"
@@ -95,6 +98,17 @@
 (defn- stderr!
   [& parts]
   (.write js/process.stderr (str (str/join "" parts) "\n")))
+
+(defonce ^:private sync-contract-record-cache* (atom nil))
+(def ^:private sync-contract-record-cache-ttl-ms 2000)
+
+(defn- now-ms
+  []
+  (.now js/Date))
+
+(defn invalidate-sync-contract-cache!
+  []
+  (reset! sync-contract-record-cache* nil))
 
 ;; ── Discovery ──────────────────────────────────────────────────────────────
 
@@ -194,6 +208,68 @@
             []
             (remove nil? records))))
 
+(defn discover-contract-files-sync
+  "Synchronously find all .edn files under root. Runtime sync consumers must
+   still parse the files through parse-contract-file! so identity comes from the
+   contract body, not from the directory or filename."
+  [root]
+  (try
+    (->> (.readdirSync node-fs root #js {:withFileTypes true :recursive true})
+         array-seq
+         (keep entry->file-path)
+         vec)
+    (catch :default err
+      (stderr! "[contracts] sync readdir failed: " root " — " (.-message err))
+      [])))
+
+(defn- load-all-contracts-sync-uncached
+  [config]
+  (->> (contract-root-paths config)
+       (mapcat discover-contract-files-sync)
+       distinct
+       (keep (fn [file-path]
+               (try
+                 (parse-contract-file!
+                  file-path
+                  (.readFileSync node-fs file-path "utf8"))
+                 (catch :default err
+                   (stderr! "[contracts] sync read error: " file-path " — " (.-message err))
+                   nil))))
+       dedup-contracts))
+
+(defn load-all-contracts-sync
+  "Synchronously load all contract records through the same parser/validator and
+   [contractClass id] dedup path as load-all-contracts!. This is the escape hatch
+   for startup/runtime code that cannot await but still must not use filepath or
+   folder placement as contract truth.
+
+   A short process-local cache prevents startup/model resolution from reparsing
+   the entire contract tree dozens of times in the same tick. Invalid contracts
+   are still omitted; they must not pin the event loop or block HTTP startup."
+  [config]
+  (let [now (now-ms)
+        cached @sync-contract-record-cache*]
+    (if (and cached (< (- now (:ts cached)) sync-contract-record-cache-ttl-ms))
+      (:records cached)
+      (let [records (load-all-contracts-sync-uncached config)]
+        (reset! sync-contract-record-cache* {:ts now :records records})
+        records))))
+
+(defn find-contract-record-sync
+  [config contract-class contract-id]
+  (let [klass (normalize-contract-class contract-class)
+        wanted-id (some-> contract-id str str/trim not-empty)]
+    (some (fn [record]
+            (when (and (= klass (:contractClass record))
+                       (= wanted-id (:id record)))
+              record))
+          (load-all-contracts-sync config))))
+
+(defn contract-sync
+  [config contract-class contract-id]
+  (some-> (find-contract-record-sync config contract-class contract-id)
+          :contract))
+
 ;; ── Public API ─────────────────────────────────────────────────────────────
 
 (defn load-all-contracts!
@@ -281,49 +357,38 @@
 
 (defn write-edn-file!
   [file-path edn-text]
+  (invalidate-sync-contract-cache!)
   (let [dir (.dirname path file-path)]
     (-> (ensure-dir! dir)
         (.then (fn [] (.writeFile fs file-path edn-text "utf8"))))))
 
 (defn list-contract-ids-sync
   [config contract-class]
-  (->> (contract-class-dir-paths config contract-class)
-       (mapcat (fn [dir]
-                 (try (->> (.readdirSync node-fs dir #js {:withFileTypes true :recursive true})
-                           (keep (fn [ent]
-                                   (when-let [fp (entry->file-path ent)]
-                                     (let [id (subs (.-name ent) 0 (- (count (.-name ent)) 4))]
-                                       id)))))
-                      (catch :default _ []))))
-       distinct sort vec))
+  (let [klass (normalize-contract-class contract-class)]
+    (->> (load-all-contracts-sync config)
+         (filter #(= klass (:contractClass %)))
+         (map :id)
+         distinct
+         sort
+         vec)))
 
 (defn load-contract!
   ([config contract-id] (load-contract! config "agents" contract-id))
   ([config contract-class contract-id]
-   (let [klass     (normalize-contract-class contract-class)
-         file-path (contract-file-path config klass contract-id)]
-     (-> (.readFile fs file-path "utf8")
-         (.then (fn [edn-text]
-                  (let [trimmed (str/trim (str edn-text))]
-                    (if (str/blank? trimmed)
-                      {:ok? false :edn-text (str edn-text) :contract nil
-                       :validation {:ok false :errors [{:path [] :message "EDN text is empty"}]}}
-                      (try
-                        (let [raw-contract (reader/read-string trimmed)
-                              contract     (if (= klass "agents")
-                                             (actor-scope/normalize-agent-contract raw-contract)
-                                             raw-contract)
-                              validation   (v/validate klass contract)]
-                          {:ok?        (:ok validation)
-                           :edn-text   (str edn-text)
-                           :contract   contract
-                           :validation (dissoc validation :value)})
-                        (catch :default err
-                          {:ok? false :edn-text (str edn-text) :contract nil
-                           :validation {:ok false
-                                        :errors [{:path [] :message (str "EDN parse error: " (.-message err))}]}}))))) )
-         (.catch (fn [err]
-                   (if (= "ENOENT" (.-code err))
-                     {:ok? false :edn-text "" :contract nil
-                      :validation {:ok false :errors [{:path [] :message "Contract not found"}]}}
-                     (throw err))))))))
+   (let [klass (normalize-contract-class contract-class)
+         wanted-id (some-> contract-id str str/trim not-empty)]
+     (-> (load-all-contracts! config)
+         (.then (fn [records]
+                  (if-let [record (some (fn [candidate]
+                                          (when (and (= klass (:contractClass candidate))
+                                                     (= wanted-id (:id candidate)))
+                                            candidate))
+                                        records)]
+                    {:ok? true
+                     :edn-text (:edn-text record)
+                     :contract (if (= klass "agents")
+                                 (actor-scope/normalize-agent-contract (:contract record))
+                                 (:contract record))
+                     :validation {:ok true :errors []}}
+                    {:ok? false :edn-text "" :contract nil
+                     :validation {:ok false :errors [{:path [] :message "Contract not found"}]}})))))))

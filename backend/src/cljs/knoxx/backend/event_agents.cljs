@@ -6,9 +6,8 @@
    The runtime matches events/jobs and launches Knoxx runs through direct/start."
   (:require [clojure.string :as str]
             [shadow.cljs.modern :refer [js-await]]
-            ["node:child_process" :as child-process]
              ["node:fs/promises" :as fs-promises]
-             [knoxx.backend.discord-gateway :as dg]
+            [knoxx.backend.events.sources.discord :as discord-source]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
@@ -18,14 +17,13 @@
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
-            [knoxx.backend.http :as backend-http]
-            [knoxx.backend.quality-labels :as quality-labels]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.text :refer [sanitize-svg-content]]
             [knoxx.backend.util.parse :refer [parse-positive-int]]
-            [knoxx.backend.actions.dispatch :as actions-dispatch]))
+            [knoxx.backend.actions.dispatch :as actions-dispatch]
+            [knoxx.backend.contracts.actor-scope :as actor-scope]))
 
-(declare start! reload! execute-discord-synthesis! normalize-job-state run-job!)
+(declare start! reload! execute-discord-synthesis! normalize-job-state run-job! dispatch-voice-state-update!)
 
 (defonce running?* (atom false))
 (defonce scheduled-tasks* (atom {}))
@@ -70,7 +68,6 @@
   [event-id]
   (let [[before] (swap-vals! dispatched-event-ids* conj event-id)]
     (not (contains? before event-id))))
-(defonce discord-gateway-unsubscribe* (atom nil))
 
 (defonce ^:private enriched-env-config-cache*
   (atom {:base nil :enriched nil}))
@@ -117,29 +114,15 @@
 
 (defn- discord-token
   []
-  (:discord-bot-token (cfg)))
+  (discord-source/bot-token (cfg)))
 
-(defn- discord-gateway-manager
+(defn- policy-db
   []
-  (dg/gateway-manager))
-
-(defn- discord-gateway-active?
-  []
-  (when-let [manager (discord-gateway-manager)]
-    (let [status (.status manager)]
-      (boolean (or (aget status "ready")
-                   (aget status "started"))))))
+  (runtime-state/current-policy-db))
 
 (defn- discord-gateway-user-id
   []
-  (when-let [manager (discord-gateway-manager)]
-    (let [status (.status manager)]
-      (some-> (aget status "userId") str str/trim not-empty))))
-
-(defn- discord-headers
-  [token]
-  #js {"Authorization" (str "Bot " token)
-       "Content-Type" "application/json"})
+  (discord-source/gateway-user-id))
 
 (defn- fetch-json!
   [url options]
@@ -151,86 +134,13 @@
                      (.then (fn [text]
                               (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
 
-(defn map-discord-message
-  [msg]
-  {:id (aget msg "id")
-   :channelId (or (aget msg "channel_id") "")
-   :content (or (aget msg "content") "")
-   :authorId (or (aget msg "author" "id") "")
-   :authorUsername (or (aget msg "author" "username") "unknown")
-   :authorIsBot (boolean (aget msg "author" "bot"))
-   :timestamp (or (aget msg "timestamp") "")
-   :attachments (->> (if (array? (aget msg "attachments")) (array-seq (aget msg "attachments")) [])
-                     (mapv (fn [attachment]
-                             {:id (or (aget attachment "id") "")
-                              :filename (or (aget attachment "filename") "")
-                              :contentType (or (aget attachment "content_type") (aget attachment "contentType"))
-                              :size (or (aget attachment "size") 0)
-                              :url (or (aget attachment "url") "")})))
-   :embeds (->> (if (array? (aget msg "embeds")) (array-seq (aget msg "embeds")) [])
-                (mapv (fn [embed]
-                        {:title (or (aget embed "title") nil)
-                         :description (or (aget embed "description") nil)
-                         :url (or (aget embed "url") nil)})))})
-
-(defn- sort-newest-first
-  [messages]
-  (sort-by :timestamp #(compare %2 %1) messages))
-
-(defn- discord-record-id
-  [message]
-  (str "discord:message:" (:channelId message) ":" (:id message)))
-
-(defn- label-for-record-id
-  [labels record-id]
-  (or (get labels record-id)
-      (get labels (keyword record-id))
-      {}))
-
-(defn- attach-openplanner-labels!
-  [config messages]
-  (if (or (empty? messages) (not (backend-http/openplanner-enabled? config)))
-    (js/Promise.resolve (quality-labels/good-first-then-not-bad messages))
-    (let [ids (mapv discord-record-id messages)]
-      (-> (backend-http/openplanner-request! config "POST" "/v1/labels/records/lookup" {:ids ids})
-          (.then (fn [response]
-                   (let [labels (:labels response)]
-                     (->> messages
-                          (mapv (fn [message]
-                                  (assoc message :openplannerLabels (label-for-record-id labels (discord-record-id message)))))
-                          quality-labels/good-first-then-not-bad))))
-          (.catch (fn [error]
-                    (.warn js/console "[event-agents] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad Discord context" error)
-                    []))))))
-
-(defn- read-discord-channel!
-  [config channel-id limit]
-  (if (discord-gateway-active?)
-    (-> (.fetchChannelMessages (discord-gateway-manager) channel-id (clj->js {:limit (max 1 (min 100 (or limit 25)))}))
-        (.then (fn [messages]
-                 (->> (js->clj messages :keywordize-keys true)
-                      sort-newest-first
-                      vec)))
-        (.then (fn [messages]
-                 (attach-openplanner-labels! config messages))))
-    (let [token (discord-token)]
-      (if (str/blank? token)
-        (js/Promise.reject (js/Error. "Discord bot token not configured"))
-        (-> (fetch-json!
-             (str "https://discord.com/api/v10/channels/" channel-id "/messages?limit=" (max 1 (min 100 (or limit 25))))
-             #js {:method "GET"
-                  :headers (discord-headers token)})
-            (.then (fn [payload]
-                     (->> (if (array? payload) (array-seq payload) [])
-                          (map map-discord-message)
-                          sort-newest-first
-                          vec)))
-            (.then (fn [messages]
-                     (attach-openplanner-labels! config messages))))))))
-
 (defn- discord-source-config
   [control]
   (or (get-in control [:sources :discord]) {}))
+
+(defn- nonblank-str
+  [value]
+  (some-> value str str/trim not-empty))
 
 (defn- filter-string-list
   [values]
@@ -569,17 +479,13 @@
   (contains? #{"synthesize" "synthesis"}
              (some-> mode str str/trim str/lower-case)))
 
-(defn- exec-async
-  "Run a shell command asynchronously, returning a Promise that resolves to
-   the stdout string or rejects on error/timeout."
-  [cmd opts]
-  (js/Promise.
-   (fn [resolve reject]
-     (.exec child-process cmd opts
-            (fn [err stdout _stderr]
-              (if err
-                (reject err)
-                (resolve stdout)))))))
+(defn- fetch-with-timeout
+  "Fetch a URL with an AbortController timeout. Returns a Promise<Response>."
+  [url opts timeout-ms]
+  (let [controller (js/AbortController.)
+        timeout-id (js/setTimeout #(.abort controller) timeout-ms)]
+    (-> (js/fetch url (js/Object.assign #js {:signal (.-signal controller)} opts))
+        (.finally (fn [] (js/clearTimeout timeout-id))))))
 
 (defn- sanitize-svg-file!
   "Read an SVG file, repair corruption if present, and write it back.
@@ -600,33 +506,39 @@
     (js/Promise.resolve false)))
 
 (defn- download-attachment-to-tmp!
-  "Download an attachment to /tmp asynchronously. Returns a Promise<string|nil>."
+  "Download an attachment to /tmp asynchronously using secure fetch.
+   Returns a Promise<string|nil> with the local file path."
   [{:keys [filename url]}]
   (if (and filename url)
     (let [local-path (str "/tmp/" filename)]
-      (-> (if (media/source-discord-cdn-url? url)
-            (if-let [token (discord-token)]
-              (-> (exec-async
-                   (str "curl -sL -H " (pr-str (str "Authorization: Bot " token))
-                        " -o " (pr-str local-path) " " (pr-str url))
-                   #js {:timeout 10000})
-                  (.then (fn [_] local-path))
-                  (.catch (fn [err]
-                            (println "[event-agents] attachment download failed:" filename (.-message err))
-                            nil)))
-              (js/Promise.resolve nil))
-            (-> (exec-async
-                 (str "curl -sL -o " (pr-str local-path) " " (pr-str url))
-                 #js {:timeout 10000})
-                (.then (fn [_] local-path))
-                (.catch (fn [err]
-                          (println "[event-agents] attachment download failed:" filename (.-message err))
-                          nil))))
+      (-> (fetch-with-timeout
+           url
+           (if (and (media/source-discord-cdn-url? url) (discord-token))
+             #js {:headers #js {"Authorization" (str "Bot " (discord-token))}}
+             #js {})
+           10000)
+          (.then (fn [resp]
+                   (if (.-ok resp)
+                     (.-arrayBuffer resp)
+                     (throw (js/Error. (str "HTTP " (.-status resp)))))))
+          (.then (fn [buffer]
+                   (.writeFile fs-promises local-path (js/Buffer. buffer))
+                   local-path))
           (.then (fn [path]
-                   (when path
-                     (sanitize-svg-file! path))
-                   path))))
+                   (sanitize-svg-file! path)
+                   path))
+          (.catch (fn [err]
+                    (println "[event-agents] attachment download failed:" filename (.-message err))
+                    nil))))
     (js/Promise.resolve nil)))
+
+(defn- cleanup-tmp-file!
+  "Delete a temporary file, logging any errors."
+  [path]
+  (when path
+    (-> (.unlink fs-promises path)
+        (.catch (fn [err]
+                  (println "[event-agents] failed to clean up temp file" path ":" (.-message err)))))))
 
 (defn event-summary-text
   "Build an event summary string. Returns a Promise<string> because attachment
@@ -665,11 +577,13 @@
                        (.then (fn [local-path]
                                 (let [filename (:filename attachment)
                                       url (:url attachment)]
+                                  ;; Clean up temp file after processing
+                                  (cleanup-tmp-file! local-path)
                                   (if local-path
                                     (str "- " filename " (saved to " local-path " — use the read tool to view it)")
                                     (str "- " filename
                                          (when url
-                                           (str " <" url "> (download failed, use url directly)")))))))))
+                                           (str " <" url "> (download failed, use url directly)"))))))))
                  attachments)))
           (.then (fn [lines]
                    (str base-text
@@ -893,10 +807,20 @@
         now (.now js/Date)
         run-id (str "event-agent-" (:id job) "-" now)
         {:keys [conversation-id session-id summary]} (sticky-session-target job event)
-        contract-id (or (:contract-id agent-spec)
-                        (:contractSourceId job))
-        actor-id (or (:actor-id agent-spec)
-                     (:actorId job))
+        contract-id (or (nonblank-str (:contract-id agent-spec))
+                        (nonblank-str (:contractId agent-spec))
+                        (nonblank-str (:contract_id agent-spec))
+                        (nonblank-str (:contractSourceId job)))
+        event-actor (event-actor-id event)
+        actor-id (or (when (and event-actor
+                                 (job-permitted-for-event-actor? job event))
+                        event-actor)
+                     (nonblank-str (:actor-id agent-spec))
+                     (nonblank-str (:actorId agent-spec))
+                     (nonblank-str (:actor_id agent-spec))
+                     (nonblank-str (:actorId job))
+                     (nonblank-str (:actor-id job))
+                     (nonblank-str (:actor_id job)))
         content-parts (event-content-parts event)
         model-id (or (:model agent-spec) "gemma4:31b")
         task-prompt (or (:taskPrompt agent-spec)
@@ -1117,6 +1041,46 @@
   [event-kind]
   (some #(= (str event-kind) %) ["discord.message.mention"]))
 
+(defn- event-actor-id
+  [event]
+  (let [payload (or (:payload event) {})]
+    (or (nonblank-str (:gatewayActorId payload))
+        (nonblank-str (:sourceActorId payload))
+        (nonblank-str (:actorId payload))
+        (nonblank-str (:actor-id payload))
+        (nonblank-str (:actor_id payload))
+        (nonblank-str (:gatewayActorId event))
+        (nonblank-str (:sourceActorId event))
+        (nonblank-str (:actorId event))
+        (nonblank-str (:actor-id event))
+        (nonblank-str (:actor_id event)))))
+
+(defn- job-actor-claims
+  [job]
+  (let [agent-spec (:agentSpec job)
+        claims (actor-scope/normalize-actor-claims
+                (or (:contractActors agent-spec)
+                    (:contract-actors agent-spec)
+                    (:contract_actor_ids agent-spec)
+                    (:contractActorIds job)
+                    (:contract-actor-ids job)
+                    (:contractActors job)))]
+    (if (seq claims)
+      claims
+      (actor-scope/normalize-actor-claims
+       (or (:actorId agent-spec)
+           (:actor-id agent-spec)
+           (:actor_id agent-spec)
+           (:actorId job)
+           (:actor-id job)
+           (:actor_id job))))))
+
+(defn- job-permitted-for-event-actor?
+  [job event]
+  (if-let [actor-id (event-actor-id event)]
+    (actor-scope/actor-allowed? (job-actor-claims job) actor-id)
+    true))
+
 (defn job-matches-event?
   [control job event]
   (let [payload (or (:payload event) {})
@@ -1126,6 +1090,7 @@
     (and (:enabled job)
          (= "event" (get-in job [:trigger :kind]))
          (= (str (get-in job [:source :kind])) (str (:sourceKind event)))
+         (job-permitted-for-event-actor? job event)
          (matches-event-kind? job event-kinds)
          ;; Voice-state events carry voice-channel IDs in :channelId.
          ;; A job's default :channels are text channels for message monitoring;
@@ -1223,7 +1188,8 @@
   (let [config (cfg)
         control (control-config config)
         content (str/lower-case (str (:content message) ""))
-        bot-user-id (discord-bot-user-id control)
+        bot-user-id (or (:gatewayBotUserId message)
+                        (discord-bot-user-id control))
         mention? (and bot-user-id
                       (or (str/includes? content (str "<@" bot-user-id ">"))
                           (str/includes? content (str "<@!" bot-user-id ">"))))
@@ -1234,6 +1200,8 @@
                                 (get-in @source-state* [:discord :voice-states guild-id author-id]))
          payload {:channelId (:channelId message)
                   :guildId guild-id
+                  :gatewayActorId (:gatewayActorId message)
+                  :gatewayBotUserId (:gatewayBotUserId message)
                   :authorId author-id
                   :authorUsername (:authorUsername message)
                   :authorIsBot (:authorIsBot message)
@@ -1252,27 +1220,14 @@
                          :payload     payload}))))
 
 (defn- bind-discord-gateway!
-  [config]
-  (when-let [manager (discord-gateway-manager)]
-    (let [token (some-> (:discord-bot-token config) str str/trim)]
-      (when-not (str/blank? token)
-        (-> (.start manager token)
-            (.catch (fn [err]
-                      (println "[event-agents] discord gateway start failed:" (.-message err))
-                      nil))))
-      (when-let [unsubscribe @discord-gateway-unsubscribe*]
-        (unsubscribe)
-        (reset! discord-gateway-unsubscribe* nil))
-      (let [msg-unsub (.onMessage manager (fn [mapped _raw]
-                                             (dispatch-discord-gateway-message! (js->clj mapped :keywordize-keys true))))
-            voice-unsub (.onVoiceStateUpdate manager (fn [mapped _old _new]
-                                                        (let [data (js->clj mapped :keywordize-keys true)]
-                                                          (dispatch-voice-state-update! data))))]
-        (reset! discord-gateway-unsubscribe*
-                (fn [] (msg-unsub) (voice-unsub)))))))
+  [_config]
+  (discord-source/bind-gateways!
+   {:policy-db (policy-db)
+    :on-message! dispatch-discord-gateway-message!
+    :on-voice-state! dispatch-voice-state-update!}))
 
 (defn- dispatch-voice-state-update!
-  [{:keys [action userId username guildId channelId oldChannelId newChannelId]}]
+  [{:keys [action userId username guildId channelId oldChannelId newChannelId] :as data}]
   (when (not (str/blank? (str userId "")))
     ;; Track user voice states so message events can include the author's voice channel
     (when-not (str/blank? (str guildId ""))
@@ -1294,7 +1249,9 @@
                                 :guildId guildId
                                 :channelId channelId
                                 :oldChannelId oldChannelId
-                                :newChannelId newChannelId}})))
+                                :newChannelId newChannelId
+                                :gatewayActorId (:gatewayActorId data)
+                                :gatewayBotUserId (:gatewayBotUserId data)}})))
 
 (defn- dispatch-discord-message-event!
   [control job message match-kind]
@@ -1309,110 +1266,38 @@
 
 (defn- discord-message-match-kind
   [control job message]
-  (let [bot-user-id (discord-bot-user-id control)
-        content (str/lower-case (str (:content message) ""))
-        mention? (and bot-user-id
-                      (or (str/includes? content (str "<@" bot-user-id ">"))
-                          (str/includes? content (str "<@!" bot-user-id ">"))))
-        keyword? (and (not (job-match-all? job))
-                      (matches-keywords? control job (:content message)))
-        created? (matches-event-kind? job "discord.message.created")]
-    (cond
-      mention? "discord.message.mention"
-      keyword? "discord.message.keyword"
-      (and created? (job-match-all? job)) "discord.message.created"
-      :else nil)))
+  (discord-source/message-match-kind
+   {:bot-user-id (discord-bot-user-id control)
+    :content (:content message)
+    :keyword? (and (not (job-match-all? job))
+                   (matches-keywords? control job (:content message)))
+    :created? (matches-event-kind? job "discord.message.created")
+    :match-all? (job-match-all? job)}))
 
 (defn- resolve-job-channel-ids!
   [control job]
-  (let [explicit-channels (job-channels control job)
-        guild-ids (job-guild-ids job)
-        publish-channels (job-publish-channels job)
-        list-channels! (fn []
-                         (or (dg/list-channels)
-                             (js/Promise.resolve #js [])))]
-    (cond
-      (seq guild-ids)
-      (-> (list-channels!)
-          (.then (fn [channels]
-                   (let [rows (js->clj channels :keywordize-keys true)
-                         guild-id-set (set guild-ids)]
-                     (->> rows
-                          (filter (fn [channel]
-                                    (contains? guild-id-set (:guildId channel))))
-                          (map :id)
-                          distinct
-                          vec)))))
-
-      (and (empty? explicit-channels) (seq publish-channels))
-      (-> (list-channels!)
-          (.then (fn [channels]
-                   (let [rows (js->clj channels :keywordize-keys true)
-                         publish-channel-set (set publish-channels)
-                         guilds (->> rows
-                                     (filter (fn [channel]
-                                               (contains? publish-channel-set (:id channel))))
-                                     (map :guildId)
-                                     distinct
-                                     vec)]
-                     (if (seq guilds)
-                       (let [guild-set (set guilds)]
-                         (->> rows
-                              (filter (fn [channel]
-                                        (contains? guild-set (:guildId channel))))
-                              (map :id)
-                              distinct
-                              vec))
-                       publish-channels)))))
-
-      :else
-      (js/Promise.resolve explicit-channels))))
+  (discord-source/resolve-channel-ids!
+   {:explicit-channels (job-channels control job)
+    :guild-ids (job-guild-ids job)
+    :publish-channels (job-publish-channels job)}))
 
 (defn- execute-discord-patrol!
   [config control job]
-  ;; Skip patrol dispatch entirely when the gateway is live — the gateway fires
-  ;; dispatch-discord-gateway-message! in real time, so patrol would double-fire.
-  (if (discord-gateway-active?)
-    (js/Promise.resolve nil)
   (let [limit (job-max-messages job 25)]
     (-> (resolve-job-channel-ids! control job)
         (.then (fn [channels]
-                 (if (seq channels)
-                   (js/Promise.all
-                    (clj->js
-                     (mapv (fn [channel-id]
-                             (-> (read-discord-channel! config channel-id limit)
-                                 (.then (fn [messages]
-                                          (let [fresh (unseen-discord-messages channel-id messages)]
-                                            (doseq [message fresh]
-                                              (when-let [match-kind (discord-message-match-kind control job message)]
-                                                (dispatch-discord-message-event! control job message match-kind)))
-                                            (remember-discord-latest! channel-id messages)
-                                            {:channelId channel-id
-                                             :fetched (count messages)
-                                             :fresh (count fresh)})))
-                                 (.catch (fn [err]
-                                           (println "[event-agents] discord patrol failed for" channel-id ":" (.-message err))
-                                           {:channelId channel-id
-                                            :error true}))))
-                           channels)))
-                   (js/Promise.resolve nil))))))))
+                 (discord-source/execute-patrol!
+                  {:config config
+                   :channel-ids channels
+                   :limit limit
+                   :unseen-messages unseen-discord-messages
+                   :remember-latest! remember-discord-latest!
+                   :match-kind (partial discord-message-match-kind control job)
+                   :dispatch-message! (partial dispatch-discord-message-event! control job)}))))))
 
 (defn- summarize-discord-channel
   [channel-id messages]
-  (->> messages
-       (remove :authorIsBot)
-       (take 8)
-       (map (fn [message]
-              (let [attachments (:attachments message)
-                    attachment-text (when (seq attachments)
-                                      (str " attachments="
-                                           (str/join ", " (map (fn [a] (str (:filename a) (when (:url a) (str " <" (:url a) ">"))))
-                                          attachments))))]
-                (str "[" channel-id "] <" (:authorUsername message) " (id:" (:authorId message) ")> "
-                     (subs (:content message) 0 (min 180 (count (:content message))))
-                     (or attachment-text "")))))
-       (str/join "\n")))
+  (discord-source/summarize-channel channel-id messages))
 
 (defn- synthesis-channel-ids!
   [control job trigger-event]
@@ -1422,16 +1307,6 @@
                  (->> (concat channels (when trigger-channel [trigger-channel]))
                       distinct
                       vec))))))
-
-(defn- fetch-discord-synthesis-row!
-  [config limit channel-id]
-  (-> (read-discord-channel! config channel-id limit)
-      (.then (fn [messages]
-               {:channelId channel-id
-                :messages messages}))
-      (.catch (fn [_]
-                {:channelId channel-id
-                 :messages []}))))
 
 (defn- discord-synthesis-trigger-summary!
   [trigger-event]
@@ -1443,17 +1318,7 @@
 
 (defn- discord-synthesis-image-attachments
   [rows]
-  (->> rows
-       (mapcat (fn [{:keys [messages]}]
-                 (mapcat :attachments messages)))
-       (filter :url)
-       (filter (fn [attachment]
-                 (some-> (:contentType attachment)
-                         str
-                         str/lower-case
-                         (str/starts-with? "image/"))))
-       (take 8)
-       vec))
+  (discord-source/image-attachments rows))
 
 (defn- discord-synthesis-dispatch-summary!
   [config job publish-channels trigger-event channels rows]
@@ -1488,16 +1353,16 @@
   ([config control job] (execute-discord-synthesis! config control job nil))
   ([config control job trigger-event]
    (let [limit (job-max-messages job 12)
-         publish-channels (job-publish-channels job)
-         fetch-row! (partial fetch-discord-synthesis-row! config limit)
-         dispatch-summary! (partial discord-synthesis-dispatch-summary! config job publish-channels trigger-event)]
+         publish-channels (job-publish-channels job)]
      (-> (synthesis-channel-ids! control job trigger-event)
          (.then (fn [channels]
-                  (if-not (seq channels)
-                    (js/Promise.resolve nil)
-                    (-> (js/Promise.all (clj->js (mapv fetch-row! channels)))
-                        (.then (fn [results]
-                                 (dispatch-summary! channels (js->clj results :keywordize-keys true))))))))))))
+                  (discord-source/execute-synthesis!
+                   {:config config
+                    :channel-ids channels
+                    :limit limit
+                    :dispatch-summary! (fn [rows]
+                                         (discord-synthesis-dispatch-summary!
+                                          config job publish-channels trigger-event channels rows))})))))))
 
 (defn- execute-direct-job!
   [config job source-kind event-kind]
@@ -1551,9 +1416,7 @@
 
 (defn stop!
   []
-  (when-let [unsubscribe @discord-gateway-unsubscribe*]
-    (unsubscribe)
-    (reset! discord-gateway-unsubscribe* nil))
+  (discord-source/stop!)
   (doseq [[_ task] @scheduled-tasks*]
     (when (and task (map? task) (= :interval (:type task)))
       (clear-interval-task! task)))

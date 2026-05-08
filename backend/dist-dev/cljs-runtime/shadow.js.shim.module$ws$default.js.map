@@ -1,0 +1,9 @@
+{
+"version":3,
+"file":"shadow.js.shim.module$ws$default.js",
+"lineCount":3,
+"mappings":"AAAAA,IAAKC,CAAAA,OAAL,CAAa,kCAAb,CAAA;AACAC,MAAOC,CAAAA,EAAGC,CAAAA,IAAKC,CAAAA,iBAAf,GAAmCH,MAAOI,CAAAA,GAAIC,CAAAA,aAAcC,CAAAA,OAA5D;;",
+"sources":["shadow.js.shim.module$ws$default.js"],
+"sourcesContent":["goog.provide(\"shadow.js.shim.module$ws$default\");\nshadow.js.shim.module$ws$default = shadow.esm.esm_import$ws.default;\n"],
+"names":["goog","provide","shadow","js","shim","module$ws$default","esm","esm_import$ws","default"]
+}

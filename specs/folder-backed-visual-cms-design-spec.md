@@ -271,11 +271,22 @@ Only blocks declared in the registry can be placed in the visual editor.
     :alt {:type :string}
     :caption {:type :string}}}
 
-  :divider
-  {:label "Divider"
-   :category :layout
-   :icon :minus
-   :props-schema {}}}}
+   :divider
+   {:label "Divider"
+    :category :layout
+    :icon :minus
+    :props-schema {}}
+
+   :contract-ref
+   {:label "Contract Reference"
+    :category :composition
+    :icon :layers
+    :props-schema
+    {:ref-type {:type :enum :values [:path :id] :default :path}
+     :ref-path {:type :string}
+     :ref-id {:type :string}
+     :include-layout {:type :boolean :default false}
+     :zone-mapping {:type :markdown}}}}
 ```
 
 ### Registry rules
@@ -286,6 +297,59 @@ Only blocks declared in the registry can be placed in the visual editor.
   1. Creating a React component in the shared component registry.
   2. Declaring it in `contracts/cms-block-registry.edn`.
   3. Adding it to one or more template zone `:accepts` lists.
+
+---
+
+## Contract Composition
+
+Blocks can reference other view contracts, enabling composition and reuse.
+
+### Composition by path
+
+Reference another contract by filesystem path:
+
+```clojure
+{:id "shared-header"
+ :type :contract-ref
+ :zone :hero
+ :ref {:kind :contract-ref
+       :ref-type :path
+       :ref-path "cms/drafts/shared-header/view-contract.edn"
+       :include-layout false}}
+```
+
+### Composition by ID
+
+Reference another contract by its `:view/id`:
+
+```clojure
+{:id "track-list"
+ :type :contract-ref
+ :zone :main
+ :ref {:kind :contract-ref
+       :ref-type :id
+       :ref-id "error-coded-radio"
+       :include-layout false
+       :zone-mapping {:main :tracks}}}
+```
+
+### Resolution rules
+
+- **Path refs** load the contract directly from the given path.
+- **ID refs** search in order:
+  1. `cms/drafts/<id>/view-contract.edn`
+  2. `gardens/*/drafts/<id>/view-contract.edn`
+  3. `gardens/*/published/<id>/view-contract.edn`
+- **Max depth** of 3 to prevent infinite recursion.
+- **Zone mapping** optionally remaps zones from the referenced contract.
+- **Include layout** optionally merges the referenced contract's layout zones.
+
+### UI representation
+
+In the visual editor, a `:contract-ref` block appears as a highlighted card showing:
+- Reference type (path or ID)
+- The path or ID value
+- A note that the referenced blocks will be composed at render time
 
 ---
 

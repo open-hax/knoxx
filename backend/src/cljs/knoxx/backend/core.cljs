@@ -29,7 +29,9 @@
 (defn- app-log-error!
   [app message err]
   (let [^js log (.-log app)]
-    (.error log message err)))
+    (if err
+      (.error log err message)
+      (.error log message))))
 
 (defn- app-listen!
   [^js app host port]
@@ -107,10 +109,22 @@
     (reset! runtime-state/config* resolved-config)
     (reset! runtime-state/runtime* runtime)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
-    (-> (prewarm-sdk-runtime! runtime app resolved-config)
-        (.then (fn [_]
-                 (start-background-services! app resolved-config)
-                 (clj->js resolved-config))))))
+    ;; Route registration and HTTP listen must not be gated on the SDK runtime
+    ;; cache or contract health. Invalid contracts, model-registry misses, and
+    ;; upstream model fetch failures should degrade agent turns later; they must
+    ;; never prevent the backend from binding /health and admin repair routes.
+    (js/setTimeout
+     (fn []
+       (-> (prewarm-sdk-runtime! runtime app resolved-config)
+           (.catch (fn [err]
+                     (app-log-error! app "Knoxx SDK runtime prewarm failed; startup continuing" err)
+                     nil))))
+     1000)
+    (js/setTimeout
+     (fn []
+       (start-background-services! app resolved-config))
+     1500)
+    (js/Promise.resolve (clj->js resolved-config))))
 
 (defn start!
   [runtime]

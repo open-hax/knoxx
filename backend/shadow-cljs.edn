@@ -55,6 +55,42 @@
     :infer-externs :auto,
     :macros {:knoxx.backend.macros true},
     :warnings {:infer-warning false}}},
+  :server-dev
+  {:target :esm,
+   :runtime :node,
+   :output-dir "dist-dev",
+   :modules {:server {:init-fn knoxx.backend.entrypoint/init}},
+   :js-options
+   {:js-provider :import,
+    :keep-as-import
+    #{"@resvg/resvg-js"
+      "@modelcontextprotocol/sdk"
+      "pg"
+      "node:child_process"
+      "node:fs/promises"
+      "node:crypto"
+      "node:fs"
+      "node:path"
+      "node:url"
+      "redis"
+      "discord.js"
+      "@discordjs/voice"
+      "libsodium-wrappers"}},
+   :devtools
+   {:autoload true,
+    :preloads [shadow.cljs.devtools.client.node-esm],
+    ;; This codebase has existing infer warnings; without ignore-warnings,
+    ;; shadow compiles but refuses to hot-load changed code.
+    :ignore-warnings true,
+    :before-load-async knoxx.backend.bootstrap/stop-http-before-load!,
+    :after-load-async knoxx.backend.bootstrap/start-http-after-load!},
+   :compiler-options
+   {:output-feature-set :es-next,
+    :optimizations :none,
+    :source-map true,
+    :infer-externs :auto,
+    :macros {:knoxx.backend.macros true},
+    :warnings {:infer-warning false}}},
   :server
   {:target :esm,
    :runtime :node,
@@ -76,13 +112,6 @@
       "discord.js"
       "@discordjs/voice"
       "libsodium-wrappers"}},
-   :devtools
-   {:autoload true,
-    ;; This codebase has existing infer warnings; without ignore-warnings,
-    ;; shadow compiles but refuses to hot-load changed code.
-    :ignore-warnings true,
-    :before-load-async knoxx.backend.bootstrap/stop-http-before-load!,
-    :after-load-async knoxx.backend.bootstrap/start-http-after-load!},
    :compiler-options
    {:output-feature-set :es-next,
     :optimizations :none,

@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [clip-text tool-text-result]]
+            [knoxx.backend.tools.actor-credentials :as actor-credentials]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
 
 (def publish-params
@@ -29,16 +30,11 @@
    [:limit {:optional true :description "Maximum timeline posts to return."} [:int {:min 1 :max 25}]]
    [:cursor {:optional true :description "Optional pagination cursor from a previous bluesky.timeline call."} :string]])
 
-(defn- env-nonblank [k]
-  (some-> (aget js/process.env k) str str/trim not-empty))
-
 (defn- bluesky-service-base-url []
-  (or (env-nonblank "BLUESKY_SERVICE_URL")
-      "https://bsky.social"))
+  "https://bsky.social")
 
 (defn- bluesky-public-base-url []
-  (or (env-nonblank "BLUESKY_PUBLIC_API_URL")
-      "https://public.api.bsky.app"))
+  "https://public.api.bsky.app")
 
 (defn- query-url [base params]
   (let [search (js/URLSearchParams.)]
@@ -57,22 +53,27 @@
                      (.then (fn [text]
                               (throw (js/Error. (str label " error " (.-status resp) ": " text)))))))))))
 
-(defn- bluesky-auth-config []
-  (let [identifier (env-nonblank "BLUESKY_IDENTIFIER")
-        password (env-nonblank "BLUESKY_APP_PASSWORD")]
-    (when (or (nil? identifier) (nil? password))
-      (throw (js/Error. "Bluesky credentials not configured. Set BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD.")))
-    {:identifier identifier :password password}))
+(defn- bluesky-auth-config! [runtime]
+  (-> (actor-credentials/get-credential! runtime "bluesky")
+      (.then (fn [credential]
+               (let [identifier (or (actor-credentials/secret-value credential :identifier :handle :username)
+                                    (:accountIdentifier credential))
+                     password (actor-credentials/secret-value credential :appPassword :app-password :password)]
+                 (when (or (str/blank? (str identifier))
+                           (str/blank? (str password)))
+                   (throw (js/Error. "Bluesky actor credential must include identifier and appPassword.")))
+                 {:identifier identifier :password password})))))
 
-(defn- bluesky-create-session! []
-  (let [{:keys [identifier password]} (bluesky-auth-config)]
-    (bluesky-json-fetch!
-     (str (bluesky-service-base-url) "/xrpc/com.atproto.server.createSession")
-     #js {:method "POST"
-          :headers #js {"Content-Type" "application/json"
-                        "User-Agent" "Knoxx-Agent/1.0"}
-          :body (.stringify js/JSON #js {:identifier identifier :password password})}
-     "Bluesky auth")))
+(defn- bluesky-create-session! [runtime]
+  (-> (bluesky-auth-config! runtime)
+      (.then (fn [{:keys [identifier password]}]
+               (bluesky-json-fetch!
+                (str (bluesky-service-base-url) "/xrpc/com.atproto.server.createSession")
+                #js {:method "POST"
+                     :headers #js {"Content-Type" "application/json"
+                                   "User-Agent" "Knoxx-Agent/1.0"}
+                     :body (.stringify js/JSON #js {:identifier identifier :password password})}
+                "Bluesky auth")))))
 
 (defn- bluesky-post-url [handle uri]
   (let [post-id (some-> uri str (str/split #"/") last)]
@@ -128,10 +129,10 @@
                                                  :url (bluesky-post-url handle (aget post "uri"))}))))]
                      {:kind kind :results results})))))))
 
-(defn- bluesky-profile! [actor]
+(defn- bluesky-profile! [runtime actor]
   (let [actor (some-> actor str str/trim)
         actor-promise (if (str/blank? actor)
-                        (-> (bluesky-create-session!)
+                        (-> (bluesky-create-session! runtime)
                             (.then (fn [session]
                                      (or (aget session "handle") (aget session "did")))))
                         (js/Promise.resolve actor))]
@@ -180,8 +181,8 @@
                                              :url (bluesky-post-url handle (aget post "uri"))}))))]
                  {:actor actor :results results})))))
 
-(defn- bluesky-timeline! [limit cursor]
-  (-> (bluesky-create-session!)
+(defn- bluesky-timeline! [runtime limit cursor]
+  (-> (bluesky-create-session! runtime)
       (.then (fn [session]
                (bluesky-json-fetch!
                 (query-url (str (bluesky-service-base-url) "/xrpc/app.bsky.feed.getTimeline")
@@ -208,8 +209,8 @@
                                              :url (bluesky-post-url handle (aget post "uri"))}))))]
                  {:cursor (aget payload "cursor") :results results})))))
 
-(defn- bluesky-publish! [text]
-  (-> (bluesky-create-session!)
+(defn- bluesky-publish! [runtime text]
+  (-> (bluesky-create-session! runtime)
       (.then (fn [session]
                (-> (bluesky-json-fetch!
                     (str (bluesky-service-base-url) "/xrpc/com.atproto.repo.createRecord")
@@ -230,22 +231,22 @@
                                :cid (or (aget result "cid") "")
                                :url (or (bluesky-post-url (aget session "handle") uri) "")}))))))))
 
-(defn publish-execute [_runtime _config _tool-call-id params a b c]
+(defn publish-execute [runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         text (or (aget params "text") "")]
     (when (str/blank? (str/trim text))
       (throw (js/Error. "text is required")))
     (maybe-tool-update! on-update "Publishing to Bluesky…")
-    (-> (bluesky-publish! text)
+    (-> (bluesky-publish! runtime text)
         (.then (fn [result]
                  (tool-text-result (str "Published Bluesky post\n" (or (:url result) (:uri result) ""))
                                    result))))))
 
-(defn profile-execute [_runtime _config _tool-call-id params a b c]
+(defn profile-execute [runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         actor (or (aget params "actor") "")]
     (maybe-tool-update! on-update "Reading Bluesky profile…")
-    (-> (bluesky-profile! actor)
+    (-> (bluesky-profile! runtime actor)
         (.then (fn [profile]
                  (tool-text-result
                   (str "Bluesky profile: " (or (:displayName profile) (:handle profile) "unknown")
@@ -284,12 +285,12 @@
                  (tool-text-result (format-posts (str "Bluesky author feed: " actor) (:results result))
                                    result))))))
 
-(defn timeline-execute [_runtime _config _tool-call-id params a b c]
+(defn timeline-execute [runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         limit (max 1 (min 25 (or (aget params "limit") 8)))
         cursor (or (aget params "cursor") "")]
     (maybe-tool-update! on-update "Reading authenticated Bluesky timeline…")
-    (-> (bluesky-timeline! limit cursor)
+    (-> (bluesky-timeline! runtime limit cursor)
         (.then (fn [result]
                  (tool-text-result (format-posts "Bluesky timeline" (:results result))
                                    result))))))

@@ -1,4 +1,8 @@
-{:blocks
+{:contract/id "cms-block-registry"
+ :contract/kind :cms-block-registry
+ :contract/version 1
+ :enabled true
+ :blocks
  {:hero
   {:label "Hero"
    :category :layout
@@ -99,8 +103,19 @@
     :alt {:type :string}
     :caption {:type :string}}}
 
-  :divider
-  {:label "Divider"
-   :category :layout
-   :icon :minus
-   :props-schema {}}}}
+   :divider
+   {:label "Divider"
+    :category :layout
+    :icon :minus
+    :props-schema {}}
+
+   :contract-ref
+   {:label "Contract Reference"
+    :category :composition
+    :icon :layers
+    :props-schema
+    {:ref-type {:type :enum :values [:path :id] :default :path}
+     :ref-path {:type :string}
+     :ref-id {:type :string}
+     :include-layout {:type :boolean :default false}
+     :zone-mapping {:type :markdown}}}}}

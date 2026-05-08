@@ -59,10 +59,25 @@ function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySes
   return merged;
 }
 
+const CMS_CHAT_ACTOR_ID = "cms_chat";
+const CMS_CHAT_SESSION_KEY = "knoxx_cms_chat_session_id";
+const CMS_CHAT_SCRATCHPAD_KEY = "knoxx_cms_chat_scratchpad_state";
+const CMS_CHAT_PINNED_KEY = "knoxx_cms_chat_pinned_context";
+const CMS_CHAT_SESSION_STATE_KEY = "knoxx_cms_chat_session_state";
+const CMS_CHAT_SIDEBAR_WIDTH_KEY = "knoxx_cms_chat_sidebar_width_px";
+
 function CmsPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const chat = useChatWorkspaceController({ initialShowCanvas: false, defaultActorId: "cms_chat" });
+  const chat = useChatWorkspaceController({
+    initialShowCanvas: false,
+    defaultActorId: CMS_CHAT_ACTOR_ID,
+    sessionIdKey: CMS_CHAT_SESSION_KEY,
+    scratchpadStorageKey: CMS_CHAT_SCRATCHPAD_KEY,
+    pinnedContextStorageKey: CMS_CHAT_PINNED_KEY,
+    sessionStateKey: CMS_CHAT_SESSION_STATE_KEY,
+    sidebarWidthKey: CMS_CHAT_SIDEBAR_WIDTH_KEY,
+  });
 
   // Editor state
   const [editorTitle, setEditorTitle] = useState("");

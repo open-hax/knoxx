@@ -98,7 +98,7 @@
    [:text {:description "Plain text. Strip markdown first."} :string]
    [:output_path {:optional true :description "Workspace-relative output path. Defaults to Voice/tts-<timestamp>.mp3. Use Voice/ for spoken output, Audio/ for clips and effects, Music/ for musical content."} :string]
    [:voice_id {:optional true :description "Voxx/Kokoro voice ID. Default: af_jessica."} :string]
-   [:model_id {:optional true :description "Voxx backend hint/model. Default: kokoro. Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER: xiaomi_mimo, kokoro, espeak."} :string]
+   [:model_id {:optional true :description "Voxx backend hint/model. Default: kokoro. Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER: xiaomi_mimo, kokoro; eSpeak is opt-in only."} :string]
    [:output_format {:optional true :description "Audio format. Default mp3."} :string]
    [:speed {:optional true :description "Speech speed multiplier. Default 1.15 for the af_jessica workspace voice."} [:double {:min 0.25 :max 4.0}]]
    [:postprocess_profile {:optional true :description "Final Voxx mastering profile. Default sports-commentator-v1. Aliases: sports/commentator, broadcast/warm, narrator/polish, radio/crisp, soft/studio; off/none disables."} :string]
@@ -172,7 +172,7 @@
   [:map
    [:text {:description "Text to synthesize via /ws/voice/tts."} :string]
    [:voice_id {:optional true :description "Voxx/Kokoro voice ID. Default: af_jessica."} :string]
-   [:model_id {:optional true :description "Voxx backend hint/model. Default: kokoro; fallback order is controlled by Voxx."} :string]
+   [:model_id {:optional true :description "Voxx backend hint/model. Default: kokoro; fallback order is controlled by Voxx. eSpeak is opt-in only in the workspace default."} :string]
    [:output_format {:optional true :description "Format. Default: mp3."} :string]
    [:speed {:optional true :description "Speech speed multiplier. Default 1.15."} [:double {:min 0.25 :max 4.0}]]
    [:postprocess_profile {:optional true :description "Final Voxx mastering profile. Default sports-commentator-v1. Aliases: sports, broadcast, narrator, radio, soft; off disables."} :string]
@@ -314,7 +314,7 @@
             "Use tags sparingly at phrase boundaries. Bracket tags set Voxx segment-level emotion/energy filters, [pause] and <break time=\"...ms\" /> insert silence, and [laugh] inserts a short nonverbal effect."
             "Voxx consumes known performance tags, sends clean segment text to the chosen backend, stitches the segments together, then applies tag-driven inflection postprocessing plus the final mastering profile."
             "Use postprocess_profile to choose Voxx's final mastering: sports/commentator (default high energy), broadcast/warm, narrator/polish, radio/crisp, soft/studio, or off/none for dry capture."
-            "The inherited Melo narrator-unifier remains a local Melo stage; the Voxx final postprocess stage is backend-agnostic and gives Kokoro/remote/Melo/eSpeak livelier leveling, EQ, compression, limiting, and gain."
+            "eSpeak is not in the default Voxx backend order; if a voice sounds robotic, inspect x-openhax-tts-backend before assuming postprocess is the cause."
             "Use model_id as a backend hint: kokoro, xiaomi_mimo, requesty, openai, melo, or espeak; Voxx may fall back by VOICE_GATEWAY_TTS_BACKEND_ORDER."
             "Default output_format is mp3. When output_path is omitted, files save to Voice/tts-<timestamp>.mp3 automatically."
             "Use Voice/ for spoken TTS output, Audio/ for sound clips and effects, Music/ for musical or sung content."

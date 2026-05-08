@@ -24,6 +24,8 @@
 (def ^:private voice-listener-bytes-per-sample 2)
 (def ^:private voice-listener-min-duration-s 0.8)
 (def ^:private voice-listener-silence-debounce-ms 900)
+;; ~30 seconds of stereo 48kHz PCM16LE = 48000 * 2 * 2 * 30 = 5.76 MB
+(def ^:private voice-listener-max-buffer-bytes (* 48000 2 2 30))
 
 ;; ---------------------------------------------------------------------------
 ;; discord.js imports
@@ -689,10 +691,16 @@
                         decoder (create-decoder)]
                     ;; audio-stream emits Opus packets; decoder emits PCM16LE.
                     (.pipe audio-stream decoder)
-                    (.on decoder "data"
-                         (fn [pcm-chunk]
-                           (when-let [buf (get @pcm-buffers uid)]
-                             (.push buf pcm-chunk))))
+                     (.on decoder "data"
+                          (fn [pcm-chunk]
+                            (when-let [buf (get @pcm-buffers uid)]
+                              (let [current-size (reduce (fn [acc b] (+ acc (.-length b))) 0 buf)]
+                                (if (> (+ current-size (.-length pcm-chunk)) voice-listener-max-buffer-bytes)
+                                  (do
+                                    (js/console.warn "[voice:listener] PCM buffer overflow for" uid "— dropping audio")
+                                    (swap! pcm-buffers dissoc uid)
+                                    (.push buf nil))
+                                  (.push buf pcm-chunk)))))))
                     (.on decoder "error"
                          (fn [err]
                            (js/console.error "[voice:listener] decoder error for" uid ":" (.-message err))))
@@ -759,6 +767,8 @@
 
    Options (CLJS map or JS object):
      - :log / \"log\": logger object (default: console)
+     - :set-default? / \"setDefault\": when false, do not replace the legacy
+       singleton manager.
 
    Methods: start, stop, restart, onMessage, status, listServers,
             listChannels, fetchChannelMessages, fetchDmMessages,
@@ -767,6 +777,9 @@
   (let [log (or (when (map? opts) (:log opts))
                 (when (object? opts) (aget opts "log"))
                 js/console)
+        set-default? (not= false (or (when (map? opts) (:set-default? opts))
+                                     (when (object? opts) (aget opts "setDefault"))
+                                     true))
         client-state (atom nil)
         ready-promise (atom nil)
         current-token (atom nil)
@@ -830,7 +843,8 @@
                        :listVoiceMembers (fn [guild-id channel-id]
                                            (gw-list-voice-members ensure-client guild-id channel-id))})
 
-          (set-manager! @this-obj)
+          (when set-default?
+            (set-manager! @this-obj))
           @this-obj)))))
 
 ;; ---------------------------------------------------------------------------
@@ -838,6 +852,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defonce ^:private manager* (atom nil))
+(defonce ^:private actor-managers* (atom {}))
 
 (defn set-manager!
   "Store the gateway manager instance for CLJS API access."
@@ -845,9 +860,93 @@
   (reset! manager* m))
 
 (defn gateway-manager
-  "Returns the current gateway manager instance (or nil)."
+  "Returns the legacy/default gateway manager instance, or an actor-owned manager."
+  ([] @manager*)
+  ([actor-id]
+   (if-let [id (some-> actor-id str str/trim not-empty)]
+     (get @actor-managers* id)
+     @manager*)))
+
+(defn gateway-managers
+  "Returns a map of actor-id to actor-owned Discord gateway managers."
   []
-  @manager*)
+  @actor-managers*)
+
+(defn- credential-value
+  [credential k]
+  (or (when (map? credential) (get credential k))
+      (when (map? credential) (get credential (keyword k)))
+      (when (map? credential) (get credential (name k)))
+      (when (object? credential) (aget credential (name k)))))
+
+(defn- credential-secret-value
+  [credential & ks]
+  (let [secrets (credential-value credential :secretJson)]
+    (some (fn [k]
+            (some-> (or (credential-value secrets k)
+                        (credential-value secrets (keyword k))
+                        (credential-value secrets (name k)))
+                    str
+                    str/trim
+                    not-empty))
+          ks)))
+
+(defn- credential-actor-id
+  [credential]
+  (some-> (or (credential-value credential :actorId)
+              (credential-value credential :actor-id)
+              (credential-value credential :actor_id))
+          str
+          str/trim
+          not-empty))
+
+(defn- credential-bot-token
+  [credential]
+  (credential-secret-value credential :botToken :bot-token :token))
+
+(defn ensure-actor-manager!
+  [actor-id]
+  (let [actor-id (some-> actor-id str str/trim not-empty)]
+    (when-not actor-id
+      (throw (js/Error. "actor id is required for Discord actor gateway")))
+    (or (get @actor-managers* actor-id)
+        (let [manager (createDiscordGatewayManager #js {:log js/console :setDefault false})]
+          (swap! actor-managers* assoc actor-id manager)
+          manager))))
+
+(defn start-actor-gateway!
+  [actor-id token]
+  (let [manager (ensure-actor-manager! actor-id)]
+    (-> (.start manager token)
+        (.then (fn [_]
+                 {:actorId actor-id
+                  :status (js->clj (.status manager) :keywordize-keys true)})))))
+
+(defn start-actor-gateways!
+  [credentials]
+  (let [rows (js->clj (or credentials #js []) :keywordize-keys true)
+        valid (->> rows
+                   (keep (fn [credential]
+                           (let [actor-id (credential-actor-id credential)
+                                 token (credential-bot-token credential)]
+                             (when (and actor-id token)
+                               {:actorId actor-id :token token}))))
+                   vec)
+        active-actor-ids (set (map :actorId valid))]
+    (doseq [[actor-id manager] @actor-managers*]
+      (when-not (contains? active-actor-ids actor-id)
+        (try (.stop manager) (catch js/Error _))
+        (swap! actor-managers* dissoc actor-id)))
+    (-> (js/Promise.all
+         (clj->js
+          (mapv (fn [{:keys [actorId token]}]
+                  (-> (start-actor-gateway! actorId token)
+                      (.catch (fn [err]
+                                (.warn js/console "[discord-gateway] actor gateway start failed" actorId (.-message err))
+                                {:actorId actorId :error (.-message err)}))))
+                valid)))
+        (.then (fn [results]
+                 (js->clj results :keywordize-keys true))))))
 
 (defn started?
   "Returns true if the gateway client exists."

@@ -84,6 +84,14 @@ function parseViewContract(ednText: string): ViewContract {
           kind: extractKeyword((block.source as Record<string, unknown>).kind) as "file",
           path: String((block.source as Record<string, unknown>).path ?? ""),
         } : undefined,
+        ref: block.ref ? {
+          kind: "contract-ref" as const,
+          ref_type: extractKeyword((block.ref as Record<string, unknown>).ref_type) as "path" | "id",
+          ref_path: String((block.ref as Record<string, unknown>).ref_path ?? ""),
+          ref_id: String((block.ref as Record<string, unknown>).ref_id ?? ""),
+          include_layout: (block.ref as Record<string, unknown>).include_layout === true,
+          zone_mapping: (block.ref as Record<string, unknown>).zone_mapping as Record<string, string> | undefined,
+        } : undefined,
         hidden: block.hidden === true,
       };
     }).filter((b) => b.id && b.type);

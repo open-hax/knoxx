@@ -25,17 +25,12 @@ Your capabilities:
 - Apply OpenPlanner graph labels after confirmation
 
 Always confirm actions with the user. Keep the playlist organized and suggest improvements."}
+ :sub-agents ["broadcast_studio_audio_transcriber"
+              "broadcast_studio_audio_describer"
+              "broadcast_studio_audio_labeler"]
  :trigger-kind :manual
  :contract/version 1
  :enabled true
-- :data {}}
-+ :sub-agents ["broadcast_studio_audio_transcriber"
-+              "broadcast_studio_audio_describer"
-+              "broadcast_studio_audio_labeler"]
-+ :data {:audio-sub-agent-contracts ["broadcast_studio_audio_transcriber"
-+                                    "broadcast_studio_audio_describer"
-+                                    "broadcast_studio_audio_labeler"]}}
- :trigger-kind :manual
- :contract/version 1
- :enabled true
- :data {}}
+ :data {:audio-sub-agent-contracts ["broadcast_studio_audio_transcriber"
+                                    "broadcast_studio_audio_describer"
+                                    "broadcast_studio_audio_labeler"]}}

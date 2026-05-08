@@ -242,6 +242,12 @@
                      (aget body "session_id"))
      :run-id (or (aget body "runId")
                  (aget body "run_id"))
+     :actor-id (some-> (or (aget body "actorId")
+                           (aget body "actor_id")
+                           (aget body "actor-id"))
+                         str
+                         str/trim
+                         not-empty)
      :metadata (js->clj metadata :keywordize-keys true)}))
 
 (defn route!

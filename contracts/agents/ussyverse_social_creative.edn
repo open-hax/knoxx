@@ -65,7 +65,6 @@ File organization discipline:
  :source-kind :discord,
  :cadence-min 10,
  :enabled true,
-
  :context {:max-messages 1000
            :max-chars 200000
            :preserve-system true}

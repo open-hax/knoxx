@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.document-state :refer [normalize-relative-path]]
             [knoxx.backend.text :refer [tool-text-result]]
+            [knoxx.backend.tools.actor-credentials :as actor-credentials]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
@@ -22,10 +23,12 @@
   [value]
   (some-> (str value) (str/includes? "cdn.discordapp.com/attachments")))
 
-(defn- discord-bot-token
-  "Get Discord bot token from config, if available."
-  [config]
-  (some-> config :discord-bot-token str str/trim not-empty))
+(defn- discord-bot-token!
+  "Get Discord bot token from the current actor credential."
+  [runtime]
+  (-> (actor-credentials/get-credential! runtime "discord_bot")
+      (.then (fn [credential]
+               (actor-credentials/secret-value credential :botToken :bot-token :token)))))
 
 ;; -------------------------------------------------------------------------
 ;; Path / FS shims
@@ -310,12 +313,15 @@
          decoded))
 
       (source-http-url? source)
-      (let [token (when (source-discord-cdn-url? source)
-                    (discord-bot-token config))
-            headers #js {"User-Agent" "Knoxx-Agent/1.0"}
-            _ (when token
-                (aset headers "Authorization" (str "Bot " token)))]
-        (-> (js/fetch source #js {:headers headers})
+      (let [token-promise (if (source-discord-cdn-url? source)
+                            (discord-bot-token! runtime)
+                            (js/Promise.resolve nil))]
+        (-> token-promise
+            (.then (fn [token]
+                     (let [headers #js {"User-Agent" "Knoxx-Agent/1.0"}]
+                       (when token
+                         (aset headers "Authorization" (str "Bot " token)))
+                       (js/fetch source #js {:headers headers}))))
             (.then (fn [resp]
                      (if-not (.-ok resp)
                        (-> (.text resp)

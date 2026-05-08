@@ -216,6 +216,18 @@
    [:context {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 
+(def CmsContract
+  "CMS editor contracts are EDN records under contracts/ used by the folder-backed
+   visual CMS. They keep their domain payload (:blocks or :templates) at the
+   top-level so existing CMS editor file readers remain compatible."
+  [:map {:closed false}
+   [:contract/id string?]
+   [:contract/kind [:enum :cms-block-registry :cms-templates :cms-template-registry]]
+   [:contract/version {:optional true} int?]
+   [:enabled {:optional true} boolean?]
+   [:blocks {:optional true} [:map {:closed false}]]
+   [:templates {:optional true} [:map {:closed false}]]])
+
 (defn- infer-contract-class
   [value]
   (cond
@@ -223,6 +235,9 @@
          (= :policy (:contract/kind value))) "policies"
     (and (contains? value :contract/id)
          (= :sub-agent (:contract/kind value))) "sub_agents"
+    (and (contains? value :contract/id)
+         (contains? #{:cms-block-registry :cms-templates :cms-template-registry}
+                    (:contract/kind value))) "cms"
     (contains? value :contract/id) "agents"
     (contains? value :actor/id) "actors"
     (contains? value :role/id) "roles"
@@ -244,6 +259,7 @@
     "models" ModelContract
     "ingest_sources" IngestSourceContract
     "sub_agents" SubAgentContract
+    "cms" CmsContract
     AgentContract))
 
 (defn- collect-humanized-errors

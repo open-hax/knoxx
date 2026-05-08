@@ -6,7 +6,7 @@
 (def ^:private default-voxx-model-id "kokoro")
 (def ^:private default-voxx-speed "1.15")
 (def ^:private default-voxx-output-format "mp3")
-(def ^:private default-voxx-postprocess-profile "off")
+(def ^:private default-voxx-postprocess-profile "sports-commentator-v1")
 
 (defn- trim-trailing-slashes
   [s]
@@ -283,7 +283,7 @@
                                      :default_voice_id (voxx-default-voice-id config)
                                      :default_model_id (voxx-default-model-id config)
                                      :default_speed (voxx-default-speed config)
-                                     :default_postprocess_enabled false
+                                     :default_postprocess_enabled true
                                      :default_postprocess_profile default-voxx-postprocess-profile
                                      :default_prompt_aware true})))
                           (.catch (fn [err]
@@ -328,7 +328,7 @@
                                               postprocess-profile-raw)
                         postprocess-enabled (bool-value (first-body-value body ["postprocess_enabled"
                                                                                 "postprocessEnabled"])
-                                                        false)
+                                                        true)
                         prompt-aware (bool-value (first-body-value body ["prompt_aware"
                                                                          "promptAware"
                                                                          "prompt-aware"])

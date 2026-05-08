@@ -1,15 +1,16 @@
 (ns kms-ingestion.drivers.audio
-  "Audio file driver that uses gemma4:e4b to describe audio files."
+  "Audio file driver that uses the Knoxx agent runtime to describe audio files."
   (:require
    [babashka.fs :as fs]
    [cheshire.core :as json]
    [clj-http.client :as http]
    [clojure.string :as str]
+   [kms-ingestion.config :as app-config]
    [kms-ingestion.drivers.protocol :as protocol])
   (:import
    [java.nio.file Files FileVisitor FileVisitResult]
    [java.security MessageDigest]
-   [java.util Base64]))
+   [java.util Base64 UUID]))
 
 (def audio-extensions
   #{"mp3" "wav" "ogg" "m4a" "flac" "aac" "opus" "wma" "aiff" "aif" "mp4" "webm"})
@@ -26,6 +27,40 @@
   (or (:root-path config)
       (:root_path config)
       (throw (ex-info "Missing root_path in driver config" {:config config}))))
+
+(defn- nonblank-str [value]
+  (let [s (some-> value str str/trim)]
+    (when-not (str/blank? s) s)))
+
+(defn- config-value [config kebab-key snake-key default-value]
+  (or (get config kebab-key)
+      (get config snake-key)
+      default-value))
+
+
+(defn- knoxx-backend-url [config]
+  (nonblank-str (config-value config :knoxx-backend-url :knoxx_backend_url (app-config/knoxx-backend-url))))
+
+(defn- knoxx-api-key [config]
+  (nonblank-str (config-value config :knoxx-api-key :knoxx_api_key (app-config/knoxx-api-key))))
+
+(defn- knoxx-user-email [config]
+  (nonblank-str (config-value config :knoxx-user-email :knoxx_user_email (app-config/knoxx-user-email))))
+
+(defn- audio-agent-model [config]
+  (nonblank-str (config-value config :audio-analysis-model :audio_analysis_model (app-config/audio-analysis-model))))
+
+(defn- audio-agent-contract-id [config]
+  (nonblank-str (config-value config :audio-analysis-agent-contract-id :audio_analysis_agent_contract_id (app-config/audio-analysis-agent-contract-id))))
+
+(defn- audio-agent-actor-id [config]
+  (nonblank-str (config-value config :audio-analysis-agent-actor-id :audio_analysis_agent_actor_id (app-config/audio-analysis-agent-actor-id))))
+
+(defn- audio-agent-timeout-ms [config]
+  (long (config-value config :audio-analysis-agent-timeout-ms :audio_analysis_agent_timeout_ms (app-config/audio-analysis-agent-timeout-ms))))
+
+(defn- audio-agent-poll-ms [config]
+  (long (config-value config :audio-analysis-agent-poll-ms :audio_analysis_agent_poll_ms (app-config/audio-analysis-agent-poll-ms))))
 
 (defn- sha256 [path]
   (let [bytes (Files/readAllBytes (.toPath (fs/file path)))
@@ -56,21 +91,6 @@
          "Size: " (human-audio-size size) "\n"
          "Path: " path)))
 
-(defn- audio-format [path]
-  (case (normalized-extension path)
-    "wav" "wav"
-    "mp3" "mp3"
-    "m4a" "mp4"
-    "mp4" "mp4"
-    "webm" "webm"
-    "ogg" "ogg"
-    "opus" "opus"
-    "flac" "flac"
-    "aac" "aac"
-    "aiff" "aiff"
-    "aif" "aiff"
-    "mp3"))
-
 (defn- audio-mime-type [path]
   (case (normalized-extension path)
     "wav" "audio/wav"
@@ -89,60 +109,146 @@
 (defn- file->base64 [path]
   (.encodeToString (Base64/getEncoder) (Files/readAllBytes (.toPath (fs/file path)))))
 
-(defn- audio-chat-content [path]
+(defn- data-url [path]
+  (str "data:" (audio-mime-type path) ";base64," (file->base64 path)))
+
+(defn- audio-agent-message [path]
   (let [filename (fs/file-name path)
         ext (fs/extension path)
         size (fs/size path)]
-    [{:type "text"
-      :text (str "Listen to the attached audio bytes as primary evidence. "
-                 "Do not infer from the filename alone. Return a compact library note with: "
-                 "(1) what is audible, (2) likely content type, (3) reusable labels.\n"
-                 "Filename: " filename "\n"
-                 "Format: " ext "\n"
-                 "MIME: " (audio-mime-type path) "\n"
-                 "Size: " size " bytes\n"
-                 "Fallback title from filename: " (filename->song-title path))}
-     {:type "input_audio"
-      :input_audio {:data (file->base64 path)
-                    :format (audio-format path)}}]))
+    (str "Analyze the attached audio for library ingestion. Treat the audio bytes as primary evidence; do not infer from the filename alone.\n"
+         "Return a compact, indexable catalogue note with: (1) what is audible, (2) likely content type, "
+         "(3) mood/pacing/production traits, and (4) reusable labels.\n"
+         "Filename: " filename "\n"
+         "Format: " ext "\n"
+         "MIME: " (audio-mime-type path) "\n"
+         "Size: " size " bytes\n"
+         "Filename-derived title: " (filename->song-title path))))
 
-(defn- gemma-audio-description
-  "Use gemma4:e4b with the actual audio bytes, not filename-only metadata."
-  [path chat-url]
-  (try
-    (let [response (http/post
-                    (str chat-url "/v1/chat/completions")
-                    {:headers {"Content-Type" "application/json"}
-                     :body (json/generate-string
-                            {:model "gemma4-e4b"
-                             :messages [{:role "system"
-                                         :content "You are an audio-library analyzer. Hear the attached audio directly and produce truthful, reusable catalogue metadata. If the audio is unclear, say so."}
-                                        {:role "user"
-                                         :content (audio-chat-content path)}]
-                             :max_tokens 240
-                             :temperature 0.2
-                             :chat_template_kwargs {:enable_thinking false}})
-                     :as :json
-                     :socket-timeout 120000
-                     :connection-timeout 30000
-                     :throw-exceptions false})]
-      (when (= 200 (:status response))
-        (some-> (get-in response [:body :choices]) first (get-in [:message :content]) str/trim not-empty)))
-    (catch Exception e
-      (println "[audio-driver] gemma4 describe failed: " (.getMessage e))
-      nil)))
+(defn- audio-agent-content-part [path]
+  {:type "audio"
+   :data (data-url path)
+   :mimeType (audio-mime-type path)
+   :filename (fs/file-name path)
+   :size (fs/size path)})
+
+(defn- knoxx-headers [config]
+  (cond-> {"Content-Type" "application/json"}
+    (knoxx-user-email config) (assoc "x-knoxx-user-email" (knoxx-user-email config))
+    (knoxx-api-key config) (assoc "X-API-Key" (knoxx-api-key config))))
+
+(defn- knoxx-url [config path]
+  (str (str/replace (knoxx-backend-url config) #"/+$" "") path))
+
+(defn- uuid []
+  (str (UUID/randomUUID)))
+
+(defn- http-success? [status]
+  (<= 200 (long status) 299))
+
+(defn- post-knoxx-json [config path body]
+  (let [response (http/post (knoxx-url config path)
+                            {:headers (knoxx-headers config)
+                             :body (json/generate-string body)
+                             :as :json
+                             :socket-timeout (audio-agent-timeout-ms config)
+                             :connection-timeout 30000
+                             :throw-exceptions false})]
+    (if (http-success? (:status response))
+      (:body response)
+      (throw (ex-info (str "Knoxx HTTP " (:status response) ": " (:body response))
+                      {:status (:status response)
+                       :body (:body response)})))))
+
+(defn- get-knoxx-json [config path]
+  (let [response (http/get (knoxx-url config path)
+                           {:headers (knoxx-headers config)
+                            :as :json
+                            :socket-timeout 30000
+                            :connection-timeout 15000
+                            :throw-exceptions false})]
+    (when (http-success? (:status response))
+      (:body response))))
+
+(defn- run-answer [run]
+  (nonblank-str (or (:answer run)
+                    (get-in run [:run :answer]))))
+
+(defn- run-status [run]
+  (nonblank-str (or (:status run)
+                    (get-in run [:run :status]))))
+
+(defn- wait-for-agent-run! [config run-id]
+  (let [deadline (+ (System/currentTimeMillis) (audio-agent-timeout-ms config))
+        poll-ms (max 250 (audio-agent-poll-ms config))]
+    (loop []
+      (let [body (get-knoxx-json config (str "/api/knoxx/runs/" run-id))
+            run (or (:run body) body)
+            status (run-status run)
+            answer (run-answer run)]
+        (cond
+          (and (= "completed" status) answer)
+          answer
+
+          (= "completed" status)
+          (throw (ex-info (str "Knoxx audio agent completed without an answer: " run-id)
+                          {:run-id run-id
+                           :run run}))
+
+          (= "failed" status)
+          (throw (ex-info (str "Knoxx audio agent failed: " (or (:error run) "unknown error"))
+                          {:run-id run-id
+                           :run run}))
+
+          (> (System/currentTimeMillis) deadline)
+          (throw (ex-info (str "Timed out waiting for Knoxx audio agent run " run-id)
+                          {:run-id run-id}))
+
+          :else
+          (do
+            (Thread/sleep poll-ms)
+            (recur)))))))
+
+(defn- knoxx-agent-audio-description
+  "Start a visible Knoxx agent run for audio analysis and wait for its answer."
+  [path config]
+  (let [run-id (uuid)
+        conversation-id (str "audio-ingest-" run-id)
+        session-id (uuid)
+        model (audio-agent-model config)
+        body {:conversation_id conversation-id
+              :session_id session-id
+              :run_id run-id
+              :message (audio-agent-message path)
+              :content_parts [(audio-agent-content-part path)]
+              :agent_spec {:contract_id (audio-agent-contract-id config)
+                           :actor_id (audio-agent-actor-id config)
+                           :role "audio-library-analyzer"
+                           :model model
+                           :thinking_level "off"
+                           :context_policy {:max-messages 1
+                                            :max-chars 1000
+                                            :preserve-system true}
+                           :resource_policies {:source "kms-ingestion"
+                                               :path (str path)
+                                               :filename (fs/file-name path)}}
+              :model model}]
+    (post-knoxx-json config "/api/knoxx/direct/start" body)
+    (wait-for-agent-run! config run-id)))
 
 (defn audio-context
   "Return a structured audio context map for UI pinning and ingestion content."
-  [path chat-url]
-  (let [song-title (filename->song-title path)
-        base-description (base-audio-description path)
-        ai-description (gemma-audio-description path chat-url)
-        content (cond-> base-description
-                  ai-description (str "\n\nAI Description: " ai-description))]
-    {:song-title song-title
-     :description (or ai-description base-description)
-     :content content}))
+  ([path]
+   (audio-context path {}))
+  ([path config-or-ignored]
+   (let [config (if (map? config-or-ignored) config-or-ignored {})
+         song-title (filename->song-title path)
+         base-description (base-audio-description path)
+         ai-description (knoxx-agent-audio-description path config)
+         content (str base-description "\n\nAI Description: " ai-description)]
+     {:song-title song-title
+      :description ai-description
+      :content content})))
 
 (deftype AudioDriver [config state]
   protocol/Driver
@@ -196,10 +302,9 @@
   
   (extract [this file-id]
     (let [root-path (get-root-path config)
-          full-path (fs/path root-path file-id)
-          chat-url (or (:chat-url config) (:chat_url config) "http://localhost:8082")]
+          full-path (fs/path root-path file-id)]
       (if (fs/exists? full-path)
-        (let [{:keys [content]} (audio-context full-path chat-url)
+        (let [{:keys [content]} (audio-context full-path config)
               content-hash (sha256 full-path)]
           {:id file-id
            :path file-id

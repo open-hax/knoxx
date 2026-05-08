@@ -3,7 +3,7 @@
  :actor/org "open-hax"
  :actor/label "Broadcast Studio"
  :actor/default-agent "broadcast_studio_default"
-  :actor/roles [:role/discord
+  :actor/roles [:role/discord-user
                  :role/knowledge_worker]
   :prompts {:system "You are the Broadcast Studio actor. You help manage audio playlists, mid-roll scheduling, and stream production. You can add and remove tracks from the playlist, control playback state, and organize audio files into folders.
 

@@ -34,18 +34,18 @@ export async function createAdminOrg(payload: { name: string; slug?: string; kin
   });
 }
 
-export async function listOrgUsers(orgId: string): Promise<{ users: AdminUserSummary[] }> {
-  return request<{ users: AdminUserSummary[] }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/users`);
+export async function listOrgActors(orgId: string): Promise<{ users: AdminUserSummary[] }> {
+  return request<{ users: AdminUserSummary[] }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/actors`);
 }
 
-export async function createOrgUser(orgId: string, payload: {
+export async function createOrgActor(orgId: string, payload: {
   actorId?: string;
   email?: string;
   displayName: string;
   roleSlugs: string[];
   toolPolicies?: AdminToolPolicy[];
 }): Promise<{ user: AdminUserSummary | null }> {
-  return request<{ user: AdminUserSummary | null }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/users`, {
+  return request<{ user: AdminUserSummary | null }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/actors`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -60,7 +60,7 @@ export async function updateAdminActor(userId: string, payload: {
   authProvider?: string;
   externalSubject?: string;
 }): Promise<{ user: AdminUserSummary | null }> {
-  return request<{ user: AdminUserSummary | null }>(`/api/admin/users/${encodeURIComponent(userId)}`, {
+  return request<{ user: AdminUserSummary | null }>(`/api/admin/actors/${encodeURIComponent(userId)}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
@@ -72,7 +72,7 @@ export async function upsertAdminActorCredential(userId: string, provider: strin
   accountIdentifier?: string;
   credentials: Record<string, string>;
 }): Promise<{ credential: unknown }> {
-  return request<{ credential: unknown }>(`/api/admin/users/${encodeURIComponent(userId)}/credentials/${encodeURIComponent(provider)}`, {
+  return request<{ credential: unknown }>(`/api/admin/actors/${encodeURIComponent(userId)}/credentials/${encodeURIComponent(provider)}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });

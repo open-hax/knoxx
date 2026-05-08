@@ -53,7 +53,7 @@
 
  :source/translation
  {:enabled? false
-  :model "glm-5"
+  :model "gemma4:31b"
   :poll-ms 5000}
 
  :source/projection

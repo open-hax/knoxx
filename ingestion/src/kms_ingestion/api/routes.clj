@@ -60,16 +60,14 @@
            :body {:error (str "Source " source-id " is not an audio driver contract")}}
 
           :else
-          (let [root-path (or (get-in contract [:source/config :root-path])
-                              (get-in contract [:source/config :root_path]))
-                chat-url (or (get-in contract [:source/config :chat-url])
-                             (get-in contract [:source/config :chat_url])
-                             "http://localhost:8082")
+          (let [source-config (or (:source/config contract) {})
+                root-path (or (:root-path source-config)
+                              (:root_path source-config))
                 full-path (.getPath (java.io.File. ^String root-path ^String file-path))]
             (if-not (.exists (java.io.File. full-path))
               {:status 404
                :body {:error (str "Audio file not found: " file-path)}}
-              (let [{:keys [song-title description content]} (audio/audio-context full-path chat-url)]
+              (let [{:keys [song-title description content]} (audio/audio-context full-path source-config)]
                 {:status 200
                  :body {:ok true
                         :path file-path
@@ -510,15 +508,13 @@
              (let [tenant-id (get-tenant-id request)
                    body (request-body->map request)
                    root-path (or (:root_path body) (:root-path body))
-                   chat-url (or (:chat_url body) (:chat-url body) "http://localhost:8082")
                    name (or (:name body) "Audio Files")
                    ;; Create audio source
                    source (db/create-source!
                            {:tenant-id tenant-id
                             :driver-type "audio"
                             :name name
-                            :config {:root_path root-path
-                                     :chat_url chat-url}
+                            :config {:root_path root-path}
                             :collections [tenant-id]
                             :file-types [".mp3" ".wav" ".ogg" ".m4a" ".flac"]})
                    source-id (uuid-str (:source_id source))
@@ -531,5 +527,4 @@
                 :body {:source_id source-id
                        :job_id job-id
                        :status "queued"
-                       :root_path root-path
-                       :chat_url chat-url}}))}]])
+                       :root_path root-path}}))}]])

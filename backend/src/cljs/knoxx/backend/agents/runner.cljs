@@ -8,7 +8,8 @@
             [knoxx.backend.agent-turns :as agent-turns]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.session-store :as session-store]))
+            [knoxx.backend.session-store :as session-store]
+            ["node:crypto" :as crypto]))
 
 (defn current-runtime
   []
@@ -176,13 +177,12 @@
   (js/Promise.reject (js/Error. message)))
 
 (defn- normalize-body
-  [runtime payload]
-  (let [node-crypto (aget runtime "crypto")
-        params (direct-start-payload->turn-params payload)
+  [_runtime payload]
+  (let [params (direct-start-payload->turn-params payload)
         provided-session-id (:session-id params)
-        session-id (agent-turns/ensure-session-id node-crypto provided-session-id)
-        conversation-id (or (:conversation-id params) (.randomUUID node-crypto))
-        run-id (or (:run-id params) (.randomUUID node-crypto))]
+        session-id (agent-turns/ensure-session-id crypto provided-session-id)
+        conversation-id (or (:conversation-id params) (.randomUUID crypto))
+        run-id (or (:run-id params) (.randomUUID crypto))]
     (assoc params
            :session-id session-id
            :conversation-id conversation-id

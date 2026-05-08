@@ -94,7 +94,9 @@
    :gmail-app-email (env "GMAIL_APP_EMAIL" "")
    :gmail-app-password (env "GMAIL_APP_PASSWORD" "")
 
-   :discord-bot-token (env "DISCORD_BOT_TOKEN" "")
+   ;; Discord/Twitch/Bluesky tool credentials are actor-owned and are read
+   ;; from the policy DB actor_credentials table, not process env vars.
+   :discord-bot-token ""
 
    ;; Music services
    :audd-api-token (env "AUDD_API_TOKEN" "")

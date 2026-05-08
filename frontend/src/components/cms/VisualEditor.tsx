@@ -7,6 +7,7 @@
 import { Puck, type Config, type Data } from "@measured/puck";
 import { useCallback, useState } from "react";
 import type { ViewContract, ViewBlock, ViewZone } from "../../lib/cms/viewContract";
+import type { ViewBlockRef } from "../../lib/cms/viewContract";
 import { PublicationBlocksRenderer } from "@open-hax/garden-publication-components";
 
 // Convert view-contract blocks to Puck data model
@@ -26,6 +27,7 @@ function blocksToPuckData(contract: ViewContract): Data {
         ...block.props,
         _blockId: block.id,
         _blockSource: block.source,
+        _blockRef: block.ref,
       },
     });
     zones[block.zone] = zoneBlocks;
@@ -53,7 +55,7 @@ function puckDataToBlocks(data: Data, contract: ViewContract): ViewBlock[] {
 
     for (const item of zoneItems) {
       const blockId = (item.props._blockId as string) ?? crypto.randomUUID();
-      const { _blockId, _blockSource, ...props } = item.props;
+      const { _blockId, _blockSource, _blockRef, ...props } = item.props;
 
       blockMap.set(blockId, {
         id: blockId,
@@ -61,6 +63,7 @@ function puckDataToBlocks(data: Data, contract: ViewContract): ViewBlock[] {
         zone: zone.id,
         props,
         source: _blockSource as ViewBlock["source"],
+        ref: _blockRef as ViewBlock["ref"],
       });
     }
   }
@@ -281,6 +284,42 @@ function buildPuckConfig(zones: ViewZone[]): Config {
       divider: {
         fields: {},
         render: () => <hr style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.1)", margin: "2rem 0" }} />,
+      },
+      "contract-ref": {
+        fields: {
+          ref_type: {
+            type: "select",
+            options: [
+              { label: "Path", value: "path" },
+              { label: "ID", value: "id" },
+            ],
+          },
+          ref_path: { type: "text" },
+          ref_id: { type: "text" },
+          include_layout: { type: "radio", options: [
+            { label: "Yes", value: true },
+            { label: "No", value: false },
+          ]},
+        },
+        defaultProps: {
+          ref_type: "path",
+          ref_path: "",
+          ref_id: "",
+          include_layout: false,
+        },
+        render: ({ ref_type, ref_path, ref_id }) => (
+          <div style={{ padding: "1rem", background: "rgba(59, 130, 246, 0.1)", border: "2px dashed #3b82f6", borderRadius: "8px", color: "#93bbfd" }}>
+            <div style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Contract Reference</div>
+            {ref_type === "path" ? (
+              <div style={{ fontSize: "0.875rem" }}>Path: {ref_path || "(none)"}</div>
+            ) : (
+              <div style={{ fontSize: "0.875rem" }}>ID: {ref_id || "(none)"}</div>
+            )}
+            <div style={{ fontSize: "0.75rem", marginTop: "0.5rem", opacity: 0.7 }}>
+              Referenced contract blocks will be composed into this zone at render time.
+            </div>
+          </div>
+        ),
       },
     },
     root: {

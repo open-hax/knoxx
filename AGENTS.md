@@ -43,6 +43,12 @@ Over:
 4. Private helpers (`defn-`) should outnumber public functions in domain namespaces. The public surface is the tool factory and any data schemas.
 5. Never import a domain slice into another domain slice to grab a helper — move the helper up to shared.
 
+## Runtime Operations
+
+- Do not restart Knoxx PM2 processes unless the user explicitly asks for a restart.
+- Prefer source edits and let shadow-cljs hot reload backend CLJS changes; Vite will reload frontend changes automatically.
+- If a restart seems necessary, report why and wait for the user to restart or approve it.
+
 ## Modern CLJS Patterns
 
 Always prefer modern shadow-cljs patterns over legacy verbose forms:

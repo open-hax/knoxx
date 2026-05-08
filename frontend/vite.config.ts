@@ -20,10 +20,8 @@ export default defineConfig({
         changeOrigin: true,
       },
       "/ws": {
-        target: VITE_BACKEND_URL.replace("http://", "ws://").replace(
-          "https://",
-          "wss://",
-        ),
+        target: VITE_BACKEND_URL,
+        changeOrigin: true,
         ws: true,
       },
       "/health": {

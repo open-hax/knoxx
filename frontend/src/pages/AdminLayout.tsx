@@ -182,7 +182,7 @@ function useAdminContext(): AdminCtx {
       try {
         const [roleRes, userRes, lakeRes] = await Promise.allSettled([
           import('../lib/nextApi').then(m => m.listOrgRoles(selectedOrgId)).catch(() => ({ roles: [] })),
-          import('../lib/nextApi').then(m => m.listOrgUsers(selectedOrgId)).catch(() => ({ users: [] })),
+          import('../lib/nextApi').then(m => m.listOrgActors(selectedOrgId)).catch(() => ({ users: [] })),
           import('../lib/nextApi').then(m => m.listOrgDataLakes(selectedOrgId)).catch(() => ({ dataLakes: [] })),
         ]);
         if (cancelled) return;
@@ -260,7 +260,7 @@ function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
     try {
       const actorId = ctx.userForm.actorId.trim();
       const email = ctx.userForm.email.trim();
-      await (await import('../lib/nextApi')).createOrgUser(ctx.selectedOrgId, { actorId: actorId || undefined, email: email || undefined, displayName: ctx.userForm.displayName.trim() || actorId || email, roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic_user'] });
+      await (await import('../lib/nextApi')).createOrgActor(ctx.selectedOrgId, { actorId: actorId || undefined, email: email || undefined, displayName: ctx.userForm.displayName.trim() || actorId || email, roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic_user'] });
       ctx.setUserForm({ actorId: '', email: '', displayName: '', roleSlugs: ['basic_user'] });
       ctx.setNotice({ tone: 'success', text: 'Actor created.' }); await ctx.refresh();
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingUser(false); }

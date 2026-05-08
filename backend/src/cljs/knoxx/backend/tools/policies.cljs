@@ -8,6 +8,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cljs.reader :as reader]
+            [knoxx.backend.contracts.loader :as contracts-loader]
             [knoxx.backend.tools.registry :as tool-registry]
             ["node:fs" :as node-fs]
             ["node:path" :as path]))
@@ -51,10 +52,8 @@
 
 (defn load-policy-contract!
   [config contract-id]
-  (when-let [dir (policy-dir config)]
-    (let [file-path (path/join dir (str contract-id ".edn"))]
-      (when (.existsSync node-fs file-path)
-        (read-edn-sync file-path)))))
+  (some-> (contracts-loader/find-contract-record-sync config "policies" contract-id)
+          :contract))
 
 (defn load-tool-call-contracts!
   [config contract-ids]

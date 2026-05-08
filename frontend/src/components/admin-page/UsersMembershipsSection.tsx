@@ -109,6 +109,28 @@ function configuredFieldLabel(current: AdminActorCredentialSummary | null, field
   return current?.configuredFields.includes(fieldKey) ? 'configured' : 'not set';
 }
 
+function actorSearchText(user: AdminUserSummary, selectedOrgId: string): string {
+  const membership = membershipForOrg(user, selectedOrgId);
+  return [
+    user.displayName,
+    user.email,
+    user.authProvider,
+    user.externalSubject,
+    user.status,
+    membership?.actorId,
+    membership?.status,
+    ...(membership?.roles.map((role) => `${role.slug} ${role.name}`) ?? []),
+    ...(membership?.toolPolicies.map((policy) => `${policy.toolId} ${policy.effect}`) ?? []),
+    ...(user.credentials?.flatMap((credential) => [
+      credential.provider,
+      credential.label,
+      credential.kind,
+      credential.accountIdentifier,
+      ...credential.configuredFields,
+    ]) ?? []),
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
 export function UsersMembershipsSection({
   selectedOrgId,
   selectedOrgName,
@@ -158,6 +180,8 @@ export function UsersMembershipsSection({
   const [credentialDrafts, setCredentialDrafts] = useState<Record<string, ActorCredentialDraft>>({});
   const [savingActorId, setSavingActorId] = useState<string | null>(null);
   const [savingCredential, setSavingCredential] = useState<string | null>(null);
+  const [actorSearch, setActorSearch] = useState('');
+  const [expandedActors, setExpandedActors] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setActorDrafts(Object.fromEntries(users.map((user) => [user.id, draftProfileForUser(user, selectedOrgId)])));
@@ -168,6 +192,25 @@ export function UsersMembershipsSection({
   }, [selectedOrgId, users]);
 
   const orgActorLabel = useMemo(() => selectedOrgName || 'selected org', [selectedOrgName]);
+  const filteredUsers = useMemo(() => {
+    const query = actorSearch.trim().toLowerCase();
+    return users.filter((user) => {
+      const membership = membershipForOrg(user, selectedOrgId);
+      if (!membership) return false;
+      return !query || actorSearchText(user, selectedOrgId).includes(query);
+    });
+  }, [actorSearch, selectedOrgId, users]);
+
+  const toggleActorExpanded = (userId: string) => {
+    setExpandedActors((current) => ({ ...current, [userId]: !current[userId] }));
+  };
+
+  const setFilteredActorsExpanded = (expanded: boolean) => {
+    setExpandedActors((current) => ({
+      ...current,
+      ...Object.fromEntries(filteredUsers.map((user) => [user.id, expanded])),
+    }));
+  };
 
   const saveActorProfile = async (userId: string) => {
     const draft = actorDrafts[userId];
@@ -247,12 +290,45 @@ export function UsersMembershipsSection({
         </form>
       ) : null}
 
+      <div className="mb-4 flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/70 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <label className="flex flex-1 flex-col gap-1 text-xs font-medium uppercase tracking-wide text-slate-500">
+          Search actors
+          <input
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 placeholder:text-slate-600"
+            placeholder="Search actor id, email, display name, role, credential provider, tool…"
+            value={actorSearch}
+            onChange={(event) => setActorSearch(event.target.value)}
+          />
+        </label>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+          <span>{filteredUsers.length} of {users.filter((user) => membershipForOrg(user, selectedOrgId)).length} actor(s)</span>
+          <button
+            type="button"
+            onClick={() => setFilteredActorsExpanded(true)}
+            className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-200 hover:bg-slate-800"
+          >
+            Expand filtered
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilteredActorsExpanded(false)}
+            className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-200 hover:bg-slate-800"
+          >
+            Collapse filtered
+          </button>
+        </div>
+      </div>
+
       <div className="space-y-4">
         {users.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-800 px-4 py-6 text-sm text-slate-400">
             No actors are visible in this org.
           </div>
-        ) : users.map((user) => {
+        ) : filteredUsers.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-800 px-4 py-6 text-sm text-slate-400">
+            No actors match “{actorSearch.trim()}”.
+          </div>
+        ) : filteredUsers.map((user) => {
           const membership = membershipForOrg(user, selectedOrgId);
           if (!membership) {
             return null;
@@ -260,12 +336,26 @@ export function UsersMembershipsSection({
           const roleDraft = membershipRoleDrafts[membership.id] || membership.roles.map((role) => role.slug);
           const toolDraft = membershipToolDrafts[membership.id] || toolDraftMap(membership.toolPolicies);
           const actorDraft = actorDrafts[user.id] || draftProfileForUser(user, selectedOrgId);
+          const isExpanded = Boolean(expandedActors[user.id]);
           return (
             <div key={user.id} className="rounded-xl border border-slate-800 bg-slate-900/80 p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <div className="text-sm font-semibold text-slate-100">{user.displayName}</div>
-                  <div className="text-sm text-slate-400">{user.email}</div>
+                <button
+                  type="button"
+                  aria-expanded={isExpanded}
+                  onClick={() => toggleActorExpanded(user.id)}
+                  className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                >
+                  <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-700 text-xs text-slate-300">
+                    {isExpanded ? '−' : '+'}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-slate-100">{user.displayName}</span>
+                    <span className="block truncate text-sm text-slate-400">{user.email}</span>
+                    <span className="mt-1 block text-xs text-slate-500">{isExpanded ? 'Click to collapse' : 'Click to manage profile, credentials, roles, and tools'}</span>
+                  </span>
+                </button>
+                <div className="min-w-0 flex-1 lg:flex-none">
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Badge tone="info">actor:{membership.actorId || 'workspace_user'}</Badge>
                     <Badge tone={membership.status === 'active' ? 'success' : 'danger'}>{membership.status}</Badge>
@@ -289,6 +379,8 @@ export function UsersMembershipsSection({
                 </div>
               </div>
 
+              {isExpanded ? (
+                <>
               <div className="mt-4 grid gap-4 xl:grid-cols-2">
                 <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
                   <div className="mb-3 text-sm font-semibold text-slate-100">Actor profile</div>
@@ -487,6 +579,8 @@ export function UsersMembershipsSection({
                   ) : null}
                 </div>
               </div>
+                </>
+              ) : null}
             </div>
           );
         })}

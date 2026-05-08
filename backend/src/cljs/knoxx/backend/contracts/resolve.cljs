@@ -1,12 +1,9 @@
 (ns knoxx.backend.contracts.resolve
   (:require [clojure.string :as str]
-            [cljs.reader :as reader]
             [knoxx.backend.contracts.actor-scope :as actor-scope]
             [knoxx.backend.contracts.loader :as loader]
             [knoxx.backend.contracts.roles :as roles]
-            [knoxx.backend.tools.registry :as tool-registry]
-            ["node:fs" :as fs]
-            ["node:path" :as path]))
+            [knoxx.backend.tools.registry :as tool-registry]))
 
 (def known-actor-keys #{:id :kind :default-agent :role-slugs :capability-ids :system-prompt :task-prompt :thinking-level :model :contract-id :model-profile :tool-policies :ui/actions})
 (def known-role-keys #{:id :role/capabilities :role/permissions :role/prompts})
@@ -46,18 +43,11 @@
       (get-in contract [:data :context])
       (get-in contract [:data :context-policy])))
 
-(defn- read-edn-sync
-  [file-path]
-  (try
-    (some-> (.readFileSync fs file-path "utf8") str reader/read-string)
-    (catch :default _
-      nil)))
-
 (defn all-contract-extras
   [config actor-spec role-slugs capability-ids agent-contract]
   (let [actor-x (actor-extras (:actor actor-spec))
         role-x (map #(role-extras (roles/role-contract config %)) role-slugs)
-        cap-x (map #(capability-extras (read-edn-sync (loader/capability-file-path config (roles/cap-id->slug %)))) capability-ids)
+        cap-x (map #(capability-extras (loader/contract-sync config "capabilities" %)) capability-ids)
         agent-x (agent-extras agent-contract)
         merged (reduce into {} (concat (filter seq role-x) (filter seq cap-x) (when agent-x [agent-x]) (when actor-x [actor-x])))]
     (when (seq merged) merged)))
@@ -146,10 +136,10 @@
 (defn resolve-actor
   [config actor-id]
   (when-let [id (some-> actor-id str str/trim not-empty)]
-    (let [file-path (loader/actor-file-path config id)
-          actor (read-edn-sync file-path)]
+    (let [record (loader/find-contract-record-sync config "actors" id)
+          actor (:contract record)]
       (when actor
-        {:id id
+        {:id (:id record)
          :actor actor
          :kind (some-> (:actor/kind actor) name)
          :org (some-> (:actor/org actor) str str/trim not-empty)
@@ -168,9 +158,10 @@
 
 (defn actor-catalog
   [config]
-  (->> (loader/list-contract-ids-sync config "actors")
-       (map (fn [actor-id]
-              (resolve-actor config actor-id)))
+  (->> (loader/load-all-contracts-sync config)
+       (filter #(= "actors" (:contractClass %)))
+       (map (fn [record]
+              (resolve-actor config (:id record))))
        (remove nil?)
        (sort-by :id)
        vec))
@@ -239,8 +230,8 @@
    (resolve-agent-contract config contract-id nil))
   ([config contract-id actor-id]
    (when-let [id (some-> contract-id str str/trim not-empty)]
-     (let [file-path (loader/contract-file-path config "agents" id)
-           contract0 (read-edn-sync file-path)
+     (let [record (loader/find-contract-record-sync config "agents" id)
+           contract0 (:contract record)
            contract (some-> contract0 actor-scope/normalize-agent-contract)]
        (when contract
          (let [enabled? (not (false? (:enabled contract)))
@@ -290,7 +281,7 @@
                                    (:system-prompt actor-spec)
                                    agent-system-prompt)
                     all-extras (all-contract-extras config actor-spec role-slugs capability-ids contract)]
-                {:id id
+                {:id (:id record)
                 :enabled enabled?
                 :contract contract
                 :contract-actors contract-actors
@@ -323,11 +314,11 @@
   ([config]
    (agent-contract-catalog config nil))
   ([config actor-id]
-   (let [ids (loader/list-contract-ids-sync config "agents")
-         wanted-actor-id (some-> actor-id str str/trim not-empty)]
-     (->> ids
-          (map (fn [id]
-                 (resolve-agent-contract config id wanted-actor-id)))
+   (let [wanted-actor-id (some-> actor-id str str/trim not-empty)]
+     (->> (loader/load-all-contracts-sync config)
+          (filter #(= "agents" (:contractClass %)))
+          (map (fn [record]
+                 (resolve-agent-contract config (:id record) wanted-actor-id)))
           (remove nil?)
           (filter :enabled)
           (filter manual-agent-contract?)

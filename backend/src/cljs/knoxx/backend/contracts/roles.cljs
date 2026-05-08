@@ -1,129 +1,114 @@
 (ns knoxx.backend.contracts.roles
   (:require [clojure.string :as str]
-            [cljs.reader :as reader]
             [knoxx.backend.contracts.loader :as contract-loader]
-            [knoxx.backend.tools.registry :as tools]
-            ["node:fs" :as fs]
-            ["node:path" :as path]))
+            [knoxx.backend.tools.registry :as tools]))
 
 (def role-aliases
-  {"executive" "knowledge_worker"
-   "principal_architect" "developer"
-   "junior_dev" "knowledge_worker"})
+  "Legacy export retained for callers that inspect it. Runtime role resolution must
+   not use hard-coded aliases; canonical role identity comes from role contracts."
+  {})
 
-(defn- safe-segment
-  [s]
-  (when (and (string? s)
-             (re-matches #"[A-Za-z0-9._-]+" s))
-    s))
+(defn- keywordish-id
+  [value]
+  (cond
+    (keyword? value) (some-> value name str/trim not-empty)
+    (string? value) (some-> value str str/trim not-empty)
+    (nil? value) nil
+    :else (some-> value str str/trim not-empty)))
 
-(defn- read-edn-sync
-  [file-path]
-  (try
-    (let [text (.readFileSync fs file-path "utf8")]
-      (reader/read-string (str text)))
-    (catch :default _
-      nil)))
+(defn- id-candidates
+  [value]
+  (let [raw (keywordish-id value)]
+    (->> [raw
+          (some-> raw (str/replace #"_" "-"))
+          (some-> raw (str/replace #"-" "_"))
+          (when (some-> raw (str/starts-with? "cap_"))
+            (subs raw 4))]
+         (remove str/blank?)
+         distinct
+         vec)))
 
-(defn role-slug->file
-  [config role-slug]
-  (when-let [slug (safe-segment role-slug)]
-    (contract-loader/role-file-path config slug)))
+(defn- contract-record
+  [config contract-class id]
+  (let [klass (contract-loader/normalize-contract-class contract-class)
+        candidates (set (id-candidates id))]
+    (some (fn [record]
+            (when (and (= klass (:contractClass record))
+                       (contains? candidates (:id record)))
+              record))
+          (contract-loader/load-all-contracts-sync config))))
 
-(defn cap-slug->file
-  [config cap-slug]
-  (when-let [slug (safe-segment cap-slug)]
-    (contract-loader/capability-file-path config slug)))
+(defn- contract-by-id
+  [config contract-class id]
+  (some-> (contract-record config contract-class id) :contract))
 
 (defn list-role-slugs
-  "List role slugs (filenames without .edn) from contracts/roles.
+  "List canonical role contract IDs from parsed contract records.
 
-  Uses synchronous IO; role catalogs are small and used in request paths."
+   IDs come from :role/id through contracts.loader identity extraction, not from
+   filenames or contracts/roles directory placement."
   [config]
-  (try
-    (contract-loader/list-contract-ids-sync config "roles")
-    (catch :default _
-      ["knowledge_worker"])))
+  (->> (contract-loader/load-all-contracts-sync config)
+       (filter #(= "roles" (:contractClass %)))
+       (map :id)
+       distinct
+       sort
+       vec))
 
 (defn normalize-role
-  "Normalize an incoming role slug to a role that exists in contracts/roles.
+  "Return the canonical role contract id when it exists.
 
-   Falls back to knowledge_worker."
+   This intentionally does not fall back to a default role: missing role claims
+   are contract drift and should be visible to callers."
   [config role]
-  (let [role (str (or role ""))
-        candidates (->> [role
-                         (get role-aliases role)
-                         (some-> role (str/replace #"-" "_"))
-                         (some-> role (str/replace #"_" "-"))
-                         (some-> (get role-aliases role) (str/replace #"-" "_"))]
-                        (remove nil?))
-        known (set (list-role-slugs config))]
-    (or (some (fn [candidate]
-                (when (contains? known candidate)
-                  candidate))
-              candidates)
-        "knowledge_worker")))
+  (or (some-> (contract-record config "roles" role) :id)
+      (keywordish-id role)))
 
 (defn- normalize-cap-id
   [v]
-  (cond
-    (keyword? v) (str (namespace v) "/" (name v))
-    (string? v) (let [s (some-> v str str/trim not-empty)]
-                  (when s s))
-    :else nil))
+  (keywordish-id v))
 
 (defn cap-id->slug
-  "Map a :cap/* id to a filename slug like cap_read."
+  "Legacy helper retained for callers. It no longer names a file path; it returns
+   the canonical-ish capability id candidate used for contract identity lookup."
   [cap-id]
-  (let [base (last (str/split (str cap-id) #"/"))]
-    (str "cap_" (-> base
-                     (str/replace #"-" "_")
-                     (str/trim)))))
+  (or (some-> (contract-record {} "capabilities" cap-id) :id)
+      (some-> cap-id keywordish-id (str/replace #"^cap_" ""))))
 
 (defn role-capability-ids
-  "Return normalized capability ids (e.g. cap/read) for a role slug."
+  "Return normalized capability ids for a role contract."
   [config role]
-  (let [role (normalize-role config role)
-        role-path (role-slug->file config role)
-        role-map (when role-path (read-edn-sync role-path))]
-    (->> (or (:role/capabilities role-map)
-             [])
+  (let [role-map (contract-by-id config "roles" role)]
+    (->> (or (:role/capabilities role-map) [])
          (keep normalize-cap-id)
          distinct
          vec)))
 
 (defn capability-tool-ids
-  "Return a vector of tool ids (strings) for one capability id or slug."
+  "Return a vector of tool ids for one capability id."
   [config cap]
-  (let [cap-slug (cond
-                   (and (string? cap) (str/starts-with? cap "cap_")) cap
-                   :else (some-> cap normalize-cap-id cap-id->slug))]
-    (if-not cap-slug
-      []
-      (->> (read-edn-sync (cap-slug->file config cap-slug))
-           :cap/tools
-           (map tools/normalize-tool-id)
-           distinct
-           sort
-           vec))))
+  (if-let [cap-map (contract-by-id config "capabilities" cap)]
+    (->> (:cap/tools cap-map)
+         (map tools/normalize-tool-id)
+         (remove str/blank?)
+         distinct
+         sort
+         vec)
+    []))
 
 (defn role-tool-ids
-  "Return a vector of tool ids (strings) for a role.
-
-   Reads roles/<role>.edn and its referenced capabilities/*.edn."
+  "Return a vector of tool ids for a role contract."
   [config role]
-  (let [role (normalize-role config role)
-        cap-ids (role-capability-ids config role)
-        tool-ids (->> cap-ids
-                      (mapcat (fn [cap-id]
-                                (capability-tool-ids config cap-id)))
-                      distinct
-                      sort
-                      vec)]
-    tool-ids))
+  (let [cap-ids (role-capability-ids config role)]
+    (->> cap-ids
+         (mapcat (fn [cap-id]
+                   (capability-tool-ids config cap-id)))
+         distinct
+         sort
+         vec)))
 
 (defn role-tools
-  "Return vector of {:id :label :description :enabled} tool entries for a role."
+  "Return vector of {:id :label :description} tool entries for a role."
   [config role]
   (mapv (fn [tool-id]
           (let [{:keys [label description]} (tools/get-tool tool-id)]
@@ -133,24 +118,15 @@
         (role-tool-ids config role)))
 
 (defn role-contract
-  "Load a role contract map from contracts/roles/<slug>.edn.
-
-   `role` may be a slug (knowledge_worker), a normalized slug (knowledge-worker),
-   or a keyword (:role/knowledge-worker)."
+  "Load a role contract map by canonical role identity."
   [config role]
-  (let [slug (normalize-role config role)
-        role-path (role-slug->file config slug)]
-    (when role-path
-      (read-edn-sync role-path))))
+  (contract-by-id config "roles" role))
 
 (defn role-permissions
-  "Return a vector of permission code strings for a role.
-
-   Reads :role/permissions from contracts/roles/<role>.edn."
+  "Return a vector of permission code strings for a role contract."
   [config role]
   (let [role-map (role-contract config role)]
-    (->> (or (:role/permissions role-map)
-             [])
+    (->> (or (:role/permissions role-map) [])
          (map str)
          distinct
          sort
@@ -169,7 +145,7 @@
     (some-> prompt str str/trim not-empty)))
 
 (defn role-task-prompt
-  "Return the role-level task prompt text (string) if present." 
+  "Return the role-level task prompt text (string) if present."
   [config role]
   (let [role-map (role-contract config role)
         prompt (or (get-in role-map [:prompts :task])

@@ -38,12 +38,22 @@ export interface ViewBlockSource {
   path: string;
 }
 
+export interface ViewBlockRef {
+  kind: "contract-ref";
+  ref_type: "path" | "id";
+  ref_path?: string;
+  ref_id?: string;
+  include_layout?: boolean;
+  zone_mapping?: Record<string, string>;
+}
+
 export interface ViewBlock {
   id: string;
   type: string;
   zone: string;
   props?: Record<string, unknown>;
   source?: ViewBlockSource;
+  ref?: ViewBlockRef;
   hidden?: boolean;
 }
 

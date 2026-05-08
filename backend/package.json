@@ -5,8 +5,9 @@
   "license": "GPL-3.0-only",
   "scripts": {
     "build": "shadow-cljs release server",
-    "watch": "shadow-cljs watch server",
+    "watch": "shadow-cljs watch server-dev",
     "start": "node dist/server.js",
+    "start:dev": "node dist-dev/server.js",
     "test": "node scripts/run-shadow-tests-ci.mjs",
     "test:coverage": "node scripts/run-shadow-tests-coverage-ci.mjs",
     "test:shadow": "shadow-cljs compile test",

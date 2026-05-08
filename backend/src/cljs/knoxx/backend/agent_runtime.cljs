@@ -1,6 +1,7 @@
 (ns knoxx.backend.agent-runtime
   (:require [clojure.string :as str]
             [knoxx.backend.actor-mailbox :as actor-mailbox]
+            [knoxx.backend.agent-context :as agent-context]
             [knoxx.backend.agent-hydration :refer [create-agent-custom-tools]]
             [knoxx.backend.http :as http]
             [knoxx.backend.http :refer [no-content? request-query-string request-forward-headers request-forward-body]]
@@ -10,7 +11,10 @@
             [knoxx.backend.runtime.models :refer [normalize-thinking-level effective-thinking-level models-config allowlisted-model-id? resolve-model-contract]]
             [knoxx.backend.extension-runtime :as ext-runtime]
             [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]))
+            [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]
+            ["@open-hax/eta-mu" :as sdk]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]))
 
 ;; Initialize extension runtime at load time
 (ext-runtime/init!)
@@ -385,6 +389,39 @@
                                  {:toolId tool-id :effect "allow"})
                                (sort (vec allowed-tool-ids))))))
 
+(defn- restore-agent-context!
+  [previous]
+  (if previous
+    (agent-context/set-context! previous)
+    (agent-context/clear-context!)))
+
+(defn- wrap-tool-execute-with-agent-context!
+  [tool context]
+  (let [execute (and tool (aget tool "execute"))]
+    (when (fn? execute)
+      (aset tool "execute"
+            (fn [& args]
+              (let [previous (agent-context/get-context)]
+                (agent-context/set-context! context)
+                (try
+                  (let [result (apply execute args)]
+                    (if (and result (fn? (aget result "finally")))
+                      (.finally result (fn [] (restore-agent-context! previous)))
+                      (do
+                        (restore-agent-context! previous)
+                        result)))
+                  (catch :default err
+                    (restore-agent-context! previous)
+                    (throw err))))))))
+  tool)
+
+(defn- wrap-custom-tools-with-agent-context!
+  [custom-tools context]
+  (when custom-tools
+    (doseq [tool (if (array? custom-tools) (array-seq custom-tools) [])]
+      (wrap-tool-execute-with-agent-context! tool context)))
+  custom-tools)
+
 (defn- tool-runtime-name
   "Return the eta-mu runtime name for a built-in/custom tool entry.
    Built-ins are strings after eta-mu 0.70; custom tools are JS objects and may
@@ -482,8 +519,8 @@
       rel)))
 
 (defn resolve-workspace-path
-  [runtime config raw-path]
-  (let [node-path (aget runtime "path")
+  [_runtime config raw-path]
+  (let [node-path path
         requested (some-> raw-path str str/trim not-empty)
         roots (allowed-root-records node-path config)
         music-root (some #(when (= "Music" (:alias %)) %) roots)
@@ -509,12 +546,11 @@
     candidate))
 
 (defn ensure-sdk-runtime!
-  [runtime config]
+  [_runtime config]
   (if-let [p @sdk-runtime*]
     p
-    (let [node-fs (aget runtime "fs")
-          node-path (aget runtime "path")
-          sdk (aget runtime "sdk")
+    (let [node-fs fs
+          node-path path
           runtime-dir (:agent-dir config)
           models-file (.join node-path runtime-dir "models.json")
           auth-file (.join node-path runtime-dir "auth.json")
@@ -581,8 +617,7 @@
    (-> (ensure-sdk-runtime! runtime config)
        (.then
         (fn [sdk-runtime]
-          (let [sdk (aget runtime "sdk")
-                SessionManager (aget sdk "SessionManager")
+          (let [SessionManager (aget sdk "SessionManager")
                 createAgentSession (aget sdk "createAgentSession")
                 model-registry (aget sdk-runtime "modelRegistry")
                 auth-storage (aget sdk-runtime "authStorage")
@@ -604,7 +639,11 @@
                                                       (:actor-id agent-spec))
                 tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
                 builtin-tools (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec))
-                custom-tools (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
+                custom-tools (wrap-custom-tools-with-agent-context!
+                              (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
+                              {:session-id session-id
+                               :conversation-id conversation-id
+                               :agent-spec agent-spec})
                 tool-name-allowlist (enabled-tool-name-allowlist builtin-tools custom-tools)
                 create-session (fn [session-manager]
                                  (-> (createAgentSession

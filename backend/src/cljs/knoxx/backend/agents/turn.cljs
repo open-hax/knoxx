@@ -27,7 +27,9 @@
             [knoxx.backend.text :refer [assistant-message-text assistant-message-reasoning-text]]
    [knoxx.backend.turn-control :as turn-control]
    [knoxx.backend.agent-context :as agent-ctx]
-   [knoxx.backend.util.time :refer [now-iso]]))
+   [knoxx.backend.util.time :refer [now-iso]]
+   ["node:crypto" :as crypto]
+   ["node:fs/promises" :as fs]))
 
 (defonce conversation-access* (atom {}))
 (defonce lounge-messages* (atom []))
@@ -111,6 +113,21 @@
 (defn remember-conversation-access!
   [ctx conversation-id]
   (authz/remember-conversation-access! conversation-access* ctx conversation-id))
+
+(defn- auth-context-for-agent-turn
+  [auth-context agent-spec]
+  (let [agent-actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)
+        needs-context? (or auth-context
+                           agent-actor-id
+                           (seq (:tool-policies agent-spec))
+                           (:role agent-spec))]
+    (when needs-context?
+      (cond-> (or auth-context {})
+        agent-actor-id (assoc :actorId agent-actor-id)
+        (and (nil? auth-context) (seq (:tool-policies agent-spec)))
+        (assoc :toolPolicies (vec (:tool-policies agent-spec)))
+        (and (nil? auth-context) (:role agent-spec))
+        (assoc :roleSlugs [(:role agent-spec)])))))
 
 (defn ensure-session-id
   [node-crypto session-id]
@@ -458,7 +475,7 @@
 
                 :else "")))]
 
-    (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms (aget runtime "crypto"))
+    (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms crypto)
           abort! (fn [reason] (stream/request-abort! state session reason))
           _registered (stream/register-active-turn! state abort! agent-spec)
           unsubscribe (.subscribe session (stream/build-subscribe-handler state session))
@@ -524,9 +541,9 @@
    (fn [resolve reject]
      (try
        (resolve
-        (let [node-crypto (aget runtime "crypto")
-              conversation-id (or conversation-id (.randomUUID node-crypto))
-              session-id (ensure-session-id node-crypto session-id)
+        (let [conversation-id (or conversation-id (.randomUUID crypto))
+              session-id (ensure-session-id crypto session-id)
+              auth-context (auth-context-for-agent-turn auth-context agent-spec)
               _ (ensure-conversation-access! auth-context conversation-id)
               _ (remember-conversation-access! auth-context conversation-id)
               mode (or mode "direct")
@@ -539,7 +556,7 @@
                                                                            thinking-level-raw
                                                                            (:agent-thinking-level config)
                                                                            "off"))
-              run-id (or run-id (.randomUUID node-crypto))
+              run-id (or run-id (.randomUUID crypto))
               started-at (now-iso)
               started-ms (.now js/Date)
               existing-messages (vec (or (:messages (session-store/get-session-sync session-id)) []))
@@ -551,10 +568,6 @@
                                    ;; media data; history is adequately represented by text content.
                                    (mapv #(dissoc % :content-parts))
                                    (prune-session-messages agent-spec))
-              auth-context (if (and (nil? auth-context) (seq (:tool-policies agent-spec)))
-                             {:toolPolicies (vec (:tool-policies agent-spec))
-                              :roleSlugs (cond-> [] (:role agent-spec) (conj (:role agent-spec)))}
-                             auth-context)
               auth-extra (auth-snapshot auth-context)]
           (cond
             (and thinking-level-raw (nil? parsed-thinking-level))
@@ -591,18 +604,17 @@
                                                           (some-> (.-searchParams u) (.get "path") str str/trim not-empty)))
                                                       (catch :default _ nil)))
                                read-workspace-media-data-url! (fn [raw-path fallback-mime label]
-                                                               (let [node-fs (aget runtime "fs")
-                                                                     normalized (media/normalize-tool-path-arg raw-path)
+                                                               (let [normalized (media/normalize-tool-path-arg raw-path)
                                                                      {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)
                                                                      mime (or (media/workspace-media-mime-type relative) fallback-mime)]
-                                                                 (-> (media/fs-stat! node-fs absolute)
+                                                                 (-> (media/fs-stat! fs absolute)
                                                                      (.then (fn [stat]
                                                                               (when-not (.isFile stat)
                                                                                 (throw (js/Error. (str "Attached " label " is not a file"))))
                                                                               (let [size (.-size stat)]
                                                                                 (when (> size max-bytes)
                                                                                   (throw (js/Error. (str "Attached " label " exceeds max bytes: " size "; max=" max-bytes))))
-                                                                                (.readFile node-fs absolute))))
+                                                                                (.readFile fs absolute))))
                                                                      (.then (fn [buf]
                                                                               (str "data:" mime ";base64," (.toString buf "base64")))))))
                                data-url? (fn [value]

@@ -158,19 +158,25 @@ function normalizeConversationResponse(response: Record<string, unknown>) {
         ? response.run_id
         : typeof response.runId === "string"
           ? response.runId
-          : null,
+          : typeof response["run-id"] === "string"
+            ? response["run-id"]
+            : null,
     conversation_id:
       typeof response.conversation_id === "string"
         ? response.conversation_id
         : typeof response.conversationId === "string"
           ? response.conversationId
-          : null,
+          : typeof response["conversation-id"] === "string"
+            ? response["conversation-id"]
+            : null,
     session_id:
       typeof response.session_id === "string"
         ? response.session_id
         : typeof response.sessionId === "string"
           ? response.sessionId
-          : null,
+          : typeof response["session-id"] === "string"
+            ? response["session-id"]
+            : null,
     model: typeof response.model === "string" ? response.model : null,
   };
 }
@@ -396,6 +402,7 @@ export async function knoxxControl(payload: {
   conversation_id: string;
   session_id?: string | null;
   run_id?: string | null;
+  actor_id?: string | null;
 }): Promise<{ ok: boolean; conversation_id?: string | null; session_id?: string | null; run_id?: string | null; kind?: string | null }> {
   const endpoint = payload.kind === "follow_up" ? "/api/knoxx/follow-up" : "/api/knoxx/steer";
   return request<Record<string, unknown>>(endpoint, {
@@ -405,6 +412,7 @@ export async function knoxxControl(payload: {
       conversation_id: payload.conversation_id,
       session_id: payload.session_id,
       run_id: payload.run_id,
+      actor_id: payload.actor_id,
     }),
   }).then((response) => ({
     ok: Boolean(response.ok),
@@ -419,6 +427,7 @@ export async function knoxxAbort(payload: {
   conversation_id: string;
   session_id?: string | null;
   run_id?: string | null;
+  actor_id?: string | null;
   reason?: string;
 }): Promise<{ ok: boolean; conversation_id?: string | null; session_id?: string | null; run_id?: string | null; error?: string | null }> {
   return request<Record<string, unknown>>("/api/knoxx/abort", {
@@ -427,6 +436,7 @@ export async function knoxxAbort(payload: {
       conversation_id: payload.conversation_id,
       session_id: payload.session_id,
       run_id: payload.run_id,
+      actor_id: payload.actor_id,
       reason: payload.reason,
     }),
   }).then((response) => ({
@@ -441,6 +451,7 @@ export async function knoxxAbort(payload: {
 export async function knoxxUndoSessionTurn(payload: {
   session_id: string;
   conversation_id?: string | null;
+  actor_id?: string | null;
   turns?: number;
 }): Promise<{ ok: boolean; session_id?: string | null; conversation_id?: string | null; removed_count?: number; remaining_messages?: number; error?: string | null }> {
   return request<Record<string, unknown>>("/api/knoxx/session/undo", {
@@ -448,6 +459,7 @@ export async function knoxxUndoSessionTurn(payload: {
     body: JSON.stringify({
       session_id: payload.session_id,
       conversation_id: payload.conversation_id,
+      actor_id: payload.actor_id,
       turns: payload.turns,
     }),
   }).then((response) => ({

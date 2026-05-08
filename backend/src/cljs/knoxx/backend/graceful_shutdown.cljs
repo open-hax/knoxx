@@ -10,8 +10,9 @@
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.realtime :as realtime]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.turn-control :as turn-control]))
+             [knoxx.backend.redis-client :as redis]
+             [knoxx.backend.runtime.state :as runtime-state]
+             [knoxx.backend.turn-control :as turn-control]))
 
 (defonce shutdown-state* (atom {:installed? false
                                 :in-progress? false
@@ -74,12 +75,17 @@
                                           (log-warn! app (str "[shutdown] marked " count " active session(s) resumable for restart"))
                                           #js {:count count}))))
                            (js/Promise.resolve #js {:count 0})))))
-              (.then (fn [_]
-                       (when-let [client (redis/get-client)]
-                         (redis/quit client))))
-              (.then (fn [_]
-                       (log-info! app "[shutdown] graceful shutdown complete")
-                       (js/process.exit 0)))
+               (.then (fn [_]
+                        (.all js/Promise
+                              (clj->js
+                               [(when-let [client (redis/get-client)]
+                                  (redis/quit client))
+                                (when-let [policy-db (runtime-state/current-policy-db)]
+                                  (when-let [close-fn (aget policy-db "close")]
+                                    (close-fn)))]))))
+               (.then (fn [_]
+                        (log-info! app "[shutdown] graceful shutdown complete")
+                        (js/process.exit 0)))
               (.catch (fn [err]
                         (log-error! app "[shutdown] graceful shutdown failed" err)
                         (js/process.exit 1))))]

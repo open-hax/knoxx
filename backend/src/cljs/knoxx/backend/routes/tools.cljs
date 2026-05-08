@@ -46,12 +46,10 @@
 
 (defn- event-agents-control-response [config]
   (let [live-config (or @runtime-state/config* config)
-        token       (:discord-bot-token live-config)
-        configured  (not (str/blank? token))
         control     (control-config/event-agent-control-config live-config)
         runtime     (events-runtime/status-snapshot live-config)]
-    {:configured       configured
-     :tokenPreview     (if configured (masked-discord-token token) "")
+    {:configured       false
+     :tokenPreview     ""
      :availableRoles   (control-config/event-agent-role-options live-config)
      :availableSourceKinds (control-config/event-agent-source-kind-options)
      :availableTriggerKinds (control-config/event-agent-trigger-kind-options)
@@ -270,38 +268,13 @@
   "POST" "/api/tools/discord/publish"
   [session-guard]
   (try
-    (let [body    (or (aget request "body") #js {})
-          agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
-          role       (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish" agent-contract-id)
-          channel-id (str/trim (str (or (aget body "channelId") "")))
-          content    (str/trim (str (or (aget body "content") "")))
-          token      (:discord-bot-token (or @runtime-state/config* config))
-          validation-error (cond
-                             (str/blank? token)      "Discord bot token not configured."
-                             (str/blank? channel-id) "Missing required field: channelId"
-                             (str/blank? content)    "Missing required field: content"
-                             :else nil)]
-      (if validation-error
-        (json-response! reply 400 {:detail validation-error})
-        (-> (js/fetch (str "https://discord.com/api/v10/channels/" channel-id "/messages")
-                     #js {:method  "POST"
-                          :headers #js {"Authorization" (str "Bot " token)
-                                        "Content-Type"  "application/json"}
-                          :body    (.stringify js/JSON #js {:content content})})
-            (.then (fn [resp]
-                     (if (.-ok resp)
-                       (-> (.json resp)
-                           (.then (fn [result]
-                                    (json-response! reply 200 {:ok true :role role
-                                                               :channelId channel-id
-                                                               :messageId (aget result "id")}))))
-                       (-> (.text resp)
-                           (.then (fn [text]
-                                    (json-response! reply 502 {:detail (str "Discord API error: " text)})))))))
-            (.catch (fn [err]
-                      (json-response! reply 502 {:detail (str "Discord request failed: " (or (aget err "message") (str err)))})))))))
+    (let [body (or (aget request "body") #js {})
+          agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))]
+      (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish" agent-contract-id)
+      (json-response! reply 410 {:ok false
+                                 :detail "Global Discord publish is disabled. Use actor-owned Discord credentials via Admin → Actors and the discord.send tool."}))
     (catch :default err
-      (error-response! reply err)))
+      (error-response! reply err))))
 
 ;; ── Admin / config routes ───────────────────────────────────────────────────
 
@@ -310,11 +283,10 @@
   "GET" "/api/admin/config/discord"
   [session-guard]
   (ensure-permission! ctx "org.event_agents.control")
-  (let [live-config (or @runtime-state/config* config)
-        token       (:discord-bot-token live-config)
-        configured  (not (str/blank? token))
-        masked      (if configured (masked-discord-token token) "")]
-    (json-response! reply 200 {:configured configured :tokenPreview masked})))
+  (json-response! reply 200 {:configured false
+                            :tokenPreview ""
+                            :credentialSource "actor_credentials"
+                            :detail "Discord bot keys are configured per actor in Admin → Actors."}))
 
 (defroute register-discord-token-put-route!
   []
@@ -322,17 +294,10 @@
   [session-guard]
   (try
     (ensure-permission! ctx "org.event_agents.control")
-    (let [body      (or (aget request "body") #js {})
-          new-token (str/trim (str (or (aget body "discordBotToken") "")))]
-      (if (str/blank? new-token)
-        (json-response! reply 400 {:detail "discordBotToken must not be blank"})
-        (do
-          (aset js/process.env "DISCORD_BOT_TOKEN" new-token)
-          (swap! runtime-state/config* (fn [c] (assoc (or c config) :discord-bot-token new-token)))
-          (restart-discord-gateway! new-token)
-          (events-runtime/reload!)
-          (json-response! reply 200 {:ok true :configured true
-                                     :tokenPreview (masked-discord-token new-token)}))))
+    (json-response! reply 410 {:ok false
+                               :configured false
+                               :credentialSource "actor_credentials"
+                               :detail "Global Discord token configuration has been migrated. Store Discord bot credentials on an actor in Admin → Actors."})
     (catch :default err
       (error-response! reply err))))
 

@@ -2,8 +2,8 @@
  * Knoxx PM2 ecosystem
  *
  * Runs all three Knoxx services on the host for source-mapped debugging:
- *   1. knoxx-shadow    — shadow-cljs watch with source maps (compiles CLJS → dist/)
- *   2. knoxx-backend   — node dist/server.js (compiled by shadow-cljs) with source-map stack traces
+ *   1. knoxx-shadow    — shadow-cljs watch with source maps (compiles CLJS → dist-dev/)
+ *   2. knoxx-backend   — node dist-dev/server.js (watch-produced dev output) with source-map stack traces
  *   3. knoxx-frontend  — vite dev server with HMR + API proxy to backend
  *   4. knoxx-ingestion — clojure -M:run (kms-ingestion on port 3003)
  *
@@ -159,7 +159,7 @@ const apps = [
       script: 'pnpm',
       // Force source maps in the watch build so dist/*.map stays available
       // even if the underlying shadow config drifts.
-      args: 'exec shadow-cljs --source-maps watch server',
+      args: 'exec shadow-cljs --source-maps watch server-dev',
       watch: false,
       autorestart: true,
       max_restarts: 10,
@@ -173,9 +173,10 @@ const apps = [
     {
       name: 'knoxx-backend',
       cwd: backendDir,
-      // All-CLJS runtime entrypoint compiled by shadow-cljs (:server build).
-      // This keeps the backend fully CLJS-driven so nREPL can mutate the runtime.
-      script: 'dist/server.js',
+      // All-CLJS runtime entrypoint compiled by shadow-cljs (:server-dev build).
+      // This keeps PM2 on watch-produced dev output and leaves dist/server.js
+      // for compile/release verification so devtools websocket code is not clobbered.
+      script: 'dist-dev/server.js',
       node_args: '--enable-source-maps',
       kill_timeout: 35000,
       shutdown_with_message: true,
@@ -284,7 +285,6 @@ const apps = [
       }]
       : []),
 
-    // (Backend runs above; no separate node dist/server.js PM2 process.)
     // ── 4. Frontend (Vite dev server) ────────────────────────────────
     {
       name: 'knoxx-frontend',

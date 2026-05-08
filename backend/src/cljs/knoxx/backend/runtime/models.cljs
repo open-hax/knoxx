@@ -1,9 +1,6 @@
 (ns knoxx.backend.runtime.models
   (:require [clojure.string :as str]
-            [cljs.reader :as reader]
-            [knoxx.backend.runtime.contract-loader :as contract-loader]
-            ["node:fs" :as fs]
-            ["node:path" :as path]))
+            [knoxx.backend.runtime.contract-loader :as contract-loader]))
 
 (def ^:private default-model-prefix-allowlist
   ["glm-5" "gpt-5" "qwen3" "gemma4:" "gemma3:" "deepseek" "kimi-k2" "nemotron" "cogito" "devstral" "minimax" "ministral" "mistral-large"])
@@ -38,32 +35,6 @@
                      :else (some-> value str str/trim str/lower-case not-empty))]
     (when (contains? input-kinds normalized)
       normalized)))
-
-(defn- read-edn-sync
-  [file-path]
-  (try
-    (some-> (.readFileSync fs file-path "utf8") str reader/read-string)
-    (catch :default _
-      nil)))
-
-(defn- read-contract-dir
-  [dir]
-  (try
-    (->> (.readdirSync fs dir)
-         (filter (fn [name]
-                   (and (string? name) (str/ends-with? name ".edn"))))
-         (map (fn [name]
-                (read-edn-sync (.join path dir name))))
-         (remove nil?)
-         vec)
-    (catch :default _
-      [])))
-
-(defn- read-contract-dirs
-  [dirs]
-  (->> dirs
-       (mapcat read-contract-dir)
-       vec))
 
 (defn- normalize-boolean
   [value]
@@ -143,26 +114,20 @@
 
 (defn model-family-contracts
   [config]
-  (->> (read-contract-dirs (contract-loader/contract-class-dir-paths config "model_families"))
+  (->> (contract-loader/load-all-contracts-sync config)
+       (filter #(= "model_families" (:contractClass %)))
+       (map :contract)
        (map normalize-model-family-contract)
        (remove nil?)
-       (reverse)
-       (reduce (fn [acc contract]
-                 (assoc acc (:id contract) contract))
-               {})
-       vals
        vec))
 
 (defn model-contracts
   [config]
-  (->> (read-contract-dirs (contract-loader/contract-class-dir-paths config "models"))
+  (->> (contract-loader/load-all-contracts-sync config)
+       (filter #(= "models" (:contractClass %)))
+       (map :contract)
        (map normalize-model-contract)
        (remove nil?)
-       (reverse)
-       (reduce (fn [acc contract]
-                 (assoc acc (:id contract) contract))
-               {})
-       vals
        vec))
 
 (defn resolve-model-family

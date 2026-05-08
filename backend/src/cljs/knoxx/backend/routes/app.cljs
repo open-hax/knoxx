@@ -105,6 +105,7 @@
 (defn- effective-auth-context
   [ctx parsed]
   (let [base (or ctx (:auth-context parsed))
+        requested-actor-id (some-> (get-in parsed [:agent-spec :actor-id]) str str/trim not-empty)
         requested-role-slug (requested-role parsed)
         role-slugs (cond
                      (and (nil? base) requested-role-slug) [requested-role-slug]
@@ -116,11 +117,18 @@
         resource-policies (or (get-in parsed [:agent-spec :resource-policies])
                               (get-in parsed [:auth-context :resourcePolicies])
                               (:resourcePolicies base))]
-    (when (or base requested-role-slug (seq tool-policies) resource-policies)
+    (when (or base requested-actor-id requested-role-slug (seq tool-policies) resource-policies)
       (cond-> (or base {})
+        requested-actor-id (assoc :actorId requested-actor-id)
         (seq role-slugs) (assoc :roleSlugs role-slugs)
         (or (seq tool-policies) (some? base)) (assoc :toolPolicies tool-policies)
         resource-policies (assoc :resourcePolicies resource-policies)))))
+
+(defn- auth-context-with-actor
+  [ctx actor-id]
+  (if-let [actor-id* (some-> actor-id str str/trim not-empty)]
+    (assoc (or ctx {}) :actorId actor-id*)
+    ctx))
 
 (defn- active-run-summary
   [run session]
@@ -495,10 +503,12 @@
                     :auth-context agent-ctx)
         accepted-response {:ok true
                            :queued true
-                           :run-id run-id
-                           :conversation-id conversation-id
-                           :session-id session-id
-                           :body body
+                           :run_id run-id
+                           :runId run-id
+                           :conversation_id conversation-id
+                           :conversationId conversation-id
+                           :session_id session-id
+                           :sessionId session-id
                            :model (or (:model body)
                                       (get-in body [:agent-spec :model])
                                       (:llmModel @settings-state*))}
@@ -752,7 +762,10 @@
                     "voxx"
                     "")
     :tts_default_voice_id (or (:voxx-voice-id config) "af_jessica")
+    :tts_default_model_id (or (:voxx-model-id config) "kokoro")
     :tts_default_speed (or (:voxx-default-speed config) "1.15")
+    :tts_default_postprocess_enabled true
+    :tts_default_postprocess_profile "sports-commentator-v1"
     :proxx_enabled (and (not (str/blank? (:proxx-base-url config)))
                         (not (str/blank? (:proxx-auth-token config))))
     :proxx_default_model (:llmModel @settings-state*)
@@ -1223,8 +1236,9 @@
 (defroute api-knoxx-steer! []
   "POST" "/api/knoxx/steer"
   (when ctx (ensure-permission! ctx "agent.controls.steer"))
-  (let [body (assoc (normalize-control-body (or (aget request "body") #js {})) :kind "steer")]
-    (ensure-conversation-access! ctx (:conversation-id body))
+  (let [body (assoc (normalize-control-body (or (aget request "body") #js {})) :kind "steer")
+        actor-ctx (auth-context-with-actor ctx (:actor-id body))]
+    (ensure-conversation-access! actor-ctx (:conversation-id body))
     (-> (queue-agent-control! runtime config body)
         (.then (partial steer-ok reply))
         (.catch (partial steer-err reply)))))
@@ -1232,8 +1246,9 @@
 (defroute api-knoxx-follow-up! []
   "POST" "/api/knoxx/follow-up"
   (when ctx (ensure-permission! ctx "agent.controls.follow_up"))
-  (let [body (assoc (normalize-control-body (or (aget request "body") #js {})) :kind "follow_up")]
-    (ensure-conversation-access! ctx (:conversation-id body))
+  (let [body (assoc (normalize-control-body (or (aget request "body") #js {})) :kind "follow_up")
+        actor-ctx (auth-context-with-actor ctx (:actor-id body))]
+    (ensure-conversation-access! actor-ctx (:conversation-id body))
     (-> (queue-agent-control! runtime config body)
         (.then (partial steer-ok reply))
         (.catch (partial steer-err reply)))))
@@ -1248,11 +1263,13 @@
   (when ctx (ensure-permission! ctx "agent.controls.steer"))
   (let [raw (or (aget request "body") #js {})
         conversation-id (or (aget raw "conversation_id") (aget raw "conversationId") "")
+        actor-id (or (aget raw "actor_id") (aget raw "actorId") (aget raw "actor-id"))
+        actor-ctx (auth-context-with-actor ctx actor-id)
         reason (or (aget raw "reason") "aborted_by_user")]
     (if (str/blank? (str conversation-id))
       (json-response! reply 400 {:ok false :error "conversation_id is required"})
       (do
-        (ensure-conversation-access! ctx conversation-id)
+        (ensure-conversation-access! actor-ctx conversation-id)
         (-> (turn-control/abort-active-turn! conversation-id reason)
             (.then (partial abort-ok reply))
             (.catch (partial steer-err reply)))))))
@@ -1267,6 +1284,8 @@
         provided-conversation-id (str (or (aget raw "conversation_id")
                                           (aget raw "conversationId")
                                           ""))
+        actor-id (or (aget raw "actor_id") (aget raw "actorId") (aget raw "actor-id"))
+        actor-ctx (auth-context-with-actor ctx actor-id)
         turns-raw (or (aget raw "turns") 1)
         turns (let [parsed (js/parseInt (str turns-raw) 10)]
                 (if (js/isNaN parsed) 1 (max 1 parsed)))]
@@ -1287,8 +1306,8 @@
                      current-messages (vec (or (:messages session) []))
                      rewound-messages (session-store/rewind-messages current-messages turns)
                      removed-count (- (count current-messages) (count rewound-messages))]
-                 (when (and ctx (not (str/blank? conversation-id)))
-                   (ensure-conversation-access! ctx conversation-id))
+                 (when (and actor-ctx (not (str/blank? conversation-id)))
+                   (ensure-conversation-access! actor-ctx conversation-id))
                  (if (zero? removed-count)
                    (json-response! reply 409 {:ok false :error "No user turns available to undo"})
                    (-> (session-store/undo-session-turns! (redis/get-client) session-id turns)

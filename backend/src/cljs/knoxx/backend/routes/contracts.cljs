@@ -193,17 +193,18 @@
 (defn sync-contract-index!
   "Sync contracts/*.edn → Redis contracts:index set.
 
-   Redis is a cache + fast index; disk is canonical."
+   Redis is a cache + fast index; disk is canonical. Invalid contract files are
+   omitted by the loader and must not block backend startup or the repair UI."
   [config]
   (if-let [client (redis/get-client)]
-    (-> (.all js/Promise
-              (clj->js (map (fn [klass]
-                              (-> (loader/list-contract-ids! config klass)
-                                  (.then (fn [ids]
-                                           (mapv (fn [id] (contract-id->index-key klass id)) ids)))))
-                            loader/contract-class-order)))
-        (.then (fn [nested]
-                 (let [ids (vec (mapcat identity (js->clj nested))) ]
+    (-> (loader/load-all-contracts! config)
+        (.then (fn [records]
+                 (let [ids (->> records
+                                (map (fn [record]
+                                       (contract-id->index-key (:contractClass record) (:id record))))
+                                distinct
+                                sort
+                                vec)]
                    (-> (redis/smembers client contracts-index-key)
                        (.then (fn [existing]
                                 (let [existing-set (set (map str (js/Array.from (or existing #js []))))
@@ -223,7 +224,7 @@
                                                 :removed to-remove
                                                 :count (count ids)}))))))))))
         (.catch (fn [err]
-                  (println "[contracts] sync-contract-index! failed:" (.-message err))
+                  (println "[contracts] sync-contract-index! failed; startup continuing:" (.-message err))
                   {:ok false :error (.-message err)})))
     (js/Promise.resolve {:ok false :error "Redis not connected"})))
 

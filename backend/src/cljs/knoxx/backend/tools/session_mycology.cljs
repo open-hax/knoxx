@@ -5,7 +5,10 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.shared :refer [create-tool-obj]]))
+            [knoxx.backend.tools.shared :refer [create-tool-obj]]
+            ["node:fs" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]))
 
 (def ^:const SPORE-THRESHOLD 0.72)
 (def ^:const PROMOTION-MIN-RECURRENCE
@@ -277,11 +280,8 @@
 (defn create-session-mycology-tools
   ([runtime config] (create-session-mycology-tools runtime config nil))
   ([runtime config auth-context]
-   (let [node-fs (aget runtime "fs")
-         node-path (aget runtime "path")
-         node-os (aget runtime "os")
-         allowed? (fn [tool-id] (or (nil? auth-context) (ctx-tool-allowed? auth-context tool-id)))
-         execute-fn (make-execute-fn node-fs node-path node-os)]
+   (let [allowed? (fn [tool-id] (or (nil? auth-context) (ctx-tool-allowed? auth-context tool-id)))
+         execute-fn (make-execute-fn fs path os)]
      (clj->js
       (vec
        (remove nil?

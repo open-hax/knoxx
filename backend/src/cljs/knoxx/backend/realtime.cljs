@@ -92,32 +92,38 @@
       (catch :default _
         (swap! ws-clients* dissoc client-id)))))
 
+(defn ws-client-matches-payload?
+  "True when a realtime client should receive a scoped payload.
+   Conversation id is authoritative when the client already knows it. A blank
+   client conversation id may still match by session id so the first async
+   /chat/start response cannot strand the live stream before the frontend learns
+   the server-generated conversation id."
+  [client session-id payload]
+  (let [payload-conversation-id (str (or (:conversation_id payload) (aget payload "conversation_id") ""))
+        client-session-id (or (aget client "sessionId") "")
+        client-conversation-id (or (aget client "conversationId") "")]
+    (cond
+      (and (not (str/blank? payload-conversation-id))
+           (not (str/blank? client-conversation-id)))
+      (= payload-conversation-id client-conversation-id)
+
+      (not (str/blank? session-id))
+      (and (not (str/blank? client-session-id))
+           (= session-id client-session-id))
+
+      :else false)))
+
 (defn broadcast-ws-session!
   "Broadcast to clients scoped by conversation-id for isolation.
-   Falls back to session-id matching for backwards compatibility.
-   Never broadcasts to all clients - requires explicit conversation or session match."
+   Falls back to session-id matching for clients that have not learned the
+   conversation-id yet. Never broadcasts to all clients."
   [session-id channel payload]
-  (let [payload-conversation-id (str (or (:conversation_id payload) (aget payload "conversation_id") ""))]
-    (doseq [[client-id client] @ws-clients*]
-      (let [client-session-id (or (aget client "sessionId") "")
-            client-conversation-id (or (aget client "conversationId") "")
-            ;; Match by conversation-id (primary) or session-id (fallback)
-            ;; Never match blank-to-blank to prevent cross-session contamination
-            matches? (cond
-                       (not (str/blank? payload-conversation-id))
-                       (and (not (str/blank? client-conversation-id))
-                            (= payload-conversation-id client-conversation-id))
-
-                       (not (str/blank? session-id))
-                       (and (not (str/blank? client-session-id))
-                            (= session-id client-session-id))
-
-                       :else false)]
-        (when matches?
-          (try
-            (safe-ws-send! (aget client "socket") (ws-envelope channel payload))
-            (catch :default _
-              (swap! ws-clients* dissoc client-id))))))))
+  (doseq [[client-id client] @ws-clients*]
+    (when (ws-client-matches-payload? client session-id payload)
+      (try
+        (safe-ws-send! (aget client "socket") (ws-envelope channel payload))
+        (catch :default _
+          (swap! ws-clients* dissoc client-id))))))
 
 (defn ensure-ws-stats-loop!
   [runtime active-runs-count]

@@ -4,8 +4,23 @@ import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
 import { ContextBar } from "../components/context-bar";
 
+const CHAT_PAGE_ACTOR_ID = "chat_primary";
+const CHAT_PAGE_SESSION_KEY = "knoxx_chat_page_session_id";
+const CHAT_PAGE_SCRATCHPAD_KEY = "knoxx_chat_page_scratchpad_state";
+const CHAT_PAGE_PINNED_KEY = "knoxx_chat_page_pinned_context";
+const CHAT_PAGE_SESSION_STATE_KEY = "knoxx_chat_page_session_state";
+const CHAT_PAGE_SIDEBAR_WIDTH_KEY = "knoxx_chat_page_sidebar_width_px";
+
 function ChatPage() {
-  const chat = useChatWorkspaceController({ initialShowCanvas: false, defaultActorId: "chat_primary" });
+  const chat = useChatWorkspaceController({
+    initialShowCanvas: false,
+    defaultActorId: CHAT_PAGE_ACTOR_ID,
+    sessionIdKey: CHAT_PAGE_SESSION_KEY,
+    scratchpadStorageKey: CHAT_PAGE_SCRATCHPAD_KEY,
+    pinnedContextStorageKey: CHAT_PAGE_PINNED_KEY,
+    sessionStateKey: CHAT_PAGE_SESSION_STATE_KEY,
+    sidebarWidthKey: CHAT_PAGE_SIDEBAR_WIDTH_KEY,
+  });
   const [showFiles, setShowFiles] = useState(true);
 
   return (

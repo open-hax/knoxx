@@ -21,8 +21,8 @@
             [knoxx.backend.routes.mcp :as mcp-http]
             [knoxx.backend.routes.tools.proxy :as proxy-routes]
             [knoxx.backend.runtime.config :as runtime-config]
-            [knoxx.backend.runtime.deps :as runtime-deps]
             [knoxx.backend.runtime.models :as runtime-models]
+            [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.agent-turns :refer [lounge-messages*]]))
 
 (defn- env
@@ -70,9 +70,9 @@
 (defn start-http!
   "Create a fresh Fastify app and bind HTTP routes around durable runtime state."
   [runtime cfg policyDb cookie-hook?]
+  (runtime-state/remember-context! runtime cfg policyDb)
   (let [app (http-server/create-app!)]
     (http-server/ensure-json-empty-body-parser! app)
-
     ;; Debug hook: log large requests before they hit 413.
     (http-server/add-hook! app "onRequest"
       (fn [req reply done]
@@ -83,7 +83,6 @@
           (when (> (js/parseInt len 10) (* 900 1024))
             (js/console.warn "[knoxx] large request" (.-url req) len "bytes")))
         (done)))
-
     (-> (http-server/register-default-plugins! app)
         ;; WS routes plugin.
         (.then (fn []
@@ -142,7 +141,7 @@
 
     (-> (policy-db/create-policy-db (policy-options))
         (.then (fn [policyDb]
-                 (let [runtime (runtime-deps/make-runtime policyDb)]
+                 (let [runtime #js {}]
                    (lifecycle/remember-context! runtime cfg policyDb cookie-hook?)
                    (start-http! runtime cfg policyDb cookie-hook?))))
         (.catch (fn [err]

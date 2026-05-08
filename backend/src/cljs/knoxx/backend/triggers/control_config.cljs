@@ -1,14 +1,12 @@
 (ns knoxx.backend.triggers.control-config
   (:require [clojure.string :as str]
-            [cljs.reader :as reader]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.contract-loader :as contract-loader]
             [knoxx.backend.runtime.models :as models]
             [knoxx.backend.runtime.roles :as roles]
             [knoxx.backend.tooling :as tooling]
             [knoxx.backend.tools.registry :as tools]
-            [knoxx.backend.util.parse :refer [parse-positive-int]]
-            ["node:fs" :as fs]))
+            [knoxx.backend.util.parse :refer [parse-positive-int]]))
 
 (defn- env
   [k default]
@@ -31,6 +29,10 @@
     (nil? value) nil
     :else (some-> value str str/trim not-empty)))
 
+(defn- nonblank-str
+  [value]
+  (some-> value str str/trim not-empty))
+
 (defn- keywordish->event-kind
   [value]
   (cond
@@ -41,15 +43,6 @@
                          nm))
     (string? value) (some-> value str str/trim not-empty (str/replace #"/" "."))
     :else nil))
-
-(defn- read-edn-with-hash-sync
-  [file-path]
-  (try
-    (let [edn-text (some-> (.readFileSync fs file-path "utf8") str)]
-      (when edn-text
-        {:edn (reader/read-string edn-text)
-         :hash (hash edn-text)}))
-    (catch :default _ nil)))
 
 (defn- explicit-tool-ids
   [contract]
@@ -160,7 +153,10 @@
                      :taskPrompt (or (some-> (get-in contract [:prompts :task]) str not-empty) "")
                      :toolPolicies (vec (or (:tool-policies resolved)
                                             (tool-policies-from-contract config role contract)))
-                     :memoryHydration memory-hydration}
+                     :memoryHydration memory-hydration
+                     :contractId contract-id
+                     :actorId (:actor-id resolved)
+                     :contractActors (vec (or (:contract-actor-ids resolved) []))}
          :description (or (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
                           (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
                           contract-id)
@@ -173,11 +169,13 @@
 (defn- contract-agent-jobs
   [config]
   (try
-    (->> (contract-loader/list-contract-ids-sync config "agents")
-         (map (fn [contract-id]
-                (let [{:keys [edn hash]} (read-edn-with-hash-sync (contract-loader/contract-file-path config "agents" contract-id))]
-                  (when edn
-                    (contract->event-agent-job config contract-id edn hash)))))
+    (->> (contract-loader/load-all-contracts-sync config)
+         (filter #(= "agents" (:contractClass %)))
+         (map (fn [record]
+                (contract->event-agent-job config
+                                           (:id record)
+                                           (:contract record)
+                                           (hash (:edn-text record)))))
          (remove nil?)
          (sort-by :id)
          vec)
@@ -255,9 +253,10 @@
   [config]
   (let [default-model (default-discord-model config)
         known-roles (set (roles/list-role-slugs config))
-        default-role (if (contains? known-roles "system_admin")
-                       "system_admin"
-                       (:knoxx-default-role config))]
+        configured-role (roles/normalize-role config (:knoxx-default-role config))
+        default-role (or (when (contains? known-roles configured-role)
+                           configured-role)
+                         (first (sort known-roles)))]
     [{:id "patrol"
       :name "Channel patrol"
       :kind "observer"
@@ -498,7 +497,16 @@
         thinking-level (or (models/normalize-thinking-level (:thinkingLevel agent-source))
                            (:thinkingLevel (:agentSpec default-job))
                            (:agent-thinking-level config)
-                           "off")]
+                           "off")
+        actor-id (or (nonblank-str (:actorId source))
+                     (nonblank-str (:actor-id source))
+                     (nonblank-str (:actor_id source))
+                     (nonblank-str (:actorId agent-source))
+                     (nonblank-str (:actor-id agent-source))
+                     (nonblank-str (:actor_id agent-source))
+                     (nonblank-str (:actorId default-job))
+                     (nonblank-str (:actorId (:agentSpec default-job)))
+                     (nonblank-str (:actor_id (:agentSpec default-job))))]
     {:id (:id default-job)
      :name (or (some-> (:name source) str str/trim not-empty) (:name default-job))
      :enabled (not (false? (:enabled source)))
@@ -524,7 +532,14 @@
                  :toolPolicies (let [normalized (normalize-tool-policy-list (:toolPolicies agent-source))]
                                  (if (and (seq normalized) (every? some? normalized))
                                    normalized
-                                   (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job))))) }
+                                   (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job)))))
+                 :contractId (or (nonblank-str (:contractId agent-source))
+                                 (nonblank-str (:contractSourceId source))
+                                 (nonblank-str (:contractSourceId default-job)))
+                 :actorId actor-id
+                 :contractActors (vec (or (:contractActors agent-source)
+                                          (:contractActors (:agentSpec default-job))
+                                          [])) }
      :contractSourceId (or (:contractSourceId source)
                            (:contractSourceId default-job))
      :contractSourceKind (or (:contractSourceKind source)
@@ -533,11 +548,7 @@
                             (:contractSourceKey default-job))
      :contractHash (or (:contractHash default-job)
                        (:contractHash source))
-:actorId (or (:actorId source)
-                   (:actorId default-job)
-                   ;; Always prefer contract-sourced actorId if available
-                   (when contract-sourced?
-                     (:actor_id (:agentSpec default-job))))
+     :actorId actor-id
      :description (or (some-> (:description source) str str/trim not-empty)
                       (:description default-job))}))
 
