@@ -3,6 +3,7 @@
    pipeline-runner, and agent tools. No scheduling or job logic here."
   (:require [clojure.string :as str]
             [knoxx.backend.agents.runner :as agents-runner]
+            [knoxx.backend.http :as http]
             [knoxx.backend.runtime.config :as runtime-config]))
 
 (defn- discord-token
@@ -15,9 +16,11 @@
   #js {"Authorization" (str "Bot " token)
        "Content-Type" "application/json"})
 
+(def ^:private discord-timeout-ms 15000)
+
 (defn- fetch-json!
   [url options]
-  (-> (js/fetch url options)
+  (-> (http/fetch-with-timeout url options discord-timeout-ms)
       (.then (fn [resp]
                (if (.-ok resp)
                  (.json resp)

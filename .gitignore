@@ -27,3 +27,4 @@ venv/
 # Workspace symlink targets (resolved at install time)
 packages/uxx
 packages/webgl-graph-view
+backend/dist*

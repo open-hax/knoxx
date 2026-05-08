@@ -6,7 +6,8 @@
 
    Previously wrapped globalThis.__mcp_gateway exposed by mcp_gateway.mjs.
    Now self-contained in CLJS — the mjs module is no longer needed."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.http :as http]))
 
 (def ^:private PROTOCOL-VERSION "2024-11-05")
 
@@ -94,10 +95,12 @@
                       (aset "Accept" "application/json, text/event-stream"))]
         (when (:shared-secret config)
           (aset headers "Authorization" (str "Bearer " (:shared-secret config))))
-        (-> (js/fetch base-url
-                      (clj->js {:method "POST"
-                                :headers (js/Object.entries headers)
-                                :body body}))
+        (-> (http/fetch-with-timeout
+             base-url
+             (clj->js {:method "POST"
+                       :headers (js/Object.entries headers)
+                       :body body})
+             30000)
             (.then
              (fn [response]
                (if (not (.-ok response))

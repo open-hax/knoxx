@@ -1,1 +1,0 @@
-{"version":3,"sources":["knoxx/backend/util/time.cljs"],"mappings":";;;AAEA,kCAAA,lCAAMA;AAAN,AAEE,OAAc,KAAAC","names":["knoxx.backend.util.time/now-iso","js/Date"],"sourcesContent":["(ns knoxx.backend.util.time)\n\n(defn now-iso\n  []\n  (.toISOString (js/Date.)))\n"]}
