@@ -237,13 +237,19 @@
     (let [body     (or (aget request "body") #js {})
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role     (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "bash" agent-contract-id)
-          timeout-ms (min (max (or (aget body "timeout_ms") 120000) 1000) 600000)
+          ;; Keep live-server shell tools short. Long recursive scans have left
+          ;; child processes stuck under knoxx-backend; heavy work belongs in a
+          ;; sandbox or an explicit operator terminal, not the always-on API.
+          timeout-ms (min (max (or (aget body "timeout_ms") 60000) 1000) 120000)
           workdir  (if-let [raw-wd (aget body "workdir")]
                      (resolve-workspace-path runtime config raw-wd)
                      (.resolve path (:workspace-root config)))]
       (-> (exec-file-async "/bin/bash"
                             #js ["-lc" (or (aget body "command") "")]
-                            #js {:cwd workdir :timeout timeout-ms :maxBuffer 1048576})
+                            #js {:cwd workdir
+                                 :timeout timeout-ms
+                                 :killSignal "SIGKILL"
+                                 :maxBuffer 1048576})
           (.then (fn [result]
                    (let [[stdout _]  (clip-text (or (aget result "stdout") "") 24000)
                          [stderr __] (clip-text (or (aget result "stderr") "") 12000)]

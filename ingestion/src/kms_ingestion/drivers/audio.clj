@@ -10,10 +10,17 @@
   (:import
    [java.nio.file Files FileVisitor FileVisitResult]
    [java.security MessageDigest]
-   [java.util Base64 UUID]))
+   [java.util Base64 UUID]
+   [java.util.concurrent Semaphore]))
 
 (def audio-extensions
   #{"mp3" "wav" "ogg" "m4a" "flac" "aac" "opus" "wma" "aiff" "aif" "mp4" "webm"})
+
+(defonce audio-agent-semaphore
+  (delay
+    (let [permits (max 1 (app-config/audio-analysis-agent-max-concurrency))]
+      (println (str "[audio-driver] Knoxx audio agent concurrency limit=" permits))
+      (Semaphore. permits true))))
 
 (defn- normalized-extension [path]
   (-> (or (fs/extension path) "")
@@ -143,6 +150,17 @@
 (defn- uuid []
   (str (UUID/randomUUID)))
 
+(defn- with-audio-agent-permit
+  [path f]
+  (let [^Semaphore semaphore @audio-agent-semaphore]
+    (when (zero? (.availablePermits semaphore))
+      (println (str "[audio-driver] waiting for audio agent slot: " path)))
+    (.acquire semaphore)
+    (try
+      (f)
+      (finally
+        (.release semaphore)))))
+
 (defn- http-success? [status]
   (<= 200 (long status) 299))
 
@@ -233,8 +251,11 @@
                                                :path (str path)
                                                :filename (fs/file-name path)}}
               :model model}]
-    (post-knoxx-json config "/api/knoxx/direct/start" body)
-    (wait-for-agent-run! config run-id)))
+    (with-audio-agent-permit
+      path
+      (fn []
+        (post-knoxx-json config "/api/knoxx/direct/start" body)
+        (wait-for-agent-run! config run-id)))))
 
 (defn audio-context
   "Return a structured audio context map for UI pinning and ingestion content."

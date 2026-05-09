@@ -1,5 +1,6 @@
 (ns knoxx.backend.triggers.control-config
   (:require [clojure.string :as str]
+            [knoxx.backend.agent-templates :as prompt-templates]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.runtime.contract-loader :as contract-loader]
             [knoxx.backend.runtime.models :as models]
@@ -58,7 +59,12 @@
         role-tool-ids (if (str/blank? (str (or role "")))
                         []
                         (roles/role-tool-ids config role))
-        tool-ids (if (seq explicit) explicit role-tool-ids)]
+        ;; :data/tools is an additive escape hatch for contract-local tools.
+        ;; It must not replace role/capability-derived tools; contract agents
+        ;; are composed from reusable roles/capabilities plus local additions.
+        tool-ids (->> (concat role-tool-ids explicit)
+                      distinct
+                      vec)]
     (mapv (fn [tool-id]
             {:toolId tool-id :effect "allow"})
           tool-ids)))
@@ -148,17 +154,17 @@
                      :model model
                      :thinkingLevel thinking-level
                      :systemPrompt (or (:system-prompt resolved)
-                                       (some-> (get-in contract [:prompts :system]) str not-empty)
+                                       (prompt-templates/prompt-value (get-in contract [:prompts :system]))
                                        "")
-                     :taskPrompt (or (some-> (get-in contract [:prompts :task]) str not-empty) "")
+                     :taskPrompt (or (prompt-templates/prompt-value (get-in contract [:prompts :task])) "")
                      :toolPolicies (vec (or (:tool-policies resolved)
                                             (tool-policies-from-contract config role contract)))
                      :memoryHydration memory-hydration
                      :contractId contract-id
                      :actorId (:actor-id resolved)
                      :contractActors (vec (or (:contract-actor-ids resolved) []))}
-         :description (or (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
-                          (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
+         :description (or (prompt-templates/prompt-preview (get-in contract [:prompts :task]))
+                          (prompt-templates/prompt-preview (get-in contract [:prompts :system]))
                           contract-id)
          :contractSourceId contract-id
          :contractSourceKind "agent"
@@ -523,11 +529,11 @@
                             (:model (:agentSpec default-job))
                             (default-discord-model config))
                  :thinkingLevel thinking-level
-                 :systemPrompt (or (some-> (:systemPrompt agent-source) str not-empty)
-                                   (:systemPrompt (:agentSpec default-job))
+                 :systemPrompt (or (prompt-templates/prompt-value (:systemPrompt agent-source))
+                                   (prompt-templates/prompt-value (:systemPrompt (:agentSpec default-job)))
                                    "")
-                 :taskPrompt (or (some-> (:taskPrompt agent-source) str not-empty)
-                                 (:taskPrompt (:agentSpec default-job))
+                 :taskPrompt (or (prompt-templates/prompt-value (:taskPrompt agent-source))
+                                 (prompt-templates/prompt-value (:taskPrompt (:agentSpec default-job)))
                                  "")
                  :toolPolicies (let [normalized (normalize-tool-policy-list (:toolPolicies agent-source))]
                                  (if (and (seq normalized) (every? some? normalized))

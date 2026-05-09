@@ -119,7 +119,7 @@
      [:thinking {:optional true} :string]]]
    [:prompts {:optional true}
     [:map
-     [:system {:optional true} :string]
-     [:task {:optional true} :string]]]
+     [:system {:optional true} :any]
+     [:task {:optional true} :any]]]
    [:context {:optional true} :map]
    [:data {:optional true} :map]])

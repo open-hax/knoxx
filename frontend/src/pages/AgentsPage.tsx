@@ -105,8 +105,8 @@ export default function AgentsPage() {
   );
 
   return (
-    <div data-page="agents" className="h-full min-h-0 overflow-y-auto bg-slate-950 p-4 text-slate-100">
-      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div data-page="agents" className="flex flex-col h-full min-h-0 overflow-hidden bg-slate-950 p-4 text-slate-100">
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between shrink-0">
         <div className="flex items-center gap-2">
           <Button
             variant={tab === "control" ? "primary" : "ghost"}
@@ -133,33 +133,36 @@ export default function AgentsPage() {
         ) : null}
       </div>
 
-      {tab === "control" ? (
-        <div className="space-y-4">
-          {!canControlEventAgents ? (
-            <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
-              Event-agent control access required.
-            </div>
-          ) : (
-            <>
-              {toolsError ? (
-                <div className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-xs text-amber-200">
-                  Tool catalog unavailable: {toolsError}
-                </div>
-              ) : null}
-              <DiscordSection
-                canManage={canControlEventAgents}
-                tools={tools}
-                onSelectedJobChange={(job) => setSelectedJob(job)}
-              />
-            </>
-          )}
-        </div>
-      ) : (
-        <AgentAuditLogs
-          defaultMode="history"
-          className="min-h-0"
-        />
-      )}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {tab === "control" ? (
+          <div className="flex flex-col h-full min-h-0 gap-4">
+            {!canControlEventAgents ? (
+              <div className="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
+                Event-agent control access required.
+              </div>
+            ) : (
+              <>
+                {toolsError ? (
+                  <div className="shrink-0 rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-xs text-amber-200">
+                    Tool catalog unavailable: {toolsError}
+                  </div>
+                ) : null}
+                <DiscordSection
+                  className="min-h-0 flex-1"
+                  canManage={canControlEventAgents}
+                  tools={tools}
+                  onSelectedJobChange={(job) => setSelectedJob(job)}
+                />
+              </>
+            )}
+          </div>
+        ) : (
+          <AgentAuditLogs
+            defaultMode="history"
+            className="h-full"
+          />
+        )}
+      </div>
     </div>
   );
 }

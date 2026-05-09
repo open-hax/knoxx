@@ -24,8 +24,28 @@
 (def ^:private voice-listener-bytes-per-sample 2)
 (def ^:private voice-listener-min-duration-s 0.8)
 (def ^:private voice-listener-silence-debounce-ms 900)
-;; ~30 seconds of stereo 48kHz PCM16LE = 48000 * 2 * 2 * 30 = 5.76 MB
-(def ^:private voice-listener-max-buffer-bytes (* 48000 2 2 30))
+;; Chunk audio into ~25s segments with ~5s overlap so the NPU STT never
+;; receives more than it can handle.  When the buffer hits the threshold we
+;; flush everything except the overlap (which becomes the head of the next
+;; chunk).  This prevents both OOM and mid-word cuts at chunk boundaries.
+;;
+;; 48000 Hz × 2 channels × 2 bytes/sample × 25 s = 4 800 000 bytes
+(def ^:private voice-listener-chunk-threshold-s 25)
+;; Overlap must be ≥ the NPU model’s receptive context (≈ 1–2 s) plus a
+;; safety margin so words spanning the boundary appear in both chunks.
+(def ^:private voice-listener-chunk-overlap-s 5)
+
+(def ^:private voice-listener-chunk-threshold-bytes
+  (* voice-listener-sample-rate
+     voice-listener-channels
+     voice-listener-bytes-per-sample
+     voice-listener-chunk-threshold-s))
+
+(def ^:private voice-listener-chunk-overlap-bytes
+  (* voice-listener-sample-rate
+     voice-listener-channels
+     voice-listener-bytes-per-sample
+     voice-listener-chunk-overlap-s))
 
 ;; ---------------------------------------------------------------------------
 ;; discord.js imports
@@ -668,6 +688,35 @@
                       (js/console.log "[voice:listener] calling on-audio for" uid "wav bytes:" (.-length wav) "duration:" duration-s "s")
                       (on-audio uid wav))))))
 
+            ;; Eagerly chunk long utterances so the NPU STT never receives > 25 s.
+            ;; We keep the last 5 s as overlap so words at the boundary are not cut.
+            chunk-and-flush!
+            (fn [uid]
+              (when-let [buf (get @pcm-buffers uid)]
+                (let [total-pcm (js/Buffer.concat (js/Array.from buf))
+                      total-len (.-length total-pcm)]
+                  (when (> total-len voice-listener-chunk-overlap-bytes)
+                    (let [flush-len (- total-len voice-listener-chunk-overlap-bytes)
+                          flush-pcm (.slice total-pcm 0 flush-len)
+                          keep-pcm (.slice total-pcm flush-len)
+                          duration-s (/ flush-len
+                                        voice-listener-sample-rate
+                                        voice-listener-bytes-per-sample
+                                        voice-listener-channels)
+                          overlap-s (/ voice-listener-chunk-overlap-bytes
+                                       voice-listener-sample-rate
+                                       voice-listener-bytes-per-sample
+                                       voice-listener-channels)
+                          wav (pcm16le->wav-buffer flush-pcm
+                                                   voice-listener-sample-rate
+                                                   voice-listener-channels)]
+                      ;; Retain overlap as the head of the next chunk.
+                      (swap! pcm-buffers assoc uid #js [keep-pcm])
+                      (js/console.log "[voice:listener] chunk-flush for" uid
+                                      "flushed:" duration-s "s"
+                                      "overlap-kept:" overlap-s "s")
+                      (on-audio uid wav))))))
+
             on-start-speaking
             (fn [user-id]
               (let [uid (str user-id)]
@@ -694,13 +743,12 @@
                      (.on decoder "data"
                           (fn [pcm-chunk]
                             (when-let [buf (get @pcm-buffers uid)]
+                              (.push buf pcm-chunk)
+                              ;; Eagerly chunk when we approach the NPU limit
+                              ;; so we never drop live audio.
                               (let [current-size (reduce (fn [acc b] (+ acc (.-length b))) 0 buf)]
-                                (if (> (+ current-size (.-length pcm-chunk)) voice-listener-max-buffer-bytes)
-                                  (do
-                                    (js/console.warn "[voice:listener] PCM buffer overflow for" uid "— dropping audio")
-                                    (swap! pcm-buffers dissoc uid)
-                                    (.push buf nil))
-                                  (.push buf pcm-chunk)))))))
+                                (when (> current-size voice-listener-chunk-threshold-bytes)
+                                  (chunk-and-flush! uid))))))
                     (.on decoder "error"
                          (fn [err]
                            (js/console.error "[voice:listener] decoder error for" uid ":" (.-message err))))
@@ -933,10 +981,13 @@
                                {:actorId actor-id :token token}))))
                    vec)
         active-actor-ids (set (map :actorId valid))]
-    (doseq [[actor-id manager] @actor-managers*]
-      (when-not (contains? active-actor-ids actor-id)
-        (try (.stop manager) (catch js/Error _))
-        (swap! actor-managers* dissoc actor-id)))
+     (doseq [[actor-id manager] @actor-managers*]
+       (when-not (contains? active-actor-ids actor-id)
+         (try
+           (.stop manager)
+           (catch js/Error _)
+           (finally
+             (swap! actor-managers* dissoc actor-id)))))
     (-> (js/Promise.all
          (clj->js
           (mapv (fn [{:keys [actorId token]}]

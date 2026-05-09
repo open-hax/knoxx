@@ -8,17 +8,19 @@ export function SectionCard({
   title,
   description,
   actions,
+  className,
   children,
 }: {
   title?: string;
   description?: string;
   actions?: React.ReactNode;
+  className?: string;
   children: React.ReactNode;
 }) {
   const hasHeader = Boolean(title || description || actions);
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-5 shadow-xl">
+    <section className={classNames("rounded-2xl border border-slate-800 bg-slate-950/70 p-5 shadow-xl", className)}>
       {hasHeader ? (
         <div className="mb-4 flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
           <div>

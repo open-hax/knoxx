@@ -55,14 +55,12 @@
                          (:roleSlug spec))
                     str
                     not-empty)
-        system-prompt (some-> (or (:system_prompt spec)
-                                  (:system-prompt spec)
-                                  (:systemPrompt spec))
-                              str)
-        task-prompt (some-> (or (:task_prompt spec)
-                                (:task-prompt spec)
-                                (:taskPrompt spec))
-                            str)
+        system-prompt (or (:system_prompt spec)
+                          (:system-prompt spec)
+                          (:systemPrompt spec))
+        task-prompt (or (:task_prompt spec)
+                        (:task-prompt spec)
+                        (:taskPrompt spec))
         model (some-> (:model spec) str not-empty)
         thinking-level (some-> (or (:thinking_level spec)
                                    (:thinking-level spec)
@@ -139,6 +137,9 @@
              :content-parts (or (:content_parts payload)
                                 (:content-parts payload)
                                 [])
+             :template-context (or (:template_context payload)
+                                   (:template-context payload)
+                                   (:templateContext payload))
              :model (:model payload)
              :mode "direct"
              :agent-spec (normalize-agent-spec (or (:agent_spec payload)
@@ -162,6 +163,51 @@
    :model (or (:model body)
               (get-in body [:agent-spec :model]))})
 
+(defn- err-prop
+  [err prop]
+  (try
+    (aget err prop)
+    (catch :default _ nil)))
+
+(defn- err-message
+  [err]
+  (or (some-> (err-prop err "message") str not-empty)
+      (some-> err str not-empty)
+      "Unknown error"))
+
+(defn- safe-ex-data
+  [err]
+  (try
+    (ex-data err)
+    (catch :default _ nil)))
+
+(defn- safe-json
+  [value]
+  (try
+    (.stringify js/JSON (clj->js value) nil 2)
+    (catch :default _
+      (str value))))
+
+(defn- log-async-spawn-error!
+  [body err]
+  (let [diagnostic (cond-> {:message (err-message err)
+                            :runId (:run-id body)
+                            :conversationId (:conversation-id body)
+                            :sessionId (:session-id body)
+                            :model (or (:model body)
+                                       (get-in body [:agent-spec :model]))
+                            :contractId (get-in body [:agent-spec :contract-id])
+                            :actorId (get-in body [:agent-spec :actor-id])}
+                     (some-> (err-prop err "name") str not-empty)
+                     (assoc :name (str (err-prop err "name")))
+                     (some-> (err-prop err "stack") str not-empty)
+                     (assoc :stack (str (err-prop err "stack")))
+                     (safe-ex-data err)
+                     (assoc :data (safe-ex-data err)))]
+    (.error js/console "[agents.runner] async direct spawn failed" (safe-json diagnostic))
+    (when-let [stack (:stack diagnostic)]
+      (.error js/console "[agents.runner] stack\n" stack))))
+
 (defn- queue-turn!
   [runtime config body]
   (-> (agent-turns/validate-chat-policy! (:auth-context body) (policy-model config body))
@@ -169,7 +215,7 @@
                (-> (agent-turns/send-agent-turn! runtime config body)
                    (.then (fn [_] nil))
                    (.catch (fn [err]
-                             (.error js/console "[agents.runner] async direct spawn failed" err))))
+                             (log-async-spawn-error! body err))))
                (accepted-response body)))))
 
 (defn- busy-error

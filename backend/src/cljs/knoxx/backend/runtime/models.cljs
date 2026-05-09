@@ -305,6 +305,10 @@
       (str/ends-with? base "/") (str base "v1")
       :else (str base "/v1"))))
 
+(def ^:private proxx-affinity-compat
+  {:sendSessionAffinityHeaders true
+   :supportsLongCacheRetention true})
+
 (defn- provider-settings-map
   [config]
   (let [configured-base-urls (or (:provider-base-urls config) {})
@@ -333,7 +337,8 @@
     (merge
      {"proxx" {:baseUrl (provider-openai-base-url (:proxx-base-url config))
                 :apiKey "PROXX_AUTH_TOKEN"
-                :authHeader true}}
+                :authHeader true
+                :compat proxx-affinity-compat}}
      configured-providers)))
 
 (defn per-model-compat
@@ -386,13 +391,14 @@
                                     models)
          providers (reduce-kv (fn [acc provider-id provider-model-ids]
                                 (if-let [settings (get provider-settings provider-id)]
-                                  (assoc acc (keyword provider-id)
-                                         (merge settings
-                                                {:compat base-compat
-                                                 :models (mapv (fn [model-id]
-                                                                 (merge (provider-model-config config model-id)
-                                                                        {:compat (per-model-compat config model-id)}))
-                                                               provider-model-ids)}))
+                                  (let [provider-compat (merge base-compat (:compat settings))]
+                                    (assoc acc (keyword provider-id)
+                                           (merge (dissoc settings :compat)
+                                                  {:compat provider-compat
+                                                   :models (mapv (fn [model-id]
+                                                                   (merge (provider-model-config config model-id)
+                                                                          {:compat (per-model-compat config model-id)}))
+                                                                 provider-model-ids)})))
                                   acc))
                               {}
                               models-by-provider)]

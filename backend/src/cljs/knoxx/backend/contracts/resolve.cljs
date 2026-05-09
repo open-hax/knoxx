@@ -1,5 +1,6 @@
 (ns knoxx.backend.contracts.resolve
   (:require [clojure.string :as str]
+            [knoxx.backend.agent-templates :as templates]
             [knoxx.backend.contracts.actor-scope :as actor-scope]
             [knoxx.backend.contracts.loader :as loader]
             [knoxx.backend.contracts.roles :as roles]
@@ -154,7 +155,7 @@
                               (remove nil?)
                               distinct
                               vec)
-         :system-prompt (some-> (get-in actor [:prompts :system]) str str/trim not-empty)}))))
+         :system-prompt (templates/prompt-value (get-in actor [:prompts :system]))}))))
 
 (defn actor-catalog
   [config]
@@ -179,11 +180,12 @@
 (defn- combine-system-prompts
   [& parts]
   (let [segments (->> parts
-                      (map (fn [part]
-                             (some-> part str str/trim not-empty)))
-                      (remove nil?))]
-    (when (seq segments)
-      (str/join "\n\n" segments))))
+                      (keep templates/prompt-value)
+                      vec)]
+    (cond
+      (empty? segments) nil
+      (= 1 (count segments)) (first segments)
+      :else (list (symbol "template") {:separator "\n\n"} segments))))
 
 (defn- collect-role-tool-ids
   [config role-slugs]
@@ -271,13 +273,14 @@
                    primary-role (or (first contract-role-slugs)
                                     (first actor-role-slugs)
                                     (:knoxx-default-role config))
-                    role-system-prompt-text (->> role-slugs
-                                                  (keep #(some-> (roles/role-system-prompt config %) str str/trim not-empty))
-                                                  distinct
-                                                  (str/join "\n\n"))
-                    agent-system-prompt (some-> (get-in contract [:prompts :system]) str str/trim not-empty)
+                    role-system-prompts (->> role-slugs
+                                             (keep #(roles/role-system-prompt config %))
+                                             distinct
+                                             vec)
+                    role-system-prompt (apply combine-system-prompts role-system-prompts)
+                    agent-system-prompt (templates/prompt-value (get-in contract [:prompts :system]))
                     system-prompt (combine-system-prompts
-                                   role-system-prompt-text
+                                   role-system-prompt
                                    (:system-prompt actor-spec)
                                    agent-system-prompt)
                     all-extras (all-contract-extras config actor-spec role-slugs capability-ids contract)]
@@ -294,11 +297,11 @@
                 :role primary-role
                 :model (some-> (get-in contract [:agent :model]) str str/trim not-empty)
                 :thinking-level (some-> (get-in contract [:agent :thinking]) keywordish->role-slug)
-                :role-system-prompt role-system-prompt-text
+                :role-system-prompt role-system-prompt
                 :actor-system-prompt (:system-prompt actor-spec)
                 :agent-system-prompt agent-system-prompt
                 :system-prompt system-prompt
-                :task-prompt (some-> (get-in contract [:prompts :task]) str str/trim not-empty)
+                :task-prompt (templates/prompt-value (get-in contract [:prompts :task]))
                 :trigger-kind (some-> (:trigger-kind contract) keywordish->role-slug)
                 :memory-hydration (memory-hydration-from-contract contract)
                 :context-policy (context-policy-from-contract contract)

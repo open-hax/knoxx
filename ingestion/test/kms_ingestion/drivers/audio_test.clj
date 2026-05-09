@@ -4,7 +4,9 @@
    [cheshire.core]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
-   [kms-ingestion.drivers.audio :as audio]))
+   [kms-ingestion.drivers.audio :as audio])
+  (:import
+   [java.util.concurrent Semaphore]))
 
 (defn- temp-audio-file [suffix bytes]
   (let [path (str (fs/create-temp-file {:prefix "audio-driver-test-" :suffix suffix}))]
@@ -67,6 +69,31 @@
             (is (= "audio" (:type audio-part)))
             (is (= "audio/wav" (:mimeType audio-part)))
             (is (str/starts-with? (:data audio-part) "data:audio/wav;base64,"))))
+        (finally
+          (fs/delete-if-exists path))))))
+
+(deftest audio-agent-runs-are-serialized-test
+  (testing "Audio agent starts are serialized so the GPU only handles one audio request at a time"
+    (let [path (temp-audio-file ".wav" "RIFFfake-wav")
+          active (atom 0)
+          max-active (atom 0)]
+      (try
+        (with-redefs [audio/audio-agent-semaphore (delay (Semaphore. 1 true))
+                      clj-http.client/post (fn [_url _opts]
+                                             (let [current (swap! active inc)]
+                                               (swap! max-active max current)
+                                               (Thread/sleep 75)
+                                               (swap! active dec)
+                                               {:status 202
+                                                :body {:ok true}}))
+                      clj-http.client/get (fn [_url _opts]
+                                            {:status 200
+                                             :body {:ok true
+                                                    :run {:status "completed"
+                                                          :answer "ok"}}})]
+          (let [futures (doall (repeatedly 4 #(future (:description (audio/audio-context path)))))]
+            (is (= ["ok" "ok" "ok" "ok"] (mapv deref futures)))
+            (is (= 1 @max-active))))
         (finally
           (fs/delete-if-exists path))))))
 

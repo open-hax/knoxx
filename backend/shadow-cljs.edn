@@ -47,7 +47,8 @@
       "redis"
       "discord.js"
       "@discordjs/voice"
-      "libsodium-wrappers"}},
+      "libsodium-wrappers"
+      "puppeteer-core"}},
    :compiler-options
    {:output-feature-set :es-next,
     :optimizations :simple,
@@ -63,7 +64,7 @@
    :js-options
    {:js-provider :import,
     :keep-as-import
-    #{"@resvg/resvg-js"
+    #{"puppeteer-core"
       "@modelcontextprotocol/sdk"
       "pg"
       "node:child_process"
@@ -99,7 +100,7 @@
    :js-options
    {:js-provider :import,
     :keep-as-import
-    #{"@resvg/resvg-js"
+    #{"puppeteer-core"
       "@modelcontextprotocol/sdk"
       "pg"
       "node:child_process"

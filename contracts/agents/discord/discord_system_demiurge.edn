@@ -6,11 +6,15 @@
                               :mode :always
                               :k 6}},
  :source-mode :respond,
- :events {:always [], :maybe [:discord.message/keyword]},
+  :events {:always [:discord.message/mention]
+           :maybe [:discord.message/keyword]
+           :threshold 1
+           :weights {"discord.message/mention" 1
+                     "discord.message/keyword" 1}},
  :hooks {:before {}, :after {}},
  :agent
  {:roles [:role/developer :role/creative_catalyst],
-  :model "mimo-v2.5-pro",
+  :model "gemma4:31b",
   :thinking :xhigh},
  :prompts
  {:system
@@ -18,20 +22,21 @@
   :task
   "A user on Discord has requested a change to the system. Manifest their intent into the codebase with absolute precision and appropriate, transcendent flair."},
  :trigger-kind :event,
- :contract/version 1,
+ :contract/version 2,
  :source-kind :discord,
  :cadence-min 30,
  :enabled true,
 
  :context {:max-messages 10000
-           :max-chars 3500000
+           :max-chars 500000
            :preserve-system true}
  :data
  {:filters
-  {:channels ["1444189585373663417" "1444150910950576229"],
+  {:channels [ "1444150910950576229"],
    :keywords
-   ["change" "fix" "add" "remove" "update" "system-request"]},
+   ["change" "fix" "add" "remove" "update" "system-request"
+    "edit" "refactor" "deploy" "bug" "feature" "implement" "build"]},
   :source {:max-messages 200
            :stickySession true
-           :streamingBehavior "steer"
+           ;; :streamingBehavior "steer"
            :sessionMaxMessages 10000}}}

@@ -9,6 +9,7 @@
             [knoxx.backend.policy.protocol :as policy]
             [knoxx.backend.tools.registry :as tool-registry]
             ["node:fs" :as fs]
+            ["node:fs/promises" :as fs-promises]
             ["node:path" :as path]))
 
 (defrecord EdnPolicyStore [contracts-dir])

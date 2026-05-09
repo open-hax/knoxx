@@ -5,8 +5,12 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :source-mode :synthesize,
- :hooks {:before {}, :after {}},
+  :source-mode :synthesize,
+  :events {:always []
+           :maybe [:discord.message/keyword]
+           :threshold 1
+           :weights {"discord.message/keyword" 1}},
+  :hooks {:before {}, :after {}},
  :agent
  {:role :role/pixel_artist, :model "gemma4:31b", :thinking :medium},
  :prompts
@@ -23,7 +27,8 @@
  :data
  {:filters
   {:channels ["1494137016303095828"],
-   :keywords ["pixel" "sprite" "8bit" "retro"]},
+    :keywords ["pixel" "sprite" "8bit" "retro"
+               "pixelart" "game" "sprite" "8-bit" "16-bit" "retrogame" "chiptune"]},
   :source {:max-messages 10},
   :specialties [:gameboy :NES :spectrum :custom],
   :styles [:gameboy :rpg :shooter :adventure]}}

@@ -85,8 +85,8 @@
    [:actor {:optional true} ActorCapSpec]
    [:agent {:optional true} AgentSpec]
    [:prompts {:optional true} [:map {:closed false}
-                                [:system {:optional true} string?]
-                                [:task {:optional true} string?]]]
+                                [:system {:optional true} any?]
+                                [:task {:optional true} any?]]]
    [:context {:optional true} ContextPolicy]
    [:context-policy {:optional true} ContextPolicy]
    [:ui/actions {:optional true} [:vector UiAction]]
@@ -115,9 +115,9 @@
    [:role/permissions {:optional true} [:sequential string?]]
    [:prompts {:optional true}
     [:map {:closed false}
-     [:system {:optional true} string?]
-     [:task {:optional true} string?]]]
-   [:role/system-prompt {:optional true} string?]])
+     [:system {:optional true} any?]
+     [:task {:optional true} any?]]]
+   [:role/system-prompt {:optional true} any?]])
 
 (def CapabilityContract
   [:map {:closed false}
@@ -168,6 +168,22 @@
     [:model/max-tokens {:optional true} int?]
     [:model/input {:optional true} [:sequential keyword?]]])
 
+(def RuntimeFeatureContract
+  "Runtime feature contracts let Knoxx manage non-agent runtime toggles such as
+   eta-mu extensions without promoting those toggles into ad-hoc JSON state."
+  [:map {:closed false}
+   [:contract/kind [:= :runtime-feature]]
+   [:contract/id string?]
+   [:runtime-feature/id {:optional true} string?]
+   [:runtime/owner {:optional true} [:or keyword? string?]]
+   [:runtime/feature {:optional true} [:or keyword? string?]]
+   [:eta-mu/extension {:optional true} [:or keyword? string?]]
+   [:enabled {:optional true} boolean?]
+   [:runtime/enabled {:optional true} boolean?]
+   [:runtime/default-enabled {:optional true} boolean?]
+   [:runtime/applies-to {:optional true} [:sequential [:map {:closed false}]]]
+   [:runtime/config {:optional true} [:map {:closed false}]]])
+
 (def IngestSourceContract
    "Ingestion source contracts live under contracts/ and are also discovered by
     the backend contract loader. They are not used by runtime.models, but they
@@ -211,8 +227,8 @@
    [:sub-agent/mode {:optional true} [:enum :fire-and-forget :await :collect]]
    [:agent {:optional true} AgentSpec]
    [:prompts {:optional true} [:map {:closed false}
-                                [:system {:optional true} string?]
-                                [:task {:optional true} string?]]]
+                                [:system {:optional true} any?]
+                                [:task {:optional true} any?]]]
    [:context {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 
@@ -244,6 +260,8 @@
     (contains? value :cap/id) "capabilities"
     (contains? value :model-family/id) "model_families"
     (contains? value :model/id) "models"
+    (or (contains? value :runtime-feature/id)
+        (= :runtime-feature (:contract/kind value))) "runtime_features"
     (= :ingest_source (:contract/kind value)) "ingest_sources"
     :else "agents"))
 
@@ -257,6 +275,7 @@
     "policies" PolicyContract
     "model_families" ModelFamilyContract
     "models" ModelContract
+    "runtime_features" RuntimeFeatureContract
     "ingest_sources" IngestSourceContract
     "sub_agents" SubAgentContract
     "cms" CmsContract

@@ -1,11 +1,19 @@
 /**
  * Knoxx PM2 ecosystem
  *
- * Runs all three Knoxx services on the host for source-mapped debugging:
- *   1. knoxx-shadow    — shadow-cljs watch with source maps (compiles CLJS → dist-dev/)
- *   2. knoxx-backend   — node dist-dev/server.js (watch-produced dev output) with source-map stack traces
- *   3. knoxx-frontend  — vite dev server with HMR + API proxy to backend
- *   4. knoxx-ingestion — clojure -M:run (kms-ingestion on port 3003)
+ * Runs all Knoxx services on the host for source-mapped debugging:
+ *   1. knoxx-shadow          — shadow-cljs watch with source maps (compiles backend CLJS → dist-dev/)
+ *   2. knoxx-backend         — node dist-dev/server.js (watch-produced dev output) with source-map stack traces
+ *   3. knoxx-frontend        — vite dev server with HMR + API proxy to backend (port 5173)
+ *   4. knoxx-frontend-shadow — shadow-cljs watch for helix frontend (port 5174)
+ *   5. knoxx-ingestion       — clojure -M:run (kms-ingestion on port 3003)
+ *
+ * Frontend migration notes:
+ *   - The Vite frontend (knoxx-frontend, port 5173) is the current production path.
+ *   - The shadow-cljs frontend (knoxx-frontend-shadow, port 5174) is the helix migration target.
+ *   - Before starting knoxx-frontend-shadow, build the TS bridge once:
+ *       cd frontend && pnpm build:bridge
+ *   - Rebuild the bridge whenever you add TS components to src/bridge/.
  *
  * Dependencies (must be running separately):
  *   - Redis     on localhost:6379  (compose: knoxx-redis)
@@ -90,6 +98,7 @@ const musicLibraryRoot = process.env.KNOXX_MUSIC_LIBRARY_ROOT
   || hostEnv.KNOXX_MUSIC_LIBRARY_ROOT
   || path.join(os.homedir(), 'Music');
 const sttNpuPort = process.env.KNOXX_STT_PORT || hostEnv.KNOXX_STT_PORT || '8010';
+const chromiumPath = process.env.KNOXX_CHROMIUM_PATH || hostEnv.KNOXX_CHROMIUM_PATH || '/snap/bin/chromium';
 // Voice STT for the local Knoxx stack is pinned to the repo-local sidecar by default.
 // Only a process-level override should redirect it somewhere else.
 const sttNpuExplicitBaseUrl = process.env.KNOXX_STT_BASE_URL || '';
@@ -173,16 +182,18 @@ const apps = [
     {
       name: 'knoxx-backend',
       cwd: backendDir,
-      // All-CLJS runtime entrypoint compiled by shadow-cljs (:server-dev build).
-      // This keeps PM2 on watch-produced dev output and leaves dist/server.js
-      // for compile/release verification so devtools websocket code is not clobbered.
-      script: 'dist-dev/server.js',
-      node_args: '--enable-source-maps',
+      // Foreground launcher waits for shadow-cljs dev server + dist-dev/server.js
+      // before importing the all-CLJS runtime entrypoint. This encodes the full
+      // hot-reload cycle in PM2 instead of relying on an agent's ad hoc startup order.
+      script: 'scripts/start-server-dev.cljs',
+      interpreter: path.join(backendDir, 'node_modules', '.bin', 'nbb'),
       kill_timeout: 35000,
+      listen_timeout: 60000,
+      wait_ready: true,
       shutdown_with_message: true,
-      // Auto-restart when shadow-cljs produces new output
-        watch: false, // watching can become really problematic when agents are resuming. If we're doing active work on the project, the files might change several times for one change, put the thing in broken states, etc. Then we end up with all these zombie event agents.
-        // which is it's self a problem we have to figure out... but it's not going to make it easier to have 50+ jobs getting restarted, and leaking every time we make a change.
+      // Do not let PM2 watch compiled output or source. shadow-cljs owns hot reload;
+      // PM2 only owns the long-running launcher process.
+      watch: false,
       // watch: ['dist'],
       // watch_delay: 800,
       // ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
@@ -197,6 +208,7 @@ const apps = [
         CONTRACTS_DIR: contractsDir,
         KNOXX_MUSIC_LIBRARY_ROOT: musicLibraryRoot,
         KNOXX_EXTRA_WORKSPACE_ROOTS: musicLibraryRoot,
+        KNOXX_CHROMIUM_PATH: chromiumPath,
         DISCORD_BOT_TOKEN: hostEnv.DISCORD_BOT_TOKEN,
         KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
         KNOXX_COLLECTION_NAME: 'devel_docs',
@@ -211,6 +223,9 @@ const apps = [
         PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
         PROXX_DEFAULT_MODEL: 'gemma4:31b',
         PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
+        // Eta-mu native providers use this to emit body-level prompt_cache_key
+        // (and long-retention fields when supported) for session-affinity caching.
+        PI_CACHE_RETENTION: 'long',
         KNOXX_PROVIDER_BASE_URLS: hostEnv.KNOXX_PROVIDER_BASE_URLS || 'llamacpp=http://127.0.0.1:8082',
         KNOXX_PROVIDER_AUTH_TOKENS: hostEnv.KNOXX_PROVIDER_AUTH_TOKENS || 'llamacpp=LLAMACPP_API_KEY',
         LLAMACPP_API_KEY: hostEnv.LLAMACPP_API_KEY || 'no-key',
@@ -225,6 +240,10 @@ const apps = [
         SHOEDELUSSY_MCP_SHARED_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
         // Redis + Postgres (compose services forwarded to host)
         REDIS_URL: 'redis://127.0.0.1:6379',
+        // Automatic recovered-session resume is opt-in. Keeping this false prevents
+        // ad hoc PM2 restarts or shadow-cljs hot reloads from creating duplicate
+        // zombie agent jobs. Stale sessions may still be cleaned up by recovery.
+        KNOXX_AGENT_AUTO_RESUME_SESSIONS: hostEnv.KNOXX_AGENT_AUTO_RESUME_SESSIONS || 'false',
         KNOXX_SHUTDOWN_GRACE_MS: '25000',
         KNOXX_SHUTDOWN_POLL_MS: '250',
         KNOXX_POLICY_DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
@@ -255,7 +274,7 @@ const apps = [
       },
     },
 
-    // ── 2. STT (Whisper/OpenVINO sidecar) ────────────────────────────
+    // ── 3. STT (Whisper/OpenVINO sidecar) ────────────────────────────
     ...(sttNpuShouldRunLocal
       ? [{
         name: 'knoxx-stt-npu',
@@ -299,6 +318,21 @@ const apps = [
         NODE_ENV: 'development',
         // Vite proxy target: the host backend
         VITE_KNOXX_BACKEND_URL: 'http://127.0.0.1:8000',
+      },
+    },
+
+    // ── 4b. Frontend shadow-cljs (helix watch + hot reload) ──────────
+    {
+      name: 'knoxx-frontend-shadow',
+      cwd: frontendDir,
+      script: 'pnpm',
+      args: 'watch:cljs',
+      watch: false,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000,
+      env: {
+        NODE_ENV: 'development',
       },
     },
 

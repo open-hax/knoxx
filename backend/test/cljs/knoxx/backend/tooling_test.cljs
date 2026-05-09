@@ -78,4 +78,6 @@
       (is (contains? tool-ids "audio.spectrogram"))
       (is (contains? tool-ids "audio.waveform"))
       (is (contains? tool-ids "workspace_media.attach"))
-      (is (contains? tool-ids "music.identify_file")))))
+      (is (contains? tool-ids "music.identify_file"))
+      (is (contains? tool-ids "music.generate_song"))
+      (is (not (contains? tool-ids "blaze.generate"))))))

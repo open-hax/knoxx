@@ -12,7 +12,7 @@
 
 (def contract-class-order
   ["agents" "actors" "roles" "capabilities" "policies"
-   "model_families" "models" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents" "cms"])
+   "model_families" "models" "runtime_features" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents" "cms"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -81,6 +81,7 @@
       ("role" "roles") "roles"
       ("cap" "caps" "capability" "capabilities") "capabilities"
       ("policy" "policies") "policies"
+      ("runtime-feature" "runtime-features" "runtime_feature" "runtime_features" "runtime") "runtime_features"
       ("model-family" "model-families" "model_family" "model_families") "model_families"
       ("model" "models") "models"
       ("ingest-source" "ingest-sources" "ingest_source" "ingest_sources") "ingest_sources"
@@ -146,11 +147,14 @@
                           (when (:role/id raw) "roles")
                           (when (:cap/id raw) "capabilities")
                           (when (:model/id raw) "models")
+                          (when (:runtime-feature/id raw) "runtime_features")
+                          (when (= :runtime-feature (:contract/kind raw)) "runtime_features")
                           (when (:model-family/id raw) "model_families"))
                       keyword->str str/trim not-empty)
         id   (some-> (or (:contract/id raw) (:id raw)
                           (:actor/id raw) (:role/id raw) (:cap/id raw)
-                          (:model/id raw) (:model-family/id raw))
+                          (:model/id raw) (:model-family/id raw)
+                          (:runtime-feature/id raw))
                       keyword->str str/trim not-empty)]
     (when (and kind id) [kind id])))
 

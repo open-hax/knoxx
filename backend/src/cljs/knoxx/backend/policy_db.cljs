@@ -243,19 +243,15 @@
                  vec)]
     (if (empty? ids)
       (js/Promise.resolve nil)
-      (-> (js/Promise.all
-           (into-array
-            (for [tool-id ids]
-              (let [{:keys [label description risk-level]} (tool-registry/get-tool tool-id)]
-                (query! pool
-                        "INSERT INTO tool_definitions (id, label, description, risk_level)
-                         VALUES ($1, $2, $3, $4)
-                         ON CONFLICT (id) DO UPDATE
-                         SET label = EXCLUDED.label,
-                             description = EXCLUDED.description,
-                             risk_level = EXCLUDED.risk_level"
-                        [tool-id (or label tool-id) (or description "") (or risk-level "low")])))))
-          (.then (fn [_] nil))))))
+      (let [entries (mapv (fn [tool-id]
+                            (let [{:keys [label description risk-level]} (tool-registry/get-tool tool-id)]
+                              [tool-id (or label tool-id) (or description "") (or risk-level "low")]))
+                          ids)
+            values-clause (str/join "," (map #(str "($" (inc (* 4 %)) ",$" (inc (inc (* 4 %))) ",$" (inc (inc (inc (* 4 %)))) ",$" (+ 4 (* 4 %)) ")") (range (count entries))))
+            sql (str "INSERT INTO tool_definitions (id, label, description, risk_level) VALUES " values-clause " ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label, description = EXCLUDED.description, risk_level = EXCLUDED.risk_level")
+            params (into [] (mapcat identity) entries)]
+        (-> (query! pool sql params)
+            (.then (fn [_] nil)))))))
 
 (defn- normalize-lake-config
   [config]
@@ -343,6 +339,24 @@
                  (when (and rows (> (.-length rows) 0))
                    (aget rows 0)))))))
 
+(defn- with-transaction!
+  "Execute `f` within a PostgreSQL transaction. `f` receives the client
+   and must return a Promise. On success, COMMITs; on failure, ROLLBACKs
+   and re-throws the error."
+  [pool f]
+  (-> (.connect pool)
+      (.then (fn [client]
+               (-> (.query client "BEGIN")
+                   (.then (fn [] (f client)))
+                   (.then (fn [result]
+                            (-> (.query client "COMMIT")
+                                (.then (fn [] (.release client true)))
+                                (.then (fn [] result)))))
+                   (.catch (fn [err]
+                             (-> (.query client "ROLLBACK")
+                                 (.then (fn [] (.release client false)))
+                                 (.then (fn [] (throw err)))))))))))
+
 (defn- role-permissions-uses-legacy-ids?
   [pool]
   (-> (query! pool
@@ -358,19 +372,15 @@
   (let [codes (unique permission-codes)]
     (if (empty? codes)
       (js/Promise.resolve nil)
-      (-> (js/Promise.all
-           (into-array
-            (for [code codes]
-              (let [{:keys [resource-kind action description]} (permission-row-shape code)]
-                (query! pool
-                        "INSERT INTO permissions (code, resource_kind, action, description)
-                         VALUES ($1, $2, $3, $4)
-                         ON CONFLICT (code) DO UPDATE
-                         SET resource_kind = EXCLUDED.resource_kind,
-                             action = EXCLUDED.action,
-                             description = EXCLUDED.description"
-                        [code resource-kind action description])))))
-          (.then (fn [_] nil))))))
+      (let [entries (mapv (fn [code]
+                            (let [{:keys [resource-kind action description]} (permission-row-shape code)]
+                              [code resource-kind action description]))
+                          codes)
+            values-clause (str/join "," (map #(str "($" (inc (* 4 %)) ",$" (inc (inc (* 4 %))) ",$" (inc (inc (inc (* 4 %)))) ",$" (+ 4 (* 4 %)) ")") (range (count entries))))
+            sql (str "INSERT INTO permissions (code, resource_kind, action, description) VALUES " values-clause " ON CONFLICT (code) DO UPDATE SET resource_kind = EXCLUDED.resource_kind, action = EXCLUDED.action, description = EXCLUDED.description")
+            params (into [] (mapcat identity) entries)]
+        (-> (query! pool sql params)
+            (.then (fn [_] nil)))))))
 
 (defn- fetch-role-permission-rows!
   [pool role-ids]
@@ -433,19 +443,23 @@
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS memberships (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-      actor_id TEXT,
-      status TEXT NOT NULL DEFAULT 'active',
-      is_default BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (user_id, org_id)
-    );
+     CREATE TABLE IF NOT EXISTS memberships (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+       actor_id TEXT,
+       status TEXT NOT NULL DEFAULT 'active',
+       is_default BOOLEAN NOT NULL DEFAULT FALSE,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       UNIQUE (user_id, org_id)
+     );
 
-    CREATE TABLE IF NOT EXISTS roles (
+     CREATE INDEX IF NOT EXISTS idx_memberships_user_id ON memberships (user_id);
+     CREATE INDEX IF NOT EXISTS idx_memberships_org_id ON memberships (org_id);
+     CREATE INDEX IF NOT EXISTS idx_memberships_actor_id ON memberships (actor_id);
+
+     CREATE TABLE IF NOT EXISTS roles (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       org_id UUID REFERENCES orgs(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
@@ -465,6 +479,8 @@
     CREATE UNIQUE INDEX IF NOT EXISTS roles_org_slug_uniq
       ON roles (org_id, slug)
       WHERE org_id IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_roles_org_id ON roles (org_id);
 
     CREATE TABLE IF NOT EXISTS role_permissions (
       role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
@@ -567,6 +583,8 @@
       UNIQUE (org_id, slug)
     );
 
+    CREATE INDEX IF NOT EXISTS idx_data_lakes_org_id ON data_lakes (org_id);
+
     CREATE TABLE IF NOT EXISTS audit_events (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -579,6 +597,9 @@
       after_json JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_events_org_created ON audit_events (org_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_events_action_resource ON audit_events (action, resource_kind, created_at);
 
     CREATE TABLE IF NOT EXISTS sessions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -805,64 +826,73 @@
 
 (defn- set-role-permissions!
   [pool role-id permission-codes]
-  (let [codes (unique permission-codes)]
-    (-> (query! pool "DELETE FROM role_permissions WHERE role_id = $1" [role-id])
-        (.then (fn [_] (role-permissions-uses-legacy-ids? pool)))
-        (.then
-         (fn [legacy?]
-           (if (empty? codes)
-             nil
-             (if legacy?
-               (-> (ensure-permission-records! pool codes)
-                   (.then
-                    (fn [_]
-                      (js/Promise.all
-                       (into-array
-                        (for [code codes]
-                          (query! pool
-                                  "INSERT INTO role_permissions (role_id, permission_id, effect) SELECT $1, id, 'allow' FROM permissions WHERE code = $2 ON CONFLICT (role_id, permission_id) DO UPDATE SET effect = EXCLUDED.effect"
-                                  [role-id code])))))))
-               (js/Promise.all
-                (into-array
-                 (for [code codes]
-                   (query! pool
-                           "INSERT INTO role_permissions (role_id, permission_code, effect) VALUES ($1, $2, 'allow') ON CONFLICT (role_id, permission_code) DO UPDATE SET effect = EXCLUDED.effect"
-                           [role-id code])))))))))))
+  (with-transaction!
+   pool
+   (fn [client]
+     (let [codes (unique permission-codes)]
+       (-> (query! client "DELETE FROM role_permissions WHERE role_id = $1" [role-id])
+           (.then (fn [_] (role-permissions-uses-legacy-ids? client)))
+           (.then
+            (fn [legacy?]
+              (if (empty? codes)
+                nil
+                (if legacy?
+                  (-> (ensure-permission-records! client codes)
+                      (.then
+                       (fn [_]
+                         (js/Promise.all
+                          (into-array
+                           (for [code codes]
+                             (query! client
+                                     "INSERT INTO role_permissions (role_id, permission_id, effect) SELECT $1, id, 'allow' FROM permissions WHERE code = $2 ON CONFLICT (role_id, permission_id) DO UPDATE SET effect = EXCLUDED.effect"
+                                     [role-id code])))))))
+                  (js/Promise.all
+                   (into-array
+                    (for [code codes]
+                      (query! client
+                              "INSERT INTO role_permissions (role_id, permission_code, effect) VALUES ($1, $2, 'allow') ON CONFLICT (role_id, permission_code) DO UPDATE SET effect = EXCLUDED.effect"
+                              [role-id code])))))))))))))
 
 
 (defn- set-role-tool-policies!
   [pool role-id tool-policies]
-  (let [normalized (mapv normalize-tool-policy tool-policies)
-        tool-ids (mapv :toolId normalized)]
-    (-> (query! pool "DELETE FROM role_tool_policies WHERE role_id = $1" [role-id])
-        (.then (fn [_] (ensure-tool-definitions! pool tool-ids)))
-        (.then
-         (fn [_]
-           (js/Promise.all
-            (into-array
-             (for [policy normalized]
-               (query! pool
-                       "INSERT INTO role_tool_policies (role_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (role_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
-                       [role-id (:toolId policy) (:effect policy)
-                        (js/JSON.stringify (clj->js (:constraints policy)))]))))))
-        (.then (fn [_] nil)))))
+  (with-transaction!
+   pool
+   (fn [client]
+     (let [normalized (mapv normalize-tool-policy tool-policies)
+           tool-ids (mapv :toolId normalized)]
+       (-> (query! client "DELETE FROM role_tool_policies WHERE role_id = $1" [role-id])
+           (.then (fn [_] (ensure-tool-definitions! client tool-ids)))
+           (.then
+            (fn [_]
+              (js/Promise.all
+               (into-array
+                (for [policy normalized]
+                  (query! client
+                          "INSERT INTO role_tool_policies (role_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (role_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
+                          [role-id (:toolId policy) (:effect policy)
+                           (js/JSON.stringify (clj->js (:constraints policy)))]))))))
+           (.then (fn [_] nil)))))))
 
 (defn- set-membership-tool-policies!
   [pool membership-id tool-policies]
-  (let [normalized (mapv normalize-tool-policy tool-policies)
-        tool-ids (mapv :toolId normalized)]
-    (-> (query! pool "DELETE FROM user_tool_policies WHERE membership_id = $1" [membership-id])
-        (.then (fn [_] (ensure-tool-definitions! pool tool-ids)))
-        (.then
-         (fn [_]
-           (js/Promise.all
-            (into-array
-             (for [policy normalized]
-               (query! pool
-                       "INSERT INTO user_tool_policies (membership_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (membership_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
-                       [membership-id (:toolId policy) (:effect policy)
-                        (js/JSON.stringify (clj->js (:constraints policy)))]))))))
-        (.then (fn [_] nil)))))
+  (with-transaction!
+   pool
+   (fn [client]
+     (let [normalized (mapv normalize-tool-policy tool-policies)
+           tool-ids (mapv :toolId normalized)]
+       (-> (query! client "DELETE FROM user_tool_policies WHERE membership_id = $1" [membership-id])
+           (.then (fn [_] (ensure-tool-definitions! client tool-ids)))
+           (.then
+            (fn [_]
+              (js/Promise.all
+               (into-array
+                (for [policy normalized]
+                  (query! client
+                          "INSERT INTO user_tool_policies (membership_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (membership_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
+                          [membership-id (:toolId policy) (:effect policy)
+                           (js/JSON.stringify (clj->js (:constraints policy)))]))))))
+           (.then (fn [_] nil)))))))
 
 (defn- ensure-builtin-org-roles!
   [pool _org]
@@ -1015,21 +1045,24 @@
 
 (defn- resolve-role-ids
   [pool {:keys [org-id role-ids role-slugs]}]
-  (let [resolved-ids (atom (set (map str (or role-ids #js []))))]
-    (-> (js/Promise.all
-         (into-array
-          (for [slug (filter some? (or role-slugs #js []))]
-            (let [raw-slug (str/trim (str slug))
-                  normalized (slugify raw-slug raw-slug)]
-              (-> (query-one! pool
-                              "SELECT id FROM roles WHERE (slug = $1 OR slug = $2) AND (org_id = $3::uuid OR org_id IS NULL) ORDER BY CASE WHEN org_id IS NULL THEN 1 ELSE 0 END, created_at ASC LIMIT 1"
-                              [raw-slug normalized org-id])
-                  (.then
-                   (fn [row]
-                     (when-not row
-                       (throw (js/Error. (str "Role not found for slug '" raw-slug "'"))))
-                     (swap! resolved-ids conj (str (aget row "id"))))))))))
-        (.then (fn [_] (into-array @resolved-ids))))))
+  (let [base-ids (set (map str (or role-ids #js [])))
+        slugs (vec (filter some? (or role-slugs #js [])))]
+    (if (empty? slugs)
+      (js/Promise.resolve (into-array base-ids))
+      (let [slug-pairs (mapv (fn [slug]
+                               (let [raw (str/trim (str slug))]
+                                 [raw (slugify raw raw)]))
+                             slugs)]
+        (-> (query! pool
+                    "SELECT id, slug FROM roles WHERE slug = ANY($1::text[]) AND (org_id = $2::uuid OR org_id IS NULL)"
+                    [(into-array (mapcat identity slug-pairs)) org-id])
+            (.then (fn [result]
+                     (let [rows (aget result "rows")
+                           found (into {} (map (fn [r] [(aget r "slug") (str (aget r "id"))])) rows)
+                           missing (filter (fn [s] (not (contains? found (str/trim (str s))))) slugs)]
+                       (when (seq missing)
+                         (throw (js/Error. (str "Role not found for slug(s): " (str/join ", " missing)))))
+                       (into-array (into base-ids (vals found)))))))))))
 
 (defn- set-membership-roles!
   [pool membership-id {:keys [org-id role-ids role-slugs replace contract-projection]}]
@@ -1042,21 +1075,24 @@
            (resolve-role-ids pool {:org-id org-id
                                    :role-ids (or role-ids #js [])
                                    :role-slugs resolved-role-slugs})))
-        (.then
-         (fn [resolved-ids]
-           (-> (if replace
-                 (query! pool "DELETE FROM membership_roles WHERE membership_id = $1"
-                         [membership-id])
-                 (js/Promise.resolve nil))
-               (.then
-                (fn [_]
-                  (js/Promise.all
-                   (into-array
-                    (for [role-id resolved-ids]
-                      (query! pool
-                              "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
-                              [membership-id role-id]))))))
-               (.then (fn [_] resolved-ids))))))))
+         (.then
+          (fn [resolved-ids]
+            (with-transaction!
+             pool
+             (fn [client]
+               (-> (if replace
+                     (query! client "DELETE FROM membership_roles WHERE membership_id = $1"
+                             [membership-id])
+                     (js/Promise.resolve nil))
+                   (.then
+                    (fn [_]
+                      (js/Promise.all
+                       (into-array
+                        (for [role-id resolved-ids]
+                          (query! client
+                                  "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
+                                  [membership-id role-id]))))))
+                   (.then (fn [_] resolved-ids))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Hydration Helpers

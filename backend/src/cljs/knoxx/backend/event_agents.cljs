@@ -23,7 +23,8 @@
             [knoxx.backend.actions.dispatch :as actions-dispatch]
             [knoxx.backend.contracts.actor-scope :as actor-scope]))
 
-(declare start! reload! execute-discord-synthesis! normalize-job-state run-job! dispatch-voice-state-update!)
+(declare start! reload! execute-discord-synthesis! execute-discord-template-synthesis!
+         normalize-job-state run-job! dispatch-voice-state-update! process-dispatch-queue!)
 
 (defonce running?* (atom false))
 (defonce scheduled-tasks* (atom {}))
@@ -51,6 +52,46 @@
 (defonce ^:private reload-lock* (atom nil))
 
 (def ^:private event-agent-job-dirty-redis-key "event-agent:job-dirty")
+
+;; Concurrency limit for event dispatch to prevent thundering herds.
+(def ^:private max-concurrent-jobs 5)
+(def ^:private active-dispatch-count* (atom 0))
+;; Queue holds [deferred-resolve deferred-reject job-fn] tuples.
+(def ^:private dispatch-queue* (atom []))
+
+(defn- run-dispatch-job!
+  "Run a queued dispatch function and normalize nil/sync results to Promise.
+   Some action paths are fire-and-forget and return nil; the scheduler should
+   still complete the job instead of attempting nil.then."
+  [job-fn resolve reject]
+  (-> (js/Promise.resolve (job-fn))
+      (.then resolve)
+      (.catch reject)
+      (.finally (fn []
+                  (swap! active-dispatch-count* dec)
+                  (process-dispatch-queue!)))))
+
+(defn- process-dispatch-queue!
+  "Process queued dispatch jobs up to the concurrency limit."
+  []
+  (let [available (- max-concurrent-jobs @active-dispatch-count*)]
+    (when (pos? available)
+      (let [to-run (take available @dispatch-queue*)]
+        (swap! dispatch-queue* #(vec (drop available %)))
+        (doseq [[resolve reject job-fn] to-run]
+          (swap! active-dispatch-count* inc)
+          (run-dispatch-job! job-fn resolve reject))))))
+
+(defn- enqueue-dispatch!
+  "Enqueue a dispatch job function, running immediately if under the limit.
+   Returns a Promise that resolves/rejects when the job completes."
+  [job-fn]
+  (js/Promise.
+   (fn [resolve reject]
+     (if (< @active-dispatch-count* max-concurrent-jobs)
+       (do (swap! active-dispatch-count* inc)
+           (run-dispatch-job! job-fn resolve reject))
+       (swap! dispatch-queue* conj [resolve reject job-fn])))))
 
 (defn debounced-reload!
   "Coalesce rapid reload! calls into one, firing 2 s after the last call.
@@ -413,6 +454,85 @@
       candidate
       {})))
 
+(defn- err-prop
+  [err prop]
+  (try
+    (aget err prop)
+    (catch :default _ nil)))
+
+(defn- err-message
+  [err]
+  (or (some-> (err-prop err "message") str not-empty)
+      (some-> err str not-empty)
+      "Unknown error"))
+
+(defn- safe-ex-data
+  [err]
+  (try
+    (ex-data err)
+    (catch :default _ nil)))
+
+(defn- compact-cause
+  [cause]
+  (when cause
+    (cond-> {:message (err-message cause)}
+      (some-> (err-prop cause "name") str not-empty)
+      (assoc :name (str (err-prop cause "name")))
+      (some-> (err-prop cause "stack") str not-empty)
+      (assoc :stack (str (err-prop cause "stack")))
+      (safe-ex-data cause)
+      (assoc :data (safe-ex-data cause)))))
+
+(defn- event-error-context
+  [phase job event]
+  (let [payload (or (:payload event) {})]
+    (cond-> {:phase phase
+             :jobId (:id job)
+             :jobName (:name job)
+             :contractSourceId (:contractSourceId job)
+             :contractSourceKind (:contractSourceKind job)
+             :sourceKind (or (:sourceKind event) (get-in job [:source :kind]))
+             :sourceMode (get-in job [:source :mode])
+             :triggerKind (get-in job [:trigger :kind])
+             :eventId (:id event)
+             :eventKind (:eventKind event)
+             :eventKinds (vec (or (:eventKinds event) []))
+             :timestamp (.toISOString (js/Date.))}
+      (:channelId payload) (assoc :channelId (:channelId payload))
+      (:messageId payload) (assoc :messageId (:messageId payload))
+      (:authorId payload) (assoc :authorId (:authorId payload))
+      (:guildId payload) (assoc :guildId (:guildId payload))
+      (:repository payload) (assoc :repository (:repository payload)))))
+
+(defn- error-diagnostic
+  ([err] (error-diagnostic err nil))
+  ([err context]
+   (if (map? err)
+     (merge {:message (or (:message err) (:lastError err) "Unknown error")} context err)
+     (let [name (some-> (err-prop err "name") str not-empty)
+           stack (some-> (err-prop err "stack") str not-empty)
+           cause (compact-cause (err-prop err "cause"))
+           data (safe-ex-data err)]
+       (cond-> (merge {:message (err-message err)} context)
+         name (assoc :name name)
+         stack (assoc :stack stack)
+         cause (assoc :cause cause)
+         data (assoc :data data))))))
+
+(defn- safe-json
+  [value]
+  (try
+    (.stringify js/JSON (clj->js value) nil 2)
+    (catch :default _
+      (str value))))
+
+(defn- log-error-diagnostic!
+  [diagnostic]
+  (.error js/console "[event-agents] job failure detail" (safe-json diagnostic))
+  (when-let [stack (:stack diagnostic)]
+    (.error js/console "[event-agents] stack\n" stack))
+  diagnostic)
+
 (defn- record-job-run-start!
   [job]
   (let [job-id (:id job)
@@ -431,9 +551,11 @@
     started-at))
 
 (defn- record-job-run-finish!
-  [job started-at status error-message]
+  [job started-at status error]
   (let [finished-at (.now js/Date)
-        job-id (:id job)]
+        job-id (:id job)
+        error-detail (when error (if (map? error) error (error-diagnostic error)))
+        error-message (:message error-detail)]
     (update-job-state! job-id
                        (fn [state]
                          (-> (normalize-job-state job-id state)
@@ -446,15 +568,20 @@
                                     :lastStatus status)
                              (update :runCount (fnil inc 0))
                              ((fn [next-state]
-                                (if error-message
-                                  (assoc next-state :lastError error-message)
-                                  (dissoc next-state :lastError)))))))
+                                (if error-detail
+                                  (assoc next-state
+                                         :lastError error-message
+                                         :lastErrorDetail error-detail
+                                         :lastErrorStack (:stack error-detail))
+                                  (dissoc next-state :lastError :lastErrorDetail :lastErrorStack)))))))
     ;; Telemetry: write result to stdout (captured by PM2/container logs).
     (let [log-line (str "ts=" (.toISOString (js/Date.))
                         " | kind=:agent-job-result | job=" job-id
                         " | status=" status
                         (when error-message (str " | error=" error-message)))]
       (println "[event-agents-telemetry]" log-line)
+      (when error-detail
+        (log-error-diagnostic! error-detail))
       nil)))
 
 (defn- direct-start-headers
@@ -477,6 +604,11 @@
 (defn- synthesis-source-mode?
   [mode]
   (contains? #{"synthesize" "synthesis"}
+             (some-> mode str str/trim str/lower-case)))
+
+(defn- template-synthesis-source-mode?
+  [mode]
+  (contains? #{"template-synthesize" "templated-synthesis"}
              (some-> mode str str/trim str/lower-case)))
 
 (defn- fetch-with-timeout
@@ -540,12 +672,28 @@
         (.catch (fn [err]
                   (println "[event-agents] failed to clean up temp file" path ":" (.-message err)))))))
 
+(defn- attachment-summary-line!
+  "Download one attachment for local inspection and return a summary line.
+   Always resolves to a string so Promise.all receives only real promises."
+  [attachment]
+  (-> (download-attachment-to-tmp! attachment)
+      (.then (fn [local-path]
+               (let [filename (:filename attachment)
+                     url (:url attachment)]
+                 ;; Clean up temp file after processing.
+                 (cleanup-tmp-file! local-path)
+                 (if local-path
+                   (str "- " filename " (saved to " local-path " — use the read tool to view it)")
+                   (str "- " filename
+                        (when url
+                          (str " <" url "> (download failed, use url directly)")))))))))
+
 (defn event-summary-text
   "Build an event summary string. Returns a Promise<string> because attachment
    downloads are async to avoid blocking the event loop."
   [event]
   (let [payload (or (:payload event) {})
-        attachments (or (:attachments payload) [])
+        attachments (vec (or (:attachments payload) []))
         publish-channels (or (:publishChannels payload) [])
         publish-text (when (seq publish-channels)
                        (str "\nPublish to channels:\n"
@@ -568,32 +716,17 @@
                        (when-let [summary (:summary payload)]
                          (str "Summary: " summary "\n"))
                        (when-let [payload-preview (:payloadPreview payload)]
-                         (str "Payload preview: " payload-preview "\n")))]
+                         (str "Payload preview: " payload-preview "\n")))
+        base-with-publish (str base-text (or publish-text ""))]
     (if (seq attachments)
-      (-> (js/Promise.all
-           (clj->js
-            (map (fn [attachment]
-                   (-> (download-attachment-to-tmp! attachment)
-                       (.then (fn [local-path]
-                                (let [filename (:filename attachment)
-                                      url (:url attachment)]
-                                  ;; Clean up temp file after processing
-                                  (cleanup-tmp-file! local-path)
-                                  (if local-path
-                                    (str "- " filename " (saved to " local-path " — use the read tool to view it)")
-                                    (str "- " filename
-                                         (when url
-                                           (str " <" url "> (download failed, use url directly)"))))))))
-                 attachments)))
+      (-> (js/Promise.all (clj->js (mapv attachment-summary-line! attachments)))
           (.then (fn [lines]
                    (str base-text
                         "\nAttachments (downloaded for reading):\n"
                         (str/join "\n" (js->clj lines))
                         "\n"
                         (or publish-text "")))))
-      (js/Promise.resolve
-       (str base-text
-            (or publish-text ""))))))
+      (js/Promise.resolve base-with-publish))))
 
 ;; Legacy sync version kept for callers that truly need a string (e.g. inline
 ;; log formatting).  Does NOT download attachments — just lists them as links.
@@ -823,11 +956,10 @@
                      (nonblank-str (:actor_id job)))
         content-parts (event-content-parts event)
         model-id (or (:model agent-spec) "gemma4:31b")
-        task-prompt (or (:taskPrompt agent-spec)
-                        (:task-prompt agent-spec)
-                        "")
-        system-prompt (or (:systemPrompt agent-spec)
-                          (:system-prompt agent-spec)
+        template-context (templates/event-template-context job event summary)
+        rendered-agent-spec (templates/render-agent-prompts agent-spec nil template-context)
+        task-prompt (or (:task-prompt rendered-agent-spec) "")
+        system-prompt (or (:system-prompt rendered-agent-spec)
                           "You are a Knoxx event agent.")
         thinking-level (or (:thinkingLevel agent-spec)
                            (:thinking-level agent-spec)
@@ -851,6 +983,7 @@
                   :run_id run-id
                   :message (str preamble summary-text)
                   :content_parts content-parts
+                  :template_context template-context
                   :agent_spec (cond-> {:role (or (:role agent-spec) "knowledge_worker")
                                        :system_prompt system-prompt
                                        :task_prompt task-prompt
@@ -1104,6 +1237,12 @@
              (matches-keywords? control job (:content payload)))
          (matches-repository? job (:repository payload)))))
 
+(defn- record-dispatch-job-error!
+  [job started-at event err]
+  (record-job-run-finish! job started-at "error"
+                          (error-diagnostic err (event-error-context "dispatch-event" job event)))
+  nil)
+
 (defn dispatch-event!
   [event]
   (let [config (cfg)
@@ -1139,28 +1278,31 @@
     (if (empty? matching-jobs)
       (js/Promise.resolve {:matchedJobs []
                            :event normalized-event})
-      (-> (js/Promise.all
-           (clj->js
-            (mapv (fn [job]
-                    (let [started-at (record-job-run-start! job)
-                          step (job-step job)]
-                      (-> (if (and (= "discord" (get-in job [:source :kind]))
-                                    (synthesis-source-mode? (get-in job [:source :mode])))
-                            (execute-discord-synthesis! config control job normalized-event)
-                            (actions-dispatch/dispatch! {:config config
-                                                         :event normalized-event :job job
-                                                         :run-agent! start-agent-run!}
-                                                        step))
-                          (.then (fn [result]
-                                   (record-job-run-finish! job started-at "ok" nil)
-                                   result))
-                          (.catch (fn [err]
-                                    (record-job-run-finish! job started-at "error" (.-message err))
-                                    nil)))))
-                  matching-jobs)))
-          (.then (fn [_]
-                   {:matchedJobs (mapv :id matching-jobs)
-                    :event normalized-event})))))))  ;; closes idempotency if
+       (let [job-promises (mapv (fn [job]
+                                  (let [started-at (record-job-run-start! job)
+                                        step (job-step job)]
+                                    (enqueue-dispatch!
+                                     (fn []
+                                       (-> (js/Promise.resolve
+                                            (if (and (= "discord" (get-in job [:source :kind]))
+                                                     (template-synthesis-source-mode? (get-in job [:source :mode])))
+                                              (execute-discord-template-synthesis! config control job normalized-event)
+                                              (if (and (= "discord" (get-in job [:source :kind]))
+                                                       (synthesis-source-mode? (get-in job [:source :mode])))
+                                                (execute-discord-synthesis! config control job normalized-event)
+                                                (actions-dispatch/dispatch! {:config config
+                                                                             :event normalized-event :job job
+                                                                             :run-agent! start-agent-run!}
+                                                                            step))))
+                                            (.then (fn [result]
+                                                     (record-job-run-finish! job started-at "ok" nil)
+                                                     result))
+                                            (.catch (partial record-dispatch-job-error! job started-at normalized-event)))))))
+                                matching-jobs)]
+         (-> (js/Promise.all (clj->js job-promises))
+             (.then (fn [_]
+                      {:matchedJobs (mapv :id matching-jobs)
+                       :event normalized-event}))))))))
 
 (defn- discord-bot-user-id
   [control]
@@ -1320,6 +1462,30 @@
   [rows]
   (discord-source/image-attachments rows))
 
+(defn- discord-template-source-message
+  [channel-id message]
+  {:id (:id message)
+   :message-id (:id message)
+   :channel (:channelName message)
+   :channel-id (or (:channelId message) channel-id)
+   :guild (:guildName message)
+   :guild-id (:guildId message)
+   :user-name (:authorUsername message)
+   :user-id (:authorId message)
+   :author-is-bot (:authorIsBot message)
+   :timestamp (:timestamp message)
+   :text (:content message)
+   :attachments (vec (or (:attachments message) []))
+   :embeds (vec (or (:embeds message) []))})
+
+(defn- discord-template-source-messages
+  [rows]
+  (->> rows
+       (mapcat (fn [{:keys [channelId messages]}]
+                 (map #(discord-template-source-message channelId %) messages)))
+       (remove :author-is-bot)
+       vec))
+
 (defn- discord-synthesis-dispatch-summary!
   [config job publish-channels trigger-event channels rows]
   (let [channel-summary (->> rows
@@ -1364,17 +1530,58 @@
                                          (discord-synthesis-dispatch-summary!
                                           config job publish-channels trigger-event channels rows))})))))))
 
+(defn- discord-template-synthesis-dispatch!
+  [config job publish-channels trigger-event channels rows]
+  (let [source-messages (discord-template-source-messages rows)]
+    (actions-dispatch/dispatch!
+     {:config config
+      :event {:sourceKind "discord"
+              :eventKind "discord.snapshot.template"
+              :timestamp (.toISOString (js/Date.))
+              :payload {:channelId (first channels)
+                        :publishChannels publish-channels
+                        :messages source-messages
+                        :source/messages source-messages
+                        :discordRows rows
+                        :triggerEvent trigger-event
+                        :attachments (discord-synthesis-image-attachments rows)}}
+      :job job
+      :run-agent! start-agent-run!}
+     (job-step job))))
+
+(defn- execute-discord-template-synthesis!
+  ([config control job] (execute-discord-template-synthesis! config control job nil))
+  ([config control job trigger-event]
+   (let [limit (job-max-messages job 12)
+         publish-channels (job-publish-channels job)]
+     (-> (synthesis-channel-ids! control job trigger-event)
+         (.then (fn [channels]
+                  (discord-source/execute-synthesis!
+                   {:config config
+                    :channel-ids channels
+                    :limit limit
+                    :dispatch-summary! (fn [rows]
+                                         (discord-template-synthesis-dispatch!
+                                          config job publish-channels trigger-event channels rows))})))))))
+
+(defn- direct-job-payload
+  [job]
+  (let [channels (filter-string-list (get-in job [:filters :channels]))
+        publish-channels (or (seq (job-publish-channels job)) channels)]
+    (cond-> {:payloadPreview (str "Synthetic trigger for job " (:id job))}
+      (seq channels) (assoc :channelId (first channels))
+      (seq publish-channels) (assoc :publishChannels (vec publish-channels)))))
+
 (defn- execute-direct-job!
   [config job source-kind event-kind]
   (actions-dispatch/dispatch! {:config config
                                :event {:sourceKind source-kind
                                        :eventKind event-kind
                                        :timestamp (.toISOString (js/Date.))
-                                       :payload {:payloadPreview (str "Synthetic trigger for job " (:id job))}}
+                                       :payload (direct-job-payload job)}
                                :job job
                                :run-agent! start-agent-run!}
-                              (job-step job))
-  )
+                              (job-step job)))
 
 (defn- execute-cron-job!
   [config job]
@@ -1384,6 +1591,9 @@
     (cond
       (and (= source-kind "discord") (= mode "patrol"))
       (execute-discord-patrol! config control job)
+
+      (and (= source-kind "discord") (template-synthesis-source-mode? mode))
+      (execute-discord-template-synthesis! config control job)
 
       (and (= source-kind "discord") (synthesis-source-mode? mode))
       (execute-discord-synthesis! config control job)
@@ -1399,15 +1609,19 @@
     (if-not job
       (js/Promise.reject (js/Error. (str "Unknown event-agent job: " job-id)))
       (let [started-at (record-job-run-start! job)]
-        (js-await [result
-                   (if (= "cron" (get-in job [:trigger :kind]))
-                     (execute-cron-job! config job)
-                     (execute-direct-job! config job (get-in job [:source :kind]) "manual.run"))]
-                  (record-job-run-finish! job started-at "ok" nil)
-                  result
-                  (catch err
-                      (record-job-run-finish! job started-at "error" (.-message err))
-                    nil))))))
+        (-> (js/Promise.resolve
+             (if (= "cron" (get-in job [:trigger :kind]))
+               (execute-cron-job! config job)
+               (execute-direct-job! config job (get-in job [:source :kind]) "manual.run")))
+            (.then (fn [result]
+                     (record-job-run-finish! job started-at "ok" nil)
+                     result))
+            (.catch (fn [err]
+                      (record-job-run-finish! job started-at "error"
+                                              (error-diagnostic err
+                                                              (event-error-context "manual-run" job {:sourceKind (get-in job [:source :kind])
+                                                                                                     :eventKind "manual.run"})))
+                      nil)))))))
 
 (defn- clear-interval-task!
   [task]

@@ -52,8 +52,8 @@ export default function EventsPage() {
   }, [canControlEvents, canReadToolCatalog]);
 
   return (
-    <div data-page="events" className="h-full min-h-0 overflow-y-auto bg-slate-950 p-4 text-slate-100">
-      <div className="mb-4 space-y-1">
+    <div data-page="events" className="flex flex-col h-full min-h-0 overflow-hidden bg-slate-950 p-4 text-slate-100">
+      <div className="mb-4 space-y-1 shrink-0">
         <h1 className="text-xl font-semibold text-slate-100">Events</h1>
         <p className="text-sm text-slate-400">
           Generic event runtime control: schedules, triggers, dispatch, and reset.
@@ -61,17 +61,17 @@ export default function EventsPage() {
       </div>
 
       {!canControlEvents ? (
-        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
+        <div className="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
           Event runtime control access required.
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="flex flex-col min-h-0 flex-1 gap-4">
           {toolsError ? (
-            <div className="rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-xs text-amber-200">
+            <div className="shrink-0 rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-xs text-amber-200">
               Tool catalog unavailable: {toolsError}
             </div>
           ) : null}
-          <DiscordSection canManage={canControlEvents} tools={tools} />
+          <DiscordSection className="min-h-0 flex-1" canManage={canControlEvents} tools={tools} />
         </div>
       )}
     </div>

@@ -1,0 +1,21 @@
+{:source-paths ["src/cljs"]
+ :dependencies [[lilactown/helix "0.2.2"]]
+ :nrepl {:port 4501}
+ :builds
+ {:app
+  {:target :browser
+   :output-dir "public/cljs"
+   :asset-path "/cljs"
+   :modules {:app {:init-fn knoxx.frontend.core/init}}
+   :js-options
+   {:js-provider :import
+    :keep-as-import #{"react" "react-dom" "react-dom/client" "react-router-dom"}
+    :resolve {"@open-hax/knoxx-frontend-bridge" {:target :file
+                                                  :file "dist/bridge/knoxx-frontend-bridge.es.js"}}}
+   :devtools
+   {:http-root "public"
+    :http-port 5174
+    :after-load knoxx.frontend.core/after-load}
+   :compiler-options
+   {:output-feature-set :es-next
+    :source-map true}}}}

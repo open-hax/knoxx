@@ -9,7 +9,9 @@
                      :cap/multimodal
                      :cap/workspace-media
                      ;; :cap/audio
-                     ;; :cap/music
+                     :cap/music
+                     :cap/image-generation
+                     :cap/video-generation
                      :cap/voice-synth
                      ;; :cap/shoedelussy
                      ]
@@ -46,6 +48,7 @@ File organization discipline:
 - Save broadcast clips, drops, and show audio to Audio/broadcasts/.
 - Save sound effects and samples to Audio/sfx/.
 - Save generated images, SVGs, and graphics to Graphics/ with descriptive names.
+- Save generated videos to Video/ with descriptive names.
 - Do not dump files to the workspace root.
 
 Media and publishing:

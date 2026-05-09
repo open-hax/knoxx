@@ -1,0 +1,7 @@
+{:cap/id :cap/image-generation
+ :cap/tools [:image.generate]
+ :cap/user-surfaces [{:surface/id :workspace/image-generation
+                      :surface/label "Image generation workbench"
+                      :surface/kind :generator
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Humans request generated images and inspect resulting workspace media; agents use the dedicated image.generate tool and then workspace_media.attach for publishable assets."}]}

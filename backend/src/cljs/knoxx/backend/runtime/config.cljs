@@ -102,6 +102,9 @@
    :audd-api-token (env "AUDD_API_TOKEN" "")
    :acoustid-api-key (env "ACOUSTID_API_KEY" "")
 
+   ;; BlazeAPI multimodal generation is accessed through Proxx; Knoxx does not
+   ;; read direct Blaze credentials.
+
    ;; Voice / speech
    :voxx-url (env "VOXX_URL" "http://127.0.0.1:8787")
    :voxx-api-key (env "VOICE_GATEWAY_API_KEY" "dev-token")
@@ -126,6 +129,10 @@
 
    ;; Redis (session persistence)
    :redis-url (env "REDIS_URL" "")
+
+   ;; Agent recovery. Automatic resume is intentionally opt-in: backend hot reload
+   ;; and ad hoc PM2 restarts must not create duplicate zombie jobs.
+   :agent-auto-resume-sessions? (= "true" (str/lower-case (env "KNOXX_AGENT_AUTO_RESUME_SESSIONS" "false")))
 
    ;; Graceful shutdown / PM2 drain timings
    :shutdown-grace-ms (env-int "KNOXX_SHUTDOWN_GRACE_MS" 25000)

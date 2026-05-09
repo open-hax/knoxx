@@ -10,9 +10,10 @@
             [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.realtime :as realtime]
-             [knoxx.backend.redis-client :as redis]
-             [knoxx.backend.runtime.state :as runtime-state]
-             [knoxx.backend.turn-control :as turn-control]))
+            [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.runtime.state :as runtime-state]
+            [knoxx.backend.svg-render :as svg-render]
+            [knoxx.backend.turn-control :as turn-control]))
 
 (defonce shutdown-state* (atom {:installed? false
                                 :in-progress? false
@@ -78,7 +79,8 @@
                (.then (fn [_]
                         (.all js/Promise
                               (clj->js
-                               [(when-let [client (redis/get-client)]
+                               [(svg-render/shutdown!)
+                                (when-let [client (redis/get-client)]
                                   (redis/quit client))
                                 (when-let [policy-db (runtime-state/current-policy-db)]
                                   (when-let [close-fn (aget policy-db "close")]

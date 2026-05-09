@@ -188,7 +188,9 @@
                                         deleted-paths))
         (let [files file-entries
               batch-size (cr/batch-size contract)
-              batch-parallelism (cr/batch-parallelism contract)
+              batch-parallelism (if (= driver-type "audio")
+                                  1
+                                  (cr/batch-parallelism contract))
               ragussy-url (config/ragussy-url)
               openplanner-url (config/openplanner-url)
               openplanner-api-key (config/openplanner-api-key)
@@ -211,6 +213,7 @@
                              (name sink-type)
                              ", batch-size=" batch-size
                              ", batch-parallelism=" batch-parallelism
+                             (when (= driver-type "audio") " (audio agent spawn limit)")
                              ", semantic-edges=" (cr/semantic-enabled? contract)
                              (when streaming? ", mode=streaming")))
           (loop [remaining (seq files)

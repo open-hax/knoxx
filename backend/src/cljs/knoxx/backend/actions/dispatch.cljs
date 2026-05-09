@@ -8,7 +8,7 @@
 
 (defn dispatch!
   [ctx step-spec]
-  (js-await [action (loader/resolve-action! (:config ctx) step-spec)]
+  (js-await [action (js/Promise.resolve (loader/resolve-action! (:config ctx) step-spec))]
     (when-not (contract/validate-action action)
       (throw (ex-info "Invalid ActionContract"
                       {:explain (contract/explain-action action)

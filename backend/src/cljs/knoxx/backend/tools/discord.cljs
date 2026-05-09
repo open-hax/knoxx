@@ -5,9 +5,9 @@
             [knoxx.backend.discord-gateway :as dg]
             [knoxx.backend.http :as backend-http :refer [js-array-seq]]
             [knoxx.backend.quality-labels :as quality-labels]
+            [knoxx.backend.svg-render :as svg-render]
             [knoxx.backend.text :refer [sanitize-svg-content tool-text-result]]
 
-            ["@resvg/resvg-js" :default resvg-mod]
             [knoxx.backend.tools.actor-credentials :as actor-credentials]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
@@ -280,17 +280,10 @@
     (subs source (count "file://")))))
 
 (defn- svg-buffer->png-buffer!
-"Render an SVG buffer to PNG using @resvg/resvg-js. Returns a promise."
+"Render an SVG buffer to PNG using headless Chromium. Returns a promise."
 [svg-buffer]
-(js/Promise.
- (fn [resolve reject]
-   (try
-     (let [Resvg (or (.-Resvg resvg-mod) resvg-mod)
-           svg-str (sanitize-svg-content (.toString svg-buffer "utf8"))
-           renderer (new Resvg svg-str #js {:logLevel "off"})
-           png-data (.asPng (.render renderer))]
-       (resolve (.from js/Buffer png-data)))
-     (catch :default e (reject e))))))
+(let [svg-str (sanitize-svg-content (.toString svg-buffer "utf8"))]
+  (svg-render/svg->png svg-str {:width 600 :height 300})))
 
 (def svg-code-block-pattern
 #"(?is)```(?:svg|image/svg\+xml)\s*\n([\s\S]*?)\n```")

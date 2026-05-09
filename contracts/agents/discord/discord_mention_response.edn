@@ -6,9 +6,12 @@
                               :mode :always
                               :k 6}},
  :source-mode :respond,
- :events
- {:always [:discord.message/mention :discord.message/keyword],
-  :maybe []},
+  :events
+  {:always [:discord.message/mention]
+   :maybe [:discord.message/keyword]
+   :threshold 1
+   :weights {"discord.message/mention" 1
+             "discord.message/keyword" 1}},
  :hooks {:before {}, :after {}},
  :agent
  {:roles [:role/creative_catalyst :role/developer],
@@ -25,5 +28,6 @@
  :cadence-min 1,
  :enabled false,
  :data
- {:filters {:channels [], :keywords ["openhax" "knoxx" "cephalon"]},
+  {:filters {:channels [], :keywords ["openhax" "knoxx" "cephalon"
+                                      "system" "bot" "agent" "ai" "assistant"]},
   :source {:max-messages 100}}}

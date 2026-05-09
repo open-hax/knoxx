@@ -10,6 +10,7 @@
             [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.routes.contracts :as contracts-routes]
+            [knoxx.backend.document-state :refer [normalize-relative-path]]
             [knoxx.backend.routes.documents :as document-routes]
             [knoxx.backend.guards :as guards]
             [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
@@ -33,6 +34,8 @@
             [knoxx.backend.routes.translation :as translation-routes]
             [shadow.cljs.modern :refer (js-await)]
             ["node:crypto" :as crypto]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]
             ))
 
 
@@ -742,7 +745,7 @@
 ;; Dev-only endpoint used to verify shadow-cljs hot-reload against a live
 ;; long-running Node runtime (shadow owns the process).
 (defroute dev-hmr! []
-  "GET" "/api/dev/hmr"
+  "GET" "/api/dev/hmr" []
   (json-response! reply 200 (dev-hmr-response)))
 
 (defroute config! []
@@ -876,6 +879,25 @@
     (-> (fetch-json target-url #js {:method "GET"})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
+
+(defroute api-ingestion-file-put! []
+  "PUT" "/api/ingestion/file"
+  (let [workspace-root (:workspace-root config)
+        body (or (aget request "body") #js {})
+        file-path (or (aget body "path") "")
+        content (or (aget body "content") "")
+        safe-path (normalize-relative-path file-path)]
+    (if (or (str/blank? safe-path) (str/starts-with? safe-path ".."))
+      (json-response! reply 400 {:detail "Invalid or unsafe file path"})
+      (let [absolute-path (.resolve path workspace-root safe-path)]
+        (if (not (str/starts-with? absolute-path workspace-root))
+          (json-response! reply 400 {:detail "Path escapes workspace"})
+          (let [dir (.dirname path absolute-path)]
+            (-> (.mkdir fs dir #js {:recursive true})
+                (.then (fn [] (.writeFile fs absolute-path content "utf8")))
+                (.then (fn [] (json-response! reply 200 {:ok true :path safe-path})))
+                (.catch (fn [err]
+                          (json-response! reply 500 {:detail (str "Write failed: " err)}))))))))))
 
 (defroute api-ingestion-sources! []
   "GET" "/api/ingestion/sources"

@@ -83,6 +83,18 @@
           (actor-scope/normalize-agent-contract {:contract/id "knoxx_default"
                                                  :contract/actor "chat_primary"})))))
 
+(deftest runtime-feature-contract-schema-accepts-eta-mu-toggle
+  (let [result (validator/validate "runtime_features"
+                                   {:contract/kind :runtime-feature
+                                    :contract/id "eta-mu.opmf-contract-gate"
+                                    :runtime/owner :eta-mu
+                                    :runtime/feature :opmf-contract-gate
+                                    :enabled false
+                                    :runtime/default-enabled false
+                                    :runtime/config {:autoRepair false}})]
+    (is (:ok result) (pr-str result))))
+
 (deftest loader-normalizes-policy-class
   (is (= "policies" (loader/normalize-contract-class "policy")))
-  (is (= "policies" (loader/normalize-contract-class "policies"))))
+  (is (= "policies" (loader/normalize-contract-class "policies")))
+  (is (= "runtime_features" (loader/normalize-contract-class "runtime-feature"))))

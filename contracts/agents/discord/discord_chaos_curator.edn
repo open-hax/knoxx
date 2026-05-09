@@ -6,7 +6,10 @@
                               :mode :always
                               :k 6}},
  :source-mode :respond,
- :events {:always [:discord.message/keyword], :maybe []},
+  :events {:always []
+           :maybe [:discord.message/keyword]
+           :threshold 1
+           :weights {"discord.message/keyword" 1}},
  :hooks {:before {}, :after {}},
  :agent
  {:roles [:role/creative_catalyst :role/developer :role/meta-creator],
@@ -25,5 +28,6 @@
  :data
  {:filters
   {:channels ["1444189585373663417"],
-   :keywords ["chaos" "vibe-check" "tired" "void" "glitch"]},
+   :keywords ["chaos" "vibe-check" "tired" "void" "glitch"
+              "random" "weird" "glitchy" "broken" "fun" "nonsense" "absurd"]},
   :source {:max-messages 50}}}

@@ -6,7 +6,9 @@
                               :mode :always
                               :k 6}},
  :source-mode :respond,
- :events {:maybe [:discord.message/keyword]},
+  :events {:maybe [:discord.message/keyword]
+           :threshold 1
+           :weights {"discord.message/keyword" 1}},
  :hooks {:before {}, :after {}},
  :agent
  {:role :role/visualist, :model "gemma4:31b", :thinking :medium},
@@ -26,7 +28,8 @@
   {:channels ["1494137016303095828" "1444189585373663417"],
 
    :keywords
-   ["art" "visual" "poster" "album" "stage" "promo" "graphic"]},
+   ["art" "visual" "poster" "album" "stage" "promo" "graphic"
+    "canvas" "illustration" "cover" "visuals" "render" "artwork"]},
   :source {:max-messages 10},
   :specialties
   [:album_art :stage_design :social_media :promotional :merch],

@@ -17,6 +17,7 @@
             [knoxx.backend.tools.openplanner :as openplanner]
             [knoxx.backend.tools.music :as music]
             [knoxx.backend.tools.voice :as voice]
+            [knoxx.backend.tools.blaze :as blaze]
             [knoxx.backend.tools.bluesky :as bluesky]
             [knoxx.backend.tools.multimodal :as multimodal]
             [knoxx.backend.tools.workspace-media :as workspace-media]
@@ -199,6 +200,7 @@
             (.concat (openplanner/create-openplanner-custom-tools runtime config auth-context))
             (.concat (music/create-music-custom-tools runtime config auth-context))
             (.concat (voice/create-voice-synth-custom-tools runtime config auth-context))
+            (.concat (blaze/create-blaze-custom-tools runtime config auth-context))
             (.concat (bluesky/create-bluesky-custom-tools runtime config auth-context))
             (.concat (multimodal/create-multimodal-custom-tools runtime config auth-context))
             (.concat (workspace-media/create-workspace-media-custom-tools runtime config auth-context))

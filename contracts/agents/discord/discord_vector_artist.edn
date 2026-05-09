@@ -6,7 +6,9 @@
                               :mode :always
                               :k 6}},
  :source-mode :respond,
- :events {:maybe [:discord.message/keyword]},
+  :events {:maybe [:discord.message/keyword]
+           :threshold 1
+           :weights {"discord.message/keyword" 1}},
  :hooks {:before {}, :after {}},
  :agent
  {:role :role/visualist, :model "gemma4:31b", :thinking :medium},
@@ -23,6 +25,7 @@
  :data
  {:filters
   {:channels ["1494137016303095828"],
-   :keywords ["vector" "svg" "logo" "graphic" "design"]},
+   :keywords ["vector" "svg" "logo" "graphic" "design"
+              "illustration" "icon" "badge" "clean" "geometric" "shape"]},
   :source {:max-messages 10},
   :specialties [:logo :icon :badge :pattern]}}

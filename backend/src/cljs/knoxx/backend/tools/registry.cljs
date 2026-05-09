@@ -53,6 +53,10 @@
    "music.musicbrainz_recording" {:id "music.musicbrainz_recording" :label "MusicBrainz" :description "Look up recording metadata by MBID" :risk-level "medium"}
    "music.copyright_check" {:id "music.copyright_check" :label "Copyright Check" :description "Check copyright status of audio" :risk-level "medium"}
    "music.generate" {:id "music.generate" :label "Generate Music" :description "Synthesize a WAV file from a JSON music spec using the native Node.js audio engine" :risk-level "medium"}
+   "music.generate_song" {:id "music.generate_song" :label "Generate Song" :description "Generate a complete song or instrumental music asset through Proxx/Blaze music generation" :risk-level "medium"}
+   "image.generate" {:id "image.generate" :label "Generate Image" :description "Generate an image asset through Proxx/Blaze image generation" :risk-level "medium"}
+   "video.generate" {:id "video.generate" :label "Generate Video" :description "Generate a video asset through Proxx/Blaze video generation" :risk-level "medium"}
+   "blaze.generate" {:id "blaze.generate" :label "Blaze Generate" :description "Legacy generic Proxx/Blaze generator; prefer modality-specific music.generate_song, image.generate, and video.generate tools" :risk-level "medium"}
    "voice.openutau_project" {:id "voice.openutau_project" :label "OpenUtau Project" :description "Create an OpenUtau .ustx singing project for human review and export" :risk-level "low"}
    "voice.tts"        {:id "voice.tts"        :label "Text-to-Speech" :description "Synthesize speech via Voxx Gateway TTS; writes MP3 to workspace"  :risk-level "low"}
    "voice.tts_stream" {:id "voice.tts_stream" :label "TTS Stream"     :description "Return Voxx WS streaming TTS session params for /ws/voice/tts" :risk-level "low"}

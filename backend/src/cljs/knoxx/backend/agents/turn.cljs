@@ -6,6 +6,7 @@
                                                    build-agent-user-message
                                                    hydration-sources]]
             [knoxx.backend.agent-runtime :refer [ensure-agent-session! remove-agent-session! prune-session-messages]]
+            [knoxx.backend.agent-templates :as templates]
             [knoxx.backend.agents.content :as content :refer [model-ready-content-parts merge-content-parts]]
             [knoxx.backend.agents.policy :as policy]
             [knoxx.backend.agents.stream :as stream]
@@ -34,77 +35,14 @@
 (defonce conversation-access* (atom {}))
 (defonce lounge-messages* (atom []))
 
-(defn- flatten-template-values
-  ([value]
-   (flatten-template-values nil value))
-  ([prefix value]
-   (cond
-     (map? value)
-     (into {}
-           (mapcat (fn [[k v]]
-                     (let [key-name (cond
-                                      (keyword? k) (name k)
-                                      (string? k) k
-                                      :else (str k))
-                           next-prefix (if prefix (str prefix "." key-name) key-name)]
-                       (flatten-template-values next-prefix v))))
-           value)
-
-     (sequential? value)
-     (when prefix
-       {prefix (clojure.string/join ", " (map str value))})
-
-     (some? value)
-     (when prefix {prefix value})
-
-     :else {})))
-
-(defn- auth-context-template-values
-  [auth-context]
-  (let [user (:user auth-context)
-        org (:org auth-context)
-        membership (:membership auth-context)
-        email (or (:email auth-context)
-                  (:user-email auth-context)
-                  (:userEmail auth-context)
-                  (:email user)
-                  (:user-email user)
-                  (:userEmail user))
-        display-name (or (:name auth-context)
-                         (:display-name auth-context)
-                         (:displayName auth-context)
-                         (:name user)
-                         (:display-name user)
-                         (:displayName user)
-                         email)
-        org-slug (or (:org-slug auth-context)
-                     (:orgSlug auth-context)
-                     (:slug org)
-                     (:org-slug org)
-                     (:orgSlug org))]
-    {"name" display-name
-     "email" email
-     "user.email" email
-     "user.name" display-name
-     "org.slug" org-slug
-     "membership.id" (or (:membership-id auth-context)
-                          (:membershipId auth-context)
-                          (:id membership))}))
-
 (defn- render-task-prompt
   ([task-prompt auth-context]
-   (render-task-prompt task-prompt auth-context nil))
+   (render-task-prompt task-prompt auth-context nil nil))
   ([task-prompt auth-context template-context]
-  (when-let [template (content/nonblank task-prompt)]
-    (let [values (merge (auth-context-template-values auth-context)
-                        (flatten-template-values template-context))]
-      (str/replace template #"\{ctx\.([A-Za-z0-9_.-]+)\}"
-                   (fn [match]
-                     (let [parts (if (vector? match) match [match])
-                           full (first parts)
-                           key (second parts)]
-                       (or (some-> (get values key) str)
-                           full))))))))
+   (render-task-prompt task-prompt auth-context template-context nil))
+  ([task-prompt auth-context template-context agent-spec]
+   (templates/prompt-value
+    (templates/render-prompt task-prompt agent-spec auth-context template-context))))
 
 (defn ensure-conversation-access!
   [ctx conversation-id]
@@ -544,6 +482,7 @@
         (let [conversation-id (or conversation-id (.randomUUID crypto))
               session-id (ensure-session-id crypto session-id)
               auth-context (auth-context-for-agent-turn auth-context agent-spec)
+              agent-spec (templates/render-agent-prompts agent-spec auth-context template-context)
               _ (ensure-conversation-access! auth-context conversation-id)
               _ (remember-conversation-access! auth-context conversation-id)
               mode (or mode "direct")
@@ -718,7 +657,7 @@
                                                materialized-content-parts (vec (or (aget results 2) []))
                                                session (aget results 3)
                                                turn-message (or (content/nonblank message)
-                                                                (render-task-prompt (:task-prompt agent-spec) auth-context template-context)
+                                                                (render-task-prompt (:task-prompt agent-spec) auth-context template-context agent-spec)
                                                                 "")
                                                user-message (if (seq materialized-content-parts)
                                                               {:role "user" :content turn-message :content-parts materialized-content-parts}

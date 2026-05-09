@@ -10,8 +10,10 @@
  :source-kind :discord
  :source-mode :session
  :contract/actors ["discord_automation" "system_admin"]
-  :events {:always [:discord.message/keyword]
-           }
+   :events {:always []
+            :maybe [:discord.message/keyword]
+            :threshold 1
+            :weights {"discord.message/keyword" 1}}
  :hooks {:before {} :after {}}
   :agent {:roles [:role/voice-agent
                   :role/cephalon
@@ -36,7 +38,8 @@
  :sub-agents [:audio_agent :research_assistant :notifier]
 
  :data
- {:filters {:keywords ["join voice" "let's talk"]}
+  {:filters {:keywords ["join voice" "let's talk"
+                         "voice" "talk" "speak" "chat" "vc" "call" "audio"]}
   :source {:max-messages 2000
            :stickySession true
            :streamingBehavior "steer"

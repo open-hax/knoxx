@@ -813,14 +813,14 @@ export default function AgentAuditLogs({
   }, [semanticQuery, selectedSessionId]);
 
   return (
-    <div className={className ?? ""}>
+    <div className={`h-full ${className ?? ""}`}>
       {error ? (
         <div className="mb-4 rounded-lg border border-red-800 bg-red-950/40 p-3 text-sm text-red-200">{error}</div>
       ) : null}
 
-      <div className="grid min-h-0 grid-cols-[360px_minmax(0,1fr)] gap-4">
-        <div className="min-h-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
-          <div className="border-b border-slate-800 px-4 py-3">
+      <div className="grid h-full min-h-0 grid-cols-[360px_minmax(0,1fr)] gap-4">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+          <div className="shrink-0 border-b border-slate-800 px-4 py-3">
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-semibold text-slate-200">Sessions</div>
               <div className="text-xs text-slate-500">
@@ -874,7 +874,7 @@ export default function AgentAuditLogs({
             </div>
           </div>
 
-          <div className="max-h-full overflow-y-auto p-3" onScroll={handleSessionsScroll}>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3" onScroll={handleSessionsScroll}>
             {loadingSessions && sessions.length === 0 ? <div className="text-sm text-slate-500">Loading sessions…</div> : null}
             {!loadingSessions && filteredSessions.length === 0 ? <div className="text-sm text-slate-500">No sessions match.</div> : null}
 

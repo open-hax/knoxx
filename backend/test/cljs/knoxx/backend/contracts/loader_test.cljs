@@ -14,6 +14,7 @@
   (is (= "policies"     (sut/normalize-contract-class "policies")))
   (is (= "model_families" (sut/normalize-contract-class "model_families")))
   (is (= "models"       (sut/normalize-contract-class "models")))
+  (is (= "runtime_features" (sut/normalize-contract-class "runtime_features")))
   (is (= "actions"      (sut/normalize-contract-class "actions")))
   (is (= "pipelines"    (sut/normalize-contract-class "pipelines")))
   (is (= "triggers"     (sut/normalize-contract-class "triggers"))))
@@ -30,7 +31,9 @@
   (testing "model-family -> model_families"
     (is (= "model_families" (sut/normalize-contract-class "model-family"))))
   (testing "cap -> capabilities"
-    (is (= "capabilities" (sut/normalize-contract-class "cap")))))
+    (is (= "capabilities" (sut/normalize-contract-class "cap"))))
+  (testing "runtime-feature -> runtime_features"
+    (is (= "runtime_features" (sut/normalize-contract-class "runtime-feature")))))
 
 (deftest normalize-contract-class-rejects-unknown
   (is (thrown? js/Error (sut/normalize-contract-class "weasel"))))
@@ -50,6 +53,14 @@
     (is (:ok? result))
     (is (= "test-agent" (:id result)))
     (is (= "agents" (:contractClass result)))))
+
+(deftest parse-contract-file-runtime-feature
+  (let [edn-text "{:contract/kind :runtime-feature :contract/id \"eta-mu.opmf-contract-gate\" :runtime/feature :opmf-contract-gate :enabled false}"
+        result   (#'sut/parse-contract-file! "/fake/runtime_features/opmf_contract_gate.edn" edn-text)]
+    (is (some? result))
+    (is (:ok? result))
+    (is (= "eta-mu.opmf-contract-gate" (:id result)))
+    (is (= "runtime_features" (:contractClass result)))))
 
 (deftest parse-contract-file-missing-id-returns-nil
   (let [edn-text "{:contract/kind :agent :trigger-kind :manual :agent {:role :knowledge_worker}}"

@@ -6,7 +6,10 @@
                               :mode :always
                               :k 6}},
  :source-mode :respond,
- :events {:always [:discord.message/keyword]},
+  :events {:always []
+           :maybe [:discord.message/keyword]
+           :threshold 1
+           :weights {"discord.message/keyword" 1}},
  :hooks {:before {}, :after {}},
  :agent
  {:roles [:role/creative_catalyst :role/guitarist],
@@ -25,5 +28,6 @@
  :data
  {:filters
   {:channels ["1444189585373663417"],
-   :keywords ["sound" "music" "wav" "silence" "lullaby" "audio"]},
+    :keywords ["sound" "music" "wav" "silence" "lullaby" "audio"
+               "song" "melody" "tune" "rhythm" "beat" "compose" "track" "mix"]},
   :source {:max-messages 20}}}

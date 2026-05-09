@@ -12,7 +12,7 @@
             [knoxx.backend.extension-runtime :as ext-runtime]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]
-            ["@open-hax/eta-mu" :as sdk]
+            ["@open-hax/eta-mu-cli" :as sdk]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 
@@ -22,42 +22,34 @@
 (defonce sdk-runtime* (atom nil))
 (defonce agent-sessions* (atom {}))
 
-;; Proxx session affinity: Proxx uses prompt_cache_key to lock a session to an
-;; account+provider pair. The eta-mu agent runtime does not emit
-;; prompt_cache_key by default, so we inject it via an always-on extension
-;; installed into the Knoxx agent runtime directory.
-(def ^:private proxx-session-affinity-extension-code
-  (str
-   "import type { ExtensionAPI } from \"@open-hax/eta-mu\";\n\n"
-   "function isRecord(value: unknown): value is Record<string, unknown> {\n"
-   "  return typeof value === 'object' && value !== null;\n"
-   "}\n\n"
-   "export default function (etaMu: ExtensionAPI) {\n"
-   "  etaMu.on('before_provider_request', (event, ctx) => {\n"
-   "    // Only touch Knoxx→Proxx traffic.\n"
-   "    if (ctx.model?.provider !== 'proxx') return;\n"
-   "\n"
-   "    const sessionKey = typeof ctx.sessionManager?.getSessionId === 'function'\n"
-   "      ? String(ctx.sessionManager.getSessionId() ?? '').trim()\n"
-   "      : '';\n"
-   "    if (!sessionKey) return;\n"
-   "\n"
-   "    const payload = event.payload;\n"
-   "    if (payload === null || typeof payload !== 'object') return;\n"
-   "    const record = payload as Record<string, unknown>;\n"
-   "\n"
-   "    const existing = typeof record.prompt_cache_key === 'string'\n"
-   "      ? record.prompt_cache_key.trim()\n"
-   "      : typeof record.promptCacheKey === 'string'\n"
-   "        ? record.promptCacheKey.trim()\n"
-   "        : '';\n"
-   "\n"
-   "    if (existing) return record;\n"
-   "\n"
-   "    // Proxx extracts prompt_cache_key from request bodies to enforce affinity.\n"
-   "    return { ...record, prompt_cache_key: sessionKey };\n"
-   "  });\n"
-   "}\n"))
+;; Session registry bounds to prevent memory leaks under sustained load.
+(def ^:private max-agent-sessions 500)
+(def ^:private agent-session-inactive-ttl-ms (* 4 60 60 1000)) ; 4 hours
+(def ^:private agent-session-sweep-interval-ms 300000) ; 5 minutes
+
+(defn- evict-oldest-agent-session!
+  "Remove the least-recently-accessed session when the registry is over capacity."
+  []
+  (when (> (count @agent-sessions*) max-agent-sessions)
+    (let [oldest (apply min-key (comp :last-accessed val) @agent-sessions*)]
+      (when oldest
+        (swap! agent-sessions* dissoc (key oldest))))))
+
+(defn- start-agent-session-sweep!
+  "Periodically remove agent sessions that have been inactive beyond the TTL."
+  []
+  (js/setInterval
+   (fn []
+     (let [cutoff (- (js/Date.now) agent-session-inactive-ttl-ms)
+           stale (for [[id entry] @agent-sessions*
+                       :when (< (or (:last-accessed entry) 0) cutoff)]
+                   id)]
+       (when (seq stale)
+         (swap! agent-sessions* #(apply dissoc % stale)))))
+   agent-session-sweep-interval-ms))
+
+;; Start the sweep loop once at load time.
+(start-agent-session-sweep!)
 
 (defn- js-array-seq
   [value]
@@ -554,8 +546,6 @@
           runtime-dir (:agent-dir config)
           models-file (.join node-path runtime-dir "models.json")
           auth-file (.join node-path runtime-dir "auth.json")
-          extensions-dir (.join node-path runtime-dir "extensions")
-          affinity-extension-file (.join node-path extensions-dir "proxx-session-affinity.ts")
           SettingsManager (aget sdk "SettingsManager")
           AuthStorage (aget sdk "AuthStorage")
           ModelRegistry (aget sdk "ModelRegistry")
@@ -571,13 +561,7 @@
                                                       (.stringify js/JSON (clj->js (models-config config model-ids)) nil 2)
                                                       "utf8")
                                           (.then (fn [] nil))))))))
-                (.then (fn []
-                         (-> (.mkdir node-fs extensions-dir #js {:recursive true})
-                             (.then (fn []
-                                      (.writeFile node-fs
-                                                  affinity-extension-file
-                                                  proxx-session-affinity-extension-code
-                                                  "utf8"))))))
+
                 (.then (fn []
                          (let [auth-storage (.create AuthStorage auth-file)
                                _ (when-not (str/blank? (:proxx-auth-token config))
@@ -802,11 +786,13 @@
                                                       #js {:conversationId conversation-id
                                                            :sessionId session-id}
                                                       ctx))
-                        (swap! agent-sessions* assoc conversation-id {:session next-session
-                                                                      :model-id model-id
-                                                                      :tool-signature current-tool-signature
-                                                                      :session-id session-id
-                                                                      :actor-id (:actor-id agent-spec)})
+                         (evict-oldest-agent-session!)
+                         (swap! agent-sessions* assoc conversation-id {:session next-session
+                                                                       :model-id model-id
+                                                                       :tool-signature current-tool-signature
+                                                                       :session-id session-id
+                                                                       :actor-id (:actor-id agent-spec)
+                                                                       :last-accessed (js/Date.now)})
                         (register-actor-live-route! runtime conversation-id session-id agent-spec)
                         next-session)))))
        (-> (create-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)
@@ -820,13 +806,15 @@
                                                   #js {:conversationId conversation-id
                                                        :sessionId session-id}
                                                   ctx))
-                    (swap! agent-sessions* assoc conversation-id {:session session
-                                                                  :model-id model-id
-                                                                  :tool-signature current-tool-signature
-                                                                  :session-id session-id
-                                                                  :actor-id (:actor-id agent-spec)})
-                    (register-actor-live-route! runtime conversation-id session-id agent-spec)
-                    session)))))))
+                     (evict-oldest-agent-session!)
+                     (swap! agent-sessions* assoc conversation-id {:session session
+                                                                   :model-id model-id
+                                                                   :tool-signature current-tool-signature
+                                                                   :session-id session-id
+                                                                   :actor-id (:actor-id agent-spec)
+                                                                   :last-accessed (js/Date.now)})
+                     (register-actor-live-route! runtime conversation-id session-id agent-spec)
+                     session)))))))
 
 (defn active-agent-session
   [conversation-id]

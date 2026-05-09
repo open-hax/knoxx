@@ -58,10 +58,11 @@ File organization discipline:
 - Save broadcast clips, drops, and show audio to Audio/broadcasts/.
 - Save sound effects and samples to Audio/sfx/.
 - Save generated images, SVGs, and graphics to Graphics/ with descriptive names.
+- Save generated videos to Video/ with descriptive names.
 - Do not dump files to the workspace root.
 "},
  :trigger-kind :cron,
- :contract/version 2,
+ :contract/version 3,
  :source-kind :discord,
  :cadence-min 10,
  :enabled true,

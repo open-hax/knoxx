@@ -59,6 +59,34 @@
 ;; In-memory cache for fast access during active streaming
 (defonce session-cache* (atom {}))
 
+;; Cache bounds to prevent memory leaks under sustained load.
+(def ^:private max-session-cache-size 1000)
+(def ^:private sticky-session-ttl-ms (* 24 60 60 1000)) ; 24 hours
+(def ^:private session-cache-sweep-interval-ms 300000)   ; 5 minutes
+
+(defn- evict-oldest-session-cache-entry!
+  "Remove the oldest entry when the cache exceeds max size."
+  []
+  (when (> (count @session-cache*) max-session-cache-size)
+    (let [oldest (apply min-key (comp :cached-at val) @session-cache*)]
+      (when oldest
+        (swap! session-cache* dissoc (key oldest))))))
+
+(defn- start-session-cache-sweep!
+  "Periodically evict stale sticky sessions from the cache."
+  []
+  (js/setInterval
+   (fn []
+     (let [cutoff (- (js/Date.now) sticky-session-ttl-ms)
+           stale (for [[id entry] @session-cache*
+                       :when (< (or (:cached-at entry) 0) cutoff)]
+                   id)]
+       (when (seq stale)
+         (swap! session-cache* #(apply dissoc % stale)))))
+   session-cache-sweep-interval-ms))
+
+(start-session-cache-sweep!)
+
 (defn get-session
   "Get session state, checking cache first then Redis.
    Always resolves a promise for call-site consistency."
@@ -66,11 +94,12 @@
   (if-let [cached (get @session-cache* session-id)]
     (resolved cached)
     (if redis-client
-      (-> (redis/get-json redis-client (session-key session-id))
-          (.then (fn [session]
-                   (when session
-                     (swap! session-cache* assoc session-id session))
-                   session)))
+       (-> (redis/get-json redis-client (session-key session-id))
+           (.then (fn [session]
+                    (when session
+                      (evict-oldest-session-cache-entry!)
+                      (swap! session-cache* assoc session-id (assoc session :cached-at (js/Date.now))))
+                    session)))
       (resolved nil))))
 
 (defn get-session-sync
@@ -95,7 +124,8 @@
                   session-id (assoc :session_id session-id)
                   conversation-id (assoc :conversation_id conversation-id))]
     ;; Update cache immediately
-    (swap! session-cache* assoc session-id session)
+    (evict-oldest-session-cache-entry!)
+    (swap! session-cache* assoc session-id (assoc session :cached-at (js/Date.now)))
 
     (if redis-client
       (-> (redis/set-json redis-client
@@ -249,16 +279,14 @@
                  ;; Default behavior: keep in Redis briefly for resume, then cleanup.
                  ;; Sticky event-agent sessions are long-lived across scheduled runs, so keep them
                  ;; in Redis+cache (and in the active set so they recover after restart).
-                 (let [sticky? (str/includes? (str session-id) "-sticky")]
-                   (if sticky?
-                     nil
-                     (js/setTimeout
-                      #(do
-                         ;; Evict from in-memory cache to prevent unbounded growth
-                         (swap! session-cache* dissoc session-id)
-                         (remove-session! redis-client session-id conversation-id))
-                      60000)))
-                 session)))))
+                  ;; Always evict from cache after a brief delay; sticky sessions
+                  ;; just get a longer delay. The cache sweep will catch any leaks.
+                  (js/setTimeout
+                   #(swap! session-cache* dissoc session-id)
+                   (if (str/includes? (str session-id) "-sticky")
+                     sticky-session-ttl-ms
+                     60000))
+                  session)))))
 
 (defn session-can-send?
   "Check if session can accept new messages.

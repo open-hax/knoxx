@@ -2,7 +2,7 @@
  :contract/kind :agent
  :contract/actors ["broadcast_studio"]
  :hooks {:before {} :after {}}
- :agent {:role :role/discord-user
+ :agent {:roles [:role/creative-catalyst :role/developer]
          :model "gemma4:31b"
          :thinking :minimal}
  :prompts {:system "You are the Broadcast Studio primary agent. You manage a mixed audio library for stream production: music, sound effects, ambience, spoken word, drops, bumpers, generated songs, and production assets.

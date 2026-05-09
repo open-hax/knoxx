@@ -83,7 +83,7 @@ export function createChatRuntimeActions({
     setMessages((prev) => (prev.some((entry) => entry.id === message.id) ? prev : [...prev, message]));
   };
 
-  const loadRunDetail = async (runId: string) => {
+  const loadRunDetail = async (runId: string, attempt = 0): Promise<void> => {
     try {
       const run = await getRun(runId);
       if (activeRunIdRef.current === runId) {
@@ -110,7 +110,15 @@ export function createChatRuntimeActions({
         }
       }
     } catch (error) {
-      appendConsoleLine(`[runs] failed to load ${runId}: ${(error as Error).message}`);
+      const message = (error as Error).message;
+      const runIsStillActive = activeRunIdRef.current === runId;
+      if (runIsStillActive && message.includes('404') && attempt < 6) {
+        window.setTimeout(() => {
+          void loadRunDetail(runId, attempt + 1);
+        }, 250 * (attempt + 1));
+        return;
+      }
+      appendConsoleLine(`[runs] failed to load ${runId}: ${message}`);
     }
   };
 

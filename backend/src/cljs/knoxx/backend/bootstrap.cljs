@@ -33,6 +33,13 @@
   [v]
   (contains? #{"1" "true" "yes" "on" "y"} (-> (str (or v "")) str/trim str/lower-case)))
 
+(def hmr-probe-token
+  "hmr-probe-2026-05-09-stability-b")
+
+(defn- process-uptime-ms
+  []
+  (js/Math.round (* 1000 (.uptime js/process))))
+
 (defn- notify-ready!
   []
   (let [send-fn (aget js/process "send")
@@ -77,8 +84,10 @@
     (http-server/add-hook! app "onRequest"
       (fn [req reply done]
         (when (= (.-url req) "/api/dev/hmr")
-          (.header reply "x-knoxx-hmr-probe" "hmr-probe-2026-05-07-e")
-          (js/console.log "[knoxx-hot-reload-probe] hmr-probe-2026-05-07-e"))
+          (.header ^js reply "x-knoxx-hmr-probe" hmr-probe-token)
+          (js/console.log "[knoxx-hot-reload-probe]" hmr-probe-token
+                          #js {:pid (.-pid js/process)
+                               :uptimeMs (process-uptime-ms)}))
         (when-let [len (aget (.-headers req) "content-length")]
           (when (> (js/parseInt len 10) (* 900 1024))
             (js/console.warn "[knoxx] large request" (.-url req) len "bytes")))
@@ -122,7 +131,9 @@
                                 (when client
                                   (.info log "Redis connected for session persistence")
                                   ;; Fire-and-forget: must not block startup.
-                                  (agent-resume/resume-on-startup! runtime app cfg)
+                                  ;; Guarded so shadow-cljs hot reload does not spawn
+                                  ;; recovery jobs as if the Node process had restarted.
+                                  (agent-resume/resume-on-process-startup! runtime app cfg)
                                   (agent-resume/start-periodic-recovery! runtime app cfg))))
                        (.catch (fn [err]
                                  (.warn log "Redis initialization failed" err))))
@@ -150,22 +161,30 @@
 
 (defn ^:dev/before-load-async stop-http-before-load!
   [done]
-  (.log js/console "[knoxx-hot-reload] before-load: closing HTTP server")
+  (.log js/console "[knoxx-hot-reload] before-load: closing HTTP server"
+        #js {:pid (.-pid js/process)
+             :uptimeMs (process-uptime-ms)})
   (-> (lifecycle/close-current-http!)
       (.then (fn [_]
-               (.log js/console "[knoxx-hot-reload] before-load: HTTP server closed")))
+               (.log js/console "[knoxx-hot-reload] before-load: HTTP server closed"
+                     #js {:pid (.-pid js/process)
+                          :uptimeMs (process-uptime-ms)})))
       (.catch (fn [err]
                 (.error js/console "[knoxx-hot-reload] failed to close HTTP server" err)))
       (.finally done)))
 
 (defn ^:dev/after-load-async start-http-after-load!
   [done]
-  (.log js/console "[knoxx-hot-reload] after-load: starting HTTP server")
+  (.log js/console "[knoxx-hot-reload] after-load: starting HTTP server"
+        #js {:pid (.-pid js/process)
+             :uptimeMs (process-uptime-ms)})
   (let [{:keys [runtime config policyDb cookie-hook?]} (lifecycle/context)]
     (if (and runtime config policyDb)
       (-> (start-http! runtime config policyDb cookie-hook?)
           (.then (fn [_]
-                   (.log js/console "[knoxx-hot-reload] after-load: HTTP server started")))
+                   (.log js/console "[knoxx-hot-reload] after-load: HTTP server started"
+                         #js {:pid (.-pid js/process)
+                              :uptimeMs (process-uptime-ms)})))
           (.catch (fn [err]
                     (.error js/console "[knoxx-hot-reload] failed to restart HTTP server" err)))
           (.finally done))

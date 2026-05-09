@@ -1,5 +1,6 @@
 (ns knoxx.backend.contracts.roles
   (:require [clojure.string :as str]
+            [knoxx.backend.agent-templates :as templates]
             [knoxx.backend.contracts.loader :as contract-loader]
             [knoxx.backend.tools.registry :as tools]))
 
@@ -133,7 +134,7 @@
          vec)))
 
 (defn role-system-prompt
-  "Return the role-level system prompt text (string) if present."
+  "Return the role-level system prompt value if present."
   [config role]
   (let [role-map (role-contract config role)
         prompt (or (get-in role-map [:prompts :system])
@@ -142,10 +143,10 @@
                    (:role/system_prompt role-map)
                    (:system-prompt role-map)
                    (:system_prompt role-map))]
-    (some-> prompt str str/trim not-empty)))
+    (templates/prompt-value prompt)))
 
 (defn role-task-prompt
-  "Return the role-level task prompt text (string) if present."
+  "Return the role-level task prompt value if present."
   [config role]
   (let [role-map (role-contract config role)
         prompt (or (get-in role-map [:prompts :task])
@@ -154,4 +155,4 @@
                    (:role/task_prompt role-map)
                    (:task-prompt role-map)
                    (:task_prompt role-map))]
-    (some-> prompt str str/trim not-empty)))
+    (templates/prompt-value prompt)))
