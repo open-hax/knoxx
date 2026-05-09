@@ -5,7 +5,7 @@ import { Button } from "@open-hax/uxx";
 import { listAdminTools } from "../lib/api/admin";
 import type { AdminToolDefinition } from "../lib/types";
 
-import { DiscordSection } from "../components/admin-page/DiscordSection";
+import { EventAgentsPanel } from "../components/admin-page/EventAgentsPanel";
 import AgentAuditLogs from "../components/agent-audit/AgentAuditLogs";
 import type { EventAgentJobControl } from "../lib/api/admin";
 import { useAuth } from "./useAuth";
@@ -147,11 +147,10 @@ export default function AgentsPage() {
                     Tool catalog unavailable: {toolsError}
                   </div>
                 ) : null}
-                <DiscordSection
-                  className="min-h-0 flex-1"
+                <EventAgentsPanel
                   canManage={canControlEventAgents}
                   tools={tools}
-                  onSelectedJobChange={(job) => setSelectedJob(job)}
+                  onSelectedJobChange={(job) => setSelectedJob(job as EventAgentJobControl | null)}
                 />
               </>
             )}

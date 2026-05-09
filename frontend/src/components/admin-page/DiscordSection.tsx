@@ -196,10 +196,12 @@ export function DiscordSection({
   canManage,
   tools = [],
   onSelectedJobChange,
+  className,
 }: {
   canManage: boolean;
   tools?: AdminToolDefinition[];
   onSelectedJobChange?: (job: EventAgentJobControl | null) => void;
+  className?: string;
 }) {
   const [loading, setLoading] = useState(true);
   const [savingToken, setSavingToken] = useState(false);
@@ -501,14 +503,14 @@ export function DiscordSection({
   }, [canManage]);
 
   return (
-    <SectionCard>
+    <SectionCard className={className}>
       {loading || !draft || !status ? (
         <div className="text-sm text-slate-300">Loading event-agent control plane…</div>
       ) : (
-        <div className="space-y-4">
-          <div className="overflow-x-auto pb-1">
-            <div className="grid min-w-[44rem] gap-4 grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[14rem_minmax(0,1fr)]">
-            <aside className="sticky top-4 self-start space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+        <div className="flex flex-col h-full min-h-0">
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="grid h-full min-h-0 min-w-[44rem] gap-3 grid-cols-[12rem_minmax(0,1fr)] xl:grid-cols-[13rem_minmax(0,1fr)]">
+            <aside className="flex flex-col overflow-hidden h-full space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold text-slate-100">Agents</div>
                 <div className="text-[11px] text-slate-500">{filteredJobs.length}/{draft.jobs.length}</div>
@@ -604,7 +606,7 @@ export function DiscordSection({
                 />
               </label>
 
-              <div className="max-h-[72vh] space-y-1.5 overflow-y-auto pr-1">
+              <div className="flex-1 min-h-0 space-y-1.5 overflow-y-auto pr-1">
                 {filteredJobs.length > 0 ? filteredJobs.map((job) => (
                   <SidebarJobButton
                     key={job.id}
@@ -621,51 +623,54 @@ export function DiscordSection({
               </div>
             </aside>
 
-            <div className="space-y-4 min-w-0">
-              <CollapsiblePanel
-                title="Schedule review"
-                description="Review active schedule identity as contract-kind + contract-id, current cadence, and next-run timing before restarting cron jobs."
-                defaultOpen
-              >
-                <EventAgentScheduleReview
-                  jobs={draft.jobs}
-                  runtimeJobs={runtimeJobs}
-                  selectedJobId={selectedJob?.id ?? null}
-                  onSelectJob={(jobId) => setSelectedJobId(jobId)}
-                />
-              </CollapsiblePanel>
+            <div className="grid gap-3 min-w-0 h-full min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+              <div className="flex flex-col h-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40">
+                <div className="shrink-0 border-b border-slate-800 px-3 py-2">
+                  <div className="text-sm font-semibold text-slate-100">Schedule review</div>
+                  <div className="text-[11px] text-slate-500">Review cadence and next-run timing.</div>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto p-2">
+                  <EventAgentScheduleReview
+                    jobs={draft.jobs}
+                    runtimeJobs={runtimeJobs}
+                    selectedJobId={selectedJob?.id ?? null}
+                    onSelectJob={(jobId) => setSelectedJobId(jobId)}
+                  />
+                </div>
+              </div>
 
-              {selectedJob ? (
-                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-                  <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold text-slate-100">{selectedJob.name}</h3>
-                        <Badge tone={selectedJob.enabled ? "success" : "warn"}>{selectedJob.enabled ? "Enabled" : "Disabled"}</Badge>
-                        <span className="text-xs text-slate-500">{selectedJob.source.kind} · {selectedJob.trigger.kind} · {selectedJob.contractSourceId ? "contract" : "custom"}</span>
-                        {selectedRuntime?.running ? <Badge tone="info">Running now</Badge> : null}
-                      </div>
-                      <p className="mt-2 text-sm text-slate-400">{selectedJob.description || "No description provided."}</p>
-                      {selectedJob.contractSourceId ? (
-                        <div className="mt-2 text-xs text-slate-500">
-                          Contract-backed from <code className="font-mono text-slate-300">{selectedJob.contractSourceKind ?? "agent"}:{selectedJob.contractSourceId}</code>
-                          {typeof selectedJob.contractHash === "number" ? (
-                            <span> · hash <code className="font-mono text-slate-300">{selectedJob.contractHash}</code></span>
-                          ) : null}
+              <div className="h-full overflow-y-auto min-w-0 space-y-3 pr-1">
+                {selectedJob ? (
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+                    <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-semibold text-slate-100">{selectedJob.name}</h3>
+                          <Badge tone={selectedJob.enabled ? "success" : "warn"}>{selectedJob.enabled ? "Enabled" : "Disabled"}</Badge>
+                          <span className="text-xs text-slate-500">{selectedJob.source.kind} · {selectedJob.trigger.kind} · {selectedJob.contractSourceId ? "contract" : "custom"}</span>
+                          {selectedRuntime?.running ? <Badge tone="info">Running now</Badge> : null}
                         </div>
-                      ) : null}
+                        <p className="mt-2 text-sm text-slate-400">{selectedJob.description || "No description provided."}</p>
+                        {selectedJob.contractSourceId ? (
+                          <div className="mt-2 text-xs text-slate-500">
+                            Contract-backed from <code className="font-mono text-slate-300">{selectedJob.contractSourceKind ?? "agent"}:{selectedJob.contractSourceId}</code>
+                            {typeof selectedJob.contractHash === "number" ? (
+                              <span> · hash <code className="font-mono text-slate-300">{selectedJob.contractHash}</code></span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleRunJob(selectedJob.id)}
+                        disabled={!canManage || runningJobId === selectedJob.id}
+                        className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        {runningJobId === selectedJob.id ? "Queueing…" : "Run now"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleRunJob(selectedJob.id)}
-                      disabled={!canManage || runningJobId === selectedJob.id}
-                      className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
-                    >
-                      {runningJobId === selectedJob.id ? "Queueing…" : "Run now"}
-                    </button>
-                  </div>
 
-                  <div className="mt-4 space-y-4">
+                    <div className="mt-4 space-y-4">
                     <div className="grid gap-4 xl:grid-cols-3">
                       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
                         <div className="text-sm font-semibold text-slate-100">Runtime snapshot</div>
@@ -1062,6 +1067,7 @@ export function DiscordSection({
                   {error}
                 </div>
               ) : null}
+              </div>
             </div>
             </div>
           </div>

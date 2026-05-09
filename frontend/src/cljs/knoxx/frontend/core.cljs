@@ -22,6 +22,10 @@
   (println "[knoxx-frontend] hot reload"))
 
 (defn ^:dev/once init []
-  (let [root-el (js/document.getElementById "root")
-        root (.createRoot rdc root-el)]
-    (.render root ($ app))))
+  ;; Only auto-render in standalone mode; when embedded in Vite,
+  ;; components are mounted by EventAgentsPanel.tsx
+  (when (and (not js/window.__knoxxViteApp)
+             (js/document.getElementById "cljs-root"))
+    (let [root-el (js/document.getElementById "cljs-root")
+          root (.createRoot rdc root-el)]
+      (.render root ($ app)))))
