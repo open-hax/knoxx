@@ -30,6 +30,8 @@ function ChatPage() {
         flex: "1 1 0%",
         gap: 0,
         minHeight: 0,
+        minWidth: 0,
+        overflow: "hidden",
         background:
           "radial-gradient(circle at top left, var(--token-colors-alpha-green-_14) 0%, transparent 28%), radial-gradient(circle at bottom right, var(--token-colors-alpha-orange-_12) 0%, transparent 24%), linear-gradient(180deg, var(--token-monokai-bg-default) 0%, var(--token-monokai-bg-darker) 100%)",
       }}

@@ -10,6 +10,7 @@
             [helix.dom :as d]
             [knoxx.frontend.app-routes :as routes]
             [knoxx.frontend.pages.agents :as agents-page]
+            [knoxx.frontend.pages.events :as events-page]
             ["react-router-dom" :as rr]
             ["react-dom/client" :as rdom]
             ["@open-hax/knoxx-app-bridge" :as app]))
@@ -85,19 +86,21 @@
                      (d/div {:class-name "app-shell__header-inner"}
                             (d/h1 {:class-name "app-shell__brand"} "Knoxx")
                             (d/nav {:class-name "app-shell__nav" :aria-label "Primary"}
-                                   ($ NavLink {:to routes/chat-route :class-name nav-class} "Chat")
-                                   ($ NavLink {:to routes/mail-route :class-name nav-class} "Mail")
-                                   ($ NavLink {:to routes/studio-route :class-name nav-class} "Studio")
+                                   ;; IMPORTANT: when passing props to React components (NavLink), use :className
+                                   ;; not :class-name (otherwise React receives an invalid DOM attribute).
+                                   ($ NavLink {:to routes/chat-route :className nav-class} "Chat")
+                                   ($ NavLink {:to routes/mail-route :className nav-class} "Mail")
+                                   ($ NavLink {:to routes/studio-route :className nav-class} "Studio")
                                    (when-not basic-user?
                                      (d/span
-                                       ($ NavLink {:to routes/cms-route :class-name nav-class} "CMS")
-                                       ($ NavLink {:to routes/contracts-route :class-name nav-class} "Contracts")
-                                       ($ NavLink {:to routes/data-route :class-name nav-class} "Data")
-                                       ($ NavLink {:to routes/gardens-route :class-name nav-class} "Gardens")
-                                       ($ NavLink {:to routes/translations-route :class-name nav-class} "Translations")
-                                       ($ NavLink {:to routes/events-route :class-name nav-class} "Events")
-                                       ($ NavLink {:to routes/agents-route :class-name nav-class} "Agents")
-                                       ($ NavLink {:to (:admin routes/ops-routes) :class-name nav-class} "Admin")))
+                                       ($ NavLink {:to routes/cms-route :className nav-class} "CMS")
+                                       ($ NavLink {:to routes/contracts-route :className nav-class} "Contracts")
+                                       ($ NavLink {:to routes/data-route :className nav-class} "Data")
+                                       ($ NavLink {:to routes/gardens-route :className nav-class} "Gardens")
+                                       ($ NavLink {:to routes/translations-route :className nav-class} "Translations")
+                                       ($ NavLink {:to routes/events-route :className nav-class} "Events")
+                                       ($ NavLink {:to routes/agents-route :className nav-class} "Agents")
+                                       ($ NavLink {:to (:admin routes/ops-routes) :className nav-class} "Admin")))
                             ($ UserMenu)))
 
            (d/main {:class-name "app-shell__main"}
@@ -105,10 +108,12 @@
                       ;; All route definitions live here (shadow is router source-of-truth).
                       ($ Route {:path routes/chat-route
                                 :element ($ app/ChatPage)})
+                      ;; AuthBoundary owns /login and /signup rendering when unauthenticated.
+                      ;; When authenticated, treat them as harmless redirects back home.
                       ($ Route {:path routes/login-route
-                                :element ($ PlaceholderPage {:title "Login"})})
+                                :element ($ Navigate {:to routes/chat-route :replace true})})
                       ($ Route {:path routes/signup-route
-                                :element ($ PlaceholderPage {:title "Signup"})})
+                                :element ($ Navigate {:to routes/chat-route :replace true})})
 
                       ($ Route {:path routes/mail-route
                                 :element ($ ProtectedSurface {:children ($ app/MailPage)})})
@@ -116,9 +121,9 @@
                                 :element ($ ProtectedSurface {:children ($ app/BroadcastStudioPage)})})
 
                       ($ Route {:path routes/cms-route
-                                :element ($ ProtectedSurface {:children ($ PlaceholderPage {:title "CMS"})})})
+                                :element ($ ProtectedSurface {:children ($ app/CmsPage)})})
                       ($ Route {:path (str routes/cms-editor-route "/*")
-                                :element ($ ProtectedSurface {:children ($ PlaceholderPage {:title "CMS Editor"})})})
+                                :element ($ ProtectedSurface {:children ($ app/VisualCmsEditorPage)})})
 
                       ($ Route {:path routes/contracts-route
                                 :element ($ ProtectedSurface {:children ($ app/ContractsPage)})})
@@ -137,7 +142,7 @@
                                 :element ($ ProtectedSurface {:children ($ app/TranslationReviewPage)})})
 
                       ($ Route {:path routes/events-route
-                                :element ($ ProtectedSurface {:children ($ PlaceholderPage {:title "Events"})})})
+                                :element ($ ProtectedSurface {:children ($ events-page/EventsPage)})})
 
                       ;; Agents is the first fully shadow-owned page.
                       ($ Route {:path routes/agents-route
