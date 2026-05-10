@@ -72,7 +72,9 @@ File organization discipline:
  :sub-agents [:audio_agent :research_assistant :notifier]
  :data
  {:filters
-  {:publishChannels ["1494137016303095828" "1444189585373663417"]},
+  {:publishChannels [
+                     ;; "1494137016303095828"
+                     "1444189585373663417"]},
   :source
   {:max-messages 500,
    :sessionMaxMessages 2000}}}

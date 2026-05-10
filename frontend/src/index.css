@@ -1,4 +1,7 @@
-@import '@open-hax/uxx/css';
+/* NOTE: postcss-import used by tailwindcss CLI does not reliably resolve
+   package.json "exports" subpaths (e.g. "@open-hax/uxx/css").
+   Import the concrete file path instead. */
+@import '@open-hax/uxx/dist/tokens.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

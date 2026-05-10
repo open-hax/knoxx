@@ -4,16 +4,13 @@
  * Runs all Knoxx services on the host for source-mapped debugging:
  *   1. knoxx-shadow          — shadow-cljs watch with source maps (compiles backend CLJS → dist-dev/)
  *   2. knoxx-backend         — node dist-dev/server.js (watch-produced dev output) with source-map stack traces
- *   3. knoxx-frontend        — vite dev server with HMR + API proxy to backend (port 5173)
- *   4. knoxx-frontend-shadow — shadow-cljs watch for helix frontend (port 5174)
- *   5. knoxx-ingestion       — clojure -M:run (kms-ingestion on port 3003)
+ *   3. knoxx-frontend        — migration mode: Vite builds to ./dist (watch) while shadow-cljs owns the dev HTTP server on port 5173
+ *   4. knoxx-ingestion       — clojure -M:run (kms-ingestion on port 3003)
  *
- * Frontend migration notes:
- *   - The Vite frontend (knoxx-frontend, port 5173) is the current production path.
- *   - The shadow-cljs frontend (knoxx-frontend-shadow, port 5174) is the helix migration target.
- *   - Before starting knoxx-frontend-shadow, build the TS bridge once:
- *       cd frontend && pnpm build:bridge
- *   - Rebuild the bridge whenever you add TS components to src/bridge/.
+ * Frontend migration notes (important):
+ *   - Vite must NOT run its own dev server in this setup.
+ *   - shadow-cljs serves ./dist and proxies /api,/ws,/health to the backend.
+ *   - The TS→CLJS bridge is built by Vite in watch mode (vite.bridge.config.ts).
  *
  * Dependencies (must be running separately):
  *   - Redis     on localhost:6379  (compose: knoxx-redis)
@@ -83,14 +80,16 @@ const contractsDir = path.join(knoxxRoot, 'contracts');
 
 // Workspace root is where Knoxx is allowed to read/write files.
 // DO NOT hard-code /home/err/devel: other machines/users check out elsewhere.
+//
+// IMPORTANT: never dump process.env in logs (it can contain secrets).
 const workspaceRoot =
-  process.env.WORKSPACE_ROOT ||
-  process.env.WORKSPACE_PATH ||
-  process.env.KNOXX_WORKSPACE_ROOT ||
-  tryGitTopLevel(knoxxRoot) ||
-  // Fallback: assume standard repo layout: <root>/orgs/open-hax/openplanner/packages/agents/knoxx
-  path.resolve(knoxxRoot, '../../../../../../..');
-
+  process.env.WORKSPACE_ROOT
+  || process.env.WORKSPACE_PATH
+  || process.env.KNOXX_WORKSPACE_ROOT
+  || tryGitTopLevel(knoxxRoot)
+  || (() => {
+    throw new Error('no workspace root defined (set WORKSPACE_ROOT/WORKSPACE_PATH/KNOXX_WORKSPACE_ROOT)');
+  })();
 const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env');
 const hostEnvPath = process.env.KNOXX_HOST_ENV_PATH || defaultHostEnvPath;
 const hostEnv = loadSimpleEnv(hostEnvPath);
@@ -304,7 +303,11 @@ const apps = [
       }]
       : []),
 
-    // ── 4. Frontend (Vite dev server) ────────────────────────────────
+    // ── 4. Frontend (Vite build/watch + shadow-cljs dev server) ──────
+    // `pnpm dev` (frontend/package.json) runs:
+    //   - vite build --watch          (writes ./dist)
+    //   - vite build --watch (bridge) (writes ./dist/bridge)
+    //   - shadow-cljs watch app       (serves HTTP on :5173 and writes ./dist/cljs)
     {
       name: 'knoxx-frontend',
       cwd: frontendDir,
@@ -316,23 +319,8 @@ const apps = [
       restart_delay: 3000,
       env: {
         NODE_ENV: 'development',
-        // Vite proxy target: the host backend
+        // Used by Vite builds (and retained for `pnpm preview`).
         VITE_KNOXX_BACKEND_URL: 'http://127.0.0.1:8000',
-      },
-    },
-
-    // ── 4b. Frontend shadow-cljs (helix watch + hot reload) ──────────
-    {
-      name: 'knoxx-frontend-shadow',
-      cwd: frontendDir,
-      script: 'pnpm',
-      args: 'watch:cljs',
-      watch: false,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 5000,
-      env: {
-        NODE_ENV: 'development',
       },
     },
 

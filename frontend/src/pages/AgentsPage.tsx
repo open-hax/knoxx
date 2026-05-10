@@ -2,13 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "@open-hax/uxx";
-import { listAdminTools } from "../lib/api/admin";
-import type { AdminToolDefinition } from "../lib/types";
-
-import { EventAgentsPanel } from "../components/admin-page/EventAgentsPanel";
 import AgentAuditLogs from "../components/agent-audit/AgentAuditLogs";
-import type { EventAgentJobControl } from "../lib/api/admin";
-import { useAuth } from "./useAuth";
 
 type AgentsTab = "control" | "audit";
 
@@ -28,81 +22,16 @@ function setTabInLocation(location: ReturnType<typeof useLocation>, tab: AgentsT
 }
 
 export default function AgentsPage() {
-  const auth = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
   const [tab, setTab] = useState<AgentsTab>(() => getTabFromLocation(location));
-
-  const [tools, setTools] = useState<AdminToolDefinition[]>([]);
-  const [toolsError, setToolsError] = useState<string | null>(null);
-
-  const [selectedJob, setSelectedJob] = useState<EventAgentJobControl | null>(null);
-
-  const canControlEventAgents = useMemo(
-    () => Boolean(auth.isSystemAdmin || auth.permissions.includes("org.event_agents.control")),
-    [auth.isSystemAdmin, auth.permissions],
-  );
-
-  const canReadToolCatalog = useMemo(
-    () => Boolean(
-      auth.isSystemAdmin
-      || auth.permissions.includes("org.tool_policy.read")
-      || auth.permissions.includes("platform.roles.manage")
-      || auth.permissions.includes("org.user_policy.read"),
-    ),
-    [auth.isSystemAdmin, auth.permissions],
-  );
 
   useEffect(() => {
     const nextTab = getTabFromLocation(location);
     setTab(nextTab);
   }, [location]);
 
-  useEffect(() => {
-    // The runtime job selection is used for the control tab only.
-    // Leaving it set while viewing audit logs is confusing because it renders an
-    // "audit filter" banner even though no filter is applied.
-    if (tab === "audit") {
-      setSelectedJob(null);
-    }
-  }, [tab]);
-
-  useEffect(() => {
-    if (!canControlEventAgents || !canReadToolCatalog) {
-      setTools([]);
-      return;
-    }
-
-    let cancelled = false;
-    void listAdminTools()
-      .then((result) => {
-        if (!cancelled) {
-          setTools(result.tools);
-          setToolsError(null);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setTools([]);
-          setToolsError(error instanceof Error ? error.message : String(error));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [canControlEventAgents, canReadToolCatalog]);
-
-  const builtInContractId = useMemo(
-    () => (selectedJob?.contractSourceId ? String(selectedJob.contractSourceId) : undefined),
-    [selectedJob?.contractSourceId],
-  );
-
-  const builtInActorId = useMemo(
-    () => (selectedJob?.actorId ? String(selectedJob.actorId) : undefined),
-    [selectedJob?.actorId],
-  );
 
   return (
     <div data-page="agents" className="flex flex-col h-full min-h-0 overflow-hidden bg-slate-950 p-4 text-slate-100">
@@ -124,36 +53,15 @@ export default function AgentsPage() {
           </Button>
         </div>
 
-        {tab === "control" && (builtInContractId || builtInActorId) ? (
-          <div className="text-xs text-slate-500">
-            audit filter:
-            {builtInContractId ? <span className="ml-2 font-mono text-slate-300">contract {builtInContractId}</span> : null}
-            {builtInActorId ? <span className="ml-2 font-mono text-slate-300">actor {builtInActorId}</span> : null}
-          </div>
-        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {tab === "control" ? (
           <div className="flex flex-col h-full min-h-0 gap-4">
-            {!canControlEventAgents ? (
-              <div className="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
-                Event-agent control access required.
-              </div>
-            ) : (
-              <>
-                {toolsError ? (
-                  <div className="shrink-0 rounded-lg border border-amber-700 bg-amber-950/30 p-3 text-xs text-amber-200">
-                    Tool catalog unavailable: {toolsError}
-                  </div>
-                ) : null}
-                <EventAgentsPanel
-                  canManage={canControlEventAgents}
-                  tools={tools}
-                  onSelectedJobChange={(job) => setSelectedJob(job as EventAgentJobControl | null)}
-                />
-              </>
-            )}
+            <div
+              id="knoxx-event-agents-root"
+              className="h-full min-h-0"
+            />
           </div>
         ) : (
           <AgentAuditLogs

@@ -8,16 +8,16 @@ cljs.core.async.impl.dispatch.process_messages = (function cljs$core$async$impl$
 
 (cljs.core.async.impl.dispatch.queued_QMARK_ = false);
 
-var count_12899 = (0);
+var count_25630 = (0);
 while(true){
-var m_12900 = cljs.core.async.impl.dispatch.tasks.pop();
-if((m_12900 == null)){
+var m_25631 = cljs.core.async.impl.dispatch.tasks.pop();
+if((m_25631 == null)){
 } else {
-(m_12900.cljs$core$IFn$_invoke$arity$0 ? m_12900.cljs$core$IFn$_invoke$arity$0() : m_12900.call(null));
+(m_25631.cljs$core$IFn$_invoke$arity$0 ? m_25631.cljs$core$IFn$_invoke$arity$0() : m_25631.call(null));
 
-if((count_12899 < cljs.core.async.impl.dispatch.TASK_BATCH_SIZE)){
-var G__12901 = (count_12899 + (1));
-count_12899 = G__12901;
+if((count_25630 < cljs.core.async.impl.dispatch.TASK_BATCH_SIZE)){
+var G__25632 = (count_25630 + (1));
+count_25630 = G__25632;
 continue;
 } else {
 }

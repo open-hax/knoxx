@@ -1,3 +1,5 @@
+import "./cljs_env.js";
+import "./shadow.js.js";
 import * as esm_import$react from "react";
 goog.provide("shadow.esm.esm_import$react");
 shadow.js.nativeProvides["shadow.esm.esm_import$react"] = esm_import$react;

@@ -1,31 +1,18 @@
 (ns knoxx.frontend.core
-  "Helix entry point for the Knoxx frontend.
+  "shadow-cljs browser entrypoint.
 
-   shadow-cljs mounts this namespace at process boot and hot-reloads it
-   via the ^:dev/after-load hook."
-  (:require [helix.core :as hx :refer [$ defnc]]
-            [helix.dom :as d]
-            ["react-dom/client" :as rdc]
-            ["@open-hax/knoxx-frontend-bridge" :as bridge]))
+   This bundle is loaded into the Vite app as a plain script. It MUST NOT
+   mount into #root (Vite owns the main React tree).
 
-(defnc app []
-  (d/div {:class-name "min-h-screen bg-slate-900 text-white p-8"}
-    (d/h1 {:class-name "text-3xl font-bold mb-4"}
-      "Knoxx")
-    (d/p "Hello from shadow-cljs + helix!")
-    ;; Mount a TypeScript component via the bridge
-    ($ bridge/EmptyState {:title "Nothing here yet"
-                          :message "This TS component is imported from shadow-cljs."
-                          :icon "🧪"})))
+   Its job is to ensure CLJS namespaces are loaded so exported components are
+   available under window.knoxx.* for TS wrappers to call." 
+  (:require [knoxx.frontend.app :as app]
+            [knoxx.frontend.admin.event-agents-panel]))
 
 (defn ^:dev/after-load after-load []
-  (println "[knoxx-frontend] hot reload"))
+  (js/console.log "[knoxx-frontend] hot reload")
+  (app/mount!))
 
 (defn ^:dev/once init []
-  ;; Only auto-render in standalone mode; when embedded in Vite,
-  ;; components are mounted by EventAgentsPanel.tsx
-  (when (and (not js/window.__knoxxViteApp)
-             (js/document.getElementById "cljs-root"))
-    (let [root-el (js/document.getElementById "cljs-root")
-          root (.createRoot rdc root-el)]
-      (.render root ($ app)))))
+  (js/console.log "[knoxx-frontend] cljs bundle loaded")
+  (app/mount!))

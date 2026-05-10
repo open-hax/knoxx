@@ -1,16 +1,39 @@
 (ns knoxx.frontend.admin.event-agents-panel
   "Main event agent runtime control panel with state management.
    Replaces the legacy DiscordSection.tsx."
-  (:require [helix.core :as hx :refer [$ defnc]]
+  (:require [clojure.string :as str]
+            [helix.core :as hx :refer [$ defnc]]
             [helix.hooks :as hooks]
             [helix.dom :as d]
-            [shadow.cljs.modern :refer [js-await]]
             [knoxx.frontend.admin.event-agent-utils :as u]
             [knoxx.frontend.admin.event-agent-components :as c]
             [knoxx.frontend.admin.event-agent-sidebar :as sidebar]
             [knoxx.frontend.admin.event-agents :as agents]
-            [knoxx.frontend.admin.event-agent-infrastructure :as infra]
             ["@open-hax/knoxx-frontend-bridge" :as bridge]))
+
+;; ---------------------------------------------------------------------------
+;; Helpers
+;; ---------------------------------------------------------------------------
+
+(defn- await
+  "Single-binding helper: (await [x (foo)] (bar x))"
+  [[sym expr] & body]
+  `(-> ~expr
+       (.then (fn [~sym] ~@body))))
+
+(defn- await-all
+  "Parallel await for multiple promises."
+  [bindings & body]
+  (let [syms (take-nth 2 bindings)
+        exprs (take-nth 2 (rest bindings))]
+    `(-> (js/Promise.all (cljs.core/array ~@exprs))
+         (.then (fn [res#]
+                  (let [~@(interleave syms (map-indexed (fn [i _] `(aget res# ~i)) exprs))]
+                    ~@body))))))
+
+;; ---------------------------------------------------------------------------
+;; Sub-components
+;; ---------------------------------------------------------------------------
 
 (defnc sidebar-controls
   "Control buttons above the job list."
@@ -80,7 +103,7 @@
                 (d/div {:class-name "rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2"}
                        (d/div {:class-name "text-[11px] uppercase tracking-wide text-slate-500"} "Freshness")
                        (d/div {:class-name "mt-1 text-lg font-semibold text-slate-100"} seen-discord-channels)
-                       (d/div {:class-name "text-[11px] text-slate-500"} "Channels")))))
+                        (d/div {:class-name "text-[11px] text-slate-500"} "Channels")))))
 
 (defnc notice-banner
   "Success or error notice banner."
@@ -98,6 +121,10 @@
   (when (seq error)
     (d/div {:class-name "rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200"}
            error)))
+
+;; ---------------------------------------------------------------------------
+;; Main panel
+;; ---------------------------------------------------------------------------
 
 (defnc event-agents-panel
   "Main panel component.
@@ -124,14 +151,10 @@
         [draft-token set-draft-token] (hooks/use-state "")
         [event-source-kind set-event-source-kind] (hooks/use-state "github")
         [event-kind set-event-kind] (hooks/use-state "issues.opened")
-        [event-payload set-event-payload] (hooks/use-state "{\n  \"repository\": \"open-hax/openplanner\",\n  \"title\": \"Example event\",\n  \"content\": \"Investigate this issue\"\n}")]
+        [event-payload set-event-payload] (hooks/use-state "{\"repository\": \"open-hax/openplanner\", \"title\": \"Example event\", \"content\": \"Investigate this issue\"}")
 
         ;; Derived state
         runtime-jobs (if status (.. status -runtime -jobs) #js [])
-        available-roles (if status (.-availableRoles status) #js [])
-        available-source-kinds (if status (.-availableSourceKinds status) #js [])
-        available-trigger-kinds (if status (.-availableTriggerKinds status) #js [])
-        available-tool-ids (->> tools (map #(.-id %)) sort)
         discord-source (if draft (.. draft -sources -discord) #js {})
         recent-event-count (if (and status (.. status -runtime -sources -recentEvents)
                                     (js/Array.isArray (.. status -runtime -sources -recentEvents)))
@@ -148,7 +171,7 @@
                           (if (empty? query)
                             (.-jobs draft)
                             (->> (.-jobs draft)
-                                 (filter #(clojure.string/includes? (u/job-search-text %) query)))))
+                                 (filter #(str/includes? (u/job-search-text %) query)))))
                         [])
 
         selected-job (if (seq filtered-jobs)
@@ -172,22 +195,25 @@
                     (set-loading true)
                     (set-error "")
                     (set-notice nil)
-                    (js-await [token-status (bridge/getDiscordConfig)
-                               control-status (bridge/getEventAgentControl)]
-                      (let [merged (js/Object.assign #js {} control-status
-                                                     #js {:configured (.-configured token-status)
-                                                          :tokenPreview (.-tokenPreview token-status)})]
-                        (set-status merged)
-                        (set-draft (.-control merged))
-                        (set-draft-token "")
-                        (set-json-drafts (u/seed-json-drafts (.. merged -control -jobs)))
-                        (set-event-source-kind (if (.includes (.-availableSourceKinds merged) "github")
-                                                 "github"
-                                                 (or (first (.-availableSourceKinds merged)) "manual")))
-                        (set-loading false))
-                      (catch js/Error err
-                        (set-error (.-message err))
-                        (set-loading false))))
+                    (-> (js/Promise.all (array (bridge/getDiscordConfig)
+                                               (bridge/getEventAgentControl)))
+                        (.then (fn [res]
+                                 (let [token-status (aget res 0)
+                                       control-status (aget res 1)
+                                       merged (js/Object.assign #js {} control-status
+                                                                #js {:configured (.-configured token-status)
+                                                                     :tokenPreview (.-tokenPreview token-status)})]
+                                   (set-status merged)
+                                   (set-draft (.-control merged))
+                                   (set-draft-token "")
+                                   (set-json-drafts (u/seed-json-drafts (.. merged -control -jobs)))
+                                   (set-event-source-kind (if (.includes (.-availableSourceKinds merged) "github")
+                                                            "github"
+                                                            (or (first (.-availableSourceKinds merged)) "manual")))
+                                   (set-loading false))))
+                        (.catch (fn [err]
+                                  (set-error (.-message err))
+                                  (set-loading false)))))
 
         update-job (fn [job-id patch]
                      (when draft
@@ -203,10 +229,10 @@
         update-json-draft (fn [job-id field value]
                             (set-json-drafts
                               (update json-drafts job-id
-                                      (fn [draft]
-                                        (assoc (or draft {:source-config "{}"
-                                                          :filters "{}"
-                                                          :tool-policies "[]"})
+                                      (fn [d]
+                                        (assoc (or d {:source-config "{}"
+                                                      :filters "{}"
+                                                      :tool-policies "[]"})
                                                field value)))))
 
         parse-control-for-save (fn []
@@ -238,26 +264,27 @@
 
         handle-save-token (fn []
                             (when can-manage
-                              (let [normalized (clojure.string/trim draft-token)]
+                              (let [normalized (str/trim draft-token)]
                                 (if (empty? normalized)
                                   (set-error "Bot token must not be blank")
                                   (do
                                     (set-saving-token true)
                                     (set-error "")
                                     (set-notice nil)
-                                    (js-await [updated (bridge/updateDiscordConfig normalized)]
-                                      (set-status (fn [current]
-                                                    (when current
-                                                      (js/Object.assign #js {} current
-                                                                        #js {:configured (.-configured updated)
-                                                                             :tokenPreview (.-tokenPreview updated)}))))
-                                      (set-draft-token "")
-                                      (set-notice {:tone :success :text (str "Discord bot token saved. Preview: " (.-tokenPreview updated))})
-                                      (load-data)
-                                      (catch js/Error err
-                                        (set-notice {:tone :error :text (.-message err)}))
-                                      (finally
-                                        (set-saving-token false))))))))
+                                    (-> (bridge/updateDiscordConfig normalized)
+                                        (.then (fn [updated]
+                                                 (set-status (fn [current]
+                                                               (when current
+                                                                 (js/Object.assign #js {} current
+                                                                                   #js {:configured (.-configured updated)
+                                                                                        :tokenPreview (.-tokenPreview updated)}))))
+                                                 (set-draft-token "")
+                                                 (set-notice {:tone :success :text (str "Discord bot token saved. Preview: " (.-tokenPreview updated))})
+                                                 (load-data)))
+                                        (.catch (fn [err]
+                                                  (set-notice {:tone :error :text (.-message err)})))
+                                        (.finally (fn []
+                                                    (set-saving-token false)))))))))
 
         handle-save-control (fn []
                               (when (and can-manage draft)
@@ -266,28 +293,33 @@
                                 (set-notice nil)
                                 (try
                                   (let [next (parse-control-for-save)]
-                                    (js-await [updated (bridge/updateEventAgentControl next)]
-                                      (set-status updated)
-                                      (set-draft (.-control updated))
-                                      (set-json-drafts (u/seed-json-drafts (.. updated -control -jobs)))
-                                      (set-notice {:tone :success :text "Event-agent control plane updated and runtime reloaded."})
-                                      (catch js/Error err
-                                        (set-notice {:tone :error :text (.-message err)}))
-                                      (finally
-                                        (set-saving-control false))))))))
+                                    (-> (bridge/updateEventAgentControl next)
+                                        (.then (fn [updated]
+                                                 (set-status updated)
+                                                 (set-draft (.-control updated))
+                                                 (set-json-drafts (u/seed-json-drafts (.. updated -control -jobs)))
+                                                 (set-notice {:tone :success :text "Event-agent control plane updated and runtime reloaded."})))
+                                        (.catch (fn [err]
+                                                  (set-notice {:tone :error :text (.-message err)})))
+                                        (.finally (fn []
+                                                    (set-saving-control false)))))
+                                  (catch js/Error err
+                                    (set-notice {:tone :error :text (.-message err)})
+                                    (set-saving-control false)))))
 
         handle-run-job (fn [job-id]
                          (when can-manage
                            (set-running-job-id job-id)
                            (set-error "")
                            (set-notice nil)
-                           (js-await [_ (bridge/runEventAgentJob job-id)]
-                             (set-notice {:tone :success :text (str "Queued job " job-id ".")})
-                             (load-data)
-                             (catch js/Error err
-                               (set-notice {:tone :error :text (.-message err)}))
-                             (finally
-                               (set-running-job-id nil)))))
+                           (-> (bridge/runEventAgentJob job-id)
+                               (.then (fn [_]
+                                        (set-notice {:tone :success :text (str "Queued job " job-id ".")})
+                                        (load-data)))
+                               (.catch (fn [err]
+                                         (set-notice {:tone :error :text (.-message err)})))
+                               (.finally (fn []
+                                           (set-running-job-id nil))))))
 
         handle-dispatch-event (fn []
                                 (when can-manage
@@ -296,71 +328,78 @@
                                   (set-notice nil)
                                   (try
                                     (let [payload (js/JSON.parse (or event-payload "{}"))]
-                                      (js-await [result (bridge/dispatchEventAgentEvent
-                                                          #js {:sourceKind event-source-kind
-                                                               :eventKind event-kind
-                                                               :payload payload})]
-                                        (set-notice {:tone :success
-                                                     :text (str "Dispatched " event-source-kind ":" event-kind
-                                                                ". Matched jobs: "
-                                                                (or (clojure.string/join ", " (.-matchedJobs result))
-                                                                    "none") ".")})
-                                        (load-data)
-                                        (catch js/Error err
-                                          (set-notice {:tone :error :text (.-message err)}))
-                                        (finally
-                                          (set-dispatching-event false))))))))
+                                      (-> (bridge/dispatchEventAgentEvent
+                                            #js {:sourceKind event-source-kind
+                                                 :eventKind event-kind
+                                                 :payload payload})
+                                          (.then (fn [result]
+                                                   (set-notice {:tone :success
+                                                                :text (str "Dispatched " event-source-kind ":" event-kind
+                                                                           ". Matched jobs: "
+                                                                           (or (str/join ", " (.-matchedJobs result))
+                                                                               "none") ".")})
+                                                   (load-data)))
+                                          (.catch (fn [err]
+                                                    (set-notice {:tone :error :text (.-message err)})))
+                                          (.finally (fn []
+                                                      (set-dispatching-event false)))))
+                                    (catch js/Error err
+                                      (set-notice {:tone :error :text (.-message err)})
+                                      (set-dispatching-event false)))))
 
         handle-stop-runtime (fn []
                               (when can-manage
                                 (set-toggling-runtime true)
                                 (set-error "")
                                 (set-notice nil)
-                                (js-await [updated (bridge/stopEventAgentRuntime)]
-                                  (set-status updated)
-                                  (set-draft (.-control updated))
-                                  (set-json-drafts (u/seed-json-drafts (.. updated -control -jobs)))
-                                  (set-notice {:tone :success :text "Event-agent runtime stopped (schedulers cleared)."})
-                                  (catch js/Error err
-                                    (set-notice {:tone :error :text (.-message err)}))
-                                  (finally
-                                    (set-toggling-runtime false)))))
+                                (-> (bridge/stopEventAgentRuntime)
+                                    (.then (fn [updated]
+                                             (set-status updated)
+                                             (set-draft (.-control updated))
+                                             (set-json-drafts (u/seed-json-drafts (.. updated -control -jobs)))
+                                             (set-notice {:tone :success :text "Event-agent runtime stopped (schedulers cleared)."})))
+                                    (.catch (fn [err]
+                                              (set-notice {:tone :error :text (.-message err)})))
+                                    (.finally (fn []
+                                                (set-toggling-runtime false))))))
 
         handle-start-runtime (fn []
                                (when can-manage
                                  (set-toggling-runtime true)
                                  (set-error "")
                                  (set-notice nil)
-                                 (js-await [updated (bridge/startEventAgentRuntime)]
-                                   (set-status updated)
-                                   (set-draft (.-control updated))
-                                   (set-json-drafts (u/seed-json-drafts (.. updated -control -jobs)))
-                                   (set-notice {:tone :success :text "Event-agent runtime started."})
-                                   (load-data)
-                                   (catch js/Error err
-                                     (set-notice {:tone :error :text (.-message err)}))
-                                   (finally
-                                     (set-toggling-runtime false)))))
+                                 (-> (bridge/startEventAgentRuntime)
+                                     (.then (fn [updated]
+                                              (set-status updated)
+                                              (set-draft (.-control updated))
+                                              (set-json-drafts (u/seed-json-drafts (.. updated -control -jobs)))
+                                              (set-notice {:tone :success :text "Event-agent runtime started."})
+                                              (load-data)))
+                                     (.catch (fn [err]
+                                               (set-notice {:tone :error :text (.-message err)})))
+                                     (.finally (fn []
+                                                 (set-toggling-runtime false))))))
 
         handle-reset-runtime (fn []
                                (when can-manage
                                  (set-resetting-runtime true)
                                  (set-error "")
                                  (set-notice nil)
-                                 (js-await [updated (bridge/resetEventAgentRuntime)]
-                                   (set-status updated)
-                                   (set-draft (.-control updated))
-                                   (set-json-drafts (u/seed-json-drafts (.. updated -control -jobs)))
-                                   (set-notice {:tone :success
-                                                :text (str "Event-agent runtime reset. Cleared "
-                                                           (.. updated -reset -deletedCount)
-                                                           " persisted state key(s) and disabled "
-                                                           (.. updated -reset -disabledCronJobCount)
-                                                           " cron job(s). Review schedules before restarting.")})
-                                   (catch js/Error err
-                                     (set-notice {:tone :error :text (.-message err)}))
-                                   (finally
-                                     (set-resetting-runtime false)))))]
+                                 (-> (bridge/resetEventAgentRuntime)
+                                     (.then (fn [updated]
+                                              (set-status updated)
+                                              (set-draft (.-control updated))
+                                              (set-json-drafts (u/seed-json-drafts (.. updated -control -jobs)))
+                                              (set-notice {:tone :success
+                                                           :text (str "Event-agent runtime reset. Cleared "
+                                                                      (.. updated -reset -deletedCount)
+                                                                      " persisted state key(s) and disabled "
+                                                                      (.. updated -reset -disabledCronJobCount)
+                                                                      " cron job(s). Review schedules before restarting.")})))
+                                     (.catch (fn [err]
+                                               (set-notice {:tone :error :text (.-message err)})))
+                                     (.finally (fn []
+                                                 (set-resetting-runtime false))))))]
 
     ;; Effects
     (hooks/use-effect
@@ -376,7 +415,7 @@
     (hooks/use-effect
       [selected-job on-selected-job-change]
       (when on-selected-job-change
-        (on-selected-job-change selected-job)))
+        (on-selected-job-change selected-job))
 
     ;; Render
     (if (or loading (not draft) (not status))
@@ -435,6 +474,6 @@
                                                    :on-run handle-run-job
                                                    :can-manage can-manage
                                                    :saving-control saving-control
-                                                   :running-job-id running-job-id}))))
+                                                   :running-job-id running-job-id})))
              ($ error-banner {:error error})
-             ($ notice-banner {:notice notice})))))
+             ($ notice-banner {:notice notice}))))))

@@ -1,7 +1,11 @@
 import { useEffect, useState, useCallback, Suspense, lazy, type ReactNode } from "react";
 import { API_BASE } from "../lib/api/core";
 import { AuthContextInstance } from "./auth-context-instance";
-import { useLocation } from "react-router-dom";
+
+// NOTE: This module is consumed by shadow-cljs via the Vite app-bridge.
+// During the router migration we avoid react-router hooks here to prevent
+// "useLocation() may be used only in the context of a <Router>" failures
+// caused by subtle router context duplication/loading-order issues.
 
 // ---------------------------------------------------------------------------
 // Types (re-exported for consumers)
@@ -69,7 +73,7 @@ const LazySignupPage = lazy(() =>
 );
 
 export default function AuthBoundary({ children }: { children: ReactNode }) {
-  const location = useLocation();
+  const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
   const [auth, setAuth] = useState<AuthContext>({
     user: null,
     actor: null,
@@ -161,7 +165,7 @@ export default function AuthBoundary({ children }: { children: ReactNode }) {
   }
 
   if (!auth.user) {
-    const showingSignup = location.pathname === "/signup";
+    const showingSignup = pathname === "/signup";
     return (
       <AuthContextInstance.Provider value={{ ...auth, refresh, logout }}>
         <Suspense fallback={<div className="flex h-screen items-center justify-center bg-slate-950 text-slate-400"><p>Loading…</p></div>}>

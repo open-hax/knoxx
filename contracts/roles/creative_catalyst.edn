@@ -10,8 +10,8 @@
                      :cap/workspace-media
                      ;; :cap/audio
                      :cap/music
-                     :cap/image-generation
-                     :cap/video-generation
+                     ;; :cap/image-generation
+                     ;; :cap/video-generation
                      :cap/voice-synth
                      ;; :cap/shoedelussy
                      ]

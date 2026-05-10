@@ -1,25 +1,49 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 
-// Lazy-loaded CLJS event agents panel wrapper
-// The shadow-cljs build must be loaded before this component renders
+// CLJS event agents panel wrapper.
+//
+// IMPORTANT: This wrapper intentionally does NOT auto-fallback to the legacy
+// TypeScript panel. If shadow-cljs isn’t correctly exporting the panel, we want
+// a loud, obvious failure so the migration stays debuggable.
 
 type CljsComponentType = React.ComponentType<{
   canManage: boolean;
-  tools: Array<{ id: string; name?: string }>;
+  tools: import("../../lib/types").AdminToolDefinition[];
   onSelectedJobChange?: (job: unknown) => void;
 }>;
 
 function getCljsComponent(): CljsComponentType | null {
-  const ns = (window as Record<string, unknown>).knoxx;
+  // CLJS namespaces use underscores instead of hyphens in JS
+  const ns = (window as unknown as Record<string, unknown>).knoxx;
   if (!ns) return null;
   const frontend = (ns as Record<string, unknown>).frontend;
   if (!frontend) return null;
   const admin = (frontend as Record<string, unknown>).admin;
   if (!admin) return null;
-  const panel = (admin as Record<string, unknown>)["event-agents-panel"];
+  const panel = (admin as Record<string, unknown>).event_agents_panel;
   if (!panel) return null;
-  const component = (panel as Record<string, unknown>)["event-agents-panel"];
+  const component = (panel as Record<string, unknown>).event_agents_panel;
   return (component as CljsComponentType) ?? null;
+}
+
+class CljsErrorBoundary extends React.Component<
+  React.PropsWithChildren<{ onError: (error: Error) => void }>,
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    this.props.onError(error);
+  }
+
+  render() {
+    if (this.state.error) return null;
+    return this.props.children;
+  }
 }
 
 export function EventAgentsPanel({
@@ -28,39 +52,41 @@ export function EventAgentsPanel({
   onSelectedJobChange,
 }: {
   canManage: boolean;
-  tools: Array<{ id: string; name?: string }>;
+  tools: import("../../lib/types").AdminToolDefinition[];
   onSelectedJobChange?: (job: unknown) => void;
 }) {
   const [Component, setComponent] = useState<CljsComponentType | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Try to get the CLJS component immediately
     const comp = getCljsComponent();
     if (comp) {
       setComponent(() => comp);
       return;
     }
 
-    // If not available, the CLJS module may still be loading
-    // Wait a bit and check again
+    // Give the /cljs/app.js injector a moment to run.
     const timer = setTimeout(() => {
       const loaded = getCljsComponent();
       if (loaded) {
         setComponent(() => loaded);
-      } else {
-        setError("CLJS module not available. Make sure /cljs/app.js is loaded.");
+        return;
       }
-    }, 2000);
+
+      setLoadError(
+        "shadow-cljs EventAgentsPanel export not found on window.knoxx.frontend.admin.event_agents_panel.event_agents_panel. " +
+          "This is an integration/compile problem (not a reason to silently render legacy TS).",
+      );
+    }, 1500);
 
     return () => clearTimeout(timer);
   }, []);
 
-  if (error) {
+  if (loadError) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-rose-400">
-        Error loading event agents panel: {error}
+      <div className="h-full rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-100">
+        <div className="font-semibold">Runtime jobs (shadow-cljs) failed to load</div>
+        <div className="mt-2 font-mono text-xs whitespace-pre-wrap break-words">{loadError}</div>
       </div>
     );
   }
@@ -68,18 +94,20 @@ export function EventAgentsPanel({
   if (!Component) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-slate-400">
-        Loading event agents panel…
+        Loading runtime jobs…
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="h-full">
-      <Component
-        canManage={canManage}
-        tools={tools}
-        onSelectedJobChange={onSelectedJobChange}
-      />
+    <div className="h-full">
+      <CljsErrorBoundary
+        onError={(error) => {
+          setLoadError(String(error?.message ?? error));
+        }}
+      >
+        <Component canManage={canManage} tools={tools} onSelectedJobChange={onSelectedJobChange} />
+      </CljsErrorBoundary>
     </div>
   );
 }

@@ -8,8 +8,17 @@
 
 export { EmptyState } from "../components/EmptyState";
 
-// Admin API functions for event agent runtime control
+// APIs for shadow-cljs consumption
 export {
+  // Auth context (permissions / isSystemAdmin)
+  getKnoxxAuthContext,
+} from "../lib/api/common";
+
+export {
+  // Tool catalog
+  listAdminTools,
+
+  // Event agent runtime control
   getDiscordConfig,
   updateDiscordConfig,
   getEventAgentControl,

@@ -12,7 +12,6 @@
             [knoxx.backend.extension-runtime :as ext-runtime]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]
-            ["@open-hax/eta-mu-cli" :as sdk]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 
@@ -20,7 +19,25 @@
 (ext-runtime/init!)
 
 (defonce sdk-runtime* (atom nil))
+(defonce sdk-module-promise* (atom nil))
 (defonce agent-sessions* (atom {}))
+
+(defn- load-eta-mu-sdk!
+  "Return a Promise of the eta-mu SDK module.
+
+   We avoid a static require/import because @open-hax/eta-mu-cli is ESM-only and
+   shadow-cljs :node-test emits CJS bundles (require()), which crashes with
+   ERR_PACKAGE_PATH_NOT_EXPORTED when the package lacks an exports.require
+   condition.
+
+   Using Function(...) keeps ClosureCompiler from trying to transpile a dynamic
+   import expression."
+  []
+  (or @sdk-module-promise*
+      (let [importer (js/Function. "specifier" "return import(specifier);")
+            p (importer "@open-hax/eta-mu-cli")]
+        (reset! sdk-module-promise* p)
+        p)))
 
 ;; Session registry bounds to prevent memory leaks under sustained load.
 (def ^:private max-agent-sessions 500)
@@ -546,44 +563,45 @@
           runtime-dir (:agent-dir config)
           models-file (.join node-path runtime-dir "models.json")
           auth-file (.join node-path runtime-dir "auth.json")
-          SettingsManager (aget sdk "SettingsManager")
-          AuthStorage (aget sdk "AuthStorage")
-          ModelRegistry (aget sdk "ModelRegistry")
-          DefaultResourceLoader (aget sdk "DefaultResourceLoader")
-          settings-manager (.inMemory SettingsManager (clj->js {:compaction {:enabled false}
-                                                                :retry {:enabled true :maxRetries 1}}))
-          p (-> (.mkdir node-fs runtime-dir #js {:recursive true})
-                (.then (fn []
-                         (-> (fetch-proxx-model-ids! config)
-                             (.then (fn [model-ids]
-                                      (-> (.writeFile node-fs
-                                                      models-file
-                                                      (.stringify js/JSON (clj->js (models-config config model-ids)) nil 2)
-                                                      "utf8")
-                                          (.then (fn [] nil))))))))
-
-                (.then (fn []
-                         (let [auth-storage (.create AuthStorage auth-file)
-                               _ (when-not (str/blank? (:proxx-auth-token config))
-                                   (.setRuntimeApiKey auth-storage "proxx" (:proxx-auth-token config)))
-                               _ (doseq [[provider-id env-var] (or (:provider-auth-tokens config) {})]
-                                   (let [provider-id (some-> provider-id str str/trim not-empty)
-                                         env-var (some-> env-var str str/trim not-empty)
-                                         token (when env-var (aget js/process.env env-var))]
-                                     (when (and provider-id (string? token) (not (str/blank? token)))
-                                       (.setRuntimeApiKey auth-storage provider-id token))))
-                               model-registry (ModelRegistry. auth-storage models-file)
-                               loader (DefaultResourceLoader.
-                                       #js {:cwd (:workspace-root config)
-                                            :agentDir runtime-dir
-                                            :settingsManager settings-manager})]
-                           (-> (.reload loader)
+          p (-> (load-eta-mu-sdk!)
+                (.then (fn [sdk]
+                         (let [SettingsManager (aget sdk "SettingsManager")
+                               AuthStorage (aget sdk "AuthStorage")
+                               ModelRegistry (aget sdk "ModelRegistry")
+                               DefaultResourceLoader (aget sdk "DefaultResourceLoader")
+                               settings-manager (.inMemory SettingsManager (clj->js {:compaction {:enabled false}
+                                                                                     :retry {:enabled true :maxRetries 1}}))]
+                           (-> (.mkdir node-fs runtime-dir #js {:recursive true})
                                (.then (fn []
-                                        #js {:authStorage auth-storage
-                                             :modelRegistry model-registry
-                                             :settingsManager settings-manager
-                                             :loader loader
-                                             :runtimeDir runtime-dir}))))))
+                                        (-> (fetch-proxx-model-ids! config)
+                                            (.then (fn [model-ids]
+                                                     (-> (.writeFile node-fs
+                                                                     models-file
+                                                                     (.stringify js/JSON (clj->js (models-config config model-ids)) nil 2)
+                                                                     "utf8")
+                                                         (.then (fn [] nil))))))))
+                               (.then (fn []
+                                        (let [auth-storage (.create AuthStorage auth-file)
+                                              _ (when-not (str/blank? (:proxx-auth-token config))
+                                                  (.setRuntimeApiKey auth-storage "proxx" (:proxx-auth-token config)))
+                                              _ (doseq [[provider-id env-var] (or (:provider-auth-tokens config) {})]
+                                                  (let [provider-id (some-> provider-id str str/trim not-empty)
+                                                        env-var (some-> env-var str str/trim not-empty)
+                                                        token (when env-var (aget js/process.env env-var))]
+                                                    (when (and provider-id (string? token) (not (str/blank? token)))
+                                                      (.setRuntimeApiKey auth-storage provider-id token))))
+                                              model-registry (ModelRegistry. auth-storage models-file)
+                                              loader (DefaultResourceLoader.
+                                                      #js {:cwd (:workspace-root config)
+                                                           :agentDir runtime-dir
+                                                           :settingsManager settings-manager})]
+                                          (-> (.reload loader)
+                                              (.then (fn []
+                                                       #js {:authStorage auth-storage
+                                                            :modelRegistry model-registry
+                                                            :settingsManager settings-manager
+                                                            :loader loader
+                                                            :runtimeDir runtime-dir}))))))))))
                 (.catch (fn [err]
                           (reset! sdk-runtime* nil)
                           (js/Promise.reject err))))]
@@ -601,9 +619,11 @@
    (-> (ensure-sdk-runtime! runtime config)
        (.then
         (fn [sdk-runtime]
-          (let [SessionManager (aget sdk "SessionManager")
-                createAgentSession (aget sdk "createAgentSession")
-                model-registry (aget sdk-runtime "modelRegistry")
+          (-> (load-eta-mu-sdk!)
+              (.then (fn [sdk]
+                       (let [SessionManager (aget sdk "SessionManager")
+                             createAgentSession (aget sdk "createAgentSession")
+                             model-registry (aget sdk-runtime "modelRegistry")
                 auth-storage (aget sdk-runtime "authStorage")
                 loader (aget sdk-runtime "loader")
                 settings-manager (aget sdk-runtime "settingsManager")
@@ -711,7 +731,7 @@
                 (.appendThinkingLevelChange session-manager thinking-level)
                 (-> (rehydrate-session-manager-from-redis! config session-manager conversation-id session-id agent-spec)
                     (.then (fn [result]
-                             (create-session (aget result "sessionManager")))))))))))))
+                             (create-session (aget result "sessionManager"))))))))))))))))
 
 (defn- visible-session-signature
   [runtime config auth-context agent-spec]

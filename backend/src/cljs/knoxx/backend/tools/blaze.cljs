@@ -124,21 +124,90 @@
     "tts" "MiniMax-speech-2.8-hd-highspeed"
     "fast-general"))
 
+;; Blaze media generation queue — limit concurrency to 1 so each request gets
+;; Blaze's full attention and avoids Cloudflare 120s timeout under contention.
+(def ^:private blaze-queue (atom {:in-flight false :waiting []}))
+
+
+(defn- run-queued!
+  "Enqueue fn; if nothing in flight, run immediately. Otherwise queue."
+  [f]
+  (js/Promise.
+   (fn [resolve reject]
+     (letfn [(try-run! []
+               (let [current @blaze-queue]
+                 (if (:in-flight current)
+                   (swap! blaze-queue update :waiting conj [resolve reject f])
+                   (do
+                     (swap! blaze-queue assoc :in-flight true)
+                     (-> (f)
+                         (.then (fn [result]
+                                  (resolve result)
+                                  (drain!)))
+                         (.catch (fn [err]
+                                   (reject err)
+                                   (drain!))))))))
+             (drain! []
+               (let [current (swap! blaze-queue
+                                    (fn [q]
+                                      (let [rest (vec (rest (:waiting q)))]
+                                        (if (seq rest)
+                                          {:in-flight true :waiting rest}
+                                          {:in-flight false :waiting []}))))
+                     next (first (:waiting current))]
+                 (when next
+                   (let [[rslv rjct fn-] next]
+                     (-> (fn-)
+                         (.then (fn [result]
+                                  (rslv result)
+                                  (drain!)))
+                         (.catch (fn [err]
+                                   (rjct err)
+                                   (drain!))))))))]
+       (try-run!)))))
+
 (defn- candidate-models
   [modality requested-model]
   (if-let [model (blank->nil requested-model)]
     [model]
     (case modality
+      ;; Music endpoints can be flaky/model-gated; keep a deterministic fallback
+      ;; order so "terminated" or other logical failures can try 2.5.
       "music" ["MiniMax-music-2.6-highspeed"
                "MiniMax-music-2.5-highspeed"]
-      "image" ["MiniMax-image-01-highspeed"
-               "qwen3.6-plus-image"
-               "qwen3.5-omni-plus-image"
-               "qwen3.5-omni-flash-thinking-search"]
-      "video" ["qwen3.5-omni-flash-thinking-search"
-               "qwen3.6-plus-video"]
+      "image" ["MiniMax-image-01-highspeed"]
+      "video" ["qwen3.5-omni-flash-thinking-search"]
       "tts" ["MiniMax-speech-2.8-hd-highspeed"]
       [(default-model modality)])))
+
+(declare response-text first-data-url first-media-url hex-asset-string base64-asset-string)
+
+(defn- payload-has-output?
+  "Best-effort detection of whether a Blaze payload includes any usable output.
+
+   Some upstream/proxy responses may report status=terminated/failed while still
+   including an asset URL or embedded audio/image/video bytes. The known-good
+   Python script treats these as success when an asset can be saved, so Knoxx
+   should only treat logical statuses as fatal when no output is present."
+  [payload]
+  (let [data (:data payload)
+        data-maps (cond
+                    (map? data) [data]
+                    (sequential? data) (filter map? data)
+                    :else [])
+        has-direct? (some (fn [m]
+                            (or (blank->nil (:url m))
+                                (blank->nil (:audio m))
+                                (blank->nil (:video m))))
+                          data-maps)
+        text (response-text payload)
+        asset-text (str text "\n" (pr-str payload))]
+    (boolean
+     (or has-direct?
+         (first-data-url asset-text)
+         (first-media-url asset-text)
+         (hex-asset-string payload)
+         (base64-asset-string payload)))))
 
 (defn- default-system-prompt
   [modality]
@@ -221,29 +290,30 @@
         payload (parse-json-object (aget params "payload_json") "payload_json")
         music-lyrics (normalize-music-lyrics (aget params "lyrics"))
         music-prompt (ensure-vocal-music-prompt prompt music-lyrics)
-        explicit-instrumental (bool-param params "is_instrumental")
-        instrumental? (if (nil? explicit-instrumental)
-                        (and (nil? music-lyrics)
-                             (not (prompt-implies-vocals? music-prompt)))
-                        explicit-instrumental)
-        explicit-lyrics-optimizer (bool-param params "lyrics_optimizer")
-        lyrics-optimizer? (if (nil? explicit-lyrics-optimizer)
-                            (and (not instrumental?) (nil? music-lyrics))
-                            explicit-lyrics-optimizer)
+      explicit-instrumental (bool-param params "is_instrumental")
+      instrumental? (if (nil? explicit-instrumental)
+                      (nil? music-lyrics)
+                      explicit-instrumental)
+      explicit-lyrics-optimizer (bool-param params "lyrics_optimizer")
+      lyrics-optimizer? (if (nil? explicit-lyrics-optimizer)
+                          false
+                          explicit-lyrics-optimizer)
         music-format (or (blank->nil (aget params "audio_format"))
                          (output-path-audio-format params)
                          "mp3")
         base (case modality
                "image" {:model model :prompt prompt}
                "video" {:model model :prompt prompt}
-               "music" (cond-> {:model model
-                                 :prompt music-prompt
-                                 :lyrics_optimizer lyrics-optimizer?
-                                 :is_instrumental instrumental?
-                                 :sample_rate (or (some-> (aget params "sample_rate") js/Number) 44100)
-                                 :bitrate (or (some-> (aget params "bitrate") js/Number) 256000)
-                                 :audio_format music-format}
-                         music-lyrics (assoc :lyrics music-lyrics))
+                "music" (cond-> {:model model
+                                  :prompt music-prompt
+                                  :lyrics_optimizer lyrics-optimizer?
+                                  :is_instrumental instrumental?
+                                  :sample_rate (let [v (aget params "sample_rate")]
+                                                 (if (number? v) v 44100))
+                                  :bitrate (let [v (aget params "bitrate")]
+                                             (if (number? v) v 256000))
+                                  :audio_format music-format}
+                          music-lyrics (assoc :lyrics music-lyrics))
                "tts" {:model model
                       :input prompt
                       :voice "default"
@@ -261,11 +331,24 @@
   [payload]
   (let [status (some-> (:status payload) str str/lower-case)
         error (blank->nil (:error payload))
-        message (blank->nil (:message payload))]
-    (when (contains? #{"failed" "error" "terminated" "canceled" "cancelled"} status)
+        message (blank->nil (:message payload))
+        status-msg (blank->nil (get-in payload [:analysis_info :status_msg]))
+        no-output? (true? (:_blaze_no_output payload))
+        has-output? (payload-has-output? payload)]
+    (cond
+      (and (contains? #{"failed" "error" "terminated" "canceled" "cancelled"} status)
+           (not has-output?))
       (str "Blaze returned " status
            (when-let [detail (or error message)]
-             (str ": " detail))))))
+             (str ": " detail)))
+
+      (or no-output?
+          (and status-msg (re-find #"(?i)usage limit exceeded|daily usage limit" status-msg)))
+      (str "Blaze returned no output"
+           (when-let [detail (or status-msg error message)]
+             (str ": " detail)))
+
+      :else nil)))
 
 (defn- fetch-json!
   [url api-key body log-context]
@@ -280,6 +363,7 @@
                                       :body (summarize-body body)))
     (p/let [res (js/fetch url #js {:method "POST"
                                    :headers headers
+                                   :signal (js/AbortSignal.timeout 1200000)
                                    :body (.stringify js/JSON (clj->js body))})
             elapsed (- (now-ms) start-ms)
             _ (log-info! "response-status" (assoc log-context
@@ -348,10 +432,10 @@
     {:mime-type mime
      :buffer (.from js/Buffer b64 "base64")}))
 
-(defn- likely-media-url?
+      (defn- likely-media-url?
   [url]
   (or (re-find #"(?i)\.(png|jpe?g|webp|gif|svg|mp3|wav|ogg|m4a|flac|aac|mp4|webm|mov)(\?|$)" url)
-      (re-find #"(?i)(image|audio|video|file|asset|download)" url)))
+      (re-find #"(?i)(image|audio|video|music|file|asset|download|output)" url)))
 
 (defn- first-media-url
   [text]
@@ -396,7 +480,10 @@
 (defn- fetch-media-url!
   [url]
   (log-info! "asset-download-start" {:url url})
-  (p/let [res (js/fetch url #js {:headers #js {"Accept" "image/*,audio/*,video/*,*/*"}})
+  (p/let [res (js/fetch url #js {:headers #js {"Accept" "image/*,audio/*,video/*,*/*"}
+                                 :signal (js/AbortSignal.timeout 1200000)
+
+                                 })
           _ (when-not (.-ok res)
               (p/let [msg (.text res)]
                 (throw (js/Error. (str "Generated asset download HTTP " (.-status res) ": " msg)))))
@@ -599,11 +686,11 @@
             saved (maybe-save-asset! runtime config modality output-path asset-text payload)
             response-artifact (when-not saved (write-response-json! runtime config payload))
             _ (log-info! "execute-complete" (assoc log-context
-                                                    :model model
-                                                    :attempts (:attempts result)
-                                                    :saved_asset (boolean saved)
-                                                    :asset_workspace_path (:workspace-path saved)
-                                                    :response_artifact_workspace_path (:workspace-path response-artifact)))]
+                                                   :model model
+                                                   :attempts (:attempts result)
+                                                   :saved_asset (boolean saved)
+                                                   :asset_workspace_path (:workspace-path saved)
+                                                   :response_artifact_workspace_path (:workspace-path response-artifact)))]
       (tool-text-result
        (str "Proxx Blaze " modality " response from " model
             (if saved

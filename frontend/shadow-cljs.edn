@@ -1,21 +1,44 @@
-{:source-paths ["src/cljs"]
+{:source-paths ["src/cljs" "src/dev"]
  :dependencies [[lilactown/helix "0.2.2"]]
  :nrepl {:port 4501}
+
+ ;; Make shadow-cljs the dev entrypoint:
+ ;; - Serves the Vite build output from ./dist
+ ;; - Proxies backend traffic (/api, /ws, /health) to the backend
+ ;; - Keeps shadow devtools endpoints local (/api/remote-*, /api/open-file)
+ :dev-http
+ {5173 {:roots ["." "dist"]
+        :push-state/index "index.html"
+        :proxy-url "http://knoxx-backend:8000"
+        :proxy-predicate knoxx.frontend.dev-http/proxy-predicate}}
+
  :builds
  {:app
-  {:target :browser
-   :output-dir "public/cljs"
+ {:target :browser
+   ;; NOTE: output goes to dist/cljs for both dev (watch) and prod (release).
+   ;; Do not write shadow outputs into ./public because Vite treats that as a
+   ;; static "source" directory; stale artifacts there can shadow the real build.
+   :output-dir "dist/cljs"
    :asset-path "/cljs"
    :modules {:app {:init-fn knoxx.frontend.core/init}}
    :js-options
-   {:js-provider :import
-    :keep-as-import #{"react" "react-dom" "react-dom/client" "react-router-dom"}
+   {:js-provider :shadow
     :resolve {"@open-hax/knoxx-frontend-bridge" {:target :file
-                                                  :file "dist/bridge/knoxx-frontend-bridge.es.js"}}}
+                                                  :file "dist/bridge/knoxx-frontend-bridge.es.js"}
+              "@open-hax/knoxx-app-bridge" {:target :file
+                                            :file "dist/bridge/knoxx-app-bridge.es.js"}}}
    :devtools
-   {:http-root "public"
-    :http-port 5174
-    :after-load knoxx.frontend.core/after-load}
+   {:after-load knoxx.frontend.core/after-load
+    ;; When this bundle is served behind HTTPS (Caddy/tunnel), shadow's devtools
+    ;; client must use WSS and the public origin.
+    :use-document-protocol true
+    :use-document-host true
+    ;; IMPORTANT: don't force the document port. In the MVP/tunnel setup the
+    ;; browser might be on an arbitrary forwarded port (e.g. :9630) that is not
+    ;; actually serving shadow's /api/remote-relay endpoint. Pin devtools to the
+    ;; canonical public origin instead.
+    :use-document-port false
+    :devtools-url "https://knoxx.promethean.rest"}
    :compiler-options
    {:output-feature-set :es-next
     :source-map true}}}}
