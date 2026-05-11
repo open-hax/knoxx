@@ -2,7 +2,7 @@
   "name": "@open-hax/knoxx-backend-cljs",
   "private": true,
   "type": "module",
-  "license": "GPL-3.0-only",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "build": "shadow-cljs release server",
     "watch": "shadow-cljs watch server-dev",

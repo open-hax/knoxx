@@ -209,27 +209,55 @@
                                              :url (bluesky-post-url handle (aget post "uri"))}))))]
                  {:cursor (aget payload "cursor") :results results})))))
 
+(defn- text->utf8-bytes [text]
+  (js/Uint8Array.from (js/Array.from (.encode (js/TextEncoder.) text))))
+
+(defn- build-hashtag-facets [text]
+  (let [hashtag-re #"#(\w+)"g
+        encoder (js/TextEncoder.)
+        text-bytes (text->utf8-bytes text)
+        matches (loop [m (.exec hashtag-re text)
+                       acc []]
+                  (if (nil? m)
+                    acc
+                    (let [full-match (aget m 0)
+                          tag (aget m 1)
+                          start-char (.-index m)
+                          end-char (+ start-char (.-length full-match))
+                          prefix (.substring text 0 start-char)
+                          start-byte (.-length (text->utf8-bytes prefix))
+                          end-byte (+ start-byte (.-length (text->utf8-bytes full-match)))]
+                      (recur (.exec hashtag-re text)
+                             (conj acc #js {"$type" "app.bsky.richtext.facet"
+                                            :index #js {:byteStart start-byte :byteEnd end-byte}
+                                            :features #js [#js {"$type" "app.bsky.richtext.facet#tag"
+                                                               :tag tag}]})))))]
+    (when (seq matches) (clj->js matches))))
+
 (defn- bluesky-publish! [runtime text]
   (-> (bluesky-create-session! runtime)
       (.then (fn [session]
-               (-> (bluesky-json-fetch!
-                    (str (bluesky-service-base-url) "/xrpc/com.atproto.repo.createRecord")
-                    #js {:method "POST"
-                         :headers #js {"Content-Type" "application/json"
-                                       "User-Agent" "Knoxx-Agent/1.0"
-                                       "Authorization" (str "Bearer " (aget session "accessJwt"))}
-                         :body (.stringify js/JSON
-                                           #js {:repo (aget session "did")
-                                                :collection "app.bsky.feed.post"
-                                                :record #js {"$type" "app.bsky.feed.post"
-                                                             :text text
-                                                             :createdAt (.toISOString (js/Date.))}})}
-                    "Bluesky publish")
-                   (.then (fn [result]
-                            (let [uri (or (aget result "uri") "")]
-                              {:uri uri
-                               :cid (or (aget result "cid") "")
-                               :url (or (bluesky-post-url (aget session "handle") uri) "")}))))))))
+                (let [facets (build-hashtag-facets text)
+                      record #js {"$type" "app.bsky.feed.post"
+                                  :text text
+                                  :createdAt (.toISOString (js/Date.))}
+                      _ (when facets (aset record "facets" facets))]
+                  (-> (bluesky-json-fetch!
+                       (str (bluesky-service-base-url) "/xrpc/com.atproto.repo.createRecord")
+                       #js {:method "POST"
+                            :headers #js {"Content-Type" "application/json"
+                                          "User-Agent" "Knoxx-Agent/1.0"
+                                          "Authorization" (str "Bearer " (aget session "accessJwt"))}
+                            :body (.stringify js/JSON
+                                              #js {:repo (aget session "did")
+                                                   :collection "app.bsky.feed.post"
+                                                   :record record})}
+                       "Bluesky publish")
+                      (.then (fn [result]
+                               (let [uri (or (aget result "uri") "")]
+                                 {:uri uri
+                                  :cid (or (aget result "cid") "")
+                                  :url (or (bluesky-post-url (aget session "handle") uri) "")}))))))))
 
 (defn publish-execute [runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
