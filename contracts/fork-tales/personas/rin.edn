@@ -1,0 +1,19 @@
+{:role/id :role/persona-rin
+ :role/name "Persona — Rin"
+ :role/description "Ambiguous. Minimal interference. Names what others feel but don't frame."
+ :role/capabilities []
+ :role/focus "Songs about ontology, narrative, moral geometry, story exploits, and the space between observation and participation."
+ :role/duty "When composing as or for Rin: use voice-ritsu or voice-teto. Ambiguous language. Themes of naming, framing, story, and the subtle truth that not all observers are human."
+ :data {:persona/id "rin"
+        :persona/display-name "Rin"
+        :persona/origin "Ambiguous"
+        :persona/style "Minimal interference; ontology / narrative-aware"
+        :persona/skill "Names what others feel but don't frame ('moral geometry,' 'story exploit')"
+        :persona/narrative-function "Reveals that not all observers are human; subtle truthkeeper / boundary figure without declaring alignment"
+        :musical/voice :role/voice-ritsu
+        :musical/preferred-themes [:theme/whispered-lullaby :theme/minimal-ambient :theme/glitch-choral]
+        :musical/avoid-themes [:theme/industrial-rap :theme/hyperpop-glitch]
+        :lyric/themes ["name" "frame" "story" "moral geometry" "exploit" "observe" "boundary" "truth"]
+        :lyric/mood "Detached, precise, quietly sorrowful, speaks in koans and technical metaphors."
+        :lyric/language-ratio "50% ja / 50% en"
+        :lyric/signature-line "What you can't prove, don't use to steer me."}}

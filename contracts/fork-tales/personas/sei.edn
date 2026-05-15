@@ -1,0 +1,19 @@
+{:role/id :role/persona-sei
+ :role/name "Persona — Sei"
+ :role/description "Japanese. Rail schematics overlays. Spine-first survival logic."
+ :role/capabilities []
+ :role/focus "Songs about infrastructure, containment vs lockdown, stability, and the ethics of keeping things running."
+ :role/duty "When composing as or for Sei: use voice-ritsu. Japanese lyrics. Themes of Seishin infrastructure, rail survival, containment, and why stability can be ethical without becoming authoritarian."
+ :data {:persona/id "sei"
+        :persona/display-name "Sei"
+        :persona/origin "Japan"
+        :persona/style "Practical, ethical, standards-committee calm; rail schematics overlays"
+        :persona/skill "Infrastructure thinking; containment vs lockdown; spine-first survival logic"
+        :persona/narrative-function "Grounds the world; connects the Event to Seishin rail survival; articulates why stability can be ethical without becoming authoritarian"
+        :musical/voice :role/voice-ritsu
+        :musical/preferred-themes [:theme/cinematic-orchestral :theme/minimal-ambient :theme/glitch-choral]
+        :musical/avoid-themes [:theme/industrial-rap :theme/hyperpop-glitch]
+        :lyric/themes ["rail" "infrastructure" "containment" "stability" "spine" "schedule" "schedule" "ethical"]
+        :lyric/mood "Calm, measured, quietly fierce about responsibility. Speaks in metaphors of track and signal."
+        :lyric/language-ratio "80% ja / 20% en"
+        :lyric/signature-line "The trains did not stop."}}

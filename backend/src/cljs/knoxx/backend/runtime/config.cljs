@@ -115,6 +115,9 @@
 
    ;; eta-mu agent runtime dir
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
+   :agent-compaction-enabled? (not= "false" (str/lower-case (env "KNOXX_AGENT_COMPACTION_ENABLED" "true")))
+   :agent-compaction-reserve-tokens (env-int "KNOXX_AGENT_COMPACTION_RESERVE_TOKENS" 16384)
+   :agent-compaction-keep-recent-tokens (env-int "KNOXX_AGENT_COMPACTION_KEEP_RECENT_TOKENS" 20000)
 
    ;; Sandbox container runtime
    :sandbox-docker-bin (env "KNOXX_SANDBOX_DOCKER_BIN" "docker")

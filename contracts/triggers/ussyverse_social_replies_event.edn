@@ -1,0 +1,14 @@
+{:contract/kind :trigger
+ :contract/id "ussyverse_social_replies_event"
+ :contract/version 1
+ :enabled true
+ :trigger/kind :event
+ :trigger/target "ussyverse_social_replies"
+ :trigger/source {:kind :discord
+                  :events [:discord.message/mention
+                           :discord.message/keyword]}
+ :data {:filters {:channels ["1494137016303095828"
+                             "1444189585373663417"]
+                  :keywords ["frankie" "yap" "music" "song" "slop" "ussy"
+                             "beat" "loop" "track" "art" "create" "mix" "drop"]}
+        :context {:reason "contract event: ussyverse social replies"}}}

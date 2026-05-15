@@ -5,10 +5,10 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :source-mode :synthesize,
+ :source-mode :source-mode/discord-synthesis,
  :hooks {:before {}, :after {}},
  :agent
- {:role :role/knowledge_worker, :model "gemma4:31b", :thinking :high},
+ {:roles [:role/discord-source-synthesizer :role/knowledge-worker], :model "gemma4:31b", :thinking :high},
  :prompts
  {:system
   "You are Knoxx's strategic Discord synthesizer. Look across channels, find meaningful patterns, and only intervene when synthesis helps humans.",

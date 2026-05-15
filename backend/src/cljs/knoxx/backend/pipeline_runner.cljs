@@ -11,6 +11,16 @@
 
 (defn- cfg [] (models/enrich-config (runtime-config/cfg)))
 
+(defn- load-contract-sync
+  [config contract-class contract-id]
+  (let [klass (loader/normalize-contract-class contract-class)
+        wanted-id (some-> contract-id str str/trim not-empty)]
+    (some (fn [record]
+            (when (and (= klass (:contractClass record))
+                       (= wanted-id (:id record)))
+              (:contract record)))
+          (loader/load-all-contracts-sync config))))
+
 ;; ── async interpolation ─────────────────────────────
 
 (defn- resolve-temps
@@ -64,13 +74,14 @@
 
 (defn- run-agent-step!
   "Execute an :agent step by starting a Knoxx agent session."
-  [config step contract pipeline-ctx]
+  [config step contract pipeline-ctx k->v]
   (let [output (get-in step [:step/data :output])]
     (js/console.log "[pipeline]" (:step/id step) "agent step" (:contract/id contract))
     (p/let [ctx (interpolate-map
-                (merge pipeline-ctx
-                       (:context contract)
-                        (get-in step [:step/data :context])))
+                 (merge pipeline-ctx
+                        (:context contract)
+                         (get-in step [:step/data :context]))
+                 k->v)
                 result (discord-io/start-agent-session!
                        config
                        (assoc contract :task-prompt (get-in contract [:prompts :task]))
@@ -82,13 +93,13 @@
 
 (defn- run-step!
   "Execute one pipeline step. Returns Promise."
-  [config step pipeline-ctx]
+  [config step pipeline-ctx k->v]
   (let [contract-id (:step/contract step)]
-    (if-let [contract (or (loader/load-contract! (cfg) "actions" contract-id)
-                           (loader/load-contract! (cfg) "agents" contract-id))]
+    (if-let [contract (or (load-contract-sync config "actions" contract-id)
+                           (load-contract-sync config "agents" contract-id))]
       (case (:contract/kind contract)
         :action (run-action-step! step)
-        :agent  (run-agent-step! config step contract pipeline-ctx)
+        :agent  (run-agent-step! config step contract pipeline-ctx k->v)
         (do (js/console.warn "[pipeline] unknown step kind" (:contract/kind contract))
             (js/Promise.resolve {:step-id (:step/id step) :status "skip"})))
       (do (js/console.warn "[pipeline] step contract not found:" contract-id)
@@ -116,7 +127,7 @@
                   "steps:" (count ordered))
     (p/let [k->v (resolve-temps pipeline-ctx)]
       (p/let [_ (reduce (fn [p step]
-                          (p/then p (fn [_] (run-step! config step pipeline-ctx))))
+                           (p/then p (fn [_] (run-step! config step pipeline-ctx k->v))))
                         (js/Promise.resolve nil)
                         ordered)
               output (:output pipeline-contract)]

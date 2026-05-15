@@ -9,7 +9,8 @@
    All contracts are EDN maps. The :contract/kind key discriminates the kind.
    Maps use {:closed false} to tolerate dialect-specific extension fields."
   (:require [malli.core :as m]
-            [malli.error :as me]))
+            [malli.error :as me]
+            [malli.transform :as mt]))
 
 ;; ── Primitives ────────────────────────────────────────────────────────────────
 
@@ -77,6 +78,15 @@
    [:max-chars       {:optional true} int?]
    [:preserve-system {:optional true} boolean?]])
 
+(def RuntimeSourceRef
+  [:or keyword? string?
+   [:map {:closed false}
+    [:source/ref {:optional true} [:or keyword? string?]]
+    [:source/id  {:optional true} [:or keyword? string?]]
+    [:filters {:optional true} [:map {:closed false}]]
+    [:hydration {:optional true} [:map {:closed false}]]
+    [:source/hydration {:optional true} [:map {:closed false}]]]])
+
 (def SubAgentConfig
   "Configuration for how a sub-agent relates to its parent."
   [:map {:closed false}
@@ -105,6 +115,7 @@
      [:system {:optional true} string?]
      [:task   {:optional true} string?]]]
    [:memory           {:optional true} [:map {:closed false}]]
+   [:sources          {:optional true} [:sequential RuntimeSourceRef]]
    [:context          {:optional true} ContextPolicy]
    [:context-policy   {:optional true} ContextPolicy]
    [:sub-agents       {:optional true} [:vector string?]]
@@ -128,6 +139,7 @@
      [:system {:optional true} string?]
      [:task   {:optional true} string?]]]
    [:memory           {:optional true} [:map {:closed false}]]
+   [:sources          {:optional true} [:sequential RuntimeSourceRef]]
    [:context          {:optional true} ContextPolicy]
    [:context-policy   {:optional true} ContextPolicy]
    [:data             {:optional true} [:map {:closed false}]]])
@@ -158,7 +170,9 @@
    [:actor/contract      {:optional true} string?]
    [:actor/default-agent {:optional true} string?]
    [:actor/roles         {:optional true} [:sequential keyword?]]
-   [:actor/capabilities  {:optional true} [:sequential keyword?]]])
+   [:actor/capabilities  {:optional true} [:sequential keyword?]]
+   [:actor/sources       {:optional true} [:sequential RuntimeSourceRef]]
+   [:sources             {:optional true} [:sequential RuntimeSourceRef]]])
 
 ;; ── Role contract (knoxx heritage) ────────────────────────────────────────────
 
@@ -169,6 +183,8 @@
    [:role/description  {:optional true} string?]
    [:role/capabilities {:optional true} [:sequential keyword?]]
    [:role/permissions  {:optional true} [:sequential string?]]
+   [:role/sources      {:optional true} [:sequential RuntimeSourceRef]]
+   [:sources           {:optional true} [:sequential RuntimeSourceRef]]
    [:prompts           {:optional true}
     [:map {:closed false}
      [:system {:optional true} string?]
@@ -301,6 +317,25 @@
    [:enabled           {:optional true} :boolean]
    [:data              {:optional true} :map]])
 
+;; ── Runtime source contract (knoxx) ──────────────────────────────────────────
+
+(def RuntimeSourceContract
+  "Runtime context source provider. This is distinct from :ingest_source: source
+   contracts hydrate context before a turn; ingest_source contracts index data."
+  [:map {:closed false}
+   [:contract/kind    [:= :source]]
+   [:contract/id      ContractId]
+   [:contract/type    {:optional true} [:or string? keyword?]]
+   [:contract/version {:optional true} int?]
+   [:source/id        [:or string? keyword?]]
+   [:source/name      {:optional true} string?]
+   [:source/enabled?  {:optional true} :boolean]
+   [:source/provider  {:optional true} [:or string? keyword?]]
+   [:source/hydration {:optional true} [:map {:closed false}]]
+   [:source/render    {:optional true} [:map {:closed false}]]
+   [:source/filters   {:optional true} [:map {:closed false}]]
+   [:source/tools     {:optional true} [:sequential [:or string? keyword?]]]])
+
 ;; ── Model family contract (merged proxx + knoxx) ──────────────────────────────
 
 (def ModelFamilyContract
@@ -387,6 +422,7 @@
    :action       ActionContract
    :pipeline     PipelineContract
    :trigger      TriggerContract
+   :source       RuntimeSourceContract
 
    ;; Model catalog (merged)
    :model-family ModelFamilyContract
@@ -418,6 +454,8 @@
     :else                                     :agent))
 
 ;; ── Public API ────────────────────────────────────────────────────────────────
+
+(declare collect-humanized-errors)
 
 (defn schema-for
   "Look up the Malli schema for a contract kind.
@@ -479,6 +517,6 @@
   [contract-class value]
   (let [schema (schema-for contract-class)]
     (try
-      (let [coerced (m/coerce schema value (malli.transform/default-value-transformer))]
+      (let [coerced (m/coerce schema value (mt/default-value-transformer))]
         (when (m/validate schema coerced) coerced))
       (catch :default _ nil))))

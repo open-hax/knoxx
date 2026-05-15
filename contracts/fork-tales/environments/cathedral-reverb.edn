@@ -1,0 +1,14 @@
+{:role/id :role/env-cathedral-reverb
+ :role/name "Environment — Cathedral Reverb"
+ :role/description "Stone, vastness, sacred echo. The space where anchors resonate."
+ :role/capabilities []
+ :role/focus "Sonic space: cathedral reverb, stone resonance, sacred geometry, long decay."
+ :role/duty "Apply when the song needs to feel like it is being sung in a vast, ancient, sacred space — or when the Gate itself is present."
+ :data {:env/name "Cathedral Reverb"
+        :env/space "Vast stone architecture"
+        :env/reverb "Cathedral, 4-8s decay, pre-delay 60ms"
+        :env/textures ["Stone resonance" "Distant choir" "Cold air" "Incense and static"]
+        :env/scale "Epic, vertical, overwhelming"
+        :env/light "Dust motes in shafts of light, stained glass colors"
+        :env/mood "Sacred, anxious, awe-filled"
+        :env/reference "The Gate in Gates of Truth. Where geometry and scripture overlap."}}

@@ -12,10 +12,16 @@
             ["discord.js" :as discord]
             ["@discordjs/voice" :as voice]
             ["prism-media" :as prism]
-            ["libsodium-wrappers" :as sodium]
+            ["node:module" :refer [createRequire]]
             ["node:stream" :refer [Readable]]))
 
-;; sodium is imported for @discordjs/voice crypto support — no explicit use needed
+;; libsodium-wrappers is needed for @discordjs/voice crypto support.
+;; We *must* load it via CommonJS `require` because libsodium-wrappers@0.7.16
+;; publishes an ESM export that imports a missing ./libsodium.mjs.
+(defonce ^:private libsodium-wrappers-loaded?
+  (let [req (createRequire (str (.cwd js/process) "/"))]
+    (req "libsodium-wrappers")
+    true))
 
 (declare set-manager!)
 
@@ -92,11 +98,23 @@
     (.copy pcm wav 44)
     wav))
 
+(defn- member-role-ids
+  [member]
+  (try
+    (let [roles (when member (.-roles member))
+          cache (when roles (.-cache roles))]
+      (if cache
+        (into-array (for [[role-id _role] cache] role-id))
+        #js []))
+    (catch js/Error _
+      #js [])))
+
 (defn- map-message
   "Convert a discord.js Message to a plain JS map."
   [message]
   (let [author (.-author message)
-        guild (.-guild message)]
+        guild (.-guild message)
+        member (.-member message)]
     #js {:id (.-id message)
          :channelId (.-channelId message)
          :guildId (or (when guild (.-id guild)) "")
@@ -104,6 +122,7 @@
          :authorId (or (when author (.-id author)) "")
          :authorUsername (or (when author (.-username author)) "unknown")
          :authorIsBot (boolean (when author (.-bot author)))
+         :authorRoleIds (member-role-ids member)
          :timestamp (try (.toISOString (.-createdAt message))
                          (catch js/Error _ (.toISOString (js/Date.))))
          :attachments (into-array

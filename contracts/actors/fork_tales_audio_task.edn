@@ -1,0 +1,15 @@
+{:actor/id "fork_tales_audio_task"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Fork Tales Audio Reconstruction Task"
+ :actor/default-agent "fork_tales_audio_reconstruction"
+ :actor/roles [:role/fork-tales-composer]
+ :actor/capabilities [:cap/read
+                      :cap/bash
+                      :cap/workspace-media
+                      :cap/multimodal
+                      :cap/audio-editing
+                      :cap/voice-synth]
+ :prompts {:system "Run focused Fork Tales vocal-reconstruction tasks with local audio evidence only."}
+ :data {:fork-tales/audio-workflow {:canonical-script "/home/err/devel/scripts/fork_tales_audio_agent.cljs"
+                                    :artifact-root "/home/err/devel/Music/fork-tales/references/heresy-between/diagnostics/gemma-agent"}}}

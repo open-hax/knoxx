@@ -8,6 +8,19 @@
         offset (js/parseInt (or (.get (.-searchParams url) "offset") "0") 10)]
     (if (js/Number.isFinite offset) offset 0)))
 
+(deftest session-list-limit-is-bounded
+  (is (= 12 (memory-routes/session-list-limit nil)))
+  (is (= 20 (memory-routes/session-list-limit "20")))
+  (is (= memory-routes/max-session-list-page-size
+         (memory-routes/session-list-limit "500"))))
+
+(deftest session-list-upstream-page-size-is-bounded
+  (is (= 21 (memory-routes/session-list-upstream-page-size 20 0)))
+  (is (= memory-routes/max-session-list-upstream-page-size
+         (memory-routes/session-list-upstream-page-size 80 0)))
+  (is (= memory-routes/max-session-list-upstream-page-size
+         (memory-routes/session-list-upstream-page-size 40 80))))
+
 (deftest fetch-authorized-session-pages-stops-after-needed-window
   (async done
     (let [page-offsets* (atom [])

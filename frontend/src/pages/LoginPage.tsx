@@ -112,8 +112,9 @@ export default function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+            <label htmlFor="login-invite-email" className="block text-sm font-medium text-slate-300 mb-1">Email</label>
             <input
+              id="login-invite-email"
               type="email"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
@@ -122,8 +123,9 @@ export default function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Invite code</label>
+            <label htmlFor="login-invite-code" className="block text-sm font-medium text-slate-300 mb-1">Invite code</label>
             <input
+              id="login-invite-code"
               type="text"
               value={inviteCode}
               onChange={(e) => setInviteCode(e.target.value)}

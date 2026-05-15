@@ -101,15 +101,27 @@
                                :name (or (aget channel "name") "")
                                :type (aget channel "type")}))))))))
 
+(def ^:private default-discord-tool-policies
+  [{:toolId "discord.read" :effect "allow"}
+   {:toolId "discord.search" :effect "allow"}
+   {:toolId "discord.publish" :effect "allow"}
+   {:toolId "discord.guilds" :effect "allow"}
+   {:toolId "memory_search" :effect "allow"}
+   {:toolId "graph_query" :effect "allow"}])
+
 (defn start-agent-session!
   "Launch a normal Knoxx direct-mode turn for a Discord-triggered payload.
    `opts` map accepts :channelId :channelName :authorUsername :content :reason."
   [config job {:keys [channelId channelName authorUsername content reason]}]
   (let [now (.now js/Date)
+        job-agent-spec (or (:agentSpec job) {})
         run-id (str "discord-" (:id job) "-" now)
         conversation-id (str "discord-" (:id job) "-" channelId "-" now)
         session-id (str "discord-session-" (:id job) "-" now)
-        task-prompt (or (:taskPrompt job) "")
+        task-prompt (or (:taskPrompt job) (:taskPrompt job-agent-spec) "")
+        tool-policies (or (:toolPolicies job)
+                          (:toolPolicies job-agent-spec)
+                          default-discord-tool-policies)
         user-message (str "Discord job: " (:name job) "\n"
                           "Reason: " reason "\n"
                           "Channel ID: " channelId "\n"
@@ -125,20 +137,26 @@
               :session_id session-id
               :run_id run-id
               :message user-message
-              :agent_spec {:role (or (:role job) "system_admin")
+              :agent_spec {:contract_id (or (:contractId job) (:contractId job-agent-spec))
+                           :actor_id (or (:actorId job) (:actorId job-agent-spec))
+                           :role (or (:role job) (:role job-agent-spec) "system_admin")
                            :system_prompt (or (:systemPrompt job)
+                                              (:systemPrompt job-agent-spec)
                                               "You are Knoxx's Discord agent.")
+                           :task_prompt task-prompt
                            :model (or (:model job)
+                                      (:model job-agent-spec)
                                       (:proxx-default-model config)
                                       "glm-5")
-                           :thinking_level (or (:thinkingLevel job) "off")
-                           :tool_policies [{:toolId "discord.read" :effect "allow"}
-                                           {:toolId "discord.search" :effect "allow"}
-                                           {:toolId "discord.publish" :effect "allow"}
-                                           {:toolId "discord.guilds" :effect "allow"}
-                                           {:toolId "memory_search" :effect "allow"}
-                                           {:toolId "graph_query" :effect "allow"}]}
+                           :thinking_level (or (:thinkingLevel job)
+                                               (:thinkingLevel job-agent-spec)
+                                               "off")
+                           :tool_policies tool-policies
+                           :sources (or (:sources job) (:sources job-agent-spec))
+                           :memory_hydration (or (:memoryHydration job) (:memoryHydration job-agent-spec))
+                           :context_policy (or (:contextPolicy job) (:contextPolicy job-agent-spec))}
               :model (or (:model job)
+                         (:model job-agent-spec)
                          (:proxx-default-model config)
                          "glm-5")}]
     (-> (agents-runner/spawn-direct! config body)

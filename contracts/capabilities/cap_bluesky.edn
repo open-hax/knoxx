@@ -1,9 +1,23 @@
 {:cap/id :cap/bluesky
- :cap/tools [:bluesky.publish
-             :bluesky.profile
-             :bluesky.search
-             :bluesky.author.feed
-             :bluesky.timeline]
+  :cap/tools [:bluesky.publish
+              :bluesky.profile
+              :bluesky.search
+              :bluesky.author.feed
+              :bluesky.timeline
+              :bluesky.repost
+              :bluesky.like
+              :bluesky.unlike
+              :bluesky.follow
+              :bluesky.unfollow
+              :bluesky.delete
+              :bluesky.thread
+              :bluesky.notifications
+              :bluesky.followers
+              :bluesky.follows
+              :bluesky.chat.list
+              :bluesky.chat.read
+              :bluesky.chat.send
+              :bluesky.chat.react]
  :cap/user-surfaces [{:surface/id :workspace/social-publisher
                       :surface/label "Social publisher"
                       :surface/kind :composer

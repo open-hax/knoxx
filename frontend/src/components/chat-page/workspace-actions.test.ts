@@ -78,11 +78,11 @@ describe("persistedSessionVisibleForActor", () => {
     ).toBe(false);
   });
 
-  it("can exclude pi-authored local sessions while showing all other actors", () => {
-    persistChatSessionSnapshot("workspace", "session-pi", {
-      sessionId: "session-pi",
-      conversationId: "conversation-pi",
-      activeActorId: "pi",
+  it("can exclude eta-mu-authored local sessions while showing all other actors", () => {
+    persistChatSessionSnapshot("workspace", "session-eta-mu", {
+      sessionId: "session-eta-mu",
+      conversationId: "conversation-eta-mu",
+      activeActorId: "eta-mu",
       messages: [],
       runtimeEvents: [],
       isSending: false,
@@ -91,7 +91,7 @@ describe("persistedSessionVisibleForActor", () => {
     expect(
       persistedSessionVisibleForFilter(
         "workspace",
-        { session: "conversation-pi", active_session_id: "session-pi", local_only: true },
+        { session: "conversation-eta-mu", active_session_id: "session-eta-mu", local_only: true },
         "all",
         true,
         new Set(),

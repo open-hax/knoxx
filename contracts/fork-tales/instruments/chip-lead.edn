@@ -1,0 +1,14 @@
+{:role/id :role/instr-chip-lead
+ :role/name "Instrument — Chip Lead"
+ :role/description "8-bit chip lead. Binary for speed. The sound of precise small things."
+ :role/capabilities []
+ :role/focus "Sonic texture: square wave, pulse width modulation, arpeggios, rapid note sequences."
+ :role/duty "Apply when the song celebrates bytes, checksums, or the beauty of small precise digital things."
+ :data {:instrument/name "Chip Lead"
+        :instrument/family "synth"
+        :instrument/timbre "Bright, sharp, digital, nostalgic"
+        :instrument/technique "Square wave arpeggios, rapid note sequences, pulse width modulation"
+        :instrument/effects ["bit-crush" "arpeggiator" "glide" "staccato"]
+        :instrument/register "High, piercing, C5-C7"
+        :instrument/mood "Playful, urgent, precise, celebratory"
+        :instrument/reference "The chip lead in 'Sixteen Bytes' — quick drop, 140 BPM urgency."}}

@@ -4,6 +4,7 @@
    in vertical domain slices under knoxx.backend.tools.<domain>."
   (:require [clojure.string :as str]
             [knoxx.backend.core-memory :refer [filter-authorized-memory-hits!]]
+            [knoxx.backend.contracts.sources :as sources]
             [knoxx.backend.http :refer [openplanner-enabled?]]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search!]]
             [knoxx.backend.runtime.defaults :refer [default-settings]]
@@ -52,17 +53,32 @@
   (boolean (re-find #"(?i)\b(previous|earlier|before|remember|last time|prior|session|you said|you did|we talked|we discussed)\b"
                     (or message ""))))
 
+(defn- openplanner-memory-source-options
+  [config agent-spec]
+  (when-let [source (sources/find-source (sources/source-specs-for-agent config agent-spec)
+                                         :source/openplanner-memory)]
+    (sources/source-hydration-options source)))
+
 (defn- passive-memory-hydration-options
-  [agent-spec]
-  (or (:memory-hydration agent-spec)
-      (:memoryHydration agent-spec)
-      (get-in agent-spec [:memory :passive-hydration])
-      (get-in agent-spec [:memory :passiveHydration])
-      (get-in agent-spec [:memory_hydration])))
+  [config agent-spec]
+  (sources/deep-merge
+   (openplanner-memory-source-options config agent-spec)
+   (or (:memory-hydration agent-spec)
+       (:memoryHydration agent-spec)
+       (get-in agent-spec [:memory :passive-hydration])
+       (get-in agent-spec [:memory :passiveHydration])
+       (get-in agent-spec [:memory_hydration]))))
 
 (defn- passive-memory-hydration-mode
   [opts]
-  (some-> (or (:mode opts) (:source-mode opts) (:sourceMode opts)) str str/trim str/lower-case not-empty))
+  (let [mode (or (:mode opts) (:source-mode opts) (:sourceMode opts))]
+    (some-> (cond
+              (keyword? mode) (name mode)
+              (some? mode) (str mode)
+              :else nil)
+            str/trim
+            str/lower-case
+            not-empty)))
 
 (defn- positive-int-or
   [value fallback]
@@ -87,7 +103,7 @@
   ([config conversation-id message] (passive-memory-hydration! config conversation-id message nil nil))
   ([config conversation-id message auth-context] (passive-memory-hydration! config conversation-id message auth-context nil))
   ([config conversation-id message auth-context agent-spec]
-   (let [opts (or (passive-memory-hydration-options agent-spec) {})]
+   (let [opts (or (passive-memory-hydration-options config agent-spec) {})]
      (if (and (openplanner-enabled? config)
               (passive-memory-hydration-enabled? opts)
               (passive-memory-hydration-should-run? message opts))
@@ -100,8 +116,11 @@
                                    (assoc result :hits hits
                                                  :mode (or (passive-memory-hydration-mode opts) "triggered")
                                                  :elapsedMs (- (.now js/Date) started-ms)
-                                                 :conversationId conversation-id))))))))
-       (js/Promise.resolve nil)))))
+                                                 :conversationId conversation-id))))))
+             (.catch (fn [err]
+                       (.warn js/console "[agent-hydration] passive OpenPlanner memory hydration failed; continuing without memory context" err)
+                       nil)))
+       (js/Promise.resolve nil))))))
 
 
 (defn passive-hydration-text

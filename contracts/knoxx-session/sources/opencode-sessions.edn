@@ -1,0 +1,27 @@
+{:contract/id :knoxx-session/opencode-sessions
+ :contract/kind :ingest_source
+ :contract/type :ingest/source
+ :contract/version 1
+ :tenant/id "knoxx-session"
+ :source/id :opencode-sessions
+ :source/name "OpenCode coding sessions"
+ :source/enabled? true
+ :source/driver :opencode-sessions
+
+ :source/config
+ {:base-url "http://127.0.0.1:4096"
+  :page-size 100
+  :max-sessions 1000
+  :include-archived? true}
+
+ :source/discovery
+ {:api-endpoints ["/experimental/session" "/session/:sessionID/message"]}
+
+ :source/schedule
+ {:mode :poll
+  :sync-interval-minutes 5}
+
+ :source/sink
+ {:type :openplanner
+  :lake "knoxx-session"
+  :collections ["knoxx-session"]}}

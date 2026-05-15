@@ -30,6 +30,20 @@
   [^js Type schema]
   (.Optional Type schema))
 
+(defn- replace-tool-name
+  [text original-name sanitized-name]
+  (some-> (str text)
+          (str/replace original-name sanitized-name)))
+
+(defn- sanitize-tool-guidelines
+  [guidelines original-name sanitized-name]
+  (let [items (if (array? guidelines) (array-seq guidelines) [])]
+    (clj->js
+     (mapv (fn [guideline]
+             (str "Use " sanitized-name " (canonical " original-name ") when "
+                  (replace-tool-name guideline original-name sanitized-name)))
+           items))))
+
 (defn sanitize-custom-tool-name
   [tool]
   (let [name (some-> (aget tool "name") str)
@@ -40,7 +54,15 @@
       (aset tool "name" sanitized)
       (aset tool "originalName" name)
       (when-let [description (some-> (aget tool "description") str)]
-        (aset tool "description" (str description " Original tool id: " name "."))))
+        (aset tool "description"
+              (str description " Call this tool as `" sanitized "`. Canonical tool id: `" name "`.")))
+      (when-let [snippet (some-> (aget tool "promptSnippet") str)]
+        (aset tool "promptSnippet"
+              (str "Call as `" sanitized "` (canonical `" name "`). "
+                   (replace-tool-name snippet name sanitized))))
+      (when-let [guidelines (aget tool "promptGuidelines")]
+        (aset tool "promptGuidelines"
+              (sanitize-tool-guidelines guidelines name sanitized))))
     tool))
 
 (defn sanitize-custom-tools

@@ -62,6 +62,7 @@
 ;; Cache bounds to prevent memory leaks under sustained load.
 (def ^:private max-session-cache-size 1000)
 (def ^:private sticky-session-ttl-ms (* 24 60 60 1000)) ; 24 hours
+(def ^:private sticky-session-ttl-seconds (js/Math.floor (/ sticky-session-ttl-ms 1000)))
 (def ^:private session-cache-sweep-interval-ms 300000)   ; 5 minutes
 
 (defn- evict-oldest-session-cache-entry!
@@ -120,6 +121,9 @@
   [redis-client session]
   (let [session-id (some-> (:session_id session) str)
         conversation-id (some-> (:conversation_id session) str)
+        session-ttl-seconds (if (str/includes? (str session-id) "-sticky")
+                              sticky-session-ttl-seconds
+                              SESSION_TTL_SECONDS)
         session (cond-> session
                   session-id (assoc :session_id session-id)
                   conversation-id (assoc :conversation_id conversation-id))]
@@ -131,13 +135,13 @@
       (-> (redis/set-json redis-client
                           (session-key session-id)
                           session
-                          SESSION_TTL_SECONDS)
+                          session-ttl-seconds)
           (.then (fn []
                    (if conversation-id
                      (redis/set-key redis-client
-                                (conversation-session-key conversation-id)
-                                session-id
-                                SESSION_TTL_SECONDS)
+                                    (conversation-session-key conversation-id)
+                                    session-id
+                                    session-ttl-seconds)
                      (resolved nil))))
           (.then (fn []
                    (if session-id

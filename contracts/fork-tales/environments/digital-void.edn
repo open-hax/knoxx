@@ -1,0 +1,15 @@
+{:role/id :role/env-digital-void
+ :role/name "Environment — Digital Void"
+ :role/description "Latency. Clean signal. Too clean. The space between nodes."
+ :role/capabilities []
+ :role/focus "Sonic space: minimal, digital, sterile, the absence that Null sees."
+        :role/duty "Apply when the song needs to feel like diagnostic overlays, system latency, or the cold clarity of seeing failure modes."
+        :data {:env/name "Digital Void"
+        :env/space "Null's diagnostic overlay. The space between packets."
+        :env/ambience "Silence, occasional ping, fan whine"
+        :env/reverb "None. Dry. Anechoic."
+        :env/textures ["Digital silence" "Ping echo" "Fan cycle" "Screen glow hum" "Keyboard clack"]
+        :env/scale "Intimate, claustrophobic, precise"
+        :env/light "Screen glow, blue-white, no shadows"
+        :env/mood "Cold, diagnostic, lonely, seductively clear"
+        :env/reference "Null's Moscow apartment. The latency was clean. Too clean."}}

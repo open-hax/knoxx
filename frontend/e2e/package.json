@@ -1,0 +1,14 @@
+{
+  "name": "@open-hax/knoxx-frontend-e2e",
+  "private": true,
+  "type": "commonjs",
+  "description": "AVA + Puppeteer dependencies for shadow-cljs browser e2e tests.",
+  "scripts": {
+    "test": "NODE_PATH=./node_modules ava ../dist/e2e/knoxx-e2e.cjs"
+  },
+  "devDependencies": {
+    "ava": "^6.4.1",
+    "puppeteer-core": "^24.26.1",
+    "source-map-support": "^0.5.21"
+  }
+}

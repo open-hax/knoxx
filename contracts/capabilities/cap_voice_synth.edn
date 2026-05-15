@@ -1,6 +1,7 @@
 {:cap/id :cap/voice-synth
  :cap/tools [
-             ;; :voice.openutau_project
+             :voice.openutau_project
+             :voice.openutau_render
              :voice.tts
              :voice.tts_stream
              :bash]

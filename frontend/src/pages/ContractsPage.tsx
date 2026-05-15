@@ -123,6 +123,20 @@ function replaceSimpleValue(ednText: string, key: string, token: string): string
   return ednText;
 }
 
+function ednTokenToInputValue(token: string | null): string {
+  if (!token) return "";
+  return token.trim().replace(/^:/, "").replace(/^"|"$/g, "");
+}
+
+function stringToken(value: string): string {
+  return JSON.stringify(value);
+}
+
+function keywordToken(value: string): string {
+  const normalized = value.trim().replace(/^:/, "");
+  return normalized ? `:${normalized}` : ":agent";
+}
+
 function extractAgentValue(ednText: string, agentKey: string): string | null {
   const pattern = new RegExp(`(:agent[\\s\\S]{0,400}?:${agentKey}\\s+)([^\\s\\n\\r}]+)`, "m");
   const match = ednText.match(pattern);
@@ -505,12 +519,12 @@ export default function ContractsPage() {
     } catch (err) {
       setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
     } finally { setValidating(false); }
-  }, [ednDraft]);
+  }, [ednDraft, selectedContractClass]);
 
   const handleSave = useCallback(async () => {
     const explicitId = selectedId ? normalizeId(selectedId) : null;
     const inferredId = parseContractIdFromEdn(ednDraft);
-    const contractId = explicitId || inferredId;
+    const contractId = inferredId || explicitId;
     if (!contractId) { setNotice({ tone: "error", text: "Missing contract id." }); return; }
 
     setSaving(true); setNotice(null); setError("");
@@ -527,7 +541,7 @@ export default function ContractsPage() {
     } catch (err) {
       setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
     } finally { setSaving(false); }
-  }, [ednDraft, loadAgentLibrary, selectedId]);
+  }, [ednDraft, loadAgentLibrary, selectedContractClass, selectedId]);
 
   const handleCopy = useCallback(async () => {
     if (!selectedId) return;
@@ -547,10 +561,13 @@ export default function ContractsPage() {
     } catch (err) {
       setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
     } finally { setSaving(false); }
-  }, [copyTarget, loadAgentLibrary, selectedId]);
+  }, [copyTarget, loadAgentLibrary, selectedContractClass, selectedId]);
 
   // ── Metadata form sync from EDN ───────────────────────────────────────
 
+  const contractIdValue = ednTokenToInputValue(extractSimpleValue(ednDraft, "contract/id")) || selectedId || "new-agent";
+  const contractKindValue = ednTokenToInputValue(extractSimpleValue(ednDraft, "contract/kind")) || selectedContractClass.slice(0, -1) || "agent";
+  const contractVersionValue = ednTokenToInputValue(extractSimpleValue(ednDraft, "contract/version")) || "1";
   const enabledToken = extractSimpleValue(ednDraft, "enabled");
   const triggerKindToken = extractSimpleValue(ednDraft, "trigger-kind") ?? ":event";
   const sourceKindToken = extractSimpleValue(ednDraft, "source-kind") ?? ":discord";
@@ -898,6 +915,55 @@ export default function ContractsPage() {
             </button>
           </div>
         ) : null}
+
+        {/* Contract identity form */}
+        <div style={{ flexShrink: 0, padding: isNarrow ? "10px 14px" : "12px 20px", borderBottom: `1px solid ${palette.fg.subtle}`, background: palette.bg.default }}>
+          <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "minmax(180px, 1.2fr) minmax(120px, 0.7fr) minmax(100px, 0.45fr) auto", gap: 10, alignItems: "end" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Contract identity</div>
+              <input
+                value={contractIdValue}
+                onChange={(event) => setEdnDraft((current) => replaceSimpleValue(current, "contract/id", stringToken(event.target.value)))}
+                disabled={saving}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
+              />
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Kind</div>
+              <select
+                value={contractKindValue}
+                onChange={(event) => setEdnDraft((current) => replaceSimpleValue(current, "contract/kind", keywordToken(event.target.value)))}
+                disabled={saving}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
+              >
+                {["agent", "policy", "fulfillment", "tool-call", "trigger"].map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+              </select>
+            </label>
+
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ fontSize: tokens.fontSize.xs, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: palette.fg.muted }}>Version</div>
+              <input
+                type="number"
+                min={1}
+                value={contractVersionValue}
+                onChange={(event) => setEdnDraft((current) => replaceSimpleValue(current, "contract/version", String(Math.max(1, Number(event.target.value || 1)))))}
+                disabled={saving}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: tokens.radius.md, border: `1px solid ${palette.fg.subtle}`, background: palette.bg.darker, color: palette.fg.default, fontSize: tokens.fontSize.sm, outline: "none" }}
+              />
+            </label>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 34, padding: "0 4px", fontSize: tokens.fontSize.sm, color: palette.fg.default }}>
+              <input
+                type="checkbox"
+                checked={enabledToken !== "false"}
+                onChange={(event) => setEdnDraft((current) => replaceSimpleValue(current, "enabled", event.target.checked ? "true" : "false"))}
+                disabled={saving}
+              />
+              Enabled
+            </label>
+          </div>
+        </div>
 
         {/* Main content area: editor */}
         <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>

@@ -665,10 +665,17 @@
                           (let [n (some-> (aget tool "name") str str/trim not-empty)
                                 s (or (when z (typebox->zod-shape z (or (aget tool "parameters") #js {}))) #js {})]
                             (when n
-                              (.registerTool server n
-                                             #js {:description (str (or (aget tool "description") (aget tool "label") n))
-                                                  :inputSchema s}
-                                             (fn [params] (tool-execute! tool params))))))
+                              (let [tool-config #js {:description (str (or (aget tool "description") (aget tool "label") n))
+                                                     :inputSchema s}]
+                                (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
+                                  (aset tool-config "title" title))
+                                (when-let [annotations (aget tool "annotations")]
+                                  (aset tool-config "annotations" annotations))
+                                (when-let [meta (aget tool "_meta")]
+                                  (aset tool-config "_meta" meta))
+                                (.registerTool server n
+                                               tool-config
+                                               (fn [params] (tool-execute! tool params)))))))
                         (-> (.connect server transport)
                             (.then (fn [_]
                                      (ensure-streamable-accept! request)

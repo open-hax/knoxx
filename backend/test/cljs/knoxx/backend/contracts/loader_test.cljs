@@ -1,5 +1,6 @@
 (ns knoxx.backend.contracts.loader-test
-  (:require [cljs.test :refer [deftest is testing async]]
+  (:require [clojure.string :as str]
+            [cljs.test :refer [deftest is testing async]]
             [knoxx.backend.contracts.loader :as sut]))
 
 ;; ---------------------------------------------------------------------------
@@ -12,6 +13,8 @@
   (is (= "roles"        (sut/normalize-contract-class "roles")))
   (is (= "capabilities" (sut/normalize-contract-class "capabilities")))
   (is (= "policies"     (sut/normalize-contract-class "policies")))
+  (is (= "source_modes" (sut/normalize-contract-class "source_modes")))
+  (is (= "sources"      (sut/normalize-contract-class "sources")))
   (is (= "model_families" (sut/normalize-contract-class "model_families")))
   (is (= "models"       (sut/normalize-contract-class "models")))
   (is (= "runtime_features" (sut/normalize-contract-class "runtime_features")))
@@ -33,7 +36,11 @@
   (testing "cap -> capabilities"
     (is (= "capabilities" (sut/normalize-contract-class "cap"))))
   (testing "runtime-feature -> runtime_features"
-    (is (= "runtime_features" (sut/normalize-contract-class "runtime-feature")))))
+    (is (= "runtime_features" (sut/normalize-contract-class "runtime-feature"))))
+  (testing "source-mode -> source_modes"
+    (is (= "source_modes" (sut/normalize-contract-class "source-mode"))))
+  (testing "runtime-source -> sources"
+    (is (= "sources" (sut/normalize-contract-class "runtime-source")))))
 
 (deftest normalize-contract-class-rejects-unknown
   (is (thrown? js/Error (sut/normalize-contract-class "weasel"))))
@@ -61,6 +68,23 @@
     (is (:ok? result))
     (is (= "eta-mu.opmf-contract-gate" (:id result)))
     (is (= "runtime_features" (:contractClass result)))))
+
+(deftest parse-contract-file-source-mode
+  (testing ":source-mode kind is canonicalized before raw :contract/kind reaches class normalization"
+    (let [edn-text "{:contract/kind :source-mode :contract/id \"discord-synthesis\" :source-mode/id :source-mode/discord-synthesis :source/kind :discord :source/mode :template-synthesize}"
+          result   (#'sut/parse-contract-file! "/fake/source_modes/discord_synthesis.edn" edn-text)]
+      (is (some? result))
+      (is (:ok? result))
+      (is (= "discord-synthesis" (:id result)))
+      (is (= "source_modes" (:contractClass result))))))
+
+(deftest parse-contract-file-runtime-source
+  (let [edn-text "{:contract/kind :source :contract/id \"openplanner-memory\" :source/id :source/openplanner-memory :source/provider :openplanner :source/hydration {:mode :triggered :k 6}}"
+        result   (#'sut/parse-contract-file! "/fake/sources/openplanner_memory.edn" edn-text)]
+    (is (some? result))
+    (is (:ok? result))
+    (is (= "openplanner-memory" (:id result)))
+    (is (= "sources" (:contractClass result)))))
 
 (deftest parse-contract-file-missing-id-returns-nil
   (let [edn-text "{:contract/kind :agent :trigger-kind :manual :agent {:role :knowledge_worker}}"
@@ -123,7 +147,7 @@
 (deftest entry->file-path-returns-path-for-edn
   (let [fake #js {:isFile (fn [] true) :name "my_agent.edn" :parentPath "/contracts/agents"}]
     (is (string? (#'sut/entry->file-path fake)))
-    (is (clojure.string/includes? (#'sut/entry->file-path fake) "my_agent.edn"))))
+    (is (str/includes? (#'sut/entry->file-path fake) "my_agent.edn"))))
 
 ;; ---------------------------------------------------------------------------
 ;; load-all-contracts! — integration against real contracts dir
@@ -184,6 +208,12 @@
         (.catch (fn [err]
                   (is false (str "must not reject on bad root: " (.-message err)))
                   (done))))))
+
+(deftest contract-file-path-prefers-body-identity-record
+  (testing "capability ids come from :cap/id, while legacy filenames may still carry cap_ prefixes"
+    (let [config {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"}
+          file-path (sut/contract-file-path config "capabilities" "test-cap")]
+      (is (str/includes? file-path "capabilities/test_cap.edn")))))
 
 (deftest dedup-contracts-preserves-all-classes
   (async done

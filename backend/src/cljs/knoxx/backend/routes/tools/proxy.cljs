@@ -8,7 +8,8 @@
             [knoxx.backend.contracts.actor-scope :as actor-scope]
             [knoxx.backend.core-memory :as core-memory]
             [knoxx.backend.http :as backend-http]
-            [knoxx.backend.eta-mu-session-ingester :as eta-mu-sessions]))
+            [knoxx.backend.eta-mu-session-ingester :as eta-mu-sessions]
+            [knoxx.backend.opencode-session-ingester :as opencode-sessions]))
 
 (defn- enrich-session-summary!
   [config summary]
@@ -210,6 +211,110 @@
                                       #js {:method "POST"
                                            :headers kms-headers
                                            :body (js/JSON.stringify #js {:source_id (aget eta-mu-source "source_id")
+                                                                        :full_scan force?})
+                                           :signal (timeout-signal 20000)})
+                            (.then (fn [r] (if (.-ok r) (.json r) (safe-json r))))
+                            (.then (fn [job]
+                                     (.send reply #js {:ok true :job job})))
+                            (.catch (fn [err]
+                                      (.code reply 500)
+                                      (.send reply #js {:ok false :error (.-message err)}))))))))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; OpenCode Session Ingestion Routes
+  ;; ---------------------------------------------------------------------------
+
+  ;; GET /api/admin/opencode-sessions/status — OpenCode server and ingestion state overview
+  (.get app "/api/admin/opencode-sessions/status"
+        (fn [_req reply]
+          (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
+                kms-headers #js {"x-knoxx-user-email" "system-admin@open-hax.local"
+                                "x-knoxx-org-slug" "open-hax"}
+                opencode-p (-> (opencode-sessions/get-opencode-ingest-status)
+                               (.catch (fn [err]
+                                         #js {:ok false :error (.-message err)})))
+                kms-p (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
+                                    #js {:headers kms-headers
+                                         :signal (timeout-signal 15000)})
+                          (.then (fn [r]
+                                   (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
+                          (.catch (fn [_] #js []))
+                          (.then
+                           (fn [sources]
+                             (let [sources (if (array? sources) sources #js [])
+                                   opencode-source (.find sources (fn [s] (= (aget s "driver_type") "opencode-sessions")))]
+                               (if-not opencode-source
+                                 #js {:ok false :error "opencode-sessions source not found" :sources sources}
+                                 (-> (js/fetch (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget opencode-source "source_id"))
+                                               #js {:headers kms-headers
+                                                    :signal (timeout-signal 15000)})
+                                     (.then (fn [r]
+                                              (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
+                                     (.catch (fn [_] #js []))
+                                     (.then (fn [jobs]
+                                              #js {:ok true :source opencode-source :jobs jobs}))))))))]
+            (-> (js/Promise.all #js [opencode-p kms-p])
+                (.then
+                 (fn [parts]
+                   (.send reply #js {:ok true
+                                     :opencode (aget parts 0)
+                                     :kms_ingestion (aget parts 1)
+                                     :time (now-iso)})))
+                (.catch
+                 (fn [err]
+                   (.code reply 500)
+                   (.send reply #js {:ok false :error (.-message err)})))))))
+
+  ;; GET /api/admin/opencode-sessions — list available OpenCode sessions via server API
+  (.get app "/api/admin/opencode-sessions"
+        (fn [req reply]
+          (try
+            (let [q (or (aget req "query") #js {})
+                  limit (min (js/parseInt (or (aget q "limit") "50") 10) 200)
+                  cursor (aget q "cursor")
+                  directory (aget q "directory")
+                  search (aget q "search")
+                  roots (when (some? (aget q "roots")) (= "true" (str (aget q "roots"))))
+                  archived (if (some? (aget q "archived")) (= "true" (str (aget q "archived"))) true)]
+              (-> (opencode-sessions/list-opencode-sessions {:limit limit
+                                                             :cursor cursor
+                                                             :directory directory
+                                                             :search search
+                                                             :roots roots
+                                                             :archived archived})
+                  (.then (fn [result] (.send reply result)))
+                  (.catch (fn [err]
+                            (.code reply 500)
+                            (.send reply #js {:ok false :error (.-message err)})))))
+            (catch :default err
+              (.code reply 500)
+              (.send reply #js {:ok false :error (str err)})))))
+
+  ;; POST /api/admin/opencode-sessions/ingest — proxy to ingestion service
+  (.post app "/api/admin/opencode-sessions/ingest"
+         (fn [req reply]
+           (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
+                 kms-headers #js {"content-type" "application/json"
+                                 "x-knoxx-user-email" "system-admin@open-hax.local"
+                                 "x-knoxx-org-slug" "open-hax"}
+                 body (or (aget req "body") #js {})
+                 force? (boolean (aget body "force"))]
+             (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
+                           #js {:headers kms-headers
+                                :signal (timeout-signal 20000)})
+                 (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
+                 (.catch (fn [_] #js []))
+                 (.then
+                  (fn [sources]
+                    (let [sources (if (array? sources) sources #js [])
+                          opencode-source (.find sources (fn [s] (= (aget s "driver_type") "opencode-sessions")))]
+                      (if-not opencode-source
+                        (do (.code reply 404)
+                            (.send reply #js {:ok false :error "opencode-sessions source not found in ingestion service"}))
+                        (-> (js/fetch (str kms-base "/api/ingestion/jobs")
+                                      #js {:method "POST"
+                                           :headers kms-headers
+                                           :body (js/JSON.stringify #js {:source_id (aget opencode-source "source_id")
                                                                         :full_scan force?})
                                            :signal (timeout-signal 20000)})
                             (.then (fn [r] (if (.-ok r) (.json r) (safe-json r))))

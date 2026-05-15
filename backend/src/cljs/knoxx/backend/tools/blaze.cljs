@@ -118,7 +118,7 @@
 (defn- default-model
   [modality]
   (case modality
-    "music" "MiniMax-music-2.6-highspeed"
+    "music" "musicgen-small"
     "image" "MiniMax-image-01-highspeed"
     "video" "qwen3.5-omni-flash-thinking-search"
     "tts" "MiniMax-speech-2.8-hd-highspeed"
@@ -171,10 +171,12 @@
   (if-let [model (blank->nil requested-model)]
     [model]
     (case modality
-      ;; Music endpoints can be flaky/model-gated; keep a deterministic fallback
-      ;; order so "terminated" or other logical failures can try 2.5.
-      "music" ["MiniMax-music-2.6-highspeed"
-               "MiniMax-music-2.5-highspeed"]
+       ;; Local musicgen is free and fast; fall back to MiniMax if it fails.
+       "music" ["musicgen-small"
+                "MiniMax-music-2.6-free"
+                "MiniMax-music-2.5-free"
+                "MiniMax-music-2.6-highspeed"
+                "MiniMax-music-2.5-highspeed"]
       "image" ["MiniMax-image-01-highspeed"]
       "video" ["qwen3.5-omni-flash-thinking-search"]
       "tts" ["MiniMax-speech-2.8-hd-highspeed"]
@@ -304,17 +306,18 @@
         base (case modality
                "image" {:model model :prompt prompt}
                "video" {:model model :prompt prompt}
-                "music" (cond-> {:model model
-                                  :prompt music-prompt
-                                  :lyrics_optimizer lyrics-optimizer?
-                                  :is_instrumental instrumental?
-                                  :sample_rate (let [v (aget params "sample_rate")]
-                                                 (if (number? v) v 44100))
-                                  :bitrate (let [v (aget params "bitrate")]
-                                             (if (number? v) v 256000))
-                                  :audio_format music-format}
-                          music-lyrics (assoc :lyrics music-lyrics))
-               "tts" {:model model
+                 "music" (cond-> {:model model
+                                   :prompt music-prompt
+                                   :lyrics_optimizer lyrics-optimizer?
+                                   :is_instrumental instrumental?
+                                   :sample_rate (let [v (aget params "sample_rate")]
+                                                  (if (number? v) v 44100))
+                                   :bitrate (let [v (aget params "bitrate")]
+                                              (if (number? v) v 256000))
+                                   :audio_format music-format}
+                            music-lyrics (assoc :lyrics music-lyrics)
+                            (number? (aget params "duration")) (assoc :duration (aget params "duration")))
+                "tts" {:model model
                       :input prompt
                       :voice "default"
                       :response_format "mp3"}
@@ -481,7 +484,7 @@
   [url]
   (log-info! "asset-download-start" {:url url})
   (p/let [res (js/fetch url #js {:headers #js {"Accept" "image/*,audio/*,video/*,*/*"}
-                                 :signal (js/AbortSignal.timeout 1200000)
+                                 :signal (js/AbortSignal.timeout 120000000)
 
                                  })
           _ (when-not (.-ok res)
@@ -604,16 +607,19 @@
 
 (def blaze-music-generate-params
   [:map
-   [:prompt {:description "Music style prompt for Proxx/Blaze music generation. Put arrangement, genre, BPM, key, mood, mix notes, and vocal delivery here; put actual lyrics in lyrics."} :string]
-   [:lyrics {:optional true :description "Explicit lyrics for a vocal song. When present, the request is sent as non-instrumental by default."} :string]
-   [:model {:optional true :description "Optional exact Blaze music model ID. Defaults through candidate order: MiniMax-music-2.6-highspeed, then MiniMax-music-2.5-highspeed."} :string]
-   [:output_path {:optional true :description "Workspace-relative output path. Defaults to Music/blaze/<uuid>.mp3. The extension .mp3, .wav, or .pcm sets audio_format unless audio_format is provided."} :string]
-   [:is_instrumental {:optional true :description "Force instrumental true/false. Defaults false when lyrics are present; defaults true when there are no lyrics and the prompt does not imply vocals/song/rap/chorus."} :boolean]
-   [:lyrics_optimizer {:optional true :description "Force Blaze lyrics_optimizer true/false. Defaults false for explicit lyrics and inferred instrumental requests."} :boolean]
-   [:audio_format {:optional true :description "Output format hint: mp3, wav, or pcm. If omitted, inferred from output_path extension or mp3."} :string]
+   [:prompt {:description "INSTRUMENTAL ONLY — Music style prompt. Describe arrangement, genre, BPM, key, mood, mix notes, and instruments. Do NOT include lyrics here. Current models (musicgen-small) generate instrumentals only."} :string]
+   [:model
+    {:optional true
+     :description "Optional exact music model ID. Defaults through candidate order: musicgen-small (local free, instrumental only). MiniMax models require API key and may support vocals but are not currently available."}
+    :string]
+
+   [:output_path {:optional true :description "Workspace-relative output path. Defaults to Music/blaze/<uuid>.wav. The extension .wav or .mp3 sets audio_format unless audio_format is provided. IMPORTANT: musicgen-small returns WAV, so use .wav extension to avoid format confusion."} :string]
+   [:is_instrumental {:optional true :description "Always true for current models. musicgen-small is instrumental-only. Leave unset."} :boolean]
+   [:audio_format {:optional true :description "Output format hint: wav or mp3. If omitted, inferred from output_path extension or wav. musicgen-small returns WAV."} :string]
    [:sample_rate {:optional true :description "Sample rate. Default 44100."} :int]
    [:bitrate {:optional true :description "Bitrate. Default 256000."} :int]
-   [:payload_json {:optional true :description "Advanced: JSON object merged into the Proxx /v1/music/generations payload. Use only for Blaze-specific music fields."} :string]])
+   [:duration {:optional true :description "Duration in seconds. Default 5 for musicgen-small. ALWAYS set to 30+ for usable music. musicgen-small max is around 30s."} :int]
+    [:payload_json {:optional true :description "Advanced: JSON object merged into the Proxx /v1/music/generations payload. Use only for Blaze-specific music fields."} :string]])
 
 (def blaze-image-generate-params
   [:map
@@ -640,7 +646,9 @@
 
 (defn blaze-music-generate-execute
   [runtime config tool-call-id params a b c]
-  (execute-for-modality "music" "music.generate_song" runtime config tool-call-id params a b c))
+  (execute-for-modality
+   "music" "music.generate_song"
+                        runtime config tool-call-id params a b c))
 
 (defn blaze-image-generate-execute
   [runtime config tool-call-id params a b c]
@@ -726,14 +734,14 @@
 
 (def blaze-music-generate-tool
   (partial create-tool-obj
-           "music.generate_song" "Generate Song"
-           "Generate a complete song or instrumental music asset through Proxx's authenticated BlazeAPI music endpoint."
-           "Use this dedicated Proxx/Blaze music tool when the user wants AI-generated music, songs, beats, soundscapes, or vocal tracks. Do not use the generic blaze.generate tool for music."
-           ["For a vocal song, pass explicit lyrics in lyrics and put genre/arrangement/performance details in prompt."
-            "For ambient, soundscape, beat, loop, or instrumental requests, omit lyrics; the tool defaults to is_instrumental=true unless the prompt clearly asks for vocals/song/rap/chorus."
-            "If you have tested lyrics or exact payload fields, preserve them instead of paraphrasing."
-            "Use output_path under Music/ with .mp3 or .wav; the extension is respected as audio_format."
-            "After a successful asset save, call workspace_media.attach on the returned path to embed it in the response."]
+            "music.generate_song" "Generate Instrumental"
+            "Generate INSTRUMENTAL music through Proxx's authenticated BlazeAPI music endpoint. Current default model (musicgen-small) produces instrumentals only — NO VOCALS, NO LYRICS."
+            "Use this tool for AI-generated instrumental music, beats, soundscapes, and backing tracks. Do NOT use for vocal songs or lyrics. For vocal synthesis, use voice.openutau_project + voice.openutau_render. Do not use the generic blaze.generate tool for music."
+            ["INSTRUMENTAL ONLY: Current models do not generate vocals. musicgen-small is a local instrumental diffusion model."
+             "Describe arrangement, genre, BPM, key, mood, mix notes, and instruments in prompt."
+             "Use output_path under Music/ with .wav extension. musicgen-small returns WAV format."
+             "ALWAYS set duration to 30+ seconds. Default is 5 seconds which is not usable music."
+             "After a successful asset save, call workspace_media.attach on the returned path to embed it in the response."]
            blaze-music-generate-params
            blaze-music-generate-execute))
 

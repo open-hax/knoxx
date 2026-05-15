@@ -62,14 +62,24 @@
                      (.then (fn [text]
                               (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
 
+(defn- message-role-ids
+  [msg]
+  (->> (if (array? (aget msg "member" "roles"))
+         (array-seq (aget msg "member" "roles"))
+         [])
+       (map str)
+       vec))
+
 (defn map-message
   [msg]
   {:id (aget msg "id")
    :channelId (or (aget msg "channel_id") "")
+   :guildId (or (aget msg "guild_id") "")
    :content (or (aget msg "content") "")
    :authorId (or (aget msg "author" "id") "")
    :authorUsername (or (aget msg "author" "username") "unknown")
    :authorIsBot (boolean (aget msg "author" "bot"))
+   :authorRoleIds (message-role-ids msg)
    :timestamp (or (aget msg "timestamp") "")
    :attachments (->> (if (array? (aget msg "attachments")) (array-seq (aget msg "attachments")) [])
                      (mapv (fn [attachment]
@@ -169,7 +179,7 @@
           (js/Promise.resolve #js [])))))
 
 (defn resolve-channel-ids!
-  [{:keys [explicit-channels guild-ids publish-channels]}]
+  [{:keys [explicit-channels guild-ids]}]
   (cond
     (seq guild-ids)
     (-> (list-channels!)
@@ -183,28 +193,9 @@
                         distinct
                         vec)))))
 
-    (and (empty? explicit-channels) (seq publish-channels))
-    (-> (list-channels!)
-        (.then (fn [channels]
-                 (let [rows (js->clj channels :keywordize-keys true)
-                       publish-channel-set (set publish-channels)
-                       guilds (->> rows
-                                   (filter (fn [channel]
-                                             (contains? publish-channel-set (:id channel))))
-                                   (map :guildId)
-                                   distinct
-                                   vec)]
-                   (if (seq guilds)
-                     (let [guild-set (set guilds)]
-                       (->> rows
-                            (filter (fn [channel]
-                                      (contains? guild-set (:guildId channel))))
-                            (map :id)
-                            distinct
-                            vec))
-                     publish-channels)))))
-
     :else
+    ;; Publish channels are output sinks, not read sources. Never infer scan
+    ;; channels from publish targets.
     (js/Promise.resolve explicit-channels)))
 
 (defn message-match-kind

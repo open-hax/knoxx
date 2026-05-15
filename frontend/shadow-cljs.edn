@@ -1,4 +1,4 @@
-{:source-paths ["src/cljs" "src/dev"]
+{:source-paths ["src/cljs" "src/dev" "src/e2e"]
  :dependencies [[lilactown/helix "0.2.2"]]
  :nrepl {:port 4501}
 
@@ -39,6 +39,14 @@
     ;; canonical public origin instead.
     :use-document-port false
     :devtools-url "https://knoxx.promethean.rest"}
+   :compiler-options
+   {:output-feature-set :es-next
+    :source-map true}}
+
+  :e2e
+  {:target :node-script
+   :main knoxx.frontend.e2e.ava-runner/main
+   :output-to "dist/e2e/knoxx-e2e.cjs"
    :compiler-options
    {:output-feature-set :es-next
     :source-map true}}}}

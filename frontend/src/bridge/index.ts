@@ -22,6 +22,7 @@ export {
   getDiscordConfig,
   updateDiscordConfig,
   getEventAgentControl,
+  fireTrigger,
   updateEventAgentControl,
   runEventAgentJob,
   dispatchEventAgentEvent,
@@ -29,3 +30,12 @@ export {
   startEventAgentRuntime,
   resetEventAgentRuntime,
 } from "../lib/api/admin";
+
+export {
+  // Contract administration
+  copyContract,
+  getContract,
+  listContracts,
+  saveContract,
+  validateContract,
+} from "../lib/api/contracts";

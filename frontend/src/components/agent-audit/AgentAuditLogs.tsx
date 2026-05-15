@@ -34,6 +34,10 @@ export type AgentAuditLogsProps = {
 
 const PAGE_SIZE = 40;
 
+export function memorySessionsPageLimit(_filters: { builtInActorId?: string; builtInContractId?: string; actorId?: string } = {}): number {
+  return PAGE_SIZE;
+}
+
 function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
   const seen = new Set<string>();
   const merged: MemorySessionSummary[] = [];
@@ -173,9 +177,27 @@ function activeRunTitle(run: ActiveAgentSummary): string {
 
 type AuditItem =
   | { kind: "user_message"; id: string; content: string; ts?: string; contentParts?: ContentPart[] }
+  | { kind: "thinking"; id: string; content: string; ts?: string; model?: string | null }
   | { kind: "agent_turn"; id: string; content: string; ts?: string; model?: string | null; toolReceipts: ToolReceipt[]; contentParts?: ContentPart[]; status?: string }
   | { kind: "tool_call"; id: string; receipt: ToolReceipt; ts?: string }
   | { kind: "system_note"; id: string; title: string; content: string; ts?: string; variant?: "info" | "warning" | "error" | "success" };
+
+function auditItemTime(item: AuditItem): number {
+  if (!item.ts) return Number.MAX_SAFE_INTEGER;
+  const ms = new Date(item.ts).getTime();
+  return Number.isNaN(ms) ? Number.MAX_SAFE_INTEGER : ms;
+}
+
+function sortAuditItems(items: AuditItem[]): AuditItem[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const byTime = auditItemTime(left.item) - auditItemTime(right.item);
+      if (byTime !== 0) return byTime;
+      return left.index - right.index;
+    })
+    .map(({ item }) => item);
+}
 
 function runDetailToAuditItems(run: RunDetail): AuditItem[] {
   const runId = run.run_id;
@@ -189,6 +211,29 @@ function runDetailToAuditItems(run: RunDetail): AuditItem[] {
       id: `${runId}:request:${i}`,
       content: msg.content,
       contentParts: msg.contentParts,
+      ts: run.created_at,
+    });
+  }
+
+  const traceReasoning = (run.trace_blocks ?? [])
+    .filter((block) => block.kind === "reasoning" && block.content?.trim())
+    .map((block) => ({
+      kind: "thinking" as const,
+      id: `${runId}:trace:${block.id}`,
+      content: block.content ?? "",
+      ts: block.at ?? run.updated_at,
+      model: run.model,
+    }));
+
+  if (traceReasoning.length > 0) {
+    items.push(...traceReasoning);
+  } else if (run.reasoning?.trim()) {
+    items.push({
+      kind: "thinking",
+      id: `${runId}:reasoning`,
+      content: run.reasoning,
+      ts: run.updated_at,
+      model: run.model,
     });
   }
 
@@ -233,7 +278,7 @@ function runDetailToAuditItems(run: RunDetail): AuditItem[] {
     }
   }
 
-  return items;
+  return sortAuditItems(items);
 }
 
 function rowsToAuditItems(rows: MemorySessionRow[]): AuditItem[] {
@@ -271,6 +316,14 @@ function rowsToAuditItems(rows: MemorySessionRow[]): AuditItem[] {
           ts: row.ts,
         });
       }
+    } else if (row.kind === "knoxx.reasoning") {
+      items.push({
+        kind: "thinking",
+        id: row.id,
+        content: row.text ?? "",
+        ts: row.ts,
+        model: row.model,
+      });
     } else if (row.kind === "knoxx.tool_receipt") {
       const extra = parseMemoryRowExtra(row) ?? {};
       const receipt = extra.receipt as ToolReceipt | undefined;
@@ -298,7 +351,7 @@ function rowsToAuditItems(rows: MemorySessionRow[]): AuditItem[] {
     // Skip knoxx.runtime.* events — they are plumbing already covered by receipts
   }
 
-  return items;
+  return sortAuditItems(items);
 }
 
 function eventsToAuditItems(runId: string, events: RunEvent[]): AuditItem[] {
@@ -349,7 +402,7 @@ function eventsToAuditItems(runId: string, events: RunEvent[]): AuditItem[] {
     });
   }
 
-  return items;
+  return sortAuditItems(items);
 }
 
 function auditItemSearchText(item: AuditItem): string {
@@ -358,6 +411,8 @@ function auditItemSearchText(item: AuditItem): string {
       return [item.content, item.ts].filter(Boolean).join(" ").toLowerCase();
     case "agent_turn":
       return [item.content, item.model ?? "", item.status ?? "", item.ts].filter(Boolean).join(" ").toLowerCase();
+    case "thinking":
+      return [item.content, item.model ?? "", item.ts].filter(Boolean).join(" ").toLowerCase();
     case "tool_call":
       return [
         item.receipt.tool_name ?? "",
@@ -508,9 +563,14 @@ export default function AgentAuditLogs({
   const filteredActiveRuns = useMemo(() => {
     if (mode !== "active") return [];
     const query = effectiveSessionsQuery;
-    if (!query) return activeRuns;
-    return activeRuns.filter((run) => activeRunSearchText(run).includes(query));
-  }, [activeRuns, effectiveSessionsQuery, mode]);
+    const withBuiltIns = activeRuns.filter((run) => {
+      if (builtInActorId && activeRunSubAgentId(run) !== builtInActorId && activeRunParentAgentId(run) !== builtInActorId) return false;
+      if (builtInContractId && activeRunContractId(run) !== builtInContractId) return false;
+      return true;
+    });
+    if (!query) return withBuiltIns;
+    return withBuiltIns.filter((run) => activeRunSearchText(run).includes(query));
+  }, [activeRuns, builtInActorId, builtInContractId, effectiveSessionsQuery, mode]);
 
   const filteredSessions = useMemo(() => {
     const query = effectiveSessionsQuery;
@@ -579,7 +639,11 @@ export default function AgentAuditLogs({
       else setLoadingMoreSessions(true);
 
       const actorId = sessionActorFilter !== "all" ? sessionActorFilter : undefined;
-      const page = await listMemorySessions({ limit: PAGE_SIZE, offset, actorId });
+      const page = await listMemorySessions({
+        limit: memorySessionsPageLimit({ builtInActorId, builtInContractId, actorId }),
+        offset,
+        actorId,
+      });
       const nextRows = page.rows ?? [];
 
       if (!isMore) {
@@ -602,7 +666,7 @@ export default function AgentAuditLogs({
       if (!isMore) setLoadingSessions(false);
       else setLoadingMoreSessions(false);
     }
-  }, []);
+  }, [builtInActorId, builtInContractId, sessionActorFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1125,6 +1189,27 @@ export default function AgentAuditLogs({
                             </div>
                           );
                         }
+
+                        case "thinking":
+                          return (
+                            <div key={item.id} className="rounded-lg border border-violet-800/40 bg-violet-950/20 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-violet-100">Thinking</div>
+                                  {item.ts ? <div className="mt-1 text-xs text-slate-400">{formatTimestamp(item.ts)}</div> : null}
+                                </div>
+                                <div className="flex gap-2">
+                                  <Badge size="sm" variant="info">reasoning</Badge>
+                                  {item.model ? <Badge size="sm" variant="default">{item.model}</Badge> : null}
+                                </div>
+                              </div>
+                              {item.content ? (
+                                <div className="mt-3 text-sm text-violet-100/90">
+                                  <Markdown content={item.content} theme="dark" variant="compact" lineNumbers={false} copyButton={false} />
+                                </div>
+                              ) : null}
+                            </div>
+                          );
 
                         case "tool_call":
                           return <ToolReceiptBlock key={item.id} receipt={item.receipt} />;

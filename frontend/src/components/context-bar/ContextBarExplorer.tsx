@@ -100,7 +100,7 @@ export function ContextBarExplorer({
           >
             /{currentPath || ""}
           </div>
-          <Button variant="ghost" size="sm" disabled={!currentPath} onClick={() => void onLoadDirectory(currentParentPath)}>
+          <Button variant="ghost" size="sm" onClick={() => void onLoadDirectory(currentParentPath)}>
             Up
           </Button>
         </div>

@@ -54,8 +54,9 @@ export default function SignupPage({ error, onSignupSuccess }: SignupPageProps) 
 
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-300">Email</label>
+            <label htmlFor="signup-email" className="mb-1 block text-sm font-medium text-slate-300">Email</label>
             <input
+              id="signup-email"
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -65,8 +66,9 @@ export default function SignupPage({ error, onSignupSuccess }: SignupPageProps) 
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-300">Display name</label>
+            <label htmlFor="signup-display-name" className="mb-1 block text-sm font-medium text-slate-300">Display name</label>
             <input
+              id="signup-display-name"
               type="text"
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}

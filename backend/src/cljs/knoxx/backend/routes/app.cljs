@@ -10,6 +10,7 @@
             [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.routes.contracts :as contracts-routes]
+            [knoxx.backend.contracts.sources :as contract-sources]
             [knoxx.backend.document-state :refer [normalize-relative-path]]
             [knoxx.backend.routes.documents :as document-routes]
             [knoxx.backend.guards :as guards]
@@ -63,9 +64,13 @@
         requested-contract-id (or (get requested :contract-id)
                                   (default-agent-contract-id config requested-actor-id))
         resolved (effective-agent-contract config requested-contract-id requested-actor-id)
-        resolved-id (:id resolved)]
-    (cond-> (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies :contract-actor-ids :memory-hydration :context-policy])
-                   requested)
+        resolved-id (:id resolved)
+        merged (merge (select-keys resolved [:role :model :system-prompt :task-prompt :thinking-level :tool-policies :contract-actor-ids :memory-hydration :context-policy :sources])
+                      requested)
+        runtime-sources (contract-sources/compose-source-refs config
+                                                              (:sources resolved)
+                                                              (:sources requested))]
+    (cond-> (assoc merged :sources runtime-sources)
       requested-actor-id (assoc :actor-id requested-actor-id)
       (seq (:contract-actor-ids resolved)) (assoc :contract-actors (:contract-actor-ids resolved))
       resolved-id (assoc :contract-id resolved-id))))

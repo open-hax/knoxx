@@ -1,0 +1,20 @@
+{:role/id :role/theme-dark-synthwave
+ :role/name "Theme — Dark Synthwave"
+ :role/description "Dark synthwave + choir. Forks cost reality. Rank the branch you're willing to live in."
+ :role/capabilities []
+ :role/focus "Sonic texture: heavy sidechain, choir hits on 'fork', melodic arps that split into harmonies at chorus."
+ :role/duty "Apply when the song deals with fork-tax, consequences, ranked choices, or the weight of branching paths."
+ :data {:theme/name "Dark Synthwave"
+        :theme/bpm 88
+        :theme/time-signature "4/4"
+        :theme/genre "dark synthwave + choir"
+        :theme/key "E minor"
+        :production/sidechain "Heavy"
+        :production/choir "Hits on 'fork', swells on 'cost'"
+        :production/synths "Melodic arps that split into harmonies at chorus"
+        :production/bass "Pulsing, gated"
+        :lyric/motifs ["fork" "cost" "reality" "rank" "branch" "intent" "merge" "split"]
+        :lyric/structure "Verse builds tension, chorus releases with harmonic split"
+        :mood/ominous? true
+        :mood/determined? true
+        :mood/sacred? true}}

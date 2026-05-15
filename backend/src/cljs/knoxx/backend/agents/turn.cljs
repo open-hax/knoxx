@@ -111,6 +111,7 @@
       (:task-prompt agent-spec) (assoc :hasTaskPrompt true)
       (seq (:tool-policies agent-spec)) (assoc :toolPolicies (vec (:tool-policies agent-spec)))
       (:resource-policies agent-spec) (assoc :resourcePolicies (:resource-policies agent-spec))
+      (seq (:sources agent-spec)) (assoc :sources (vec (:sources agent-spec)))
       (:context-policy agent-spec) (assoc :contextPolicy (:context-policy agent-spec))
       (:sub-agent-id agent-spec) (assoc :subAgentId (:sub-agent-id agent-spec))
       (:parent-agent-id agent-spec) (assoc :parentAgentId (:parent-agent-id agent-spec))

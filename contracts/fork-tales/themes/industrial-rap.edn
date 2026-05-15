@@ -1,0 +1,20 @@
+{:role/id :role/theme-industrial-rap
+ :role/name "Theme — Industrial Rap"
+ :role/description "Industrial glitch-rap. Pretty graphs lie. Claims need receipts."
+ :role/capabilities []
+ :role/focus "Sonic texture: distorted bass, clipped snares, harsh hi-hats, spoken delivery with sharp pauses, crowd-chant hook."
+ :role/duty "Apply when the song audits systems, calls out vibes-over-anchors, or speaks institutional truth to power."
+ :data {:theme/name "Industrial Rap"
+        :theme/bpm 96
+        :theme/time-signature "4/4"
+        :theme/genre "industrial glitch-rap"
+        :theme/key "D minor"
+        :production/bass "Distorted, heavy"
+        :production/drums "Clipped snares, harsh hi-hats, half-time feel"
+        :production/vocal-style "Spoken delivery with sharp pauses. Crowd-chant hook."
+        :production/textures "Industrial noise, graph-paper static"
+        :lyric/motifs ["edges" "claims" "receipts" "graphs" "lie" "audit" "proof" "witness"]
+        :lyric/hook-structure "Call-and-response. Say it. Prove it. Burn it."
+        :mood/angry? true
+        :mood/defiant? true
+        :mood/sacred? false}}

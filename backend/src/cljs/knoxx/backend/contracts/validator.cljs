@@ -46,6 +46,15 @@
    [:max-chars {:optional true} int?]
    [:preserve-system {:optional true} boolean?]])
 
+(def RuntimeSourceRef
+  [:or keyword? string?
+   [:map {:closed false}
+    [:source/ref {:optional true} [:or keyword? string?]]
+    [:source/id {:optional true} [:or keyword? string?]]
+    [:filters {:optional true} [:map {:closed false}]]
+    [:hydration {:optional true} [:map {:closed false}]]
+    [:source/hydration {:optional true} [:map {:closed false}]]]])
+
 (def UiAction
   [:map {:closed false}
    [:id string?]
@@ -87,6 +96,7 @@
    [:prompts {:optional true} [:map {:closed false}
                                 [:system {:optional true} any?]
                                 [:task {:optional true} any?]]]
+   [:sources {:optional true} [:sequential RuntimeSourceRef]]
    [:context {:optional true} ContextPolicy]
    [:context-policy {:optional true} ContextPolicy]
    [:ui/actions {:optional true} [:vector UiAction]]
@@ -104,6 +114,8 @@
    [:actor/default-agent {:optional true} string?]
    [:actor/roles {:optional true} [:sequential keyword?]]
    [:actor/capabilities {:optional true} [:sequential keyword?]]
+   [:actor/sources {:optional true} [:sequential RuntimeSourceRef]]
+   [:sources {:optional true} [:sequential RuntimeSourceRef]]
    [:ui/actions {:optional true} [:vector UiAction]]])
 
 (def RoleContract
@@ -113,6 +125,8 @@
    [:role/description {:optional true} string?]
    [:role/capabilities {:optional true} [:sequential keyword?]]
    [:role/permissions {:optional true} [:sequential string?]]
+   [:role/sources {:optional true} [:sequential RuntimeSourceRef]]
+   [:sources {:optional true} [:sequential RuntimeSourceRef]]
    [:prompts {:optional true}
     [:map {:closed false}
      [:system {:optional true} any?]
@@ -167,6 +181,38 @@
    [:model/context-window {:optional true} int?]
     [:model/max-tokens {:optional true} int?]
     [:model/input {:optional true} [:sequential keyword?]]])
+
+(def SourceModeContract
+  "Source-mode contracts document how event-agent source modes transform upstream
+   source records into template context and runtime dispatch behavior."
+  [:map {:closed false}
+   [:contract/kind [:= :source-mode]]
+   [:contract/id ContractId]
+   [:source-mode/id {:optional true} keyword?]
+   [:source/kind {:optional true} [:or keyword? string?]]
+   [:source/mode {:optional true} [:or keyword? string?]]
+   [:prompts {:optional true} [:map {:closed false}
+                                [:system {:optional true} any?]
+                                [:task {:optional true} any?]]]
+   [:data {:optional true} [:map {:closed false}]]])
+
+(def RuntimeSourceContract
+  "Runtime source contracts declare context providers hydrated before an agent
+   turn. They are intentionally separate from :ingest_source contracts, which
+   describe indexing/discovery jobs."
+  [:map {:closed false}
+   [:contract/kind [:= :source]]
+   [:contract/id ContractId]
+   [:contract/type {:optional true} [:or string? keyword?]]
+   [:contract/version {:optional true} int?]
+   [:source/id [:or string? keyword?]]
+   [:source/name {:optional true} string?]
+   [:source/enabled? {:optional true} boolean?]
+   [:source/provider {:optional true} [:or string? keyword?]]
+   [:source/hydration {:optional true} [:map {:closed false}]]
+   [:source/render {:optional true} [:map {:closed false}]]
+   [:source/filters {:optional true} [:map {:closed false}]]
+   [:source/tools {:optional true} [:sequential [:or string? keyword?]]]])
 
 (def RuntimeFeatureContract
   "Runtime feature contracts let Knoxx manage non-agent runtime toggles such as
@@ -229,7 +275,46 @@
    [:prompts {:optional true} [:map {:closed false}
                                 [:system {:optional true} any?]
                                 [:task {:optional true} any?]]]
-   [:context {:optional true} [:map {:closed false}]]
+    [:context {:optional true} [:map {:closed false}]]
+    [:data {:optional true} [:map {:closed false}]]])
+
+(def ActionContract
+  [:map {:closed false}
+   [:contract/kind [:= :action]]
+   [:contract/id ContractId]
+   [:contract/version {:optional true} int?]
+   [:enabled {:optional true} boolean?]
+   [:action/handler string?]
+   [:action/params {:optional true} [:map {:closed false}]]
+   [:data {:optional true} [:map {:closed false}]]])
+
+(def PipelineStep
+  [:map {:closed false}
+   [:step/id string?]
+   [:step/contract ContractId]
+   [:step/depends-on {:optional true} [:vector string?]]
+   [:step/condition {:optional true} string?]
+   [:step/data {:optional true} [:map {:closed false}]]])
+
+(def PipelineContract
+  [:map {:closed false}
+   [:contract/kind [:= :pipeline]]
+   [:contract/id ContractId]
+   [:contract/version {:optional true} int?]
+   [:enabled {:optional true} boolean?]
+   [:pipeline/steps [:vector PipelineStep]]
+   [:data {:optional true} [:map {:closed false}]]])
+
+(def TriggerContract
+  [:map {:closed false}
+   [:contract/kind [:= :trigger]]
+   [:contract/id ContractId]
+   [:contract/version {:optional true} int?]
+   [:enabled {:optional true} boolean?]
+   [:trigger/kind [:enum :cron :event :webhook :manual]]
+   [:trigger/target ContractId]
+   [:trigger/schedule {:optional true} string?]
+   [:trigger/source {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 
 (def CmsContract
@@ -251,9 +336,16 @@
          (= :policy (:contract/kind value))) "policies"
     (and (contains? value :contract/id)
          (= :sub-agent (:contract/kind value))) "sub_agents"
+    (= :action (:contract/kind value)) "actions"
+    (= :pipeline (:contract/kind value)) "pipelines"
+    (= :trigger (:contract/kind value)) "triggers"
+    (= :sub-agent (:contract/kind value)) "sub_agents"
     (and (contains? value :contract/id)
          (contains? #{:cms-block-registry :cms-templates :cms-template-registry}
                     (:contract/kind value))) "cms"
+    (or (contains? value :source-mode/id)
+        (= :source-mode (:contract/kind value))) "source_modes"
+    (= :source (:contract/kind value)) "sources"
     (contains? value :contract/id) "agents"
     (contains? value :actor/id) "actors"
     (contains? value :role/id) "roles"
@@ -273,10 +365,15 @@
     "roles" RoleContract
     "capabilities" CapabilityContract
     "policies" PolicyContract
+    "source_modes" SourceModeContract
+    "sources" RuntimeSourceContract
     "model_families" ModelFamilyContract
     "models" ModelContract
     "runtime_features" RuntimeFeatureContract
     "ingest_sources" IngestSourceContract
+    "actions" ActionContract
+    "pipelines" PipelineContract
+    "triggers" TriggerContract
     "sub_agents" SubAgentContract
     "cms" CmsContract
     AgentContract))

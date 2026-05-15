@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ChatMainPane } from "./ChatMainPane";
@@ -154,7 +155,35 @@ function renderPane(messages: ChatMessage[]) {
   return render(<ChatMainPane {...makeProps(messages)} />);
 }
 
+function RuntimeQueuedHarness() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  return (
+    <ChatMainPane
+      {...makeProps(messages)}
+      isSending={isSending}
+      composerDisabled={isSending}
+      onSend={(text) => {
+        setMessages([
+          { id: "u1", role: "user", content: text },
+          { id: "a1", role: "assistant", content: "", status: "streaming", model: "gemma4:31b" },
+        ]);
+        setIsSending(true);
+      }}
+    />
+  );
+}
+
 describe("ChatMainPane auto-scroll", () => {
+  it("renders the queued user turn and disables composer controls while sending", () => {
+    render(<RuntimeQueuedHarness />);
+
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    expect(screen.getByTestId("message-list")).toHaveTextContent("hello");
+    expect(screen.getByRole("button", { name: "send" })).toBeDisabled();
+  });
+
   it("renders a thinking-level dropdown with all supported options", () => {
     const onSelectedThinkingLevelChange = vi.fn();
     render(

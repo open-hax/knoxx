@@ -5,7 +5,7 @@ import {
   fetchIngestionSources, fetchIngestionJobs, fetchSourceAudit,
   triggerIngestionJob, fetchGraphExport, fetchServiceHealth,
   fetchDataMongoCollections, fetchDataMongoList, queryDataMongo, fetchDataPgTables, buildSemanticEdges, browseFiles, fetchFileContent,
-  fetchOpenPlannerProxy, postOpenPlannerProxy,
+  fetchOpenPlannerProxy, postOpenPlannerProxy, fetchEmbeddingCoverage,
 } from '../lib/nextApi';
 import { buildKnoxxAuthHeaders } from '../lib/api';
 import type { IngestionSource, IngestionJob, SourceAudit, ServiceHealth } from '../lib/nextApi';
@@ -111,9 +111,9 @@ function KV({ k, v }: { k: string; v: React.ReactNode }) {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────
 
-function OverviewTab({ sources, jobs, health, graphStats, onBuildEdges }: {
+function OverviewTab({ sources, jobs, health, graphStats, embeddingCoverage, onBuildEdges }: {
   sources: IngestionSource[]; jobs: IngestionJob[]; health: ServiceHealth | null;
-  graphStats: any; onBuildEdges: () => void;
+  graphStats: any; embeddingCoverage: any; onBuildEdges: () => void;
 }) {
   const activeJobs = jobs.filter(j => j.status === 'running' || j.status === 'pending');
   const totalDocs = graphStats?.total || 0;
@@ -166,6 +166,52 @@ function OverviewTab({ sources, jobs, health, graphStats, onBuildEdges }: {
           ⚡ Rebuild Semantic Edges
         </button>
       </div>
+
+      {/* Embedding coverage */}
+      {embeddingCoverage?.coverage && (
+        <div className="rounded-lg border border-slate-700/50 bg-slate-800/30 px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Embedding Coverage</h3>
+            <span className={`text-xs font-bold ${embeddingCoverage.coverage.embeddingRate >= 0.8 ? 'text-emerald-400' : embeddingCoverage.coverage.embeddingRate >= 0.5 ? 'text-amber-400' : 'text-rose-400'}`}>
+              {(embeddingCoverage.coverage.embeddingRate * 100).toFixed(1)}%
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <div className="text-[10px] text-slate-500">Total Events</div>
+              <div className="text-sm font-bold text-slate-200">{fmt(embeddingCoverage.coverage.totalEvents)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-500">Graph Nodes</div>
+              <div className="text-sm font-bold text-slate-200">{fmt(embeddingCoverage.coverage.totalGraphNodes)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-500">Embeddings</div>
+              <div className="text-sm font-bold text-slate-200">{fmt(embeddingCoverage.coverage.totalEmbeddings)}</div>
+            </div>
+          </div>
+          {embeddingCoverage.byNodeKind?.length > 0 && (
+            <div>
+              <div className="text-[10px] text-slate-500 mb-1">By Node Kind</div>
+              <div className="flex flex-wrap gap-1">
+                {embeddingCoverage.byNodeKind.slice(0, 12).map((k: any) => (
+                  <Badge key={k.kind}>{k.kind}: {fmt(k.count)}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+          {embeddingCoverage.byModel?.length > 0 && (
+            <div>
+              <div className="text-[10px] text-slate-500 mb-1">By Model</div>
+              <div className="flex flex-wrap gap-1">
+                {embeddingCoverage.byModel.slice(0, 6).map((m: any) => (
+                  <Badge key={m.model} color="bg-purple-500/10 text-purple-400">{m.model}: {fmt(m.count)}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Recent jobs */}
       <div>
@@ -877,6 +923,16 @@ function ServicesTab({
   );
 }
 
+export function parseMongoJsonText<T>(label: string, raw: string, defaultValue: T): T {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return defaultValue;
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch (e: any) {
+    throw new Error(`${label} is not valid JSON: ${e.message}`);
+  }
+}
+
 function DatabaseTab() {
   const [tables, setTables] = useState<string[]>([]);
   const [selectedTable, setSelectedTable] = useState('');
@@ -953,15 +1009,7 @@ function DatabaseTab() {
     }
   }, []);
 
-  const parseMongoJson = useCallback((label: string, raw: string, defaultValue: any) => {
-    const trimmed = (raw || '').trim();
-    if (!trimmed) return defaultValue;
-    try {
-      return JSON.parse(trimmed);
-    } catch (e: any) {
-      throw new Error(`${label} is not valid JSON: ${e.message}`);
-    }
-  }, []);
+  const parseMongoJson = useCallback(parseMongoJsonText, []);
 
   const runMongoQueryFor = useCallback(async (collection: string, opts?: { skip?: number }) => {
     if (!collection) return;
@@ -971,9 +1019,9 @@ function DatabaseTab() {
     setMongoSelectedRow(null);
     setMongoQueryInfo('');
     try {
-      const filter = parseMongoJson('Filter', mongoFilterText, {});
-      const sort = parseMongoJson('Sort', mongoSortText, { _id: -1 });
-      const projection = parseMongoJson('Projection', mongoProjectionText, undefined);
+      const filter = parseMongoJson<Record<string, unknown>>('Filter', mongoFilterText, {});
+      const sort = parseMongoJson<Record<string, 1 | -1>>('Sort', mongoSortText, { _id: -1 });
+      const projection = parseMongoJson<Record<string, number> | undefined>('Projection', mongoProjectionText, undefined);
       const res = await queryDataMongo({
         collection,
         filter,
@@ -1475,21 +1523,25 @@ export default function DataPage() {
   const [health, setHealth] = useState<ServiceHealth | null>(null);
   const [graphStats, setGraphStats] = useState<any>(null);
   const [graphData, setGraphData] = useState<any>(null);
+  const [embeddingCoverage, setEmbeddingCoverage] = useState<any>(null);
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const loadAll = useCallback(async () => {
     try {
-      const [srcRes, jobRes, healthRes, mongoRes] = await Promise.allSettled([
+      const [srcRes, jobRes, healthRes, mongoRes, embedRes] = await Promise.allSettled([
         fetchIngestionSources(), fetchIngestionJobs(), fetchServiceHealth(),
-        fetchDataMongoCollections(),
+        fetchDataMongoCollections(), fetchEmbeddingCoverage(),
       ]);
       setSources(srcRes.status === 'fulfilled' ? srcRes.value : []);
       setJobs(jobRes.status === 'fulfilled' ? jobRes.value : []);
       setHealth(healthRes.status === 'fulfilled' ? healthRes.value : null);
       if (mongoRes.status === 'fulfilled' && mongoRes.value) {
         setGraphStats({ total: mongoRes.value.documents?.total || 0, ...mongoRes.value.documents });
+      }
+      if (embedRes.status === 'fulfilled' && embedRes.value?.ok) {
+        setEmbeddingCoverage(embedRes.value);
       }
     } catch (e) { setError(String(e)); }
     finally { setLoading(false); }
@@ -1559,7 +1611,7 @@ export default function DataPage() {
       )}
 
       <main className={tab === 'graph' ? 'flex-1 overflow-hidden p-0' : 'flex-1 overflow-y-auto p-6'}>
-        {tab === 'overview' && <OverviewTab sources={sources} jobs={jobs} health={health} graphStats={graphStats} onBuildEdges={handleBuildEdges} />}
+        {tab === 'overview' && <OverviewTab sources={sources} jobs={jobs} health={health} graphStats={graphStats} embeddingCoverage={embeddingCoverage} onBuildEdges={handleBuildEdges} />}
         {tab === 'sources' && <SourcesTab sources={sources} jobs={jobs} onSync={handleSync} />}
         {tab === 'files' && <FileExplorerTab />}
         {tab === 'documents' && <DocumentsTab />}

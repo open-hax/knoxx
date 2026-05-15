@@ -1,5 +1,6 @@
 (ns knoxx.backend.contracts-routes-test
-  (:require [cljs.test :refer [deftest is testing async]]
+  (:require [clojure.string :as str]
+            [cljs.test :refer [deftest is testing async]]
             [knoxx.backend.routes.contracts :as sut]
             [knoxx.backend.redis-client :as redis]))
 
@@ -111,3 +112,24 @@
           (.catch (fn [err]
                     (is false (str "handler threw: " (.-message err)))
                     (done)))))))
+
+(deftest validate-contract-edn-surfaces-agent-shape-warnings
+  (let [result (#'sut/validate-contract-edn
+                "agents"
+                "{:contract/id \"warny\"
+                  :contract/kind :agent
+                  :trigger-kind :cron
+                  :source {:max-messages 2000}
+                  :agent {:role :contract_writer}
+                  :prompts {:task \"update :data/world_state\"}
+                  :data {:filter {:publishChannels [\"123\"]}
+                         :source {:max-messages 2000}
+                         :plot_log []}}")
+        messages (set (map :message (:warnings result)))]
+    (is (:ok result))
+    (is (some #(str/includes? % ":data/:filter") messages))
+    (is (some #(str/includes? % "top-level :source") messages))
+    (is (some #(str/includes? % "clamped to 100") messages))
+    (is (some #(str/includes? % "mutable runtime state") messages))
+    (is (some #(str/includes? % "Role refs should use") messages))
+    (is (some #(str/includes? % "Prompt references mutable :data") messages))))

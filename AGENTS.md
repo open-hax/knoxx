@@ -49,6 +49,14 @@ Over:
 - Prefer source edits and let shadow-cljs hot reload backend CLJS changes; Vite will reload frontend changes automatically.
 - If a restart seems necessary, report why and wait for the user to restart or approve it.
 
+## Verification Requirements
+
+- Do not report a code change as done unless the relevant test command completes with zero failures and zero errors.
+- For backend ClojureScript changes, run `pnpm -C backend exec shadow-cljs compile test` and treat any reported test failure as blocking, even if the compiler exits 0.
+- For production backend changes, also run `pnpm -C backend exec shadow-cljs compile server` or the narrower build command that proves the changed build target.
+- If the full relevant suite is already red, either fix it before claiming completion or clearly state that the task is blocked by the failing tests; do not phrase a red suite as “verified” or “done.”
+- Only use a narrower test command when it directly covers the changed code and explain why the full relevant suite was not run.
+
 ## Modern CLJS Patterns
 
 Always prefer modern shadow-cljs patterns over legacy verbose forms:

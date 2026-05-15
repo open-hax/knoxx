@@ -282,6 +282,12 @@ export async function runEventAgentJob(jobId: string): Promise<{ ok: boolean; jo
   });
 }
 
+export async function fireTrigger(triggerId: string): Promise<{ ok: boolean; triggerId: string; result?: unknown }> {
+  return request<{ ok: boolean; triggerId: string; result?: unknown }>(`/api/admin/triggers/${encodeURIComponent(triggerId)}/fire`, {
+    method: "POST",
+  });
+}
+
 export async function dispatchEventAgentEvent(event: {
   sourceKind: string;
   eventKind: string;
@@ -311,7 +317,8 @@ export async function resetEventAgentRuntime(): Promise<EventAgentControlRespons
   reset: {
     ok: boolean;
     deletedCount: number;
-    disabledCronJobCount: number;
+    disabledCronJobCount?: number;
+    preservedCronJobCount?: number;
   };
 }> {
   return request<EventAgentControlResponse & {
@@ -320,7 +327,8 @@ export async function resetEventAgentRuntime(): Promise<EventAgentControlRespons
     reset: {
       ok: boolean;
       deletedCount: number;
-      disabledCronJobCount: number;
+      disabledCronJobCount?: number;
+      preservedCronJobCount?: number;
     };
   }>("/api/admin/config/events/runtime/reset", {
     method: "POST",

@@ -41,6 +41,7 @@
       "node:child_process"
       "node:fs/promises"
       "node:crypto"
+      "@open-hax/eta-mu-cli"
       "node:fs"
       "node:path"
       "node:url"
@@ -74,6 +75,7 @@
       "node:path"
       "node:url"
       "redis"
+      "@open-hax/eta-mu-cli"
       "discord.js"
       "@discordjs/voice"
       "libsodium-wrappers"}},
@@ -110,6 +112,7 @@
       "node:path"
       "node:url"
       "redis"
+      "@open-hax/eta-mu-cli"
       "discord.js"
       "@discordjs/voice"
       "libsodium-wrappers"}},
@@ -125,6 +128,8 @@
    :output-to "target/test/test.cjs",
    :ns-regex ["knoxx.backend.*-test$"],
    :autorun true,
+   :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
+                                                     :file "test/js/eta_mu_cli_test_stub.cjs"}}},
    :compiler-options
    {:output-feature-set :es-next,
     :macros {:knoxx.backend.macros true},
@@ -134,6 +139,8 @@
    :output-to "target/test/test-ci.cjs",
    :ns-regex ["knoxx.backend.*-test$"],
    :autorun false,
+   :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
+                                                     :file "test/js/eta_mu_cli_test_stub.cjs"}}},
    :compiler-options
    {:output-feature-set :es-next,
     :optimizations :none,

@@ -1,0 +1,14 @@
+{:contract/id "openplanner-memory"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :source/id :source/openplanner-memory
+ :source/name "OpenPlanner conversational memory"
+ :source/enabled? true
+ :source/provider :openplanner
+ :source/hydration {:strategy :memory-search
+                    :mode :triggered
+                    :k 6}
+ :source/render {:title "OpenPlanner memory"
+                 :description "Prior Knoxx session memory and action history; verify exact claims with memory_search or memory_session."}
+ :source/tools [:memory_search :memory_session]}

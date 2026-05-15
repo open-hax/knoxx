@@ -9,7 +9,8 @@
             [knoxx.backend.discord-io :as discord-io]
             [knoxx.backend.pipeline-runner :as pipeline-runner]
             [knoxx.backend.runtime.config :as runtime-config]
-            [knoxx.backend.runtime.models :as models]))
+            [knoxx.backend.runtime.models :as models]
+            [knoxx.backend.tooling :as tooling]))
 
 (defonce running?* (atom false))
 (defonce trigger-id->interval* (atom {}))
@@ -32,27 +33,77 @@
   [config trigger-id]
   (loader/contract-file-path config "triggers" trigger-id))
 
+(defn- load-contract-sync
+  [config contract-class contract-id]
+  (let [klass (loader/normalize-contract-class contract-class)
+        wanted-id (some-> contract-id str str/trim not-empty)]
+    (some (fn [record]
+            (when (and (= klass (:contractClass record))
+                       (= wanted-id (:id record)))
+              (:contract record)))
+          (loader/load-all-contracts-sync config))))
+
 ;; ─── fire helpers ─────────────────────────────────────────────────────
 
 (defn- fire-pipeline!
   [config trigger-ctx pipeline-id]
-  (when-let [contract (loader/load-contract! config "pipelines" pipeline-id)]
+  (when-let [contract (load-contract-sync config "pipelines" pipeline-id)]
     (pipeline-runner/run-pipeline! config (assoc contract :trigger-ctx trigger-ctx))))
 
 (defn- fire-agent!
   [config trigger-ctx agent-id]
-  (when-let [contract (loader/load-contract! config "agents" agent-id)]
-    (let [ctx (merge (:context trigger-ctx) (:data/context contract))
-          discord-ctx (select-keys trigger-ctx [:channelId :channelName
-                                                 :authorUsername :content :reason])]
+  (when-let [contract (load-contract-sync config "agents" agent-id)]
+    (let [resolved (tooling/resolve-agent-contract config agent-id)
+          job {:id agent-id
+               :name agent-id
+               :contractId agent-id
+               :role (:role resolved)
+               :systemPrompt (:system-prompt resolved)
+               :taskPrompt (or (:task-prompt resolved)
+                               (get-in contract [:prompts :task]))
+               :model (:model resolved)
+               :thinkingLevel (:thinking-level resolved)
+               :toolPolicies (:tool-policies resolved)
+               :sources (:sources resolved)
+               :memoryHydration (:memory-hydration resolved)
+               :contextPolicy (:context-policy resolved)}
+          discord-ctx (select-keys (or trigger-ctx {}) [:channelId :channelName
+                                                        :authorUsername :content :reason])]
       (discord-io/start-agent-session!
        config
-       (assoc contract :taskPrompt (get-in contract [:prompts :task]))
+       job
        discord-ctx))))
 
 (defn- fire-action!
   [config _trigger-ctx action-id]
   (js/console.warn "[trigger-runner] action dispatch not yet wired:" action-id))
+
+(defn- target-contract-id
+  [target]
+  (some-> target
+          str
+          str/trim
+          (str/replace #"^(pipeline|agent|action):" "")
+          not-empty))
+
+(defn- dispatch-target!
+  [config trigger-ctx target]
+  (let [contract-id (target-contract-id target)]
+    (cond
+      (nil? contract-id)
+      (js/Promise.reject (js/Error. "Trigger target is blank"))
+
+      (load-contract-sync config "pipelines" contract-id)
+      (fire-pipeline! config trigger-ctx contract-id)
+
+      (load-contract-sync config "actions" contract-id)
+      (fire-action! config trigger-ctx contract-id)
+
+      (load-contract-sync config "agents" contract-id)
+      (fire-agent! config trigger-ctx contract-id)
+
+      :else
+      (js/Promise.reject (js/Error. (str "Unknown trigger target: " target))))))
 
 ;; ─── cron scheduling ────────────────────────────────────────────────
 
@@ -76,14 +127,12 @@
         id (js/setInterval
              (fn []
                (when @running?*
-                 (when-let [contract (loader/load-contract! config "triggers" trigger-id)]
-                   (when (:enabled contract)
-                     (let [target (:trigger/target contract)
-                           ctx    (:data/context contract)]
-                       (cond
-                         (str/starts-with? target "pipeline") (fire-pipeline! config ctx target)
-                         (str/starts-with? target "action")   (fire-action! config ctx target)
-                         :else                                 (fire-agent! config ctx target)))))))
+                  (when-let [contract (load-contract-sync config "triggers" trigger-id)]
+                    (when (:enabled contract)
+                      (-> (js/Promise.resolve
+                           (dispatch-target! config (:data/context contract) (:trigger/target contract)))
+                          (.catch (fn [err]
+                                    (js/console.error "[trigger-runner] failed to fire" trigger-id err))))))))
              ms)]
     (swap! trigger-id->interval* assoc trigger-id id)
     (js/console.log "[trigger-runner] scheduled" trigger-id "every" ms "ms")))
@@ -97,7 +146,7 @@
     (reset! running?* true)
     (let [config (cfg)]
       (doseq [trigger-id (loader/list-contract-ids-sync config "triggers")]
-        (when-let [contract (loader/load-contract! config "triggers" trigger-id)]
+        (when-let [contract (load-contract-sync config "triggers" trigger-id)]
           (when (:enabled contract)
             (case (:trigger/kind contract)
               :cron (schedule-cron-trigger! config trigger-id (:trigger/schedule contract))
@@ -118,15 +167,12 @@
   ([trigger-id] (fire! trigger-id {}))
   ([trigger-id ctx]
    (let [config (cfg)
-         contract (loader/load-contract! config "triggers" trigger-id)]
+          contract (load-contract-sync config "triggers" trigger-id)]
      (if contract
-       (let [target (:trigger/target contract)
-             ctx'   (merge (:data/context contract) ctx)]
-         (cond
-           (str/starts-with? target "pipeline") (fire-pipeline! config ctx' target)
-           (str/starts-with? target "action")   (fire-action! config ctx' target)
-           :else                                 (fire-agent! config ctx' target))
-         (js/Promise.resolve {:fired trigger-id}))
+        (let [target (:trigger/target contract)
+              ctx'   (merge (:data/context contract) ctx)]
+          (-> (js/Promise.resolve (dispatch-target! config ctx' target))
+              (.then (fn [_] {:fired trigger-id}))))
        (js/Promise.reject (js/Error. (str "Unknown trigger: " trigger-id)))))))
 
 (defn status
@@ -136,5 +182,5 @@
     {:running @running?*
      :triggers (->> (loader/list-contract-ids-sync config "triggers")
                    (mapv (fn [id]
-                           (when-let [c (loader/load-contract! config "triggers" id)]
+                            (when-let [c (load-contract-sync config "triggers" id)]
                               (select-keys c [:contract/id :trigger/kind :trigger/target :enabled])))))}))

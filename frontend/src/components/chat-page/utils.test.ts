@@ -16,6 +16,15 @@ describe("novelAppendedText", () => {
     expect(novelAppendedText("The", "TheThe model should reason once.")).toBe(" model should reason once.");
     expect(novelAppendedText("ha", "haha")).toBe("ha");
   });
+
+  it("keeps a streamed assistant transcript monotonic across overlapping websocket chunks", () => {
+    let rendered = "";
+    for (const incoming of ["The", "The answer", "answer is", " is stable.", "The answer is stable."]) {
+      rendered = `${rendered}${novelAppendedText(rendered, incoming)}`;
+    }
+
+    expect(rendered).toBe("The answer is stable.");
+  });
 });
 
 describe("applyToolTraceEvent", () => {

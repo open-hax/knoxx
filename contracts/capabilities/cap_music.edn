@@ -5,8 +5,20 @@
              :music.copyright_check
              :music.generate
              :music.generate_song]
+ :cap/description
+ "Music analysis and INSTRUMENTAL generation tools.
+
+ IMPORTANT: music.generate_song is INSTRUMENTAL ONLY with current models.
+ - musicgen-small (default): local free model, generates instrumentals, outputs WAV
+ - ALWAYS set duration to 30+ seconds (default is 5s which is not usable)
+ - Use .wav extension for output_path since musicgen-small returns WAV
+ - For vocal songs: use voice.openutau_project + voice.openutau_render (OpenUTAU)
+ - Do NOT send lyrics to music.generate_song — current models ignore them
+
+ For full song composition (music + vocals in one prompt): not yet available.
+ When a model supports this, it will be exposed as music.compose_full_song."
  :cap/user-surfaces [{:surface/id :workspace/music-analysis
                       :surface/label "Music analysis panel"
                       :surface/kind :inspector
                       :surface/routes ["/ops/documents"]
-                      :surface/description "Humans identify tracks, inspect music metadata, and review generated song assets from a music panel; agents use music tools including native synthesis and the dedicated Proxx/Blaze music.generate_song tool for full song or instrumental generation."}]}
+                      :surface/description "Humans identify tracks, inspect music metadata, and review generated instrumental assets from a music panel; agents use music tools including native synthesis and the dedicated Proxx/Blaze music.generate_song tool for INSTRUMENTAL generation only."}]}

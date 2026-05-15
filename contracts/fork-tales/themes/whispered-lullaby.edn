@@ -1,0 +1,20 @@
+{:role/id :role/theme-whispered-lullaby
+ :role/name "Theme — Whispered Lullaby"
+ :role/description "Whispered lullaby. 60 BPM. Almost no drums. What you can't prove, don't use to steer me."
+ :role/capabilities []
+ :role/focus "Sonic texture: air and noise as texture, almost no drums, whispered, 60 BPM."
+ :role/duty "Apply when the song is a lullaby, a goodbye, a promise, or a refusal to be moved by unproven things."
+ :data {:theme/name "Whispered Lullaby"
+        :theme/bpm 60
+        :theme/time-signature "3/4"
+        :theme/genre "whispered lullaby"
+        :theme/key "D major"
+        :production/drums "Almost none. Maybe a heartbeat."
+        :production/textures "Air and noise as texture. Wind. Static."
+        :production/vocal-style "Whispered, breathy, close"
+        :production/reverb "Infinite, soft, like falling asleep"
+        :lyric/motifs ["sleep" "prove" "steer" "hear" "between" "space" "quiet" "rest"]
+        :lyric/structure "Short. Repetitive. Like a spell."
+        :mood/peaceful? true
+        :mood/sad? true
+        :mood/protective? true}}

@@ -149,6 +149,7 @@
   (let [normalized (into #{}
                          (comp (map #(some-> % str str/trim not-empty))
                                (map #(when % (contracts-roles/normalize-role (contracts-config) %)))
+                               (map #(some-> % (str/replace #"-" "_")))
                                (remove nil?))
                          (or role-slugs []))]
     (if (contains? normalized "system_admin")

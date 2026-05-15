@@ -1,0 +1,16 @@
+{:contract/id "cron-tick"
+ :contract/kind :source-mode
+ :contract/version 1
+ :source-mode/id :source-mode/cron-tick
+ :source/kind :cron
+ :source/mode :tick
+ :prompts
+ {:task
+  (template {:separator "\n\n"}
+    ["## Source mode: cron tick"
+     "This run is scheduler-driven and has no Discord source-message scan. Use durable tools and explicit contract tasks for context; do not infer read channels from Discord publish targets."
+     (template ["Contract:" (:contract-id ctx) "Actor:" (:actor-id ctx)])])}
+ :data
+ {:requires-explicit-channels false
+  :source-context-path nil
+  :channel-semantics "No implicit Discord read source."}}

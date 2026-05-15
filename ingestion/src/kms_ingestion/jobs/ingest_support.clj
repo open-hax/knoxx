@@ -159,9 +159,10 @@
        :target :openplanner
        :lake tenant-id})))
 
-(defn ingest-eta-mu-session-via-openplanner!
-  "Ingest a eta-mu session's events via OpenPlanner /v1/events endpoint.
-   The :content of file-data is a JSON string with {:session-id, :cwd, :events [...]}.
+(defn ingest-events-via-openplanner!
+  "Ingest pre-mapped session events via OpenPlanner /v1/events.
+
+   The :content of file-data is a JSON string with {:session-id, :events [...]}.
    Events are already mapped to OpenPlanner EventEnvelopeV1 format."
   [_job-id tenant-id _source-id openplanner-url openplanner-api-key file]
   (let [parsed (some-> (:content file) (json/parse-string keyword))
@@ -197,6 +198,11 @@
              :error (str failed-batches " batches failed")
              :target :openplanner
              :lake tenant-id}))))))
+
+(defn ingest-eta-mu-session-via-openplanner!
+  "Backward-compatible wrapper for eta-mu event-session ingestion."
+  [& args]
+  (apply ingest-events-via-openplanner! args))
 
 (defn build-semantic-edges-incremental!
   "Call OpenPlanner to build semantic edges for newly ingested documents.

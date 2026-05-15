@@ -10,7 +10,7 @@
             ["node:http" :as http]))
 
 (def ^:private fixture-mp3
-  "orgs/open-hax/openplanner/packages/agents/knoxx/Audio/broadcasts/brain_fart_alert.mp3")
+  "../Audio/broadcasts/brain_fart_alert.mp3")
 
 (defn- join-chunks
   "Concat Node buffers into a utf8 string."
@@ -212,6 +212,7 @@
                        "tool-call-mock"
                        #js {"prompt" prompt
                             "lyrics" lyrics
+                            "model" "MiniMax-music-2.6-highspeed"
                             "output_path" output-path}
                        nil nil nil)
                     req (first @requests*)]
@@ -263,6 +264,7 @@
                        "tool-call-mock"
                        #js {"prompt" prompt
                             "lyrics" lyrics
+                            "model" "MiniMax-music-2.6-highspeed"
                             "output_path" output-path}
                        nil nil nil)
                     req (first @requests*)]

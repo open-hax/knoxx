@@ -3,7 +3,7 @@ import time
 import json
 import subprocess
 import threading
-from typing import Tuple, Generator
+from typing import Any, Generator, Protocol, Tuple
 
 import numpy as np
 from flask import Flask, jsonify, request, Response, stream_with_context
@@ -11,6 +11,11 @@ from huggingface_hub import snapshot_download
 
 
 MAX_AUDIO_DURATION_S = 25.0  # NPU KV cache can't handle very long audio
+
+
+class WhisperPipelineLike(Protocol):
+    def generate(self, audio: np.ndarray, **kwargs: Any) -> Any:
+        ...
 
 def env(name: str, default: str) -> str:
     value = os.getenv(name)
@@ -20,8 +25,15 @@ def env(name: str, default: str) -> str:
 PORT = int(env("PORT", "8010"))
 MODEL_DIR = env("MODEL_DIR", "/data/models")
 MODEL_ID = env("WHISPER_MODEL_ID", "OpenVINO/whisper-medium.en-int8-ov")
+TIMED_MODEL_ID = env("STT_TIMED_MODEL_ID", MODEL_ID)
+TIMED_MODEL_DIR = env(
+    "STT_TIMED_MODEL_DIR",
+    MODEL_DIR if TIMED_MODEL_ID == MODEL_ID else f"{MODEL_DIR}-timed",
+)
 REQUESTED_DEVICE = env("WHISPER_DEVICE", "NPU")
 NPU_COMPILER_TYPE = env("WHISPER_NPU_COMPILER_TYPE", "DRIVER")
+ENABLE_WORD_TIMESTAMPS = env("STT_WORD_TIMESTAMPS", "false").lower() in {"1", "true", "yes", "on"}
+TIMED_REQUESTED_DEVICE = env("STT_TIMED_DEVICE", "CPU" if ENABLE_WORD_TIMESTAMPS else REQUESTED_DEVICE)
 
 # Audio chunking for long recordings
 # The NPU model (whisper-small-int4) works best with full 20-25s clips.
@@ -100,7 +112,11 @@ def list_available_devices() -> list[str]:
         return []
 
 
-def load_pipeline(requested_device: str) -> Tuple[object, str, str | None]:
+def load_pipeline(requested_device: str) -> Tuple[WhisperPipelineLike, str, str | None]:
+    return load_pipeline_for_model(MODEL_DIR, requested_device)
+
+
+def load_pipeline_for_model(model_dir: str, requested_device: str) -> Tuple[WhisperPipelineLike, str, str | None]:
     import openvino_genai  # imported late so the module import failure is explicit
 
     init_error: str | None = None
@@ -110,7 +126,12 @@ def load_pipeline(requested_device: str) -> Tuple[object, str, str | None]:
             # On some installs the driver compiler path fails for Whisper; prefer compiler-in-plugin.
             kwargs["NPU_COMPILER_TYPE"] = NPU_COMPILER_TYPE
 
-        pipe = openvino_genai.WhisperPipeline(MODEL_DIR, device=requested_device, **kwargs)
+        # OpenVINO GenAI 2026.1 NPU fails Whisper pipeline construction when
+        # word_timestamps is supplied here (rv_readers.size assertion). Keep the
+        # NPU pipeline loadable and request word timestamps at generate-time.
+        if ENABLE_WORD_TIMESTAMPS and requested_device.upper() != "NPU":
+            kwargs["word_timestamps"] = True
+        pipe = openvino_genai.WhisperPipeline(model_dir, device=requested_device, **kwargs)
         return pipe, requested_device, None
     except Exception as e:
         init_error = repr(e)
@@ -118,7 +139,8 @@ def load_pipeline(requested_device: str) -> Tuple[object, str, str | None]:
 
         # If NPU init fails, fall back to CPU so the service is still usable.
         if requested_device.upper() != "CPU":
-            pipe = openvino_genai.WhisperPipeline(MODEL_DIR, device="CPU")
+            kwargs = {"word_timestamps": True} if ENABLE_WORD_TIMESTAMPS else {}
+            pipe = openvino_genai.WhisperPipeline(model_dir, device="CPU", **kwargs)
             return pipe, "CPU", init_error
 
         raise
@@ -160,6 +182,20 @@ def _recreate_pipeline() -> None:
         raise
 
 
+def _get_timed_pipe() -> tuple[WhisperPipelineLike, str, str | None]:
+    """Lazily load the batch/timed pipeline so realtime STT stays light."""
+    pipe = app.config.get("TIMED_PIPE")
+    if pipe is not None:
+        return pipe, app.config.get("TIMED_DEVICE", REQUESTED_DEVICE), app.config.get("TIMED_INIT_ERROR")
+
+    ensure_model(TIMED_MODEL_ID, TIMED_MODEL_DIR)
+    pipe, device, init_error = load_pipeline_for_model(TIMED_MODEL_DIR, TIMED_REQUESTED_DEVICE)
+    app.config["TIMED_PIPE"] = pipe
+    app.config["TIMED_DEVICE"] = device
+    app.config["TIMED_INIT_ERROR"] = init_error
+    return pipe, device, init_error
+
+
 def _generate(audio: np.ndarray) -> str:
     """Run inference while holding the lock. Caller must have acquired the lock."""
     result = app.config["PIPE"].generate(audio)
@@ -174,6 +210,82 @@ def _generate(audio: np.ndarray) -> str:
         text = getattr(result, "text", None)
         text = text.strip() if text else str(result).strip()
     return text
+
+
+def _result_text(result: Any) -> str:
+    text = getattr(result, "text", None)
+    if text:
+        return text.strip()
+    texts = getattr(result, "texts", None)
+    if texts:
+        return " ".join(str(item).strip() for item in texts if str(item).strip()).strip()
+    return str(result).strip()
+
+
+def _chunk_to_dict(chunk: Any, offset_s: float) -> dict:
+    return {
+        "start_s": float(getattr(chunk, "start_ts", 0.0)) + offset_s,
+        "end_s": float(getattr(chunk, "end_ts", 0.0)) + offset_s,
+        "text": str(getattr(chunk, "text", "")).strip(),
+    }
+
+
+def _word_to_dict(word: Any, offset_s: float) -> dict:
+    return {
+        "start_s": float(getattr(word, "start_ts", 0.0)) + offset_s,
+        "end_s": float(getattr(word, "end_ts", 0.0)) + offset_s,
+        "word": str(getattr(word, "word", "")).strip(),
+    }
+
+
+def _generate_timed(audio: np.ndarray, offset_s: float = 0.0) -> dict:
+    """Return text plus optional segment/word timestamps for one chunk."""
+    pipe, _, _ = _get_timed_pipe()
+    result = pipe.generate(audio, return_timestamps=True, word_timestamps=ENABLE_WORD_TIMESTAMPS)
+    text = _result_text(result)
+    if _is_garbage_text(text):
+        print("[stt-npu] Garbage detected in timed transcription. Recreating timed pipeline and retrying…")
+        app.config.pop("TIMED_PIPE", None)
+        pipe, _, _ = _get_timed_pipe()
+        result = pipe.generate(audio, return_timestamps=True, word_timestamps=ENABLE_WORD_TIMESTAMPS)
+        text = _result_text(result)
+    chunks = getattr(result, "chunks", None) or []
+    words = getattr(result, "words", None) or []
+    return {
+        "text": text,
+        "segments": [_chunk_to_dict(chunk, offset_s) for chunk in chunks],
+        "words": [_word_to_dict(word, offset_s) for word in words],
+    }
+
+
+def transcribe_timed_chunked(audio: np.ndarray) -> dict:
+    total_samples = audio.shape[0]
+    chunk_samples = int(CHUNK_DURATION_S * SAMPLE_RATE)
+    overlap_samples = int(CHUNK_OVERLAP_S * SAMPLE_RATE)
+    stride = max(1, chunk_samples - overlap_samples)
+    chunks = []
+    pos = 0
+    while pos < total_samples:
+        end = min(pos + chunk_samples, total_samples)
+        chunk = audio[pos:end]
+        offset_s = float(pos) / SAMPLE_RATE
+        acquired = _acquire_pipe_lock(timeout=30.0)
+        if not acquired:
+            chunks.append({"offset_s": offset_s, "error": "NPU busy"})
+            pos += stride
+            continue
+        try:
+            timed = _generate_timed(chunk, offset_s=offset_s)
+        finally:
+            _pipe_lock.release()
+        chunks.append({"offset_s": offset_s, **timed})
+        pos += stride
+    return {
+        "text": " ".join(chunk.get("text", "") for chunk in chunks if chunk.get("text", "")).strip(),
+        "chunks": chunks,
+        "segments": [segment for chunk in chunks for segment in chunk.get("segments", [])],
+        "words": [word for chunk in chunks for word in chunk.get("words", [])],
+    }
 
 
 def _longest_common_suffix_prefix(a: str, b: str) -> int:
@@ -238,13 +350,19 @@ def health():
         {
             "ok": True,
             "model_id": MODEL_ID,
+            "timed_model_id": TIMED_MODEL_ID,
+            "timed_model_loaded": app.config.get("TIMED_PIPE") is not None,
+            "timed_requested_device": TIMED_REQUESTED_DEVICE,
             "requested_device": REQUESTED_DEVICE,
             "device": app.config.get("DEVICE", REQUESTED_DEVICE),
+            "timed_device": app.config.get("TIMED_DEVICE"),
             "available_devices": app.config.get("AVAILABLE_DEVICES", []),
             "init_error": app.config.get("INIT_ERROR"),
+            "timed_init_error": app.config.get("TIMED_INIT_ERROR"),
             "chunk_duration_s": CHUNK_DURATION_S,
             "chunk_overlap_s": CHUNK_OVERLAP_S,
             "audio_filters": AUDIO_FILTERS,
+            "word_timestamps": ENABLE_WORD_TIMESTAMPS,
         }
     )
 
@@ -285,6 +403,53 @@ def transcribe():
             yield _sse_event({"error": str(e)})
 
     return Response(stream_with_context(generate_stream()), mimetype="text/event-stream")
+
+
+@app.post("/transcribe-timed")
+def transcribe_timed():
+    audio_bytes = request.get_data(cache=False)
+    if not audio_bytes:
+        return jsonify({"detail": "Empty request body"}), 400
+
+    start = time.time()
+    try:
+        audio = decode_to_f32le_16k_mono(audio_bytes)
+    except Exception as e:
+        return jsonify({"detail": str(e)}), 400
+
+    duration_s = float(audio.shape[0]) / SAMPLE_RATE
+    try:
+        if duration_s <= CHUNK_DURATION_S:
+            acquired = _acquire_pipe_lock(timeout=30.0)
+            if not acquired:
+                return jsonify({"detail": "NPU busy"}), 503
+            try:
+                result = _generate_timed(audio)
+            finally:
+                _pipe_lock.release()
+            result["chunks"] = [{"offset_s": 0.0, **result}]
+        else:
+            result = transcribe_timed_chunked(audio)
+    except Exception as e:
+        return jsonify({"detail": str(e)}), 500
+
+    elapsed = time.time() - start
+    return jsonify(
+        {
+            **result,
+            "model_id": TIMED_MODEL_ID,
+            "realtime_model_id": MODEL_ID,
+            "device": app.config.get("TIMED_DEVICE", app.config.get("DEVICE", REQUESTED_DEVICE)),
+            "timed_requested_device": TIMED_REQUESTED_DEVICE,
+            "realtime_device": app.config.get("DEVICE", REQUESTED_DEVICE),
+            "timed_device": app.config.get("TIMED_DEVICE"),
+            "timed_init_error": app.config.get("TIMED_INIT_ERROR"),
+            "duration_s": duration_s,
+            "rtf": elapsed / duration_s if duration_s > 0 else None,
+            "return_timestamps": True,
+            "word_timestamps": ENABLE_WORD_TIMESTAMPS,
+        }
+    )
 
 
 def main() -> None:

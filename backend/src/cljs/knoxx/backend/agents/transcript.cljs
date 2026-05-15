@@ -29,23 +29,37 @@
          vec)))
 
 (defn- transcript-messages
-  "Internal richer variant that preserves assistant content-parts."
+  "Internal richer variant that preserves assistant content-parts and compaction summaries."
   [session]
   (let [messages (when (and session (array? (aget session "messages")))
                    (array-seq (aget session "messages")))]
     (->> messages
          (keep (fn [message]
                  (let [role (some-> (aget message "role") str)
+                       summary (some-> (aget message "summary") nonblank)
                        text (some-> (session-message-text message) nonblank)
+                       usage (when-let [raw-usage (aget message "usage")]
+                               (js->clj raw-usage :keywordize-keys true))
                        ;; Despite the name, assistant-content-parts extracts media parts from any
                        ;; pi message content array. We must persist user-side content parts too,
                        ;; otherwise restored sessions lose multimodal inputs.
                        parts (assistant-content-parts message)]
-                   (when (and (contains? #{"user" "assistant" "system"} role)
-                              (or text (seq parts)))
+                   (cond
+                     (and (= "compactionSummary" role) summary)
+                     (cond-> {:role role
+                              :summary summary
+                              :content summary}
+                       (number? (aget message "tokensBefore"))
+                       (assoc :tokensBefore (aget message "tokensBefore")))
+
+                     (and (contains? #{"user" "assistant" "system"} role)
+                          (or text (seq parts)))
                      (cond-> {:role role}
                        text (assoc :content text)
-                       (seq parts) (assoc :content-parts parts))))))
+                       (seq parts) (assoc :content-parts parts)
+                       (and (= "assistant" role) usage) (assoc :usage usage))
+
+                     :else nil))))
          vec)))
 
 (defn- append-message-if-novel

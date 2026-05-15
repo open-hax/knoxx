@@ -101,8 +101,9 @@
       (nonblank expires-at) (assoc :mailbox/expires-at (nonblank expires-at)))))
 
 (defn- policy-db
-  [_runtime]
-  (runtime-state/current-policy-db))
+  [runtime]
+  (or (when runtime (aget runtime "policyDb"))
+      (runtime-state/current-policy-db)))
 
 (defn database-enabled?
   [runtime]
@@ -123,7 +124,7 @@
 
 (defn- rows
   [result]
-  (let [rows* (aget result "rows")]
+  (let [rows* (when result (aget result "rows"))]
     (if (array? rows*)
       (array-seq rows*)
       [])))

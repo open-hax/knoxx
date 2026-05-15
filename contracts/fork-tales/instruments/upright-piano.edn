@@ -1,0 +1,14 @@
+{:role/id :role/instr-upright-piano
+ :role/name "Instrument — Upright Piano"
+ :role/description "Upright piano with tape warble. The instrument of memory degrading gracefully."
+ :role/capabilities []
+ :role/focus "Sonic texture: acoustic piano, close-mic, tape saturation, wow and flutter."
+ :role/duty "Apply when the song needs intimacy, nostalgia, or the feeling of something true being recorded imperfectly."
+ :data {:instrument/name "Upright Piano"
+        :instrument/family "keyboard"
+        :instrument/timbre "Warm, woody, close, imperfect"
+        :instrument/technique "Close-mic, tape warble, occasional string buzz"
+        :instrument/effects ["tape saturation" "wow and flutter" "subtle distortion"]
+        :instrument/register "Mid-range, C3-C5"
+        :instrument/mood "Nostalgic, honest, slightly broken but functional"
+        :instrument/reference "The piano in 'S5 (The Name Audit)' — minimal, close, tape warble."}}

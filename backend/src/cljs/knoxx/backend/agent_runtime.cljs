@@ -12,6 +12,7 @@
             [knoxx.backend.extension-runtime :as ext-runtime]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.tooling :refer [allowed-tool-id-set create-runtime-tools]]
+            ["@open-hax/eta-mu-cli" :as eta-mu-cli]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 
@@ -25,17 +26,11 @@
 (defn- load-eta-mu-sdk!
   "Return a Promise of the eta-mu SDK module.
 
-   We avoid a static require/import because @open-hax/eta-mu-cli is ESM-only and
-   shadow-cljs :node-test emits CJS bundles (require()), which crashes with
-   ERR_PACKAGE_PATH_NOT_EXPORTED when the package lacks an exports.require
-   condition.
-
-   Using Function(...) keeps ClosureCompiler from trying to transpile a dynamic
-   import expression."
+   @open-hax/eta-mu-cli is declared in shadow-cljs :keep-as-import, so this
+   namespace can import it the same way Knoxx imports other Node dependencies."
   []
   (or @sdk-module-promise*
-      (let [importer (js/Function. "specifier" "return import(specifier);")
-            p (importer "@open-hax/eta-mu-cli")]
+      (let [p (js/Promise.resolve eta-mu-cli)]
         (reset! sdk-module-promise* p)
         p)))
 
@@ -197,11 +192,31 @@
                   (seq content-parts) (clj->js content-parts)
                   (not (str/blank? content)) #js [#js {:type "text" :text content}]
                   :else nil)]
-    (when (and (contains? #{"user" "assistant" "system"} role)
-               payload)
-      #js {:role role
-           :content payload
-           :timestamp (.now js/Date)})))
+    (cond
+      (= "compactionSummary" role)
+      (when-let [summary (some-> (or (:summary message) (:content message)) str str/trim not-empty)]
+        #js {:role "compactionSummary"
+             :summary summary
+             :tokensBefore (or (:tokensBefore message) (:tokens-before message) 0)
+             :timestamp (.now js/Date)})
+
+      (and (contains? #{"user" "assistant" "system"} role)
+           payload)
+      (let [agent-message #js {:role role
+                               :content payload
+                               :timestamp (.now js/Date)}]
+        ;; Eta-mu auto-compaction's pre-prompt check assumes assistant messages
+        ;; have a fully populated usage map. Rehydrated Knoxx transcripts often
+        ;; predate usage persistence, so provide a zero-value sentinel instead
+        ;; of crashing on `usage.totalTokens` before the next sticky turn.
+        (when (= "assistant" role)
+          (aset agent-message "usage" (clj->js (or (:usage message)
+                                                    {:input 0
+                                                     :output 0
+                                                     :cacheRead 0
+                                                     :cacheWrite 0
+                                                     :totalTokens 0}))))
+        agent-message))))
 
 (defn- planner-row->stored-session-message
   [row]
@@ -282,7 +297,7 @@
 
 (defn- message-text-size
   [message]
-  (+ (count (str (or (:content message) "")))
+  (+ (count (str (or (:content message) (:summary message) "")))
      (reduce + 0 (map #(count (str (or (:text %) (:filename %) (:url %) "")))
                       (or (:content-parts message) (:contentParts message) [])))))
 
@@ -554,6 +569,12 @@
       (throw (js/Error. "Path escapes allowed workspace roots")))
     candidate))
 
+(defn- compaction-settings
+  [config]
+  {:enabled (not= false (:agent-compaction-enabled? config))
+   :reserveTokens (or (positive-int-value (:agent-compaction-reserve-tokens config)) 16384)
+   :keepRecentTokens (or (positive-int-value (:agent-compaction-keep-recent-tokens config)) 20000)})
+
 (defn ensure-sdk-runtime!
   [_runtime config]
   (if-let [p @sdk-runtime*]
@@ -569,7 +590,7 @@
                                AuthStorage (aget sdk "AuthStorage")
                                ModelRegistry (aget sdk "ModelRegistry")
                                DefaultResourceLoader (aget sdk "DefaultResourceLoader")
-                               settings-manager (.inMemory SettingsManager (clj->js {:compaction {:enabled false}
+                               settings-manager (.inMemory SettingsManager (clj->js {:compaction (compaction-settings config)
                                                                                      :retry {:enabled true :maxRetries 1}}))]
                            (-> (.mkdir node-fs runtime-dir #js {:recursive true})
                                (.then (fn []
@@ -665,57 +686,70 @@
                                      (.then (fn [result]
                                               (let [session (aget result "session")]
                                                 (.setThinkingLevel session thinking-level)
-                                                ;; Wire afterToolCall: inject images from tool results
-                                                ;; into the LLM context immediately. When the agent
-                                                ;; reads a Discord channel and encounters an image, it
-                                                ;; sees it inline — same as a human scrolling Discord.
-                                                (when (fn? (some-> session (aget "agent") (aget "setAfterToolCall")))
-                                                  (.setAfterToolCall
-                                                   (aget session "agent")
-                                                   (fn [ctx _signal]
-                                                    (let [result     (aget ctx "result")
+                                                 ;; Wire afterToolCall: inject media from tool results
+                                                 ;; into the LLM context immediately. When the agent
+                                                 ;; reads a Discord channel image or loads workspace audio,
+                                                 ;; it sees/hears it inline on the next model turn.
+                                                 (when (fn? (some-> session (aget "agent") (aget "setAfterToolCall")))
+                                                   (.setAfterToolCall
+                                                    (aget session "agent")
+                                                    (fn [ctx _signal]
+                                                     (let [result     (aget ctx "result")
                                                           details    (when result (aget result "details"))
                                                           raw-parts  (or (when details (aget details "content_parts"))
                                                                          (when details (aget details "contentParts"))
                                                                          #js [])
-                                                          img-parts  (->> (array-seq raw-parts)
-                                                                          (filter #(= "image" (some-> (aget % "type") str str/lower-case)))
-                                                                          vec)
-                                                          fetch-b64! (fn [url]
-                                                                       (-> (js/fetch url)
-                                                                           (.then (fn [r]
-                                                                                    (when-not (.-ok r)
-                                                                                      (throw (js/Error. (str "img fetch failed: " (.-status r)))))
-                                                                                    (.-arrayBuffer r)))
-                                                                           (.then (fn [ab]
-                                                                                    (let [buf (js/Buffer.from ab)]
-                                                                                      (str "data:image/png;base64," (.toString buf "base64")))))))
-                                                          materialize! (fn [part]
-                                                                         (let [url  (some-> (aget part "url")  str not-empty)
-                                                                               data (some-> (aget part "data") str not-empty)
-                                                                               mime (or (some-> (aget part "mimeType") str not-empty) "image/png")]
-                                                                           (cond
-                                                                             (and data (str/starts-with? data "data:"))
-                                                                             (js/Promise.resolve
-                                                                               (let [comma (.indexOf data ",")]
-                                                                                 #js {:type "image"
-                                                                                      :data (if (>= comma 0) (.slice data (inc comma)) data)
-                                                                                      :mimeType mime}))
-                                                                             (and data (not (str/starts-with? data "http")))
-                                                                             (js/Promise.resolve #js {:type "image" :data data :mimeType mime})
-                                                                             url
-                                                                             (-> (fetch-b64! url)
-                                                                                 (.then (fn [data-url]
-                                                                                          (let [comma (.indexOf data-url ",")]
-                                                                                            #js {:type "image"
-                                                                                                 :data (if (>= comma 0) (.slice data-url (inc comma)) data-url)
-                                                                                                 :mimeType mime}))))
-                                                                             :else (js/Promise.resolve nil))))]
-                                                      (if (seq img-parts)
-                                                        (-> (.all js/Promise (clj->js (mapv materialize! img-parts)))
-                                                            (.then (fn [materialized]
-                                                                     (let [good (->> (array-seq materialized) (remove nil?) vec)]
-                                                                       (when (seq good)
+                                                           media-parts (->> (array-seq raw-parts)
+                                                                            (filter #(contains? #{"image" "audio"}
+                                                                                                (some-> (aget % "type") str str/lower-case)))
+                                                                            vec)
+                                                           fetch-b64! (fn [url media-type]
+                                                                        (-> (js/fetch url)
+                                                                            (.then (fn [r]
+                                                                                     (when-not (.-ok r)
+                                                                                       (throw (js/Error. (str media-type " fetch failed: " (.-status r)))))
+                                                                                     (.-arrayBuffer r)))
+                                                                            (.then (fn [ab]
+                                                                                     (let [buf (js/Buffer.from ab)]
+                                                                                       (str "data:" media-type ";base64," (.toString buf "base64")))))))
+                                                           audio-format (fn [mime]
+                                                                          (mime->audio-format mime))
+                                                           media-object (fn [part-type data mime]
+                                                                          (let [obj #js {:type part-type
+                                                                                         :data data
+                                                                                         :mimeType mime}]
+                                                                            (when (= "audio" part-type)
+                                                                              (aset obj "format" (or (audio-format mime) "mp3")))
+                                                                            obj))
+                                                           materialize! (fn [part]
+                                                                          (let [part-type (some-> (aget part "type") str str/lower-case)
+                                                                                url       (some-> (aget part "url")  str not-empty)
+                                                                                data      (some-> (aget part "data") str not-empty)
+                                                                                mime      (or (some-> (aget part "mimeType") str not-empty)
+                                                                                              (if (= "audio" part-type) "audio/mpeg" "image/png"))]
+                                                                            (cond
+                                                                              (and data (str/starts-with? data "data:"))
+                                                                              (js/Promise.resolve
+                                                                                (let [comma (.indexOf data ",")]
+                                                                                  (media-object part-type
+                                                                                                (if (>= comma 0) (.slice data (inc comma)) data)
+                                                                                                mime)))
+                                                                              (and data (not (str/starts-with? data "http")))
+                                                                              (js/Promise.resolve
+                                                                                (media-object part-type data mime))
+                                                                              url
+                                                                              (-> (fetch-b64! url mime)
+                                                                                  (.then (fn [data-url]
+                                                                                           (let [comma (.indexOf data-url ",")]
+                                                                                             (media-object part-type
+                                                                                                           (if (>= comma 0) (.slice data-url (inc comma)) data-url)
+                                                                                                           mime)))))
+                                                                              :else (js/Promise.resolve nil))))]
+                                                       (if (seq media-parts)
+                                                         (-> (.all js/Promise (clj->js (mapv materialize! media-parts)))
+                                                             (.then (fn [materialized]
+                                                                      (let [good (->> (array-seq materialized) (remove nil?) vec)]
+                                                                        (when (seq good)
                                                                          (let [existing (or (some-> result (aget "content")) #js [])
                                                                                merged   (clj->js (into (vec (array-seq existing)) good))]
                                                                            #js {:content merged})))))

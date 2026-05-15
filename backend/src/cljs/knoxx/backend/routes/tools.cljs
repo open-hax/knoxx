@@ -7,9 +7,10 @@
             [knoxx.backend.macros :refer-macros [defroute]]
             [knoxx.backend.mcp-bridge :as mcp]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.text :refer [sanitize-svg-content]]
-            [knoxx.backend.triggers.control-config :as control-config]
-            ["node:child_process" :refer [execFile]]
+             [knoxx.backend.text :refer [sanitize-svg-content]]
+             [knoxx.backend.triggers.control-config :as control-config]
+             [knoxx.backend.triggers.trigger-runner :as trigger-runner]
+             ["node:child_process" :refer [execFile]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]
             ["node:util" :refer [promisify]]
@@ -535,6 +536,24 @@
   (ensure-permission! ctx "org.event_agents.control")
   (json-response! reply 200 (:runtime (event-agents-control-response config))))
 
+(defroute register-trigger-fire-route!
+  []
+  "POST" "/api/admin/triggers/:triggerId/fire"
+  [session-guard]
+  (try
+    (ensure-permission! ctx "org.event_agents.control")
+    (let [trigger-id (or (aget request "params" "triggerId") "")]
+      (if (str/blank? trigger-id)
+        (json-response! reply 400 {:detail "triggerId is required"})
+        (-> (trigger-runner/fire! trigger-id)
+            (.then (fn [result]
+                     (json-response! reply 202 {:ok true
+                                                :triggerId trigger-id
+                                                :result result})))
+            (.catch (fn [err] (error-response! reply err))))))
+    (catch :default err
+      (error-response! reply err))))
+
 ;; ── MCP routes ──────────────────────────────────────────────────────────────────
 
 (defroute register-mcp-status-route!
@@ -601,6 +620,7 @@
   (register-discord-control-put-route!   app runtime config deps)
   (register-discord-control-job-run-route! app runtime config deps)
   (register-discord-cron-get-route!      app runtime config deps)
+  (register-trigger-fire-route!          app runtime config deps)
   (register-mcp-status-route!            app runtime config deps)
   (register-mcp-catalog-route!           app runtime config deps)
   (register-mcp-call-route!              app runtime config deps)

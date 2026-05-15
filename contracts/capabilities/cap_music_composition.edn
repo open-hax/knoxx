@@ -1,0 +1,26 @@
+{:cap/id :cap/music-composition
+ :cap/tools [:music.compose_full_song]
+ :cap/description
+ "FUTURE CAPABILITY — Full song composition (music + vocals + lyrics in one generation).
+
+ NOT CURRENTLY AVAILABLE. No deployed model supports this.
+
+ When available, this will generate a complete song with:
+ - Instrumental backing track
+ - Vocal melody
+ - Lyrics
+ - Mixed output
+
+ Until then, use the INSTRUMENTAL pipeline:
+ 1. music.generate_song for instrumental backing (WAV, 30s+)
+ 2. voice.openutau_project for vocal track with lyrics
+ 3. voice.openutau_render to synthesize vocals
+ 4. Mix in external DAW if needed
+
+ This capability exists as a placeholder so agents know the difference
+ between instrumental generation and full composition."
+ :cap/user-surfaces [{:surface/id :workspace/music-composition
+                      :surface/label "Music composition panel"
+                      :surface/kind :inspector
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Future workspace for full song composition. Currently inactive — use instrumental generation + OpenUTAU vocal synthesis instead."}]}

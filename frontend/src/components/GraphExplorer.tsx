@@ -115,6 +115,8 @@ export function GraphExplorer(props: {
   const nodeIndex = useMemo(() => new Map(props.nodes.map((n) => [n.id, n] as const)), [props.nodes]);
 
   const [search, setSearch] = useState('');
+  const [kindFilter, setKindFilter] = useState<string | null>(null);
+  const [lakeFilter, setLakeFilter] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [distance, setDistance] = useState(props.defaultDistance ?? 2);
   const [maxNodes, setMaxNodes] = useState(220);
@@ -135,13 +137,43 @@ export function GraphExplorer(props: {
   const [nodePreviewLoading, setNodePreviewLoading] = useState(false);
   const [nodePreviewError, setNodePreviewError] = useState('');
 
+  const allKinds = useMemo(() => [...new Set(props.nodes.map((n) => n.kind).filter(Boolean))].sort(), [props.nodes]);
+  const allLakes = useMemo(() => [...new Set(props.nodes.map((n) => n.lake).filter(Boolean))].sort(), [props.nodes]);
+
   const filteredNodes = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return props.nodes.slice(0, 250);
-    return props.nodes
-      .filter((n) => (n.label || '').toLowerCase().includes(q) || (n.project || '').toLowerCase().includes(q) || (n.nodeType || '').toLowerCase().includes(q) || n.id.toLowerCase().includes(q))
-      .slice(0, 250);
-  }, [props.nodes, search]);
+    let rows = props.nodes;
+    if (kindFilter) {
+      rows = rows.filter((n) => n.kind === kindFilter);
+    }
+    if (lakeFilter) {
+      rows = rows.filter((n) => n.lake === lakeFilter);
+    }
+    if (q) {
+      rows = rows.filter((n) => {
+        const haystack = [
+          n.label,
+          n.project,
+          n.nodeType,
+          n.id,
+          n.kind,
+          n.source,
+          n.lake,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (haystack.includes(q)) return true;
+        // Also search string values inside data
+        const dataStrings = Object.values(n.data ?? {})
+          .filter((v) => typeof v === 'string')
+          .join(' ')
+          .toLowerCase();
+        return dataStrings.includes(q);
+      });
+    }
+    return rows.slice(0, 250);
+  }, [props.nodes, search, kindFilter, lakeFilter]);
 
   const renderedGraph = useMemo(() => {
     if (!graphView) return null;
@@ -365,6 +397,61 @@ export function GraphExplorer(props: {
         <div className="shrink-0 p-3 border-b border-slate-700/30 space-y-2">
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search nodes…"
             className="w-full bg-slate-900/50 border border-slate-700/50 rounded px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none" />
+          {(kindFilter || lakeFilter) && (
+            <div className="flex items-center gap-1.5">
+              {kindFilter && (
+                <button onClick={() => setKindFilter(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 hover:bg-blue-500/30">
+                  kind:{kindFilter} ×
+                </button>
+              )}
+              {lakeFilter && (
+                <button onClick={() => setLakeFilter(null)} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30">
+                  lake:{lakeFilter} ×
+                </button>
+              )}
+              <button onClick={() => { setKindFilter(null); setLakeFilter(null); }} className="text-[10px] text-slate-500 hover:text-slate-300 ml-auto">
+                clear
+              </button>
+            </div>
+          )}
+          {allKinds.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] text-slate-500">Kind</div>
+              <div className="flex flex-wrap gap-1">
+                {allKinds.slice(0, 12).map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setKindFilter(kindFilter === k ? null : k)}
+                    className={`text-[10px] px-1.5 py-0.5 rounded border ${kindFilter === k ? 'bg-blue-500/20 border-blue-500/30 text-blue-300' : 'border-slate-700/50 text-slate-400 hover:bg-slate-700/20 hover:text-slate-300'}`}
+                  >
+                    {k}
+                  </button>
+                ))}
+                {allKinds.length > 12 && (
+                  <span className="text-[10px] text-slate-600">+{allKinds.length - 12} more</span>
+                )}
+              </div>
+            </div>
+          )}
+          {allLakes.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] text-slate-500">Lake</div>
+              <div className="flex flex-wrap gap-1">
+                {allLakes.slice(0, 8).map((l) => (
+                  <button
+                    key={l}
+                    onClick={() => setLakeFilter(lakeFilter === l ? null : l)}
+                    className={`text-[10px] px-1.5 py-0.5 rounded border ${lakeFilter === l ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300' : 'border-slate-700/50 text-slate-400 hover:bg-slate-700/20 hover:text-slate-300'}`}
+                  >
+                    {l}
+                  </button>
+                ))}
+                {allLakes.length > 8 && (
+                  <span className="text-[10px] text-slate-600">+{allLakes.length - 8} more</span>
+                )}
+              </div>
+            </div>
+          )}
           <div className="flex gap-2 items-end">
             <div className="flex-1">
               <div className="text-[10px] text-slate-500 mb-1">Distance</div>
@@ -399,7 +486,11 @@ export function GraphExplorer(props: {
             <button key={n.id} onClick={() => setSelectedNodeId(n.id)}
               className={`w-full px-3 py-2 text-left border-b border-slate-700/20 hover:bg-slate-700/10 ${selectedNodeId === n.id ? 'bg-slate-700/25' : ''}`}>
               <div className="text-xs text-slate-200 truncate">{summarizeNodeLabel(n)}</div>
-              <div className="text-[10px] text-slate-600 truncate">{n.project} · {n.nodeType}</div>
+              <div className="text-[10px] text-slate-600 truncate">
+                <span className="text-slate-500">{n.kind}</span>
+                <span className="text-slate-700"> · </span>
+                {n.project} · {n.nodeType}
+              </div>
             </button>
           ))}
           {filteredNodes.length === 0 && (

@@ -62,6 +62,8 @@
    :audio-analysis-agent-timeout-ms (env-int "AUDIO_ANALYSIS_AGENT_TIMEOUT_MS" 600000)
    :audio-analysis-agent-poll-ms (env-int "AUDIO_ANALYSIS_AGENT_POLL_MS" 2000)
    :audio-analysis-agent-max-concurrency (env-int "AUDIO_ANALYSIS_AGENT_MAX_CONCURRENCY" 1)
+   ;; When false, audio driver sources are forced disabled (no background audio indexing).
+   :audio-indexing-enabled (env-bool "AUDIO_INDEXING_ENABLED" true)
    :translation-agent-enabled (env-bool "TRANSLATION_AGENT_ENABLED" false)
    :translation-model (env "TRANSLATION_MODEL" "glm-5")
    :translation-poll-ms (env-int "TRANSLATION_POLL_MS" 5000)
@@ -108,6 +110,7 @@
 (defn audio-analysis-agent-timeout-ms [] (:audio-analysis-agent-timeout-ms (config)))
 (defn audio-analysis-agent-poll-ms [] (:audio-analysis-agent-poll-ms (config)))
 (defn audio-analysis-agent-max-concurrency [] (:audio-analysis-agent-max-concurrency (config)))
+(defn audio-indexing-enabled? [] (:audio-indexing-enabled (config)))
 (defn translation-agent-enabled? [] (:translation-agent-enabled (config)))
 (defn translation-model [] (:translation-model (config)))
 (defn translation-poll-ms [] (:translation-poll-ms (config)))

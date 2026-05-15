@@ -31,7 +31,10 @@
     :else nil))
 
 (defn- load-sub-agent-contract!
-  "Load a sub-agent contract by ID. Resolves to the parsed contract map or nil."
+  "Load a sub-agent contract by ID. Resolves to the parsed contract map or nil.
+
+   Tries contracts/sub_agents/ first, then falls back to contracts/agents/
+   so any agent contract can be spawned as a sub-agent."
   [config sub-agent-id]
   (if-let [id (id->string sub-agent-id)]
     (-> (contracts/load-contract! config "sub_agents" id)
@@ -41,8 +44,14 @@
                    contract
 
                    (= "Contract not found" (some-> validation :errors first :message))
-                   (do (js/console.warn "[sub-agent] contract not found:" id)
-                       nil)
+                   ;; Fallback: try agents/
+                   (-> (contracts/load-contract! config "agents" id)
+                       (.then (fn [{:keys [ok? contract]}]
+                                (if ok?
+                                  (do (js/console.log "[sub-agent] resolved agent contract as sub-agent:" id)
+                                      contract)
+                                  (do (js/console.warn "[sub-agent] contract not found in sub_agents or agents:" id)
+                                      nil)))))
 
                    :else
                    (do (js/console.warn "[sub-agent] invalid contract" id (pr-str validation))

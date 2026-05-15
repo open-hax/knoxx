@@ -5,6 +5,30 @@
 (def default-ticks-per-quarter 480)
 (def default-renderer "WORLDLINE-R")
 (def default-track-color "Blue")
+(def render-script-path "/home/err/devel/services/utau-renderer/render-ustx.sh")
+
+;; Available singers with their phonemizers
+(def available-singers
+  {"teto" {:name "重音テト OU用日本語統合ライブラリー"
+           :phonemizer "OpenUtau.Core.Ustx.JapaneseCVPhonemizer"
+           :language "ja"
+           :description "Kasane Teto - Japanese integrated voicebank"}
+   "ritsu" {:name "波音リツ連続音Ver1.5.1"
+             :phonemizer "OpenUtau.Plugin.Builtin.JapaneseVCVPhonemizer"
+             :language "ja"
+             :description "Namine Ritsu - Japanese VCV connected voicebank"}
+    "teto-en" {:name "重音テト音声ライブラリー"
+               :phonemizer "OpenUtau.Plugin.Builtin.ArpasingPhonemizer"
+               :language "en"
+               :description "Kasane Teto - English voicebank"}})
+
+(def default-singer "teto")
+
+(defn resolve-singer
+  "Resolve singer config by ID or return default."
+  [singer-id]
+  (or (get available-singers (str/lower-case (str singer-id)))
+      (get available-singers default-singer)))
 
 (defn slugify
   [value]
@@ -54,6 +78,26 @@
           (max min-value)
           (min max-value)))))
 
+(def ^:private known-problematic-lyrics
+  "Lyric strings that hang OpenUTAU's renderer after phonemization.
+   Map of problematic -> safe replacement."
+  {"kyoukai" "kaikyou"})
+
+(defn sanitize-lyric
+  "Sanitize lyric text to avoid OpenUTAU renderer hangs.
+   - Removes hyphens and spaces
+   - Replaces known problematic romaji patterns
+   - Falls back to 'a' for empty strings"
+  [lyric]
+  (when lyric
+    (let [cleaned (-> lyric
+                      str/trim
+                      (str/replace #"[-\s]+" "")
+                      str/lower-case)]
+      (or (get known-problematic-lyrics cleaned)
+          (not-empty cleaned)
+          "a"))))
+
 (defn lyric-text
   [note]
   (let [lyric (some-> (or (:lyric note) (:text note)) str str/trim not-empty)
@@ -62,10 +106,43 @@
                                   (:phoneticHint note))
                               str str/trim not-empty)]
     (cond
-      (and lyric phonetic-hint) (str lyric " [" phonetic-hint "]")
+      (and lyric phonetic-hint) (str (sanitize-lyric lyric) " [" phonetic-hint "]")
       phonetic-hint (str "[" phonetic-hint "]")
-      lyric lyric
+      lyric (sanitize-lyric lyric)
       :else "a")))
+
+(def ^:const min-renderable-notes
+  "OpenUTAU's WORLDLINE-R renderer appears to hang when processing
+   voice parts with fewer than ~12 notes. Pad with rests to ensure
+   reliable headless rendering."
+  12)
+
+(def ^:private hiragana-pad-lyrics
+  "Cyclic pool of safe hiragana syllables for note padding.
+   JapaneseCVPhonemizer accepts these; romaji vowels like 'a' hang."
+  ["あ" "い" "う" "え" "お" "か" "き" "く" "け" "こ" "さ" "し"])
+
+(defn- pad-notes
+  "Ensure at least MIN-RENDERABLE-NOTES by appending hiragana pad notes.
+   OpenUTAU's WORLDLINE-R renderer hangs with fewer than ~12 singable notes.
+   Pads with cyclic hiragana (never rests/romaji) to keep phonemizer happy."
+  [notes]
+  (let [current-count (count notes)]
+    (if (>= current-count min-renderable-notes)
+      notes
+      (let [last-end (if (seq notes)
+                       (+ (:position (last notes)) (:duration (last notes)))
+                       0)
+            pad-duration default-ticks-per-quarter
+            needed (- min-renderable-notes current-count)
+            pad-notes (mapv (fn [i]
+                              {:position (+ last-end (* i pad-duration))
+                               :duration pad-duration
+                               :tone 60
+                               :lyric (nth hiragana-pad-lyrics
+                                           (mod i (count hiragana-pad-lyrics)))})
+                            (range needed))]
+        (into notes pad-notes)))))
 
 (defn normalize-notes
   [notes]
@@ -73,7 +150,7 @@
          cursor 0
          normalized []]
     (if-not remaining
-      normalized
+      (pad-notes normalized)
       (let [note (first remaining)
             explicit-position (parse-number (or (:position note) (:start_tick note) (:start-tick note)))
             position (if (nil? explicit-position)
@@ -124,10 +201,10 @@
                              4
                              1
                              32)
-        singer-id (or (some-> (:singer_id opts) str str/trim not-empty)
-                      (some-> (:singer-id opts) str str/trim not-empty)
-                      "")
-        phonemizer (or (some-> (:phonemizer opts) str str/trim not-empty) "")
+         singer-config (resolve-singer (or (:singer_id opts) (:singer-id opts)))
+         singer-id (:name singer-config)
+         phonemizer (or (some-> (:phonemizer opts) str str/trim not-empty)
+                        (:phonemizer singer-config))
         track-name (or (some-> (:track_name opts) str str/trim not-empty)
                        (some-> (:track-name opts) str str/trim not-empty)
                        "Vocal")
@@ -280,5 +357,32 @@
        "2. If singer or phonemizer is blank, select them on the vocal track.\n"
        "3. Review lyrics, phonemes, and pitch/timing.\n"
        "4. Export audio with `File > Export Audio > Export wav Files` or `Mixdown To Wav File`.\n\n"
-       "## Research note\n"
-       "OpenUtau currently documents UI-based export and does not expose a supported headless `.ustx -> .wav` workflow for backend automation, so Knoxx generates a ready-to-edit project instead of pretending it already rendered audio.\n"))
+        "## Headless render\n"
+        "Use the `voice.openutau_render` tool to render this project to WAV without opening the UI.\n"
+        "Requires: Xvfb + OpenUTAU + voicebank + WORLDLINE-R renderer.\n"
+        "\n"
+        "## Available singers\n"
+        "- `teto` — 重音テト OU用日本語統合ライブラリー (Kasane Teto - Japanese)\n"
+        "- `ritsu` — 波音リツ連続音Ver1.5.1 (Namine Ritsu - Japanese)\n"
+        "- `teto-en` — 重音テト音声ライブラリー (Kasane Teto - English)\n"))
+
+(defn render-ustx-to-wav
+  "Render a .ustx file to .wav using the headless OpenUTAU pipeline.
+   Returns a promise that resolves to {:wav_path string} or rejects with error."
+  [ustx-path output-wav-path]
+  (let [child-process (js/require "node:child_process")
+        path        (js/require "node:path")
+        util        (js/require "node:util")
+        exec-file   (util/promisify (.-execFile child-process))
+        script      render-script-path]
+    (-> (exec-file script #js [ustx-path output-wav-path]
+                    #js {:timeout 600000 :maxBuffer 4194304})
+        (.then (fn [result]
+                 (let [stdout (.-stdout result)]
+                   (if (str/includes? stdout "Success!")
+                     {:wav_path output-wav-path
+                      :stdout   stdout}
+                     (throw (js/Error. (str "Render did not report success. stdout: " stdout)))))))
+        (.catch (fn [err]
+                  (throw (js/Error. (str "OpenUTAU render failed: " (.-message err)
+                                         " stderr: " (or (.-stderr err) "N/A")))))))))

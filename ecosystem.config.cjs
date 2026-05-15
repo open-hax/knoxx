@@ -185,7 +185,7 @@ const apps = [
       // before importing the all-CLJS runtime entrypoint. This encodes the full
       // hot-reload cycle in PM2 instead of relying on an agent's ad hoc startup order.
       script: 'scripts/start-server-dev.cljs',
-      interpreter: path.join(backendDir, 'node_modules', '.bin', 'nbb'),
+        interpreter: 'nbb',
       kill_timeout: 35000,
       listen_timeout: 60000,
       wait_ready: true,
@@ -294,10 +294,26 @@ const apps = [
             process.env.WHISPER_MODEL_ID
             || hostEnv.WHISPER_MODEL_ID
             || 'OpenVINO/whisper-medium.en-int8-ov',
+          STT_TIMED_MODEL_ID:
+            process.env.STT_TIMED_MODEL_ID
+            || hostEnv.STT_TIMED_MODEL_ID
+            || 'OpenVINO/whisper-medium-int8-ov',
+          STT_TIMED_MODEL_DIR:
+            process.env.STT_TIMED_MODEL_DIR
+            || hostEnv.STT_TIMED_MODEL_DIR
+            || `${sttNpuModelDir}-timed`,
+          STT_TIMED_DEVICE:
+            process.env.STT_TIMED_DEVICE
+            || hostEnv.STT_TIMED_DEVICE
+            || 'CPU',
           WHISPER_NPU_COMPILER_TYPE:
             process.env.WHISPER_NPU_COMPILER_TYPE
             || hostEnv.WHISPER_NPU_COMPILER_TYPE
             || 'DRIVER',
+          STT_WORD_TIMESTAMPS:
+            process.env.STT_WORD_TIMESTAMPS
+            || hostEnv.STT_WORD_TIMESTAMPS
+            || 'true',
           PYTHONUNBUFFERED: '1',
         },
       }]
@@ -346,6 +362,8 @@ const apps = [
         KNOXX_API_KEY: hostEnv.KNOXX_API_KEY || process.env.KNOXX_API_KEY || 'change-me',
         PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
         PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
+        // Temporary kill-switch: disable background indexing for the audio driver.
+        AUDIO_INDEXING_ENABLED: 'false',
       },
     },
 ];

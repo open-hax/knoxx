@@ -22,11 +22,12 @@
 
 (defn- self-headers
   [config]
-  (let [api-key (:knoxx-api-key (live-config config))]
-    (cond-> #js {"Content-Type" "application/json"
-                 "x-knoxx-user-email" "system-admin@open-hax.local"}
-      (not (str/blank? (str api-key)))
-      (aset "X-API-Key" api-key))))
+  (let [api-key (:knoxx-api-key (live-config config))
+        headers #js {"Content-Type" "application/json"
+                     "x-knoxx-user-email" "system-admin@open-hax.local"}]
+    (when-not (str/blank? (str api-key))
+      (aset headers "X-API-Key" api-key))
+    headers))
 
 (defn- api-base
   [config]

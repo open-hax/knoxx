@@ -12,7 +12,7 @@
 
 (def contract-class-order
   ["agents" "actors" "roles" "capabilities" "policies"
-   "model_families" "models" "runtime_features" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents" "cms"])
+   "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents" "cms"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -81,6 +81,8 @@
       ("role" "roles") "roles"
       ("cap" "caps" "capability" "capabilities") "capabilities"
       ("policy" "policies") "policies"
+      ("source-mode" "source-modes" "source_mode" "source_modes") "source_modes"
+      ("source" "sources" "runtime-source" "runtime-sources" "runtime_source" "runtime_sources") "sources"
       ("runtime-feature" "runtime-features" "runtime_feature" "runtime_features" "runtime") "runtime_features"
       ("model-family" "model-families" "model_family" "model_families") "model_families"
       ("model" "models") "models"
@@ -139,21 +141,29 @@
 
 (defn- extract-contract-identity
   [raw]
-  ;; IMPORTANT: prefer :model/id over :model-family/id.
-  ;; Many model contracts include both keys, but they must be classified as "models"
-  ;; (otherwise they'll be validated as a model-family and fail on :model-family/prefixes).
-  (let [kind (some-> (or (:contract/kind raw) (:kind raw)
-                          (when (:actor/id raw) "actors")
+  ;; IMPORTANT: prefer structural/canonical class inference before the raw
+  ;; :contract/kind value. Otherwise namespaced/dashed kinds like :source-mode
+  ;; can be handed to normalize-contract-class before older aliases know them.
+  ;; Also prefer :model/id over :model-family/id: many model contracts include
+  ;; both keys, but they must be classified as "models".
+  (let [kind (some-> (or (when (:actor/id raw) "actors")
                           (when (:role/id raw) "roles")
                           (when (:cap/id raw) "capabilities")
                           (when (:model/id raw) "models")
+                          (when (:source-mode/id raw) "source_modes")
+                          (when (= :source-mode (:contract/kind raw)) "source_modes")
+                          (when (= :source (:contract/kind raw)) "sources")
                           (when (:runtime-feature/id raw) "runtime_features")
                           (when (= :runtime-feature (:contract/kind raw)) "runtime_features")
-                          (when (:model-family/id raw) "model_families"))
+                          (when (:model-family/id raw) "model_families")
+                          (:contract/kind raw)
+                          (:kind raw))
                       keyword->str str/trim not-empty)
         id   (some-> (or (:contract/id raw) (:id raw)
                           (:actor/id raw) (:role/id raw) (:cap/id raw)
                           (:model/id raw) (:model-family/id raw)
+                          (:source-mode/id raw)
+                          (:source/id raw)
                           (:runtime-feature/id raw))
                       keyword->str str/trim not-empty)]
     (when (and kind id) [kind id])))
@@ -252,11 +262,14 @@
    are still omitted; they must not pin the event loop or block HTTP startup."
   [config]
   (let [now (now-ms)
+        roots (contract-root-paths config)
         cached @sync-contract-record-cache*]
-    (if (and cached (< (- now (:ts cached)) sync-contract-record-cache-ttl-ms))
+    (if (and cached
+             (= roots (:roots cached))
+             (< (- now (:ts cached)) sync-contract-record-cache-ttl-ms))
       (:records cached)
       (let [records (load-all-contracts-sync-uncached config)]
-        (reset! sync-contract-record-cache* {:ts now :records records})
+        (reset! sync-contract-record-cache* {:ts now :roots roots :records records})
         records))))
 
 (defn find-contract-record-sync
@@ -340,10 +353,12 @@
    (let [klass    (normalize-contract-class contract-class)
          id       (safe-path-segment! contract-id "contract-id")
          filename (str id ".edn")
+         identity-path (some-> (find-contract-record-sync config klass id) :file-path)
          existing (some (fn [root]
                           (find-contract-file-recursive root klass filename))
                         (contract-root-paths config))]
-     (or existing
+     (or identity-path
+         existing
          (.join path (resolve-contracts-dir config) klass filename)))))
 
 (defn role-file-path       [config slug]     (contract-file-path config "roles"        slug))

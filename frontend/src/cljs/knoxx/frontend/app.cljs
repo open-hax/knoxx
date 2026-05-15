@@ -32,8 +32,8 @@
 (defnc LegacyOpsRedirect []
   (let [location (useLocation)]
     ($ Navigate {:to (routes/remap-legacy-ops-path (.-pathname location)
-                                                  (.-search location)
-                                                  (.-hash location))
+                                                   (.-search location)
+                                                   (.-hash location))
                  :replace true})))
 
 (defnc UserMenu []
@@ -50,18 +50,18 @@
                          (d/span {:class-name "hidden md:inline"} display))
                (when open?
                  (d/div
-                   (d/div {:class-name "fixed inset-0 z-10" :on-click #(set-open false)})
-                   (d/div {:class-name "absolute right-0 top-full mt-1 z-20 w-56 rounded-lg border border-slate-700 bg-slate-900 py-1 shadow-xl"}
-                          (d/div {:class-name "px-3 py-2 border-b border-slate-800"}
-                                 (d/p {:class-name "text-sm font-medium text-white truncate"} display)
-                                 (d/p {:class-name "text-xs text-slate-400 truncate"} (.. auth -user -email))
-                                 (when org-name
-                                   (d/p {:class-name "text-xs text-slate-500 mt-0.5"} org-name)))
-                          (d/button {:on-click (fn []
+                  (d/div {:class-name "fixed inset-0 z-10" :on-click #(set-open false)})
+                  (d/div {:class-name "absolute right-0 top-full mt-1 z-20 w-56 rounded-lg border border-slate-700 bg-slate-900 py-1 shadow-xl"}
+                         (d/div {:class-name "px-3 py-2 border-b border-slate-800"}
+                                (d/p {:class-name "text-sm font-medium text-white truncate"} display)
+                                (d/p {:class-name "text-xs text-slate-400 truncate"} (.. auth -user -email))
+                                (when org-name
+                                  (d/p {:class-name "text-xs text-slate-500 mt-0.5"} org-name)))
+                         (d/button {:on-click (fn []
                                                 (set-open false)
                                                 (.then (.logout auth) (fn [_] nil)))
-                                     :class-name "w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-slate-800 transition"}
-                                    "Sign out")))))))))
+                                    :class-name "w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-slate-800 transition"}
+                                   "Sign out")))))))))
 
 (defnc PlaceholderPage [{:keys [title]}]
   (d/div {:class-name "flex h-full items-center justify-center p-8 text-slate-300"}
@@ -76,10 +76,10 @@
         nav-class (fn [^js args]
                     (str "app-shell__nav-link" (when (.-isActive args) " app-shell__nav-link--active")))]
     (hooks/use-effect
-      :once
-      (fn []
-        (.add (.-classList js/document.documentElement) "dark")
-        js/undefined))
+     :once
+     (fn []
+       (.add (.-classList js/document.documentElement) "dark")
+       js/undefined))
 
     (d/div {:class-name "app-shell"}
            (d/header {:class-name "app-shell__header"}
@@ -93,16 +93,17 @@
                                    ($ NavLink {:to routes/studio-route :className nav-class} "Studio")
                                    (when-not basic-user?
                                      (d/span
-                                       ($ NavLink {:to routes/cms-route :className nav-class} "CMS")
-                                       ($ NavLink {:to routes/contracts-route :className nav-class} "Contracts")
-                                       ($ NavLink {:to routes/data-route :className nav-class} "Data")
-                                       ($ NavLink {:to routes/gardens-route :className nav-class} "Gardens")
-                                       ($ NavLink {:to routes/translations-route :className nav-class} "Translations")
-                                       ($ NavLink {:to routes/events-route :className nav-class} "Events")
-                                       ($ NavLink {:to routes/agents-route :className nav-class} "Agents")
-                                       ($ NavLink {:to (:admin routes/ops-routes) :className nav-class} "Admin")))
-                            ($ UserMenu)))
+                                      ($ NavLink {:to routes/cms-route :className nav-class} "CMS")
+                                      ($ NavLink {:to routes/contracts-route :className nav-class} "Contracts")
+                                      ($ NavLink {:to routes/data-route :className nav-class} "Data")
+                                      ($ NavLink {:to routes/gardens-route :className nav-class} "Gardens")
+                                      ($ NavLink {:to routes/translations-route :className nav-class} "Translations")
+                                      ($ NavLink {:to routes/events-route :className nav-class} "Events")
+                                      ($ NavLink {:to routes/agents-route :className nav-class} "Agents")
+                                      ($ NavLink {:to (:admin routes/ops-routes) :className nav-class} "Admin")))
+                                   ($ UserMenu)))
 
+                     )
            (d/main {:class-name "app-shell__main"}
                    ($ Routes
                       ;; All route definitions live here (shadow is router source-of-truth).
@@ -157,7 +158,8 @@
                                 :element ($ LegacyOpsRedirect)})
 
                       ($ Route {:path "*"
-                                :element ($ Navigate {:to routes/chat-route :replace true})})))))))
+                                :element ($ Navigate {:to routes/chat-route :replace true})})))
+           )))
 
 (defnc Root []
   ($ BrowserRouter
@@ -175,4 +177,3 @@
     (when-not @root-instance*
       (reset! root-instance* (.createRoot rdom root-el)))
     (.render @root-instance* ($ Root))))
-

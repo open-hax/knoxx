@@ -188,11 +188,13 @@ export interface RunDetail extends RunSummary {
   session_id?: string | null;
   conversation_id?: string | null;
   answer?: string | null;
+  reasoning?: string | null;
   contentParts?: ContentPart[];
   request_messages: Array<{ role: string; content: string; contentParts?: ContentPart[] }>;
   settings: Record<string, unknown>;
   resources: Record<string, unknown>;
   events?: RunEvent[];
+  trace_blocks?: ChatTraceBlock[];
   tool_receipts?: ToolReceipt[];
   sources?: AgentSource[];
 }

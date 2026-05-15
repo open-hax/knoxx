@@ -1,7 +1,9 @@
 (ns knoxx.backend.contracts.resolve-test
   (:require [cljs.test :as t :refer [deftest is testing]]
+            [knoxx.backend.contracts.actor-scope]
+            [knoxx.backend.contracts.loader :as loader]
             [knoxx.backend.contracts.resolve :as sut]
-            [knoxx.backend.contracts.actor-scope]))
+            [knoxx.backend.contracts.roles :as roles]))
 
 (deftest actor-extras-test
   (let [actor-spec {:id "test-actor"
@@ -47,6 +49,77 @@
     (is (contains? sut/known-actor-keys :id)))
   (is (contains? sut/known-actor-keys :kind))
   (is (contains? sut/known-actor-keys :system-prompt)))
+
+(deftest resolve-agent-contract-composes-role-actor-and-agent-task-prompts
+  (let [contract {:contract/id "agent-a"
+                  :contract/kind :agent
+                  :contract/actors ["actor-a"]
+                  :trigger-kind :manual
+                  :agent {:roles [:role/source-role]}
+                  :prompts {:task "agent task"}}]
+    (with-redefs [loader/find-contract-record-sync (fn [_ class id]
+                                                     (case class
+                                                       "agents" {:id id :contract contract}
+                                                       nil))
+                  sut/default-actor-id (fn [_] "actor-a")
+                  sut/resolve-actor (fn [_ _]
+                                      {:id "actor-a"
+                                       :role-slugs []
+                                       :capability-ids []
+                                       :task-prompt "actor task"})
+                  roles/role-task-prompt (fn [_ role]
+                                           (when (= "source-role" role)
+                                             "role task"))
+                  roles/role-system-prompt (fn [_ _] nil)
+                  roles/role-tool-ids (fn [_ _] [])]
+      (let [resolved (sut/resolve-agent-contract {} "agent-a")
+            task (:task-prompt resolved)]
+        (is (sequential? task))
+        (is (= ["role task" "actor task" "agent task"] (nth task 2)))))))
+
+(deftest resolve-agent-contract-composes-runtime-sources
+  (let [source-contract {:contract/id "openplanner-memory"
+                         :contract/kind :source
+                         :source/id :source/openplanner-memory
+                         :source/provider :openplanner
+                         :source/hydration {:strategy :memory-search
+                                            :mode :triggered
+                                            :k 6}}
+        agent-contract {:contract/id "agent-a"
+                        :contract/kind :agent
+                        :contract/actors ["actor-a"]
+                        :trigger-kind :manual
+                        :agent {:roles [:role/source-role]}
+                        :sources [{:source/ref :source/openplanner-memory
+                                   :hydration {:mode :always}}]}
+        role-contract {:role/id :role/source-role
+                       :role/sources [{:source/ref :source/openplanner-memory
+                                       :hydration {:k 4}}]}]
+    (with-redefs [loader/find-contract-record-sync (fn [_ class id]
+                                                     (case class
+                                                       "agents" {:id id :contract agent-contract}
+                                                       "sources" {:id id :contract source-contract}
+                                                       nil))
+                  sut/default-actor-id (fn [_] "actor-a")
+                  sut/resolve-actor (fn [_ _]
+                                      {:id "actor-a"
+                                       :role-slugs []
+                                       :capability-ids []
+                                       :actor {:actor/sources [:source/openplanner-memory]}})
+                  roles/role-contract (fn [_ role]
+                                        (when (= "source-role" role)
+                                          role-contract))
+                  roles/role-task-prompt (fn [_ _] nil)
+                  roles/role-system-prompt (fn [_ _] nil)
+                  roles/role-tool-ids (fn [_ _] [])]
+      (let [resolved (sut/resolve-agent-contract {} "agent-a")
+            source (first (:sources resolved))]
+        (is (= 1 (count (:sources resolved))))
+        (is (= :source/openplanner-memory (:source/id source)))
+        (is (= {:strategy :memory-search
+                :mode :always
+                :k 4}
+               (:source/hydration source)))))))
 ; ---------------------------------------------------------------------------
 ; Multi-role composition (agent-role-claims)
 ; ---------------------------------------------------------------------------

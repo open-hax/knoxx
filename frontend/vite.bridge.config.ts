@@ -4,9 +4,15 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  esbuild: {
+    jsxDev: false,
+  },
   build: {
-    // Emit .map files so browser stack traces map back to TS sources.
-    sourcemap: true,
+    // Do not emit source maps for shadow-consumed bridge files. shadow-cljs
+    // follows source map metadata when file-resolving ESM and can rehydrate
+    // dev JSX (`jsxDEV`) into the optimized bundle, which crashes under the
+    // production React runtime.
+    sourcemap: false,
     lib: {
       entry: path.resolve(__dirname, "src/bridge/index.ts"),
       name: "knoxx-frontend-bridge",

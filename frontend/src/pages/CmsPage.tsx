@@ -153,7 +153,7 @@ function CmsPage() {
       setLoadingBrowse(true);
       try {
         const params = new URLSearchParams();
-        params.set("path", "cms");
+        params.set("path", ".");
         const resp = await fetch(`/api/ingestion/browse?${params}`);
         if (resp.ok) {
           setBrowseData(await resp.json());

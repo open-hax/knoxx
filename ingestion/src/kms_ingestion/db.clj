@@ -175,17 +175,18 @@
 
 (defn create-source!
   "Create a new ingestion source."
-  [{:keys [tenant-id driver-type name config collections file-types include-patterns exclude-patterns]}]
+  [{:keys [tenant-id driver-type name config collections file-types include-patterns exclude-patterns enabled]}]
   (query-one
-   "INSERT INTO ingestion_sources (tenant_id, driver_type, name, config, collections, file_types, include_patterns, exclude_patterns)
-     VALUES (?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb)
+   "INSERT INTO ingestion_sources (tenant_id, driver_type, name, config, collections, file_types, include_patterns, exclude_patterns, enabled)
+     VALUES (?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?)
      RETURNING *"
    tenant-id driver-type name
    (json/generate-string config)
    (json/generate-string (or collections ["devel-docs" "devel-code" "devel-config" "devel-data"]))
    (when file-types (json/generate-string file-types))
    (when include-patterns (json/generate-string include-patterns))
-   (when exclude-patterns (json/generate-string exclude-patterns))))
+   (when exclude-patterns (json/generate-string exclude-patterns))
+   (if (nil? enabled) true (boolean enabled))))
 
 (defn mark-source-scanned!
   "Update last_scan_at when a source is queued or completed."
@@ -218,7 +219,7 @@
 
 (defn update-source!
   "Update an existing ingestion source's config, file_types, exclude_patterns, etc."
-  [source-id {:keys [config collections file-types include-patterns exclude-patterns]}]
+  [source-id {:keys [config collections file-types include-patterns exclude-patterns enabled]}]
   (query-one
    (str "UPDATE ingestion_sources SET "
         "config = ?::jsonb, "
@@ -226,6 +227,7 @@
         "file_types = ?::jsonb, "
         "include_patterns = ?::jsonb, "
         "exclude_patterns = ?::jsonb, "
+        "enabled = ?, "
         "updated_at = NOW() "
         "WHERE source_id = ?::uuid RETURNING *")
    (json/generate-string config)
@@ -233,6 +235,7 @@
    (when file-types (json/generate-string file-types))
    (when include-patterns (json/generate-string include-patterns))
    (when exclude-patterns (json/generate-string exclude-patterns))
+   (if (nil? enabled) true (boolean enabled))
    source-id))
 
 ;; ============================================================

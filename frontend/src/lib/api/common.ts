@@ -250,6 +250,7 @@ function normalizeRunDetail(run: RunDetail): RunDetail {
     ),
     request_messages: normalizeRequestMessages(run.request_messages),
     events: Array.isArray(run.events) ? run.events : [],
+    trace_blocks: Array.isArray(run.trace_blocks) ? run.trace_blocks : [],
     tool_receipts: toolReceipts,
     sources: Array.isArray(run.sources) ? run.sources : [],
   };

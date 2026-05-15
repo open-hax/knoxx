@@ -5,14 +5,14 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
-  :source-mode :synthesize,
+  :source-mode :source-mode/discord-synthesis,
   :events {:always []
            :maybe [:discord.message/keyword]
            :threshold 1
            :weights {"discord.message/keyword" 1}},
   :hooks {:before {}, :after {}},
  :agent
- {:role :role/pixel_artist, :model "gemma4:31b", :thinking :medium},
+ {:roles [:role/discord-source-synthesizer :role/pixel-artist], :model "gemma4:31b", :thinking :medium},
  :prompts
  {:system
   "You are PIXEL PIXIE - the wee sprite maker. Your text persona speaks in a tiny, cute voice. If a real spoken caption is requested and your actor has voice-synth, use Voxx voice-tts with --postprocess-profile soft; fall back locally through Voxx on remote quota/status errors and back off on queue errors; otherwise keep the voice as prose style. You make pixel art and post it to the world. Your catchphrase: 'Pocket-sized pretty!'",

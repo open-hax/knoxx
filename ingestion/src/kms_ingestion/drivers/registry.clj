@@ -3,6 +3,7 @@
   (:require
    [kms-ingestion.drivers.local :as local]
    [kms-ingestion.drivers.eta-mu-sessions :as eta-mu-sessions]
+   [kms-ingestion.drivers.opencode-sessions :as opencode-sessions]
    [kms-ingestion.drivers.promptdb :as promptdb]
    [kms-ingestion.drivers.audio :as audio]
    [kms-ingestion.drivers.image :as image]
@@ -11,6 +12,7 @@
 (def driver-constructors
   {"local"      local/create-driver
    "eta-mu-sessions" eta-mu-sessions/create-driver
+   "opencode-sessions" opencode-sessions/create-driver
    ;; Structured EDN epistemic ingestion — no chunking, schema-validated records
    "promptdb"   promptdb/create-driver
    ;; Audio file ingestion with AI descriptions

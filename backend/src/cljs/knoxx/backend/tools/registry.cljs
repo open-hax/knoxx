@@ -42,11 +42,25 @@
    "sandbox_container.commit" {:id "sandbox_container.commit" :label "Sandbox Commit" :description "Create a git commit inside the sandbox workdir" :risk-level "low"}
    "sandbox_container.destroy" {:id "sandbox_container.destroy" :label "Sandbox Destroy" :description "Destroy a sandbox container and its temporary workspace" :risk-level "low"}
 
-   "bluesky.publish" {:id "bluesky.publish" :label "Bluesky Publish" :description "Publish updates to Bluesky" :risk-level "low"}
-   "bluesky.profile" {:id "bluesky.profile" :label "Bluesky Profile" :description "Read a Bluesky profile by handle or DID" :risk-level "low"}
-   "bluesky.search" {:id "bluesky.search" :label "Bluesky Search" :description "Search public Bluesky posts or actors" :risk-level "low"}
-   "bluesky.author.feed" {:id "bluesky.author.feed" :label "Bluesky Author Feed" :description "Read recent posts from a specific Bluesky author" :risk-level "low"}
-   "bluesky.timeline" {:id "bluesky.timeline" :label "Bluesky Timeline" :description "Read the authenticated Bluesky timeline" :risk-level "low"}
+    "bluesky.publish" {:id "bluesky.publish" :label "Bluesky Publish" :description "Publish updates to Bluesky" :risk-level "low"}
+    "bluesky.profile" {:id "bluesky.profile" :label "Bluesky Profile" :description "Read a Bluesky profile by handle or DID" :risk-level "low"}
+    "bluesky.search" {:id "bluesky.search" :label "Bluesky Search" :description "Search public Bluesky posts or actors" :risk-level "low"}
+    "bluesky.author.feed" {:id "bluesky.author.feed" :label "Bluesky Author Feed" :description "Read recent posts from a specific Bluesky author" :risk-level "low"}
+    "bluesky.timeline" {:id "bluesky.timeline" :label "Bluesky Timeline" :description "Read the authenticated Bluesky timeline" :risk-level "low"}
+    "bluesky.repost" {:id "bluesky.repost" :label "Bluesky Repost" :description "Repost a Bluesky post" :risk-level "low"}
+    "bluesky.like" {:id "bluesky.like" :label "Bluesky Like" :description "Like a Bluesky post" :risk-level "low"}
+    "bluesky.unlike" {:id "bluesky.unlike" :label "Bluesky Unlike" :description "Remove a like from a Bluesky post" :risk-level "low"}
+    "bluesky.follow" {:id "bluesky.follow" :label "Bluesky Follow" :description "Follow a Bluesky actor" :risk-level "low"}
+    "bluesky.unfollow" {:id "bluesky.unfollow" :label "Bluesky Unfollow" :description "Unfollow a Bluesky actor" :risk-level "low"}
+    "bluesky.delete" {:id "bluesky.delete" :label "Bluesky Delete" :description "Delete a Bluesky post" :risk-level "medium"}
+    "bluesky.thread" {:id "bluesky.thread" :label "Bluesky Thread" :description "Read a Bluesky post thread" :risk-level "low"}
+    "bluesky.notifications" {:id "bluesky.notifications" :label "Bluesky Notifications" :description "Read Bluesky notifications" :risk-level "low"}
+    "bluesky.followers" {:id "bluesky.followers" :label "Bluesky Followers" :description "List followers of a Bluesky actor" :risk-level "low"}
+    "bluesky.follows" {:id "bluesky.follows" :label "Bluesky Follows" :description "List accounts a Bluesky actor follows" :risk-level "low"}
+    "bluesky.chat.list" {:id "bluesky.chat.list" :label "Bluesky Chat List" :description "List Bluesky DM conversations" :risk-level "medium"}
+    "bluesky.chat.read" {:id "bluesky.chat.read" :label "Bluesky Chat Read" :description "Read messages from a Bluesky DM conversation" :risk-level "medium"}
+    "bluesky.chat.send" {:id "bluesky.chat.send" :label "Bluesky Chat Send" :description "Send a Bluesky DM" :risk-level "medium"}
+    "bluesky.chat.react" {:id "bluesky.chat.react" :label "Bluesky Chat React" :description "React to a Bluesky DM message" :risk-level "low"}
 
    "music.identify_file" {:id "music.identify_file" :label "Music Identify" :description "Identify songs from audio files using AudD API" :risk-level "medium"}
    "music.acoustid_lookup" {:id "music.acoustid_lookup" :label "AcoustID Lookup" :description "Look up audio fingerprints via AcoustID" :risk-level "medium"}
@@ -57,8 +71,9 @@
    "image.generate" {:id "image.generate" :label "Generate Image" :description "Generate an image asset through Proxx/Blaze image generation" :risk-level "medium"}
    "video.generate" {:id "video.generate" :label "Generate Video" :description "Generate a video asset through Proxx/Blaze video generation" :risk-level "medium"}
    "blaze.generate" {:id "blaze.generate" :label "Blaze Generate" :description "Legacy generic Proxx/Blaze generator; prefer modality-specific music.generate_song, image.generate, and video.generate tools" :risk-level "medium"}
-   "voice.openutau_project" {:id "voice.openutau_project" :label "OpenUtau Project" :description "Create an OpenUtau .ustx singing project for human review and export" :risk-level "low"}
-   "voice.tts"        {:id "voice.tts"        :label "Text-to-Speech" :description "Synthesize speech via Voxx Gateway TTS; writes MP3 to workspace"  :risk-level "low"}
+    "voice.openutau_project" {:id "voice.openutau_project" :label "OpenUtau Project" :description "Create an OpenUtau .ustx singing project for human review and export" :risk-level "low"}
+    "voice.openutau_render" {:id "voice.openutau_render" :label "OpenUtau Render" :description "Headlessly render an OpenUtau .ustx project to WAV" :risk-level "low"}
+    "voice.tts"        {:id "voice.tts"        :label "Text-to-Speech" :description "Synthesize speech via Voxx Gateway TTS; writes MP3 to workspace"  :risk-level "low"}
    "voice.tts_stream" {:id "voice.tts_stream" :label "TTS Stream"     :description "Return Voxx WS streaming TTS session params for /ws/voice/tts" :risk-level "low"}
    "discord.voice.join"   {:id "discord.voice.join"   :label "Voice Join"   :description "Join a Discord voice channel" :risk-level "low"}
    "discord.voice.leave"  {:id "discord.voice.leave"  :label "Voice Leave"  :description "Leave a Discord voice channel" :risk-level "low"}
@@ -83,8 +98,10 @@
    "save_translation" {:id "save_translation" :label "Save Translation" :description "Save translated content to database" :risk-level "low"}
    "create_new_file" {:id "create_new_file" :label "Create New File" :description "Create a new file-backed artifact for the Knoxx canvas editor" :risk-level "low"}
 
+   "contract.list" {:id "contract.list" :label "Contract List" :description "List contract IDs by class before reading or writing" :risk-level "low"}
+   "contract.read" {:id "contract.read" :label "Contract Read" :description "Read exact EDN for an existing contract by class and id" :risk-level "low"}
    "contract.write" {:id "contract.write" :label "Contract Write" :description "Create or update a contract by writing EDN text" :risk-level "high"}
-   "contract.validate" {:id "contract.validate" :label "Contract Validate" :description "Parse and validate EDN contract text without saving. Returns errors with line hints." :risk-level "low"}
+   "contract.validate" {:id "contract.validate" :label "Contract Validate" :description "Parse and validate EDN contract text without saving. Returns errors and warnings with line hints." :risk-level "low"}
 
    "nrepl.eval" {:id "nrepl.eval" :label "nREPL Eval" :description "Evaluate CLJ/CLJS in the live shadow-cljs runtime via nREPL (developer-only)" :risk-level "high"}
 

@@ -1,0 +1,14 @@
+{:role/id :role/instr-sub-bass
+ :role/name "Instrument — Sub Bass"
+ :role/description "Soft sub-bass heartbeat. The pulse beneath the silence."
+ :role/capabilities []
+ :role/focus "Sonic texture: low-frequency sine, slow attack, felt more than heard."
+ :role/duty "Apply when the song needs a physical pulse, a body-feel, or the sense of something alive beneath the surface."
+ :data {:instrument/name "Sub Bass"
+        :instrument/family "bass"
+        :instrument/timbre "Deep, warm, physical, slow-moving"
+        :instrument/technique "Sine wave, slow attack, long release, sidechain-friendly"
+        :instrument/effects ["sub-harmonic enhancement" "slow envelope" "sidechain ducking"]
+        :instrument/register "Sub-bass, C0-C2"
+        :instrument/mood "Intimate, physical, grounding, slightly ominous"
+        :instrument/reference "The sub-bass in 'Between η and μ' — soft heartbeat beneath the cathedral reverb."}}

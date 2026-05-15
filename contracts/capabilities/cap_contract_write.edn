@@ -1,7 +1,10 @@
 {:cap/id :cap/contract-write
- :cap/tools [:contract.write :contract.validate]
+ :cap/tools [:contract.list
+             :contract.read
+             :contract.write
+             :contract.validate]
  :cap/user-surfaces [{:surface/id :workspace/contracts-editor
                       :surface/label "Contracts editor"
                       :surface/kind :editor
                       :surface/routes ["/contracts" "/ops/contracts"]
-                      :surface/description "Humans edit EDN contracts in the contract workbench; agents use contract.write and contract.validate."}]}
+                      :surface/description "Humans edit EDN contracts in the contract workbench; agents use contract.list/read/validate/write."}]}

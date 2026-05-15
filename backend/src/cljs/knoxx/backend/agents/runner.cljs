@@ -79,6 +79,10 @@
         resource-policies (or (:resource_policies spec)
                               (:resource-policies spec)
                               (:resourcePolicies spec))
+        sources (or (:sources spec)
+                    (:runtime_sources spec)
+                    (:runtime-sources spec)
+                    (:runtimeSources spec))
         memory-hydration (or (:memory_hydration spec)
                              (:memory-hydration spec)
                              (:memoryHydration spec))
@@ -116,6 +120,7 @@
       thinking-level (assoc :thinking-level thinking-level)
       (seq tool-policies) (assoc :tool-policies tool-policies)
       resource-policies (assoc :resource-policies resource-policies)
+      (seq sources) (assoc :sources sources)
       memory-hydration (assoc :memory-hydration memory-hydration)
       context-policy (assoc :context-policy context-policy)
       sub-agent-id (assoc :sub-agent-id sub-agent-id)
@@ -126,7 +131,10 @@
 (defn direct-start-payload->turn-params
   [payload]
   (let [auth-context (or (:auth_context payload)
-                         (:auth-context payload))]
+                         (:auth-context payload))
+        template-context (or (:template_context payload)
+                             (:template-context payload)
+                             (:templateContext payload))]
     (cond-> {:conversation-id (or (:conversation_id payload)
                                   (:conversation-id payload))
              :session-id (or (:session_id payload)
@@ -137,13 +145,11 @@
              :content-parts (or (:content_parts payload)
                                 (:content-parts payload)
                                 [])
-             :template-context (or (:template_context payload)
-                                   (:template-context payload)
-                                   (:templateContext payload))
              :model (:model payload)
              :mode "direct"
              :agent-spec (normalize-agent-spec (or (:agent_spec payload)
                                                    (:agent-spec payload)))}
+      template-context (assoc :template-context template-context)
       auth-context (assoc :auth-context auth-context))))
 
 (defn- policy-model

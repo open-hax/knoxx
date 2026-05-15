@@ -120,9 +120,13 @@
         resource-policies (or (:resource_policies spec)
                               (:resource-policies spec)
                               (:resourcePolicies spec))
+        sources (or (:sources spec)
+                    (:runtime_sources spec)
+                    (:runtime-sources spec)
+                    (:runtimeSources spec))
         memory-hydration (memory-hydration-spec spec)
         context-policy (context-policy-spec spec)]
-    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies memory-hydration context-policy)
+    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies (seq sources) memory-hydration context-policy)
       {:contract-id contract-id
        :actor-id actor-id
        :role role
@@ -132,6 +136,7 @@
        :thinking-level thinking-level
        :tool-policies tool-policies
        :resource-policies resource-policies
+       :sources sources
        :memory-hydration memory-hydration
        :context-policy context-policy})))
 

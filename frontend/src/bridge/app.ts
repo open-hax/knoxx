@@ -23,3 +23,24 @@ export { default as OpsRoot } from "../pages/OpsRoot";
 // single-file + compatible with shadow-cljs file resolution when adding these.
 export { default as CmsPage } from "../pages/CmsPage";
 export { VisualCmsEditorPage } from "../pages/VisualCmsEditorPage";
+
+// Agent audit surfaces — TSX widgets mounted by shadow-cljs AgentsPage.
+export { default as AgentAuditLogs } from "../components/agent-audit/AgentAuditLogs";
+export { AgentAuditSessionList } from "../components/agent-audit/AgentAuditSessionList";
+
+// Chat workspace — consumed by shadow-cljs AgentsPage for consistent sidebar UX.
+export { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
+export { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
+export { CollapsedPanelTab } from "../components/CollapsedPanelTab";
+
+// Layout primitives — IDE-style workbench shell.
+export {
+  WorkbenchShell,
+  WorkbenchPanel,
+  WorkbenchMain,
+  WorkbenchBottomPanel,
+  AgentWorkbenchLayout,
+} from "../components/layout";
+
+// Context explorer — file browser, sessions, semantic search.
+export { ContextBar } from "../components/context-bar";

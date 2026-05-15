@@ -20,7 +20,7 @@
        (remove nil?)
        vec))
 
-(declare default-discord-model clamp-max-messages event-agent-trigger-kinds)
+(declare default-discord-model clamp-max-messages clamp-max-message-chars event-agent-trigger-kinds)
 
 (defn- keywordish->string
   [value]
@@ -44,6 +44,42 @@
                          nm))
     (string? value) (some-> value str str/trim not-empty (str/replace #"/" "."))
     :else nil))
+
+(defn- source-mode-record
+  [config value]
+  (let [wanted (keywordish->string value)]
+    (when wanted
+      (some (fn [record]
+              (when (and (= "source_modes" (:contractClass record))
+                         (= wanted (:id record)))
+                record))
+            (contract-loader/load-all-contracts-sync config)))))
+
+(defn- source-mode-contract
+  [config value]
+  (some-> (source-mode-record config value) :contract))
+
+(defn- source-mode-runtime-kind
+  [mode-contract fallback]
+  (or (keywordish->string (:source/kind mode-contract))
+      (keywordish->string fallback)
+      "manual"))
+
+(defn- source-mode-runtime-mode
+  [mode-contract fallback]
+  (or (keywordish->string (:source/mode mode-contract))
+      (keywordish->string fallback)
+      "respond"))
+
+(defn- combine-prompt-values
+  [& parts]
+  (let [segments (->> parts
+                      (keep prompt-templates/prompt-value)
+                      vec)]
+    (cond
+      (empty? segments) nil
+      (= 1 (count segments)) (first segments)
+      :else (list (symbol "template") {:separator "\n\n"} segments))))
 
 (defn- explicit-tool-ids
   [contract]
@@ -92,77 +128,116 @@
       (get-in contract [:memory :passive-hydration])
       (get-in contract [:memory :passiveHydration])))
 
+(defn- contract-event-kinds
+  [contract]
+  (let [normalize (fn [values]
+                    (->> (or values [])
+                         (map keywordish->event-kind)
+                         (remove nil?)
+                         distinct
+                         vec))
+        always-kinds (normalize (get-in contract [:events :always]))
+        maybe-kinds (normalize (get-in contract [:events :maybe]))]
+    {:always-kinds always-kinds
+     :maybe-kinds maybe-kinds
+     :event-kinds (vec (distinct (concat always-kinds maybe-kinds)))}))
+
+(defn- contract-source-mode-context
+  [config contract]
+  (let [source-mode-ref (:source-mode contract)
+        mode-contract (source-mode-contract config source-mode-ref)]
+    {:source-mode-ref source-mode-ref
+     :source-mode-contract mode-contract
+     :source-kind (source-mode-runtime-kind mode-contract (:source-kind contract))
+     :source-mode (source-mode-runtime-mode mode-contract source-mode-ref)
+     :source-mode-task-prompt (prompt-templates/prompt-value (get-in mode-contract [:prompts :task]))}))
+
+(defn- vectorish-string-list
+  [value]
+  (cond
+    (sequential? value) (->> value (map str) (map str/trim) (remove str/blank?) vec)
+    (string? value) (parse-string-list value)
+    :else []))
+
+(defn- contract-source-spec
+  [contract source-kind source-mode source-mode-contract]
+  (let [source-config (or (get-in contract [:data :source]) {})
+        trusted-role-ids (or (seq (vectorish-string-list (:trustedRoleIds source-config)))
+                             (seq (vectorish-string-list (:trusted-role-ids source-config)))
+                             (seq (vectorish-string-list (:trusted_role_ids source-config)))
+                             (seq (vectorish-string-list (get-in source-mode-contract [:data :trusted-role-ids]))))
+        sticky-session? (or (true? (:stickySession source-config))
+                            (true? (:sticky_session source-config)))
+        session-max-messages (or (parse-positive-int (:sessionMaxMessages source-config))
+                                 (parse-positive-int (:session_max_messages source-config)))
+        max-total-messages (or (parse-positive-int (:maxTotalMessages source-config))
+                               (parse-positive-int (:max-total-messages source-config))
+                               (parse-positive-int (:max_messages_total source-config)))
+        max-message-chars (or (parse-positive-int (:maxMessageChars source-config))
+                              (parse-positive-int (:max-message-chars source-config))
+                              (parse-positive-int (:max_message_chars source-config)))
+        streaming-behavior (some-> (or (:streamingBehavior source-config)
+                                       (:streaming_behavior source-config))
+                                   str str/trim not-empty)]
+    {:kind source-kind
+     :mode source-mode
+     :config (cond-> {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
+                                                       (get-in contract [:data :source :maxMessages]))}
+               max-total-messages (assoc :maxTotalMessages (clamp-max-messages max-total-messages max-total-messages))
+               max-message-chars (assoc :maxMessageChars (clamp-max-message-chars max-message-chars max-message-chars))
+               trusted-role-ids (assoc :trustedRoleIds (vec trusted-role-ids))
+               sticky-session? (assoc :stickySession true)
+               session-max-messages (assoc :sessionMaxMessages session-max-messages)
+               streaming-behavior (assoc :streamingBehavior streaming-behavior))}))
+
+(defn- contract-agent-spec
+  [config contract-id contract resolved source-mode-ref source-mode-task-prompt]
+  (let [role (:role resolved)]
+    {:role (if (str/blank? (str (or role ""))) (:knoxx-default-role config) role)
+     :model (or (:model resolved) (default-discord-model config))
+     :thinkingLevel (or (:thinking-level resolved)
+                        (some-> (get-in contract [:agent :thinking]) keywordish->string)
+                        "off")
+     :systemPrompt (or (:system-prompt resolved)
+                       (prompt-templates/prompt-value (get-in contract [:prompts :system]))
+                       "")
+     :taskPrompt (or (combine-prompt-values
+                      source-mode-task-prompt
+                      (or (:task-prompt resolved)
+                          (prompt-templates/prompt-value (get-in contract [:prompts :task]))))
+                     "")
+     :toolPolicies (vec (or (:tool-policies resolved)
+                            (tool-policies-from-contract config role contract)))
+     :sources (vec (or (:sources resolved) []))
+     :memoryHydration (memory-hydration-from-contract contract)
+     :contextPolicy (:context-policy resolved)
+     :contractId contract-id
+     :sourceMode (keywordish->string source-mode-ref)
+     :actorId (:actor-id resolved)
+     :contractActors (vec (or (:contract-actor-ids resolved) []))}))
+
 (defn- contract->event-agent-job
   [config contract-id contract contract-hash]
   (let [trigger-kind (keywordish->string (:trigger-kind contract))
         resolved (tooling/resolve-agent-contract config contract-id)]
     (when (and (= :agent (:contract/kind contract))
                (contains? event-agent-trigger-kinds trigger-kind))
-        (let [role (:role resolved)
-            model (or (:model resolved)
-                      (default-discord-model config))
-            thinking-level (or (:thinking-level resolved)
-                               (some-> (get-in contract [:agent :thinking]) keywordish->string)
-                               "off")
-            source-kind (or (keywordish->string (:source-kind contract))
-                            "manual")
-            source-mode (or (keywordish->string (:source-mode contract))
-                            "respond")
-            cadence (max 1 (or (parse-positive-int (:cadence-min contract)) 5))
-            always-kinds (->> (or (get-in contract [:events :always]) [])
-                              (map keywordish->event-kind)
-                              (remove nil?)
-                              distinct
-                              vec)
-            maybe-kinds (->> (or (get-in contract [:events :maybe]) [])
-                             (map keywordish->event-kind)
-                             (remove nil?)
-                             distinct
-                             vec)
-            event-kinds (vec (distinct (concat always-kinds maybe-kinds)))
-            event-weights (or (get-in contract [:events :weights]) {})
-            event-threshold (or (get-in contract [:events :threshold]) 1)
-            filters (filters-from-contract contract)
-            source-config (or (get-in contract [:data :source]) {})
-            memory-hydration (memory-hydration-from-contract contract)
-            sticky-session? (or (true? (:stickySession source-config))
-                                (true? (:sticky_session source-config)))
-            session-max-messages (or (parse-positive-int (:sessionMaxMessages source-config))
-                                     (parse-positive-int (:session_max_messages source-config)))
-            streaming-behavior (some-> (or (:streamingBehavior source-config)
-                                           (:streaming_behavior source-config))
-                                       str str/trim not-empty)]
+      (let [{:keys [always-kinds maybe-kinds event-kinds]} (contract-event-kinds contract)
+            {:keys [source-mode-ref source-mode-contract source-kind source-mode source-mode-task-prompt]}
+            (contract-source-mode-context config contract)]
         {:id contract-id
          :name contract-id
          :enabled (not (false? (:enabled contract)))
-          :trigger {:kind trigger-kind
-                    :cadenceMinutes cadence
-                    :eventKinds event-kinds
-                    :alwaysKinds always-kinds
-                    :maybeKinds maybe-kinds
-                    :eventWeights event-weights
-                    :eventThreshold event-threshold}
-         :source {:kind source-kind
-                  :mode source-mode
-                  :config (cond-> {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
-                                                                   (get-in contract [:data :source :maxMessages]))}
-                           sticky-session? (assoc :stickySession true)
-                           session-max-messages (assoc :sessionMaxMessages session-max-messages)
-                           streaming-behavior (assoc :streamingBehavior streaming-behavior))}
-         :filters filters
-         :agentSpec {:role (if (str/blank? (str (or role ""))) (:knoxx-default-role config) role)
-                     :model model
-                     :thinkingLevel thinking-level
-                     :systemPrompt (or (:system-prompt resolved)
-                                       (prompt-templates/prompt-value (get-in contract [:prompts :system]))
-                                       "")
-                     :taskPrompt (or (prompt-templates/prompt-value (get-in contract [:prompts :task])) "")
-                     :toolPolicies (vec (or (:tool-policies resolved)
-                                            (tool-policies-from-contract config role contract)))
-                     :memoryHydration memory-hydration
-                     :contractId contract-id
-                     :actorId (:actor-id resolved)
-                     :contractActors (vec (or (:contract-actor-ids resolved) []))}
+         :trigger {:kind trigger-kind
+                   :cadenceMinutes (max 1 (or (parse-positive-int (:cadence-min contract)) 5))
+                   :eventKinds event-kinds
+                   :alwaysKinds always-kinds
+                   :maybeKinds maybe-kinds
+                   :eventWeights (or (get-in contract [:events :weights]) {})
+                   :eventThreshold (or (get-in contract [:events :threshold]) 1)}
+         :source (contract-source-spec contract source-kind source-mode source-mode-contract)
+         :filters (filters-from-contract contract)
+         :agentSpec (contract-agent-spec config contract-id contract resolved source-mode-ref source-mode-task-prompt)
          :description (or (prompt-templates/prompt-preview (get-in contract [:prompts :task]))
                           (prompt-templates/prompt-preview (get-in contract [:prompts :system]))
                           contract-id)
@@ -202,6 +277,7 @@
 (def ^:private event-agent-trigger-kinds #{"cron" "event"})
 
 (def ^:private max-messages-limit 100)
+(def ^:private max-message-chars-limit 8000)
 
 (defn- clamp-max-messages
   [value fallback]
@@ -210,11 +286,29 @@
               25)]
     (max 1 (min max-messages-limit n))))
 
+(defn- clamp-max-message-chars
+  [value fallback]
+  (let [n (or (parse-positive-int value)
+              (parse-positive-int fallback)
+              1200)]
+    (max 120 (min max-message-chars-limit n))))
+
 (defn- clamp-source-config
   [source-config default-config]
   (let [cfg (or source-config {})]
     (cond-> (assoc cfg :maxMessages (clamp-max-messages (:maxMessages cfg)
                                                         (:maxMessages (or default-config {}))))
+      (parse-positive-int (or (:maxTotalMessages cfg) (:max-total-messages cfg)))
+      (assoc :maxTotalMessages (clamp-max-messages (or (:maxTotalMessages cfg)
+                                                       (:max-total-messages cfg))
+                                                   (:maxMessages cfg)))
+
+      (parse-positive-int (or (:maxMessageChars cfg) (:max-message-chars cfg) (:max_message_chars cfg)))
+      (assoc :maxMessageChars (clamp-max-message-chars (or (:maxMessageChars cfg)
+                                                           (:max-message-chars cfg)
+                                                           (:max_message_chars cfg))
+                                                       (:maxMessageChars (or default-config {}))))
+
       (contains? cfg :stickySession)
       (assoc :stickySession (boolean (:stickySession cfg)))
 
@@ -435,11 +529,12 @@
 
 (defn- derive-default-discord-channels
   [jobs]
+  ;; Publishing targets are not read sources. Keep this fallback narrow for
+  ;; legacy/manual jobs only; contract-sourced jobs without explicit channels do
+  ;; not fall back to these defaults in event_agents/job-channels.
   (->> (or jobs [])
        (mapcat (fn [job]
-                 (concat (or (get-in job [:filters :channels]) [])
-                         (or (get-in job [:filters :publishChannels]) [])
-                         (or (get-in job [:filters :publish_channels]) []))))
+                 (or (get-in job [:filters :channels]) [])))
        (map (fn [value] (some-> value str str/trim not-empty)))
        (remove nil?)
        distinct
@@ -512,7 +607,24 @@
                      (nonblank-str (:actor_id agent-source))
                      (nonblank-str (:actorId default-job))
                      (nonblank-str (:actorId (:agentSpec default-job)))
-                     (nonblank-str (:actor_id (:agentSpec default-job))))]
+                     (nonblank-str (:actor_id (:agentSpec default-job))))
+        sources (vec (or (:sources agent-source)
+                         (:runtimeSources agent-source)
+                         (:runtime-sources agent-source)
+                         (:sources (:agentSpec default-job))
+                         []))
+        memory-hydration (or (:memoryHydration agent-source)
+                             (:memory-hydration agent-source)
+                             (:memory_hydration agent-source)
+                             (:memoryHydration (:agentSpec default-job))
+                             (:memory-hydration (:agentSpec default-job))
+                             (:memory_hydration (:agentSpec default-job)))
+        context-policy (or (:contextPolicy agent-source)
+                           (:context-policy agent-source)
+                           (:context_policy agent-source)
+                           (:contextPolicy (:agentSpec default-job))
+                           (:context-policy (:agentSpec default-job))
+                           (:context_policy (:agentSpec default-job)))]
     {:id (:id default-job)
      :name (or (some-> (:name source) str str/trim not-empty) (:name default-job))
      :enabled (not (false? (:enabled source)))
@@ -524,28 +636,31 @@
               :config (clamp-source-config (:config source-config)
                                           (get-in default-job [:source :config]))}
      :filters (or (:filters source) (:filters default-job) {})
-     :agentSpec {:role role
-                 :model (or (some-> (:model agent-source) str str/trim not-empty)
-                            (:model (:agentSpec default-job))
-                            (default-discord-model config))
-                 :thinkingLevel thinking-level
-                 :systemPrompt (or (prompt-templates/prompt-value (:systemPrompt agent-source))
-                                   (prompt-templates/prompt-value (:systemPrompt (:agentSpec default-job)))
-                                   "")
-                 :taskPrompt (or (prompt-templates/prompt-value (:taskPrompt agent-source))
-                                 (prompt-templates/prompt-value (:taskPrompt (:agentSpec default-job)))
-                                 "")
-                 :toolPolicies (let [normalized (normalize-tool-policy-list (:toolPolicies agent-source))]
-                                 (if (and (seq normalized) (every? some? normalized))
-                                   normalized
-                                   (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job)))))
-                 :contractId (or (nonblank-str (:contractId agent-source))
-                                 (nonblank-str (:contractSourceId source))
-                                 (nonblank-str (:contractSourceId default-job)))
-                 :actorId actor-id
-                 :contractActors (vec (or (:contractActors agent-source)
-                                          (:contractActors (:agentSpec default-job))
-                                          [])) }
+     :agentSpec (cond-> {:role role
+                        :model (or (some-> (:model agent-source) str str/trim not-empty)
+                                   (:model (:agentSpec default-job))
+                                   (default-discord-model config))
+                        :thinkingLevel thinking-level
+                        :systemPrompt (or (prompt-templates/prompt-value (:systemPrompt agent-source))
+                                          (prompt-templates/prompt-value (:systemPrompt (:agentSpec default-job)))
+                                          "")
+                        :taskPrompt (or (prompt-templates/prompt-value (:taskPrompt agent-source))
+                                        (prompt-templates/prompt-value (:taskPrompt (:agentSpec default-job)))
+                                        "")
+                        :toolPolicies (let [normalized (normalize-tool-policy-list (:toolPolicies agent-source))]
+                                        (if (and (seq normalized) (every? some? normalized))
+                                          normalized
+                                          (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job)))))
+                        :contractId (or (nonblank-str (:contractId agent-source))
+                                        (nonblank-str (:contractSourceId source))
+                                        (nonblank-str (:contractSourceId default-job)))
+                        :actorId actor-id
+                        :contractActors (vec (or (:contractActors agent-source)
+                                                 (:contractActors (:agentSpec default-job))
+                                                 []))}
+                  (seq sources) (assoc :sources sources)
+                  memory-hydration (assoc :memoryHydration memory-hydration)
+                  context-policy (assoc :contextPolicy context-policy))
      :contractSourceId (or (:contractSourceId source)
                            (:contractSourceId default-job))
      :contractSourceKind (or (:contractSourceKind source)

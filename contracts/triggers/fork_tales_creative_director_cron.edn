@@ -1,0 +1,9 @@
+{:contract/kind :trigger
+ :contract/id "fork_tales_creative_director_cron"
+ :contract/version 1
+ :enabled true
+ :trigger/kind :cron
+ :trigger/target "fork_tales_creative_director"
+ :trigger/schedule "*/30 * * * *"
+ :trigger/source {:kind :discord}
+ :data {:context {:reason "contract cron: fork tales creative director"}}}

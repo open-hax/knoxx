@@ -17,6 +17,7 @@
             [knoxx.backend.triggers.control-config :as control-config]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-templates :as templates]
+            [knoxx.backend.quality-labels :as quality-labels]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.text :refer [sanitize-svg-content]]
             [knoxx.backend.util.parse :refer [parse-positive-int]]
@@ -190,12 +191,17 @@
        (remove nil?)
        vec))
 
+(defn- contract-sourced-job?
+  [job]
+  (boolean (nonblank-str (:contractSourceId job))))
+
 (defn- job-channels
   [control job]
   (let [channels (filter-string-list (get-in job [:filters :channels]))]
-    (if (seq channels)
-      channels
-      (vec (or (:defaultChannels (discord-source-config control)) [])))))
+    (cond
+      (seq channels) channels
+      (contract-sourced-job? job) []
+      :else (vec (or (:defaultChannels (discord-source-config control)) [])))))
 
 (defn- job-publish-channels
   [job]
@@ -234,6 +240,22 @@
   (or (parse-positive-int (get-in job [:source :config :maxMessages]))
       (parse-positive-int fallback)
       25))
+
+(defn- job-max-total-messages
+  [job fallback]
+  (or (parse-positive-int (get-in job [:source :config :maxTotalMessages]))
+      (parse-positive-int (get-in job [:source :config :max-total-messages]))
+      (parse-positive-int fallback)
+      (job-max-messages job 25)))
+
+(defn- job-max-message-chars
+  [job fallback]
+  (let [n (or (parse-positive-int (get-in job [:source :config :maxMessageChars]))
+              (parse-positive-int (get-in job [:source :config :max-message-chars]))
+              (parse-positive-int (get-in job [:source :config :max_message_chars]))
+              (parse-positive-int fallback)
+              1200)]
+    (max 120 (min 8000 n))))
 
 (defn- discord-last-seen
   [channel-id]
@@ -296,16 +318,6 @@
   (reset! recent-events* [])
   (reset! job-specs* {})
   (reset! dispatched-event-ids* #{}))
-
-(defn- disable-cron-jobs
-  [control]
-  (update control :jobs
-          (fn [jobs]
-            (mapv (fn [job]
-                    (if (= "cron" (get-in job [:trigger :kind]))
-                      (assoc job :enabled false)
-                      job))
-                  (or jobs [])))))
 
 (defn- recover-runtime-state!
   [control]
@@ -851,22 +863,25 @@
     state
     {}))
 
-(defn- sticky-session-base-conversation-id
-  [job event]
+(defn- sticky-session-owner
+  [event]
   (let [source-kind (str (:sourceKind event))
         author-id (or (get-in event [:payload :authorId]) "unknown-user")
         owner-id (if (= source-kind "discord")
                    (or (get-in event [:payload :channelId]) author-id)
                    author-id)]
+    {:source-kind source-kind
+     :owner-id owner-id
+     :key (str owner-id ":" (str/lower-case source-kind))}))
+
+(defn- sticky-session-base-conversation-id
+  [job event]
+  (let [{:keys [source-kind owner-id]} (sticky-session-owner event)]
     (str "event-agent-" (:id job) "-" owner-id "-" (str/lower-case source-kind) "-sticky")))
 
 (defn- sticky-session-base-session-id
   [job event]
-  (let [source-kind (str (:sourceKind event))
-        author-id (or (get-in event [:payload :authorId]) "unknown-user")
-        owner-id (if (= source-kind "discord")
-                   (or (get-in event [:payload :channelId]) author-id)
-                   author-id)]
+  (let [{:keys [owner-id]} (sticky-session-owner event)]
     (str "event-agent-session-" (:id job) "-" owner-id "-sticky")))
 
 (defn- sticky-session-summary
@@ -891,10 +906,11 @@
       {:conversation-id (str "event-agent-" job-id "-" (str/lower-case (str (:sourceKind event))) "-" (.now js/Date))
        :session-id (str "event-agent-session-" job-id "-" (.now js/Date))
        :summary nil}
-      (let [state (get @job-state* job-id {})
+      (let [owner-key (:key (sticky-session-owner event))
+            state (get-in @job-state* [job-id :stickySessions owner-key] {})
             generation (or (:stickyGeneration state) 0)
             base-conversation-id (sticky-session-base-conversation-id job event)
-            base-session-id (sticky-session-base-session-id job)
+            base-session-id (sticky-session-base-session-id job event)
             current-conversation-id (or (:stickyConversationId state)
                                         (if (zero? generation)
                                           base-conversation-id
@@ -914,20 +930,22 @@
                 summary (sticky-session-summary existing-session)]
             (update-job-state! job-id
                                (fn [current]
-                                 (assoc (or current {})
-                                        :stickyGeneration next-generation
-                                        :stickyConversationId next-conversation-id
-                                        :stickySessionId next-session-id)))
+                                 (assoc-in (or current {})
+                                           [:stickySessions owner-key]
+                                           {:stickyGeneration next-generation
+                                            :stickyConversationId next-conversation-id
+                                            :stickySessionId next-session-id})))
             {:conversation-id next-conversation-id
              :session-id next-session-id
              :summary summary})
           (do
             (update-job-state! job-id
                                (fn [current]
-                                 (assoc (or current {})
-                                        :stickyGeneration generation
-                                        :stickyConversationId current-conversation-id
-                                        :stickySessionId current-session-id)))
+                                 (assoc-in (or current {})
+                                           [:stickySessions owner-key]
+                                           {:stickyGeneration generation
+                                            :stickyConversationId current-conversation-id
+                                            :stickySessionId current-session-id})))
             {:conversation-id current-conversation-id
              :session-id current-session-id
              :summary nil}))))))
@@ -966,6 +984,9 @@
                            "off")
         tool-policies (or (:toolPolicies agent-spec)
                           (:tool-policies agent-spec))
+        sources (or (:sources agent-spec)
+                    (:runtimeSources agent-spec)
+                    (:runtime-sources agent-spec))
         memory-hydration (or (:memoryHydration agent-spec)
                              (:memory-hydration agent-spec))
         context-policy (or (:contextPolicy agent-spec)
@@ -992,6 +1013,7 @@
                                        :tool_policies (tool-policies->js tool-policies)}
                                 contract-id (assoc :contract_id contract-id)
                                 actor-id (assoc :actor_id actor-id)
+                                (seq sources) (assoc :sources sources)
                                 memory-hydration (assoc :memory_hydration memory-hydration)
                                 context-policy (assoc :context_policy context-policy))
                   :model model-id})))))
@@ -1462,29 +1484,98 @@
   [rows]
   (discord-source/image-attachments rows))
 
+(defn- truncate-source-text
+  [text max-chars]
+  (let [s (str (or text ""))]
+    (if (> (count s) max-chars)
+      (str (subs s 0 max-chars) "\n[… source message truncated at " max-chars " chars …]")
+      s)))
+
+(def ^:private default-discord-trusted-role-ids
+  #{"1494109844737753220"})
+
+(defn- source-config-string-list
+  [source-config ks]
+  (let [value (some #(get source-config %) ks)]
+    (cond
+      (sequential? value) (->> value (map str) (map str/trim) (remove str/blank?) vec)
+      (string? value) (->> (str/split value #",") (map str/trim) (remove str/blank?) vec)
+      :else [])))
+
+(defn- discord-trusted-role-ids
+  [job]
+  (let [configured (source-config-string-list (get-in job [:source :config])
+                                              [:trustedRoleIds :trusted-role-ids :trusted_role_ids])]
+    (set (concat default-discord-trusted-role-ids configured))))
+
+(defn- discord-author-role-ids
+  [message]
+  (->> (or (:authorRoleIds message)
+           (:author-role-ids message)
+           (:author_role_ids message)
+           [])
+       (map str)
+       (map str/trim)
+       (remove str/blank?)
+       vec))
+
+(defn- trust-roles
+  [trusted-role-ids author-role-ids]
+  (->> author-role-ids
+       (filter #(contains? trusted-role-ids %))
+       (map #(case %
+               "1494109844737753220" :discord-role/trust
+               (keyword "discord-role" %)))
+       vec))
+
 (defn- discord-template-source-message
-  [channel-id message]
-  {:id (:id message)
-   :message-id (:id message)
-   :channel (:channelName message)
-   :channel-id (or (:channelId message) channel-id)
-   :guild (:guildName message)
-   :guild-id (:guildId message)
-   :user-name (:authorUsername message)
-   :user-id (:authorId message)
-   :author-is-bot (:authorIsBot message)
-   :timestamp (:timestamp message)
-   :text (:content message)
-   :attachments (vec (or (:attachments message) []))
-   :embeds (vec (or (:embeds message) []))})
+  [trusted-role-ids channel-id max-message-chars message]
+  (let [author-role-ids (discord-author-role-ids message)
+        trust-roles (trust-roles trusted-role-ids author-role-ids)
+        trusted? (boolean (seq trust-roles))]
+    {:id (:id message)
+     :message-id (:id message)
+     :channel (:channelName message)
+     :channel-id (or (:channelId message) channel-id)
+     :guild (:guildName message)
+     :guild-id (:guildId message)
+     :user-name (:authorUsername message)
+     :user-id (:authorId message)
+     :author-is-bot (:authorIsBot message)
+     :author-role-ids author-role-ids
+     :trusted? trusted?
+     :trust/roles trust-roles
+     :timestamp (:timestamp message)
+     :text (truncate-source-text (:content message) max-message-chars)
+     :quality-label (quality-labels/quality-label message)
+     :labels (:openplannerLabels message)
+     :attachments (vec (or (:attachments message) []))
+     :embeds (vec (or (:embeds message) []))}))
+
+(defn- source-message-rank
+  [message]
+  (cond
+    (:trusted? message) 0
+    (= "good" (:quality-label message)) 1
+    :else 2))
+
+(defn- pin-trusted-then-good
+  [messages]
+  (->> messages
+       (map-indexed (fn [idx message] (assoc message ::source-index idx)))
+       (sort-by (juxt source-message-rank ::source-index))
+       (mapv #(dissoc % ::source-index))))
 
 (defn- discord-template-source-messages
-  [rows]
-  (->> rows
-       (mapcat (fn [{:keys [channelId messages]}]
-                 (map #(discord-template-source-message channelId %) messages)))
-       (remove :author-is-bot)
-       vec))
+  ([rows max-message-chars]
+   (discord-template-source-messages rows max-message-chars default-discord-trusted-role-ids))
+  ([rows max-message-chars trusted-role-ids]
+   (->> rows
+        (mapcat (fn [{:keys [channelId messages]}]
+                  (map #(discord-template-source-message trusted-role-ids channelId max-message-chars %) messages)))
+        (remove :author-is-bot)
+        pin-trusted-then-good
+        vec)))
 
 (defn- discord-synthesis-dispatch-summary!
   [config job publish-channels trigger-event channels rows]
@@ -1532,7 +1623,11 @@
 
 (defn- discord-template-synthesis-dispatch!
   [config job publish-channels trigger-event channels rows]
-  (let [source-messages (discord-template-source-messages rows)]
+  (let [max-message-chars (job-max-message-chars job 1200)
+        trusted-role-ids (discord-trusted-role-ids job)
+        source-messages (->> (discord-template-source-messages rows max-message-chars trusted-role-ids)
+                             (take (job-max-total-messages job (job-max-messages job 12)))
+                             vec)]
     (actions-dispatch/dispatch!
      {:config config
       :event {:sourceKind "discord"
@@ -1647,8 +1742,8 @@
   [config]
   (let [live-config (or @runtime-state/config* config)
         pending-reload (or @reload-lock* (js/Promise.resolve nil))
-        reset-control (-> (control-config/default-event-agent-control live-config)
-                          disable-cron-jobs)
+        reset-control (control-config/default-event-agent-control live-config)
+        preserved-cron-job-count (count (filter #(= "cron" (get-in % [:trigger :kind])) (:jobs reset-control)))
         redis-patterns ["event-agent:job-state:*"
                         "event-agent:user-job-state:*"
                         "event-agent:job-spec:*"
@@ -1685,7 +1780,8 @@
                      (.then (fn [_]
                               {:ok true
                                :deletedCount deletedCount
-                               :disabledCronJobCount (count (filter #(= "cron" (get-in % [:trigger :kind])) (:jobs reset-control)))})))))
+                               :disabledCronJobCount 0
+                               :preservedCronJobCount preserved-cron-job-count})))))
         (.catch (fn [err]
                   (clear-runtime-state!)
                   (js/Promise.reject err))))))

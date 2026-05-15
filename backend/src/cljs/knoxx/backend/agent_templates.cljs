@@ -17,13 +17,16 @@
 
 (defn- symbol-name
   [value]
-  (when (symbol? value)
-    (name value)))
+  (cond
+    (symbol? value) (name value)
+    (keyword? value) (name value)
+    (string? value) value
+    :else nil))
 
 (defn template-form?
   "True when value is an EDN form whose head is the trusted template operator."
   [value]
-  (and (seq? value)
+  (and (sequential? value)
        (= "template" (symbol-name (first value)))))
 
 (defn- key-candidates
@@ -247,6 +250,7 @@
   "Evaluate a trusted contract template form against env."
   [form env]
   (cond
+    (template-form? form) (eval-list-call form env)
     (symbol? form) (get env form)
     (keyword? form) form
     (vector? form) (mapv #(eval-template-form % env) form)
@@ -346,6 +350,7 @@
    (let [ctx (contract-template-context agent-spec auth-context template-context)]
      (cond
        (string? prompt) (render-legacy-placeholders prompt auth-context ctx)
+       (template-form? prompt) (str (eval-template-form prompt {'ctx ctx}))
        (seq? prompt) (str (eval-template-form prompt {'ctx ctx}))
        (some? prompt) (str prompt)
        :else nil))))

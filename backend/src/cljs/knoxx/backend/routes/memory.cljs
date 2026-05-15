@@ -30,6 +30,19 @@
   [session-id]
   (not (str/starts-with? (str session-id) "translation-")))
 
+(def max-session-list-page-size 80)
+(def max-session-list-upstream-page-size 50)
+
+(defn session-list-limit
+  [value]
+  (min max-session-list-page-size
+       (max 1 (or (parse-positive-int value) 12))))
+
+(defn session-list-upstream-page-size
+  [limit offset]
+  (min max-session-list-upstream-page-size
+       (max 10 (+ (max 0 offset) (max 1 limit) 1))))
+
 (defn- normalized-actor-id
   [value]
   (some-> value str str/trim not-empty))
@@ -212,7 +225,7 @@
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (let [limit-raw (aget request "query" "limit")
-          limit (or (parse-positive-int limit-raw) 12)
+          limit (session-list-limit limit-raw)
           actor-id (some-> (or (aget request "query" "actorId")
                                (aget request "query" "actor"))
                            normalized-actor-id)
@@ -223,7 +236,7 @@
           offset-raw (aget request "query" "offset")
           offset-parsed (js/parseInt (str (or offset-raw "0")) 10)
           offset (if (and (js/Number.isFinite offset-parsed) (>= offset-parsed 0)) offset-parsed 0)
-          upstream-page-size 200
+          upstream-page-size (session-list-upstream-page-size limit offset)
           needed-count (+ offset (max 1 limit) 1)]
       (-> (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)
           (.then

@@ -32,5 +32,5 @@
 
    :keywords ["frankie" "yap" "music" "song" "slop" "ussy"
               "beat" "loop" "track" "art" "create" "mix" "drop"]},
-  :source {:max-messages 1000, :stickySession true, :sessionMaxMessages 1000
+  :source {:max-messages 100, :stickySession true, :sessionMaxMessages 1000
            }}}
