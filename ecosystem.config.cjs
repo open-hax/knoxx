@@ -186,10 +186,14 @@ const apps = [
       // hot-reload cycle in PM2 instead of relying on an agent's ad hoc startup order.
       script: 'scripts/start-server-dev.cljs',
         interpreter: 'nbb',
-      kill_timeout: 35000,
-      listen_timeout: 60000,
+      kill_timeout: 45000,
+      // Policy/contract bootstrap can legitimately take >60s when Postgres or
+      // Mongo is under graph-load pressure. Keep wait_ready, but do not let PM2
+      // SIGINT the launcher every minute and amplify the startup storm.
+      listen_timeout: 240000,
       wait_ready: true,
       shutdown_with_message: true,
+      min_uptime: '120s',
       // Do not let PM2 watch compiled output or source. shadow-cljs owns hot reload;
       // PM2 only owns the long-running launcher process.
       watch: false,
@@ -197,8 +201,9 @@ const apps = [
       // watch_delay: 800,
       // ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
       autorestart: true,
-      max_restarts: 15,
-      restart_delay: 3000,
+      max_restarts: 5,
+      restart_delay: 30000,
+      exp_backoff_restart_delay: 5000,
       env: {
         NODE_ENV: 'development',
         HOST: '0.0.0.0',
@@ -243,6 +248,17 @@ const apps = [
         // ad hoc PM2 restarts or shadow-cljs hot reloads from creating duplicate
         // zombie agent jobs. Stale sessions may still be cleaned up by recovery.
         KNOXX_AGENT_AUTO_RESUME_SESSIONS: hostEnv.KNOXX_AGENT_AUTO_RESUME_SESSIONS || 'false',
+        // Event-agent cron jobs can be heavy (model calls, Discord scans, media work).
+        // On restart, delay and spread due cron jobs instead of boot-kicking all of
+        // them while PM2/shadow/PG/Mongo are still settling.
+        KNOXX_EVENT_AGENTS_MAX_CONCURRENT_JOBS: hostEnv.KNOXX_EVENT_AGENTS_MAX_CONCURRENT_JOBS || process.env.KNOXX_EVENT_AGENTS_MAX_CONCURRENT_JOBS || '1',
+        KNOXX_EVENTS_CRON_TICKER_MS: hostEnv.KNOXX_EVENTS_CRON_TICKER_MS || process.env.KNOXX_EVENTS_CRON_TICKER_MS || '60000',
+        KNOXX_EVENTS_CRON_STARTUP_MIN_DELAY_MS: hostEnv.KNOXX_EVENTS_CRON_STARTUP_MIN_DELAY_MS || process.env.KNOXX_EVENTS_CRON_STARTUP_MIN_DELAY_MS || '180000',
+        KNOXX_EVENTS_CRON_STARTUP_SPREAD_MS: hostEnv.KNOXX_EVENTS_CRON_STARTUP_SPREAD_MS || process.env.KNOXX_EVENTS_CRON_STARTUP_SPREAD_MS || '900000',
+        KNOXX_POLICY_DB_POOL_MAX: hostEnv.KNOXX_POLICY_DB_POOL_MAX || process.env.KNOXX_POLICY_DB_POOL_MAX || '6',
+        KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS: hostEnv.KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS || process.env.KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS || '15000',
+        KNOXX_POLICY_DB_IDLE_TIMEOUT_MS: hostEnv.KNOXX_POLICY_DB_IDLE_TIMEOUT_MS || process.env.KNOXX_POLICY_DB_IDLE_TIMEOUT_MS || '30000',
+        KNOXX_POLICY_DB_LOG_CONNECTS: hostEnv.KNOXX_POLICY_DB_LOG_CONNECTS || process.env.KNOXX_POLICY_DB_LOG_CONNECTS || 'false',
         KNOXX_SHUTDOWN_GRACE_MS: '25000',
         KNOXX_SHUTDOWN_POLL_MS: '250',
         KNOXX_POLICY_DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',

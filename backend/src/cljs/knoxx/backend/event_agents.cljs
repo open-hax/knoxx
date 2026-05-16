@@ -55,7 +55,12 @@
 (def ^:private event-agent-job-dirty-redis-key "event-agent:job-dirty")
 
 ;; Concurrency limit for event dispatch to prevent thundering herds.
-(def ^:private max-concurrent-jobs 5)
+(defn- env-positive-int
+  [k default]
+  (or (parse-positive-int (aget js/process.env k)) default))
+
+(def ^:private max-concurrent-jobs
+  (env-positive-int "KNOXX_EVENT_AGENTS_MAX_CONCURRENT_JOBS" 2))
 (def ^:private active-dispatch-count* (atom 0))
 ;; Queue holds [deferred-resolve deferred-reject job-fn] tuples.
 (def ^:private dispatch-queue* (atom []))

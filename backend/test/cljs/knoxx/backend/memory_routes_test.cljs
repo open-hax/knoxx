@@ -21,6 +21,58 @@
   (is (= memory-routes/max-session-list-upstream-page-size
          (memory-routes/session-list-upstream-page-size 40 80))))
 
+(deftest memory-sessions-cache-key-is-param-and-auth-scoped
+  (let [base {:config {:session-project-name "knoxx"}
+              :ctx {:orgId "org-1"
+                    :membershipId "member-1"
+                    :userId "user-1"
+                    :actorId "actor-1"
+                    :permissions ["agent.memory.cross_session"]}
+              :limit 20
+              :offset 0
+              :actor-id "chat_primary"
+              :exclude-actor-ids ["eta-mu" "pi"]}]
+    (is (= (memory-routes/memory-sessions-cache-key base)
+           (memory-routes/memory-sessions-cache-key (assoc base :exclude-actor-ids ["pi" "eta-mu"]))))
+    (is (not= (memory-routes/memory-sessions-cache-key base)
+              (memory-routes/memory-sessions-cache-key (assoc-in base [:ctx :userId] "user-2"))))
+    (is (not= (memory-routes/memory-sessions-cache-key base)
+              (memory-routes/memory-sessions-cache-key (assoc base :actor-id "eta-mu"))))))
+
+(deftest cached-memory-sessions-source-coalesces-and-reuses-local-cache
+  (async done
+    (memory-routes/clear-memory-sessions-cache!)
+    (let [calls* (atom 0)
+          cache-key "test-coalesce"
+          fetch-fn (fn []
+                     (swap! calls* inc)
+                     (js/Promise.
+                      (fn [resolve _reject]
+                        (js/setTimeout
+                         (fn []
+                           (resolve {:rows [{:session "s1"}]
+                                     :has_more false}))
+                         0))))]
+      (-> (.all js/Promise
+                (clj->js [(memory-routes/cached-memory-sessions-source! nil cache-key fetch-fn)
+                          (memory-routes/cached-memory-sessions-source! nil cache-key fetch-fn)]))
+          (.then (fn [results]
+                   (let [results (js->clj results :keywordize-keys true)]
+                     (is (= 1 @calls*))
+                     (is (= [{:session "s1"}] (get-in (first results) [:value :rows])))
+                     (is (= "miss" (get-in (first results) [:cache :tier]))))
+                   (memory-routes/cached-memory-sessions-source! nil cache-key fetch-fn)))
+          (.then (fn [cached]
+                   (let [cached (js->clj cached :keywordize-keys true)]
+                     (is (= 1 @calls*))
+                     (is (= "memory" (get-in cached [:cache :tier])))
+                     (is (true? (get-in cached [:cache :hit]))))))
+          (.catch (fn [err]
+                    (is nil (str "unexpected rejection: " err))))
+          (.finally (fn []
+                      (memory-routes/clear-memory-sessions-cache!)
+                      (done)))))))
+
 (deftest fetch-authorized-session-pages-stops-after-needed-window
   (async done
     (let [page-offsets* (atom [])

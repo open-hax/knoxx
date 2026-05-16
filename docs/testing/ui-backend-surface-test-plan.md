@@ -557,6 +557,23 @@ The gardens CRUD anchors now cover:
 - `GardensPage` creates a garden with the expected POST payload and refreshes the list.
 - `GardensPage` confirms deletion, issues DELETE for the selected garden id, and refreshes the list.
 
+The CMS workbench anchors now cover:
+
+- `CmsPage` loads gardens and CMS document lists, opens a selected CMS document by doc id, hydrates title/body/editor state, and pins document context.
+- Saving an existing CMS document uses `PATCH /api/openplanner/v1/cms/documents/:docId`, preserves the selected doc id/source path, and renders the saved notice.
+- The publish toggle posts `POST /api/openplanner/v1/cms/publish/:docId/:gardenId?skip_translation=true&defer_index=true` for unpublished documents and `DELETE /api/openplanner/v1/cms/publish/:docId/:gardenId` for already-published documents.
+
+The Visual CMS editor anchors now cover:
+
+- `VisualCmsEditorPage` loads `view-contract.edn` and optional `content.md`, then renders the visual editor and source panel with parsed draft data.
+- Editing the visual contract marks the draft dirty and saving writes serialized EDN back to `PUT /api/ingestion/file` with the correct `draft/view-contract.edn` path.
+
+The Broadcast Studio audio/library anchors now cover:
+
+- `BroadcastStudioPage` loads `/api/studio/audio-library`, renders file entries, and plays a selected file via `/api/studio/stream?path=...`.
+- Saved M3U playlists load through `/api/studio/load-m3u`, populate the queue in order, and save back through `POST /api/studio/save-m3u` with ordered queue items.
+- Studio label editing applies and removes OpenPlanner graph labels for the selected audio file, then refreshes the applied chip list from graph edges.
+
 Relevant files:
 
 - `frontend/e2e/knoxx_e2e_support.cjs`
@@ -571,6 +588,9 @@ Relevant files:
 - `frontend/src/components/admin-page/TranslationModelSection.test.tsx`
 - `frontend/src/pages/MailPage.test.tsx`
 - `frontend/src/pages/GardensPage.test.tsx`
+- `frontend/src/pages/CmsPage.test.tsx`
+- `frontend/src/pages/VisualCmsEditorPage.test.tsx`
+- `frontend/src/pages/BroadcastStudioPage.test.tsx`
 
 ## Recommended execution plan
 

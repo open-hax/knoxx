@@ -20,7 +20,13 @@
                                                   normalize-session-title
                                                   cache-session-title!
                                                   start-session-title-backfill!]]
-            [knoxx.backend.authz :refer [ctx-permitted? system-admin? ensure-permission!]]
+            [knoxx.backend.authz :refer [ctx-actor-id
+                                         ctx-membership-id
+                                         ctx-org-id
+                                         ctx-permitted?
+                                         ctx-user-id
+                                         system-admin?
+                                         ensure-permission!]]
             [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.util.time :refer [now-iso]]
             [shadow.cljs.modern :refer [js-await]]
@@ -42,6 +48,146 @@
   [limit offset]
   (min max-session-list-upstream-page-size
        (max 10 (+ (max 0 offset) (max 1 limit) 1))))
+
+(def memory-sessions-cache-ttl-seconds 10)
+(def ^:private memory-sessions-cache-ttl-ms (* memory-sessions-cache-ttl-seconds 1000))
+(def ^:private memory-sessions-cache-max-entries 256)
+(defonce ^:private memory-sessions-cache* (atom {}))
+(defonce ^:private memory-sessions-cache-promises* (atom {}))
+
+(defn clear-memory-sessions-cache!
+  []
+  (reset! memory-sessions-cache* {})
+  (reset! memory-sessions-cache-promises* {})
+  true)
+
+(defn- now-ms [] (.now js/Date))
+
+(defn- sha256
+  [value]
+  (-> (.createHash crypto "sha256")
+      (.update (str value))
+      (.digest "hex")))
+
+(defn- stable-json
+  [value]
+  (.stringify js/JSON (clj->js value)))
+
+(defn memory-sessions-auth-scope
+  [ctx]
+  {:system-admin? (boolean (system-admin? ctx))
+   :cross-session? (boolean (ctx-permitted? ctx "agent.memory.cross_session"))
+   :org-id (str (or (ctx-org-id ctx) ""))
+   :membership-id (str (or (ctx-membership-id ctx) ""))
+   :user-id (str (or (ctx-user-id ctx) ""))
+   :actor-id (str (or (ctx-actor-id ctx) ""))})
+
+(defn memory-sessions-cache-key
+  [{:keys [config ctx limit offset actor-id exclude-actor-ids]}]
+  (sha256
+   (stable-json
+    {:v 1
+     :project (str (or (:session-project-name config) ""))
+     :limit (max 1 (or limit 12))
+     :offset (max 0 (or offset 0))
+     :actor-id (str (or actor-id ""))
+     :exclude-actor-ids (sort (map str (or exclude-actor-ids [])))
+     :auth (memory-sessions-auth-scope ctx)})))
+
+(defn- memory-sessions-cache-redis-key
+  [cache-key]
+  (str "knoxx:memory:sessions:v1:" cache-key))
+
+(defn- evict-memory-sessions-cache!
+  []
+  (let [ts (now-ms)]
+    (swap! memory-sessions-cache*
+           (fn [entries]
+             (let [live (->> entries
+                             (filter (fn [[_ entry]]
+                                       (> (:expires-at entry 0) ts)))
+                             (sort-by (fn [[_ entry]] (:cached-at entry 0)))
+                             (take-last memory-sessions-cache-max-entries))]
+               (into {} live))))))
+
+(defn- memory-sessions-cache-entry
+  [value]
+  (let [ts (now-ms)]
+    {:value value
+     :cached-at ts
+     :expires-at (+ ts memory-sessions-cache-ttl-ms)}))
+
+(defn- memory-sessions-local-hit
+  [cache-key]
+  (when-let [entry (get @memory-sessions-cache* cache-key)]
+    (let [ts (now-ms)]
+      (if (> (:expires-at entry 0) ts)
+        {:value (:value entry)
+         :cache {:hit true
+                 :tier "memory"
+                 :stale false
+                 :age_ms (max 0 (- ts (:cached-at entry ts)))}}
+        (do
+          (swap! memory-sessions-cache* dissoc cache-key)
+          nil)))))
+
+(defn- remember-memory-sessions-cache!
+  [cache-key entry]
+  (swap! memory-sessions-cache* assoc cache-key entry)
+  (evict-memory-sessions-cache!)
+  entry)
+
+(defn- write-memory-sessions-cache!
+  [redis-client cache-key value]
+  (let [entry (memory-sessions-cache-entry value)]
+    (remember-memory-sessions-cache! cache-key entry)
+    (when redis-client
+      (-> (redis/set-json redis-client (memory-sessions-cache-redis-key cache-key) entry memory-sessions-cache-ttl-seconds)
+          (.catch (fn [_] nil))))
+    entry))
+
+(defn- redis-memory-sessions-hit!
+  [redis-client cache-key]
+  (if-not redis-client
+    (js/Promise.resolve nil)
+    (-> (redis/get-json redis-client (memory-sessions-cache-redis-key cache-key))
+        (.then (fn [entry]
+                 (let [entry (when (map? entry) entry)
+                       ts (now-ms)]
+                   (if (and entry (> (:expires-at entry 0) ts))
+                     (do
+                       (remember-memory-sessions-cache! cache-key entry)
+                       {:value (:value entry)
+                        :cache {:hit true
+                                :tier "redis"
+                                :stale false
+                                :age_ms (max 0 (- ts (:cached-at entry ts)))}})
+                     nil))))
+        (.catch (fn [_] nil)))))
+
+(defn cached-memory-sessions-source!
+  [redis-client cache-key fetch-fn]
+  (if-let [hit (memory-sessions-local-hit cache-key)]
+    (js/Promise.resolve hit)
+    (-> (redis-memory-sessions-hit! redis-client cache-key)
+        (.then
+         (fn [hit]
+           (if hit
+             hit
+             (if-let [pending (get @memory-sessions-cache-promises* cache-key)]
+               pending
+               (let [promise (-> (fetch-fn)
+                                 (.then (fn [value]
+                                          (write-memory-sessions-cache! redis-client cache-key value)
+                                          {:value value
+                                           :cache {:hit false
+                                                   :tier "miss"
+                                                   :stale false
+                                                   :age_ms 0}}))
+                                 (.finally (fn []
+                                             (swap! memory-sessions-cache-promises* dissoc cache-key))))]
+                 (swap! memory-sessions-cache-promises* assoc cache-key promise)
+                 promise))))))))
 
 (defn- normalized-actor-id
   [value]
@@ -237,18 +383,27 @@
           offset-parsed (js/parseInt (str (or offset-raw "0")) 10)
           offset (if (and (js/Number.isFinite offset-parsed) (>= offset-parsed 0)) offset-parsed 0)
           upstream-page-size (session-list-upstream-page-size limit offset)
-          needed-count (+ offset (max 1 limit) 1)]
-      (-> (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)
+          needed-count (+ offset (max 1 limit) 1)
+          redis-client (redis/get-client)
+          cache-key (memory-sessions-cache-key {:config config
+                                                :ctx ctx
+                                                :limit limit
+                                                :offset offset
+                                                :actor-id actor-id
+                                                :exclude-actor-ids exclude-actor-ids})]
+      (-> (cached-memory-sessions-source!
+           redis-client
+           cache-key
+           (fn []
+             (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)))
           (.then
-           (fn [{:keys [rows has_more]}]
-             (let [all-rows (vec rows)
+           (fn [{:keys [value cache]}]
+             (let [{:keys [rows has_more]} value
+                   all-rows (vec rows)
                    visible-total (count all-rows)
                    page-rows (->> all-rows (drop offset) (take (max 1 limit)) vec)
                    page-has-more (or has_more
                                      (> visible-total (+ offset (count page-rows))))
-                   redis-client (redis/get-client)
-
-
                    enrich-promises (mapv (partial enrich-row redis-client) page-rows)]
                (if-not redis-client
                  (do (doseq [row page-rows] (warm-title-cache! (str (:session row)) config runtime))
@@ -259,7 +414,8 @@
                                                            :rows (vec (js->clj enriched-rows :keywordize-keys true))
                                                            :offset offset
                                                            :limit limit
-                                                           :has_more page-has-more}
+                                                           :has_more page-has-more
+                                                           :cache cache}
                                                     (not page-has-more) (assoc :total visible-total)))
                                   nil))
                          (.catch (fn [err] (error-response! reply err 502) nil))))
@@ -294,7 +450,8 @@
                                                                        :rows (vec (js->clj enriched-rows :keywordize-keys true))
                                                                        :offset offset
                                                                        :limit limit
-                                                                       :has_more page-has-more}
+                                                                       :has_more page-has-more
+                                                                       :cache cache}
                                                                 (not page-has-more) (assoc :total visible-total)))
                                               nil))
                                      (.catch (fn [err] (error-response! reply err 502) nil))))))
@@ -308,7 +465,8 @@
                                                                      :rows (vec (js->clj enriched-rows :keywordize-keys true))
                                                                      :offset offset
                                                                      :limit limit
-                                                                     :has_more page-has-more}
+                                                                     :has_more page-has-more
+                                                                     :cache cache}
                                                               (not page-has-more) (assoc :total visible-total)))
                                             nil))
                                    (.catch (fn [err] (error-response! reply err 502) nil))))))))))))))

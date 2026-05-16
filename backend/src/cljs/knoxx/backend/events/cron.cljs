@@ -5,7 +5,32 @@
    the legacy event-agents namespace can delegate to them while internals are
    extracted incrementally.")
 
-(def ^:private default-cron-ticker-ms 15000)
+(defn- env-positive-int
+  [k default]
+  (let [raw (aget js/process.env k)
+        parsed (js/parseInt raw 10)]
+    (if (and (js/Number.isFinite parsed) (pos? parsed))
+      parsed
+      default)))
+
+(def ^:private default-cron-ticker-ms
+  (env-positive-int "KNOXX_EVENTS_CRON_TICKER_MS" 60000))
+
+(def ^:private startup-min-delay-ms
+  (env-positive-int "KNOXX_EVENTS_CRON_STARTUP_MIN_DELAY_MS" 120000))
+
+(def ^:private startup-spread-ms
+  (env-positive-int "KNOXX_EVENTS_CRON_STARTUP_SPREAD_MS" 600000))
+
+(defn- startup-jitter-ms
+  [job-id]
+  (if (pos? startup-spread-ms)
+    (mod (js/Math.abs (hash (str job-id))) startup-spread-ms)
+    0))
+
+(defn- startup-delayed-run-at
+  [now job-id]
+  (+ now startup-min-delay-ms (startup-jitter-ms job-id)))
 
 (defn cadence-label
   [minutes]
@@ -34,14 +59,21 @@
                          (let [state (normalize-job-state job-id state)
                                running? (boolean (:running state))
                                last-finished (:lastFinishedAt state)
-                               next-run (or (:nextRunAt state)
-                                            (when last-finished (+ last-finished cadence-ms))
-                                            now)]
+                               candidate-next-run (or (:nextRunAt state)
+                                                      (when last-finished (+ last-finished cadence-ms))
+                                                      now)
+                               first-init? (nil? (:cronInitializedAt state))
+                               next-run (if (and first-init?
+                                                 (pos? startup-min-delay-ms)
+                                                 (<= candidate-next-run now))
+                                          (startup-delayed-run-at now job-id)
+                                          candidate-next-run)]
                            (assoc state
                                   :id job-id
                                   :name (:name job)
                                   :enabled (:enabled job)
                                   :running running?
+                                  :cronInitializedAt (or (:cronInitializedAt state) now)
                                   :nextRunAt next-run))))))
 
 (defn- due-cron-job?

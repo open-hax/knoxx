@@ -61,6 +61,21 @@
   []
   (default-contracts-dir))
 
+(defn- env-positive-int
+  [key default]
+  (let [raw (aget js/process.env key)
+        parsed (js/Number raw)]
+    (if (and raw
+             (not (js/Number.isNaN parsed))
+             (pos? parsed))
+      (js/Math.floor parsed)
+      default)))
+
+(defn- env-truthy?
+  [key]
+  (contains? #{"1" "true" "yes" "on" "y"}
+             (-> (or (aget js/process.env key) "") str str/trim str/lower-case)))
+
 
 (defn- normalize-email
   [value]
@@ -330,6 +345,19 @@
   [pool sql-str params]
   (let [params-arr (if (seq params) (into-array params) js/undefined)]
     (.query pool sql-str params-arr)))
+
+(defn- promise-each
+  "Run async function `f` for each item serially.
+
+   This is intentionally used inside pg transactions because pg clients do not
+   support concurrent queries on the same checked-out client. Using Promise.all
+   against a transaction client can starve the pool during startup and produces
+   pg warnings like `client.query() when the client is already executing`."
+  [items f]
+  (reduce (fn [promise item]
+            (.then promise (fn [_] (f item))))
+          (js/Promise.resolve nil)
+          (or items [])))
 
 (defn- query-one!
   "Execute query and return first row."
@@ -835,24 +863,28 @@
            (.then (fn [_] (role-permissions-uses-legacy-ids? client)))
            (.then
             (fn [legacy?]
-              (if (empty? codes)
+              (cond
+                (empty? codes)
                 nil
-                (if legacy?
-                  (-> (ensure-permission-records! client codes)
-                      (.then
-                       (fn [_]
-                         (js/Promise.all
-                          (into-array
-                           (for [code codes]
-                             (query! client
-                                     "INSERT INTO role_permissions (role_id, permission_id, effect) SELECT $1, id, 'allow' FROM permissions WHERE code = $2 ON CONFLICT (role_id, permission_id) DO UPDATE SET effect = EXCLUDED.effect"
-                                     [role-id code])))))))
-                  (js/Promise.all
-                   (into-array
-                    (for [code codes]
-                      (query! client
-                              "INSERT INTO role_permissions (role_id, permission_code, effect) VALUES ($1, $2, 'allow') ON CONFLICT (role_id, permission_code) DO UPDATE SET effect = EXCLUDED.effect"
-                              [role-id code])))))))))))))
+
+                legacy?
+                (-> (ensure-permission-records! client codes)
+                    (.then
+                     (fn [_]
+                       (promise-each
+                        codes
+                        (fn [code]
+                          (query! client
+                                  "INSERT INTO role_permissions (role_id, permission_id, effect) SELECT $1, id, 'allow' FROM permissions WHERE code = $2 ON CONFLICT (role_id, permission_id) DO UPDATE SET effect = EXCLUDED.effect"
+                                  [role-id code]))))))
+
+                :else
+                (promise-each
+                 codes
+                 (fn [code]
+                   (query! client
+                           "INSERT INTO role_permissions (role_id, permission_code, effect) VALUES ($1, $2, 'allow') ON CONFLICT (role_id, permission_code) DO UPDATE SET effect = EXCLUDED.effect"
+                           [role-id code])))))))))))
 
 
 (defn- set-role-tool-policies!
@@ -866,13 +898,13 @@
            (.then (fn [_] (ensure-tool-definitions! client tool-ids)))
            (.then
             (fn [_]
-              (js/Promise.all
-               (into-array
-                (for [policy normalized]
-                  (query! client
-                          "INSERT INTO role_tool_policies (role_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (role_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
-                          [role-id (:toolId policy) (:effect policy)
-                           (js/JSON.stringify (clj->js (:constraints policy)))]))))))
+              (promise-each
+               normalized
+               (fn [policy]
+                 (query! client
+                         "INSERT INTO role_tool_policies (role_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (role_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
+                         [role-id (:toolId policy) (:effect policy)
+                          (js/JSON.stringify (clj->js (:constraints policy)))])))))
            (.then (fn [_] nil)))))))
 
 (defn- set-membership-tool-policies!
@@ -886,13 +918,13 @@
            (.then (fn [_] (ensure-tool-definitions! client tool-ids)))
            (.then
             (fn [_]
-              (js/Promise.all
-               (into-array
-                (for [policy normalized]
-                  (query! client
-                          "INSERT INTO user_tool_policies (membership_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (membership_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
-                          [membership-id (:toolId policy) (:effect policy)
-                           (js/JSON.stringify (clj->js (:constraints policy)))]))))))
+              (promise-each
+               normalized
+               (fn [policy]
+                 (query! client
+                         "INSERT INTO user_tool_policies (membership_id, tool_id, effect, constraints_json) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT (membership_id, tool_id) DO UPDATE SET effect = EXCLUDED.effect, constraints_json = EXCLUDED.constraints_json"
+                         [membership-id (:toolId policy) (:effect policy)
+                          (js/JSON.stringify (clj->js (:constraints policy)))])))))
            (.then (fn [_] nil)))))))
 
 (defn- ensure-builtin-org-roles!
@@ -960,6 +992,31 @@
        sort
        (mapv (fn [tool-id] {:toolId tool-id :effect "allow"}))))
 
+(defn- sync-contract-role-projection-record!
+  [pool capabilities-by-id role-record]
+  (if-let [slug (contract-role-slug role-record)]
+    (let [role-contract (:contract role-record)
+          name (or (some-> (:role/label role-contract) str str/trim not-empty)
+                   (some-> (:role/name role-contract) str str/trim not-empty)
+                   (titleize-contract-id slug))]
+      (-> (ensure-role! pool {:org-id nil
+                              :name name
+                              :slug slug
+                              :scope-kind "platform"
+                              :built-in false
+                              :system-managed true})
+          (.then
+           (fn [role]
+             (-> (set-role-permissions! pool (aget role "id")
+                                        (contract-permission-codes role-contract))
+                 (.then
+                  (fn [_]
+                    (set-role-tool-policies!
+                     pool
+                     (aget role "id")
+                     (contract-tool-policies-for-role capabilities-by-id role-contract)))))))))
+    (js/Promise.resolve nil)))
+
 (defn- sync-contract-role-projections!
   "Mirror canonical role contracts into SQL role rows.
 
@@ -974,32 +1031,9 @@
                role-records (->> records
                                  (filter #(= "roles" (:contractClass %)))
                                  vec)]
-           (-> (js/Promise.all
-                (into-array
-                 (keep
-                  (fn [role-record]
-                    (when-let [slug (contract-role-slug role-record)]
-                      (let [role-contract (:contract role-record)
-                            name (or (some-> (:role/label role-contract) str str/trim not-empty)
-                                     (some-> (:role/name role-contract) str str/trim not-empty)
-                                     (titleize-contract-id slug))]
-                        (-> (ensure-role! pool {:org-id nil
-                                                :name name
-                                                :slug slug
-                                                :scope-kind "platform"
-                                                :built-in false
-                                                :system-managed true})
-                            (.then
-                             (fn [role]
-                               (-> (set-role-permissions! pool (aget role "id")
-                                                          (contract-permission-codes role-contract))
-                                   (.then
-                                    (fn [_]
-                                      (set-role-tool-policies!
-                                       pool
-                                       (aget role "id")
-                                       (contract-tool-policies-for-role capabilities-by-id role-contract)))))))))))
-                  role-records)))
+           (-> (promise-each role-records
+                             (fn [role-record]
+                               (sync-contract-role-projection-record! pool capabilities-by-id role-record)))
                (.then (fn [_] nil))))))))
 
 (defn- contract-role-slugs-from-records
@@ -1087,12 +1121,12 @@
                      (js/Promise.resolve nil))
                    (.then
                     (fn [_]
-                      (js/Promise.all
-                       (into-array
-                        (for [role-id resolved-ids]
-                          (query! client
-                                  "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
-                                  [membership-id role-id]))))))
+                      (promise-each
+                       resolved-ids
+                       (fn [role-id]
+                         (query! client
+                                 "INSERT INTO membership_roles (membership_id, role_id) VALUES ($1, $2) ON CONFLICT (membership_id, role_id) DO NOTHING"
+                                 [membership-id role-id])))))
                    (.then (fn [_] resolved-ids))))))))))
 
 ;; ---------------------------------------------------------------------------
@@ -2309,9 +2343,9 @@
       (js/Promise.
        (fn [resolve reject]
           (let [pool-config (clj->js {:connectionString conn-str
-                                      :max 20
-                                      :idleTimeoutMillis 30000
-                                      :connectionTimeoutMillis 5000
+                                      :max (env-positive-int "KNOXX_POLICY_DB_POOL_MAX" 6)
+                                      :idleTimeoutMillis (env-positive-int "KNOXX_POLICY_DB_IDLE_TIMEOUT_MS" 30000)
+                                      :connectionTimeoutMillis (env-positive-int "KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS" 15000)
                                       :allowExitOnIdle true})
                 pool (new (.-Pool pg) pool-config)]
             (.on pool "error"
@@ -2319,7 +2353,8 @@
                    (.error js/console "[policy-db] Unexpected PG pool error:" (.-message err))))
             (.on pool "connect"
                  (fn [_client]
-                   (.log js/console "[policy-db] New PG client connected")))
+                   (when (env-truthy? "KNOXX_POLICY_DB_LOG_CONNECTS")
+                     (.log js/console "[policy-db] New PG client connected"))))
             (-> (ensure-schema! pool)
                (.then (fn [_] (insert-permission-seeds! pool)))
                (.then (fn [_] (insert-tool-seeds! pool)))
