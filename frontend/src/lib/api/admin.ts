@@ -276,8 +276,8 @@ export async function updateEventAgentControl(control: EventAgentControlResponse
   });
 }
 
-export async function runEventAgentJob(jobId: string): Promise<{ ok: boolean; jobId: string }> {
-  return request<{ ok: boolean; jobId: string }>(`/api/admin/config/events/jobs/${encodeURIComponent(jobId)}/run`, {
+export async function runEventAgentJob(jobId: string): Promise<{ ok: boolean; jobId: string; result?: unknown }> {
+  return request<{ ok: boolean; jobId: string; result?: unknown }>(`/api/admin/config/events/jobs/${encodeURIComponent(jobId)}/run`, {
     method: "POST",
   });
 }

@@ -122,6 +122,44 @@
                                                           (let [result (js->clj (.parse js/JSON stdout) :keywordize-keys true)]
                                                             (assoc result :workspace-path relative :absolute-path absolute)))))))))))))))))
 
+(defn- json-object-type?
+  [value]
+  (and value
+       (not= value js/undefined)
+       (= "object" (goog/typeOf value))))
+
+(defn- ensure-json-string!
+  [field-name value]
+  (cond
+    (or (nil? value) (= value js/undefined))
+    (throw (js/Error. (str field-name " is required")))
+
+    (string? value)
+    (let [trimmed (str/trim value)]
+      (when (str/blank? trimmed)
+        (throw (js/Error. (str field-name " must not be blank"))))
+      (try
+        (.parse js/JSON trimmed)
+        trimmed
+        (catch :default err
+          (throw (js/Error. (str "Invalid " field-name ": expected JSON string or JSON object; parse failed: " (.-message err)))))))
+
+    (or (map? value) (vector? value) (array? value) (json-object-type? value))
+    (let [json-text (try
+                      (.stringify js/JSON (if (or (array? value) (json-object-type? value))
+                                            value
+                                            (clj->js value)))
+                      (catch :default err
+                        (throw (js/Error. (str "Invalid " field-name ": could not serialize JSON object: " (.-message err))))))]
+      (when (or (nil? json-text)
+                (= json-text js/undefined)
+                (str/blank? (str json-text)))
+        (throw (js/Error. (str "Invalid " field-name ": expected JSON object or array"))))
+      json-text)
+
+    :else
+    (throw (js/Error. (str "Invalid " field-name ": expected JSON string or JSON object, got " (goog/typeOf value))))))
+
 (def identify-file-params
   [:map
    [:file_path {:description "Workspace path, URL, or data URL for the audio file to identify."} :string]])
@@ -148,7 +186,7 @@
 
 (def generate-params
   [:map
-   [:spec_json {:description "JSON music specification describing BPM, tracks, instruments, patterns, and notes."} :string]
+   [:spec_json {:description "JSON music specification as an object or JSON string. Supports bpm, tracks, instruments, notes, patterns, and nested patterns[].notes with Tone-style times like 0:1:2 and durations like 4n/8n."} :any]
    [:output_path {:optional true :description "Optional workspace-relative output path for the WAV file. Defaults to Music/generated/<uuid>.wav"} :string]])
 
 (defn identify-file-execute [runtime config _tool-call-id params a b c]
@@ -228,8 +266,12 @@
 
 (defn generate-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        spec-json (aget params "spec_json")
-        output-path (media/normalize-tool-path-arg (aget params "output_path"))]
+        raw-spec-json (or (aget params "spec_json")
+                          (aget params "specJson")
+                          (aget params "spec"))
+        spec-json (ensure-json-string! "spec_json" raw-spec-json)
+        output-path (media/normalize-tool-path-arg (or (aget params "output_path")
+                                                       (aget params "outputPath")))]
     (maybe-tool-update! on-update "Generating music from spec…")
     (-> (music-generate! runtime config spec-json output-path)
         (.then (fn [result]
@@ -306,8 +348,9 @@
            "Synthesize a WAV file from a JSON music spec using the native Node.js audio engine."
            "Generate original music and render it to a WAV file directly on the server."
            ["Use music.generate when the user wants original synthesized music, beats, loops, or melodies."
-            "Construct a JSON spec with bpm, tracks, instruments, and patterns."
+            "Construct a JSON object spec with bpm, tracks, instruments, and notes; spec_json may be an object or a JSON-encoded string."
             "Supported instruments: synth, bass, lead, pad, drum (kick, snare, hihat, clap, tom)."
+            "Timing supports numeric beats plus strings like 0:1:2; durations support numeric beats plus 4n, 8n, 2n, and dotted forms."
             "After generation, use workspace_media.attach to embed the WAV in the reply with a player."
             "Default output path is Music/generated/<uuid>.wav."]
            generate-params

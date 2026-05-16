@@ -57,6 +57,37 @@
      :control          control
      :runtime          runtime}))
 
+(defn- result-prop
+  [result & ks]
+  (some (fn [k]
+          (cond
+            (map? result) (get result k)
+            (object? result) (aget result (name k))
+            :else nil))
+        ks))
+
+(defn- event-agent-result-summary
+  [result]
+  (when result
+    (let [summary (cond-> {}
+                    (some? (result-prop result :queued))
+                    (assoc :queued (boolean (result-prop result :queued)))
+                    (result-prop result :run_id :run-id :runId)
+                    (assoc :run_id (str (result-prop result :run_id :run-id :runId)))
+                    (result-prop result :conversation_id :conversation-id :conversationId)
+                    (assoc :conversation_id (str (result-prop result :conversation_id :conversation-id :conversationId)))
+                    (result-prop result :session_id :session-id :sessionId)
+                    (assoc :session_id (str (result-prop result :session_id :session-id :sessionId)))
+                    (result-prop result :model)
+                    (assoc :model (str (result-prop result :model))))]
+      (when (seq summary) summary))))
+
+(defn- event-agent-job-run-response!
+  [reply job-id result]
+  (let [summary (event-agent-result-summary result)]
+    (backend-http/json-response! reply 202 (cond-> {:ok true :jobId job-id}
+                                            summary (assoc :result summary)))))
+
 (defn- restart-discord-gateway! [token]
   (when (dg/started?)
     (-> (dg/restart! token)
@@ -342,7 +373,7 @@
       (if (str/blank? job-id)
         (json-response! reply 400 {:detail "jobId is required"})
         (-> (events-runtime/run-job! job-id)
-            (.then (fn [_] (json-response! reply 202 {:ok true :jobId job-id})))
+            (.then (fn [result] (event-agent-job-run-response! reply job-id result)))
             (.catch (fn [err] (error-response! reply err))))))
     (catch :default err
       (error-response! reply err))))
@@ -433,7 +464,7 @@
       (if (str/blank? job-id)
         (json-response! reply 400 {:detail "jobId is required"})
         (-> (events-runtime/run-job! job-id)
-            (.then (fn [_] (json-response! reply 202 {:ok true :jobId job-id})))
+            (.then (fn [result] (event-agent-job-run-response! reply job-id result)))
             (.catch (fn [err] (error-response! reply err))))))
     (catch :default err
       (error-response! reply err))))
@@ -524,7 +555,7 @@
       (if (str/blank? job-id)
         (json-response! reply 400 {:detail "jobId is required"})
         (-> (events-runtime/run-job! job-id)
-            (.then (fn [_] (json-response! reply 202 {:ok true :jobId job-id})))
+            (.then (fn [result] (event-agent-job-run-response! reply job-id result)))
             (.catch (fn [err] (error-response! reply err))))))
     (catch :default err
       (error-response! reply err))))

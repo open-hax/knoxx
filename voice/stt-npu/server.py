@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import gc
 import subprocess
 import threading
 from typing import Any, Generator, Protocol, Tuple
@@ -49,6 +50,8 @@ SAMPLE_RATE = 16000
 # uneven mic gain without changing speech timing. Set STT_AUDIO_FILTERS="" to
 # disable for A/B testing.
 AUDIO_FILTERS = env("STT_AUDIO_FILTERS", "highpass=f=80,lowpass=f=7800,dynaudnorm=f=150:g=15")
+STT_MODEL_TTL_SECONDS = float(env("STT_MODEL_TTL_SECONDS", "300"))
+STT_MODEL_TTL_CHECK_SECONDS = float(env("STT_MODEL_TTL_CHECK_SECONDS", str(min(30.0, max(1.0, STT_MODEL_TTL_SECONDS / 10.0)))))
 
 def ensure_model(model_id: str, model_dir: str) -> None:
     os.makedirs(model_dir, exist_ok=True)
@@ -173,13 +176,45 @@ def _recreate_pipeline() -> None:
     """Recreate the Whisper pipeline to clear a corrupted KV cache."""
     print("[stt-npu] Recreating pipeline to clear stuck KV cache…")
     try:
-        pipe, device, _ = load_pipeline(REQUESTED_DEVICE)
-        app.config["PIPE"] = pipe
-        app.config["DEVICE"] = device
-        print("[stt-npu] Pipeline recreated successfully on", device)
+        _load_realtime_pipe_locked(force=True)
+        print("[stt-npu] Pipeline recreated successfully on", app.config.get("DEVICE", REQUESTED_DEVICE))
     except Exception as e:
         print("[stt-npu] Failed to recreate pipeline:", e)
         raise
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _load_realtime_pipe_locked(force: bool = False) -> Tuple[WhisperPipelineLike, str, str | None]:
+    """Load the realtime Whisper pipeline. Caller must hold _pipe_lock."""
+    pipe = app.config.get("PIPE")
+    if pipe is not None and not force:
+        return pipe, app.config.get("DEVICE", REQUESTED_DEVICE), app.config.get("INIT_ERROR")
+
+    if force:
+        app.config.pop("PIPE", None)
+        gc.collect()
+
+    ensure_model(MODEL_ID, MODEL_DIR)
+    pipe, device, init_error = load_pipeline(REQUESTED_DEVICE)
+    now = _monotonic()
+    app.config["PIPE"] = pipe
+    app.config["DEVICE"] = device
+    app.config["INIT_ERROR"] = init_error
+    app.config["PIPE_LOADED_AT"] = now
+    app.config["PIPE_LAST_USED_AT"] = now
+    print("[stt-npu] Realtime pipeline loaded on", device)
+    return pipe, device, init_error
+
+
+def _mark_realtime_used_locked() -> None:
+    app.config["PIPE_LAST_USED_AT"] = _monotonic()
+
+
+def _mark_timed_used_locked() -> None:
+    app.config["TIMED_PIPE_LAST_USED_AT"] = _monotonic()
 
 
 def _get_timed_pipe() -> tuple[WhisperPipelineLike, str, str | None]:
@@ -190,15 +225,20 @@ def _get_timed_pipe() -> tuple[WhisperPipelineLike, str, str | None]:
 
     ensure_model(TIMED_MODEL_ID, TIMED_MODEL_DIR)
     pipe, device, init_error = load_pipeline_for_model(TIMED_MODEL_DIR, TIMED_REQUESTED_DEVICE)
+    now = _monotonic()
     app.config["TIMED_PIPE"] = pipe
     app.config["TIMED_DEVICE"] = device
     app.config["TIMED_INIT_ERROR"] = init_error
+    app.config["TIMED_PIPE_LOADED_AT"] = now
+    app.config["TIMED_PIPE_LAST_USED_AT"] = now
+    print("[stt-npu] Timed pipeline loaded on", device)
     return pipe, device, init_error
 
 
 def _generate(audio: np.ndarray) -> str:
     """Run inference while holding the lock. Caller must have acquired the lock."""
-    result = app.config["PIPE"].generate(audio)
+    pipe, _, _ = _load_realtime_pipe_locked()
+    result = pipe.generate(audio)
     text = getattr(result, "text", None)
     text = text.strip() if text else str(result).strip()
 
@@ -209,6 +249,7 @@ def _generate(audio: np.ndarray) -> str:
         result = app.config["PIPE"].generate(audio)
         text = getattr(result, "text", None)
         text = text.strip() if text else str(result).strip()
+    _mark_realtime_used_locked()
     return text
 
 
@@ -249,6 +290,7 @@ def _generate_timed(audio: np.ndarray, offset_s: float = 0.0) -> dict:
         pipe, _, _ = _get_timed_pipe()
         result = pipe.generate(audio, return_timestamps=True, word_timestamps=ENABLE_WORD_TIMESTAMPS)
         text = _result_text(result)
+    _mark_timed_used_locked()
     chunks = getattr(result, "chunks", None) or []
     words = getattr(result, "words", None) or []
     return {
@@ -342,16 +384,101 @@ def transcribe_chunked_gen(audio: np.ndarray) -> Generator[str, None, None]:
 app = Flask(__name__)
 # Only one NPU inference at a time to avoid KV-cache contention / hangs.
 _pipe_lock = threading.Lock()
+_ttl_thread_started = False
+
+
+def _unload_realtime_pipe_locked(reason: str) -> bool:
+    if app.config.get("PIPE") is None:
+        return False
+    app.config.pop("PIPE", None)
+    app.config.pop("PIPE_LOADED_AT", None)
+    app.config.pop("PIPE_LAST_USED_AT", None)
+    gc.collect()
+    print(f"[stt-npu] Realtime pipeline unloaded ({reason})")
+    return True
+
+
+def _unload_timed_pipe_locked(reason: str) -> bool:
+    if app.config.get("TIMED_PIPE") is None:
+        return False
+    app.config.pop("TIMED_PIPE", None)
+    app.config.pop("TIMED_PIPE_LOADED_AT", None)
+    app.config.pop("TIMED_PIPE_LAST_USED_AT", None)
+    gc.collect()
+    print(f"[stt-npu] Timed pipeline unloaded ({reason})")
+    return True
+
+
+def _maybe_unload_idle_models_locked() -> None:
+    if STT_MODEL_TTL_SECONDS <= 0:
+        return
+    now = _monotonic()
+    realtime_last_used = app.config.get("PIPE_LAST_USED_AT")
+    if app.config.get("PIPE") is not None and realtime_last_used:
+        idle_s = now - float(realtime_last_used)
+        if idle_s >= STT_MODEL_TTL_SECONDS:
+            _unload_realtime_pipe_locked(f"idle TTL {idle_s:.1f}s")
+
+    timed_last_used = app.config.get("TIMED_PIPE_LAST_USED_AT")
+    if app.config.get("TIMED_PIPE") is not None and timed_last_used:
+        idle_s = now - float(timed_last_used)
+        if idle_s >= STT_MODEL_TTL_SECONDS:
+            _unload_timed_pipe_locked(f"idle TTL {idle_s:.1f}s")
+
+
+def _ttl_watchdog_loop() -> None:
+    if STT_MODEL_TTL_SECONDS <= 0:
+        print("[stt-npu] STT model TTL disabled")
+        return
+    print(f"[stt-npu] STT model TTL enabled: {STT_MODEL_TTL_SECONDS:.1f}s")
+    while True:
+        time.sleep(STT_MODEL_TTL_CHECK_SECONDS)
+        acquired = _pipe_lock.acquire(timeout=0.05)
+        if not acquired:
+            continue
+        try:
+            _maybe_unload_idle_models_locked()
+        finally:
+            _pipe_lock.release()
+
+
+def _start_ttl_watchdog_once() -> None:
+    global _ttl_thread_started
+    if _ttl_thread_started:
+        return
+    _ttl_thread_started = True
+    thread = threading.Thread(target=_ttl_watchdog_loop, name="stt-model-ttl", daemon=True)
+    thread.start()
+
+
+@app.post("/unload")
+def unload_models():
+    acquired = _acquire_pipe_lock(timeout=30.0)
+    if not acquired:
+        return jsonify({"detail": "NPU busy"}), 503
+    try:
+        realtime = _unload_realtime_pipe_locked("manual")
+        timed = _unload_timed_pipe_locked("manual")
+    finally:
+        _pipe_lock.release()
+    return jsonify({"ok": True, "realtime_unloaded": realtime, "timed_unloaded": timed})
 
 
 @app.get("/health")
 def health():
+    now = _monotonic()
+    model_last_used = app.config.get("PIPE_LAST_USED_AT")
+    timed_last_used = app.config.get("TIMED_PIPE_LAST_USED_AT")
     return jsonify(
         {
             "ok": True,
             "model_id": MODEL_ID,
+            "model_loaded": app.config.get("PIPE") is not None,
             "timed_model_id": TIMED_MODEL_ID,
             "timed_model_loaded": app.config.get("TIMED_PIPE") is not None,
+            "model_ttl_seconds": STT_MODEL_TTL_SECONDS,
+            "model_idle_seconds": (now - model_last_used) if app.config.get("PIPE") is not None and model_last_used else None,
+            "timed_model_idle_seconds": (now - timed_last_used) if app.config.get("TIMED_PIPE") is not None and timed_last_used else None,
             "timed_requested_device": TIMED_REQUESTED_DEVICE,
             "requested_device": REQUESTED_DEVICE,
             "device": app.config.get("DEVICE", REQUESTED_DEVICE),
@@ -453,12 +580,10 @@ def transcribe_timed():
 
 
 def main() -> None:
-    ensure_model(MODEL_ID, MODEL_DIR)
     app.config["AVAILABLE_DEVICES"] = list_available_devices()
-    pipe, device, init_error = load_pipeline(REQUESTED_DEVICE)
-    app.config["PIPE"] = pipe
-    app.config["DEVICE"] = device
-    app.config["INIT_ERROR"] = init_error
+    with _pipe_lock:
+        _load_realtime_pipe_locked()
+    _start_ttl_watchdog_once()
     # Bind 0.0.0.0 for docker; publish to 127.0.0.1 at compose-level.
     # threaded=True so a stuck NPU inference doesn't block new HTTP requests.
     app.run(host="0.0.0.0", port=PORT, threaded=True)

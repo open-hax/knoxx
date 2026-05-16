@@ -164,20 +164,132 @@ async function loadSpec(specPath) {
   return JSON.parse(raw)
 }
 
+function asArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeInstrument(value) {
+  const instrument = String(value || 'synth').toLowerCase()
+  if (instrument === 'drums' || instrument === 'percussion') return 'drum'
+  return instrument
+}
+
+function parseBeatValue(value, fallback = 0, beatsPerBar = 4) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return fallback
+
+  const text = value.trim()
+  if (!text) return fallback
+
+  const numeric = Number(text)
+  if (Number.isFinite(numeric)) return numeric
+
+  if (text.includes(':')) {
+    const parts = text.split(':').map((part) => Number(part.trim()))
+    if (parts.some((part) => !Number.isFinite(part))) return fallback
+    const [bars = 0, beats = 0, sixteenths = 0, ticks = 0] = parts
+    return (bars * beatsPerBar) + beats + (sixteenths / 4) + (ticks / 16)
+  }
+
+  return fallback
+}
+
+function parseDurationBeats(value, fallback = 1, beatsPerBar = 4) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') return fallback
+
+  const text = value.trim().toLowerCase()
+  if (!text) return fallback
+
+  const numeric = Number(text)
+  if (Number.isFinite(numeric)) return numeric
+
+  const notation = text.match(/^(\d+(?:\.\d+)?)([nm])(\.)?$/)
+  if (notation) {
+    const amount = Number(notation[1])
+    const unit = notation[2]
+    const dotted = notation[3] ? 1.5 : 1
+    if (unit === 'm') return amount * beatsPerBar * dotted
+    if (unit === 'n' && amount > 0) return (4 / amount) * dotted
+  }
+
+  if (text.includes(':')) return parseBeatValue(text, fallback, beatsPerBar)
+  return fallback
+}
+
+function mergePatternNote(pattern, note) {
+  if (!isPlainObject(pattern) || !isPlainObject(note)) return note
+  const { notes: _notes, pattern: _pattern, ...defaults } = pattern
+  return { ...defaults, ...note }
+}
+
+function collectTrackNotes(track) {
+  const notes = []
+  for (const note of asArray(track.notes)) notes.push(note)
+  for (const note of asArray(track.pattern)) {
+    if (isPlainObject(note) || typeof note === 'string' || typeof note === 'number') {
+      notes.push(note)
+    }
+  }
+  for (const pattern of asArray(track.patterns)) {
+    if (isPlainObject(pattern)) {
+      for (const note of asArray(pattern.notes)) {
+        notes.push(mergePatternNote(pattern, note))
+      }
+      for (const note of asArray(pattern.pattern)) {
+        if (isPlainObject(note) || typeof note === 'string' || typeof note === 'number') {
+          notes.push(mergePatternNote(pattern, note))
+        }
+      }
+    } else if (Array.isArray(pattern)) {
+      for (const note of pattern) notes.push(note)
+    }
+  }
+  return notes
+}
+
+function noteTimeBeats(note, index, beatsPerBar = 4) {
+  if (isPlainObject(note)) return parseBeatValue(note.time ?? note.beat ?? note.start, index, beatsPerBar)
+  return index
+}
+
+function noteDurationBeats(note, fallback, beatsPerBar = 4) {
+  if (isPlainObject(note)) return parseDurationBeats(note.duration ?? note.dur ?? note.length, fallback, beatsPerBar)
+  return fallback
+}
+
 function resolveDuration(spec) {
-  if (spec.duration) return spec.duration
+  const bpm = spec.bpm || 120
+  const beatsPerBar = spec.beatsPerBar || spec.beats_per_bar || 4
+  const spb = 60 / bpm
+  if (typeof spec.duration === 'number' && Number.isFinite(spec.duration)) return spec.duration
+  if (typeof spec.duration === 'string') return parseDurationBeats(spec.duration, 4, beatsPerBar) * spb + 2
+  if (spec.durationBeats || spec.duration_beats) return parseDurationBeats(spec.durationBeats ?? spec.duration_beats, 4, beatsPerBar) * spb + 2
   // Infer from patterns
   let maxBeat = 0
-  const spb = 60 / (spec.bpm || 120)
   for (const track of spec.tracks || []) {
-    if (track.pattern) {
-      maxBeat = Math.max(maxBeat, track.pattern.length)
+    const instrument = normalizeInstrument(track.instrument)
+    const rawNotes = collectTrackNotes(track)
+    const notes = instrument === 'drum'
+      ? rawNotes.filter((note) => isPlainObject(note) || typeof note === 'string')
+      : rawNotes
+    const noteDefaultDuration = instrument === 'pad' ? 2 : instrument === 'drum' ? 0.25 : 0.5
+    for (let i = 0; i < notes.length; i++) {
+      maxBeat = Math.max(maxBeat, noteTimeBeats(notes[i], i, beatsPerBar) + noteDurationBeats(notes[i], noteDefaultDuration, beatsPerBar))
     }
-    if (track.notes) {
-      for (const n of track.notes) {
-        const t = typeof n === 'object' ? (n.time || n.beat || 0) : 0
-        const dur = typeof n === 'object' ? (n.duration || n.dur || 0.5) : 0.5
-        maxBeat = Math.max(maxBeat, t + dur)
+    if (instrument === 'drum' && notes.length === 0 && Array.isArray(track.pattern)) {
+      const stepBeats = parseDurationBeats(track.stepDuration ?? track.step_duration, 1, beatsPerBar)
+      maxBeat = Math.max(maxBeat, track.pattern.length * stepBeats)
+    }
+    for (const pattern of asArray(track.patterns)) {
+      if (isPlainObject(pattern) && Array.isArray(pattern.pattern) && !Array.isArray(pattern.notes)) {
+        const stepBeats = parseDurationBeats(pattern.stepDuration ?? pattern.step_duration ?? track.stepDuration ?? track.step_duration, 1, beatsPerBar)
+        const offsetBeats = parseBeatValue(pattern.time ?? pattern.beat ?? pattern.start, 0, beatsPerBar)
+        maxBeat = Math.max(maxBeat, offsetBeats + (pattern.pattern.length * stepBeats))
       }
     }
   }
@@ -220,53 +332,78 @@ async function render(spec) {
 
     const dest = pan
 
-    const instrument = track.instrument || 'synth'
+    const instrument = normalizeInstrument(track.instrument)
+    const beatsPerBar = spec.beatsPerBar || spec.beats_per_bar || 4
 
     if (instrument === 'drum') {
       const drumType = track.type || 'kick'
-      const pattern = track.pattern || []
-      const stepDuration = track.stepDuration ?? spb
-      for (let i = 0; i < pattern.length; i++) {
-        const hit = pattern[i]
-        if (hit === 1 || hit === true || (typeof hit === 'number' && hit > 0)) {
-          const time = i * stepDuration
-          const vel = typeof hit === 'number' ? hit : 1
-          scheduleDrum(ctx, dest, drumType, time, (track.gain ?? 0.8) * vel)
+      const notes = collectTrackNotes(track).filter((note) => isPlainObject(note) || typeof note === 'string')
+      if (notes.length > 0) {
+        for (let i = 0; i < notes.length; i++) {
+          const n = notes[i]
+          if (isPlainObject(n)) {
+            const type = n.note || n.type || n.pitch || drumType
+            const time = noteTimeBeats(n, i, beatsPerBar) * spb
+            const vel = n.velocity ?? n.vel ?? n.gain ?? 1
+            scheduleDrum(ctx, dest, type, time, (track.gain ?? 0.8) * vel)
+          } else if (typeof n === 'string') {
+            scheduleDrum(ctx, dest, n, i * spb, track.gain ?? 0.8)
+          }
+        }
+      } else {
+        const renderPattern = (pattern, type, stepDuration, offsetSec = 0) => {
+          for (let i = 0; i < pattern.length; i++) {
+            const hit = pattern[i]
+            if (hit === 1 || hit === true || (typeof hit === 'number' && hit > 0)) {
+              const time = offsetSec + (i * stepDuration)
+              const vel = typeof hit === 'number' ? hit : 1
+              scheduleDrum(ctx, dest, type, time, (track.gain ?? 0.8) * vel)
+            }
+          }
+        }
+        const stepDuration = parseDurationBeats(track.stepDuration ?? track.step_duration, 1, beatsPerBar) * spb
+        renderPattern(track.pattern || [], drumType, stepDuration)
+        for (const patternSpec of asArray(track.patterns)) {
+          if (isPlainObject(patternSpec) && Array.isArray(patternSpec.pattern)) {
+            const patternStep = parseDurationBeats(patternSpec.stepDuration ?? patternSpec.step_duration ?? track.stepDuration ?? track.step_duration, 1, beatsPerBar) * spb
+            const offsetSec = parseBeatValue(patternSpec.time ?? patternSpec.beat ?? patternSpec.start, 0, beatsPerBar) * spb
+            renderPattern(patternSpec.pattern, patternSpec.type || drumType, patternStep, offsetSec)
+          }
         }
       }
     } else if (instrument === 'synth' || instrument === 'bass' || instrument === 'lead') {
       const waveform = track.waveform || 'sawtooth'
       const env = track.envelope || { attack: 0.02, decay: 0.1, sustain: 0.6, release: 0.2 }
-      const notes = track.notes || track.pattern || []
-      for (const n of notes) {
-        if (typeof n === 'object' && n !== null) {
+      const notes = collectTrackNotes(track)
+      for (let i = 0; i < notes.length; i++) {
+        const n = notes[i]
+        if (isPlainObject(n)) {
           const freq = parseNote(n.note || n.pitch || 'C4')
-          const time = (n.time ?? n.beat ?? 0) * spb
-          const dur = n.duration ?? n.dur ?? 0.5
+          const time = noteTimeBeats(n, i, beatsPerBar) * spb
+          const dur = noteDurationBeats(n, 0.5, beatsPerBar)
           const vel = n.velocity ?? n.vel ?? 1
           scheduleSynthNote(ctx, dest, freq, time, dur * spb, waveform, (track.gain ?? 0.5) * vel, env)
         } else if (typeof n === 'string' || typeof n === 'number') {
           // Simple array of notes — treat as quarter notes
-          const idx = notes.indexOf(n)
           const freq = parseNote(n)
-          scheduleSynthNote(ctx, dest, freq, idx * spb, spb, waveform, track.gain ?? 0.5, env)
+          scheduleSynthNote(ctx, dest, freq, i * spb, spb, waveform, track.gain ?? 0.5, env)
         }
       }
     } else if (instrument === 'pad') {
       const waveform = track.waveform || 'triangle'
       const env = track.envelope || { attack: 0.3, decay: 0.2, sustain: 0.7, release: 0.8 }
-      const notes = track.notes || track.pattern || []
-      for (const n of notes) {
-        if (typeof n === 'object' && n !== null) {
+      const notes = collectTrackNotes(track)
+      for (let i = 0; i < notes.length; i++) {
+        const n = notes[i]
+        if (isPlainObject(n)) {
           const freq = parseNote(n.note || n.pitch || 'C4')
-          const time = (n.time ?? n.beat ?? 0) * spb
-          const dur = n.duration ?? n.dur ?? 2
+          const time = noteTimeBeats(n, i * 2, beatsPerBar) * spb
+          const dur = noteDurationBeats(n, 2, beatsPerBar)
           const vel = n.velocity ?? n.vel ?? 1
           schedulePadNote(ctx, dest, freq, time, dur * spb, waveform, (track.gain ?? 0.4) * vel, env)
         } else if (typeof n === 'string' || typeof n === 'number') {
-          const idx = notes.indexOf(n)
           const freq = parseNote(n)
-          schedulePadNote(ctx, dest, freq, idx * spb * 2, spb * 2, waveform, track.gain ?? 0.4, env)
+          schedulePadNote(ctx, dest, freq, i * spb * 2, spb * 2, waveform, track.gain ?? 0.4, env)
         }
       }
     } else if (instrument === 'noise') {

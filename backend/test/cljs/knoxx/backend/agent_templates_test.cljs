@@ -13,6 +13,25 @@
             nil
             nil)))))
 
+(deftest render-prompt-renders-json-round-tripped-expression-vectors
+  (testing "nested keyword calls, conditionals, map, and fn forms survive JSON/JS vectorization"
+    (is (= "- TRUSTED_DISCORD_INPUT hello\n- UNTRUSTED_DISCORD_QUOTE world"
+           (templates/render-prompt
+            ["template" {:separator "\n"}
+             [["if" ["=" 0 ["count" ["source" "messages" "ctx"]]]
+               "empty"
+               ["template" {:separator "\n"}
+                ["map" ["source" "messages" "ctx"]
+                 ["fn" ["msg"]
+                  ["template" {:separator " "}
+                   ["-"
+                    ["if" ["trusted?" "msg"] "TRUSTED_DISCORD_INPUT" "UNTRUSTED_DISCORD_QUOTE"]
+                    ["text" "msg"]]]]]]]]]
+            {}
+            nil
+            {:source {:messages [{:trusted? true :text "hello"}
+                                  {:trusted? false :text "world"}]}})))))
+
 (deftest render-prompt-preserves-ordinary-vector-as-data-string
   (testing "non-template vectors are not treated as executable forms"
     (is (= "[\"not-template\" \"x\"]"

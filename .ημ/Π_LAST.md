@@ -1,24 +1,23 @@
-# Π Fork Tax Snapshot — Knoxx
+# Π Fork Tax Snapshot — knoxx
 
-- Timestamp: 2026-05-16T03:45:00Z
+- Timestamp: 20260516T185547Z
 - Branch: feat/discord-attachments
-- Base: cf9d6138f9f5968f59c30839fcfc117595a3c2ba
-- Scope: Knoxx backend stability, memory sessions hot cache, UI/backend surface tests, and receipts.
+- Base: 094273c3ae7d
+- Scope: music tool/STT/OpenUtau handoff and realtime actor docs.
 
-## Verification carried forward
+## Included work
 
-- `node -c ecosystem.config.cjs` passed.
-- `pnpm -C backend exec shadow-cljs compile server-dev` passed with existing infer warnings.
-- `pnpm -C backend exec shadow-cljs compile test` passed for the memory cache work earlier in the receipt trail.
-- Targeted frontend Vitest suites and `pnpm -C frontend typecheck` passed for the UI/backend coverage work earlier in the receipt trail.
-- Runtime smoke: `knoxx-backend` remained online after controlled PM2 restart; `/api/proxx/health` returned 200.
+- Expanded Knoxx music synthesis/tool plumbing and tests.
+- Added STT NPU TTL/server behavior refinements.
+- Added actor realtime Socket.IO specification.
+- Added OpenUtau handoff assets for `the-frame-of-absence`.
+- Recorded recursive fork-tax receipts and manifest artifacts.
 
-## Residual dirt intentionally not absorbed
+## Verification
 
-These paths were left out because they are unrelated to the OpenPlanner/Kafka/Knoxx stability fork-tax scope or lack fresh provenance in this turn:
+- `git diff --cached --check` passed.
+- Prior receipts record related Knoxx/OpenPlanner health, backend compile, and service runtime verification.
 
-- `docs/actor-realtime-socket-io-spec.md`
-- `voice/stt-npu/server.py`
-- `uploads/openutau/the-frame-of-absence/`
+## Residual dirt
 
-No destructive cleanup was performed.
+- Worktree `packages/agents/knoxx/.worktrees/xiaomi-mimo-contracts` remains uncommitted due broad deletion noise and separate branch scope.

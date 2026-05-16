@@ -1,14 +1,8 @@
 (fork-tax-state
   (repo "knoxx")
   (branch "feat/discord-attachments")
-  (base "cf9d6138f9f5968f59c30839fcfc117595a3c2ba")
-  (timestamp "2026-05-16T03:45:00Z")
-  (scope "backend-stability memory-sessions-cache ui-backend-coverage receipts")
-  (verification
-    "node -c ecosystem.config.cjs passed"
-    "pnpm -C backend exec shadow-cljs compile server-dev passed with existing warnings"
-    "prior targeted backend/frontend tests recorded in receipts.edn")
-  (residual
-    "docs/actor-realtime-socket-io-spec.md"
-    "voice/stt-npu/server.py"
-    "uploads/openutau/the-frame-of-absence/"))
+  (base "094273c3ae7d")
+  (timestamp "20260516T185547Z")
+  (scope "music-tool stt-openvino-openutau realtime-actor-docs")
+  (verification "git diff --cached --check passed" "prior receipts cover backend compile and runtime health")
+  (residual "separate worktree xiaomi-mimo-contracts left untouched"))

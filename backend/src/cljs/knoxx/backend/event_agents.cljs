@@ -668,14 +668,14 @@
            10000)
           (.then (fn [resp]
                    (if (.-ok resp)
-                     (.-arrayBuffer resp)
+                     (.arrayBuffer resp)
                      (throw (js/Error. (str "HTTP " (.-status resp)))))))
           (.then (fn [buffer]
-                   (.writeFile fs-promises local-path (js/Buffer. buffer))
-                   local-path))
+                   (-> (.writeFile fs-promises local-path (.from js/Buffer (js/Uint8Array. buffer)))
+                       (.then (fn [_] local-path)))))
           (.then (fn [path]
-                   (sanitize-svg-file! path)
-                   path))
+                   (-> (sanitize-svg-file! path)
+                       (.then (fn [_] path)))))
           (.catch (fn [err]
                     (println "[event-agents] attachment download failed:" filename (.-message err))
                     nil))))

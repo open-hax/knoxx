@@ -84,7 +84,69 @@
           m
           ks))
 
+(def ^:private known-template-op-names
+  #{"template" "quote" "do" "let" "if" "when" "fn" "fn*"
+    "str" "pr-str" "name" "count" "first" "second" "last" "rest"
+    "vec" "distinct" "sort" "keys" "vals" "get" "get-in" "map"
+    "filter" "keep" "join" "not" "and" "or" "="})
+
+(def ^:private env-missing #js {})
+
+(defn- env-candidates
+  [value]
+  (let [raw (symbol-name value)]
+    (distinct
+     (remove nil?
+             [value
+              (when raw raw)
+              (when raw (symbol raw))]))))
+
+(defn- lookup-env
+  [env value]
+  (reduce (fn [_ candidate]
+            (if (contains? env candidate)
+              (reduced (get env candidate))
+              env-missing))
+          env-missing
+          (env-candidates value)))
+
+(defn- env-ref?
+  [env value]
+  (not (identical? env-missing (lookup-env env value))))
+
 (declare eval-template-form)
+
+(defn- eval-env-ref-or-form
+  [form env]
+  (let [found (lookup-env env form)]
+    (if (identical? env-missing found)
+      (eval-template-form form env)
+      found)))
+
+(defn- keylike?
+  [value]
+  (or (keyword? value)
+      (symbol? value)
+      (string? value)))
+
+(defn- keyword-call-vector?
+  [value env]
+  (and (vector? value)
+       (> (count value) 1)
+       (string? (first value))
+       (not (contains? known-template-op-names (first value)))
+       (env-ref? env (last value))))
+
+(defn- executable-vector-form?
+  [value env]
+  (and (vector? value)
+       (seq value)
+       (let [op (first value)
+             op-name (symbol-name op)]
+         (or (keyword? op)
+             (symbol? op)
+             (contains? known-template-op-names op-name)
+             (keyword-call-vector? value env)))))
 
 (defn- eval-body
   [forms env]
@@ -135,12 +197,12 @@
 
 (defn- eval-keyword-call
   [k args env]
-  (let [evaluated (mapv #(eval-template-form % env) args)
+  (let [evaluated (mapv #(eval-env-ref-or-form % env) args)
         last-value (last evaluated)
         leading (butlast evaluated)]
     (cond
       (and (seq leading)
-           (every? keyword? leading)
+           (every? keylike? leading)
            (or (map? last-value) (object? last-value)))
       (lookup-path last-value (cons k leading))
 
@@ -196,7 +258,13 @@
         args (rest form)
         op-name (symbol-name op)]
     (cond
-      (keyword? op) (eval-keyword-call op args env)
+      (or (keyword? op)
+          (and (string? op)
+               (not (contains? known-template-op-names op-name))
+               (seq args)
+               (env-ref? env (last args))))
+      (eval-keyword-call op args env)
+
       (= "template" op-name) (render-template-call args env)
       (= "quote" op-name) (first args)
       (= "do" op-name) (eval-body args env)
@@ -251,6 +319,7 @@
   [form env]
   (cond
     (template-form? form) (eval-list-call form env)
+    (executable-vector-form? form env) (eval-list-call form env)
     (symbol? form) (get env form)
     (keyword? form) form
     (vector? form) (mapv #(eval-template-form % env) form)
