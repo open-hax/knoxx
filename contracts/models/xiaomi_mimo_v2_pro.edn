@@ -1,0 +1,11 @@
+{:model/id "xiaomi/mimo-v2-pro"
+ :model-family/id "xiaomi-mimo"
+ :model/provider :proxx
+ :model/label "Xiaomi MiMo V2 Pro"
+ :model/allowlisted true
+ :model/reasoning true
+ :model/default-thinking :medium
+ :model/thinking-levels [:off :minimal :low :medium :high]
+ :model/context-window 1048576
+ :model/max-tokens 32000
+ :model/input [:text]}

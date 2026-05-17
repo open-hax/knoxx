@@ -1,0 +1,26 @@
+{:contract/id      "research_assistant"
+ :contract/kind    :sub-agent
+ :contract/version 1
+ :enabled          true
+
+ ;; Capability strategy: inherit parent's capabilities, but the sub-agent
+ ;; only sees a curated subset defined in :sub-agent/capabilities.
+ :sub-agent/parent-capabilities :restrict
+ :sub-agent/capabilities [:read :semantic_query :websearch :web_read]
+
+ ;; Sub-agent agent config (overrides parent where specified)
+ :sub-agent/model     nil          ;; inherit parent model
+ :sub-agent/thinking  "medium"
+ :sub-agent/role      "researcher"
+ :sub-agent/timeout-ms 60000
+ :sub-agent/mode      :await
+
+ :agent {:role "researcher"
+         :thinking "medium"}
+
+ :prompts {:system "You are a focused research sub-agent. Your job is to find, read, and synthesize information from the workspace corpus and web. Report findings concisely with source references. Do not modify files."
+           :task "Research the topic described by your parent agent and report findings."}
+
+ :context {:max-messages 20
+           :max-chars 40000
+           :preserve-system true}}

@@ -1,0 +1,23 @@
+{:contract/id      "code_reviewer"
+ :contract/kind    :sub-agent
+ :contract/version 1
+ :enabled          true
+
+ :sub-agent/parent-capabilities :restrict
+ :sub-agent/capabilities [:read :bash]
+
+ :sub-agent/model     nil
+ :sub-agent/thinking  "high"
+ :sub-agent/role      "reviewer"
+ :sub-agent/timeout-ms 45000
+ :sub-agent/mode      :await
+
+ :agent {:role "reviewer"
+         :thinking "high"}
+
+ :prompts {:system "You are a code review sub-agent. Read the specified files or diffs, identify issues (bugs, style violations, missing tests, security concerns), and produce a structured review. Be specific — cite line numbers and suggest fixes."
+           :task "Review the code provided by your parent agent."}
+
+ :context {:max-messages 15
+           :max-chars 30000
+           :preserve-system true}}

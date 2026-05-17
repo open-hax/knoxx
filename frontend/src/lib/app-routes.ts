@@ -1,10 +1,11 @@
 export const OPS_BASE_PATH = '/ops';
 export const LEGACY_OPS_BASE_PATH = '/next';
 export const AGENTS_ROUTE = '/agents';
+export const EVENTS_ROUTE = '/events';
 /** Legacy route kept for redirects. */
 export const LEGACY_EVENT_AGENTS_ROUTE = '/event-agents';
 // Back-compat name: this was previously the event-agent control surface.
-export const EVENT_AGENTS_ROUTE = AGENTS_ROUTE;
+export const EVENT_AGENTS_ROUTE = EVENTS_ROUTE;
 export const BASIC_USER_ROLE = 'basic_user';
 
 function trimSlashes(value: string): string {
@@ -25,7 +26,9 @@ export const opsRoutes = {
   documents: joinPath(OPS_BASE_PATH, 'documents'),
   docsView: joinPath(OPS_BASE_PATH, 'docs/view'),
   agents: joinPath(OPS_BASE_PATH, 'agents'),
+  studio: joinPath(OPS_BASE_PATH, 'studio'),
   vectors: joinPath(OPS_BASE_PATH, 'vectors'),
+  labels: joinPath(OPS_BASE_PATH, 'labels'),
   graphExportDebug: joinPath(OPS_BASE_PATH, 'graph-export-debug'),
   settings: joinPath(OPS_BASE_PATH, 'settings'),
   admin: joinPath(OPS_BASE_PATH, 'admin'),

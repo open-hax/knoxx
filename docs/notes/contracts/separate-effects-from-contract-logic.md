@@ -1,0 +1,34 @@
+---
+title: "Separate Effects from Contract Logic"
+category: contracts
+created: 2026-04-19
+original: 2026.04.19.13.20.24.md
+status: note
+---
+
+We need to seperate the effects from the contract logic. I think I want to simplify this system for now.
+Create a contract runtime namespace
+define the runtime in terms of pure functions that are only handling transformation of data.
+simplify the persistence to a folder full of edn files for now
+The agent then won't need special tools for updating contracts.
+it can just write contracts to the folder.
+we can instead define the contract system to the agent in terms of a contract authoring skill graph.
+
+The only tools it should have for the contract runtime should be for inspecting currently active actors.
+we will define all sessions in terms of actors executing intents to fulfill contracts guided by policies given a set of capabilities granted to them by their role with in the context of the contract they are fulfilling
+
+any unrecognied form in a contract is passed directly to the agent as a string, as a result,
+In their simplest state, a contract is a homo-iconic prompt
+
+
+https://github.com/open-hax/eta-mu/blob/main/packages/eta-mu-extensions/src/eta_mu/extensions/contract_runtime_v2.cljs
+https://github.com/open-hax/eta-mu/blob/main/packages/eta-mu-extensions/src/eta_mu/extensions/contract_runtime_v2/core.cljs
+
+https://github.com/open-hax/eta-mu/blob/main/spec/contract-runtime-v2-spec.md
+https://github.com/open-hax/eta-mu/blob/main/spec/contracts-v1.edn
+
+https://github.com/open-hax/knoxx/blob/main/docs/epistemic-kernel.md
+https://github.com/open-hax/knoxx/blob/main/docs/epistemic-examples.edn
+
+https://github.com/octave-commons/fork_tales/blob/main/specs/contract.edn
+https://github.com/octave-commons/fork_tales/blob/main/specs/signal.edn

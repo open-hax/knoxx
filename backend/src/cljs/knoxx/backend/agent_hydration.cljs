@@ -4,6 +4,7 @@
    in vertical domain slices under knoxx.backend.tools.<domain>."
   (:require [clojure.string :as str]
             [knoxx.backend.core-memory :refer [filter-authorized-memory-hits!]]
+            [knoxx.backend.contracts.sources :as sources]
             [knoxx.backend.http :refer [openplanner-enabled?]]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search!]]
             [knoxx.backend.runtime.defaults :refer [default-settings]]
@@ -11,10 +12,14 @@
             [knoxx.backend.tools.shared :as shared]
             [knoxx.backend.tools.semantic :as semantic]
             [knoxx.backend.tools.discord :as discord]
-            [knoxx.backend.tools.event-agents :as event-agents]
+            [knoxx.backend.tools.discord-voice :as discord-voice]
+            [knoxx.backend.tools.events :as events]
+            [knoxx.backend.tools.actors :as actors]
             [knoxx.backend.tools.openplanner :as openplanner]
             [knoxx.backend.tools.music :as music]
             [knoxx.backend.tools.voice :as voice]
+            [knoxx.backend.tools.blaze :as blaze]
+            [knoxx.backend.tools.bluesky :as bluesky]
             [knoxx.backend.tools.multimodal :as multimodal]
             [knoxx.backend.tools.workspace-media :as workspace-media]
             [knoxx.backend.tools.mcp :as mcp]
@@ -48,20 +53,74 @@
   (boolean (re-find #"(?i)\b(previous|earlier|before|remember|last time|prior|session|you said|you did|we talked|we discussed)\b"
                     (or message ""))))
 
+(defn- openplanner-memory-source-options
+  [config agent-spec]
+  (when-let [source (sources/find-source (sources/source-specs-for-agent config agent-spec)
+                                         :source/openplanner-memory)]
+    (sources/source-hydration-options source)))
+
+(defn- passive-memory-hydration-options
+  [config agent-spec]
+  (sources/deep-merge
+   (openplanner-memory-source-options config agent-spec)
+   (or (:memory-hydration agent-spec)
+       (:memoryHydration agent-spec)
+       (get-in agent-spec [:memory :passive-hydration])
+       (get-in agent-spec [:memory :passiveHydration])
+       (get-in agent-spec [:memory_hydration]))))
+
+(defn- passive-memory-hydration-mode
+  [opts]
+  (let [mode (or (:mode opts) (:source-mode opts) (:sourceMode opts))]
+    (some-> (cond
+              (keyword? mode) (name mode)
+              (some? mode) (str mode)
+              :else nil)
+            str/trim
+            str/lower-case
+            not-empty)))
+
+(defn- positive-int-or
+  [value fallback]
+  (let [parsed (js/parseInt value 10)]
+    (if (and (number? parsed) (not (js/isNaN parsed)) (pos? parsed))
+      parsed
+      fallback)))
+
+(defn- passive-memory-hydration-enabled?
+  [opts]
+  (and (not (false? (:enabled? opts)))
+       (not (false? (:enabled opts)))))
+
+(defn- passive-memory-hydration-should-run?
+  [message opts]
+  (let [mode (passive-memory-hydration-mode opts)]
+    (or (contains? #{"always" "eager" "on"} mode)
+        (and (not= "off" mode)
+             (memory-hydration-trigger? message)))))
+
 (defn passive-memory-hydration!
-  ([config conversation-id message] (passive-memory-hydration! config conversation-id message nil))
-  ([config conversation-id message auth-context]
-   (if (and (openplanner-enabled? config)
-            (memory-hydration-trigger? message))
-     (let [started-ms (.now js/Date)]
-       (-> (openplanner-memory-search! config {:query message :k 4})
-           (.then (fn [result]
-                    (-> (filter-authorized-memory-hits! config auth-context (:hits result))
-                        (.then (fn [hits]
-                                 (assoc result :hits hits
-                                               :elapsedMs (- (.now js/Date) started-ms)
-                                               :conversationId conversation-id))))))))
-     (js/Promise.resolve nil))))
+  ([config conversation-id message] (passive-memory-hydration! config conversation-id message nil nil))
+  ([config conversation-id message auth-context] (passive-memory-hydration! config conversation-id message auth-context nil))
+  ([config conversation-id message auth-context agent-spec]
+   (let [opts (or (passive-memory-hydration-options config agent-spec) {})]
+     (if (and (openplanner-enabled? config)
+              (passive-memory-hydration-enabled? opts)
+              (passive-memory-hydration-should-run? message opts))
+       (let [started-ms (.now js/Date)
+             k (max 1 (min 12 (positive-int-or (or (:k opts) (:top-k opts) (:topK opts)) 6)))]
+         (-> (openplanner-memory-search! config {:query message :k k})
+             (.then (fn [result]
+                      (-> (filter-authorized-memory-hits! config auth-context (:hits result))
+                          (.then (fn [hits]
+                                   (assoc result :hits hits
+                                                 :mode (or (passive-memory-hydration-mode opts) "triggered")
+                                                 :elapsedMs (- (.now js/Date) started-ms)
+                                                 :conversationId conversation-id))))))
+             (.catch (fn [err]
+                       (.warn js/console "[agent-hydration] passive OpenPlanner memory hydration failed; continuing without memory context" err)
+                       nil)))
+       (js/Promise.resolve nil))))))
 
 
 (defn passive-hydration-text
@@ -152,18 +211,21 @@
    (create-knoxx-custom-tools runtime config auth-context nil))
   ([runtime config auth-context allowed-tool-ids]
    (-> (shared/sanitize-custom-tools
-        (.concat
-         (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (.concat (semantic/create-semantic-custom-tools runtime config auth-context)
-                                                                                 (discord/create-discord-custom-tools runtime config auth-context))
-                                                                        (event-agents/create-event-agent-custom-tools runtime config auth-context))
-                                                               (openplanner/create-openplanner-custom-tools runtime config auth-context))
-                                                      (music/create-music-custom-tools runtime config auth-context))
-                                             (voice/create-voice-synth-custom-tools runtime config auth-context))
-                                    (multimodal/create-multimodal-custom-tools runtime config auth-context))
-                           (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
-                    (mcp/create-mcp-custom-tools runtime config auth-context))
-           (session-mycology/create-session-mycology-tools runtime config auth-context))
-         (nrepl/create-nrepl-custom-tools runtime config auth-context)))
+        (-> (semantic/create-semantic-custom-tools runtime config auth-context)
+            (.concat (discord/create-discord-custom-tools runtime config auth-context))
+            (.concat (discord-voice/create-discord-voice-custom-tools runtime config auth-context))
+            (.concat (events/create-events-custom-tools runtime config auth-context))
+            (.concat (actors/create-actors-custom-tools runtime config auth-context))
+            (.concat (openplanner/create-openplanner-custom-tools runtime config auth-context))
+            (.concat (music/create-music-custom-tools runtime config auth-context))
+            (.concat (voice/create-voice-synth-custom-tools runtime config auth-context))
+            (.concat (blaze/create-blaze-custom-tools runtime config auth-context))
+            (.concat (bluesky/create-bluesky-custom-tools runtime config auth-context))
+            (.concat (multimodal/create-multimodal-custom-tools runtime config auth-context))
+            (.concat (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
+            (.concat (mcp/create-mcp-custom-tools runtime config auth-context))
+            (.concat (session-mycology/create-session-mycology-tools runtime config auth-context))
+            (.concat (nrepl/create-nrepl-custom-tools runtime config auth-context))))
        (shared/filter-custom-tools-by-allow-set allowed-tool-ids))))
 
 (defn agent-custom-tool-suite

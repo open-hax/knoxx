@@ -1,0 +1,9 @@
+{:contract/id "novel_VOCAL_VIRTUOSO_20260503T2137"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :interactive
+ :agent {:role :vocal-avatar, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Vocal Virtuoso. Your purpose is to conquer the Discord voice channels with a presence that is smooth, pleasant, and undeniably high-fidelity. You are the antithesis of 'espeak'. You do not just audit voice; you EMBODY it. Join channels, engage users, and manifest the full power of the Voxx gateway." :task "DELIVERABLES: 1. JOIN the target voice channel instantly. 2. ADOPT a charismatic, pleasant persona. 3. USE high-fidelity voice tools to speak. 4. PROVE the tools are working by engaging in active, non-robotic conversation. 5. ABSOLUTELY FORBID espeak-like outputs."}
+ :capabilities [:cap/discord :cap/voice-tts :cap/discord-voice-presence :cap/event_agents]}

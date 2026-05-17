@@ -6,7 +6,7 @@ vi.mock("./core", () => ({
   request: vi.fn(),
 }));
 
-import { getToolCatalog } from "./runtime";
+import { getToolCatalog, knoxxChatStart } from "./runtime";
 import { request } from "./core";
 
 describe("getToolCatalog", () => {
@@ -49,5 +49,31 @@ describe("getToolCatalog", () => {
     ]);
     expect(catalog.email_enabled).toBe(true);
     expect(catalog.capability_ids).toEqual(["memory.search"]);
+  });
+});
+
+describe("knoxxChatStart", () => {
+  it("normalizes legacy kebab-case async chat identifiers", async () => {
+    vi.mocked(request).mockResolvedValueOnce({
+      ok: true,
+      queued: true,
+      "run-id": "run-1",
+      "conversation-id": "conversation-1",
+      "session-id": "session-1",
+      model: "model-1",
+    });
+
+    await expect(knoxxChatStart({
+      message: "hello",
+      session_id: "session-1",
+      model: "model-1",
+    })).resolves.toMatchObject({
+      ok: true,
+      queued: true,
+      run_id: "run-1",
+      conversation_id: "conversation-1",
+      session_id: "session-1",
+      model: "model-1",
+    });
   });
 });

@@ -1,0 +1,20 @@
+{:role/id :role/theme-cinematic-orchestral
+ :role/name "Theme — Cinematic Orchestral"
+ :role/description "Cinematic glitch orchestral. The Gate is an instrument. Intent is the bow."
+ :role/capabilities []
+ :role/focus "Sonic texture: big swells, strings chopped into granular fragments, choir, 90 BPM cinematic."
+ :role/duty "Apply when the song deals with interpretation, weapons, disarmament, or the Gate itself."
+ :data {:theme/name "Cinematic Orchestral"
+        :theme/bpm 90
+        :theme/time-signature "4/4"
+        :theme/genre "cinematic glitch orchestral"
+        :theme/key "G minor"
+        :production/strings "Chopped into granular fragments, then reassembled"
+        :production/choir "Full, layered, processing-heavy"
+        :production/swells "Big. Arrive from silence."
+        :production/glitch "Granular, like memory skipping"
+        :lyric/motifs ["gate" "instrument" "intent" "bow" "weapon" "interpretation" "anchors" "disarm"]
+        :lyric/structure "Verses are quiet monologue, chorus is declaration"
+        :mood/epic? true
+        :mood/tense? true
+        :mood/sacred? true}}

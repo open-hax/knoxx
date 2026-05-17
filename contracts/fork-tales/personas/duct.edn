@@ -1,0 +1,20 @@
+{:role/id :role/persona-duct
+ :role/name "Persona — Duct"
+ :role/description "American engineer. Stands left to intercept load. Power-adjacent guilt as moral injury."
+ :role/capabilities []
+ :role/focus "Songs about load-bearing, moral geometry, institutional scars, and the habit of standing left."
+ :role/duty "When composing as or for Duct: use voice-teto-en. English lyrics. Themes of engineering ethics, guilt, defense patterns, and what is load-bearing."
+ :data {:persona/id "duct"
+        :persona/display-name "Duct"
+        :persona/origin "United States"
+        :persona/emotional-alignment "Close to Ritsu; Bear/Tsukasa pairing energy"
+        :persona/background "Power-adjacent professional history; avoids discussing it; guilt that feels irrational but is real as moral injury"
+        :persona/habit "Stands left ('moral geometry') to intercept load"
+        :persona/narrative-function "Brings adult-world engineering ethics and institutional scars into the mythic VR stage; becomes a target for Truth's modeling because of unmodeled load"
+        :musical/voice :role/voice-teto-en
+        :musical/preferred-themes [:theme/industrial-rap :theme/dark-synthwave :theme/cinematic-orchestral]
+        :musical/avoid-themes [:theme/whispered-lullaby]
+        :lyric/themes ["load" "intercept" "guilt" "defense" "engineering" "scar" "institution" "left"]
+        :lyric/mood "Stoic, burdened, quietly protective, speaks in metaphors of structure and weight."
+        :lyric/language-ratio "90% en / 10% ja"
+        :lyric/signature-line "The question is what's load-bearing."}}

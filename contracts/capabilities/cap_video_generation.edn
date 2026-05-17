@@ -1,0 +1,7 @@
+{:cap/id :cap/video-generation
+ :cap/tools [:video.generate]
+ :cap/user-surfaces [{:surface/id :workspace/video-generation
+                      :surface/label "Video generation workbench"
+                      :surface/kind :generator
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Humans request generated video and inspect resulting workspace media; agents use the dedicated video.generate tool and then workspace_media.attach for publishable assets."}]}

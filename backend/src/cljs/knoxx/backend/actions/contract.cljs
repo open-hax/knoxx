@@ -2,7 +2,7 @@
   (:require [malli.core :as m]))
 
 (def ActionKind
-  [:enum :invoke/agent :invoke/http :invoke/discord-post :invoke/noop])
+  [:enum :invoke/agent :invoke/sub-agent :invoke/http :invoke/discord-post :invoke/noop])
 
 (def ActionContract
   [:map {:closed false}

@@ -24,10 +24,19 @@
 (def STALE_THRESHOLD_MS (* 10 60 1000)) ; 10 minutes
 (def POST_DRAIN_GRACE_MS 1000)          ; let Redis writes flush after turns complete
 (def RECOVERY_INTERVAL_MS 15000)        ; periodic recovery tick
+(def STARTUP_RESUME_CONCURRENCY 2)      ; keep HTTP/event loop responsive after restart
+(def RECOVERY_COOLDOWN_MS 60000)        ; skip sessions touched within last 60s
+                                        ; prevents resuming runs orphaned by reload!
+(def PROCESS_STARTUP_RESUME_WINDOW_MS 120000)
+                                        ; only treat session recovery as process-startup work
+                                        ; during the first 2 minutes of the Node process.
+                                        ; shadow-cljs hot reload must not create duplicate jobs.
 
 ;; ─── State ────────────────────────────────────────────────────────────
 
 (defonce interval-handle* (atom nil))
+(defonce startup-resume-state* (atom {:attempted? false
+                                      :skipped-reason nil}))
 
 ;; ─── Logging helpers ──────────────────────────────────────────────────
 
@@ -45,6 +54,10 @@
     (.warn log msg)))
 
 ;; ─── Session classification ───────────────────────────────────────────
+
+(defn- auto-resume-enabled?
+  [config]
+  (true? (:agent-auto-resume-sessions? config)))
 
 (defn- session-last-updated-ms
   [session]
@@ -75,10 +88,20 @@
         registered-turn? (some? (turn-control/active-turn conversation-id))]
     (or streaming? current-turn? registered-turn?)))
 
+(defn- session-hot?
+  "A session is 'hot' if it was updated very recently. Recovery skips hot
+   sessions so that in-flight runs (e.g. those orphaned by event-agents/reload!)
+   have time to finish naturally instead of being duplicated."
+  [session]
+  (let [last-ms (session-last-updated-ms session)]
+    (and (pos? last-ms)
+         (< (- (.now js/Date) last-ms) RECOVERY_COOLDOWN_MS))))
+
 (defn- session-resumable?
   [session]
   (let [conversation-id (str (or (:conversation_id session) ""))]
-    (not (runtime-processing-session? conversation-id))))
+    (and (not (session-hot? session))
+         (not (runtime-processing-session? conversation-id)))))
 
 ;; ─── Actions ──────────────────────────────────────────────────────────
 
@@ -135,14 +158,43 @@
         :resumed false
         :reason "already_processing"}))))
 
+(defn- run-limited!
+  "Run promise-returning item-fn over items with bounded concurrency.
+   This keeps startup recovery active without launching hundreds of agent turns at once."
+  [items limit item-fn]
+  (let [queue (atom (vec items))
+        results (array)
+        worker (fn worker []
+                 (if-let [item (first @queue)]
+                   (do
+                     (swap! queue subvec 1)
+                     (-> (item-fn item)
+                         (.then (fn [result]
+                                  (.push results result)
+                                  (worker)))
+                         (.catch (fn [err]
+                                   (.push results {:error (str err)})
+                                   (worker)))))
+                   (js/Promise.resolve results)))
+        worker-count (min (max 1 limit) (count items))]
+    (if (zero? worker-count)
+      (js/Promise.resolve results)
+      (-> (.all js/Promise (clj->js (repeatedly worker-count worker)))
+          (.then (fn [_] results))))))
+
 ;; ─── Batch processing ─────────────────────────────────────────────────
 
 (defn- process-sessions!
   [runtime app config sessions]
   (let [{stale true recent false} (group-by session-stale? sessions)
-        resumable-recent (filter session-resumable? recent)]
+        resumable-recent (if (auto-resume-enabled? config)
+                           (filter session-resumable? recent)
+                           [])]
     (when (seq stale)
       (log-warn! app (str "[agent-resume] aborting " (count stale) " stale session(s)")))
+    (when (and (seq recent) (not (auto-resume-enabled? config)))
+      (log-warn! app (str "[agent-resume] auto resume disabled; leaving " (count recent)
+                          " recent running session(s) untouched")))
     (when (seq resumable-recent)
       (log-info! app (str "[agent-resume] resuming " (count resumable-recent) " recent session(s)")))
     (-> (.all js/Promise
@@ -150,7 +202,7 @@
                        (.catch (fn [err]
                                  (log-info! app "[agent-resume] abort batch error" err)
                                  nil)))
-                   (-> (.all js/Promise (clj->js (mapv #(resume-session! runtime config %) resumable-recent)))
+                   (-> (run-limited! resumable-recent STARTUP_RESUME_CONCURRENCY #(resume-session! runtime config %))
                        (.catch (fn [err]
                                  (log-info! app "[agent-resume] resume batch error" err)
                                  nil)))])
@@ -160,6 +212,10 @@
                   :skipped (- (count recent) (count resumable-recent))})))))
 
 ;; ─── Public API: startup ──────────────────────────────────────────────
+
+(defn- process-uptime-ms
+  []
+  (js/Math.round (* 1000 (.uptime js/process))))
 
 (defn resume-on-startup!
   "Fire-and-forget scan of Redis active sessions on startup.
@@ -183,6 +239,41 @@
       (log-warn! app "[agent-resume] Redis unavailable; skipping startup scan")
       (js/Promise.resolve {:skipped true :reason "redis_not_connected"}))))
 
+(defn resume-on-process-startup!
+  "Run startup recovery once per Node process, not once per shadow-cljs reload.
+
+   Failure mode this prevents: a source edit triggers before/after-load, the HTTP
+   app restarts in-process, and recovery treats that hot reload like a process
+   crash, spawning duplicate recovered agent jobs. Real PM2/process restarts still
+   run recovery because process uptime is near zero."
+  [runtime app config]
+  (let [uptime-ms (process-uptime-ms)]
+    (cond
+      (:attempted? @startup-resume-state*)
+      (do
+        (log-info! app (str "[agent-resume] startup scan skipped: already attempted in this Node process "
+                            (pr-str @startup-resume-state*)))
+        (js/Promise.resolve {:skipped true
+                             :reason "already_attempted"}))
+
+      (> uptime-ms PROCESS_STARTUP_RESUME_WINDOW_MS)
+      (do
+        (reset! startup-resume-state* {:attempted? true
+                                       :skipped-reason "process_uptime_exceeded"
+                                       :uptime_ms uptime-ms})
+        (log-warn! app (str "[agent-resume] startup scan skipped: process uptime " uptime-ms
+                            "ms indicates shadow-cljs hot reload, not process startup"))
+        (js/Promise.resolve {:skipped true
+                             :reason "process_uptime_exceeded"
+                             :uptime_ms uptime-ms}))
+
+      :else
+      (do
+        (reset! startup-resume-state* {:attempted? true
+                                       :skipped-reason nil
+                                       :uptime_ms uptime-ms})
+        (resume-on-startup! runtime app config)))))
+
 ;; ─── Public API: periodic recovery ────────────────────────────────────
 
 (defn- attempt-recovery!
@@ -192,9 +283,14 @@
         (.then (fn [sessions]
                  (let [running (vec (filter #(= "running" (:status %)) sessions))
                        {stale true recent false} (group-by session-stale? running)
-                       resumable (filter session-resumable? recent)]
+                       resumable (if (auto-resume-enabled? config)
+                                   (filter session-resumable? recent)
+                                   [])]
                    (when (seq stale)
                      (log-warn! app (str "[agent-resume] aborting " (count stale) " stale session(s)")))
+                   (when (and (seq recent) (not (auto-resume-enabled? config)))
+                     (log-warn! app (str "[agent-resume] auto resume disabled; periodic recovery leaving "
+                                         (count recent) " recent running session(s) untouched")))
                    (when (seq resumable)
                      (log-info! app (str "[agent-resume] resuming " (count resumable) " recent session(s)")))
                    (-> (.all js/Promise
@@ -214,11 +310,15 @@
                                  :skipped (- (count recent) (count resumable))}))))))
         (.catch (fn [err]
                   (log-info! app "[agent-resume] recovery tick error" err)
+                  (log-info! app "[agent-resume] redis:" (nil? (redis/get-client)))
                   {:error (str err)})))
     (js/Promise.resolve {:skipped true :reason "redis_not_connected"})))
 
 (defn start-periodic-recovery!
   [runtime app config]
+  (if @interval-handle*
+    (log-info! app "[agent-resume] periodic recovery already running; keeping existing interval")
+    (log-info! app "[agent-resume] starting periodic recovery interval"))
   (when-not @interval-handle*
     (reset! interval-handle*
             (js/setInterval

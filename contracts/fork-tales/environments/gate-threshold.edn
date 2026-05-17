@@ -1,0 +1,15 @@
+{:role/id :role/env-gate-threshold
+ :role/name "Environment — Gate Threshold"
+ :role/description "Liminal. The space between. Aker's domain. Where interpretation is the weapon and anchors disarm it."
+ :role/capabilities []
+ :role/focus "Sonic space: threshold, liminal, neither here nor there, the Gate's ambiguity."
+ :role/duty "Apply when the song deals with thresholds, interpretation, the space between η and μ, or the moment before decision."
+ :data {:env/name "Gate Threshold"
+        :env/space "The space immediately before the Gate. No two observers describe it the same."
+        :env/ambience "Wind that doesn't move air. Footsteps that don't echo."
+        :env/reverb "Impossible — simultaneous infinite and none"
+        :env/textures ["Threshold hum" "Grainy light" "Footsteps on stone that isn't there" "Breath that doesn't fog"]
+        :env/scale "Personal, cosmic, contradictory"
+        :env/light "No consistent light — some see dawn, some see dusk, some see nothing"
+        :env/mood "Uncertain, sacred, terrifying, full of potential"
+        :env/reference "The Gate in Gates of Truth. 'No two players described it the same way.'"}}

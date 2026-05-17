@@ -10,10 +10,10 @@ import { env, logger } from '../config/index.js';
 import { ragApi, type ImageResult } from '../services/index.js';
 
 // Store for pagination
-const imageSearchResults = new Map<string, { 
-  conversationId: string; 
+const imageSearchResults = new Map<string, {
+  conversationId: string;
   query: string;
-  shown: number; 
+  shown: number;
   total: number;
 }>();
 
@@ -50,7 +50,7 @@ export const imagesCommand = {
     try {
       // Ask the RAG API specifically for images
       const imageQuery = `Show me images related to: ${topic}`;
-      
+
       const response = await ragApi.chat({
         message: imageQuery,
       });
@@ -90,11 +90,11 @@ export const imagesCommand = {
         const embed = new EmbedBuilder()
           .setImage(img.url)
           .setColor(env.BOT_EMBED_COLOR);
-        
+
         if (img.sourceTitle) {
           embed.setFooter({ text: `From: ${img.sourceTitle.slice(0, 100)}` });
         }
-        
+
         return embed;
       });
 
@@ -117,9 +117,9 @@ export const imagesCommand = {
         components: components.length > 0 ? components : undefined,
       });
 
-      logger.info({ 
-        userId, 
-        channelId, 
+      logger.info({
+        userId,
+        channelId,
         imagesShown: Math.min(count, images.length),
         totalImages,
       }, '/images command completed');

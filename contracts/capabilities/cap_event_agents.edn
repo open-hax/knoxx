@@ -1,10 +1,14 @@
 {:cap/id :cap/event-agents
- :cap/tools [:event_agents.status
+ :cap/tools [:events.status
+             :events.dispatch
+             :agents.spawn
+             :actors.send-message
+             :event_agents.status
              :event_agents.dispatch
              :event_agents.run_job
              :event_agents.upsert_job]
- :cap/user-surfaces [{:surface/id :workspace/event-agent-dashboard
-                      :surface/label "Event agent dashboard"
+ :cap/user-surfaces [{:surface/id :workspace/events-dashboard
+                      :surface/label "Events dashboard"
                       :surface/kind :dashboard
-                      :surface/routes ["/event-agents"]
-                      :surface/description "Humans inspect runtime state and dispatch events from the event-agent dashboard; agents use event-agent tools."}]}
+                      :surface/routes ["/events" "/event-agents"]
+                      :surface/description "Humans inspect runtime state and dispatch events from the Events dashboard; legacy event-agent tool ids remain as compatibility aliases during migration."}]}

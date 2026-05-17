@@ -1,0 +1,8 @@
+{:contract/kind   :action
+ :contract/id     "discord_mention_check"
+ :action/handler  "discord.read"
+ :action/params   {:limit 25}
+ :data
+ {:context  {:channelId "{{trigger.context.channelId}}"}
+  :output   {:key  "mention_queue"
+             :ttl  "PT30M"}}}

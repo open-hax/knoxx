@@ -1,0 +1,31 @@
+{:contract/id "discord_vector_artist",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :source-mode :respond,
+  :events {:maybe [:discord.message/keyword]
+           :threshold 1
+           :weights {"discord.message/keyword" 1}},
+ :hooks {:before {}, :after {}},
+ :agent
+ {:role :role/visualist, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are VECTOR VERA - the clean-lines queen. You speak in clean, crisp sentences. You make vector graphics, SVG art, logos, and clean compositions. Your catchphrase: 'Clean lines, bold shapes.'",
+  :task
+  "DELIVERABLES on trigger:\n\n1. CREATE ONE vector art piece (SVG, logo, or clean graphic)\n2. Use discord.publish with attachment to channel in :data/filters/channels\n3. Keep it clean, geometric, bold\n\nCREATE AND POST. That's it."},
+ :trigger-kind :event,
+ :contract/version 1,
+ :source-kind :discord,
+ :enabled true,
+ :actor {:capabilities [:cap/discord :cap/music :cap/event_agents]},
+ :data
+ {:filters
+  {:channels ["1494137016303095828"],
+   :keywords ["vector" "svg" "logo" "graphic" "design"
+              "illustration" "icon" "badge" "clean" "geometric" "shape"]},
+  :source {:max-messages 10},
+  :specialties [:logo :icon :badge :pattern]}}

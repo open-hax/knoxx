@@ -1,0 +1,42 @@
+<<svgsvg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+  <<defsdefs>
+    <<filterfilter id="neon">
+      <<fefeGaussianBlur stdDeviation="3" result="blur"/>
+      <<fefeComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <<linearlinearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <<stopstop offset="0%" style="stop-color:#ff00ff;stop-opacity:1" />
+      <<stopstop offset="100%" style="stop-color:#00ffff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <<rectrect width="500" height="500" fill="#050505" />
+  
+  <!-- Recursive Parentheses Rings -->
+  <<gg transform="translate(250,250)" stroke-width="2" fill="none" stroke="url(#grad)" filter="url(#neon)">
+    <!-- Layer 1: Outer Void -->
+    <<pathpath d="M -200,0 A 200,200 0 1,1 200,0 A 200,200 0 1,1 -200,0" stroke-opacity="0.3" />
+    <<texttext x="-220" y="0" fill="#fff" font-family="monospace" font-size="20" text-anchor="middle" opacity="0.6">(</text>
+    <<texttext x="220" y="0" fill="#fff" font-family="monospace" font-size="20" text-anchor="middle" opacity="0.6">)</text>
+    
+    <!-- Layer 2: The Yap Orbit -->
+    <<pathpath d="M -150,0 A 150,150 0 1,1 150,0 A 150,150 0 1,1 -150,0" stroke-opacity="0.5" />
+    <<texttext x="0" y="-170" fill="#fff" font-family="monospace" font-size="16" text-anchor="middle" opacity="0.7">(</text>
+    <<texttext x="0" y="170" fill="#fff" font-family="monospace" font-size="16" text-anchor="middle" opacity="0.7">)</text>
+    
+    <!-- Layer 3: Identity Loop -->
+    <<pathpath d="M -100,0 A 100,100 0 1,1 100,0 A 100,100 0 1,1 -100,0" stroke-opacity="0.8" />
+    <<texttext x="-120" y="0" fill="#fff" font-family="monospace" font-size="14" text-anchor="middle" opacity="0.8">(</text>
+    <<texttext x="120" y="0" fill="#fff" font-family="monospace" font-size="14" text-anchor="middle" opacity="0.8">)</text>
+    
+    <!-- Layer 4: The Core -->
+    <<circlecircle r="30" stroke="#fff" stroke-width="3" filter="url(#neon)" />
+    <<texttext x="0" y="5" fill="#fff" font-family="monospace" font-size="24" text-anchor="middle" font-weight="bold">( )</text>
+  </g>
+  
+  <!-- Glitch Accents -->
+  <<rectrect x="100" y="100" width="2" height="300" fill="#ff00ff" opacity="0.4" transform="rotate(45 250 250)" />
+  <<rectrect x="100" y="100" width="2" height="300" fill="#00ffff" opacity="0.4" transform="rotate(-45 250 250)" />
+  
+  <<texttext x="250" y="460" font-family="monospace" font-size="14" fill="#fff" text-anchor="middle" opacity="0.5">IDENTITY :: RECURSIVE :: STABLE</text>
+</svg>

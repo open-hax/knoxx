@@ -1,9 +1,0 @@
-packages:
-  - frontend
-  - backend
-  - discord-bot
-
-onlyBuiltDependencies:
-  - esbuild
-  - koffi
-  - protobufjs

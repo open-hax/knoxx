@@ -23,13 +23,8 @@
 
 (deftest create-runtime-tools-only-installs-builtins-allowed-by-contract
   (testing "manual chat agents no longer receive unrestricted write/edit/bash builtins by default"
-    (let [runtime #js {:sdk #js {:createReadTool (fn [_cwd] #js {:name "read"})
-                                 :createWriteTool (fn [_cwd] #js {:name "write"})
-                                 :createEditTool (fn [_cwd] #js {:name "edit"})
-                                 :createBashTool (fn [_cwd] #js {:name "bash"})}}
-          tool-names (->> (tooling/create-runtime-tools runtime test-config nil "contract_librarian" "contract_librarian" "contract_librarian")
-                          (map #(aget % "name"))
-                          set)]
+    (let [runtime #js {}
+          tool-names (set (tooling/create-runtime-tools runtime test-config nil "contract_librarian" "contract_librarian" "contract_librarian"))]
       (is (= #{"read"} tool-names)))))
 
 (deftest allowed-tool-id-set-prefers-selected-agent-contract-tools
@@ -83,4 +78,6 @@
       (is (contains? tool-ids "audio.spectrogram"))
       (is (contains? tool-ids "audio.waveform"))
       (is (contains? tool-ids "workspace_media.attach"))
-      (is (contains? tool-ids "music.identify_file")))))
+      (is (contains? tool-ids "music.identify_file"))
+      (is (contains? tool-ids "music.generate_song"))
+      (is (not (contains? tool-ids "blaze.generate"))))))

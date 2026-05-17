@@ -1,0 +1,20 @@
+{:role/id :role/theme-minimal-ambient
+ :role/name "Theme — Minimal Ambient"
+ :role/description "Minimal piano + soft glitch ambient. Long silences. The name audit."
+ :role/capabilities []
+ :role/focus "Sonic texture: close-mic vocal, tape warble, long silences, minimal piano."
+ :role/duty "Apply when the song deals with naming, versioning, review, or the quiet weight of responsibility."
+ :data {:theme/name "Minimal Ambient"
+        :theme/bpm 76
+        :theme/time-signature "4/4"
+        :theme/genre "minimal piano + soft glitch ambient"
+        :theme/key "A minor"
+        :production/piano "Close-mic, tape warble"
+        :production/silence "Long. Let the listener hear themselves."
+        :production/glitch "Soft, barely-there. Like a memory degrading."
+        :production/vocal-style "Intimate, close, almost spoken"
+        :lyric/motifs ["names" "blur" "responsibility" "version" "review" "merge" "refuse" "storm"]
+        :lyric/density "Sparse. One line is enough."
+        :mood/contemplative? true
+        :mood/sad? true
+        :mood/quiet? true}}

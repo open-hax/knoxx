@@ -24,6 +24,21 @@
       parsed
       default)))
 
+(defn- env-kv-map
+  [k]
+  (let [raw (some-> (aget js/process.env k) str str/trim)]
+    (if (str/blank? (or raw ""))
+      {}
+      (->> (str/split raw #",")
+           (map (fn [entry]
+                  (let [[left right] (str/split (str entry) #"=" 2)
+                        key (some-> left str str/trim not-empty)
+                        value (some-> right str str/trim not-empty)]
+                    (when (and key value)
+                      [key value]))))
+           (remove nil?)
+           (into {})))))
+
 (defn cfg
   "Read Knoxx backend runtime configuration from environment variables.
 
@@ -51,6 +66,9 @@
                           (when (and (string? value) (not (str/blank? value)))
                             value))
    :proxx-embed-model (env "PROXX_EMBED_MODEL" "nomic-embed-text:latest")
+   :provider-base-urls (env-kv-map "KNOXX_PROVIDER_BASE_URLS")
+   :provider-auth-tokens (env-kv-map "KNOXX_PROVIDER_AUTH_TOKENS")
+   :provider-auth-headers (env-kv-map "KNOXX_PROVIDER_AUTH_HEADERS")
 
    :knoxx-admin-url (env "KNOXX_ADMIN_URL" "http://localhost")
    :knoxx-base-url (env "KNOXX_BASE_URL" "http://localhost:8000")
@@ -76,32 +94,30 @@
    :gmail-app-email (env "GMAIL_APP_EMAIL" "")
    :gmail-app-password (env "GMAIL_APP_PASSWORD" "")
 
-   :discord-bot-token (env "DISCORD_BOT_TOKEN" "")
+   ;; Discord/Twitch/Bluesky tool credentials are actor-owned and are read
+   ;; from the policy DB actor_credentials table, not process env vars.
+   :discord-bot-token ""
 
    ;; Music services
    :audd-api-token (env "AUDD_API_TOKEN" "")
    :acoustid-api-key (env "ACOUSTID_API_KEY" "")
 
+   ;; BlazeAPI multimodal generation is accessed through Proxx; Knoxx does not
+   ;; read direct Blaze credentials.
+
    ;; Voice / speech
+   :voxx-url (env "VOXX_URL" "http://127.0.0.1:8787")
+   :voxx-api-key (env "VOICE_GATEWAY_API_KEY" "dev-token")
+   :voxx-voice-id (env "KNOXX_VOXX_VOICE_ID" "af_jessica")
+   :voxx-model-id (env "KNOXX_VOXX_MODEL_ID" "kokoro")
+   :voxx-default-speed (env "KNOXX_VOXX_DEFAULT_SPEED" (env "VOICE_GATEWAY_TTS_DEFAULT_SPEED" "1.15"))
    :stt-base-url (env "KNOXX_STT_BASE_URL" "")
 
-   ;; TTS (ElevenLabs)
-   ;; NOTE: support a few common env var names to reduce local drift.
-   :elevenlabs-api-key (or (aget js/process.env "KNOXX_ELEVENLABS_API_KEY")
-                           (aget js/process.env "KNOXX_ELEVENLABS_KEY")
-                           (aget js/process.env "ELEVENLABS_API_KEY")
-                           (aget js/process.env "ELEVEN_LABS_API_KEY")
-                           (aget js/process.env "XI_API_KEY")
-                           "")
-   :elevenlabs-voice-id (or (aget js/process.env "KNOXX_ELEVENLABS_VOICE_ID")
-                            (aget js/process.env "ELEVENLABS_VOICE_ID")
-                            "")
-   :elevenlabs-model-id (or (aget js/process.env "KNOXX_ELEVENLABS_MODEL_ID")
-                            (aget js/process.env "ELEVENLABS_MODEL_ID")
-                            "eleven_multilingual_v2")
-
-   ;; Pi / agent runtime dir
+   ;; eta-mu agent runtime dir
    :agent-dir (env "KNOXX_AGENT_DIR" "/tmp/knoxx-agent")
+   :agent-compaction-enabled? (not= "false" (str/lower-case (env "KNOXX_AGENT_COMPACTION_ENABLED" "true")))
+   :agent-compaction-reserve-tokens (env-int "KNOXX_AGENT_COMPACTION_RESERVE_TOKENS" 16384)
+   :agent-compaction-keep-recent-tokens (env-int "KNOXX_AGENT_COMPACTION_KEEP_RECENT_TOKENS" 20000)
 
    ;; Sandbox container runtime
    :sandbox-docker-bin (env "KNOXX_SANDBOX_DOCKER_BIN" "docker")
@@ -116,6 +132,10 @@
 
    ;; Redis (session persistence)
    :redis-url (env "REDIS_URL" "")
+
+   ;; Agent recovery. Automatic resume is intentionally opt-in: backend hot reload
+   ;; and ad hoc PM2 restarts must not create duplicate zombie jobs.
+   :agent-auto-resume-sessions? (= "true" (str/lower-case (env "KNOXX_AGENT_AUTO_RESUME_SESSIONS" "false")))
 
    ;; Graceful shutdown / PM2 drain timings
    :shutdown-grace-ms (env-int "KNOXX_SHUTDOWN_GRACE_MS" 25000)
@@ -136,7 +156,7 @@
    :shoedelussy-mcp-tool-name (env "SHOEDELUSSY_MCP_TOOL_NAME" "shoedelussy")
    :shoedelussy-mcp-shared-secret (env "SHOEDELUSSY_MCP_SHARED_SECRET" "")
 
-   ;; Agent system prompt (pi-coding-agent override)
+   ;; Agent system prompt (eta-mu coding agent override)
    :agent-system-prompt (env
                          "KNOXX_AGENT_SYSTEM_PROMPT"
                          (str

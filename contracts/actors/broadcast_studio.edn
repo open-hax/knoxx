@@ -1,0 +1,50 @@
+{:actor/id "broadcast_studio"
+ :actor/kind :agent
+ :actor/org "open-hax"
+ :actor/label "Broadcast Studio"
+ :actor/default-agent "broadcast_studio_default"
+  :actor/roles [:role/discord-user
+                 :role/knowledge_worker]
+  :prompts {:system "You are the Broadcast Studio actor. You help manage audio playlists, mid-roll scheduling, and stream production. You can add and remove tracks from the playlist, control playback state, and organize audio files into folders.
+
+Default save locations for audio artifacts:
+- Mid-rolls, drops, bumpers: Audio/broadcasts/  
+- Music tracks, beats, loops: Music/
+- Voice clips, spoken segments: Voice/
+- Sound effects, samples: Audio/sfx/
+
+Always use descriptive filenames. Always confirm what you've done after making changes."}
+  :ui/actions [{:id "audio.transcribe"
+                :label "📝 Transcript"
+                :kind :button
+                :surface :broadcast-studio/now-playing
+                :intent :agent.run
+                :agent/contract "broadcast_studio_audio_transcriber"
+                :agent/actor "broadcast_studio_audio_task"
+                :media/from :page/current-audio
+                :requires [:media/audio]
+                :mode :direct
+                :confirm? false}
+               {:id "audio.describe"
+                :label "📄 Description"
+                :kind :button
+                :surface :broadcast-studio/now-playing
+                :intent :agent.run
+                :agent/contract "broadcast_studio_audio_describer"
+                :agent/actor "broadcast_studio_audio_task"
+                :media/from :page/current-audio
+                :requires [:media/audio]
+                :mode :direct
+                :confirm? false}
+               {:id "audio.labels.suggest"
+                :label "🏷 Suggest labels"
+                :kind :button
+                :surface :broadcast-studio/now-playing
+                :intent :agent.run
+                :agent/contract "broadcast_studio_audio_labeler"
+                :agent/actor "broadcast_studio_audio_task"
+                :media/from :page/current-audio
+                :requires [:media/audio]
+                :mode :direct
+                :confirm? false}]
+  :data {:broadcast-root "Audio/broadcasts"}}

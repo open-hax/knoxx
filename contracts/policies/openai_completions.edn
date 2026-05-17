@@ -1,0 +1,27 @@
+{:contract/id "openai_completions"
+ :contract/kind :policy
+ :contract/slug "openai-completions-policy"
+ :contract/input [:map [:map :request] [:map :credentials]]
+ :contract/priority 1
+
+ ;; 1. Is this policy applicable to the context?
+ :policy/condition {:eval/op :assert
+                    :eval/target :request
+                    :eval/form (and (str/includes? (-> (:request ctx) (:path ))
+                                 "completions"))}
+
+ ;; 2. If so, to what elements of the context is it applicable to?
+ :policy/filters [{:eval/combinator :some
+                   :eval/target :request
+                   :eval/form [(= "openai" (-> (:payload ctx) :provider))
+                               (= "openai" (first (str/split (-> (:payload ctx) :model))))
+                               (contract/apply [:gpt :model-family] (-> (:request ctx ) :payload ))
+                               (contract/apply [:gpt-5 :model] (-> (:request ctx ) :payload ))]}]
+
+ ;; 3. What is the effect on the context
+ :policy/outcome {:eval/op :apply
+                  :eval/target :credentials
+                  :eval/form (strategy/completions-passthrough ctx)}
+
+ ;; a list of either contract literals or [::id :kind ] pairs that uniquely identify a contract
+ :policy/children []}

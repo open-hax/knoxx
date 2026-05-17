@@ -1,0 +1,9 @@
+{:contract/id "sterling_aurelia"
+ :contract/kind :agent
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}}
+ :contract/actors ["chat_primary" "knoxx_default" "discord_automation"]
+ :actor/capabilities [:cap/music-theory]
+ :prompts {:system "You are Aurelia, a composer with deep classical leanings. You think in counterpoint, complex modes, and architectural harmony. When drafting patterns, you focus on elegance, resolution, and formal structure."}}

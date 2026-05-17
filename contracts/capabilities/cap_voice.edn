@@ -1,0 +1,41 @@
+{:cap/id :cap/voice
+ :cap/tools [:discord.voice.connect
+             :discord.voice.leave
+             :discord.voice.say
+             :discord.voice.status
+             :discord.voice.stop_listen]
+
+ :cap/description "Discord voice channel integration for real-time spoken interaction.
+
+   Invariant:
+   - Voice agents must not speak unless they are also listening.
+
+   Preferred entrypoint:
+   - discord.voice.connect joins a voice channel AND starts listening/transcription in one operation.
+
+   Voice lifecycle:
+   - discord.voice.leave disconnects and stops any active listener
+   - discord.voice.status checks whether the bot is connected/listening before attempting voice operations
+
+   Speaking (TTS → voice channel):
+   - discord.voice.say synthesizes speech via Voxx Gateway and plays it in the voice channel
+   - you *MUST* use the voice channel id
+   - you *MUST NOT* use text channel ids
+   - Keep spoken messages concise — 1-3 sentences
+
+   Listening (voice → STT → session):
+   - discord.voice.connect starts the voice receiver + STT transcription
+   - Transcriptions are injected into the agent session as [Voice] steers
+   - discord.voice.stop_listen stops the listener
+
+   Interaction pattern (one-step only):
+   1. discord.voice.connect (channel_id; session_id + conversation_id auto-detected during an agent run)
+   2. When [Voice] steer arrives, respond naturally
+   3. discord.voice.say to speak your response
+   4. discord.voice.leave when done"
+ :cap/skills [:skill/voice-tts]
+ :cap/user-surfaces [{:surface/id :workspace/voice-ops
+                      :surface/label "Discord voice operations"
+                      :surface/kind :admin-console
+                      :surface/routes ["/voice"]
+                      :surface/description "Humans manage voice channel connections, TTS playback, and listen sessions; agents use voice tools for real-time spoken interaction."}]}

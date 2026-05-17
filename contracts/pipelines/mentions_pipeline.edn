@@ -1,0 +1,11 @@
+{:contract/kind  :pipeline
+ :contract/id    "mentions_pipeline"
+ :enabled        true
+ :pipeline/steps
+ [{:step/id       "check"
+   :step/contract "discord_mention_check"
+   :step/data
+   {:output  {:key "mention_queue" :ttl "PT30M"}}}]
+ :data
+ {:context  {:source "discord-mentions"}
+  :output   {:key "mentions_result" :ttl "PT1H"}}}

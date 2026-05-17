@@ -33,21 +33,45 @@
           (preview-text-nonblank json max-chars)))
       (catch :default _ nil))))
 
+(defn- duplicate-normalized-text
+  [s]
+  (str/lower-case (str/replace (str s) #"[\s\W_]+" "")))
+
+(defn- boundary-ended?
+  [s]
+  (boolean (re-find #"[\s\W_]$" s)))
+
+(defn- duplicated-prefix?
+  [previous appended]
+  (or (and (str/starts-with? appended previous)
+           (let [remaining (.slice appended (count previous))]
+             (and (pos? (count remaining))
+                  (boolean (re-find #"^[\s\W_]" remaining)))))
+      (and (boundary-ended? previous)
+           (seq (duplicate-normalized-text previous))
+           (= (duplicate-normalized-text appended)
+              (duplicate-normalized-text previous)))))
+
+(defn- max-overlap
+  [left right]
+  (loop [n (min (count left) (count right))]
+    (cond
+      (zero? n) 0
+      (str/ends-with? left (.slice right 0 n)) n
+      :else (recur (dec n)))))
+
 (defn diff-appended-text
   [previous current]
   (let [previous (str (or previous ""))
-        current (str (or current ""))
-        max-overlap (fn [left right]
-                      (loop [n (min (count left) (count right))]
-                        (cond
-                          (zero? n) 0
-                          (str/ends-with? left (.slice right 0 n)) n
-                          :else (recur (dec n)))))]
+        current (str (or current ""))]
     (cond
       (str/blank? current) ""
       (str/blank? previous) current
       (= current previous) ""
-      (str/starts-with? current previous) (.slice current (count previous))
+      (str/starts-with? current previous) (let [appended (.slice current (count previous))]
+                                            (if (duplicated-prefix? previous appended)
+                                              (.slice appended (count previous))
+                                              appended))
       :else (.slice current (max-overlap previous current)))))
 
 (defn media-part-url
@@ -264,7 +288,7 @@
 (defn reply-attachment-content-parts
   [tool-receipts]
   (->> (or tool-receipts [])
-       ;; All tool receipts may carry content_parts (images, docs) encountered during the turn.
+       (filter #(= "workspace_media.attach" (:tool_name %)))
        (mapcat #(or (:content_parts %) (:contentParts %) []))
        vec))
 

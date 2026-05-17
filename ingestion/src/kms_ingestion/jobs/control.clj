@@ -4,7 +4,12 @@
    [kms-ingestion.config :as config])
   (:import
    [java.lang.management ManagementFactory]
-   [java.util.concurrent ExecutorService Executors]))
+   [java.util.concurrent ArrayBlockingQueue
+                         ExecutorService
+                         Executors
+                         RejectedExecutionException
+                         ThreadPoolExecutor
+                         TimeUnit]))
 
 (defonce ^:private executor (atom nil))
 (defonce ^:private cpu-stats (atom {:usage 0 :periods 0 :timestamp 0}))
@@ -16,16 +21,31 @@
   (some? @executor))
 
 (defn init-executor!
-  "Initialize the job executor thread pool."
+  "Initialize the job executor thread pool with a bounded queue."
   []
-  (reset! executor (Executors/newFixedThreadPool 4))
-  (println "Job executor initialized with 4 threads"))
+  (let [queue (ArrayBlockingQueue. 1000)
+        pool (ThreadPoolExecutor. 4 8 60 TimeUnit/SECONDS queue)]
+    (reset! executor pool)
+    (println "Job executor initialized with 4-8 threads and bounded queue (max 1000)")))
 
 (defn submit-task!
-  "Submit a task to the executor."
+  "Submit a task to the executor. Returns true on success, false if rejected."
   [f]
-  (when @executor
-    (.submit ^ExecutorService @executor f)))
+  (if-let [^ExecutorService svc @executor]
+    (try
+      (.submit svc f)
+      true
+      (catch RejectedExecutionException _
+        (println "[control] Task rejected: executor queue full")
+        false))
+    false))
+
+(defn queue-depth
+  "Current depth of the executor queue."
+  []
+  (if-let [^ThreadPoolExecutor pool @executor]
+    (.size (.getQueue pool))
+    0))
 
 (defn bounded-future-mapv
   "Run at most `parallelism` items at once and preserve input order."

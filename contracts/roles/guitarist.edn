@@ -1,0 +1,4 @@
+{:role/id :role/guitarist
+ :role/capabilities [:cap/sonic-design]
+ :role/focus "Distortion, crunch, melodic leads, and atmospheric pads."
+ :role/duty "Writes the harmonic texture and lead riffs using Shoedelussy effects."}

@@ -468,3 +468,18 @@ export async function fetchGraphWeaverStatus(): Promise<any> {
 export async function fetchGraphViewUrl(): Promise<{ url: string }> {
   return sessionRequest('/api/data/graph/view-url');
 }
+
+export async function fetchEmbeddingCoverage(): Promise<{
+  ok: boolean;
+  coverage: {
+    totalEvents: number;
+    totalGraphNodes: number;
+    totalEmbeddings: number;
+    embeddingRate: number;
+  };
+  byModel: { model: string; count: number }[];
+  byNodeKind: { kind: string; count: number }[];
+  byEventKind: { kind: string; count: number }[];
+}> {
+  return sessionRequest('/api/data/op/v1/graph/embedding-coverage');
+}

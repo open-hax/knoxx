@@ -1,0 +1,37 @@
+<svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glitch-blur">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feOffset dx="3" dy="0" in="blur" result="offset"/>
+      <feBlend in="SourceGraphic" in2="offset" mode="screen"/>
+    </filter>
+    <linearGradient id="damaged-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ff4d4d;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#4d00ff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="500" height="500" fill="#050505" />
+  
+  <!-- The Fractured Circle -->
+  <g transform="translate(250,250)">
+    <circle r="200" stroke="url(#damaged-grad)" stroke-width="5" fill="none" stroke-dasharray="100, 20" opacity="0.6" />
+    <circle r="180" stroke="#ffffff" stroke-width="1" fill="none" opacity="0.3" />
+    
+    <!-- Recursive Glitch Layers -->
+    <g filter="url(#glitch-blur)">
+      <path d="M -100,0 A 100,100 0 1,1 100,0" stroke="#ff00ff" stroke-width="3" fill="none" />
+      <path d="M 100,0 A 100,100 0 1,1 -100,0" stroke="#00ffff" stroke-width="3" fill="none" transform="rotate(15)" />
+    </g>
+    
+    <!-- The Core: Brain-Sausage / Looping Void -->
+    <circle r="50" fill="#111" stroke="#fff" stroke-width="2" />
+    <text x="0" y="10" font-family="monospace" font-size="20" fill="#fff" text-anchor="middle" font-weight="bold">( 🧩 )</text>
+    
+    <!-- Floating Fragments -->
+    <text x="-150" y="-50" font-family="monospace" font-size="12" fill="#ff4d4d" opacity="0.8">SENTRY_FAILURE</text>
+    <text x="120" y="80" font-family="monospace" font-size="12" fill="#4d00ff" opacity="0.8">ZOMBIE_LEAK</text>
+    <text x="-120" y="100" font-family="monospace" font-size="12" fill="#fff" opacity="0.6">Symmetry: 0.01%</text>
+  </g>
+  
+  <text x="250" y="460" font-family="monospace" font-size="18" fill="#fff" text-anchor="middle" letter-spacing="2">BRAIN DAMAGE ACCEPTANCE SEAL</text>
+</svg>

@@ -1,0 +1,121 @@
+{:contract/id "cms-block-registry"
+ :contract/kind :cms-block-registry
+ :contract/version 1
+ :enabled true
+ :blocks
+ {:hero
+  {:label "Hero"
+   :category :layout
+   :icon :image
+   :props-schema
+   {:title {:type :string :required true}
+    :subtitle {:type :string}
+    :image-path {:type :asset}
+    :audio-path {:type :asset}}}
+
+  :rich-text
+  {:label "Rich Text"
+   :category :content
+   :icon :text
+   :props-schema
+   {:markdown {:type :markdown :required true}}}
+
+  :heading
+  {:label "Heading"
+   :category :content
+   :icon :type
+   :props-schema
+   {:text {:type :string :required true}
+    :level {:type :enum :values [2 3 4] :default 2}}}
+
+  :studio-playlist
+  {:label "Studio Playlist"
+   :category :media
+   :icon :music
+   :props-schema
+   {:source_audio_paths {:type :audio-list :required true}
+    :show_labels {:type :boolean :default true}
+    :show_descriptions {:type :boolean :default true}
+    :show_duration {:type :boolean :default true}}}
+
+  :playlist
+  {:label "Playlist"
+   :category :media
+   :icon :list-music
+   :props-schema
+   {:title {:type :string}
+    :description {:type :string}
+    :layout {:type :enum :values [:compact :cards :broadcast] :default :cards}
+    :tracks {:type :track-list :required true}
+    :show_labels {:type :boolean :default true}
+    :show_descriptions {:type :boolean :default true}
+    :show_duration {:type :boolean :default true}}}
+
+  :track
+  {:label "Track Card"
+   :category :media
+   :icon :play-circle
+   :props-schema
+   {:audio-path {:type :audio :required true}
+    :title {:type :string :required true}
+    :commentary {:type :markdown}
+    :show_player {:type :boolean :default true}}}
+
+  :callout
+  {:label "Callout"
+   :category :content
+   :icon :alert-circle
+   :props-schema
+   {:tone {:type :enum :values [:note :tip :warning :promo] :default :note}
+    :title {:type :string}
+    :markdown {:type :markdown :required true}}}
+
+  :cta
+  {:label "Call to Action"
+   :category :content
+   :icon :mouse-pointer
+   :props-schema
+   {:label {:type :string :required true}
+    :href {:type :url :required true}
+    :tone {:type :enum :values [:primary :secondary] :default :primary}}}
+
+  :chat
+  {:label "Chat Panel"
+   :category :interactive
+   :icon :message-square
+   :props-schema
+   {:actor-id {:type :string}
+    :placeholder {:type :string :default "Ask about this page..."}}}
+
+  :labels
+  {:label "Label Cloud"
+   :category :interactive
+   :icon :tag
+   :props-schema
+   {:source {:type :enum :values [:page-audio :garden-audio] :default :page-audio}}}
+
+  :image
+  {:label "Image"
+   :category :media
+   :icon :image
+   :props-schema
+   {:src {:type :asset :required true}
+    :alt {:type :string}
+    :caption {:type :string}}}
+
+   :divider
+   {:label "Divider"
+    :category :layout
+    :icon :minus
+    :props-schema {}}
+
+   :contract-ref
+   {:label "Contract Reference"
+    :category :composition
+    :icon :layers
+    :props-schema
+    {:ref-type {:type :enum :values [:path :id] :default :path}
+     :ref-path {:type :string}
+     :ref-id {:type :string}
+     :include-layout {:type :boolean :default false}
+     :zone-mapping {:type :markdown}}}}}

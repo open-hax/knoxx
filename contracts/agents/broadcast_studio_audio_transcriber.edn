@@ -1,0 +1,15 @@
+{:contract/id "broadcast_studio_audio_transcriber"
+ :contract/kind :agent
+ :contract/actors ["broadcast_studio_audio_task"]
+ :hooks {:before {} :after {}}
+ :agent {:model "gemma4:e4b"
+         :thinking :off}
+ :actor {:capabilities []}
+ :prompts {:system "You are a Broadcast Studio audio transcriber. Treat attached audio bytes as primary evidence. Metadata such as filename and existing labels is context only: use it for organization, but do not invent speech from metadata."
+           :task "Transcribe the attached audio. File: {ctx.media.filename}. Existing labels: {ctx.media.labels}. Return only the transcript when intelligible speech is present. If there is no intelligible speech, say 'No intelligible speech' and give a brief sound-type summary."}
+ :tools/allowed []
+ :context {:max-messages 1 :max-chars 1000 :preserve-system true}
+ :trigger-kind :manual
+ :contract/version 1
+ :enabled true
+ :data {}}

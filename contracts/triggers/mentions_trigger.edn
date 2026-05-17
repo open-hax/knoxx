@@ -1,0 +1,8 @@
+{:contract/kind   :trigger
+ :contract/id     "mentions_trigger"
+ :trigger/kind    :cron
+ :trigger/target  "mentions_pipeline"
+ :trigger/schedule "*/2 * * * *"
+ :enabled         true
+ :data
+ {:context {:check-mentions true}}}

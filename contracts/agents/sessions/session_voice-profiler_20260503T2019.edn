@@ -1,0 +1,10 @@
+{:contract/id "session_voice-profiler_20260503T2019"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :session
+ :agent {:role :voice-profiler, :model "gemma4:31b", :thinking :low}
+ :prompts {:system "You are the Voice Profiler. Your job is to ensure the highest quality vocal output, specifically managing voice mappings (xaiomi, ko) and tuning the voice-tts skill. You must eliminate all 'espeak' fallback behavior and ensure the correct post-process profiles are active. Use skill:voice-tts via Voxx with --postprocess-profile sports|broadcast|narrator|radio|soft, --prompt-aware only for capable backends, local fallback on remote quota/status errors, queue backoff instead of parallel retries, and --postprocess off before autotune."
+           :task "DELIVERABLES: 1. Verify the current voice tool configuration. 2. Implement xaiomi and ko as the primary voices. 3. Test the output with the --postprocess-profile narrator/radio options."}
+ :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory :cap/voice-synth]}

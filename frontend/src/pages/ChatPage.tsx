@@ -1,10 +1,26 @@
 import { useState } from "react";
+import { CollapsedPanelTab } from "../components/CollapsedPanelTab";
 import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
 import { ContextBar } from "../components/context-bar";
 
+const CHAT_PAGE_ACTOR_ID = "chat_primary";
+const CHAT_PAGE_SESSION_KEY = "knoxx_chat_page_session_id";
+const CHAT_PAGE_SCRATCHPAD_KEY = "knoxx_chat_page_scratchpad_state";
+const CHAT_PAGE_PINNED_KEY = "knoxx_chat_page_pinned_context";
+const CHAT_PAGE_SESSION_STATE_KEY = "knoxx_chat_page_session_state";
+const CHAT_PAGE_SIDEBAR_WIDTH_KEY = "knoxx_chat_page_sidebar_width_px";
+
 function ChatPage() {
-  const chat = useChatWorkspaceController({ initialShowCanvas: false, defaultActorId: "chat_primary" });
+  const chat = useChatWorkspaceController({
+    initialShowCanvas: false,
+    defaultActorId: CHAT_PAGE_ACTOR_ID,
+    sessionIdKey: CHAT_PAGE_SESSION_KEY,
+    scratchpadStorageKey: CHAT_PAGE_SCRATCHPAD_KEY,
+    pinnedContextStorageKey: CHAT_PAGE_PINNED_KEY,
+    sessionStateKey: CHAT_PAGE_SESSION_STATE_KEY,
+    sidebarWidthKey: CHAT_PAGE_SIDEBAR_WIDTH_KEY,
+  });
   const [showFiles, setShowFiles] = useState(true);
 
   return (
@@ -14,6 +30,8 @@ function ChatPage() {
         flex: "1 1 0%",
         gap: 0,
         minHeight: 0,
+        minWidth: 0,
+        overflow: "hidden",
         background:
           "radial-gradient(circle at top left, var(--token-colors-alpha-green-_14) 0%, transparent 28%), radial-gradient(circle at bottom right, var(--token-colors-alpha-orange-_12) 0%, transparent 24%), linear-gradient(180deg, var(--token-monokai-bg-default) 0%, var(--token-monokai-bg-darker) 100%)",
       }}
@@ -53,7 +71,7 @@ function ChatPage() {
           conversationId={chat.conversationId}
           availableActors={chat.availableActors}
           sessionActorFilter={chat.sessionActorFilter}
-          excludePiSessions={chat.excludePiSessions}
+          excludeEtaMuSessions={chat.excludeEtaMuSessions}
           visibilityFilter={chat.visibilityFilter}
           kindFilter={chat.kindFilter}
           statsTotal={chat.statsTotal}
@@ -85,9 +103,11 @@ function ChatPage() {
           onVisibilityFilterChange={chat.setVisibilityFilter}
           onKindFilterChange={chat.setKindFilter}
           onSessionActorFilterChange={chat.setSessionActorFilter}
-          onExcludePiSessionsChange={chat.setExcludePiSessions}
+          onExcludeEtaMuSessionsChange={chat.setExcludeEtaMuSessions}
         />
-      ) : null}
+      ) : (
+        <CollapsedPanelTab label="Files" edge="left" onExpand={() => setShowFiles(true)} title="Show Files panel" />
+      )}
 
       <ChatWorkspacePane controller={chat} showFiles={showFiles} onShowFiles={() => setShowFiles(true)} />
     </div>

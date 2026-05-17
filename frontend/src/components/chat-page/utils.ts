@@ -143,7 +143,7 @@ export function isChatRole(value: unknown): value is ChatMessage["role"] {
   return value === "system" || value === "user" || value === "assistant";
 }
 
-function parseMemoryRowExtra(row: MemorySessionRow): Record<string, unknown> | null {
+export function parseMemoryRowExtra(row: MemorySessionRow): Record<string, unknown> | null {
   if (!row.extra) return null;
   if (typeof row.extra === "object" && !Array.isArray(row.extra)) {
     return row.extra;
@@ -251,9 +251,13 @@ function fallbackTraceBlocksByRunId(rows: MemorySessionRow[]): Map<string, NonNu
 
 export function memoryRowsToMessages(rows: MemorySessionRow[]): ChatMessage[] {
   const derivedTraceBlocks = fallbackTraceBlocksByRunId(rows);
+  const hasPrimaryMessages = rows.some((row) => row.kind === "knoxx.message" && isChatRole(row.role) && typeof row.text === "string" && row.text.trim().length > 0);
+
   return rows.flatMap((row, index) => {
     const text = typeof row.text === "string" ? row.text : "";
-    if (row.kind !== "knoxx.message" || !isChatRole(row.role) || text.trim().length === 0) {
+    const isPrimaryMessage = row.kind === "knoxx.message";
+    const isLegacyReadableRow = !hasPrimaryMessages && !isPrimaryMessage && isChatRole(row.role) && text.trim().length > 0;
+    if ((!isPrimaryMessage && !isLegacyReadableRow) || !isChatRole(row.role) || text.trim().length === 0) {
       return [];
     }
 
@@ -337,7 +341,13 @@ export function novelAppendedText(previous: string, incoming: string): string {
   if (incoming.length === 0) return "";
   if (previous.length === 0) return incoming;
   if (incoming === previous) return "";
-  if (incoming.startsWith(previous)) return incoming.slice(previous.length);
+  if (incoming.startsWith(previous)) {
+    const appended = incoming.slice(previous.length);
+    const duplicatedFirstToken = /^\S+$/.test(previous)
+      && appended.startsWith(previous)
+      && /^[\s\p{P}\p{S}]/u.test(appended.slice(previous.length));
+    return duplicatedFirstToken ? appended.slice(previous.length) : appended;
+  }
 
   const max = Math.min(previous.length, incoming.length);
   for (let overlap = max; overlap > 0; overlap -= 1) {

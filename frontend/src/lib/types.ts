@@ -177,6 +177,7 @@ export interface ActiveAgentSummary extends RunSummary {
   event_count?: number;
   tool_receipt_count?: number;
   has_active_stream?: boolean;
+  active_turn_registered?: boolean;
   agent_spec?: Record<string, unknown> | null;
   resource_policies?: Record<string, unknown> | null;
   latest_user_message?: string | null;
@@ -187,11 +188,13 @@ export interface RunDetail extends RunSummary {
   session_id?: string | null;
   conversation_id?: string | null;
   answer?: string | null;
+  reasoning?: string | null;
   contentParts?: ContentPart[];
   request_messages: Array<{ role: string; content: string; contentParts?: ContentPart[] }>;
   settings: Record<string, unknown>;
   resources: Record<string, unknown>;
   events?: RunEvent[];
+  trace_blocks?: ChatTraceBlock[];
   tool_receipts?: ToolReceipt[];
   sources?: AgentSource[];
 }
@@ -208,6 +211,10 @@ export interface MemorySessionSummary {
   actor_id?: string;
   contract_id?: string;
   contract_actors?: string[];
+  sub_agent_id?: string;
+  parent_agent_id?: string;
+  parent_run_id?: string;
+  spawn_kind?: string;
 
   is_active?: boolean;
   active_status?: "running" | "waiting_input" | "completed" | "failed" | "inactive" | "unknown" | string;
@@ -364,7 +371,11 @@ export interface AgentContractCatalogResponse {
   default_agent_contract?: string | null;
 }
 
-export type ContractsClass = "agents" | "actors" | "roles" | "capabilities" | "policies";
+export type ContractsClass =
+  | "agents" | "actors" | "roles" | "capabilities" | "policies"
+  | "model_families" | "models"
+  | "actions" | "pipelines" | "triggers"
+  | "devel" | "ensemble" | "knoxx-session";
 
 export interface EmailSendResponse {
   ok: boolean;
@@ -430,6 +441,36 @@ export interface ShibbolethHandoffResponse {
   imported_item_count: number;
 }
 
+export type ActorMailboxStatus = "pending" | "delivered" | "failed" | "expired" | "superseded" | "acknowledged";
+export type ActorMailboxBox = "inbox" | "outbox";
+
+export interface ActorMailboxEntry {
+  id: string;
+  kind: string;
+  status: ActorMailboxStatus | string;
+  source: Record<string, unknown>;
+  target: Record<string, unknown>;
+  delivery: Record<string, unknown>;
+  contentRef: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  preview?: string;
+  lastError?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  deliveredAt?: string;
+  acknowledgedAt?: string;
+  expiresAt?: string;
+}
+
+export interface ActorMailboxListResponse {
+  ok: boolean;
+  box?: ActorMailboxBox;
+  actorId?: string;
+  durable?: boolean;
+  durable_?: boolean;
+  entries: ActorMailboxEntry[];
+}
+
 export interface KnoxxAuthIdentity {
   userEmail: string;
   orgSlug: string;
@@ -471,6 +512,7 @@ export interface AdminRoleSummary {
 
 export interface AdminMembershipSummary {
   id: string;
+  userId?: string;
   orgId: string;
   actorId?: string;
   orgName?: string;
@@ -483,6 +525,18 @@ export interface AdminMembershipSummary {
   toolPolicies: AdminToolPolicy[];
 }
 
+export interface AdminActorCredentialSummary {
+  id: string;
+  provider: string;
+  label?: string;
+  kind: string;
+  accountIdentifier?: string | null;
+  status: string;
+  configuredFields: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface AdminUserSummary {
   id: string;
   email: string;
@@ -492,6 +546,7 @@ export interface AdminUserSummary {
   status: string;
   createdAt?: string;
   updatedAt?: string;
+  credentials?: AdminActorCredentialSummary[];
   memberships: AdminMembershipSummary[];
 }
 

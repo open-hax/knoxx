@@ -18,6 +18,15 @@
   [role]
   (roles/normalize-role (current-config) role))
 
+(defn- normalize-slugs
+  "Normalize role slug strings to kebab-case and deduplicate.
+   Collapses mixed forms like 'knowledge_worker' / 'knowledge-worker' into one."
+  [slugs]
+  (->> (or slugs [])
+       (map #(-> % name (str/replace "_" "-")))
+       distinct
+       vec))
+
 (defn email-enabled?
   [config]
   (and (not (str/blank? (:gmail-app-email config)))
@@ -109,6 +118,13 @@
                          (resolve-actor config resolved-actor-id)))
         normalized (roles/normalize-role config (or (:role contract-spec) role))
         role-tool-ids (set (roles/role-tool-ids config normalized))
+        _ (js/console.log "[tooling/resolve-tool-context]"
+                                   (clj->js {:contract-id agent-contract-id
+                                             :actor-id actor-id
+                                             :contract-spec-id (:id contract-spec)
+                                             :tool-ids-from-contract (vec (:tool-ids contract-spec))
+                                             :role-slugs-from-contract (normalize-slugs (:role-slugs contract-spec))
+                                             :actor-role-slugs (normalize-slugs (:role-slugs actor-spec))}))
         allowed-tool-ids (cond
                            contract-spec (set (:tool-ids contract-spec))
                            auth-context (auth-tool-ids auth-context)
@@ -168,7 +184,7 @@
       :agent_id (:id contract-spec)
       :agent_label (:id contract-spec)
       :agent_trigger_kind (:trigger-kind contract-spec)
-      :role_slugs (vec (or (:role-slugs contract-spec) []))
+      :role_slugs (normalize-slugs (:role-slugs contract-spec))
       :capability_ids (vec (or (:capability-ids contract-spec) []))
       :system_prompt (when (or (nil? auth-context)
                                (authz/system-admin? auth-context))
@@ -186,21 +202,21 @@
       :tools tools})))
 
 (defn create-runtime-tools
+  "Return eta-mu built-in tool names enabled for this runtime.
+
+   eta-mu 0.70 changed createAgentSession :tools from cwd-bound Tool objects to
+   a string allowlist. Passing createReadTool/createBashTool objects now causes
+   tool registration/selection failures, so Knoxx must pass names and let eta-mu
+   bind built-ins to :cwd itself."
   ([runtime config auth-context]
    (create-runtime-tools runtime config auth-context nil nil nil))
-  ([runtime config auth-context role agent-contract-id actor-id]
-   (let [sdk (aget runtime "sdk")
-         cwd (:workspace-root config)
-         read-tool (aget sdk "createReadTool")
-         write-tool (aget sdk "createWriteTool")
-         edit-tool (aget sdk "createEditTool")
-         bash-tool (aget sdk "createBashTool")
-         allowed-tool-ids (allowed-tool-id-set config role auth-context agent-contract-id actor-id)
+  ([_runtime config auth-context role agent-contract-id actor-id]
+   (let [allowed-tool-ids (allowed-tool-id-set config role auth-context agent-contract-id actor-id)
          allowed? (fn [tool-id]
                     (contains? allowed-tool-ids tool-id))]
      (vec
       (remove nil?
-              [(when (and read-tool (allowed? "read")) (read-tool cwd))
-               (when (and write-tool (allowed? "write")) (write-tool cwd))
-               (when (and edit-tool (allowed? "edit")) (edit-tool cwd))
-               (when (and bash-tool (allowed? "bash")) (bash-tool cwd))])))))
+              [(when (allowed? "read") "read")
+               (when (allowed? "write") "write")
+               (when (allowed? "edit") "edit")
+               (when (allowed? "bash") "bash")])))))

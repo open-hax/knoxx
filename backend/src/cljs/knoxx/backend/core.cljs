@@ -2,11 +2,10 @@
   (:require [knoxx.backend.agent-hydration :refer [ensure-settings!]]
             [knoxx.backend.agent-runtime :as agent-runtime]
             [knoxx.backend.agent-turns :as agent-turns :refer [lounge-messages*]]
-            [knoxx.backend.app-routes :as app-routes]
-            [knoxx.backend.contracts-routes :as contracts-routes]
-            [knoxx.backend.event-agents :as event-agents]
+            [knoxx.backend.routes.app :as app-routes]
+            [knoxx.backend.routes.contracts :as contracts-routes]
+            [knoxx.backend.events.runtime :as events-runtime]
             [knoxx.backend.mcp-bridge :as mcp]
-            [knoxx.backend.discord-gateway :as discord-gateway]
             [knoxx.backend.realtime :as realtime]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.agent-resume :as agent-resume]
@@ -14,7 +13,11 @@
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.session-titles :refer [load-session-titles!]]))
+            [knoxx.backend.session-titles :refer [load-session-titles!]]
+            ["fastify" :default Fastify]
+            ["@fastify/cors" :default fastifyCors]
+            ["@fastify/websocket" :default fastifyWebsocket]
+            ["@fastify/multipart" :default fastifyMultipart]))
 
 (defonce server* (atom nil))
 
@@ -26,7 +29,9 @@
 (defn- app-log-error!
   [app message err]
   (let [^js log (.-log app)]
-    (.error log message err)))
+    (if err
+      (.error log err message)
+      (.error log message))))
 
 (defn- app-listen!
   [^js app host port]
@@ -82,9 +87,14 @@
   [app resolved-config]
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. Event agents and MCP discovery remain background work.
-  (-> (js/Promise.resolve nil)
+  ;;
+  ;; IMPORTANT: events-runtime/start! expects redis/get-client to be ready so it
+  ;; can load persisted control config (disable/enable jobs) *before* scheduling.
+  ;; If we start event agents before redis/init-redis!, every restart will run
+  ;; the default job set, even if the admin panel disabled a crashing job.
+  (-> (redis/init-redis! (:redis-url resolved-config))
       (.then (fn [_]
-               (event-agents/start! resolved-config)))
+               (events-runtime/start! resolved-config)))
       (.then (fn [_]
                (contracts-routes/start-contract-watcher! resolved-config)))
       (.then (fn [_]
@@ -97,27 +107,38 @@
   (let [resolved-config (runtime-models/enrich-config (if (map? config) config (runtime-config/cfg)))]
     (ensure-settings! resolved-config)
     (reset! runtime-state/config* resolved-config)
+    (reset! runtime-state/runtime* runtime)
     (app-routes/register-routes! runtime app resolved-config lounge-messages*)
-    (-> (prewarm-sdk-runtime! runtime app resolved-config)
-        (.then (fn [_]
-                 (start-background-services! app resolved-config)
-                 (clj->js resolved-config))))))
+    ;; Route registration and HTTP listen must not be gated on the SDK runtime
+    ;; cache or contract health. Invalid contracts, model-registry misses, and
+    ;; upstream model fetch failures should degrade agent turns later; they must
+    ;; never prevent the backend from binding /health and admin repair routes.
+    (js/setTimeout
+     (fn []
+       (-> (prewarm-sdk-runtime! runtime app resolved-config)
+           (.catch (fn [err]
+                     (app-log-error! app "Knoxx SDK runtime prewarm failed; startup continuing" err)
+                     nil))))
+     1000)
+    (js/setTimeout
+     (fn []
+       (start-background-services! app resolved-config))
+     1500)
+    (js/Promise.resolve (clj->js resolved-config))))
 
 (defn start!
   [runtime]
   (when-not @server*
     (let [config (runtime-models/enrich-config (runtime-config/cfg))
-          Fastify (aget runtime "Fastify")
-          fastify-cors (aget runtime "fastifyCors")
-          fastify-multipart (aget runtime "fastifyMultipart")
-          app (Fastify #js {:logger true})]
+          app (Fastify #js {:logger #js {:stream (.-stderr js/process)}})]
       (reset! runtime-state/config* config)
+      (reset! runtime-state/runtime* runtime)
       (ensure-settings! config)
       (-> (js/Promise.resolve nil)
           (.then (fn [] (load-session-titles! runtime config)))
-          (.then (fn [] (.register app fastify-cors #js {:origin true})))
-          (.then (fn [] (.register app fastify-multipart)))
-          (.then (fn [] (.register app (aget runtime "fastifyWebsocket"))))
+          (.then (fn [] (.register app fastifyCors #js {:origin true})))
+          (.then (fn [] (.register app fastifyMultipart)))
+          (.then (fn [] (.register app fastifyWebsocket)))
           (.then (fn []
                    (.register app
                               (fn [instance _opts done]
@@ -125,23 +146,29 @@
                                 (done)))))
           (.then (fn []
                    (app-routes/register-routes! runtime app config lounge-messages*)
-                   ;; Start generic event-agent runtime
-                   (event-agents/start! config)
-                   ;; Sync filesystem contracts → Redis index (write-through cache).
-                   (contracts-routes/sync-contract-index! config)
-                   (contracts-routes/start-contract-watcher! config)
-                   (app-listen! app (:host config) (:port config))))
-          (.then (fn [_]
-                   (reset! server* app)
-                   (app-log-info! app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))
-                   ;; Redis + session resume after listen — must not block startup.
+                   ;; Bring Redis up before any event-agent scheduling so we can
+                   ;; honor persisted control config (and avoid crash loops).
                    (-> (redis/init-redis! (:redis-url config))
                        (.then (fn [redis-client]
                                 (when redis-client
-                                  (app-log-info! app "Redis client initialized for session persistence")
-                                  (agent-resume/resume-on-startup! runtime app config))))
+                                  (app-log-info! app "Redis client initialized")
+                                  (contracts-routes/sync-contract-index! config))
+                                nil))
                        (.catch (fn [err]
-                                 (app-log-error! app "Failed to initialize Redis" err))))))
+                                 (app-log-error! app "Failed to initialize Redis" err)
+                                 nil))
+                       (.then (fn [_]
+                                ;; Start generic event-agent runtime
+                                (events-runtime/start! config)
+                                (contracts-routes/start-contract-watcher! config)
+                                (app-listen! app (:host config) (:port config)))))))
+          (.then (fn [_]
+                   (reset! server* app)
+                   (app-log-info! app (str "Knoxx backend CLJS listening on " (:host config) ":" (:port config)))
+                   ;; Session resume after listen — must not block startup.
+                   (-> (agent-resume/resume-on-startup! runtime app config)
+                       (.catch (fn [err]
+                                 (app-log-error! app "agent-resume failed" err))))))
           (.catch (fn [err]
                     (.error js/console "Knoxx backend CLJS failed to start" err)
                     (js/process.exit 1)))))))

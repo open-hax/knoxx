@@ -44,3 +44,37 @@
                (get-in run [:tool_receipts 0 :input_preview])))
         (is (= "```bash\necho hi\n```"
                (get-in run [:trace_blocks 0 :inputPreview])))))))
+
+(deftest append-run-event-streams-to-registered-sink
+  (testing "append-run-event! mirrors events into the registered sink"
+    (let [run-id "run-sink"
+          seen* (atom [])
+          _ (run-state/store-run! run-id {:run_id run-id :events []})]
+      (run-state/set-event-stream-sink! #(swap! seen* conj %))
+      (try
+        (run-state/append-run-event! run-id {:run_id run-id
+                                             :conversation_id "conv-1"
+                                             :session_id "sess-1"
+                                             :type "tool_start"
+                                             :at "2026-04-27T20:00:00.000Z"})
+        (is (= 1 (count @seen*)))
+        (is (= "tool_start" (:type (first @seen*))))
+        (finally
+          (run-state/clear-event-stream-sink!))))))
+
+(deftest append-run-event-swallows-sink-errors
+  (testing "a failing sink never prevents the run event from being recorded"
+    (let [run-id "run-sink-error"
+          _ (run-state/store-run! run-id {:run_id run-id :events []})]
+      (run-state/set-event-stream-sink! (fn [_] (throw (js/Error. "boom"))))
+      (try
+        (run-state/append-run-event! run-id {:run_id run-id
+                                             :conversation_id "conv-2"
+                                             :session_id "sess-2"
+                                             :type "tool_end"
+                                             :at "2026-04-27T20:00:01.000Z"})
+        (let [run (run-state/update-run! run-id identity)]
+          (is (= 1 (count (:events run))))
+          (is (= "tool_end" (:type (first (:events run))))))
+        (finally
+          (run-state/clear-event-stream-sink!))))))

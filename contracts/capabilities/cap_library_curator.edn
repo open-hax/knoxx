@@ -1,0 +1,7 @@
+{:cap/id :cap/library-curator
+ :cap/tools [:read :write]
+ :cap/user-surfaces [{:surface/id :music/library-curator
+                      :surface/label "Music library curator"
+                      :surface/kind :editor
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Expertise in managing the Music/ directory, curating playlists (.m3u), and analyzing music folders."}]}

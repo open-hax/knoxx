@@ -27,6 +27,12 @@
 
 (declare process-job!)
 
+(def ^:private filesystem-backed-drivers
+  #{"local" "eta-mu-sessions" "audio" "image" "scraper"})
+
+(def ^:private event-session-drivers
+  #{"eta-mu-sessions" "opencode-sessions"})
+
 (defn queue-job!
   "Queue a job for execution."
   [job-id source]
@@ -56,7 +62,7 @@
   [job-id driver file-meta {:keys [tenant-id source-id ragussy-url collections
                                    use-openplanner? openplanner-url openplanner-api-key
                                    graph-context driver-type contract]}]
-  (let [pi-sessions? (= driver-type "pi-sessions")]
+  (let [event-session-driver? (contains? event-session-drivers driver-type)]
     (control/maybe-throttle!
      job-id
      {:throttle-enabled? (cr/throttle-enabled? contract)
@@ -64,14 +70,16 @@
     (try
       (let [file-data (protocol/extract driver (:id file-meta))
             content-hash (when (:content file-data)
-                           (local/sha256 (:id file-meta)))
+                           (or (:content-hash file-data)
+                               (:content-hash file-meta)
+                               (local/sha256 (:id file-meta))))
             file-meta-with-hash (assoc file-meta :content-hash content-hash)
             payload-file (assoc file-data :content-hash content-hash)
             sink-type (cr/sink-type contract)
             ingest-result (if (:content file-data)
                             (cond
-                              pi-sessions?
-                              (support/ingest-pi-session-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file)
+                              event-session-driver?
+                              (support/ingest-events-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file)
 
                               (= sink-type :openplanner)
                               (support/ingest-via-openplanner! job-id tenant-id source-id openplanner-url openplanner-api-key payload-file graph-context)
@@ -86,7 +94,7 @@
                 (control/log! (str "[JOB " job-id "] FAILED " (:path file-meta) ": " (:error ingest-result))))]
         (assoc ingest-result :file file-meta-with-hash))
       (catch Exception e
-        (when (or use-openplanner? pi-sessions?)
+        (when (or use-openplanner? event-session-driver?)
           (control/note-openplanner-failure! job-id (.getMessage e)))
         {:status :failed
          :file file-meta
@@ -119,8 +127,18 @@
           driver-type (:driver_type source)
           contract-driver-config (or (:source/config contract) {})
           driver-config (merge base-driver-config contract-driver-config)
-          driver (registry/create-driver driver-type driver-config)]
-      (control/log! (str "[JOB " job-id "] Created " driver-type " driver"))
+          audio-indexing-disabled? (and (= driver-type "audio") (not (config/audio-indexing-enabled?)))
+          driver (when-not audio-indexing-disabled?
+                   (registry/create-driver driver-type driver-config))]
+      (if audio-indexing-disabled?
+        (do
+          (control/log! (str "[JOB " job-id "] Audio indexing disabled (AUDIO_INDEXING_ENABLED=false); skipping job"))
+          (db/update-job! job-id {:status "cancelled"
+                                  :error_message "audio indexing disabled"
+                                  :completed_at (Timestamp/from (Instant/now))})
+          (db/mark-source-scanned! source-id))
+        (do
+          (control/log! (str "[JOB " job-id "] Created " driver-type " driver"))
       (let [reset-count (db/reset-failed-files! source-id)]
         (when (and (cr/retry-failed? contract) (pos? reset-count))
           (control/log! (str "[JOB " job-id "] Reset " reset-count " failed files for retry"))))
@@ -159,7 +177,8 @@
                              (:changed-files discovery) " changed, "
                              (:unchanged-files discovery) " unchanged")))
         (db/update-job! job-id {:total_files total-files})
-        (when (seq existing-state)
+        (when (and (seq existing-state)
+                   (contains? filesystem-backed-drivers driver-type))
           (let [orphaned-ids (atom [])]
             (doseq [[file-id _state] existing-state]
               (let [f (java.io.File. (str file-id))]
@@ -188,7 +207,9 @@
                                         deleted-paths))
         (let [files file-entries
               batch-size (cr/batch-size contract)
-              batch-parallelism (cr/batch-parallelism contract)
+              batch-parallelism (if (= driver-type "audio")
+                                  1
+                                  (cr/batch-parallelism contract))
               ragussy-url (config/ragussy-url)
               openplanner-url (config/openplanner-url)
               openplanner-api-key (config/openplanner-api-key)
@@ -211,6 +232,7 @@
                              (name sink-type)
                              ", batch-size=" batch-size
                              ", batch-parallelism=" batch-parallelism
+                             (when (= driver-type "audio") " (audio agent spawn limit)")
                              ", semantic-edges=" (cr/semantic-enabled? contract)
                              (when streaming? ", mode=streaming")))
           (loop [remaining (seq files)
@@ -281,7 +303,7 @@
                          (into doc-ids batch-doc-ids)
                          start-time))))))
       (let [driver-state (.get-state driver)]
-        (control/log! (str "[JOB " job-id "] Driver state: " driver-state)))))
+        (control/log! (str "[JOB " job-id "] Driver state: " driver-state)))))))
     (catch Exception e
       (control/log! (str "[JOB " job-id "] FAILED: " (.getMessage e)))
       (.printStackTrace e)

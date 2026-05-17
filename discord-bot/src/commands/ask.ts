@@ -63,7 +63,7 @@ export const askCommand = {
 
       // Create the main response embed
       const embed = createForumResponseEmbed(question, response.answer, response.sources);
-      
+
       // Create source buttons
       const components: ActionRowBuilder<ButtonBuilder>[] = [];
       const sourceButtons = createSourceButtons(response.sources);
@@ -74,7 +74,7 @@ export const askCommand = {
       // Handle images
       const images = response.images || [];
       const totalImages = response.totalImages || images.length;
-      
+
       if (showImages && images.length > 0) {
         // Store for "more images" functionality
         lastResponseImages.set(channelId, {
@@ -85,7 +85,7 @@ export const askCommand = {
 
         // Create image embeds (Discord allows up to 10 embeds per message)
         const imageEmbeds = createImageEmbeds(images.slice(0, env.MAX_IMAGES_PER_RESPONSE));
-        
+
         // Add "more images" button if there are more
         if (totalImages > env.MAX_IMAGES_PER_RESPONSE) {
           const moreImagesRow = new ActionRowBuilder<ButtonBuilder>()
@@ -110,9 +110,9 @@ export const askCommand = {
         });
       }
 
-      logger.info({ 
-        userId, 
-        channelId, 
+      logger.info({
+        userId,
+        channelId,
         sourceCount: response.sources.length,
         imageCount: images.length,
         totalImages,
@@ -138,7 +138,7 @@ export const askCommand = {
 function createForumResponseEmbed(question: string, answer: string, sources: Source[]): EmbedBuilder {
   const maxAnswerLength = 3800;
   let truncatedAnswer = answer;
-  
+
   if (answer.length > maxAnswerLength) {
     truncatedAnswer = answer.slice(0, maxAnswerLength) + '\n\n*...there\'s more but Discord cut me off* 😅';
   }
@@ -181,12 +181,12 @@ function createImageEmbeds(images: ImageResult[]): EmbedBuilder[] {
     const embed = new EmbedBuilder()
       .setImage(img.url)
       .setColor(env.BOT_EMBED_COLOR);
-    
+
     // Only add footer to first image to avoid clutter
     if (index === 0 && images.length > 1) {
       embed.setFooter({ text: `📸 ${images.length} related images` });
     }
-    
+
     return embed;
   });
 }
@@ -202,10 +202,10 @@ function createSourceButtons(sources: Source[]): ActionRowBuilder<ButtonBuilder>
   if (validSources.length === 0) return [];
 
   const buttons = validSources.slice(0, 3).map((source) => {
-    const label = source.title.length > 60 
-      ? source.title.slice(0, 57) + '...' 
+    const label = source.title.length > 60
+      ? source.title.slice(0, 57) + '...'
       : source.title;
-    
+
     return new ButtonBuilder()
       .setLabel(label)
       .setURL(source.url)

@@ -1,0 +1,15 @@
+{:contract/id "manual-run"
+ :contract/kind :source-mode
+ :contract/version 1
+ :source-mode/id :source-mode/manual-run
+ :source/kind :manual
+ :source/mode :run
+ :prompts
+ {:task
+  (template {:separator "\n\n"}
+    ["## Source mode: manual run"
+     "This run is initiated explicitly and should rely on the user request, durable memory, and the agent contract task. It does not perform an implicit Discord source scan."])}
+ :data
+ {:requires-explicit-channels false
+  :source-context-path nil
+  :channel-semantics "No implicit Discord read source."}}

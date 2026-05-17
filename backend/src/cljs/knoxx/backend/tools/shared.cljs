@@ -3,8 +3,23 @@
    Sanitization, TypeBox helpers, and generic tool-update callbacks."
   (:require [clojure.string :as str]
             [knoxx.backend.runtime.state :as runtime-state]
+            [malli.json-schema :as mjs]          ;; ← add this
             [knoxx.backend.http :refer [js-array-seq]]))
 
+;; ← add this
+(defn ->params
+  "Convert a Malli schema to a Pi tool :parameters JS object."
+  [schema]
+  (clj->js (mjs/transform schema)))
+(defn create-tool-obj [ name label description prompt prompt-guidelines params  execute  runtime config]
+
+  #js {:name name
+       :label label
+       :description description
+       :promptSnippet prompt
+       :promptGuidelines (clj->js prompt-guidelines)
+       :parameters (->params params)
+       :execute (partial execute runtime config)})
 (defn maybe-tool-update!
   "Call an on-update callback with a text status update."
   [f text]
@@ -14,6 +29,20 @@
 (defn type-optional
   [^js Type schema]
   (.Optional Type schema))
+
+(defn- replace-tool-name
+  [text original-name sanitized-name]
+  (some-> (str text)
+          (str/replace original-name sanitized-name)))
+
+(defn- sanitize-tool-guidelines
+  [guidelines original-name sanitized-name]
+  (let [items (if (array? guidelines) (array-seq guidelines) [])]
+    (clj->js
+     (mapv (fn [guideline]
+             (str "Use " sanitized-name " (canonical " original-name ") when "
+                  (replace-tool-name guideline original-name sanitized-name)))
+           items))))
 
 (defn sanitize-custom-tool-name
   [tool]
@@ -25,7 +54,15 @@
       (aset tool "name" sanitized)
       (aset tool "originalName" name)
       (when-let [description (some-> (aget tool "description") str)]
-        (aset tool "description" (str description " Original tool id: " name "."))))
+        (aset tool "description"
+              (str description " Call this tool as `" sanitized "`. Canonical tool id: `" name "`.")))
+      (when-let [snippet (some-> (aget tool "promptSnippet") str)]
+        (aset tool "promptSnippet"
+              (str "Call as `" sanitized "` (canonical `" name "`). "
+                   (replace-tool-name snippet name sanitized))))
+      (when-let [guidelines (aget tool "promptGuidelines")]
+        (aset tool "promptGuidelines"
+              (sanitize-tool-guidelines guidelines name sanitized))))
     tool))
 
 (defn sanitize-custom-tools

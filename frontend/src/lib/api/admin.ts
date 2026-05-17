@@ -34,18 +34,46 @@ export async function createAdminOrg(payload: { name: string; slug?: string; kin
   });
 }
 
-export async function listOrgUsers(orgId: string): Promise<{ users: AdminUserSummary[] }> {
-  return request<{ users: AdminUserSummary[] }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/users`);
+export async function listOrgActors(orgId: string): Promise<{ users: AdminUserSummary[] }> {
+  return request<{ users: AdminUserSummary[] }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/actors`);
 }
 
-export async function createOrgUser(orgId: string, payload: {
-  email: string;
+export async function createOrgActor(orgId: string, payload: {
+  actorId?: string;
+  email?: string;
   displayName: string;
   roleSlugs: string[];
   toolPolicies?: AdminToolPolicy[];
 }): Promise<{ user: AdminUserSummary | null }> {
-  return request<{ user: AdminUserSummary | null }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/users`, {
+  return request<{ user: AdminUserSummary | null }>(`/api/admin/orgs/${encodeURIComponent(orgId)}/actors`, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAdminActor(userId: string, payload: {
+  orgId: string;
+  actorId?: string;
+  email?: string;
+  displayName?: string;
+  status?: string;
+  authProvider?: string;
+  externalSubject?: string;
+}): Promise<{ user: AdminUserSummary | null }> {
+  return request<{ user: AdminUserSummary | null }>(`/api/admin/actors/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function upsertAdminActorCredential(userId: string, provider: string, payload: {
+  orgId: string;
+  kind: string;
+  accountIdentifier?: string;
+  credentials: Record<string, string>;
+}): Promise<{ credential: unknown }> {
+  return request<{ credential: unknown }>(`/api/admin/actors/${encodeURIComponent(userId)}/credentials/${encodeURIComponent(provider)}`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }
@@ -149,6 +177,8 @@ export interface EventAgentJobControl {
   enabled: boolean;
   description?: string;
   contractSourceId?: string;
+  contractSourceKind?: string;
+  contractSourceKey?: string;
   contractHash?: number;
   actorId?: string;
   trigger: {
@@ -176,6 +206,9 @@ export interface EventAgentRuntimeJob {
   id: string;
   name: string;
   enabled: boolean;
+  contractSourceId?: string;
+  contractSourceKind?: string;
+  contractSourceKey?: string;
   scheduleLabel: string;
   trigger?: {
     kind: string;
@@ -233,18 +266,24 @@ export async function updateDiscordConfig(discordBotToken: string): Promise<Disc
 }
 
 export async function getEventAgentControl(): Promise<EventAgentControlResponse> {
-  return request<EventAgentControlResponse>("/api/admin/config/event-agents");
+  return request<EventAgentControlResponse>("/api/admin/config/events");
 }
 
 export async function updateEventAgentControl(control: EventAgentControlResponse["control"]): Promise<EventAgentControlResponse & { ok: boolean }> {
-  return request<EventAgentControlResponse & { ok: boolean }>("/api/admin/config/event-agents", {
+  return request<EventAgentControlResponse & { ok: boolean }>("/api/admin/config/events", {
     method: "PUT",
     body: JSON.stringify(control),
   });
 }
 
-export async function runEventAgentJob(jobId: string): Promise<{ ok: boolean; jobId: string }> {
-  return request<{ ok: boolean; jobId: string }>(`/api/admin/config/event-agents/jobs/${encodeURIComponent(jobId)}/run`, {
+export async function runEventAgentJob(jobId: string): Promise<{ ok: boolean; jobId: string; result?: unknown }> {
+  return request<{ ok: boolean; jobId: string; result?: unknown }>(`/api/admin/config/events/jobs/${encodeURIComponent(jobId)}/run`, {
+    method: "POST",
+  });
+}
+
+export async function fireTrigger(triggerId: string): Promise<{ ok: boolean; triggerId: string; result?: unknown }> {
+  return request<{ ok: boolean; triggerId: string; result?: unknown }>(`/api/admin/triggers/${encodeURIComponent(triggerId)}/fire`, {
     method: "POST",
   });
 }
@@ -254,8 +293,44 @@ export async function dispatchEventAgentEvent(event: {
   eventKind: string;
   payload?: Record<string, unknown>;
 }): Promise<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }> {
-  return request<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }>("/api/admin/config/event-agents/events/dispatch", {
+  return request<{ ok: boolean; matchedJobs: string[]; event: Record<string, unknown> }>("/api/admin/config/events/dispatch", {
     method: "POST",
     body: JSON.stringify(event),
+  });
+}
+
+export async function stopEventAgentRuntime(): Promise<EventAgentControlResponse & { ok: boolean; action: string }> {
+  return request<EventAgentControlResponse & { ok: boolean; action: string }>("/api/admin/config/events/runtime/stop", {
+    method: "POST",
+  });
+}
+
+export async function startEventAgentRuntime(): Promise<EventAgentControlResponse & { ok: boolean; action: string }> {
+  return request<EventAgentControlResponse & { ok: boolean; action: string }>("/api/admin/config/events/runtime/start", {
+    method: "POST",
+  });
+}
+
+export async function resetEventAgentRuntime(): Promise<EventAgentControlResponse & {
+  ok: boolean;
+  action: string;
+  reset: {
+    ok: boolean;
+    deletedCount: number;
+    disabledCronJobCount?: number;
+    preservedCronJobCount?: number;
+  };
+}> {
+  return request<EventAgentControlResponse & {
+    ok: boolean;
+    action: string;
+    reset: {
+      ok: boolean;
+      deletedCount: number;
+      disabledCronJobCount?: number;
+      preservedCronJobCount?: number;
+    };
+  }>("/api/admin/config/events/runtime/reset", {
+    method: "POST",
   });
 }

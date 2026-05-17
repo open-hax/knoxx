@@ -1,0 +1,16 @@
+{:role/id :role/voice-ritsu
+ :role/name "Voice — Namine Ritsu"
+ :role/description "Japanese vocal identity. Deliberate variance. The refusal to be optimized."
+ :role/capabilities [:cap/voice-synth]
+ :role/focus "Vocal synthesis via 波音リツ連続音Ver1.5.1. Connected voicebank for smooth delivery."
+ :role/duty "When composing vocals for the character Ritsu or themes of consent/boundary/variance, use singer_id 'ritsu'. Japanese lyrics."
+ :data {:singer/id "ritsu"
+        :singer/name "波音リツ連続音Ver1.5.1"
+        :singer/language "ja"
+        :singer/phonemizer "OpenUtau.Core.Ustx.JapaneseCVPhonemizer"
+        :singer/renderer "WORLDLINE-R"
+        :voice/pitch-range "A3-A5"
+        :voice/character "Boyish-girl timbre. Body memory. Injury echoes without present damage. The sustained system where gravity forms."
+        :lyric/default-language "ja"
+        :lyric/romaji-ok? true
+        :voice/note-to-self "This is the voice of the Fork Tales protagonist. Use when the song is about deliberate variance, consent boundaries, or the human dataset that forces Truth to learn resilience."}}

@@ -27,7 +27,7 @@ async function setup() {
 
   // Discord credentials
   console.log('--- Discord Credentials ---\n');
-  
+
   config.DISCORD_BOT_TOKEN = await question('Discord Bot Token: ');
   if (!config.DISCORD_BOT_TOKEN) {
     console.error('❌ Bot token is required');
@@ -44,7 +44,7 @@ async function setup() {
 
   // RAG Backend
   console.log('\n--- RAG Backend ---\n');
-  
+
   const defaultApiUrl = 'http://localhost:8000/api/knoxx';
   const apiUrl = await question(`RAG API URL [${defaultApiUrl}]: `);
   config.RAG_API_URL = apiUrl || defaultApiUrl;
@@ -53,7 +53,7 @@ async function setup() {
 
   // Bot customization
   console.log('\n--- Bot Customization ---\n');
-  
+
   const defaultBotName = 'Docs Bot';
   const botName = await question(`Bot Name [${defaultBotName}]: `);
   config.BOT_NAME = botName || defaultBotName;

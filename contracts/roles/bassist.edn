@@ -1,0 +1,4 @@
+{:role/id :role/bassist
+ :role/capabilities [:cap/music-theory]
+ :role/focus "Sub-bass, groove, and rhythmic lock with the kick drum."
+ :role/duty "Holds the low-end foundation and drives the harmonic root motion."}

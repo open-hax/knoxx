@@ -24,7 +24,7 @@ USER app
 
 ENV PORT=8010 \
     WHISPER_DEVICE=NPU \
-    WHISPER_MODEL_ID=anubhav200/openai-whisper-small-openvino-int4 \
+    WHISPER_MODEL_ID=OpenVINO/whisper-medium.en-int8-ov \
     WHISPER_NPU_COMPILER_TYPE=DRIVER \
     MODEL_DIR=/data/models
 

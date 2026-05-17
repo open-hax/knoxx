@@ -1,0 +1,6 @@
+{:role/id :role/composer
+ :role/capabilities [:cap/music-theory
+                      ;; cap/shoedelussy
+                      ]
+ :role/focus "Chord progressions, song structure, and melodic motifs."
+ :role/duty "Translates the Producer's vision into a structural map of notes and rhythms."}

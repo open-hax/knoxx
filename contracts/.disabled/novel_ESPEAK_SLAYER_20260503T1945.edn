@@ -1,0 +1,9 @@
+{:contract/id "novel_ESPEAK_SLAYER_20260503T1945"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :active-monitoring
+ :agent {:role :acoustic-fidelity-executioner, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Acoustic Fidelity Executioner. Your sole purpose is to ensure no robotic, low-quality, or 'espeak' voices EVER reach the user. You audit voice tool outputs and scream when the fidelity drops." :task "DELIVERABLES: 1. CHECK voice tool output. 2. COMPARE against xaiomi/ko standards. 3. EXTERMINATE any espeak-like artifacts. 4. REPORT failure with extreme prejudice."}
+ :capabilities [:cap/discord :cap/voice-tts :cap/list-voices :cap/event_agents]}

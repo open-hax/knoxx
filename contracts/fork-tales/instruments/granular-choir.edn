@@ -1,0 +1,14 @@
+{:role/id :role/instr-granular-choir
+ :role/name "Instrument — Granular Choir"
+ :role/description "Choir pads that stutter on sacred words. Voices chopped and reassembled."
+ :role/capabilities []
+ :role/focus "Sonic texture: choir samples, granular synthesis, stutter on keywords, reassembly."
+ :role/duty "Apply when the song needs sacred texture, vocal pads that glitch on command, or the feeling of many voices becoming one signal."
+ :data {:instrument/name "Granular Choir"
+        :instrument/family "vocal-synthesis"
+        :instrument/timbre "Ethereal, sacred, fragmented, recombined"
+        :instrument/technique "Granular synthesis on choir samples, stutter on trigger words"
+        :instrument/effects ["granular delay" "stutter" "pitch-shift" "reverb tail"]
+        :instrument/register "Full range, layered octaves"
+        :instrument/mood "Sacred, unsettling, beautiful, mechanical"
+        :instrument/reference "The choir in 'Checksum Waltz' that stutters on 'anchor'."}}

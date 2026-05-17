@@ -1,7 +1,7 @@
 (ns kms-ingestion.drivers.promptdb
   "Ingestion driver for promptdb — structured EDN epistemic records.
 
-   Unlike the local/pi-sessions drivers which chunk text to embeddings,
+   Unlike the local/eta-mu-sessions drivers which chunk text to embeddings,
    this driver performs schema-aware structured ingestion:
      1. Walk the filesystem path for .edn files
      2. Parse each file as EDN (one record or a vector of records)

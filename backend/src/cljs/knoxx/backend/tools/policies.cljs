@@ -6,7 +6,9 @@
    Neither contract class grants tools — only the capability/role path does.
    All functions are pure and sync."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [cljs.reader :as reader]
+            [knoxx.backend.contracts.loader :as contracts-loader]
             [knoxx.backend.tools.registry :as tool-registry]
             ["node:fs" :as node-fs]
             ["node:path" :as path]))
@@ -21,7 +23,7 @@
 
 (defn tool-call-dir
   [config]
-  (let [cwd (.cwd node-fs)
+  (let [cwd (if (exists? js/process) (.cwd js/process) "")
         candidates (->> [(or (:contracts-dir config) "contracts")
                          "../contracts"
                          "packages/agents/knoxx/contracts"
@@ -32,7 +34,7 @@
 
 (defn policy-dir
   [config]
-  (let [cwd (.cwd node-fs)
+  (let [cwd (if (exists? js/process) (.cwd js/process) "")
         candidates (->> [(or (:contracts-dir config) "contracts")
                          "../contracts"
                          "packages/agents/knoxx/contracts"
@@ -50,10 +52,8 @@
 
 (defn load-policy-contract!
   [config contract-id]
-  (when-let [dir (policy-dir config)]
-    (let [file-path (path/join dir (str contract-id ".edn"))]
-      (when (.existsSync node-fs file-path)
-        (read-edn-sync file-path)))))
+  (some-> (contracts-loader/find-contract-record-sync config "policies" contract-id)
+          :contract))
 
 (defn load-tool-call-contracts!
   [config contract-ids]
@@ -94,12 +94,11 @@
       (vec (set/difference granted-tool-ids allowed)))))
 
 (defn policy-contract-denied
-  [contract granted-tool-ids]
-  (let [deny-set (->> (get-in contract [:policy/denied] [])
-                       (map tool-registry/normalize-tool-id)
-                       (remove str/blank?)
-                       set)]
-    (vec (set/intersection deny-set granted-tool-ids))))
+  [contract _granted-tool-ids]
+  (->> (get-in contract [:policy/denied] [])
+       (map tool-registry/normalize-tool-id)
+       (remove str/blank?)
+       vec))
 
 (defn policy-contract-reason
   [contract tool-id]

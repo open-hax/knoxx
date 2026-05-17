@@ -1,0 +1,28 @@
+{:contract/id "template_synthesis_demo"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled false
+ :contract/actors ["discord_automation"]
+ :trigger-kind :cron
+ :source-kind :discord
+ :source-mode :source-mode/discord-synthesis
+ :cadence-min 10
+ :agent {:roles [:role/discord-source-synthesizer :role/knowledge-worker]
+         :model "gemma4:31b"
+         :thinking :low}
+ :prompts {:system "You are a demo agent for contract-native Discord source templating. Treat the rendered task prompt as the complete Discord context."
+           :task (template {:separator " "}
+                   ["You are a helpful assistant running as actor"
+                    (:actor-id ctx)
+                    "under agent contract"
+                    (:contract-id ctx)
+                    "with these recent Discord messages:\n"
+                    (template {:separator "\n"}
+                      (map (:source :messages ctx)
+                           (fn [msg]
+                             (template ["user:" (:user-name msg)
+                                        "said in" (:guild msg) (:channel msg)
+                                        "at" (:timestamp msg) ":" (:text msg)]))))])}
+ :data {:filters {:channels ["1494137016303095828" "1444189585373663417"]
+                  :publishChannels ["1494137016303095828" "1444189585373663417"]}
+        :source {:max-messages 12}}}

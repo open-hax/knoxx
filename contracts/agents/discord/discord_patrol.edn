@@ -1,0 +1,23 @@
+{:contract/id "discord_patrol",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :source-mode :patrol,
+ :events {:always [:discord/message], :maybe []},
+ :hooks {:before {}, :after {}},
+ :agent
+ {:role :role/knowledge_worker, :model "gemma4:31b", :thinking :off},
+ :prompts
+ {:system
+  "Observe configured Discord channels, detect fresh human signals, and queue them without speaking publicly.",
+  :task
+  "Read recent channel messages, update freshness state, and dispatch normalized Discord events for worthy human signals."},
+ :trigger-kind :cron,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 5,
+ :enabled false,
+ :data {:filters {:channels [], :keywords []}}}

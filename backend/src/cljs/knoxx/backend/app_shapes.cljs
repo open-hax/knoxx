@@ -60,6 +60,21 @@
   [policies]
   (vec (keep normalize-tool-policy (or policies []))))
 
+(defn- memory-hydration-spec
+  [spec]
+  (or (:memory_hydration spec)
+      (:memory-hydration spec)
+      (:memoryHydration spec)
+      (get-in spec [:memory :passive-hydration])
+      (get-in spec [:memory :passiveHydration])))
+
+(defn- context-policy-spec
+  [spec]
+  (or (:context_policy spec)
+      (:context-policy spec)
+      (:contextPolicy spec)
+      (:context spec)))
+
 (defn- normalize-agent-spec
   [value]
   (let [spec (some-> value (js->clj :keywordize-keys true))
@@ -104,8 +119,14 @@
                                                    (:toolPolicies spec)))
         resource-policies (or (:resource_policies spec)
                               (:resource-policies spec)
-                              (:resourcePolicies spec))]
-    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies)
+                              (:resourcePolicies spec))
+        sources (or (:sources spec)
+                    (:runtime_sources spec)
+                    (:runtime-sources spec)
+                    (:runtimeSources spec))
+        memory-hydration (memory-hydration-spec spec)
+        context-policy (context-policy-spec spec)]
+    (when (or contract-id actor-id role system-prompt task-prompt model thinking-level (seq tool-policies) resource-policies (seq sources) memory-hydration context-policy)
       {:contract-id contract-id
        :actor-id actor-id
        :role role
@@ -114,7 +135,10 @@
        :model model
        :thinking-level thinking-level
        :tool-policies tool-policies
-       :resource-policies resource-policies})))
+       :resource-policies resource-policies
+       :sources sources
+       :memory-hydration memory-hydration
+       :context-policy context-policy})))
 
 (defn- normalize-content-part-type
   [value]
@@ -186,7 +210,7 @@
         raw-content-parts (normalize-content-parts (or (aget body "contentParts")
                                                       (aget body "content_parts")
                                                       (aget body "content-parts")))
-        content-parts (auto-detect-content-parts message raw-content-parts)]
+        content-parts raw-content-parts]
     {:message message
      :conversation-id (or (aget body "conversationId")
                          (aget body "conversation_id"))
@@ -200,6 +224,10 @@
                          (aget body "reasoningEffort")
                          (aget body "reasoning_effort"))
      :content-parts content-parts
+     :template-context (some-> (or (aget body "templateContext")
+                                   (aget body "template_context")
+                                   (aget body "template-context"))
+                               (js->clj :keywordize-keys true))
      :mode (or (aget body "mode") "direct")
      :agent-spec (normalize-agent-spec (or (aget body "agentSpec")
                                            (aget body "agent_spec")))
@@ -209,16 +237,36 @@
 
 (defn normalize-control-body
   [body]
-  {:message (or (aget body "message") "")
-   :conversation-id (or (aget body "conversationId")
-                        (aget body "conversation_id"))
-   :session-id (or (aget body "sessionId")
-                   (aget body "session_id"))
-   :run-id (or (aget body "runId")
-               (aget body "run_id"))})
+  (let [metadata (or (aget body "metadata")
+                     (aget body "lineage")
+                     #js {})]
+    {:message (or (aget body "message") "")
+     :conversation-id (or (aget body "conversationId")
+                          (aget body "conversation_id"))
+     :session-id (or (aget body "sessionId")
+                     (aget body "session_id"))
+     :run-id (or (aget body "runId")
+                 (aget body "run_id"))
+     :actor-id (some-> (or (aget body "actorId")
+                           (aget body "actor_id")
+                           (aget body "actor-id"))
+                         str
+                         str/trim
+                         not-empty)
+     :metadata (js->clj metadata :keywordize-keys true)}))
 
 (defn route!
-  [app method url handler]
-  (.route app #js {:method method
-                   :url url
-                   :handler handler}))
+  "Register a Fastify route. handler-or-opts may be either:
+   - a plain function  → classic-mode (no preHandlers)
+   - a JS options obj  → preHandler-mode from defroute macro;
+     its keys are merged into the base route options so that
+     @fastify/websocket receives a proper :handler fn, not a
+     nested object (which causes `handler.call is not a function`)."
+  [app method url handler-or-opts]
+  (if (fn? handler-or-opts)
+    (.route app #js {:method method
+                     :url    url
+                     :handler handler-or-opts})
+    (.route app (.assign js/Object
+                         #js {:method method :url url}
+                         handler-or-opts))))

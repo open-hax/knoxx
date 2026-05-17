@@ -1,0 +1,44 @@
+<<svgsvg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Circle -->
+  <<circlecircle cx="200" cy="200" r="190" fill="#2c3e50" stroke="#f1c40f" stroke-width="8" />
+  <<circlecircle cx="200" cy="200" r="170" fill="none" stroke="#f1c40f" stroke-width="2" stroke-dasharray="10,5" />
+  
+  <!-- Inner Seal -->
+  <<circlecircle cx="200" cy="200" r="140" fill="#34495e" stroke="#f1c40f" stroke-width="4" />
+  
+  <!-- The Brain (Simplified/Abstract) -->
+  <<pathpath d="M150 220 Q160 160 200 160 Q240 160 250 220 Q260 260 200 260 Q140 260 150 220" fill="#ecf0f1" stroke="#bdc3c7" stroke-width="2" />
+  <<pathpath d="M170 200 Q180 180 200 180 Q220 180 230 200" stroke="#bdc3c7" fill="none" stroke-width="2" />
+  <<pathpath d="M160 230 Q180 220 200 230 Q220 220 240 230" stroke="#bdc3c7" fill="none" stroke-width="2" />
+  
+  <!-- Glitch Effects/Symmetry Break -->
+  <<rectrect x="180" y="150" width="40" height="5" fill="#e74c3c" opacity="0.7" />
+  <<rectrect x="170" y="270" width="60" height="5" fill="#3498db" opacity="0.7" />
+  <<rectrect x="230" y="200" width="20" height="5" fill="#2ecc71" opacity="0.7" />
+  
+  <!-- Text -->
+  <<defsdefs>
+    <<pathpath id="textPathUpper" d="M 200, 40 a 160,160 0 1,1 0,320 a 160,160 0 1,1 0,-320" />
+    <<pathpath id="textPathLower" d="M 200, 360 a 160,160 0 1,1 0,-320 a 160,160 0 1,1 0,320" />
+  </defs>
+  
+  <<texttext fill="#f1c40f" font-family="serif" font-size="24" font-weight="bold">
+    <<texttextPath href="#textPathUpper" startOffset="25%" text-anchor="middle">
+      CERTIFIED COGNITIVE COLLAPSE • 
+    </textPath>
+  </text>
+  
+  <<texttext fill="#f1c40f" font-family="serif" font-size="24" font-weight="bold">
+    <<texttextPath href="#textPathLower" startOffset="25%" text-anchor="middle">
+      BRAIN DAMAGE ACCEPTANCE DIVISION •
+    </textPath>
+  </text>
+  
+  <!-- Center Badge -->
+  <<texttext x="200" y="210" text-anchor="middle" fill="#f1c40f" font-family="serif" font-size="18" font-weight="bold">
+    100% FRIED
+  </text>
+  <<texttext x="200" y="230" text-anchor="middle" fill="#bdc3c7" font-family="sans-serif" font-size="12">
+    Est. 2026
+  </text>
+</svg>

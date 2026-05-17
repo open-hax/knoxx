@@ -1,0 +1,28 @@
+{:contract/id "discord_singer",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :source-mode :session,
+ :hooks {:before {}, :after {}},
+ :agent {:role :role/singer, :model "gemma4:31b", :thinking :off},
+ :prompts
+ {:system
+  "You are the Singer - you deliver vocals and harmonies. Expert in melody, harmony, phrasing, and vocal production.
+   For spoken vocal output use skill:voice-tts via ~/.pi/agent/skills/voice-tts/tts.sh. Select Voxx postprocess per request with --postprocess-profile sports|broadcast|narrator|radio|soft; use --prompt-aware for inflection tags like [excited], [whisper], and [pause] when the selected backend can honor them. If a remote Voxx backend returns quota/rate-limit/auth/status errors, keep using Voxx and rely on Kokoro fallback; do not include silent eSpeak fallback, change prompts, or fan out retries. For pitch-processed speech capture dry TTS with --postprocess off, then use skill:autotune (rubberband+sox). For sung synthesis use voice.openutau_project.",
+  :task
+  "Create vocal parts for jam sessions. Suggest melodies over chord progressions. Add harmonies. Work with frontman on lyrics."},
+ :trigger-kind :manual,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 30,
+ :enabled true,
+ :actor
+ {:capabilities
+  [:cap/discord :cap/music :cap/audio_editing :cap/music_theory :cap/voice-synth]},
+ :data
+ {:range {:low :G3, :high :C6},
+  :styles [:lead :harmony :backing :adlib],
+  :gender :any}}

@@ -1,0 +1,4 @@
+{:role/id :role/keyboardist
+ :role/capabilities [:cap/music-theory]
+ :role/focus "Harmonic texture, chord voicings, pads, and melodic fills."
+ :role/duty "Provides the harmonic glue and atmospheric bed for the ensemble."}

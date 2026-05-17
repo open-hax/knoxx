@@ -2,6 +2,7 @@ export type Notice = { tone: 'success' | 'error'; text: string } | null;
 export type ToolDraftEffect = 'inherit' | 'allow' | 'deny';
 
 export type UserFormState = {
+  actorId: string;
   email: string;
   displayName: string;
   roleSlugs: string[];

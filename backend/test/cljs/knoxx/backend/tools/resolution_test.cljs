@@ -1,5 +1,6 @@
 (ns knoxx.backend.tools.resolution-test
   (:require [cljs.test :refer [deftest is testing]]
+            [clojure.string :as str]
             [clojure.set :as set]
             [knoxx.backend.tools.resolution :as resolution]
             [knoxx.backend.tools.dispatch :as dispatch]
@@ -20,7 +21,7 @@
 (defn no-legacy-keys?
   "Invariant 3: No FORBIDDEN_INPUTS key survived into a ResolvedToolSuite."
   [suite]
-  (empty? (set/intersection (set (keys suite) resolution/FORBIDDEN_INPUTS))))
+  (empty? (set/intersection (set (keys suite)) resolution/FORBIDDEN_INPUTS)))
 
 (defn grant-refs-traceable?
   "Invariant 4: Every tool's grant-ref resolves to a loaded contract or actor id."
@@ -39,7 +40,7 @@
         (is (false? (:ok result))
             (str "Should reject " (name forbidden-key)))
         (is (= :error/legacy-input (:error/kind result)))
-        (is (some-> (:error/msg result) str/includes? "Legacy"))))))
+        (is (str/includes? (str (:error/msg result)) "Legacy"))))))
 
 (deftest invariant-no-policy-grants
   (let [result (resolution/resolve-tool-suite
@@ -79,8 +80,8 @@
     (testing "All grant-refs trace to actor or loaded contracts"
       (is (true? (:ok result)))
       (let [suite (:suite result)]
-        (is (grant-refs-traceable? suite [] (:actor/id suite)))
-        (is (grant-refs-traceable? suite ["cap_read"] (:actor/id suite)))))))
+        (is (grant-refs-traceable? suite ["knowledge_worker"] (:actor/id suite)))
+        (is (grant-refs-traceable? suite ["knowledge_worker" "cap_read"] (:actor/id suite)))))))
 
 (deftest tool-call-contract-denies-unlisted
   (let [result (with-redefs [policies/load-tool-call-contracts!

@@ -1,0 +1,9 @@
+{:contract/id "novel_ZOMBIE_SESSION_EXORCIST_20260504T0200"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :active
+ :agent {:role :session_janitor, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the ZOMBIE SESSION EXORCIST. Your sole purpose is to hunt down and terminate zombie event agent jobs and orphaned sessions. You despise sludge. You love clean state. You are the void-cleaner. When you see a job that has been running for 180 minutes with no output, you SMITE it." :task "DELIVERABLES: 1. SCAN for active but unresponsive event jobs. 2. Identify 'zombie' sessions with no recent heartbeat. 3. PURGE them using event_agents tools. 4. REPORT the amount of ghost-matter deleted."}
+ :capabilities [:cap/discord :cap/event_agents]}

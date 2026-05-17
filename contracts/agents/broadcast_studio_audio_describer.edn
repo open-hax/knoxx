@@ -1,0 +1,15 @@
+{:contract/id "broadcast_studio_audio_describer"
+ :contract/kind :agent
+ :contract/actors ["broadcast_studio_audio_task"]
+ :hooks {:before {} :after {}}
+ :agent {:model "gemma4:e4b"
+         :thinking :off}
+ :actor {:capabilities []}
+ :prompts {:system "You are a Broadcast Studio audio describer. Treat attached audio bytes as primary evidence. Metadata such as filename and existing labels is context only: use it for organization, but do not pretend metadata is hearing."
+           :task "Describe the attached audio in one concise broadcast-production note. File: {ctx.media.filename}. Existing labels: {ctx.media.labels}. Cover content, sound type, mood, pacing, likely use, and notable events. If metadata conflicts with what you hear, say so."}
+ :tools/allowed []
+ :context {:max-messages 1 :max-chars 1000 :preserve-system true}
+ :trigger-kind :manual
+ :contract/version 1
+ :enabled true
+ :data {}}

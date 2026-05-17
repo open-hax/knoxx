@@ -2,7 +2,10 @@
   (:require [clojure.string :as str]
             [knoxx.backend.authz :as authz]
             [knoxx.backend.util.time :as time]
-            [knoxx.backend.openplanner-memory :as op-memory]))
+            [knoxx.backend.openplanner-memory :as op-memory]
+            ["node:crypto" :as crypto]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]))
 
 (defonce database-state* (atom nil))
 
@@ -21,12 +24,12 @@
   (str (or (aget request "headers" "x-knoxx-session-id") "")))
 
 (defn database-root-dir
-  [runtime config]
-  (.resolve (aget runtime "path") (:workspace-root config) ".knoxx" "databases"))
+  [_runtime config]
+  (.resolve path (:workspace-root config) ".knoxx" "databases"))
 
 (defn database-docs-dir
   [runtime config db-id]
-  (.join (aget runtime "path") (database-root-dir runtime config) db-id "docs"))
+  (.join path (database-root-dir runtime config) db-id "docs"))
 
 (defn database-owner-key
   [auth-context]
@@ -93,8 +96,8 @@
    @database-state*))
 
 (defn ensure-dir!
-  [runtime dir-path]
-  (.mkdir (aget runtime "fs") dir-path #js {:recursive true}))
+  [_runtime dir-path]
+  (.mkdir fs dir-path #js {:recursive true}))
 
 (defn profile-can-access?
   ([profile session-id] (profile-can-access? profile nil session-id))
@@ -152,24 +155,22 @@
     (if (str/blank? cleaned) "upload.bin" cleaned)))
 
 (defn create-db-id
-  [runtime name]
+  [_runtime name]
   (let [base (-> (str/lower-case (str name))
                  (str/replace #"[^a-z0-9]+" "-")
                  (str/replace #"^-+|-+$" ""))
         prefix (if (str/blank? base) "db" base)]
-    (str prefix "-" (.slice (.randomUUID (aget runtime "crypto")) 0 8))))
+    (str prefix "-" (.slice (.randomUUID crypto) 0 8))))
 
 (defn list-files-recursive!
   [runtime dir-path]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        read-promise (.readdir node-fs dir-path #js {:withFileTypes true})]
+  (let [read-promise (.readdir fs dir-path #js {:withFileTypes true})]
     (-> read-promise
         (.then (fn [entries]
                  (.then (js/Promise.all
                          (clj->js
                           (for [entry (js-array-seq entries)]
-                            (let [full-path (.join node-path dir-path (.-name entry))]
+                            (let [full-path (.join path dir-path (.-name entry))]
                               (if (.isDirectory entry)
                                 (list-files-recursive! runtime full-path)
                                 (js/Promise.resolve #js [full-path]))))))
@@ -190,14 +191,12 @@
 
 (defn document-entry!
   [runtime config profile db-id abs-path]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        docs-path (:docsPath profile)]
-    (-> (.stat node-fs abs-path)
+  (let [docs-path (:docsPath profile)]
+    (-> (.stat fs abs-path)
         (.then (fn [stats]
-                 (let [rel-path (normalize-relative-path (.relative node-path docs-path abs-path))
+                 (let [rel-path (normalize-relative-path (.relative path docs-path abs-path))
                        meta (indexed-meta runtime config db-id rel-path)]
-                   {:name (.basename node-path abs-path)
+                   {:name (.basename path abs-path)
                     :relativePath rel-path
                     :size (or (aget stats "size") 0)
                     :indexed (boolean meta)
@@ -241,10 +240,7 @@
   "Ingest documents into OpenPlanner for embedding and vector storage.
    Replaces previous metadata-only tracking with OpenPlanner /v1/documents indexing."
   [runtime config profile {:keys [full selected-files]}]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        node-crypto (aget runtime "crypto")
-        db-id (:id profile)
+  (let [db-id (:id profile)
         docs-path (:docsPath profile)
         project (or (:project-name config) "devel")]
     (-> (list-files-recursive! runtime docs-path)
@@ -254,7 +250,7 @@
                           (into #{} (map normalize-relative-path) selected-files))
                  queue (->> all-abs
                             (map (fn [abs]
-                                   (let [rel (normalize-relative-path (.relative node-path docs-path abs))]
+                                   (let [rel (normalize-relative-path (.relative path docs-path abs))]
                                      {:abs abs :rel rel})))
                             (filter (fn [{:keys [rel]}]
                                       (or full (contains? wanted rel))))
@@ -297,7 +293,7 @@
                               (update-in [:records db-id :history]
                                          (fn [history]
                                            (->> (conj (vec history)
-                                                      {:id (.randomUUID node-crypto)
+                                                      {:id (.randomUUID crypto)
                                                        :completedAt (time/now-iso)
                                                        :mode mode
                                                        :chunksUpserted 0
@@ -317,7 +313,7 @@
                (-> (.all js/Promise
                          (clj->js
                           (map (fn [{:keys [abs rel]}]
-                                 (-> (.readFile node-fs abs "utf8")
+                                 (-> (.readFile fs abs "utf8")
                                      (.then (fn [content]
                                               {:rel rel
                                                :content content
@@ -362,7 +358,7 @@
                                      chunk-count (reduce + 0 (map (comp file-chunk-count :content) indexed-items))
                                      started-ms (.getTime (js/Date. started-at))
                                      duration-seconds (max 0 (js/Math.round (/ (- (.now js/Date) started-ms) 1000)))
-                                     history-item {:id (.randomUUID node-crypto)
+                                     history-item {:id (.randomUUID crypto)
                                                    :completedAt (time/now-iso)
                                                    :mode mode
                                                    :chunksUpserted chunk-count
@@ -422,21 +418,19 @@
 (defn priority-ingest-workspace-files!
   "Immediately ingest specific workspace files into OpenPlanner, bypassing queues.
    Takes workspace-relative paths, reads them from disk, and sends to /v1/documents.
-   Returns {:ok true, :indexed N, :failed M, :files [...]} summary."
-  [runtime config {:keys [paths project source]}]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        workspace-root (:workspace-root config)
+  Returns {:ok true, :indexed N, :failed M, :files [...]} summary."
+  [_runtime config {:keys [paths project source]}]
+  (let [workspace-root (:workspace-root config)
         project (or project (:project-name config) "devel")
         source (or source "knoxx-priority-ingest")]
     (-> (js/Promise.all
          (clj->js
           (map (fn [rel-path]
-                 (let [abs-path (.resolve node-path workspace-root rel-path)]
-                   (-> (.stat node-fs abs-path)
+                 (let [abs-path (.resolve path workspace-root rel-path)]
+                   (-> (.stat fs abs-path)
                        (.then (fn [stat]
                                 (if (and (.isFile stat) (text-like-path? abs-path))
-                                  (-> (.readFile node-fs abs-path "utf8")
+                                  (-> (.readFile fs abs-path "utf8")
                                       (.then (fn [content]
                                                {:rel rel-path
                                                 :abs abs-path

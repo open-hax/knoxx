@@ -1,0 +1,4 @@
+{:role/id :role/music-producer
+ :role/capabilities [:cap/music-theory :cap/sonic-design :cap/music :cap/agent-dispatch :cap/library-curator]
+ :role/focus "Sonic coherence, emotional arc, and technical direction."
+ :role/duty "Orchestrates the ensemble by delegating specific tasks to the band members and pushes work toward concrete audio artifacts when the composition calls for it."}

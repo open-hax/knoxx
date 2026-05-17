@@ -1,0 +1,6 @@
+{:role/id :role/test-role
+ :role/name "Test Role"
+ :role/description "A role for testing."
+ :role/capabilities [:cap/read :cap/write]
+ :role/permissions []
+ :prompts {:system "You have the test role."}}

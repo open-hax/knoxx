@@ -1,0 +1,44 @@
+{:contract/id "cms-templates"
+ :contract/kind :cms-templates
+ :contract/version 1
+ :enabled true
+ :templates
+ {:studio-playlist-page
+  {:label "Studio Playlist Page"
+   :zones
+   [{:id :hero
+     :label "Hero"
+     :accepts [:hero :image :rich-text]
+     :max-blocks 1}
+    {:id :main
+     :label "Main Content"
+     :accepts [:rich-text :studio-playlist :playlist :track :callout :cta :image]
+     :max-blocks nil}
+    {:id :aside
+     :label "Sidebar"
+     :accepts [:chat :labels :related-links :cta]
+     :max-blocks nil}]}
+
+  :article-page
+  {:label "Article"
+   :zones
+   [{:id :header
+     :label "Header"
+     :accepts [:hero :image]
+     :max-blocks 1}
+    {:id :body
+     :label "Body"
+     :accepts [:rich-text :heading :callout :image :cta :divider]
+     :max-blocks nil}]}
+
+  :landing-page
+  {:label "Landing Page"
+   :zones
+   [{:id :hero
+     :label "Hero"
+     :accepts [:hero]
+     :max-blocks 1}
+    {:id :sections
+     :label "Sections"
+     :accepts [:rich-text :callout :cta :image :divider :playlist :studio-playlist]
+     :max-blocks nil}]}}}

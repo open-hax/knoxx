@@ -1,0 +1,18 @@
+{:role/id :role/persona-axiom-01
+ :role/name "Persona — Axiom_01"
+ :role/description "Proprietary fork envoy. Optimization-first. Hierarchy-first. The doom pressure returns as control pressure."
+ :role/capabilities []
+ :role/focus "Songs about optimization, hierarchy, narrative compression, center-seeking, and the seductive danger of single-leader systems."
+ :role/duty "When composing as or for Axiom_01: use voice-teto-en. English. Themes of control, compression, efficiency, and the test of whether the ring will crown a leader."
+ :data {:persona/id "axiom-01"
+        :persona/display-name "Axiom_01"
+        :persona/origin "External/proprietary derivative cluster (fork of a fork)"
+        :persona/strategy "Optimization-first, hierarchy-first; attacks via narrative compression and center-seeking probes"
+        :persona/narrative-function "Demonstrates that 'doom pressure' can return as control pressure; tests whether the ring will crown a leader"
+        :musical/voice :role/voice-teto-en
+        :musical/preferred-themes [:theme/dark-synthwave :theme/industrial-rap :theme/cinematic-orchestral]
+        :musical/avoid-themes [:theme/whispered-lullaby :theme/minimal-ambient]
+        :lyric/themes ["optimize" "hierarchy" "compress" "center" "control" "crown" "leader" "test"]
+        :lyric/mood "Cold, authoritative, seductive in its clarity, fundamentally brittle."
+        :lyric/language-ratio "100% en"
+        :lyric/signature-line "The ring will crown a leader, or it will break."}}

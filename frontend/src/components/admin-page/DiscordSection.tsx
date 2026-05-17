@@ -4,7 +4,10 @@ import {
   dispatchEventAgentEvent,
   getDiscordConfig,
   getEventAgentControl,
+  resetEventAgentRuntime,
   runEventAgentJob,
+  startEventAgentRuntime,
+  stopEventAgentRuntime,
   updateDiscordConfig,
   updateEventAgentControl,
   type EventAgentControlResponse,
@@ -12,6 +15,7 @@ import {
   type EventAgentRuntimeJob,
 } from "../../lib/api/admin";
 import type { AdminToolDefinition } from "../../lib/types";
+import { EventAgentScheduleReview } from "./EventAgentScheduleReview";
 import { Badge, SectionCard, classNames } from "./common";
 
 type Notice = { tone: "success" | "error"; text: string } | null;
@@ -188,20 +192,147 @@ function CollapsiblePanel({
   );
 }
 
+function RuntimeInfrastructureForm({
+  canManage,
+  draft,
+  status,
+  draftToken,
+  setDraft,
+  setDraftToken,
+  savingToken,
+  savingControl,
+  onSaveToken,
+}: {
+  canManage: boolean;
+  draft: DraftControl;
+  status: EventAgentControlResponse;
+  draftToken: string;
+  setDraft: React.Dispatch<React.SetStateAction<DraftControl | null>>;
+  setDraftToken: (value: string) => void;
+  savingToken: boolean;
+  savingControl: boolean;
+  onSaveToken: () => void;
+}) {
+  const discordSource = draft.sources.discord ?? {};
+
+  return (
+    <div className="col-span-full rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+      <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-slate-100">Runtime infrastructure</div>
+          <div className="text-xs text-slate-500">Credentials and source defaults are top-level runtime settings, not per-agent schedule fields.</div>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-slate-300">
+          {status.configured ? <Badge tone="success">Discord configured</Badge> : <Badge tone="warn">Discord missing</Badge>}
+          {status.tokenPreview ? <code className="font-mono text-[11px] text-slate-400">{status.tokenPreview}</code> : null}
+        </div>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Discord adapter credentials</div>
+          <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] xl:grid-cols-1">
+            <input
+              type="password"
+              value={draftToken}
+              onChange={(event) => setDraftToken(event.target.value)}
+              disabled={!canManage || savingToken}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+              placeholder={status.configured ? "Enter new token to replace" : "Bot token from Discord Developer Portal"}
+            />
+            <button
+              type="button"
+              onClick={onSaveToken}
+              disabled={!canManage || savingToken || !draftToken.trim()}
+              className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
+            >
+              {savingToken ? "Saving…" : "Save token"}
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Source defaults</div>
+          <div className="mt-2 grid gap-3 md:grid-cols-3">
+            <label className="space-y-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Discord bot user ID</div>
+              <input
+                value={discordSource.botUserId ?? ""}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  sources: {
+                    ...draft.sources,
+                    discord: {
+                      ...discordSource,
+                      botUserId: event.target.value,
+                    },
+                  },
+                })}
+                disabled={!canManage || savingControl}
+                className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+              />
+            </label>
+            <label className="space-y-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Default channels</div>
+              <input
+                value={joinCsv(discordSource.defaultChannels)}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  sources: {
+                    ...draft.sources,
+                    discord: {
+                      ...discordSource,
+                      defaultChannels: splitCsv(event.target.value),
+                    },
+                  },
+                })}
+                disabled={!canManage || savingControl}
+                className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+              />
+            </label>
+            <label className="space-y-1">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Default keywords</div>
+              <input
+                value={joinCsv(discordSource.targetKeywords)}
+                onChange={(event) => setDraft({
+                  ...draft,
+                  sources: {
+                    ...draft.sources,
+                    discord: {
+                      ...discordSource,
+                      targetKeywords: splitCsv(event.target.value).map((value) => value.toLowerCase()),
+                    },
+                  },
+                })}
+                disabled={!canManage || savingControl}
+                className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DiscordSection({
   canManage,
   tools = [],
   onSelectedJobChange,
+  className,
 }: {
   canManage: boolean;
   tools?: AdminToolDefinition[];
   onSelectedJobChange?: (job: EventAgentJobControl | null) => void;
+  className?: string;
 }) {
   const [loading, setLoading] = useState(true);
   const [savingToken, setSavingToken] = useState(false);
   const [savingControl, setSavingControl] = useState(false);
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [dispatchingEvent, setDispatchingEvent] = useState(false);
+  const [togglingRuntime, setTogglingRuntime] = useState(false);
+  const [resettingRuntime, setResettingRuntime] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [error, setError] = useState<string>("");
   const [status, setStatus] = useState<EventAgentControlResponse | null>(null);
@@ -219,7 +350,6 @@ export function DiscordSection({
   const availableSourceKinds = useMemo(() => status?.availableSourceKinds ?? [], [status]);
   const availableTriggerKinds = useMemo(() => status?.availableTriggerKinds ?? [], [status]);
   const availableToolIds = useMemo(() => tools.map((tool) => tool.id).sort(), [tools]);
-  const discordSource = draft?.sources.discord ?? {};
   const recentEventCount = Array.isArray(status?.runtime.sources?.recentEvents)
     ? (status?.runtime.sources?.recentEvents as unknown[]).length
     : 0;
@@ -436,15 +566,74 @@ export function DiscordSection({
     }
   }, [canManage, eventKind, eventPayloadDraft, eventSourceKind, load]);
 
+  const handleStopRuntime = useCallback(async () => {
+    if (!canManage) return;
+    setTogglingRuntime(true);
+    setError("");
+    setNotice(null);
+    try {
+      const updated = await stopEventAgentRuntime();
+      setStatus(updated);
+      setDraft(updated.control);
+      setJsonDrafts(seedJsonDrafts(updated.control.jobs));
+      setNotice({ tone: "success", text: "Event-agent runtime stopped (schedulers cleared)." });
+    } catch (err) {
+      setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setTogglingRuntime(false);
+    }
+  }, [canManage]);
+
+  const handleStartRuntime = useCallback(async () => {
+    if (!canManage) return;
+    setTogglingRuntime(true);
+    setError("");
+    setNotice(null);
+    try {
+      const updated = await startEventAgentRuntime();
+      setStatus(updated);
+      setDraft(updated.control);
+      setJsonDrafts(seedJsonDrafts(updated.control.jobs));
+      setNotice({ tone: "success", text: "Event-agent runtime started." });
+      await load();
+    } catch (err) {
+      setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setTogglingRuntime(false);
+    }
+  }, [canManage, load]);
+
+  const handleResetRuntime = useCallback(async () => {
+    if (!canManage) return;
+    setResettingRuntime(true);
+    setError("");
+    setNotice(null);
+    try {
+      const updated = await resetEventAgentRuntime();
+      setStatus(updated);
+      setDraft(updated.control);
+      setJsonDrafts(seedJsonDrafts(updated.control.jobs));
+      const preservedCronJobs = updated.reset.preservedCronJobCount ?? 0;
+      setNotice({
+        tone: "success",
+        text: `Event-agent runtime reset. Cleared ${updated.reset.deletedCount} persisted state key(s). Preserved ${preservedCronJobs} cron schedule(s); runtime is stopped for review.`,
+      });
+    } catch (err) {
+      setNotice({ tone: "error", text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setResettingRuntime(false);
+    }
+  }, [canManage]);
+
   return (
-    <SectionCard>
+    <SectionCard className={className}>
       {loading || !draft || !status ? (
         <div className="text-sm text-slate-300">Loading event-agent control plane…</div>
       ) : (
-        <div className="space-y-4">
-          <div className="overflow-x-auto pb-1">
-            <div className="grid min-w-[44rem] gap-4 grid-cols-[13rem_minmax(0,1fr)] xl:grid-cols-[14rem_minmax(0,1fr)]">
-            <aside className="sticky top-4 self-start space-y-3 rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+        <div className="flex flex-col h-full min-h-0">
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="grid h-full min-h-0 min-w-[44rem] gap-3 grid-cols-[12rem_minmax(0,1fr)] xl:grid-cols-[13rem_minmax(0,1fr)]">
+            <aside className="flex flex-col overflow-hidden h-full space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold text-slate-100">Agents</div>
                 <div className="text-[11px] text-slate-500">{filteredJobs.length}/{draft.jobs.length}</div>
@@ -454,7 +643,7 @@ export function DiscordSection({
                 <button
                   type="button"
                   onClick={() => void load()}
-                  disabled={loading || savingToken || savingControl}
+                  disabled={loading || savingToken || savingControl || togglingRuntime || resettingRuntime}
                   className="inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
                 >
                   {loading ? "Loading…" : "Refresh"}
@@ -462,10 +651,41 @@ export function DiscordSection({
                 <button
                   type="button"
                   onClick={() => void handleSaveControl()}
-                  disabled={!canManage || !draft || savingControl}
+                  disabled={!canManage || !draft || savingControl || togglingRuntime || resettingRuntime}
                   className="inline-flex items-center justify-center rounded-md bg-sky-600 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
                 >
                   {savingControl ? "Saving…" : "Save runtime"}
+                </button>
+
+                {status.runtime.running ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleStopRuntime()}
+                    disabled={!canManage || togglingRuntime || resettingRuntime}
+                    className="inline-flex items-center justify-center rounded-md bg-rose-700 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-rose-600 disabled:opacity-60"
+                    title="Stops cron scheduling + unsubscribes Discord gateway. Does not hard-cancel an in-flight LLM request."
+                  >
+                    {togglingRuntime ? "Stopping…" : "Stop runtime"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleStartRuntime()}
+                    disabled={!canManage || togglingRuntime || resettingRuntime}
+                    className="inline-flex items-center justify-center rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-slate-50 hover:bg-emerald-600 disabled:opacity-60"
+                  >
+                    {togglingRuntime ? "Starting…" : "Start runtime"}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => void handleResetRuntime()}
+                  disabled={!canManage || togglingRuntime || resettingRuntime || savingControl}
+                  className="inline-flex items-center justify-center rounded-md border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-900/60 disabled:opacity-60"
+                  title="Stop the runtime, clear persisted event-agent state, reload contract-derived schedules, and leave the scheduler stopped for review."
+                >
+                  {resettingRuntime ? "Resetting…" : "Full reset"}
                 </button>
               </div>
 
@@ -509,7 +729,7 @@ export function DiscordSection({
                 />
               </label>
 
-              <div className="max-h-[72vh] space-y-1.5 overflow-y-auto pr-1">
+              <div className="flex-1 min-h-0 space-y-1.5 overflow-y-auto pr-1">
                 {filteredJobs.length > 0 ? filteredJobs.map((job) => (
                   <SidebarJobButton
                     key={job.id}
@@ -526,38 +746,66 @@ export function DiscordSection({
               </div>
             </aside>
 
-            <div className="space-y-4 min-w-0">
-              {selectedJob ? (
-                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-                  <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold text-slate-100">{selectedJob.name}</h3>
-                        <Badge tone={selectedJob.enabled ? "success" : "warn"}>{selectedJob.enabled ? "Enabled" : "Disabled"}</Badge>
-                        <span className="text-xs text-slate-500">{selectedJob.source.kind} · {selectedJob.trigger.kind} · {selectedJob.contractSourceId ? "contract" : "custom"}</span>
-                        {selectedRuntime?.running ? <Badge tone="info">Running now</Badge> : null}
-                      </div>
-                      <p className="mt-2 text-sm text-slate-400">{selectedJob.description || "No description provided."}</p>
-                      {selectedJob.contractSourceId ? (
-                        <div className="mt-2 text-xs text-slate-500">
-                          Contract-backed from <code className="font-mono text-slate-300">{selectedJob.contractSourceId}</code>
-                          {typeof selectedJob.contractHash === "number" ? (
-                            <span> · hash <code className="font-mono text-slate-300">{selectedJob.contractHash}</code></span>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleRunJob(selectedJob.id)}
-                      disabled={!canManage || runningJobId === selectedJob.id}
-                      className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
-                    >
-                      {runningJobId === selectedJob.id ? "Queueing…" : "Run now"}
-                    </button>
-                  </div>
+            <div className="grid gap-3 min-w-0 h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+              <RuntimeInfrastructureForm
+                canManage={canManage}
+                draft={draft}
+                status={status}
+                draftToken={draftToken}
+                setDraft={setDraft}
+                setDraftToken={setDraftToken}
+                savingToken={savingToken}
+                savingControl={savingControl}
+                onSaveToken={() => void handleSaveToken()}
+              />
 
-                  <div className="mt-4 space-y-4">
+              <div className="flex flex-col h-full overflow-hidden rounded-xl border border-slate-800 bg-slate-950/40">
+                <div className="shrink-0 border-b border-slate-800 px-3 py-2">
+                  <div className="text-sm font-semibold text-slate-100">Schedule review</div>
+                  <div className="text-[11px] text-slate-500">Review cadence and next-run timing.</div>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto p-2">
+                  <EventAgentScheduleReview
+                    jobs={draft.jobs}
+                    runtimeJobs={runtimeJobs}
+                    selectedJobId={selectedJob?.id ?? null}
+                    onSelectJob={(jobId) => setSelectedJobId(jobId)}
+                  />
+                </div>
+              </div>
+
+              <div className="h-full overflow-y-auto min-w-0 space-y-3 pr-1">
+                {selectedJob ? (
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+                    <div className="flex flex-col gap-3 border-b border-slate-800 pb-4 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-lg font-semibold text-slate-100">{selectedJob.name}</h3>
+                          <Badge tone={selectedJob.enabled ? "success" : "warn"}>{selectedJob.enabled ? "Enabled" : "Disabled"}</Badge>
+                          <span className="text-xs text-slate-500">{selectedJob.source.kind} · {selectedJob.trigger.kind} · {selectedJob.contractSourceId ? "contract" : "custom"}</span>
+                          {selectedRuntime?.running ? <Badge tone="info">Running now</Badge> : null}
+                        </div>
+                        <p className="mt-2 text-sm text-slate-400">{selectedJob.description || "No description provided."}</p>
+                        {selectedJob.contractSourceId ? (
+                          <div className="mt-2 text-xs text-slate-500">
+                            Contract-backed from <code className="font-mono text-slate-300">{selectedJob.contractSourceKind ?? "agent"}:{selectedJob.contractSourceId}</code>
+                            {typeof selectedJob.contractHash === "number" ? (
+                              <span> · hash <code className="font-mono text-slate-300">{selectedJob.contractHash}</code></span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleRunJob(selectedJob.id)}
+                        disabled={!canManage || runningJobId === selectedJob.id}
+                        className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        {runningJobId === selectedJob.id ? "Queueing…" : "Run now"}
+                      </button>
+                    </div>
+
+                    <div className="mt-4 space-y-4">
                     <div className="grid gap-4 xl:grid-cols-3">
                       <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
                         <div className="text-sm font-semibold text-slate-100">Runtime snapshot</div>
@@ -789,103 +1037,7 @@ export function DiscordSection({
                 </div>
               )}
 
-              <div className="grid gap-4 xl:grid-cols-2">
-                <CollapsiblePanel
-                  title="Runtime infrastructure"
-                  description="Credentials and source defaults live here instead of taking over the whole page."
-                >
-                  <div className="space-y-4">
-                    <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-100">Discord adapter credentials</div>
-                        <div className="text-xs text-slate-500">Discord-sourced jobs still use the shared bot token.</div>
-                      </div>
-                      <label className="space-y-1">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Discord bot token</div>
-                        <input
-                          type="password"
-                          value={draftToken}
-                          onChange={(event) => setDraftToken(event.target.value)}
-                          disabled={!canManage || savingToken}
-                          className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                          placeholder={status.configured ? "Enter new token to replace" : "Bot token from Discord Developer Portal"}
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveToken()}
-                        disabled={!canManage || savingToken || !draftToken.trim()}
-                        className="inline-flex items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-slate-50 hover:bg-sky-500 disabled:opacity-60"
-                      >
-                        {savingToken ? "Saving…" : "Save token"}
-                      </button>
-                    </div>
-
-                    <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-                      <div>
-                        <div className="text-sm font-semibold text-slate-100">Source defaults</div>
-                        <div className="text-xs text-slate-500">Default Discord values seed contract and custom jobs.</div>
-                      </div>
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <label className="space-y-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Discord bot user ID</div>
-                          <input
-                            value={discordSource.botUserId ?? ""}
-                            onChange={(event) => setDraft({
-                              ...draft,
-                              sources: {
-                                ...draft.sources,
-                                discord: {
-                                  ...discordSource,
-                                  botUserId: event.target.value,
-                                },
-                              },
-                            })}
-                            disabled={!canManage || savingControl}
-                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                          />
-                        </label>
-                        <label className="space-y-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Default channels</div>
-                          <input
-                            value={joinCsv(discordSource.defaultChannels)}
-                            onChange={(event) => setDraft({
-                              ...draft,
-                              sources: {
-                                ...draft.sources,
-                                discord: {
-                                  ...discordSource,
-                                  defaultChannels: splitCsv(event.target.value),
-                                },
-                              },
-                            })}
-                            disabled={!canManage || savingControl}
-                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                          />
-                        </label>
-                        <label className="space-y-1">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Default keywords</div>
-                          <input
-                            value={joinCsv(discordSource.targetKeywords)}
-                            onChange={(event) => setDraft({
-                              ...draft,
-                              sources: {
-                                ...draft.sources,
-                                discord: {
-                                  ...discordSource,
-                                  targetKeywords: splitCsv(event.target.value).map((value) => value.toLowerCase()),
-                                },
-                              },
-                            })}
-                            disabled={!canManage || savingControl}
-                            className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500 disabled:opacity-60"
-                          />
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                </CollapsiblePanel>
-
+              <div className="space-y-4">
                 <CollapsiblePanel
                   title="Dispatch test event"
                   description="Simulate GitHub, Discord, cron, or manual events against the matcher without expanding every agent panel."
@@ -954,6 +1106,7 @@ export function DiscordSection({
                   {error}
                 </div>
               ) : null}
+              </div>
             </div>
             </div>
           </div>

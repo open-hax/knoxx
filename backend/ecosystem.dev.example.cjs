@@ -4,18 +4,18 @@
  * NOTE:
  * - This file is a *template*. Do not commit real secrets.
  * - shadow-cljs watch provides an nREPL (default port 4500; see shadow-cljs.edn).
+ * - Dev runtime uses :server-dev / dist-dev; :server / dist is reserved for verification.
  */
 
 module.exports = {
   apps: [
     {
       name: 'knoxx-cephalon-dev',
-      cwd: '/home/err/devel/orgs/open-hax/openplanner/packages/knoxx/backend',
-      script: 'src/server.mjs',
-      // Restart when compiled CLJS output changes.
-      watch: ['dist', 'src/server.mjs'],
-      watch_delay: 500,
-      ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
+      cwd: '/path/to/openplanner/packages/agents/knoxx/backend',
+      script: 'dist-dev/server.js',
+      node_args: '--enable-source-maps',
+      // shadow-cljs owns hot reload; PM2 should only restart on hard crashes.
+      watch: false,
 
       // IMPORTANT: configure these in your real host env (or an env loader).
       env: {
@@ -36,7 +36,7 @@ module.exports = {
 
     {
       name: 'knoxx-shadow-watch',
-      cwd: '/home/err/devel/orgs/open-hax/openplanner/packages/knoxx/backend',
+      cwd: '/path/to/openplanner/packages/agents/knoxx/backend',
       script: 'pnpm',
       args: 'watch',
       autorestart: true,

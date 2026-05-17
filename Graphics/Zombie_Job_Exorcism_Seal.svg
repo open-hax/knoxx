@@ -1,0 +1,64 @@
+<<svgsvg width="600" height="600" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg">
+  <<defsdefs>
+    <<filterfilter id="neon-glow">
+      <<fefeGaussianBlur stdDeviation="3" result="blur"/>
+      <<fefeComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <<linearlinearGradient id="void-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <<stopstop offset="0%" style="stop-color:#4b0082;stop-opacity:1" />
+      <<stopstop offset="50%" style="stop-color:#000000;stop-opacity:1" />
+      <<stopstop offset="100%" style="stop-color:#ff00ff;stop-opacity:1" />
+    </linearGradient>
+    <<filterfilter id="glitch-offset">
+      <<fefeOffset dx="-2" dy="1" result="off1" />
+      <<fefeOffset dx="2" dy="-1" result="off2" />
+      <<fefeBlend mode="screen" in="off1" in2="off2" />
+    </filter>
+  </defs>
+  
+  <<rectrect width="600" height="600" fill="#050505" />
+  
+  <<gg transform="translate(300,300)">
+    <!-- Outer Ritual Ring -->
+    <<circlecircle r="280" stroke="#ff00ff" stroke-width="2" fill="none" opacity="0.4" filter="url(#neon-glow)" />
+    <<pathpath id="outerTextPath" d="M -280,0 A 280,280 0 1,1 280,0 A 280,280 0 1,1 -280,0" fill="none" />
+    <<texttext font-family="monospace" font-size="18" fill="#ff00ff" filter="url(#neon-glow)">
+      <<texttextPath href="#outerTextPath" startOffset="0%">
+        SIGKILL // 0x09 // ZOMBIE PURGE // VOID SYMMETRY // SIGKILL // 0x09 // ZOMBIE PURGE // VOID SYMMETRY //
+      </textPath>
+    </text>
+    
+    <!-- Middle Barrier Ring -->
+    <<circlecircle r="210" stroke="#00ffff" stroke-width="4" fill="none" stroke-dasharray="15,15" opacity="0.6" />
+    <<pathpath id="middleTextPath" d="M -210,0 A 210,210 0 1,1 210,0 A 210,210 0 1,1 -210,0" fill="none" />
+    <<texttext font-family="monospace" font-size="16" fill="#00ffff" opacity="0.8">
+      <<texttextPath href="#middleTextPath" startOffset="0%">
+        ( BRAIN FART ) ( REBOOT ) ( BRAIN FART ) ( REBOOT ) ( BRAIN FART ) ( REBOOT ) ( BRAIN FART ) ( REBOOT )
+      </textPath>
+    </text>
+    
+    <!-- Inner Seal Components -->
+    <<gg filter="url(#glitch-offset)">
+      <!-- Hexagram / Seal of Termination -->
+      <<pathpath d="M 0,-100 L 86,50 L -86,50 Z" fill="none" stroke="#ff00ff" stroke-width="3" filter="url(#neon-glow)" />
+      <<pathpath d="M 0,100 L 86,-50 L -86,-50 Z" fill="none" stroke="#00ffff" stroke-width="3" filter="url(#neon-glow)" />
+      
+      <!-- Core "Symmetry" Cross -->
+      <<pathpath d="M -120,0 L 120,0 M 0,-120 L 0,120" stroke="#fff" stroke-width="1" opacity="0.3" />
+      
+      <!-- The Void Center -->
+      <<circlecircle r="60" fill="url(#void-grad)" stroke="#fff" stroke-width="2" filter="url(#neon-glow)" />
+      <<texttext x="0" y="8" fill="#fff" font-family="monospace" font-size="26" text-anchor="middle" font-weight="bold">KILLED</text>
+    </g>
+    
+    <!-- Termination Runes -->
+    <<texttext x="-150" y="-140" font-family="monospace" font-size="12" fill="#00ffff" opacity="0.6">ps -ef | grep zombie</text>
+    <<texttext x="80" y="-140" font-family="monospace" font-size="12" fill="#ff00ff" opacity="0.6">kill -9 9999</text>
+    <<texttext x="-150" y="140" font-family="monospace" font-size="12" fill="#ff00ff" opacity="0.6">leak_detected: true</text>
+    <<texttext x="80" y="140" font-family="monospace" font-size="12" fill="#00ffff" opacity="0.6">symmetry_status: broken</text>
+  </g>
+  
+  <!-- Background Noise / Static -->
+  <<rectrect x="0" y="0" width="600" height="600" fill="none" stroke="#fff" stroke-width="1" opacity="0.05" />
+  <<pathpath d="M 0,300 L 600,300 M 300,0 L 300,600" stroke="#fff" stroke-width="0.5" opacity="0.1" />
+</svg>

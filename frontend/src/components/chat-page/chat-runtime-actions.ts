@@ -83,7 +83,7 @@ export function createChatRuntimeActions({
     setMessages((prev) => (prev.some((entry) => entry.id === message.id) ? prev : [...prev, message]));
   };
 
-  const loadRunDetail = async (runId: string) => {
+  const loadRunDetail = async (runId: string, attempt = 0): Promise<void> => {
     try {
       const run = await getRun(runId);
       if (activeRunIdRef.current === runId) {
@@ -110,7 +110,15 @@ export function createChatRuntimeActions({
         }
       }
     } catch (error) {
-      appendConsoleLine(`[runs] failed to load ${runId}: ${(error as Error).message}`);
+      const message = (error as Error).message;
+      const runIsStillActive = activeRunIdRef.current === runId;
+      if (runIsStillActive && message.includes('404') && attempt < 6) {
+        window.setTimeout(() => {
+          void loadRunDetail(runId, attempt + 1);
+        }, 250 * (attempt + 1));
+        return;
+      }
+      appendConsoleLine(`[runs] failed to load ${runId}: ${message}`);
     }
   };
 
@@ -128,6 +136,7 @@ export function createChatRuntimeActions({
         conversation_id: conversationId,
         session_id: sessionId,
         run_id: activeRunIdRef.current,
+        actor_id: activeActorId || null,
       });
       const optimisticTimelineMessage = controlTimelineMessageFromEvent({
         type: kind === 'follow_up' ? 'follow_up_queued' : 'steer_queued',
@@ -171,6 +180,7 @@ export function createChatRuntimeActions({
         conversation_id: conversationId,
         session_id: sessionId,
         run_id: activeRunIdRef.current,
+        actor_id: activeActorId || null,
       });
       const optimisticTimelineMessage = controlTimelineMessageFromEvent({
         type: "steer_queued",
@@ -212,6 +222,7 @@ export function createChatRuntimeActions({
         conversation_id: conversationId,
         session_id: sessionId,
         run_id: activeRunIdRef.current,
+        actor_id: activeActorId || null,
         reason: 'aborted_by_user',
       });
       appendConsoleLine(`[abort] ${response.ok ? 'requested' : 'failed'}${response.error ? `: ${response.error}` : ''}`);
@@ -237,6 +248,7 @@ export function createChatRuntimeActions({
       const response = await knoxxUndoSessionTurn({
         session_id: sessionId,
         conversation_id: conversationId,
+        actor_id: activeActorId || null,
         turns: 1,
       });
       if (!response.ok) {
@@ -257,7 +269,7 @@ export function createChatRuntimeActions({
     }
   };
 
-  const handleSend = async (text: string, contentParts?: ContentPart[]) => {
+  const handleSend = async (text: string, contentParts?: ContentPart[], options?: { direct?: boolean; omitSystemPrompt?: boolean; templateContext?: Record<string, unknown> }) => {
     if (!sessionId) {
       appendConsoleLine('[chat] session not ready, retry in a second');
       return;
@@ -283,9 +295,7 @@ export function createChatRuntimeActions({
       traceBlocks: [],
       status: 'streaming',
     };
-    const requestText = systemPrompt.trim()
-      ? `${text}\n\nSession steering note:\n${systemPrompt.trim()}`
-      : text;
+    const trimmedSystemPrompt = systemPrompt.trim();
     pendingAssistantIdRef.current = assistantMessageId;
     activeRunIdRef.current = null;
     setLatestRun(null);
@@ -295,17 +305,20 @@ export function createChatRuntimeActions({
 
     try {
       const response = await knoxxChatStart({
-        message: requestText,
+        message: text,
         conversation_id: conversationId,
         session_id: sessionId,
         run_id: activeRunIdRef.current,
         model: selectedModel,
         thinkingLevel: selectedThinkingLevel,
+        direct: options?.direct,
         contentParts,
+        templateContext: options?.templateContext,
         agentSpec: {
           actor_id: activeActorId || undefined,
           contract_id: activeAgentId || undefined,
           role: activeRole,
+          system_prompt: options?.omitSystemPrompt ? undefined : trimmedSystemPrompt || undefined,
         },
       });
       const runId = response.run_id ?? activeRunIdRef.current;

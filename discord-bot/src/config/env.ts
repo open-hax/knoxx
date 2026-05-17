@@ -17,7 +17,7 @@ const envSchema = z.object({
   BOT_NAME: z.string().default('Forum Bot'),
   BOT_COMMAND_PREFIX: z.string().default('!ask'),
   BOT_EMBED_COLOR: z.string().default('0x7c3aed').transform(val => parseInt(val, 16)),
-  
+
   // Forum mode settings
   FORUM_MODE: z.string().default('true').transform(val => val === 'true'),
   BOT_PERSONALITY: z.string().default('casual'), // casual, formal, friendly

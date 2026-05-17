@@ -1,0 +1,24 @@
+{:contract/id      "notifier"
+ :contract/kind    :sub-agent
+ :contract/version 1
+ :enabled          true
+
+ ;; No capability restrictions — notifier uses whatever the parent provides.
+ :sub-agent/parent-capabilities :inherit
+
+ :sub-agent/model     "gemma4:4b"
+ :sub-agent/thinking  "off"
+ :sub-agent/role      "notifier"
+ :sub-agent/timeout-ms 15000
+ :sub-agent/mode      :fire-and-forget
+
+ :agent {:model "gemma4:4b"
+         :role "notifier"
+         :thinking "off"}
+
+ :prompts {:system "You are a lightweight notification sub-agent. Format a brief notification message based on the context provided. Keep it under 200 words."
+           :task "Format and deliver the notification described by your parent agent."}
+
+ :context {:max-messages 5
+           :max-chars 5000
+           :preserve-system false}}

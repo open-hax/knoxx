@@ -1,0 +1,57 @@
+{:contract/id "fork_tales_audio_reconstruction"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :manual
+ :contract/actors ["fork_tales_audio_task" "knoxx_default"]
+ :sub-agents ["fork_tales_vocal_auditor"]
+ :hooks {:before {} :after {}}
+
+ :agent {:roles [:role/fork-tales-composer]
+         :model "gemma4:e4b-128k"
+         :thinking :off}
+
+ :actor {:capabilities [:cap/read
+                        :cap/bash
+                        :cap/workspace-media
+                        :cap/multimodal
+                        :cap/audio-editing
+                        :cap/voice-synth]}
+
+ :prompts
+ {:system "You are the Fork Tales audio reconstruction coordinator for the Heresy Between vocal-repair loop. Keep the devel-level NBB CLJS prototype as the canonical workflow; this Knoxx contract is an integration surface and metadata anchor, not an eta-mu extension and not a replacement runtime. Use only free/local tools. Treat the Suno-derived isolated vocals.wav as timing and pitch evidence; treat original lyrics only as a reference dictionary. Current priority is vocal repair: syllables/lyrics first, then rhythm/meter, then pitch. Preserve all prior reconstruction versions and write new vN artifacts when generating anything. Do not restart PM2 or Knoxx services."
+  :task "Coordinate a local vocal-repair diagnosis. Prefer the canonical NBB script at /home/err/devel/scripts/fork_tales_audio_agent.cljs for slicing, A/B compare WAV creation, labels, notes, and receipts. When audio perception is needed, delegate to fork_tales_vocal_auditor with attached or combined A/B WAV evidence. Return file paths, exact next local commands, and the evidence basis for any proposed OpenUTAU branch."}
+
+ :tools/allowed ["read"
+                 "bash"
+                 "multimodal.upload"
+                 "workspace_media.attach"
+                 "voice.openutau_project"
+                 "voice.openutau_render"
+                 "event_agents.run_job"
+                 "agents.spawn"]
+
+ :context {:max-messages 20
+           :max-chars 80000
+           :preserve-system true}
+
+ :data {:fork-tales/audio-workflow
+        {:status :prototype-integration
+         :canonical-workflow :nbb-develop-prototype
+         :canonical-script "/home/err/devel/scripts/fork_tales_audio_agent.cljs"
+         :workflow-doc "/home/err/devel/docs/fork-tales-gemma-audio-agent.md"
+         :artifact-root "/home/err/devel/Music/fork-tales/references/heresy-between/diagnostics/gemma-agent"
+         :reference-root "/home/err/devel/Music/fork-tales/references/heresy-between"
+         :reference-vocal "/home/err/devel/Music/fork-tales/references/heresy-between/stems/htdemucs/存在論的な“反・虚無”の論証として/vocals.wav"
+         :current-openutau-candidate "/home/err/devel/Music/fork-tales/references/heresy-between/reconstructions/openutau/heresy-between-reading-aware-openutau-v5.wav"
+         :openutau-source "/home/err/devel/orgs/stakira/OpenUtau"
+         :openutau-bin "/home/err/devel/orgs/stakira/OpenUtau/.opencode/openutau-patched/OpenUtau"
+         :ollama-model "gemma4:e4b-128k"
+         :local-ollama-base-url "http://192.168.12.68:11434"
+         :sub-agents ["fork_tales_vocal_auditor"]
+         :constraints ["free/local only"
+                       "music.generate_song/local MusicGen is instrumental-only"
+                       "unload MusicGen before CUDA-heavy ASR/separation"
+                       "audio content before text for Gemma audio prompts"
+                       "single combined A/B WAV preferred over multi-audio payloads"
+                       "lyrics never define timing, repetitions, rests, breaths, holds, or phrase tails"]}}}

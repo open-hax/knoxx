@@ -2,7 +2,17 @@
   "Shared media infrastructure: workspace path resolution, temp files,
    mime-type detection, data-URL decoding, and source loading."
   (:require [clojure.string :as str]
-            [knoxx.backend.document-state :refer [normalize-relative-path]]))
+            [knoxx.backend.document-state :refer [normalize-relative-path]]
+            [knoxx.backend.text :refer [tool-text-result]]
+            [knoxx.backend.tools.actor-credentials :as actor-credentials]
+            ["node:child_process" :refer [execFile]]
+            ["node:crypto" :as crypto]
+            ["node:fs/promises" :as fs]
+            ["node:os" :as os]
+            ["node:path" :as path]
+            ["node:util" :refer [promisify]]))
+
+(def ^:private exec-file-async (promisify execFile))
 
 (def workspace-media-max-bytes (* 20 1024 1024))
 (def multimodal-upload-max-bytes (* 25 1024 1024))
@@ -13,10 +23,12 @@
   [value]
   (some-> (str value) (str/includes? "cdn.discordapp.com/attachments")))
 
-(defn- discord-bot-token
-  "Get Discord bot token from config, if available."
-  [config]
-  (some-> config :discord-bot-token str str/trim not-empty))
+(defn- discord-bot-token!
+  "Get Discord bot token from the current actor credential."
+  [runtime]
+  (-> (actor-credentials/get-credential! runtime "discord_bot")
+      (.then (fn [credential]
+               (actor-credentials/secret-value credential :botToken :bot-token :token)))))
 
 ;; -------------------------------------------------------------------------
 ;; Path / FS shims
@@ -72,6 +84,13 @@
           (str/replace #"^@" "")
           str/trim
           not-empty))
+
+(defn normalize-relative-path-arg
+  "Normalize a user-provided relative path while keeping the media namespace's
+   path helpers qualified for tool call sites. The implementation delegates to
+   document-state/normalize-relative-path, which is imported above."
+  [value]
+  (normalize-relative-path value))
 
 (defn workspace-media-mime-type
   [path]
@@ -147,8 +166,8 @@
       rel)))
 
 (defn resolve-workspace-media-path
-  [runtime config raw-path]
-  (let [node-path (aget runtime "path")
+  [_runtime config raw-path]
+  (let [node-path path
         normalized (normalize-tool-path-arg raw-path)
         safe-path (or normalized "")
         roots (allowed-media-root-records node-path config)
@@ -244,23 +263,18 @@
   (str "data:" (sanitize-mime-type mime-type "application/octet-stream") ";base64," (.toString buffer "base64")))
 
 (defn temp-media-dir!
-  [runtime name]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        node-os (aget runtime "os")
-        dir (.join node-path (os-tmpdir node-os) "knoxx-media" name)]
-    (-> (fs-mkdir! node-fs dir #js {:recursive true})
+  [_runtime name]
+  (let [dir (.join path (os-tmpdir os) "knoxx-media" name)]
+    (-> (fs-mkdir! fs dir #js {:recursive true})
         (.then (fn [] dir)))))
 
 (defn temp-file-path!
   [runtime name ext]
-  (let [node-path (aget runtime "path")
-        node-crypto (aget runtime "crypto")]
-    (-> (temp-media-dir! runtime name)
-        (.then (fn [dir]
-                 (.join node-path
-                        dir
-                        (str (.randomUUID node-crypto) (or ext ""))))))))
+  (-> (temp-media-dir! runtime name)
+      (.then (fn [dir]
+               (.join path
+                      dir
+                      (str (.randomUUID crypto) (or ext "")))))))
 
 (defn- decode-data-url-source
   [raw-source]
@@ -287,9 +301,7 @@
 
 (defn load-media-source!
   [runtime config raw-source max-bytes]
-  (let [node-fs (aget runtime "fs")
-        node-path (aget runtime "path")
-        source (or (normalize-tool-path-arg raw-source) raw-source "")]
+  (let [source (or (normalize-tool-path-arg raw-source) raw-source "")]
     (cond
       (str/blank? (str source))
       (js/Promise.reject (js/Error. "source is required"))
@@ -301,56 +313,64 @@
          decoded))
 
       (source-http-url? source)
-      (-> (js/fetch source #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
-          (.then (fn [resp]
-                   (if-not (.-ok resp)
-                     (-> (.text resp)
-                         (.then (fn [text]
-                                  (throw (js/Error. (str "Failed to fetch source " source " (" (.-status resp) "): " text))))))
-                     (let [mime-type (sanitize-mime-type (.get (.-headers resp) "content-type")
-                                                         (workspace-media-mime-type source))
-                           filename (infer-upload-filename source 0)]
-                       (-> (.arrayBuffer resp)
-                           (.then (fn [buf]
-                                    (let [buffer (.from js/Buffer buf)
-                                          size (.-length buffer)]
-                                      (ensure-source-size! size max-bytes "Source media")
-                                      {:buffer buffer
-                                       :mime-type mime-type
-                                       :filename filename
-                                       :size size
-                                       :source-kind "url"})))))))))
+      (let [token-promise (if (source-discord-cdn-url? source)
+                            (discord-bot-token! runtime)
+                            (js/Promise.resolve nil))]
+        (-> token-promise
+            (.then (fn [token]
+                     (let [headers #js {"User-Agent" "Knoxx-Agent/1.0"}]
+                       (when token
+                         (aset headers "Authorization" (str "Bot " token)))
+                       (js/fetch source #js {:headers headers}))))
+            (.then (fn [resp]
+                     (if-not (.-ok resp)
+                       (-> (.text resp)
+                           (.then (fn [text]
+                                    (throw (js/Error. (str "Failed to fetch source " source " (" (.-status resp) "): " text))))))
+                       (let [mime-type (sanitize-mime-type (.get (.-headers resp) "content-type")
+                                                           (workspace-media-mime-type source))
+                             filename (infer-upload-filename source 0)]
+                         (-> (.arrayBuffer resp)
+                             (.then (fn [buf]
+                                      (let [buffer (.from js/Buffer buf)
+                                            size (.-length buffer)]
+                                        (ensure-source-size! size max-bytes "Source media")
+                                        {:buffer buffer
+                                         :mime-type mime-type
+                                         :filename filename
+                                         :size size
+                                         :source-kind "url"}))))))))))
 
       :else
       (let [{:keys [absolute relative]} (resolve-workspace-media-path runtime config source)
-            mime-type (sanitize-mime-type (workspace-media-mime-type relative) (workspace-media-mime-type absolute))]
-        (-> (fs-stat! node-fs absolute)
+            mime-type (sanitize-mime-type (workspace-media-mime-type relative)
+                                          (workspace-media-mime-type absolute))]
+        (-> (fs-stat! fs absolute)
             (.then (fn [stat]
                      (when-not (.isFile stat)
                        (throw (js/Error. (str relative " is not a file"))))
                      (ensure-source-size! (.-size stat) max-bytes relative)
-                     (fs-read-file! node-fs absolute)))
+                     (fs-read-file! fs absolute)))
             (.then (fn [buffer]
                      {:absolute-path absolute
                       :relative relative
                       :buffer buffer
                       :mime-type mime-type
-                      :filename (path-basename node-path absolute)
+                      :filename (path-basename path absolute)
                       :size (.-length buffer)
                       :source-kind "workspace"})))))))
 
 (defn materialize-media-source!
   [runtime config raw-source max-bytes]
-  (let [node-fs (aget runtime "fs")]
-    (-> (load-media-source! runtime config raw-source max-bytes)
-        (.then (fn [source]
-                 (if (:absolute-path source)
-                   source
-                   (-> (temp-file-path! runtime "inputs" (mime-type->extension (:mime-type source)))
-                       (.then (fn [absolute-path]
-                                (-> (fs-write-file! node-fs absolute-path (:buffer source))
-                                    (.then (fn []
-                                             (assoc source :absolute-path absolute-path))))))))))))
+  (-> (load-media-source! runtime config raw-source max-bytes)
+      (.then (fn [source]
+               (if (:absolute-path source)
+                 source
+                 (-> (temp-file-path! runtime "inputs" (mime-type->extension (:mime-type source)))
+                     (.then (fn [absolute-path]
+                              (-> (fs-write-file! fs absolute-path (:buffer source))
+                                  (.then (fn []
+                                           (assoc source :absolute-path absolute-path))))))))))))
 
 (defn media-source->content-part!
   [runtime config raw-source max-bytes]
@@ -376,42 +396,41 @@
 
 (defn audio-visualization-result!
   [runtime config raw-source {:keys [kind width height title]}]
-  (let [exec-file-async (aget runtime "execFileAsync")
-        node-fs (aget runtime "fs")
-        label (case kind
+  (let [label (case kind
                 :waveform "waveform"
                 "spectrogram")
         out-width (clamp-dimension width (if (= kind :waveform) 1200 1024) 256 4096)
         out-height (clamp-dimension height (if (= kind :waveform) 320 640) 128 2048)]
-    (when-not exec-file-async
-      (throw (js/Error. "execFileAsync runtime dependency is not available")))
     (-> (materialize-media-source! runtime config raw-source audio-render-max-bytes)
-        (.then (fn [source]
-                 (let [base-name (or title
-                                     (some-> (:filename source) (str/replace #"\.[^.]+$" ""))
-                                     "audio")]
-                   (-> (temp-file-path! runtime "renders" ".png")
-                       (.then (fn [output-path]
-                                (let [filter-expr (if (= kind :waveform)
-                                                    (str "showwavespic=s=" out-width "x" out-height ":colors=0x7dd3fc")
-                                                    (str "showspectrumpic=s=" out-width "x" out-height ":legend=disabled"))
-                                      args (clj->js ["-y"
-                                                     "-i" (:absolute-path source)
-                                                     "-lavfi" filter-expr
-                                                     "-frames:v" "1"
-                                                     output-path])]
-                                  (-> (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576})
-                                      (.then (fn [_]
-                                               (fs-read-file! node-fs output-path)))
-                                      (.then (fn [buffer]
-                                               (let [filename (str base-name "-" label ".png")
-                                                     part {:type "image"
-                                                           :data (buffer->data-url buffer "image/png")
-                                                           :mimeType "image/png"
-                                                           :filename filename
-                                                           :size (.-length buffer)}]
-                                                 {:text (str "Rendered " label " for " (or (:filename source) (:relative source) raw-source) ".")
-                                                  :details {:source raw-source
-                                                            :kind label
-                                                            :content_parts [part]}}))))))))))))))
-)
+        (.then
+         (fn [source]
+           (let [base-name (or title
+                               (some-> (:filename source) (str/replace #"\.[^.]+$" ""))
+                               "audio")]
+             (-> (temp-file-path! runtime "renders" ".png")
+                 (.then
+                  (fn [output-path]
+                    (let [filter-expr (if (= kind :waveform)
+                                        (str "showwavespic=s=" out-width "x" out-height ":colors=0x7dd3fc")
+                                        (str "showspectrumpic=s=" out-width "x" out-height ":legend=disabled"))
+                          args (clj->js ["-y"
+                                         "-i" (:absolute-path source)
+                                         "-lavfi" filter-expr
+                                         "-frames:v" "1"
+                                         output-path])]
+                      (-> (exec-file-async "ffmpeg" args #js {:timeout 120000 :maxBuffer 1048576})
+                          (.then (fn [_]
+                                   (fs-read-file! fs output-path)))
+                          (.then
+                           (fn [buffer]
+                             (let [filename (str base-name "-" label ".png")
+                                   part {:type "image"
+                                         :data (buffer->data-url buffer "image/png")
+                                         :mimeType "image/png"
+                                         :filename filename
+                                         :size (.-length buffer)}]
+                               (tool-text-result
+                                (str "Rendered " label " for " (or (:filename source) (:relative source) raw-source) ".")
+                                {:source raw-source
+                                 :kind label
+                                 :content_parts [part]})))))))))))))))

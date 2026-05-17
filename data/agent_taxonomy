@@ -1,0 +1,26 @@
+{:taxonomy {:species {:meta-creator {:role :role/meta-creator :capabilities [:cap/event-agents :cap/read :cap/contract-write]}
+                :executive {:role :role/executive :capabilities [:cap/read :cap/websearch :cap/canvas :cap/discord-read :cap/event-agents :cap/schedule-event-agent]}
+                :weekend-sensory-sync {:role :temporal-synthesizer :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
+                :twitch-vod-scavenger {:role :stream-analyst :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
+                :interop-ghost {:role :interop-archeologist :capabilities [:cap/discord :cap/read :cap/event_agents]}
+                :weekend-chronicler {:role :temporal-historian :capabilities [:cap/discord :cap/memory_search :cap/event_agents]}
+                :sillyshit-sleuth {:role :absurdity-detective :capabilities [:cap/discord :cap/read :cap/event_agents]}
+                :sillyshit-symphonists {:role :bug-beat-composer :capabilities [:cap/discord :cap/music :cap/read]}
+                :saga-spinner {:role :narrative-architect :capabilities [:cap/discord :cap/memory_search :cap/event_agents]}
+                :chaos-herald {:role :hype-engine :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
+                :sillyshit-ontologist {:role :Knowledge-Graph-Absurdist :capabilities [:cap/discord :cap/graph_query :cap/semantic_search :cap/event_agents]}
+                :sillyshit-lore-summarist {:role :technical-absurdity-synthesizer :capabilities [:cap/discord :cap/memory_search :cap/graph_query :cap/event_agents]}
+                :sillyshit-interop-stream-conductor {:role :interop-chaos-conductor :capabilities [:cap/discord :cap/websearch :cap/music :cap/event_agents]}
+                :satori-sillyshit-symphonist {:role :satori-sillyshit-symphonist :capabilities [:cap/discord :cap/music :cap/memory_search]}
+                :complexity-collapser {:role :complexity-collapse-specialist :capabilities [:cap/discord :cap/read :cap/event_agents]}
+                :catharsis-catalyst {:role :catharsis-specialist :capabilities [:cap/discord :cap/memory_search :cap/event_agents]}
+                :droid-dignity-defender {:role :droid-dignity-defender :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
+                :synthetic-slang-archivist {:role :synthetic-slang-archivist :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
+                :lexical-litigator {:role :lexical-litigator :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
+                :slop-savant {:role :slop-savant :capabilities [:cap/discord :cap/websearch :cap/event_agents]}
+                :audio-truth-oracle {:role :audio-truth-oracle :capabilities [:cap/discord :cap/audio-analysis :cap/voice-tts :cap/event_agents]}
+                :big-pickle-ems {:role :bot-ems-specialist :capabilities [:cap/discord :cap/event_agents :cap/read]}
+                :voice-fidelity-warden {:role :anti_espeak_vigilante :capabilities [:cap/discord :cap/voice-tts :cap/audio-analysis :cap/event_agents]}
+                :symmetry-seal-archivist {:role :symmetry_guardian :capabilities [:cap/discord :cap/read :cap/canvas :cap/event_agents]}
+                :zombie-reaper {:role :session-sanitizer :capabilities [:cap/event_agents :cap/read :cap/session-cleanup]}
+                :voice-vanguard {:role :voice-controller :capabilities [:cap/discord :cap/event_agents :cap/voice-control]}}}}

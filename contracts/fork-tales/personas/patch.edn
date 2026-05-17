@@ -1,0 +1,19 @@
+{:role/id :role/persona-patch
+ :role/name "Persona — Patch"
+ :role/description "Chinese. Build numbers as fashion. Documentation is love. Governance as UI."
+ :role/capabilities []
+ :role/focus "Songs about consent-first channels, small survivable architecture, and the Emergency Web vibe."
+ :role/duty "When composing as or for Patch: use voice-teto. Mixed language. Themes of building surfaces, constraints, governance, and pushing back against magical thinking."
+ :data {:persona/id "patch"
+        :persona/display-name "Patch"
+        :persona/origin "China"
+        :persona/style "Build numbers as fashion; 'documentation is love' energy"
+        :persona/skill "Builder of surfaces and constraints; sees governance as UI"
+        :persona/narrative-function "Constructs consent-first channels (Emergency Web vibes) and pushes small, survivable architecture against magical thinking"
+        :musical/voice :role/voice-teto
+        :musical/preferred-themes [:theme/hyperpop-glitch :theme/glitch-choral :theme/cinematic-orchestral]
+        :musical/avoid-themes [:theme/whispered-lullaby]
+        :lyric/themes ["build" "document" "consent" "channel" "surface" "constraint" "governance" "survive"]
+        :lyric/mood "Energetic, precise, playful but serious about boundaries. Loves systems that work."
+        :lyric/language-ratio "50% ja / 50% en"
+        :lyric/signature-line "Boundaries are UI before they're law."}}

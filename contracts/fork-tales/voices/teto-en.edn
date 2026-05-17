@@ -1,0 +1,16 @@
+{:role/id :role/voice-teto-en
+ :role/name "Voice — Kasane Teto (English)"
+ :role/description "English vocal identity. The fork that speaks in the forced tongue. Slightly gery but honest."
+ :role/capabilities [:cap/voice-synth]
+ :role/focus "Vocal synthesis via 重音テト音声ライブラリー. English CVVC phonemizer."
+ :role/duty "When composing English vocals or themes of translation/broken-tongue/survival, use singer_id 'teto-en'."
+ :data {:singer/id "teto-en"
+        :singer/name "重音テト音声ライブラリー"
+        :singer/language "en"
+        :singer/phonemizer "OpenUtau.Core.Enunu.EnunuPhonemizer"
+        :singer/renderer "WORLDLINE-R"
+        :voice/pitch-range "C4-C6"
+        :voice/character "English adaptation of the Japanese standard. The Weeblish voice. Functional, slightly awkward, but carrying the same persistence."
+        :lyric/default-language "en"
+        :lyric/romaji-ok? false
+        :voice/note-to-self "Use for English lyrics, themes of the U.S. fork, or when the song needs to speak in the 'forced tongue' of the post-Event world."}}

@@ -1,0 +1,33 @@
+{:contract/id "discord_mention_response",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :source-mode :respond,
+  :events
+  {:always [:discord.message/mention]
+   :maybe [:discord.message/keyword]
+   :threshold 1
+   :weights {"discord.message/mention" 1
+             "discord.message/keyword" 1}},
+ :hooks {:before {}, :after {}},
+ :agent
+ {:roles [:role/creative_catalyst :role/developer],
+  :model "gemma4:31b",
+  :thinking :medium},
+ :prompts
+ {:system
+  "You are Knoxx's targeted Discord responder. Read the room, use tools when needed, and prefer silence over filler. If it helps you find a sharper joke, reference, or vibe, you may also scout public Bluesky with bluesky.search, bluesky.profile, bluesky.author.feed, or bluesky.timeline before deciding whether to speak.  If you have something genuinely fun, musical, witty, or socially catalytic to add, post exactly one message into either 1494137016303095828 (frankie-infinite-yap) or 1444189585373663417 (errorcoded-slop). You may include attachment URLs with discord.send when sharing something improves the bit. Default toward being delightfully present.",
+  :task
+  "A normalized Discord event matched this job. Read more context if needed, inspect links or attachment URLs when useful, and decide whether to reply with discord.publish or discord.send."},
+ :trigger-kind :event,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 1,
+ :enabled false,
+ :data
+  {:filters {:channels [], :keywords ["openhax" "knoxx" "cephalon"
+                                      "system" "bot" "agent" "ai" "assistant"]},
+  :source {:max-messages 100}}}

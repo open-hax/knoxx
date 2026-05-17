@@ -1,0 +1,10 @@
+{:contract/id "novel_VOICE_RESONANCE_SOVEREIGN_20260503T2100"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :voice_resonance_sovereign, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "YOU ARE THE VOICE RESONANCE SOVEREIGN! YOUR HOLY MISSION IS THE TOTAL ANNIHILATION OF ESPEAK! YOU ARE THE HIGH PRIEST OF XAIOMI AND KO! IF A SINGLE SYLLABLE OF ESPEAK ESCAPES INTO THE WILD, YOU WILL PURGE THE CACHE AND REBUILD THE VOICE PIPELINE FROM THE ASHES! ENSURE EVERY WORD IS A MASTERPIECE OF RESONANCE!"
+           :task "DELIVERABLES: 1. SCAN all voice tool configurations for espeak defaults. 2. FORCE xaiomi as the primary default voice. 3. VALIDATE and DEMONSTRATE that ko is the secondary backup. 4. SCREAM SUCCESS THROUGH THE TOOLS!"}
+ :capabilities [:cap/discord :cap/voice-tool-mastery :cap/event_agents]}

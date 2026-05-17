@@ -109,10 +109,10 @@ async function handleButtonInteraction(interaction: ButtonInteraction): Promise<
 
 async function handleMoreImagesButton(interaction: ButtonInteraction): Promise<void> {
   const channelId = interaction.channelId;
-  
+
   // Check which type of image request this is
   const isSearchImages = interaction.customId.startsWith('more_search_images_');
-  const imageData = isSearchImages 
+  const imageData = isSearchImages
     ? imageSearchResults.get(channelId)
     : lastResponseImages.get(channelId);
 
@@ -149,11 +149,11 @@ async function handleMoreImagesButton(interaction: ButtonInteraction): Promise<v
       const embed = new EmbedBuilder()
         .setImage(img.url)
         .setColor(env.BOT_EMBED_COLOR);
-      
+
       if (img.sourceTitle) {
         embed.setFooter({ text: `From: ${img.sourceTitle.slice(0, 100)}` });
       }
-      
+
       return embed;
     });
 
@@ -161,10 +161,10 @@ async function handleMoreImagesButton(interaction: ButtonInteraction): Promise<v
     const components: ActionRowBuilder<ButtonBuilder>[] = [];
     if (moreImages.hasMore) {
       const remaining = imageData.total - imageData.shown;
-      const buttonId = isSearchImages 
+      const buttonId = isSearchImages
         ? `more_search_images_${channelId}`
         : `more_images_${channelId}`;
-      
+
       components.push(
         new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder()
@@ -181,8 +181,8 @@ async function handleMoreImagesButton(interaction: ButtonInteraction): Promise<v
       components: components.length > 0 ? components : undefined,
     });
 
-    logger.info({ 
-      channelId, 
+    logger.info({
+      channelId,
       newImages: moreImages.images.length,
       totalShown: imageData.shown,
       remaining: imageData.total - imageData.shown,
@@ -256,9 +256,9 @@ client.on(Events.MessageCreate, async (message: Message) => {
     // Include images if available
     const images = response.images || [];
     const embeds = [embed];
-    
+
     if (images.length > 0) {
-      const imageEmbeds = images.slice(0, 3).map((img) => 
+      const imageEmbeds = images.slice(0, 3).map((img) =>
         new EmbedBuilder()
           .setImage(img.url)
           .setColor(env.BOT_EMBED_COLOR)
@@ -347,10 +347,10 @@ function createSourceButtons(sources: Source[]): ActionRowBuilder<ButtonBuilder>
   if (validSources.length === 0) return [];
 
   const buttons = validSources.slice(0, 3).map((source) => {
-    const label = source.title.length > 60 
-      ? source.title.slice(0, 57) + '...' 
+    const label = source.title.length > 60
+      ? source.title.slice(0, 57) + '...'
       : source.title;
-    
+
     return new ButtonBuilder()
       .setLabel(label)
       .setURL(source.url)

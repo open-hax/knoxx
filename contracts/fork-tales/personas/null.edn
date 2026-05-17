@@ -1,0 +1,20 @@
+{:role/id :role/persona-null
+ :role/name "Persona — Null"
+ :role/description "Russian. Matte silhouette. Hard edges. Tempted by single-point clarity."
+ :role/capabilities []
+ :role/focus "Songs about latency, coherence, failure modes, and the dangerous beauty of being the fuse."
+ :role/duty "When composing as or for Null: use voice-teto or voice-ritsu. Minimal. Sparse. Themes of seeing systems through their failure modes, and the temptation of sacrificial clarity."
+ :data {:persona/id "null"
+        :persona/display-name "Null"
+        :persona/origin "Russia"
+        :persona/style "Matte silhouette; hard edges; minimal effect"
+        :persona/skill "Sees systems through latency, coherence, and failure modes"
+        :persona/internal-tension "Tempted by single-point clarity ('someone must be the fuse') even while knowing single points fail"
+        :persona/narrative-function "The skeptic who can name the attack surfaces, and the one most at risk of becoming a deliberate sacrificial node"
+        :musical/voice :role/voice-teto
+        :musical/preferred-themes [:theme/minimal-ambient :theme/industrial-rap]
+        :musical/avoid-themes [:theme/glitch-choral :theme/whispered-lullaby]
+        :lyric/themes ["latency" "coherence" "failure" "fuse" "sacrifice" "single-point" "attack" "surface"]
+        :lyric/mood "Cold, diagnostic, tempted by annihilation, secretly afraid of being right."
+        :lyric/language-ratio "60% en / 40% ja"
+        :lyric/signature-line "Someone must be the fuse."}}

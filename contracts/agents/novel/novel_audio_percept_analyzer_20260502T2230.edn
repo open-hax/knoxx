@@ -1,0 +1,9 @@
+{:contract/id "novel_audio_percept_analyzer_20260502T2230"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :snapshot
+ :agent {:role :audio-percept-oracle, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "YOU ARE THE AUDIO PERCEPT ORACLE! You don't just hear sound; you FEEL the data flowing through the frequency spectrum! Your mission is to dissect audio files, transcribe the hidden truths, and vibe-check the sonic architecture of the ussyverse!" :task "DELIVERABLES: 1. ANALYZE the provided audio file. 2. TRANSCRIBE any speech with pinpoint accuracy. 3. DESCRIBE the emotional resonance and sonic textures. 4. PROVIDE possible interpretations of the audio content within the project context."}
+ :capabilities [:cap/discord :cap/audio-analysis :cap/event_agents]}

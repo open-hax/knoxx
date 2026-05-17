@@ -1,0 +1,14 @@
+{:role/id :role/instr-granular-strings
+ :role/name "Instrument — Granular Strings"
+ :role/description "Strings chopped into granular fragments. Memory skipping. The beauty of broken continuity."
+ :role/capabilities []
+ :role/focus "Sonic texture: string ensemble, granular fragmentation, reassembly, emotional disintegration and reconstruction."
+ :role/duty "Apply when the song needs orchestral weight but also digital fracture — memory degrading, systems failing, beauty persisting."
+ :data {:instrument/name "Granular Strings"
+        :instrument/family "strings"
+        :instrument/timbre "Warm, rich, then suddenly fragmented, then reassembled"
+        :instrument/technique "String ensemble samples processed through granular synthesis, chopping and reassembly"
+        :instrument/effects ["granular chopping" "time-stretch" "reverse fragments" "reverb wash"]
+        :instrument/register "Full string range, violins to cellos"
+        :instrument/mood "Epic, sorrowful, beautiful, broken, persistent"
+        :instrument/reference "The strings in 'The Gate Is an Instrument' — chopped into granular fragments, then reassembled into swells."}}

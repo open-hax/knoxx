@@ -1,0 +1,17 @@
+{:contract/kind  :pipeline
+ :contract/id    "deep_synthesis_pipeline"
+ :enabled        true
+ :pipeline/steps
+ [{:step/id       "fetch"
+   :step/contract "discord_deep_synthesis"
+   :step/data
+   {:output  {:key "synthesis_data" :ttl "PT6H"}}}
+
+  {:step/id       "synthesize"
+   :step/contract "daily_synthesis_agent"
+   :step/depends-on ["fetch"]
+   :step/data
+   {:context {:digest "{{memory.temp:synthesis_data}}"}}}]
+ :data
+ {:context  {:source "discord-deep-synthesis"}
+  :output   {:key "deep_synthesis_result" :ttl "PT6H"}}}

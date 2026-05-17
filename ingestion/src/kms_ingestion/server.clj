@@ -247,8 +247,10 @@
 (defn- maybe-queue-scheduled-jobs!
   []
   (doseq [source (db/list-enabled-sources)]
-    (let [source-id (str (:source_id source))]
-      (when (and (source-due? source)
+    (let [source-id (str (:source_id source))
+          audio? (= "audio" (:driver_type source))]
+      (when (and (or (not audio?) (config/audio-indexing-enabled?))
+                 (source-due? source)
                  (not (db/source-has-active-job? source-id)))
         (let [job (db/create-job! source-id (:tenant_id source) {:scheduled true})
               job-id (str (:job_id job))]
@@ -260,12 +262,14 @@
   []
   (doseq [source (db/list-enabled-sources)]
     (let [source-id (str (:source_id source))
+          audio? (= "audio" (:driver_type source))
           latest-job (db/latest-job-for-source source-id)
           needs-bootstrap? (or (not (db/source-has-file-state? source-id))
                                (= "failed" (:status latest-job))
                                (= "cancelled" (:status latest-job)))]
-      (when (and needs-bootstrap?
-                  (not (db/source-has-active-job? source-id)))
+      (when (and (or (not audio?) (config/audio-indexing-enabled?))
+                 needs-bootstrap?
+                 (not (db/source-has-active-job? source-id)))
         (let [job (db/create-job! source-id (:tenant_id source)
                                   {:bootstrap true
                                    :retry_of (some-> latest-job :job_id str)})
@@ -306,6 +310,12 @@
           sync-minutes     (cr/sync-interval-minutes contract)
           passive-w        (cr/passive-watch-enabled? contract)
           collections      (or (cr/sink-collections contract) [tenant-id])
+          ;; Source enabled can be controlled in contract, but we also allow a runtime kill-switch
+          ;; for the audio driver so heavy background indexing can be paused without editing contracts.
+          enabled?         (and (cr/source-enabled? contract)
+                                (if (= driver-type "audio")
+                                  (config/audio-indexing-enabled?)
+                                  true))
           ;; Store contract source ID in config so the worker can map UUID -> contract file
           source-cfg       (cond-> (dissoc cfg :root_path)
                              root-p       (assoc :root_path root-p)
@@ -316,7 +326,8 @@
                             :collections      collections
                             :file-types       (vec file-types)
                             :exclude-patterns (vec exclude-pats)
-                            :include-patterns (vec include-pats)}]
+                            :include-patterns (vec include-pats)
+                            :enabled          (boolean enabled?)}]
       (if existing
         ;; Source exists — check if contract config has changed
         (let [existing-cfg (or (parse-jsonish (:config existing)) {})]
@@ -325,6 +336,7 @@
                           (vec file-types))
                     (not= (set (or (parse-jsonish (:exclude_patterns existing)) #{}))
                           (set exclude-pats))
+                    (not= (boolean (:enabled existing)) (boolean enabled?))
                     (not= (:contract_source_id existing-cfg) source-id-str))
             (println (str "[bootstrap] syncing source from contract: "
                           tenant-id "/" source-id-str
@@ -344,7 +356,7 @@
 (defn- ensure-sources-from-contracts!
   "Scan the contracts directory and ensure all discovered sources exist in the DB.
   This replaces the old hardcoded ensure-default-workspace-source! and
-  ensure-pi-sessions-source! functions."
+  ensure-eta-mu-sessions-source! functions."
   []
   (let [root (contracts/contracts-root)]
     (if root

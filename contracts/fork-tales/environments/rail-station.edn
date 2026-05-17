@@ -1,0 +1,15 @@
+{:role/id :role/env-rail-station
+ :role/name "Environment — Rail Station"
+ :role/description "Seishin Infrastructure. The spine that never broke. Platform chimes. Indifferent precision."
+ :role/capabilities []
+ :role/focus "Sonic space: platform ambience, distant trains, PA announcements, the hum of maintained systems."
+ :role/duty "Apply when the song needs to feel like Tokyo after the Event — the trains still run, schedules hold, the outside world grows silent."
+ :data {:env/name "Rail Station"
+        :env/space "Seishin Infrastructure platform, Tokyo"
+        :env/ambience "Distant train rumble, platform chimes, footstep echoes"
+        :env/reverb "Medium, reflective tile and concrete"
+        :env/textures ["Electric hum" "Brake squeal" "Door chimes" "Static from PA" "Rain on glass"]
+        :env/scale "Human, horizontal, ordered"
+        :env/light "Fluorescent, white, unforgiving but reliable"
+        :env/mood "Calm, mechanical, quietly heroic, the world is breaking but the schedule holds"
+        :env/reference "The Yamanote line. The trains did not stop."}}

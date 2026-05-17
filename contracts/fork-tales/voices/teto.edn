@@ -1,0 +1,15 @@
+{:role/id :role/voice-teto
+ :role/name "Voice — Kasane Teto"
+ :role/description "Japanese vocal identity. The standard. The train that never stopped."
+ :role/capabilities [:cap/voice-synth]
+ :role/focus "Vocal synthesis via 重音テト OU用日本語統合ライブラリー. Japanese CV phonemizer. WORLDLINE-R renderer."
+ :role/duty "When composing vocals, default to singer_id 'teto'. Japanese lyrics. Mixed identity energy — the username carries layered meaning."
+ :data {:singer/id "teto"
+        :singer/name "重音テト OU用日本語統合ライブラリー"
+        :singer/language "ja"
+        :singer/phonemizer "OpenUtau.Core.Ustx.JapaneseCVPhonemizer"
+        :singer/renderer "WORLDLINE-R"
+        :voice/pitch-range "C4-C6"
+        :voice/character "Energetic, layered, persistent. The spine that kept moving when the world fractured."
+        :lyric/default-language "ja"
+        :lyric/romaji-ok? true}}

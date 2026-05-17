@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { EVENT_AGENTS_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
+import { AGENTS_ROUTE, EVENTS_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import AuthBoundary from "./pages/AuthContext";
 import { useAuth } from "./pages/useAuth";
 import ChatPage from "./pages/ChatPage";
+import MailPage from "./pages/MailPage";
 import CmsPage from "./pages/CmsPage";
+import { VisualCmsEditorPage } from "./pages/VisualCmsEditorPage";
 import ContractsPage from "./pages/ContractsPage";
 import DataPage from "./pages/DataPage";
 import GardensPage from "./pages/GardensPage";
 import AgentsPage from "./pages/AgentsPage";
+import EventsPage from "./pages/EventsPage";
 import OpsRoot from "./pages/OpsRoot";
+import BroadcastStudioPage from "./pages/BroadcastStudioPage";
 import TranslationReviewPage from "./pages/TranslationReviewPage";
 
 
@@ -38,9 +42,15 @@ function AppShell() {
       <header className="app-shell__header">
         <div className="app-shell__header-inner">
           <h1 className="app-shell__brand">Knoxx</h1>
-          <nav className="app-shell__nav">
+          <nav className="app-shell__nav" aria-label="Primary">
             <NavLink to="/" className={navLinkClass}>
               Chat
+            </NavLink>
+            <NavLink to="/mail" className={navLinkClass}>
+              Mail
+            </NavLink>
+            <NavLink to="/studio" className={navLinkClass}>
+              Studio
             </NavLink>
             {!basicUser ? (
               <>
@@ -59,7 +69,10 @@ function AppShell() {
                 <NavLink to="/translations" className={navLinkClass}>
                   Translations
                 </NavLink>
-                <NavLink to={EVENT_AGENTS_ROUTE} className={navLinkClass}>
+                <NavLink to={EVENTS_ROUTE} className={navLinkClass}>
+                  Events
+                </NavLink>
+                <NavLink to={AGENTS_ROUTE} className={navLinkClass}>
                   Agents
                 </NavLink>
                 <NavLink to={opsRoutes.admin} className={navLinkClass}>
@@ -78,14 +91,19 @@ function AppShell() {
         <Routes>
           {/* Regular pages */}
           <Route path="/" element={<ChatPage />} />
+          <Route path="/mail" element={<MailPage />} />
+          <Route path="/studio" element={<ProtectedSurface><BroadcastStudioPage /></ProtectedSurface>} />
           <Route path="/cms" element={<ProtectedSurface><CmsPage /></ProtectedSurface>} />
+          <Route path="/cms/editor/*" element={<ProtectedSurface><VisualCmsEditorPage /></ProtectedSurface>} />
           <Route path="/contracts" element={<ProtectedSurface><ContractsPage /></ProtectedSurface>} />
           <Route path="/data" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />
+          <Route path="/data/:tab" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />
           <Route path="/gardens" element={<ProtectedSurface><GardensPage /></ProtectedSurface>} />
           <Route path="/translations" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />
           <Route path="/translations/:documentId/:targetLang" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />
-          <Route path={EVENT_AGENTS_ROUTE} element={<ProtectedSurface><AgentsPage /></ProtectedSurface>} />
-          <Route path={LEGACY_EVENT_AGENTS_ROUTE} element={<Navigate to={EVENT_AGENTS_ROUTE} replace />} />
+          <Route path={EVENTS_ROUTE} element={<ProtectedSurface><EventsPage /></ProtectedSurface>} />
+          <Route path={AGENTS_ROUTE} element={<ProtectedSurface><AgentsPage /></ProtectedSurface>} />
+          <Route path={LEGACY_EVENT_AGENTS_ROUTE} element={<Navigate to={EVENTS_ROUTE} replace />} />
           <Route path="/ops/*" element={<ProtectedSurface><OpsRoot /></ProtectedSurface>} />
           <Route path="/next/*" element={<LegacyOpsRedirect />} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -118,7 +136,7 @@ function UserMenu() {
   if (!auth?.user) return null;
 
   return (
-    <div className="relative ml-4">
+    <div className="app-shell__user-menu relative ml-4">
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800 transition"

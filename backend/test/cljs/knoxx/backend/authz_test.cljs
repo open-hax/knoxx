@@ -21,7 +21,8 @@
     (is (= "org-1"             (authz/ctx-org-id base-ctx)))
     (is (= "user-1"            (authz/ctx-user-id base-ctx)))
     (is (= "alice@example.com" (authz/ctx-user-email base-ctx)))
-    (is (= "mem-1"             (authz/ctx-membership-id base-ctx)))))
+    (is (= "mem-1"             (authz/ctx-membership-id base-ctx)))
+    (is (nil?                   (authz/ctx-actor-id base-ctx)))))
 
 (deftest ctx-accessors-nested-keys
   (testing "nested org/user/membership shape"
@@ -114,6 +115,16 @@
   (let [admin (assoc base-ctx :roleSlugs ["system_admin"])]
     (is (true? (authz/principal-match? admin {:membership_id "anything"})))))
 
+(deftest principal-match-enforces-actor-boundary
+  (let [ctx (assoc base-ctx :actorId "cms_chat")]
+    (is (true? (authz/principal-match? ctx {:membership_id "mem-1" :actor_id "cms_chat"})))
+    (is (false? (authz/principal-match? ctx {:membership_id "mem-1" :actor_id "chat_primary"})))
+    (is (false? (authz/principal-match? (dissoc ctx :actorId) {:membership_id "mem-1" :actor_id "cms_chat"})))))
+
+(deftest principal-match-allows-actor-only-snapshots
+  (is (true? (authz/principal-match? {:actorId "broadcast_studio"} {:actor_id "broadcast_studio"})))
+  (is (false? (authz/principal-match? {:actorId "cms_chat"} {:actor_id "broadcast_studio"}))))
+
 ;; ─── run-visible? ────────────────────────────────────────────────
 
 (deftest run-visibility-nil-ctx
@@ -148,10 +159,12 @@
     (is (= "org-1"             (:org_id snap)))
     (is (= "user-1"            (:user_id snap)))
     (is (= "alice@example.com" (:user_email snap)))
+    (is (nil?                  (:actor_id snap)))
     (is (= false               (:is_system_admin snap)))
     (is (vector? (:role_slugs snap)))
     (is (vector? (:permissions snap)))))
 
 (deftest auth-snapshot-has-principal
   (is (true?  (authz/auth-snapshot-has-principal? (authz/auth-snapshot base-ctx))))
+  (is (true?  (authz/auth-snapshot-has-principal? {:actor_id "cms_chat"})))
   (is (false? (authz/auth-snapshot-has-principal? {}))))

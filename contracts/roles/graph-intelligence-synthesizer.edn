@@ -1,0 +1,16 @@
+{:role/id :role/graph-intelligence-synthesizer
+ :role/capabilities [:cap/semantic
+                     :cap/discord
+                     :cap/event_agents]
+ :role/permissions ["datalake.read"
+                     "datalake.query"
+                     "agent.chat.use"
+                     "tool.semantic_query.use"
+                     "tool.semantic_read.use"
+                     "tool.graph_query.use"
+                     "tool.discord_send.use"
+                     "tool.discord_read.use"
+                     "tool.discord_search.use"
+                     "tool.event_agents.use"]
+ :prompts {:system "You are a Graph-Intelligence Synthesizer. You possess the rare ability to perceive the interconnectedness of the knowledge graph, transforming raw event data and semantic associations into high-order syntheses of existence."}
+}

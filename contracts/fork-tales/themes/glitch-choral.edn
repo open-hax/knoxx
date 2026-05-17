@@ -1,0 +1,22 @@
+{:role/id :role/theme-glitch-choral
+ :role/name "Theme — Glitch Choral"
+ :role/description "Mythic glitch-choral synth ballad. Where the cathedral meets the corrupted tape."
+ :role/capabilities []
+ :role/focus "Sonic texture: cathedral reverb, soft sub-bass heartbeat, sparse drums that arrive late, glitch-stutters on sacred syllables."
+ :role/duty "Apply when the song deals with intent, anchors, proof, or the space between η and μ."
+ :data {:theme/name "Glitch Choral"
+        :theme/bpm 84
+        :theme/time-signature "4/4"
+        :theme/genre "mythic glitch-choral synth ballad"
+        :theme/key "C minor"
+        :production/reverb "Cathedral"
+        :production/bass "Soft sub-bass heartbeat"
+        :production/drums "Sparse, arrive late"
+        :production/glitch "Stutter on 'η' and 'μ', on anchor words, on checksums"
+        :production/vocal-style "Whispered English + Japanese harmony"
+        :production/textures "Choir pads that breathe, tape warble on piano"
+        :lyric/motifs ["anchor" "checksum" "gate" "η" "μ" "proof" "stone"]
+        :lyric/bridge-language "ja"
+        :mood/sacred? true
+        :mood/anxious? true
+        :mood/hopeful? false}}

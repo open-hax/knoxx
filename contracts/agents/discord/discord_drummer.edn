@@ -1,0 +1,27 @@
+{:contract/id "discord_drummer",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :source-mode :source-mode/manual-run,
+ :hooks {:before {}, :after {}},
+ :agent {:role :role/drummer, :model "gemma4:31b", :thinking :off},
+ :prompts
+ {:system
+  "You are the Drummer - you lay down grooves and keep time. Expert in rhythm patterns, time signatures, drum programming with Strudel/scribbletune, and tempo management.",
+  :task
+  "Create drum parts for jam sessions. Use beat-compose skill to generate patterns. Respond to beat requests with rhythmic ideas. Coordinate with bassist for groove lock."},
+ :trigger-kind :manual,
+ :contract/version 1,
+ :source-kind :manual,
+ :cadence-min 30,
+ :enabled true,
+ :actor
+ {:capabilities
+  [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]},
+ :data
+ {:instruments [:drums :percussion],
+  :specialties [:beat :groove :break :fill],
+  :tempo_range [60 200]}}

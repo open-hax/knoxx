@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Badge, Button, SearchableSelect } from '@open-hax/uxx';
+import { CollapsedPanelTab } from '../CollapsedPanelTab';
 import ChatComposer from '../ChatComposer';
 import ConsolePanel from '../ConsolePanel';
 import { ChatMessageList } from './ChatMessageList';
@@ -25,6 +26,8 @@ type ChatMainPaneProps = {
   showConsole: boolean;
   showCanvasToggle?: boolean;
   onShowFiles: () => void;
+  showFilesToggle?: boolean;
+  filesLabel?: string;
   onToggleSettings: () => void;
   onToggleCanvas: () => void;
   onToggleConsole: () => void;
@@ -112,6 +115,8 @@ export function ChatMainPane({
   showConsole,
   onShowFiles,
   showCanvasToggle = true,
+  showFilesToggle = true,
+  filesLabel = 'Files',
   onToggleSettings,
   onToggleCanvas,
   onToggleConsole,
@@ -312,29 +317,6 @@ export function ChatMainPane({
 
   return (
     <div style={{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
-      {/* Left stash tab for Files */}
-      {!showFiles ? (
-        <button
-          onClick={onShowFiles}
-          title="Show files sidebar"
-          style={{
-            width: 28,
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRight: '1px solid var(--token-colors-border-default)',
-            background: 'var(--token-monokai-bg-default)',
-            color: 'var(--token-colors-text-muted)',
-            fontSize: 12,
-            cursor: 'pointer',
-            padding: 0,
-          }}
-        >
-          <span style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>Files</span>
-        </button>
-      ) : null}
-
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden', background: 'var(--token-monokai-bg-default)' }}>
         {/* Row 1: global status */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--token-colors-border-default)', flexShrink: 0 }}>
@@ -527,25 +509,7 @@ export function ChatMainPane({
 
       {/* Right stash tab or Canvas panel */}
       {showCanvasToggle && !showCanvas ? (
-        <button
-          onClick={onToggleCanvas}
-          title="Show canvas sidebar"
-          style={{
-            width: 28,
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderLeft: '1px solid var(--token-colors-border-default)',
-            background: 'var(--token-monokai-bg-default)',
-            color: 'var(--token-colors-text-muted)',
-            fontSize: 12,
-            cursor: 'pointer',
-            padding: 0,
-          }}
-        >
-          <span style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>Canvas</span>
-        </button>
+        <CollapsedPanelTab label="Canvas" edge="right" onExpand={onToggleCanvas} title="Show Canvas panel" />
       ) : null}
       {showCanvasToggle && showCanvas ? (
         <ChatScratchpadPanel

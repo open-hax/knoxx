@@ -1,6 +1,12 @@
 (ns knoxx.backend.realtime
   (:require [clojure.string :as str]
-            [knoxx.backend.util.time :as time]))
+            [knoxx.backend.util.time :as time]
+            ["node:child_process" :refer [execFile]]
+            ["node:crypto" :as crypto]
+            ["node:os" :as os]
+            ["node:util" :refer [promisify]]))
+
+(def ^:private exec-file-async (promisify execFile))
 
 (defonce ws-clients* (atom {}))
 (defonce ws-stats-interval* (atom nil))
@@ -45,25 +51,22 @@
      :power_w (parse-float-safe power-w)}))
 
 (defn collect-nvidia-gpu-stats!
-  [runtime]
-  (if-let [exec-file-async (aget runtime "execFileAsync")]
-    (-> (exec-file-async "nvidia-smi" nvidia-smi-query-args #js {:timeout 1200})
-        (.then (fn [result]
-                 (->> (str/split-lines (or (aget result "stdout") ""))
-                      (map str/trim)
-                      (remove str/blank?)
-                      (mapv parse-nvidia-smi-line))))
-        (.catch (fn [_]
-                  (js/Promise.resolve []))))
-    (js/Promise.resolve [])))
+  [_runtime]
+  (-> (exec-file-async "nvidia-smi" nvidia-smi-query-args #js {:timeout 1200})
+      (.then (fn [result]
+               (->> (str/split-lines (or (aget result "stdout") ""))
+                    (map str/trim)
+                    (remove str/blank?)
+                    (mapv parse-nvidia-smi-line))))
+      (.catch (fn [_]
+                (js/Promise.resolve [])))))
 
 (defn system-stats!
   [runtime active-runs-count]
-  (let [node-os (aget runtime "os")
-        cpu-count (max 1 (.availableParallelism node-os))
-        load1 (or (aget (.loadavg node-os) 0) 0)
-        total-mem (or (.totalmem node-os) 1)
-        free-mem (or (.freemem node-os) 0)
+  (let [cpu-count (max 1 (.availableParallelism os))
+        load1 (or (aget (.loadavg os) 0) 0)
+        total-mem (or (.totalmem os) 1)
+        free-mem (or (.freemem os) 0)
         used-mem (max 0 (- total-mem free-mem))
         cpu-percent (min 100 (* 100 (/ load1 cpu-count)))
         mem-percent (min 100 (* 100 (- 1 (/ free-mem total-mem))))]
@@ -89,32 +92,38 @@
       (catch :default _
         (swap! ws-clients* dissoc client-id)))))
 
+(defn ws-client-matches-payload?
+  "True when a realtime client should receive a scoped payload.
+   Conversation id is authoritative when the client already knows it. A blank
+   client conversation id may still match by session id so the first async
+   /chat/start response cannot strand the live stream before the frontend learns
+   the server-generated conversation id."
+  [client session-id payload]
+  (let [payload-conversation-id (str (or (:conversation_id payload) (aget payload "conversation_id") ""))
+        client-session-id (or (aget client "sessionId") "")
+        client-conversation-id (or (aget client "conversationId") "")]
+    (cond
+      (and (not (str/blank? payload-conversation-id))
+           (not (str/blank? client-conversation-id)))
+      (= payload-conversation-id client-conversation-id)
+
+      (not (str/blank? session-id))
+      (and (not (str/blank? client-session-id))
+           (= session-id client-session-id))
+
+      :else false)))
+
 (defn broadcast-ws-session!
   "Broadcast to clients scoped by conversation-id for isolation.
-   Falls back to session-id matching for backwards compatibility.
-   Never broadcasts to all clients - requires explicit conversation or session match."
+   Falls back to session-id matching for clients that have not learned the
+   conversation-id yet. Never broadcasts to all clients."
   [session-id channel payload]
-  (let [payload-conversation-id (str (or (:conversation_id payload) (aget payload "conversation_id") ""))]
-    (doseq [[client-id client] @ws-clients*]
-      (let [client-session-id (or (aget client "sessionId") "")
-            client-conversation-id (or (aget client "conversationId") "")
-            ;; Match by conversation-id (primary) or session-id (fallback)
-            ;; Never match blank-to-blank to prevent cross-session contamination
-            matches? (cond
-                       (not (str/blank? payload-conversation-id))
-                       (and (not (str/blank? client-conversation-id))
-                            (= payload-conversation-id client-conversation-id))
-
-                       (not (str/blank? session-id))
-                       (and (not (str/blank? client-session-id))
-                            (= session-id client-session-id))
-
-                       :else false)]
-        (when matches?
-          (try
-            (safe-ws-send! (aget client "socket") (ws-envelope channel payload))
-            (catch :default _
-              (swap! ws-clients* dissoc client-id))))))))
+  (doseq [[client-id client] @ws-clients*]
+    (when (ws-client-matches-payload? client session-id payload)
+      (try
+        (safe-ws-send! (aget client "socket") (ws-envelope channel payload))
+        (catch :default _
+          (swap! ws-clients* dissoc client-id))))))
 
 (defn ensure-ws-stats-loop!
   [runtime active-runs-count]
@@ -155,7 +164,7 @@
                               (.send #js {:error "WebSocket upgrade required"})))
                :wsHandler (fn [socket request]
                             (let [ws (or (aget socket "socket") socket)
-                                  client-id (.randomUUID (aget runtime "crypto"))
+                                  client-id (.randomUUID crypto)
                                   url-params (try
                                                (js/URL. (str "http://localhost" (or (aget request "url") "/ws/stream")))
                                                (catch :default _ nil))

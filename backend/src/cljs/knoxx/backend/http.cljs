@@ -87,21 +87,34 @@
 
       :else true)))
 
+(defn fetch-with-timeout
+  "Fetch a URL with an AbortController timeout. Returns a Promise<Response>."
+  ([url opts] (fetch-with-timeout url opts 30000))
+  ([url opts timeout-ms]
+   (let [controller (js/AbortController.)
+         timeout-id (js/setTimeout #(.abort controller) timeout-ms)]
+     (-> (js/fetch url (js/Object.assign #js {:signal (.-signal controller)} opts))
+         (.finally (fn [] (js/clearTimeout timeout-id)))))))
+
+(def ^:private default-fetch-timeout-ms 30000)
+
 (defn fetch-json
-  [url opts]
-  (-> (js/fetch url opts)
-      (.then (fn [resp]
-               (-> (.text resp)
-                   (.then (fn [text]
-                            (let [body (if (str/blank? text)
-                                         #js {}
-                                         (try
-                                           (.parse js/JSON text)
-                                           (catch :default _ #js {:raw text})))]
-                              #js {:ok (.-ok resp)
-                                   :status (.-status resp)
-                                   :body body
-                                   :headers resp.headers}))))))))
+  ([url opts]
+   (fetch-json url opts default-fetch-timeout-ms))
+  ([url opts timeout-ms]
+   (-> (fetch-with-timeout url opts timeout-ms)
+       (.then (fn [resp]
+                (-> (.text resp)
+                    (.then (fn [text]
+                             (let [body (if (str/blank? text)
+                                          #js {}
+                                          (try
+                                            (.parse js/JSON text)
+                                            (catch :default _ #js {:raw text})))]
+                               #js {:ok (.-ok resp)
+                                    :status (.-status resp)
+                                    :body body
+                                    :headers resp.headers})))))))))
 
 (defn trim-trailing-slashes
   [s]
@@ -119,7 +132,10 @@
 (defn openplanner-headers
   [config]
   #js {"Content-Type" "application/json"
-       "Authorization" (str "Bearer " (:openplanner-api-key config))})
+       "Authorization" (str "Bearer " (:openplanner-api-key config))
+       "X-Tenant-ID" (or (:session-project-name config) "knoxx-session")})
+
+(def ^:private openplanner-timeout-ms 60000)
 
 (defn openplanner-request!
   ([config method suffix] (openplanner-request! config method suffix nil))
@@ -130,7 +146,7 @@
                      :headers (openplanner-headers config)}]
        (when body
          (aset opts "body" (.stringify js/JSON (clj->js body))))
-       (-> (fetch-json (openplanner-url config suffix) opts)
+       (-> (fetch-json (openplanner-url config suffix) opts openplanner-timeout-ms)
            (.then (fn [resp]
                     (if (aget resp "ok")
                       (js->clj (aget resp "body") :keywordize-keys true)
@@ -141,7 +157,7 @@
 
 (defn http-error
   [status code message]
-  (doto (js/Error. message)
+  (doto (ex-info (str status " " message) {:status status :code code})
     (aset "statusCode" status)
     (aset "code" code)))
 

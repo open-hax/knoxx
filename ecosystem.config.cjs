@@ -1,11 +1,16 @@
 /**
  * Knoxx PM2 ecosystem
  *
- * Runs all three Knoxx services on the host for source-mapped debugging:
- *   1. knoxx-shadow    — shadow-cljs watch with source maps (compiles CLJS → dist/)
- *   2. knoxx-backend   — node dist/server.js (compiled by shadow-cljs) with source-map stack traces
- *   3. knoxx-frontend  — vite dev server with HMR + API proxy to backend
- *   4. knoxx-ingestion — clojure -M:run (kms-ingestion on port 3003)
+ * Runs all Knoxx services on the host for source-mapped debugging:
+ *   1. knoxx-shadow          — shadow-cljs watch with source maps (compiles backend CLJS → dist-dev/)
+ *   2. knoxx-backend         — node dist-dev/server.js (watch-produced dev output) with source-map stack traces
+ *   3. knoxx-frontend        — migration mode: Vite builds to ./dist (watch) while shadow-cljs owns the dev HTTP server on port 5173
+ *   4. knoxx-ingestion       — clojure -M:run (kms-ingestion on port 3003)
+ *
+ * Frontend migration notes (important):
+ *   - Vite must NOT run its own dev server in this setup.
+ *   - shadow-cljs serves ./dist and proxies /api,/ws,/health to the backend.
+ *   - The TS→CLJS bridge is built by Vite in watch mode (vite.bridge.config.ts).
  *
  * Dependencies (must be running separately):
  *   - Redis     on localhost:6379  (compose: knoxx-redis)
@@ -75,14 +80,16 @@ const contractsDir = path.join(knoxxRoot, 'contracts');
 
 // Workspace root is where Knoxx is allowed to read/write files.
 // DO NOT hard-code /home/err/devel: other machines/users check out elsewhere.
+//
+// IMPORTANT: never dump process.env in logs (it can contain secrets).
 const workspaceRoot =
-  process.env.WORKSPACE_ROOT ||
-  process.env.WORKSPACE_PATH ||
-  process.env.KNOXX_WORKSPACE_ROOT ||
-  tryGitTopLevel(knoxxRoot) ||
-  // Fallback: assume standard repo layout: <root>/orgs/open-hax/openplanner/packages/agents/knoxx
-  path.resolve(knoxxRoot, '../../../../../../..');
-
+  process.env.WORKSPACE_ROOT
+  || process.env.WORKSPACE_PATH
+  || process.env.KNOXX_WORKSPACE_ROOT
+  || tryGitTopLevel(knoxxRoot)
+  || (() => {
+    throw new Error('no workspace root defined (set WORKSPACE_ROOT/WORKSPACE_PATH/KNOXX_WORKSPACE_ROOT)');
+  })();
 const defaultHostEnvPath = path.join(os.homedir(), '.knoxx', '.env');
 const hostEnvPath = process.env.KNOXX_HOST_ENV_PATH || defaultHostEnvPath;
 const hostEnv = loadSimpleEnv(hostEnvPath);
@@ -90,6 +97,7 @@ const musicLibraryRoot = process.env.KNOXX_MUSIC_LIBRARY_ROOT
   || hostEnv.KNOXX_MUSIC_LIBRARY_ROOT
   || path.join(os.homedir(), 'Music');
 const sttNpuPort = process.env.KNOXX_STT_PORT || hostEnv.KNOXX_STT_PORT || '8010';
+const chromiumPath = process.env.KNOXX_CHROMIUM_PATH || hostEnv.KNOXX_CHROMIUM_PATH || '/snap/bin/chromium';
 // Voice STT for the local Knoxx stack is pinned to the repo-local sidecar by default.
 // Only a process-level override should redirect it somewhere else.
 const sttNpuExplicitBaseUrl = process.env.KNOXX_STT_BASE_URL || '';
@@ -159,7 +167,7 @@ const apps = [
       script: 'pnpm',
       // Force source maps in the watch build so dist/*.map stays available
       // even if the underlying shadow config drifts.
-      args: 'exec shadow-cljs --source-maps watch server',
+      args: 'exec shadow-cljs --source-maps watch server-dev',
       watch: false,
       autorestart: true,
       max_restarts: 10,
@@ -169,7 +177,119 @@ const apps = [
       },
     },
 
-    // ── 2. STT (Whisper/OpenVINO sidecar) ────────────────────────────
+    // ── 2. Backend (Node + compiled CLJS) ────────────────────────────
+    {
+      name: 'knoxx-backend',
+      cwd: backendDir,
+      // Foreground launcher waits for shadow-cljs dev server + dist-dev/server.js
+      // before importing the all-CLJS runtime entrypoint. This encodes the full
+      // hot-reload cycle in PM2 instead of relying on an agent's ad hoc startup order.
+      script: 'scripts/start-server-dev.cljs',
+        interpreter: 'nbb',
+      kill_timeout: 45000,
+      // Policy/contract bootstrap can legitimately take >60s when Postgres or
+      // Mongo is under graph-load pressure. Keep wait_ready, but do not let PM2
+      // SIGINT the launcher every minute and amplify the startup storm.
+      listen_timeout: 240000,
+      wait_ready: true,
+      shutdown_with_message: true,
+      min_uptime: '120s',
+      // Do not let PM2 watch compiled output or source. shadow-cljs owns hot reload;
+      // PM2 only owns the long-running launcher process.
+      watch: false,
+      // watch: ['dist'],
+      // watch_delay: 800,
+      // ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
+      autorestart: true,
+      max_restarts: 5,
+      restart_delay: 30000,
+      exp_backoff_restart_delay: 5000,
+      env: {
+        NODE_ENV: 'development',
+        HOST: '0.0.0.0',
+        PORT: '8000',
+        WORKSPACE_ROOT: workspaceRoot,
+        CONTRACTS_DIR: contractsDir,
+        KNOXX_MUSIC_LIBRARY_ROOT: musicLibraryRoot,
+        KNOXX_EXTRA_WORKSPACE_ROOTS: musicLibraryRoot,
+        KNOXX_CHROMIUM_PATH: chromiumPath,
+        DISCORD_BOT_TOKEN: hostEnv.DISCORD_BOT_TOKEN,
+        KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
+        KNOXX_COLLECTION_NAME: 'devel_docs',
+        AUDD_API_TOKEN: hostEnv.AUDD_API_TOKEN || '',
+        ACOUSTID_API_KEY: hostEnv.ACOUSTID_API_KEY || '',
+        // Public base URL used for OAuth redirect_uri + cookie scope
+        KNOXX_PUBLIC_BASE_URL: hostEnv.KNOXX_PUBLIC_BASE_URL || 'http://localhost',
+        // GitHub OAuth
+        KNOXX_GITHUB_OAUTH_CLIENT_ID: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_ID || '',
+        KNOXX_GITHUB_OAUTH_CLIENT_SECRET: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_SECRET || '',
+        // Canonical Proxx (on host via compose port-forward)
+        PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
+        PROXX_DEFAULT_MODEL: 'gemma4:31b',
+        PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
+        // Eta-mu native providers use this to emit body-level prompt_cache_key
+        // (and long-retention fields when supported) for session-affinity caching.
+        PI_CACHE_RETENTION: 'long',
+        KNOXX_PROVIDER_BASE_URLS: hostEnv.KNOXX_PROVIDER_BASE_URLS || 'llamacpp=http://127.0.0.1:8082',
+        KNOXX_PROVIDER_AUTH_TOKENS: hostEnv.KNOXX_PROVIDER_AUTH_TOKENS || 'llamacpp=LLAMACPP_API_KEY',
+        LLAMACPP_API_KEY: hostEnv.LLAMACPP_API_KEY || 'no-key',
+        // OpenPlanner (on host via compose port-forward)
+        OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
+        OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
+        KNOXX_API_KEY: hostEnv.KNOXX_API_KEY || process.env.KNOXX_API_KEY || 'change-me',
+        KNOXX_API_KEY_USER_EMAIL: hostEnv.KNOXX_API_KEY_USER_EMAIL || process.env.KNOXX_API_KEY_USER_EMAIL || 'pi@open-hax.local',
+        MCP_ENABLED: hostEnv.MCP_ENABLED || process.env.MCP_ENABLED || 'true',
+        SHOEDELUSSY_MCP_BASE_URL: shoedelussyMcpBaseUrl,
+        SHOEDELUSSY_MCP_TOOL_NAME: hostEnv.SHOEDELUSSY_MCP_TOOL_NAME || 'shoedelussy',
+        SHOEDELUSSY_MCP_SHARED_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
+        // Redis + Postgres (compose services forwarded to host)
+        REDIS_URL: 'redis://127.0.0.1:6379',
+        // Automatic recovered-session resume is opt-in. Keeping this false prevents
+        // ad hoc PM2 restarts or shadow-cljs hot reloads from creating duplicate
+        // zombie agent jobs. Stale sessions may still be cleaned up by recovery.
+        KNOXX_AGENT_AUTO_RESUME_SESSIONS: hostEnv.KNOXX_AGENT_AUTO_RESUME_SESSIONS || 'false',
+        // Event-agent cron jobs can be heavy (model calls, Discord scans, media work).
+        // On restart, delay and spread due cron jobs instead of boot-kicking all of
+        // them while PM2/shadow/PG/Mongo are still settling.
+        KNOXX_EVENT_AGENTS_MAX_CONCURRENT_JOBS: hostEnv.KNOXX_EVENT_AGENTS_MAX_CONCURRENT_JOBS || process.env.KNOXX_EVENT_AGENTS_MAX_CONCURRENT_JOBS || '1',
+        KNOXX_EVENTS_CRON_TICKER_MS: hostEnv.KNOXX_EVENTS_CRON_TICKER_MS || process.env.KNOXX_EVENTS_CRON_TICKER_MS || '60000',
+        KNOXX_EVENTS_CRON_STARTUP_MIN_DELAY_MS: hostEnv.KNOXX_EVENTS_CRON_STARTUP_MIN_DELAY_MS || process.env.KNOXX_EVENTS_CRON_STARTUP_MIN_DELAY_MS || '180000',
+        KNOXX_EVENTS_CRON_STARTUP_SPREAD_MS: hostEnv.KNOXX_EVENTS_CRON_STARTUP_SPREAD_MS || process.env.KNOXX_EVENTS_CRON_STARTUP_SPREAD_MS || '900000',
+        KNOXX_POLICY_DB_POOL_MAX: hostEnv.KNOXX_POLICY_DB_POOL_MAX || process.env.KNOXX_POLICY_DB_POOL_MAX || '6',
+        KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS: hostEnv.KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS || process.env.KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS || '15000',
+        KNOXX_POLICY_DB_IDLE_TIMEOUT_MS: hostEnv.KNOXX_POLICY_DB_IDLE_TIMEOUT_MS || process.env.KNOXX_POLICY_DB_IDLE_TIMEOUT_MS || '30000',
+        KNOXX_POLICY_DB_LOG_CONNECTS: hostEnv.KNOXX_POLICY_DB_LOG_CONNECTS || process.env.KNOXX_POLICY_DB_LOG_CONNECTS || 'false',
+        KNOXX_SHUTDOWN_GRACE_MS: '25000',
+        KNOXX_SHUTDOWN_POLL_MS: '250',
+        KNOXX_POLICY_DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
+        DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
+        // STT (NPU service on host)
+        KNOXX_STT_BASE_URL: sttNpuBaseUrl,
+
+        // Bluesky (ATProto)
+        BLUESKY_IDENTIFIER: hostEnv.BLUESKY_IDENTIFIER || process.env.BLUESKY_IDENTIFIER || '',
+        BLUESKY_APP_PASSWORD: hostEnv.BLUESKY_APP_PASSWORD || process.env.BLUESKY_APP_PASSWORD || '',
+        BLUESKY_SERVICE_URL: hostEnv.BLUESKY_SERVICE_URL || process.env.BLUESKY_SERVICE_URL || '',
+        BLUESKY_PUBLIC_API_URL: hostEnv.BLUESKY_PUBLIC_API_URL || process.env.BLUESKY_PUBLIC_API_URL || '',
+
+        // TTS (ElevenLabs)
+        // Accept historical/local key names from ~/.knoxx/.env.cephalon-host
+        KNOXX_ELEVENLABS_API_KEY:
+          hostEnv.KNOXX_ELEVENLABS_API_KEY
+          || hostEnv.KNOXX_ELEVENLABS_KEY
+          || hostEnv.ELEVENLABS_API_KEY
+          || hostEnv.ELEVEN_LABS_API_KEY
+          || hostEnv.XI_API_KEY
+          || '',
+        KNOXX_ELEVENLABS_VOICE_ID: hostEnv.KNOXX_ELEVENLABS_VOICE_ID || hostEnv.ELEVENLABS_VOICE_ID || '',
+        KNOXX_ELEVENLABS_MODEL_ID: hostEnv.KNOXX_ELEVENLABS_MODEL_ID || hostEnv.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2',
+
+        // Ingestion service on host
+        KMS_INGESTION_URL: 'http://127.0.0.1:3003',
+      },
+    },
+
+    // ── 3. STT (Whisper/OpenVINO sidecar) ────────────────────────────
     ...(sttNpuShouldRunLocal
       ? [{
         name: 'knoxx-stt-npu',
@@ -189,95 +309,37 @@ const apps = [
           WHISPER_MODEL_ID:
             process.env.WHISPER_MODEL_ID
             || hostEnv.WHISPER_MODEL_ID
-            || 'anubhav200/openai-whisper-small-openvino-int4',
+            || 'OpenVINO/whisper-medium.en-int8-ov',
+          STT_TIMED_MODEL_ID:
+            process.env.STT_TIMED_MODEL_ID
+            || hostEnv.STT_TIMED_MODEL_ID
+            || 'OpenVINO/whisper-medium-int8-ov',
+          STT_TIMED_MODEL_DIR:
+            process.env.STT_TIMED_MODEL_DIR
+            || hostEnv.STT_TIMED_MODEL_DIR
+            || `${sttNpuModelDir}-timed`,
+          STT_TIMED_DEVICE:
+            process.env.STT_TIMED_DEVICE
+            || hostEnv.STT_TIMED_DEVICE
+            || 'CPU',
           WHISPER_NPU_COMPILER_TYPE:
             process.env.WHISPER_NPU_COMPILER_TYPE
             || hostEnv.WHISPER_NPU_COMPILER_TYPE
             || 'DRIVER',
+          STT_WORD_TIMESTAMPS:
+            process.env.STT_WORD_TIMESTAMPS
+            || hostEnv.STT_WORD_TIMESTAMPS
+            || 'true',
           PYTHONUNBUFFERED: '1',
         },
       }]
       : []),
 
-    // ── 3. Backend (Node + compiled CLJS) ────────────────────────────
-    {
-      name: 'knoxx-backend',
-      cwd: backendDir,
-      // All-CLJS runtime entrypoint compiled by shadow-cljs (:server build).
-      // This keeps the backend fully CLJS-driven so nREPL can mutate the runtime.
-      script: 'dist/server.js',
-      node_args: '--enable-source-maps',
-      // Keep graceful PM2 shutdown messaging for resumable agent sessions,
-      // but do not gate startup on PM2 wait_ready: Knoxx can be fully serving
-      // before PM2 accepts the ready handshake, which caused duplicate launches
-      // and EADDRINUSE restart loops on port 8000.
-      kill_timeout: 35000,
-      shutdown_with_message: true,
-      // Auto-restart when shadow-cljs produces new output
-        // watch: ['dist'],
-      // watch_delay: 800,
-      // ignore_watch: ['.shadow-cljs', 'node_modules', 'tmp', '.git'],
-      autorestart: true,
-      max_restarts: 15,
-      restart_delay: 3000,
-      env: {
-        NODE_ENV: 'development',
-        HOST: '0.0.0.0',
-        PORT: '8000',
-        WORKSPACE_ROOT: workspaceRoot,
-        CONTRACTS_DIR: contractsDir,
-        KNOXX_MUSIC_LIBRARY_ROOT: musicLibraryRoot,
-        KNOXX_EXTRA_WORKSPACE_ROOTS: musicLibraryRoot,
-          DISCORD_BOT_TOKEN: hostEnv.DISCORD_BOT_TOKEN,
-        KNOXX_SESSION_PROJECT_NAME: 'knoxx-session',
-        KNOXX_COLLECTION_NAME: 'devel_docs',
-        AUDD_API_TOKEN: hostEnv.AUDD_API_TOKEN || '',
-        ACOUSTID_API_KEY: hostEnv.ACOUSTID_API_KEY || '',
-        // Public base URL used for OAuth redirect_uri + cookie scope
-        KNOXX_PUBLIC_BASE_URL: hostEnv.KNOXX_PUBLIC_BASE_URL || 'http://localhost',
-        // GitHub OAuth
-        KNOXX_GITHUB_OAUTH_CLIENT_ID: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_ID || '',
-        KNOXX_GITHUB_OAUTH_CLIENT_SECRET: hostEnv.KNOXX_GITHUB_OAUTH_CLIENT_SECRET || '',
-        // Canonical Proxx (on host via compose port-forward)
-        PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
-          PROXX_DEFAULT_MODEL: 'gemma4:31b',
-        PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
-        // OpenPlanner (on host via compose port-forward)
-        OPENPLANNER_BASE_URL: 'http://127.0.0.1:7777',
-        OPENPLANNER_API_KEY: hostEnv.OPENPLANNER_API_KEY || 'change-me',
-        KNOXX_API_KEY: hostEnv.KNOXX_API_KEY || process.env.KNOXX_API_KEY || 'change-me',
-        KNOXX_API_KEY_USER_EMAIL: hostEnv.KNOXX_API_KEY_USER_EMAIL || process.env.KNOXX_API_KEY_USER_EMAIL || 'pi@open-hax.local',
-        MCP_ENABLED: hostEnv.MCP_ENABLED || process.env.MCP_ENABLED || 'true',
-        SHOEDELUSSY_MCP_BASE_URL: shoedelussyMcpBaseUrl,
-        SHOEDELUSSY_MCP_TOOL_NAME: hostEnv.SHOEDELUSSY_MCP_TOOL_NAME || 'shoedelussy',
-        SHOEDELUSSY_MCP_SHARED_SECRET: hostEnv.SHOEDELUSSY_MCP_SHARED_SECRET || '',
-        // Redis + Postgres (compose services forwarded to host)
-        REDIS_URL: 'redis://127.0.0.1:6379',
-        KNOXX_SHUTDOWN_GRACE_MS: '25000',
-        KNOXX_SHUTDOWN_POLL_MS: '250',
-        KNOXX_POLICY_DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
-        DATABASE_URL: 'postgresql://kms:kms@127.0.0.1:5432/knoxx',
-        // STT (NPU service on host)
-        KNOXX_STT_BASE_URL: sttNpuBaseUrl,
-
-        // TTS (ElevenLabs)
-        // Accept historical/local key names from ~/.knoxx/.env.cephalon-host
-        KNOXX_ELEVENLABS_API_KEY:
-          hostEnv.KNOXX_ELEVENLABS_API_KEY
-          || hostEnv.KNOXX_ELEVENLABS_KEY
-          || hostEnv.ELEVENLABS_API_KEY
-          || hostEnv.ELEVEN_LABS_API_KEY
-          || hostEnv.XI_API_KEY
-          || '',
-        KNOXX_ELEVENLABS_VOICE_ID: hostEnv.KNOXX_ELEVENLABS_VOICE_ID || hostEnv.ELEVENLABS_VOICE_ID || '',
-        KNOXX_ELEVENLABS_MODEL_ID: hostEnv.KNOXX_ELEVENLABS_MODEL_ID || hostEnv.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2',
-
-        // Ingestion service on host
-        KMS_INGESTION_URL: 'http://127.0.0.1:3003',
-      },
-    },
-
-    // ── 4. Frontend (Vite dev server) ────────────────────────────────
+    // ── 4. Frontend (Vite build/watch + shadow-cljs dev server) ──────
+    // `pnpm dev` (frontend/package.json) runs:
+    //   - vite build --watch          (writes ./dist)
+    //   - vite build --watch (bridge) (writes ./dist/bridge)
+    //   - shadow-cljs watch app       (serves HTTP on :5173 and writes ./dist/cljs)
     {
       name: 'knoxx-frontend',
       cwd: frontendDir,
@@ -289,7 +351,7 @@ const apps = [
       restart_delay: 3000,
       env: {
         NODE_ENV: 'development',
-        // Vite proxy target: the host backend
+        // Used by Vite builds (and retained for `pnpm preview`).
         VITE_KNOXX_BACKEND_URL: 'http://127.0.0.1:8000',
       },
     },
@@ -316,6 +378,8 @@ const apps = [
         KNOXX_API_KEY: hostEnv.KNOXX_API_KEY || process.env.KNOXX_API_KEY || 'change-me',
         PROXX_BASE_URL: hostEnv.PROXX_BASE_URL || 'http://127.0.0.1:8789',
         PROXX_AUTH_TOKEN: hostEnv.PROXX_AUTH_TOKEN || hostEnv.PROXY_AUTH_TOKEN || 'change-me-open-hax-proxy-token',
+        // Temporary kill-switch: disable background indexing for the audio driver.
+        AUDIO_INDEXING_ENABLED: 'false',
       },
     },
 ];

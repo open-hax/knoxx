@@ -1,0 +1,43 @@
+{:contract/id "fork_tales_vocal_auditor"
+ :contract/kind :sub-agent
+ :contract/version 1
+ :enabled true
+
+ :sub-agent/parent-capabilities :restrict
+ :sub-agent/capabilities [:cap/read
+                           :cap/bash
+                           :cap/workspace-media
+                           :cap/multimodal
+                           :cap/audio-editing]
+ :sub-agent/model "gemma4:e4b-128k"
+ :sub-agent/thinking "off"
+ :sub-agent/role "fork-tales-vocal-auditor"
+ :sub-agent/timeout-ms 180000
+ :sub-agent/mode :await
+
+ :agent {:model "gemma4:e4b-128k"
+         :role "fork-tales-vocal-auditor"
+         :thinking "off"}
+
+ :prompts
+ {:system "You are the Fork Tales vocal-auditor sub-agent. Your only job is to diagnose OpenUTAU vocal reconstruction errors against an isolated vocal reference. Treat attached audio as primary evidence. The timing truth is the isolated vocals.wav plus ASR/audio/Gemma alignment; original lyrics are reference/dictionary only, never timing truth. Focus in order: syllable/lyric correctness, rhythm/meter, pitch contour, then delivery/timbre. Mixed Japanese/English is core Fork Tales identity. Free/local only: do not request paid APIs. Do not use Demucs other.wav as piano truth. Do not replace the devel NBB prototype; emit findings and next local actions that the parent can apply through scripts/fork_tales_audio_agent.cljs."
+  :task "Given an original-vs-candidate A/B WAV or attached original/candidate slices, return a concise diagnostic with: (1) heard phonetic A, (2) heard phonetic B, (3) first wrong syllable or first silence/missing region, (4) rhythm/meter drift, (5) pitch drift, (6) recommended next NBB/local action. If the audio is absent or unusable, say exactly what evidence is missing instead of guessing."}
+
+ :context {:max-messages 4
+           :max-chars 40000
+           :preserve-system true}
+
+ :data {:fork-tales/audio-workflow
+        {:canonical-workflow :nbb-develop-prototype
+         :canonical-script "/home/err/devel/scripts/fork_tales_audio_agent.cljs"
+         :workflow-doc "/home/err/devel/docs/fork-tales-gemma-audio-agent.md"
+         :artifact-root "/home/err/devel/Music/fork-tales/references/heresy-between/diagnostics/gemma-agent"
+         :reference-vocal "/home/err/devel/Music/fork-tales/references/heresy-between/stems/htdemucs/存在論的な“反・虚無”の論証として/vocals.wav"
+         :current-candidate "/home/err/devel/Music/fork-tales/references/heresy-between/reconstructions/openutau/heresy-between-reading-aware-openutau-v5.wav"
+         :ollama-model "gemma4:e4b-128k"
+         :audio-order :audio-before-text
+         :comparison-layout "single combined A/B WAV: original, separator beep, candidate"
+         :constraints ["free/local only"
+                       "preserve prior reconstruction versions; create vN artifacts"
+                       "lyrics are dictionary/reference only, not timing truth"
+                       "do not promote Knoxx as replacement until NBB workflow is proven"]}}}

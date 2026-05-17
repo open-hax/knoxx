@@ -48,9 +48,24 @@ export interface ContractListItem {
   enabled: boolean;
   title?: string;
   path?: string;
+  folder?: string;
   ednHash: number;
   compiledAt: string | null;
   updatedAt: string;
+  trigger?: {
+    kind?: "event" | "cron" | "webhook" | "manual";
+    target?: string;
+    schedule?: string;
+    source?: Record<string, unknown> | null;
+    filters?: Record<string, unknown> | null;
+    context?: Record<string, unknown> | null;
+  } | null;
+  pipeline?: {
+    steps?: Array<{ id?: string; contract?: string }>;
+  } | null;
+  action?: {
+    handler?: string;
+  } | null;
 }
 
 export interface ContractListResponse {
@@ -74,8 +89,9 @@ export interface ContractSaveResponse {
 
 // ── API functions ───────────────────────────────────────────────────────────
 
-export async function listContracts(): Promise<ContractListResponse> {
-  return request<ContractListResponse>("/api/admin/contracts");
+export async function listContracts(contractClass?: ContractsClass): Promise<ContractListResponse> {
+  const suffix = contractClass ? `?kind=${encodeURIComponent(contractClass)}` : "";
+  return request<ContractListResponse>(`/api/admin/contracts${suffix}`);
 }
 
 export async function getContract(

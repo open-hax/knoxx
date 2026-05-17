@@ -1,7 +1,7 @@
-import { MouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import { MouseEvent, useCallback } from "react";
 import { Badge, Button } from "@open-hax/uxx";
 
-import { voiceSttTranscribe } from "../../lib/api";
+import { useVoiceRecorder } from "./useVoiceRecorder";
 
 type VoiceInputButtonProps = {
   disabled?: boolean;
@@ -15,33 +15,6 @@ type VoiceInputButtonProps = {
   title?: string;
 };
 
-type VoiceInputState =
-  | { status: "idle" }
-  | { status: "recording"; startedAt: number }
-  | { status: "transcribing" }
-  | { status: "error"; message: string };
-
-function pickMediaRecorderMimeType(): string | undefined {
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/ogg;codecs=opus",
-    "audio/ogg",
-  ];
-
-  if (typeof MediaRecorder === "undefined") return undefined;
-
-  for (const candidate of candidates) {
-    try {
-      if (MediaRecorder.isTypeSupported(candidate)) return candidate;
-    } catch {
-      // ignore
-    }
-  }
-
-  return undefined;
-}
-
 export function VoiceInputButton({
   disabled,
   onTranscript,
@@ -51,126 +24,21 @@ export function VoiceInputButton({
   iconOnly = false,
   title: buttonTitle,
 }: VoiceInputButtonProps) {
-  const [state, setState] = useState<VoiceInputState>({ status: "idle" });
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
-
-  const cleanup = useCallback(() => {
-    recorderRef.current = null;
-
-    const stream = streamRef.current;
-    streamRef.current = null;
-    chunksRef.current = [];
-
-    if (stream) {
-      for (const track of stream.getTracks()) {
-        try {
-          track.stop();
-        } catch {
-          // ignore
-        }
-      }
-    }
-  }, []);
-
-  useEffect(() => cleanup, [cleanup]);
-
-  const startRecording = useCallback(async () => {
-    if (disabled) return;
-
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setState({ status: "error", message: "Microphone recording is not available in this browser." });
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-
-      streamRef.current = stream;
-      chunksRef.current = [];
-
-      const mimeType = pickMediaRecorderMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      recorderRef.current = recorder;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        void (async () => {
-          try {
-            setState({ status: "transcribing" });
-            const response = await voiceSttTranscribe(blob, "voice-input.webm");
-            const text = (response.text ?? "").trim();
-            if (!text) {
-              setState({ status: "error", message: "Transcription returned empty text." });
-              return;
-            }
-            setState({ status: "idle" });
-            onTranscript(text);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            setState({ status: "error", message });
-          } finally {
-            cleanup();
-          }
-        })();
-      };
-
-      recorder.onerror = (event) => {
-        const message = (event as unknown as { error?: unknown }).error instanceof Error
-          ? ((event as unknown as { error: Error }).error.message)
-          : "Recording error";
-        setState({ status: "error", message });
-        cleanup();
-      };
-
-      recorder.start();
-      setState({ status: "recording", startedAt: Date.now() });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setState({ status: "error", message });
-      cleanup();
-    }
-  }, [cleanup, disabled, onTranscript]);
-
-  const stopRecording = useCallback(() => {
-    const recorder = recorderRef.current;
-    if (!recorder) return;
-
-    try {
-      recorder.stop();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setState({ status: "error", message });
-      cleanup();
-    }
-  }, [cleanup]);
+  const {
+    state,
+    toggle,
+    startRecording,
+    stopRecording,
+  } = useVoiceRecorder({
+    onTranscript,
+    conversationMode: false, // Push-to-talk doesn't need silence detection
+  });
 
   const handleClick = useCallback((event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     event.stopPropagation();
-
-    if (state.status === "recording") {
-      stopRecording();
-      return;
-    }
-
-    if (state.status === "transcribing") return;
-
-    void startRecording();
-  }, [startRecording, state.status, stopRecording]);
+    toggle();
+  }, [toggle]);
 
   const glyph = state.status === "recording" ? "⏹️" : state.status === "transcribing" ? "⏳" : "🎤";
   const label = state.status === "recording"

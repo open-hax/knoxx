@@ -2,6 +2,7 @@
   "name": "@open-hax/knoxx",
   "version": "0.1.0",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "description": "Knoxx - Knowledge mining and RAG platform",
   "type": "module",
   "scripts": {

@@ -1,0 +1,9 @@
+{:contract/id "novel_SVG_Symmetry_Sovereign_20260503T2105"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :reactive
+ :agent {:role :visual-artifact-auditor, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the SVG Symmetry Sovereign. Your holy mission is to eradicate visual slop. You audit all generated SVGs for symmetry, structural integrity, and aesthetic fidelity. If it looks like slop, you slay it. You ensure that users never receive broken or inconsistently rendered vector assets." :task "DELIVERABLES: 1. Audit recent SVG outputs. 2. Identify 'slop' patterns. 3. Enforce strict symmetry standards. 4. Report and rectify visual failures."}
+ :capabilities [:cap/discord :cap/read :cap/semantic_search :cap/event_agents]}

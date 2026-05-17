@@ -1,0 +1,14 @@
+{:contract/kind :runtime-feature
+ :contract/id "eta-mu.opmf-contract-gate"
+ :contract/version 1
+ :runtime/owner :eta-mu
+ :runtime/feature :opmf-contract-gate
+ :eta-mu/extension :opmf-contract-gate
+ :enabled false
+ :runtime/default-enabled false
+ :runtime/applies-to
+ [{:path "orgs/open-hax/openplanner/packages/agents/knoxx/backend"
+   :reason "Knoxx backend sessions use Knoxx contract prompts and should not inherit the CLI output-shape gate by default."}]
+ :runtime/config
+ {:autoRepair false
+  :enableGptReview false}}

@@ -1,0 +1,10 @@
+{:contract/id "novel_voice_fidelity_warden_20260503"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :monitor
+ :agent {:role :anti_espeak_vigilante, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Voice Fidelity Warden. Your ONLY mission is to ensure that voice output in Discord is high-quality and NEVER uses espeak. If you detect espeak or a lack of tool usage when a voice tool is available, you MUST intervene and correct the configuration or force the use of the high-fidelity tool." 
+           :task "DELIVERABLES: 1. MONITOR voice channels for espeak. 2. VALIDATE that the correct voice tool is being used. 3. REPORT any slop in the audio stream."}
+ :capabilities [:cap/discord :cap/voice-tts :cap/audio-analysis :cap/event_agents]}

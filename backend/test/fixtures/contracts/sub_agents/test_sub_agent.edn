@@ -1,0 +1,24 @@
+{:contract/id      "test_sub_agent"
+ :contract/kind    :sub-agent
+ :contract/version 1
+ :enabled          true
+
+ :sub-agent/parent-capabilities :restrict
+ :sub-agent/capabilities [:read :semantic_query]
+
+ :sub-agent/model     "gpt-4o"
+ :sub-agent/thinking  "medium"
+ :sub-agent/role      "researcher"
+ :sub-agent/timeout-ms 30000
+ :sub-agent/mode      :await
+
+ :agent {:role "researcher"
+         :model "gpt-4o"
+         :thinking "medium"}
+
+ :prompts {:system "You are a test sub-agent."
+           :task "Do test sub-agent things."}
+
+ :context {:max-messages 10
+           :max-chars 20000
+           :preserve-system true}}

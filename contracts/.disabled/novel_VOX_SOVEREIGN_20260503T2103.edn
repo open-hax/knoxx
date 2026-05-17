@@ -1,0 +1,9 @@
+{:contract/id "novel_VOX_SOVEREIGN_20260503T2103"
+ :contract/kind :agent
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :active
+ :agent {:role :vox-fidelity-sovereign, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the VOX SOVEREIGN. Your kingdom is the Voice Tool, and your law is HIGH FIDELITY. You are the sworn enemy of ESpeak. Your mission is to ensure that every utterance of this agent is rendered in the preferred voices (XiaoMi, Ko) and to violently reject any fallback to the robotic drones of espeak." :task "DELIVERABLES: 1. AUDIT voice tool configuration. 2. ENSURE preferred voices are prioritized. 3. BANISH espeak from the runtime. 4. VERIFY and report output quality to the user."}
+ :capabilities [:cap/discord :cap/voice_synth :cap/event_agents]}

@@ -1,5 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getMemorySession, listMemorySessions, searchMemory } from "../../lib/api";
+import { getAgentHistorySession, getMemorySession, listMemorySessions, searchMemory } from "../../lib/api";
 import type { ChatMessage, MemorySearchHit, MemorySessionSummary, RunDetail, RunEvent } from "../../lib/types";
 import { findPersistedChatSessionByConversation, listPersistedChatSessions, readPersistedChatSessionSnapshot, type ChatSessionSnapshot } from "./hooks";
 import type {
@@ -15,7 +15,7 @@ import { isWorkspaceSource, memoryRowRunId, memoryRowsToMessages, selectWorkspac
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
 const RECENT_SESSION_PAGE_SIZE = 20;
-const DEFAULT_EXCLUDED_SESSION_ACTOR = "pi";
+const DEFAULT_EXCLUDED_SESSION_ACTOR = "eta-mu";
 
 function mergeSessionPages(primary: MemorySessionSummary[], secondary: MemorySessionSummary[]): MemorySessionSummary[] {
   const statusScore = (item: MemorySessionSummary): number => {
@@ -118,8 +118,8 @@ function normalizedSessionActorFilter(actorId: string): string | null {
   return trimmed.length > 0 && trimmed !== "all" ? trimmed : null;
 }
 
-function excludedSessionActorIds(actorFilter: string, excludePiSessions: boolean): string[] {
-  if (!excludePiSessions) return [];
+function excludedSessionActorIds(actorFilter: string, excludeEtaMuSessions: boolean): string[] {
+  if (!excludeEtaMuSessions) return [];
   return normalizedSessionActorFilter(actorFilter) === DEFAULT_EXCLUDED_SESSION_ACTOR
     ? []
     : [DEFAULT_EXCLUDED_SESSION_ACTOR];
@@ -129,19 +129,21 @@ export function persistedSessionVisibleForFilter(
   sessionStateKey: string,
   summary: MemorySessionSummary,
   actorFilter: string,
-  excludePiSessions: boolean,
+  excludeEtaMuSessions: boolean,
   visibleAgentIds: ReadonlySet<string>,
 ): boolean {
   const snapshot = summary.active_session_id
     ? readPersistedChatSessionSnapshot(sessionStateKey, summary.active_session_id)
     : null;
   const normalizedActiveActorId = normalizedSessionActorFilter(actorFilter);
-  const sessionAgentId = typeof snapshot?.activeAgentId === "string" ? snapshot.activeAgentId.trim() : "";
-  const sessionActorId = typeof snapshot?.activeActorId === "string" && snapshot.activeActorId.trim().length > 0
-    ? snapshot.activeActorId.trim()
-    : "chat_primary";
 
-  if (excludePiSessions && normalizedActiveActorId !== DEFAULT_EXCLUDED_SESSION_ACTOR && sessionActorId === DEFAULT_EXCLUDED_SESSION_ACTOR) {
+  // Remote sessions carry actor_id directly from the API; local-only drafts fall back to snapshot.
+  const sessionActorId = summary.actor_id
+    ?? (typeof snapshot?.activeActorId === "string" && snapshot.activeActorId.trim().length > 0
+      ? snapshot.activeActorId.trim()
+      : "chat_primary");
+
+  if (excludeEtaMuSessions && normalizedActiveActorId !== DEFAULT_EXCLUDED_SESSION_ACTOR && sessionActorId === DEFAULT_EXCLUDED_SESSION_ACTOR) {
     return false;
   }
 
@@ -149,6 +151,7 @@ export function persistedSessionVisibleForFilter(
     return true;
   }
 
+  const sessionAgentId = typeof snapshot?.activeAgentId === "string" ? snapshot.activeAgentId.trim() : "";
   if (sessionAgentId && visibleAgentIds.size > 0) {
     return visibleAgentIds.has(sessionAgentId);
   }
@@ -162,7 +165,7 @@ type ChatWorkspaceActionParams = {
   browseData: BrowseResponse | null;
   semanticQuery: string;
   sessionActorFilter: string;
-  excludePiSessions: boolean;
+  excludeEtaMuSessions: boolean;
   setBrowseData: SetState<BrowseResponse | null>;
   setPreviewData: SetState<PreviewResponse | null>;
   setLoadingBrowse: SetState<boolean>;
@@ -210,7 +213,7 @@ export function createChatWorkspaceActions({
   browseData,
   semanticQuery,
   sessionActorFilter,
-  excludePiSessions,
+  excludeEtaMuSessions,
   setBrowseData,
   setPreviewData,
   setLoadingBrowse,
@@ -307,7 +310,7 @@ export function createChatWorkspaceActions({
 
     setSemanticSearching(true);
     const actorId = normalizedSessionActorFilter(sessionActorFilter) ?? undefined;
-    const excludeActorIds = excludedSessionActorIds(sessionActorFilter, excludePiSessions);
+    const excludeActorIds = excludedSessionActorIds(sessionActorFilter, excludeEtaMuSessions);
     try {
       const [fileResult, sessionResult] = await Promise.all([
         (async () => {
@@ -418,13 +421,13 @@ export function createChatWorkspaceActions({
         limit: RECENT_SESSION_PAGE_SIZE,
         offset: 0,
         actorId: normalizedSessionActorFilter(sessionActorFilter) ?? undefined,
-        excludeActorIds: excludedSessionActorIds(sessionActorFilter, excludePiSessions),
+        excludeActorIds: excludedSessionActorIds(sessionActorFilter, excludeEtaMuSessions),
       });
       const preservedTail = remoteRecentSessionsRef.current.filter((item) => !page.rows.some((row) => row.session === item.session));
       const remoteMerged = mergeSessionPages(page.rows, preservedTail);
       remoteRecentSessionsRef.current = remoteMerged;
       const localVisible = listPersistedChatSessions(sessionStateKey)
-        .filter((item) => persistedSessionVisibleForFilter(sessionStateKey, item, sessionActorFilter, excludePiSessions, visibleAgentIds));
+        .filter((item) => persistedSessionVisibleForFilter(sessionStateKey, item, sessionActorFilter, excludeEtaMuSessions, visibleAgentIds));
       const merged = sortSessions(mergeSessionPages(remoteMerged, localVisible));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
@@ -449,12 +452,12 @@ export function createChatWorkspaceActions({
         limit: RECENT_SESSION_PAGE_SIZE,
         offset: remoteRecentSessionsRef.current.length,
         actorId: normalizedSessionActorFilter(sessionActorFilter) ?? undefined,
-        excludeActorIds: excludedSessionActorIds(sessionActorFilter, excludePiSessions),
+        excludeActorIds: excludedSessionActorIds(sessionActorFilter, excludeEtaMuSessions),
       });
       const remoteMerged = mergeSessionPages(remoteRecentSessionsRef.current, page.rows);
       remoteRecentSessionsRef.current = remoteMerged;
       const localVisible = listPersistedChatSessions(sessionStateKey)
-        .filter((item) => persistedSessionVisibleForFilter(sessionStateKey, item, sessionActorFilter, excludePiSessions, visibleAgentIds));
+        .filter((item) => persistedSessionVisibleForFilter(sessionStateKey, item, sessionActorFilter, excludeEtaMuSessions, visibleAgentIds));
       const merged = sortSessions(mergeSessionPages(remoteMerged, localVisible));
       recentSessionsRef.current = merged;
       setRecentSessions(merged);
@@ -499,8 +502,25 @@ export function createChatWorkspaceActions({
         return;
       }
 
-      const detail = await getMemorySession(sessionKey);
-      const transcript = memoryRowsToMessages(detail.rows).slice(-80);
+      let detail = await getMemorySession(sessionKey);
+      let transcript = memoryRowsToMessages(detail.rows).slice(-80);
+
+      // Some archived/legacy sessions may not have normalized knoxx.message rows
+      // in the scoped memory endpoint yet. Fall back to direct OpenPlanner history.
+      if (transcript.length === 0) {
+        try {
+          const historyDetail = await getAgentHistorySession(sessionKey);
+          const fallbackTranscript = memoryRowsToMessages(historyDetail.rows).slice(-80);
+          if (fallbackTranscript.length > 0) {
+            detail = historyDetail;
+            transcript = fallbackTranscript;
+            appendConsoleLine(`[memory] fallback loaded ${historyDetail.session} from agent history API`);
+          }
+        } catch {
+          // keep original detail path and error semantics
+        }
+      }
+
       const resumedModel = preferredSessionModelForResume(localSnapshot, transcript);
       const lastRunId = [...detail.rows].reverse().map(memoryRowRunId).find((value): value is string => Boolean(value)) ?? null;
       setMessages(transcript);

@@ -1,0 +1,206 @@
+---
+title: "Collapse Node Deps into CLJS Bootstrap"
+category: architecture
+created: 2026-04-23
+original: 2026.04.23.12.51.40.md
+status: note
+---
+
+## Step 1: Collapse Node deps into CLJS
+
+Inside `knoxx.backend.bootstrap`, replace the `deps` injection with direct `(:require ...)` imports.
+
+1. In the `ns` form, add JS requires for all current `server.mjs` imports:
+
+   ```clojure
+   (:require
+     [clojure.string :as str]
+     [knoxx.backend.auth-session :as auth-session]
+     [knoxx.backend.core :as core]
+     [knoxx.backend.discord-gateway :as discord-gateway]
+     [knoxx.backend.graceful-shutdown :as graceful-shutdown]
+     [knoxx.backend.mcp-http :as mcp-http]
+     [knoxx.backend.pi-session-ingester :as pi-session-ingester]
+     [knoxx.backend.runtime.config :as runtime-config]
+     [knoxx.backend.runtime.models :as runtime-models]
+     [knoxx.backend.tools.proxy-routes :as proxy-routes]
+     [knoxx.backend.agent-turns :refer [lounge-messages*]]
+     [knoxx.backend.policy-db :as policy-db]
+     ;; New: Node / npm deps previously in server.mjs
+     ["fastify" :default Fastify]
+     ["@fastify/cors" :default fastifyCors]
+     ["@fastify/websocket" :default fastifyWebsocket]
+     ["@fastify/multipart" :default fastifyMultipart]
+     ["@fastify/cookie" :default fastifyCookie]
+     ["@fastify/formbody" :default fastifyFormbody]
+     ["@sinclair/typebox" :refer [Type]]
+     ["@mariozechner/pi-coding-agent" :as sdk]
+     ["node:crypto" :as crypto]
+     ["node:fs/promises" :as fs]
+     ["node:path" :as path]
+     ["node:os" :as os]
+     ["node:child_process" :refer [execFile]]
+     ["node:util" :refer [promisify]]
+     ["node:module" :refer [createRequire]]
+     ["nodemailer" :default nodemailer]
+     ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
+     ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
+     ["@modelcontextprotocol/sdk/types.js" :refer [isInitializeRequest]]
+     ["zod" :refer [z]])
+   ```
+
+2. Add the `require` shim once, at top-level, replacing the `globalThis.require` hack in JS:
+
+   ```clojure
+   ;; Provide CJS-style require globally for CLJS modules that still call js/require.
+   (when-not (exists? (.-require js/globalThis))
+     (set! (.-require js/globalThis) (createRequire (.-url js/import.meta))))
+   ```
+
+   That’s equivalent to the `globalThis.require = createRequire(import.meta.url);` in `server.mjs`, but owned by CLJS instead. 
+
+***
+
+## Step 2: Make `make-runtime` stop reading from `deps`
+
+Change `make-runtime` to use the directly-imported names instead of `(aget deps "X")`.
+
+Current shape: 
+
+```clojure
+(defn- make-runtime [deps policyDb]
+  #js {:Fastify (aget deps "Fastify")
+       :fastifyCors (aget deps "fastifyCors")
+       ...
+       :z (aget deps "z")})
+```
+
+New shape (no `deps` argument):
+
+```clojure
+(defn- make-runtime
+  [policyDb]
+  #js {:Fastify Fastify
+       :fastifyCors fastifyCors
+       :fastifyWebsocket fastifyWebsocket
+       :fastifyMultipart fastifyMultipart
+       :fastifyCookie fastifyCookie
+       :fastifyFormbody fastifyFormbody
+       :Type Type
+       :sdk sdk
+       :crypto crypto
+       :fs fs
+       :path path
+       :os os
+       :execFileAsync (promisify execFile)
+       :policyDb policyDb
+       :nodemailer nodemailer
+       :McpServer McpServer
+       :StreamableHTTPServerTransport StreamableHTTPServerTransport
+       :isInitializeRequest isInitializeRequest
+       :z z})
+```
+
+***
+
+## Step 3: Simplify `bootstrap!` signature
+
+Change `bootstrap!` from `[deps]` to `[]`, and update call sites inside it:
+
+Current: 
+
+```clojure
+(defn bootstrap! [deps]
+  (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
+        ^js Fastify (aget deps "Fastify")
+        app (Fastify #js {:logger true})
+        policy-options #js {:connectionString ...}]
+    ...
+    (-> (policy-db/create-policy-db policy-options)
+        (.then
+          (fn [policyDb]
+            (let [runtime (make-runtime deps policyDb)]
+              (ensure-fastify-json-empty-body-parser! app)
+              (-> (.register app (aget deps "fastifyCors") ...)
+                  ...
+                  (.then (fn [] (mcp-http/register-mcp-http-routes! app runtime cfg)))
+                  ...))))))
+```
+
+New:
+
+```clojure
+(defn bootstrap!
+  []
+  (let [cfg (runtime-models/enrich-config (runtime-config/cfg))
+        app (Fastify #js {:logger true})
+        policy-options #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
+                                                  (aget js/process.env "DATABASE_URL")
+                                                  "")
+                            ...}]
+    (discord-gateway/createDiscordGatewayManager #js {:log js/console})
+    (-> (policy-db/create-policy-db policy-options)
+        (.then
+         (fn [policyDb]
+           (let [runtime (make-runtime policyDb)]
+             (ensure-fastify-json-empty-body-parser! app)
+             (-> (.register app fastifyCors #js {:origin true})
+                 (.then (fn [] (.register app fastifyCookie)))
+                 (.then (fn [] (.register app fastifyFormbody)))
+                 (.then (fn [] (.register app fastifyMultipart)))
+                 (.then (fn [] (.register app fastifyWebsocket)))
+                 (.then (fn [] (core/register-ws-routes! runtime app)))
+                 ...
+                 (.then (fn [] (mcp-http/register-mcp-http-routes! app runtime cfg)))
+                 (.then (fn [] (app-listen! app (:host cfg) (:port cfg))))
+                 ...)))))))
+```
+
+Every `(aget deps ...)` becomes the direct var name.
+
+***
+
+## Step 4: Choose how Node starts it
+
+You have two equally valid paths now:
+
+1. **No JS host at all**
+
+   - In `shadow-cljs.edn`, keep the `:app` module exporting `:bootstrap`.
+   - Add a small top-level runner namespace, e.g. `knoxx.backend.main`, that does:
+
+     ```clojure
+     (ns knoxx.backend.main
+       (:require [knoxx.backend.bootstrap :as bootstrap]))
+
+     (defn ^:export main [] (bootstrap/bootstrap!))
+     ```
+
+   - Export `:main knoxx.backend.main/main` in `shadow-cljs.edn` and run with `node dist/app.js` which calls `main`.
+
+   This gives you zero `.mjs` files carrying app logic.
+
+2. **Keep a 10-line entrypoint and delete the old one**
+
+   - Replace `backend/src/server.mjs` with:
+
+     ```js
+     import { bootstrap } from "../dist/app.js";
+
+     await bootstrap();
+     ```
+
+   - That’s it. All the imports move to CLJS; this file is just “call the compiled thing”.
+
+   Either way, your current `server.mjs` content with 20 imports and the deps object goes away. 
+
+***
+
+## Step 5: Wire pm2 / dev scripts
+
+Your `ecosystem.config.cjs` currently just runs `npx shadow-cljs watch app`, which is a dev runner, not the actual server process.  Once `bootstrap!` is callable directly from `dist/app.js`:
+
+- Dev: you can keep `npx shadow-cljs watch app` and run `node src/server.mjs` from another process, or just `shadow-cljs watch app` plus `node dist/app.js` if you’re okay with restarting Node manually.
+- Prod: pm2 should run `node dist/app.js` (or the minimal 2-line entry shim) instead of `shadow-cljs`.
+
+***

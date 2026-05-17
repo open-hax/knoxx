@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.stores.session-store-registry :as store-registry]
             [knoxx.backend.http :as backend-http]
+            [knoxx.backend.quality-labels :as quality-labels]
             [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.util.time :as time]))
 
@@ -191,6 +192,49 @@
           (range (count ids))
           ids)))
 
+(defn- hit-metadata
+  [hit]
+  (or (:metadata hit) hit {}))
+
+(defn- hit-text
+  [hit]
+  (str (or (:snippet hit) (:document hit) (:text hit) "")))
+
+(defn- reasoning-memory-hit?
+  [hit]
+  (let [metadata (hit-metadata hit)
+        kind (str (or (:kind hit) (:kind metadata) ""))
+        role (str (or (:role hit) (:role metadata) ""))
+        id (str (or (:id hit) (:parent_id metadata) (:parent-id metadata) ""))]
+    (or (= kind "knoxx.reasoning")
+        (= kind "reasoning")
+        (= (:node_type metadata) "reasoning")
+        (= (:node-type metadata) "reasoning")
+        (= role "reasoning")
+        (str/includes? id ":reasoning"))))
+
+(defn- operational-failure-memory-hit?
+  [hit]
+  (let [text (hit-text hit)]
+    (boolean
+     (or (re-find #"(?i)\b403\s+No upstream providers are allowed\b" text)
+         (re-find #"(?i)\bNo upstream providers are allowed for this tenant and request\b" text)
+         (re-find #"(?i)\bprovider_not_allowed\b" text)))))
+
+(defn- default-memory-hit?
+  [hit]
+  (and (not (reasoning-memory-hit? hit))
+       (not (operational-failure-memory-hit? hit))
+       (quality-labels/not-bad? hit)))
+
+(defn- default-memory-hits
+  [hits limit]
+  (->> (or hits [])
+       (filter default-memory-hit?)
+       quality-labels/good-first-then-not-bad
+       (take limit)
+       vec))
+
 (defn openplanner-recent-session-summaries!
   [config]
   (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions?project=" (js/encodeURIComponent (:session-project-name config))))
@@ -208,8 +252,10 @@
                                      (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" session-id))
                                          (.then (fn [session-body]
                                                   (let [rows (or (:rows session-body) [])
-                                                        row (or (last (filter #(contains? #{"assistant" "system"} (:role %)) rows))
-                                                                (last rows))]
+                                                        row (or (last (filter #(and (contains? #{"assistant" "system"} (:role %))
+                                                                                    (default-memory-hit? %))
+                                                                              rows))
+                                                                (last (filter default-memory-hit? rows)))]
                                                     (when row
                                                       {:session session-id
                                                        :role (:role row)
@@ -226,28 +272,29 @@
 (defn openplanner-memory-search!
   [config {:keys [query k session-id]}]
   (let [query (str/trim (or query ""))
-        k (max 1 (min 8 (or k 5)))]
+        k (max 1 (min 12 (or k 7)))
+        fetch-k (max k (min 36 (* k 3)))]
     (if (str/blank? query)
       (js/Promise.resolve {:query "" :hits [] :mode :none})
       (-> (backend-http/openplanner-request! config "POST" "/v1/search/vector"
                                              (cond-> {:q query
-                                                      :k k
+                                                      :k fetch-k
                                                       :source "knoxx"
                                                       :project (:session-project-name config)}
                                                (not (str/blank? session-id)) (assoc :session session-id)))
           (.then (fn [body]
                    {:query query
                     :mode :vector
-                    :hits (vector-result-hits (:result body))}))
+                    :hits (default-memory-hits (vector-result-hits (:result body)) k)}))
           (.catch (fn [_]
                     (-> (backend-http/openplanner-request! config "POST" "/v1/search/fts"
                                                            (cond-> {:q query
-                                                                    :limit k
+                                                                    :limit fetch-k
                                                                     :source "knoxx"
                                                                     :project (:session-project-name config)}
                                                              (not (str/blank? session-id)) (assoc :session session-id)))
                         (.then (fn [body]
-                                 (let [hits (vec (or (:rows body) []))]
+                                 (let [hits (default-memory-hits (or (:rows body) []) k)]
                                    (if (seq hits)
                                      {:query query
                                       :mode :fts
@@ -256,7 +303,7 @@
                                          (.then (fn [recent]
                                                   {:query query
                                                    :mode :recent
-                                                   :hits recent}))))))))))))))
+                                                   :hits (default-memory-hits recent k)}))))))))))))))
 
 (defn openplanner-graph-query!
   [config {:keys [query lake node-type limit edge-limit]}]
@@ -304,6 +351,27 @@
 (defn openplanner-graph-export!
   [config request]
   (backend-http/openplanner-request! config "GET" (str "/v1/graph/export" (backend-http/request-query-string request))))
+
+(defn operational-failure-text?
+  [text]
+  (let [text (str text)]
+    (boolean
+     (or (re-find #"(?i)\b403\s+No upstream providers are allowed\b" text)
+         (re-find #"(?i)\bNo upstream providers are allowed for this tenant and request\b" text)
+         (re-find #"(?i)\bprovider_not_allowed\b" text)))))
+
+(defn quality-label-extra
+  [quality explicit-meaning]
+  {:openplanner_labels {:claim_system "knoxx-auto-quality-v1"
+                        :quality quality
+                        :explicit_meaning explicit-meaning
+                        :labels [(str "quality:" quality)]
+                        :updated_at (time/now-iso)}})
+
+(defn output-quality-extra
+  [text]
+  (when (operational-failure-text? text)
+    (quality-label-extra "bad" "operational provider error, not useful assistant output")))
 
 (defn openplanner-event
   [config {:keys [id ts kind project session message role model text extra]}]
@@ -366,11 +434,27 @@
                          not-empty)
         contract-actors (actor-scope/actor-claims->wire
                          (or (:contractActors agent-spec)
-                             (:contract-actors agent-spec)))]
+                             (:contract-actors agent-spec)))
+        sub-agent-id (some-> (or (:subAgentId agent-spec)
+                                 (:sub-agent-id agent-spec))
+                             str str/trim not-empty)
+        parent-agent-id (some-> (or (:parentAgentId agent-spec)
+                                    (:parent-agent-id agent-spec))
+                                str str/trim not-empty)
+        parent-run-id (some-> (or (:parentRunId agent-spec)
+                                  (:parent-run-id agent-spec))
+                              str str/trim not-empty)
+        spawn-kind (some-> (or (:spawnKind agent-spec)
+                               (:spawn-kind agent-spec))
+                           str str/trim not-empty)]
     (cond-> base
       contract-id (assoc :contract_id contract-id)
       actor-id (assoc :actor_id actor-id)
-      (seq contract-actors) (assoc :contract_actors contract-actors))))
+      (seq contract-actors) (assoc :contract_actors contract-actors)
+      sub-agent-id (assoc :sub_agent_id sub-agent-id)
+      parent-agent-id (assoc :parent_agent_id parent-agent-id)
+      parent-run-id (assoc :parent_run_id parent-run-id)
+      spawn-kind (assoc :spawn_kind spawn-kind))))
 
 (defn session-node-kind
   [node-type]
@@ -433,7 +517,8 @@
                                                      :extra (merge {:run_id run-id
                                                                     :conversation_id conversation-id
                                                                     :session_id session-id}
-                                                                   scope-extra)})
+                                                                   scope-extra
+                                                                   (output-quality-extra safe-text))})
         devel-edges (for [{:keys [path target_node_id target_kind]} (extract-mentioned-devel-paths safe-text)]
                       (session-graph-edge-event config {:event-id (str node-id ":mentions_devel:" target_node_id)
                                                         :ts ts
@@ -532,7 +617,8 @@
                                                           :extra (merge common-extra
                                                                         {:status (:status run)
                                                                          :ttft_ms (:ttft_ms run)
-                                                                         :total_time_ms (:total_time_ms run)})})]
+                                                                         :total_time_ms (:total_time_ms run)}
+                                                                        (output-quality-extra (run-summary-text run)))})]
                         (not (str/blank? (or answer "")))
                         (conj (openplanner-event config {:id (str run-id ":assistant")
                                                          :ts (:updated_at run)
@@ -545,7 +631,8 @@
                                                          :text answer
                                                          :extra (merge common-extra
                                                                        {:status (:status run)
-                                                                        :trace_blocks trace-blocks})}))
+                                                                        :trace_blocks trace-blocks}
+                                                                       (output-quality-extra answer))}))
                         (not (str/blank? reasoning-text))
                         (conj (openplanner-event config {:id (str run-id ":reasoning")
                                                          :ts (:updated_at run)

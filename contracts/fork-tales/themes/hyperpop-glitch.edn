@@ -1,0 +1,20 @@
+{:role/id :role/theme-hyperpop-glitch
+ :role/name "Theme — Hyperpop Glitch"
+ :role/description "Hyperpop glitchcore micro-anthem. Binary for speed, anchors for truth."
+ :role/capabilities []
+ :role/focus "Sonic texture: quick drop, chip lead, vocoder chorus, 140 BPM urgency."
+ :role/duty "Apply when the song celebrates checksums, bytes, packets, or the beauty of small precise things."
+ :data {:theme/name "Hyperpop Glitch"
+        :theme/bpm 140
+        :theme/time-signature "4/4"
+        :theme/genre "hyperpop glitchcore micro-anthem"
+        :theme/key "F# minor"
+        :production/drop "Quick. No build-up. Just arrival."
+        :production/lead "Chip lead, 8-bit arpeggios"
+        :production/vocal-style "Vocoder chorus, pitched and compressed"
+        :production/energy "Compressed, bright, overwhelming then gone"
+        :lyric/motifs ["bytes" "checksum" "binary" "speed" "anchors" "truth" "audit" "frame"]
+        :lyric/structure "Short verses, explosive chorus, abrupt end"
+        :mood/excited? true
+        :mood/urgent? true
+        :mood/playful? true}}

@@ -1,0 +1,6 @@
+{:role/id :role/drummer
+ :role/capabilities [
+                     ;; :cap/shoedelussy
+                     ]
+ :role/focus "Ghost notes, swing, velocity dynamics, and structural transitions."
+ :role/duty "Constructs the percussive foundation and manages the energy of the beat."}

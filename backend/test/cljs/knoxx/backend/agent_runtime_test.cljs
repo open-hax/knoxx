@@ -20,6 +20,25 @@
       (is (thrown-with-msg? js/Error #"Path escapes allowed workspace roots"
                             (agent-runtime/resolve-workspace-path runtime config "../../etc/passwd"))))))
 
+(deftest stored-compaction-summary-rehydrates-as-agent-message
+  (let [message (agent-runtime/stored-session-message->agent-message
+                 {:role "compactionSummary"
+                  :summary "Earlier sticky context was summarized."
+                  :tokensBefore 12345})]
+    (is (= "compactionSummary" (aget message "role")))
+    (is (= "Earlier sticky context was summarized." (aget message "summary")))
+    (is (= 12345 (aget message "tokensBefore")))))
+
+(deftest stored-assistant-message-rehydrates-with-usage-sentinel
+  (let [message (agent-runtime/stored-session-message->agent-message
+                 {:role "assistant"
+                  :content "Older stored assistant response without usage."})
+        usage (aget message "usage")]
+    (is (= "assistant" (aget message "role")))
+    (is (= 0 (aget usage "totalTokens")))
+    (is (= 0 (aget usage "input")))
+    (is (= 0 (aget usage "output")))))
+
 (deftest rehydrate-session-manager-prefers-explicit-session-id-before-conversation-lookup
   (async done
     (let [appended* (atom [])

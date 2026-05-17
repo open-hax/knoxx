@@ -7,6 +7,7 @@
 
 (defonce session-titles* (atom {}))
 (defonce session-title-promises* (atom {}))
+(defonce session-title-generation-tail* (atom (js/Promise.resolve nil)))
 (defonce session-title-backfill* (atom {:active false
                                         :processed 0
                                         :total 0
@@ -17,6 +18,7 @@
                                         :last_error nil}))
 
 (def SESSION_TITLE_TTL_SECONDS (* 60 60 24 7))
+(def ^:private SESSION_TITLES_CACHE_MAX 512)
 
 (defn session-title-key
   [session-id]
@@ -27,6 +29,20 @@
   (js/Promise.resolve value))
 
 (declare generate-session-title!)
+
+(defn- enqueue-session-title-generation!
+  "Serialize Proxx-backed title generation so cache misses cannot fan out into
+   a provider request storm. The returned promise preserves the task result;
+   the queue tail always recovers so one failed naming request does not stall
+   later titles."
+  [task-fn]
+  (let [task (-> @session-title-generation-tail*
+                 (.catch (fn [_] nil))
+                 (.then (fn [] (task-fn))))]
+    (reset! session-title-generation-tail*
+            (-> task
+                (.catch (fn [_] nil))))
+    task))
 
 (defn sanitize-session-title
   [value]
@@ -43,17 +59,19 @@
                :else text)
         text (str/trim text)]
     (when-not (str/blank? text)
-      (subs text 0 (min 80 (count text))))))
+      (subs text 0 (min 160 (count text))))))
 
 (defn heuristic-session-title
   [seed-text]
-  (let [line (->> (str/split-lines (or seed-text ""))
-                  (map str/trim)
-                  (remove str/blank?)
-                  first)
-        cleaned (some-> line
-                        (str/replace #"^[#>*\-\d.\s]+" "")
-                        sanitize-session-title)]
+  (let [words (->> (str/split-lines (or seed-text ""))
+                   (map str/trim)
+                   (remove str/blank?)
+                   (take 2)
+                   (map #(str/replace % #"^[#>*\-\d.\s]+" ""))
+                   (map str/trim)
+                   (remove str/blank?)
+                   (str/join " "))
+        cleaned (some-> words str/lower-case sanitize-session-title)]
     (or cleaned "Untitled session")))
 
 (defn acceptable-session-title?
@@ -79,7 +97,7 @@
          fallback-title (sanitize-session-title fallback)]
      (cond
        (acceptable-session-title? title) title
-       (not (str/blank? fallback-title)) fallback-title
+       (acceptable-session-title? fallback-title) fallback-title
        :else nil))))
 
 (defn session-title-seed-text
@@ -95,7 +113,7 @@
                                    user-texts))
         combined (some->> user-texts
                           (take 3)
-                          (str/join "\n\n")
+                          (str/join " ")
                           str/trim
                           not-empty)
         fallback (->> (or rows [])
@@ -155,6 +173,25 @@
   (when-let [entry (some->> (or rows []) reverse (keep session-title-row-entry) first)]
     (assoc entry :session session-id)))
 
+(defn- evict-stale-titles!
+  "When session-titles* exceeds SESSION_TITLES_CACHE_MAX, evict oldest entries."
+  []
+  (swap! session-titles*
+         (fn [titles]
+           (if (<= (count titles) SESSION_TITLES_CACHE_MAX)
+             titles
+             (let [sorted (sort-by (fn [[_ entry]]
+                                     (or (:updated_at entry) ""))
+                                   titles)
+                   drop-n (- (count sorted) SESSION_TITLES_CACHE_MAX)]
+               (into {} (drop drop-n sorted))))))
+  (swap! session-title-promises*
+         (fn [promises]
+           (if (<= (count promises) SESSION_TITLES_CACHE_MAX)
+             promises
+             (let [known (set (keys @session-titles*))]
+               (select-keys promises known))))))
+
 (defn cache-session-title-entry!
   [session-id title title-model updated-at]
   (let [resolved {:title (or (normalize-session-title title) "Untitled session")
@@ -163,6 +200,7 @@
                   :updated_at (or updated-at (time/now-iso))}]
     (swap! session-titles* assoc session-id resolved)
     (swap! session-title-promises* dissoc session-id)
+    (evict-stale-titles!)
     (when-let [redis-client (redis/get-client)]
       (-> (redis/set-json redis-client
                           (session-title-key session-id)
@@ -291,7 +329,7 @@
 (defn resolve-session-title!
   [config seed-text]
   (let [fallback (heuristic-session-title seed-text)]
-    (-> (generate-session-title! config seed-text)
+    (-> (enqueue-session-title-generation! #(generate-session-title! config seed-text))
         (.then (fn [entry]
                  {:title (or (normalize-session-title (:title entry) fallback)
                              fallback)

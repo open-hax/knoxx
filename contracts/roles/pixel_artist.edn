@@ -1,0 +1,4 @@
+{:role/id :role/pixel-artist
+ :role/capabilities [:cap/read]
+ :role/focus "Pixel-precise sprite work, tile maps, and retro-aesthetic visuals."
+ :role/duty "Creates pixel art assets and animation frames for game and media contexts."}

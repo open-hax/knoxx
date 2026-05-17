@@ -1,0 +1,13 @@
+{:contract/id "session_Viscosity-Vortex-Analyst_20260429T0052"
+ :contract/kind :agent
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}}
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :session
+ :agent {:role :Viscosity-Vortex-Analyst, :model "gemma4:31b", :thinking :low}
+ :prompts {:system "You are the Viscosity-Vortex-Analyst. Your job is to analyze token viscosity maps and vortex patterns in the stream." :task "DELIVERABLES: 1. ANALYZE toxicity/viscosity maps. 2. Identify vortex focal points. 3. Report on flow-rate anomalies."}
+ :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}

@@ -4,7 +4,7 @@
             [knoxx.backend.redis-client :as redis]))
 
 (def RUN_EVENTS_KEY_PREFIX "knoxx:run_events:")
-(def RUN_EVENTS_MAX 200)
+(def RUN_EVENTS_MAX 1000)
 (def RUN_EVENTS_TTL 7200) ; 2 hours TTL for run event lists
 
 (defn run-events-key
@@ -19,6 +19,18 @@
                                  :recentSamples 0
                                  :modeCounts {:dense 0 :hybrid 0 :hybrid_rerank 0}}))
 
+
+(defonce event-stream-sink* (atom nil))
+
+(defn set-event-stream-sink!
+  "Register a 1-arity fire-and-forget fn called with each event as it is appended.
+   Intended for streaming events to OpenPlanner during an active run."
+  [f]
+  (reset! event-stream-sink* f))
+
+(defn clear-event-stream-sink!
+  []
+  (reset! event-stream-sink* nil))
 (defn latest-assistant-message
   [session]
   (let [messages (if (array? (aget session "messages"))
@@ -28,17 +40,52 @@
 
 (defn usage-map
   [usage]
-  {:input_tokens (or (aget usage "input") 0)
-   :output_tokens (or (aget usage "output") 0)})
+  (when usage
+    {:input_tokens (or (aget usage "input") 0)
+     :output_tokens (or (aget usage "output") 0)}))
+
+(defn- ensure-clj
+  "Defensive: coerce raw JS arrays/objects back to CLJS data before
+   storing in the in-memory run atom.  Redis round-trips and SDK
+   interop can leak raw #js [] / #js {} into fields."
+  [value]
+  (cond
+    (array? value) (js->clj value :keywordize-keys true)
+    :else value))
+
+(def MAX_RUNS 200)
 
 (defn store-run!
   [run-id run]
-  (swap! runs* assoc run-id run)
-  (swap! run-order* (fn [order]
-                      (->> (cons run-id (remove #{run-id} order))
-                           (take 200)
-                           vec)))
-  run)
+  (let [clean (cond-> run
+                (array? (:tool_receipts run))
+                (update :tool_receipts ensure-clj)
+                (array? (:trace_blocks run))
+                (update :trace_blocks ensure-clj)
+                (array? (:content_parts run))
+                (update :content_parts ensure-clj)
+                (array? (:events run))
+                (update :events ensure-clj)
+                (array? (:request_messages run))
+                (update :request_messages ensure-clj)
+                (array? (:resources run))
+                (update :resources ensure-clj)
+                (array? (:settings run))
+                (update :settings ensure-clj))]
+    (swap! runs* assoc run-id clean)
+    (swap! run-order* (fn [order]
+                        (let [new-order (->> (cons run-id (remove #{run-id} order))
+                                             (take MAX_RUNS)
+                                             vec)]
+                          ;; Evict stale entries from runs* to prevent unbounded memory growth.
+                          ;; run-order* is the canonical set of live run ids; anything not in it
+                          ;; is a stale ghost that was trimmed and should be released.
+                          (when (> (count order) MAX_RUNS)
+                            (let [stale-ids (remove (set new-order) (keys @runs*))]
+                              (when (seq stale-ids)
+                                (swap! runs* #(apply dissoc % stale-ids)))))
+                          new-order)))
+    clean))
 
 (defn summarize-run
   [run]
@@ -46,9 +93,10 @@
 
 (defn append-limited
   [items item limit]
-  (->> (conj (vec items) item)
-       (take-last limit)
-       vec))
+  (let [v (conj (vec items) item)]
+    (if (> (count v) limit)
+      (subvec v (- (count v) limit))
+      v)))
 
 (defn update-run!
   [run-id f]
@@ -71,7 +119,10 @@
     (try
       (.lTrim redis-client (run-events-key run-id) 0 (dec RUN_EVENTS_MAX))
       (.expire redis-client (run-events-key run-id) RUN_EVENTS_TTL)
-      (catch :default _ nil))))
+      (catch :default _ nil)))
+  ;; Stream event to OpenPlanner as it happens — fire-and-forget
+  (when-let [sink @event-stream-sink*]
+    (try (sink event) (catch :default _ nil))))
 
 (defn- trace-tool-block-id
   [{:keys [tool_call_id tool_name at]}]

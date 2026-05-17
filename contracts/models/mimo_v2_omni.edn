@@ -1,0 +1,12 @@
+{:model/id "mimo-v2-omni"
+ :model-family/id "mimo"
+ :model/provider :proxx
+ :model/label "Xiaomi MiMo V2 Omni"
+ :model/default false
+ :model/allowlisted true
+ :model/reasoning true
+ :model/default-thinking :medium
+ :model/thinking-levels [:off :minimal :low :medium :high :xhigh]
+ :model/context-window 128000
+ :model/max-tokens 8192
+ :model/input [:text]}

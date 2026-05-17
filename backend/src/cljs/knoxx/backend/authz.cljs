@@ -1,11 +1,12 @@
 (ns knoxx.backend.authz
   (:require [clojure.string :as str]
             [knoxx.backend.auth.session :as auth-session]
-            [knoxx.backend.http :as http]))
+            [knoxx.backend.http :as http]
+            [knoxx.backend.runtime.state :as runtime-state]))
 
 (defn policy-db
-  [runtime]
-  (aget runtime "policyDb"))
+  [_runtime]
+  (runtime-state/current-policy-db))
 
 (defn policy-db-enabled?
   [runtime]
@@ -76,11 +77,12 @@
                   (http/error-response! reply err)
                   js/undefined)))))
 
-(defn ctx-org-id [ctx] (or (:orgId ctx) (get-in ctx [:org :id])))
-(defn ctx-org-slug [ctx] (or (:orgSlug ctx) (get-in ctx [:org :slug])))
-(defn ctx-user-id [ctx] (or (:userId ctx) (get-in ctx [:user :id])))
-(defn ctx-user-email [ctx] (or (:userEmail ctx) (get-in ctx [:user :email])))
-(defn ctx-membership-id [ctx] (or (:membershipId ctx) (get-in ctx [:membership :id])))
+(defn ctx-org-id [ctx] (or (:orgId ctx) (get-in ctx [:org :id]) (when ctx (aget ctx "orgId"))))
+(defn ctx-org-slug [ctx] (or (:orgSlug ctx) (get-in ctx [:org :slug]) (when ctx (aget ctx "orgSlug"))))
+(defn ctx-user-id [ctx] (or (:userId ctx) (get-in ctx [:user :id]) (when ctx (aget ctx "userId"))))
+(defn ctx-user-email [ctx] (or (:userEmail ctx) (get-in ctx [:user :email]) (when ctx (aget ctx "userEmail"))))
+(defn ctx-membership-id [ctx] (or (:membershipId ctx) (get-in ctx [:membership :id]) (when ctx (aget ctx "membershipId"))))
+(defn ctx-actor-id [ctx] (or (:actorId ctx) (:actor_id ctx) (:actor-id ctx) (get-in ctx [:actor :id]) (when ctx (aget ctx "actorId"))))
 
 (defn ctx-role-slugs
   [ctx]
@@ -173,6 +175,7 @@
 (defn record-user-id [record] (or (:user_id record) (:userId record)))
 (defn record-user-email [record] (or (:user_email record) (:userEmail record)))
 (defn record-membership-id [record] (or (:membership_id record) (:membershipId record)))
+(defn record-actor-id [record] (or (:actor_id record) (:actorId record) (:actor-id record)))
 
 (defn principal-match?
   [ctx record]
@@ -181,8 +184,16 @@
         ctx-user (str (or (ctx-user-id ctx) ""))
         record-user (str (or (record-user-id record) ""))
         ctx-email (str/lower-case (str (or (ctx-user-email ctx) "")))
-        record-email (str/lower-case (str (or (record-user-email record) "")))]
+        record-email (str/lower-case (str (or (record-user-email record) "")))
+        ctx-actor (str (or (ctx-actor-id ctx) ""))
+        record-actor (str (or (record-actor-id record) ""))
+        actor-bound? (not (str/blank? record-actor))
+        actor-match? (or (not actor-bound?) (= ctx-actor record-actor))
+        user-bound? (or (not (str/blank? record-membership))
+                        (not (str/blank? record-user))
+                        (not (str/blank? record-email)))]
     (cond
+      (not actor-match?) false
       (system-admin? ctx) true
       (and (not (str/blank? ctx-membership))
            (not (str/blank? record-membership)))
@@ -190,9 +201,13 @@
       (and (not (str/blank? ctx-user))
            (not (str/blank? record-user)))
       (= ctx-user record-user)
-      :else
       (and (not (str/blank? ctx-email))
-           (= ctx-email record-email)))))
+           (not (str/blank? record-email)))
+      (= ctx-email record-email)
+      :else
+      (and actor-bound?
+           (not user-bound?)
+           (= ctx-actor record-actor)))))
 
 (defn auth-snapshot
   [ctx]
@@ -201,6 +216,7 @@
    :user_id (ctx-user-id ctx)
    :user_email (ctx-user-email ctx)
    :membership_id (ctx-membership-id ctx)
+   :actor_id (ctx-actor-id ctx)
    :role_slugs (vec (or (:roleSlugs ctx) []))
    :permissions (vec (or (:permissions ctx) []))
    :tool_policies (vec (or (:toolPolicies ctx) []))
@@ -213,6 +229,7 @@
                (:user_id snapshot)
                (:user_email snapshot)
                (:membership_id snapshot)
+               (:actor_id snapshot)
                (:is_system_admin snapshot))))
 
 (defn ensure-conversation-access!

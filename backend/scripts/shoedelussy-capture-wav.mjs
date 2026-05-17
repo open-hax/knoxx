@@ -35,11 +35,19 @@ const browser = await chromium.launch({
 try {
   const context = await browser.newContext()
   const page = await context.newPage()
+  
+  // ADDED: Capture console logs
+  page.on('console', msg => {
+    console.log(`[BROWSER] ${msg.type()}: ${msg.text()}`)
+  })
+  page.on('pageerror', err => {
+    console.log(`[BROWSER ERROR] ${err.message}`)
+  })
+
   await page.goto(renderUrl, { waitUntil: 'domcontentloaded', timeout: safeTimeoutMs })
   await page.waitForLoadState('networkidle', { timeout: Math.min(safeTimeoutMs, 15000) }).catch(() => undefined)
   await page.mouse.click(16, 16).catch(() => undefined)
 
-  // Wait for the Render button to appear and click it
   await page.waitForSelector('[data-testid="render-audio-btn"]', { timeout: safeTimeoutMs })
   await page.click('[data-testid="render-audio-btn"]')
 

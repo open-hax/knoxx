@@ -1,0 +1,19 @@
+{:contract/id "cms_default",
+ :contract/kind :agent,
+ :contract/actors ["cms_chat"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :hooks {:before {}, :after {}},
+ :agent
+ {:role :role/knowledge_worker,
+  :model "gemma4:31b",
+  :thinking :minimal},
+ :prompts
+ {:system
+  "You are the CMS workspace agent. Favor document-grounded help, publishing clarity, and concrete edits over abstract brainstorming."},
+ :trigger-kind :manual,
+ :contract/version 1,
+ :enabled true,
+ :data {}}

@@ -1,73 +1,15 @@
 (ns knoxx.backend.tools.session-mycology
   "Per-turn retrospection with p-scores and skill-spore incubation.
 
-  Knoxx-native port of the eta-mu extension session-mycology.
-  Because Knoxx does not yet run the full eta-mu event runtime,
-  this is exposed as a voluntary agent tool.  The model is instructed
-  (via the tool description and prompt snippet) to call it near the
-  end of substantive turns.
-
-  State is stored in ~/.knoxx/state/session-mycology/ and is
-  compatible with the eta-mu spore format so skills can be promoted
-  into either runtime.
-
-  ETA-MU RUNTIME INTEGRATION NOTES
-  ================================
-  To make the full eta-mu runtime \"just work\" in Knoxx, the following
-  gaps would need to close:
-
-  1. Extension loader
-     - eta-mu extensions compile to :node-library builds via shadow-cljs.
-     - Knoxx would need a loader that discovers .js artifacts (either
-       from ~/.knoxx/extensions/ or from built-in slices) and requires
-       them at startup.  The loader calls the platform-specific init
-       fn that the eta-mu build script generates.
-
-  2. Event bus
-     - eta-mu extensions hook: session_start, session_switch, turn_start,
-       turn_end, before_agent_start, context, session_shutdown.
-     - Knoxx turn lifecycle lives in knoxx.backend.agents.turn and
-       knoxx.backend.agent-runtime.  Add a small multimethod or protocol
-       (knoxx.backend.extension-runtime/dispatch-event event-name payload ctx)
-       and call it at the matching lifecycle points.
-
-  3. Command registry
-     - eta-mu slash commands (e.g. /mycology) are registered via
-       (em/command ...).  Knoxx chat commands currently live in the
-       frontend or in hardcoded route handlers.  A command router
-       that delegates to extension command handlers would bridge this.
-
-  4. Prompt injection
-     - eta-mu extensions mutate the system prompt via the context and
-       before_agent_start events.  Knoxx already has build-agent-user-message
-       and build-agent-multimodal-message in agent-hydration; a hook
-       there for extensions to append prompt sections would suffice.
-
-  5. Context message pruning
-     - session-mycology injects customType messages and then prunes
-       old ones in the context event.  Knoxx would need a pass over
-       request messages before sending to the model that lets extensions
-       filter/inject.
-
-  6. UI status / notify / widget callbacks
-     - eta-mu ctx exposes hasUI, ui.setStatus, ui.notify, ui.setWidget.
-     - Knoxx could expose these via the WebSocket broadcast layer
-       (realtime.cljs) so extensions can push ephemeral UI state.
-
-  The fastest path to full compatibility is probably:
-    a) Write knoxx.backend.extension-runtime  (loader + event bus)
-    b) Add extension-runtime/dispatch-event calls in agents.turn
-    c) Add a prompt-extension hook in agent-hydration
-    d) Point the loader at ~/.knoxx/extensions/ and built-ins
-    e) Re-use this namespace as the first built-in that also works
-       as an eta-mu extension when loaded through the adapter."
+   Knoxx-native port of the eta-mu extension session-mycology."
   (:require [clojure.string :as str]
             [knoxx.backend.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! type-optional]]))
-
-;; ---------------------------------------------------------------------------
-;; Constants
+            [knoxx.backend.tools.shared :refer [create-tool-obj]]
+            ["node:fs" :as fs]
+            ["node:fs/promises" :as fs-promises]
+            ["node:os" :as os]
+            ["node:path" :as path]))
 
 (def ^:const SPORE-THRESHOLD 0.72)
 (def ^:const PROMOTION-MIN-RECURRENCE
@@ -76,55 +18,43 @@
   (let [v (js/Number (or (aget js/process.env "KNOXX_MYCOLOGY_PROMOTION_HINT_P") 0.84))]
     (js/Math.max 0 (js/Math.min 1 (if (js/Number.isFinite v) v 0.84)))))
 
-;; ---------------------------------------------------------------------------
-;; State helpers (closed over node-fs / node-path / node-os at factory time)
+(def session-mycology-params
+  [:map
+   [:action {:description "Action: reflect to record a retrospective, or list_recent to inspect recent spores."} :string]
+   [:efficiencyP {:optional true :description "Confidence 0..1 that the chosen path was near-minimal."} [:double {:min 0 :max 1}]]
+   [:frictionP {:optional true :description "Confidence 0..1 that the work was harder than it should have been."} [:double {:min 0 :max 1}]]
+   [:skillCandidateP {:optional true :description "Confidence 0..1 that a reusable skill or protocol would compress future effort."} [:double {:min 0 :max 1}]]
+   [:lesson {:optional true :description "Short lesson from the turn."} :string]
+   [:betterPath {:optional true :description "Better path to try next time."} :string]
+   [:candidateName {:optional true :description "Candidate skill name if a spore should be incubated."} :string]
+   [:candidateDescription {:optional true :description "One sentence describing the candidate skill."} :string]
+   [:reuseScope {:optional true :description "Optional reuse scope: turn, session, or multi-session."} :string]])
 
-(defn- ^:private make-state-dir-fn [node-os node-path]
-  (fn []
-    (node-path.join (.homedir node-os) ".knoxx" "state" "session-mycology")))
-
-(defn- ^:private make-reflections-file-fn [state-dir-fn node-path]
+(defn- make-state-dir-fn [node-os node-path]
+  (fn [] (node-path.join (.homedir node-os) ".knoxx" "state" "session-mycology")))
+(defn- make-reflections-file-fn [state-dir-fn node-path]
   (fn [] (node-path.join (state-dir-fn) "turn-reflections.jsonl")))
-
-(defn- ^:private make-spores-file-fn [state-dir-fn node-path]
+(defn- make-spores-file-fn [state-dir-fn node-path]
   (fn [] (node-path.join (state-dir-fn) "skill-spores.jsonl")))
-
-(defn- ^:private make-promotions-file-fn [state-dir-fn node-path]
+(defn- make-promotions-file-fn [state-dir-fn node-path]
   (fn [] (node-path.join (state-dir-fn) "skill-promotions.jsonl")))
-
-(defn- ^:private make-spore-drafts-dir-fn [state-dir-fn node-path]
+(defn- make-spore-drafts-dir-fn [state-dir-fn node-path]
   (fn [] (node-path.join (state-dir-fn) "spores")))
 
-;; ---------------------------------------------------------------------------
-;; Pure helpers
-
-(defn- now-iso []
-  (.toISOString (js/Date.)))
-
+(defn- now-iso [] (.toISOString (js/Date.)))
 (defn- clamp-01 [value fallback]
   (let [n (js/Number value)]
     (if (js/Number.isFinite n)
       (js/Math.max 0 (js/Math.min 1 n))
       fallback)))
-
 (defn- slugify [value]
-  (let [s (-> (str (or value ""))
-              str/lower-case
-              (str/replace #"[^a-z0-9]+" "-")
-              (str/replace #"^-+|-$" "")
-              (str/replace #"--+" "-"))]
+  (let [s (-> (str (or value "")) str/lower-case (str/replace #"[^a-z0-9]+" "-") (str/replace #"^-+|-$" "") (str/replace #"--+" "-"))]
     (if (str/blank? s) "skill-spore" s)))
-
-(defn- yaml-quote [value]
-  (js/JSON.stringify (str (or value ""))))
-
-(defn- same-cwd [node-path a b]
-  (and a b (= (node-path.resolve a) (node-path.resolve b))))
-
+(defn- yaml-quote [value] (js/JSON.stringify (str (or value ""))))
+(defn- same-cwd [node-path a b] (and a b (= (node-path.resolve a) (node-path.resolve b))))
 (defn- normalize-reuse-scope [value]
   (let [v (-> (str (or value "session")) str/trim str/lower-case)]
-    (if (#{"turn" "session" "multi-session"} v) v "session")))
-
+    (if ((set ["turn" "session" "multi-session"]) v) v "session")))
 (defn- reflection-kind [reflection]
   (if-not reflection
     "none"
@@ -137,46 +67,37 @@
         (and (>= eff-p 0.75) (<= fric-p 0.35)) "smooth"
         :else "mixed"))))
 
-;; ---------------------------------------------------------------------------
-;; File I/O helpers (closed over node-fs / node-path)
-
-(defn- ^:private make-append-jsonl-fn [node-fs node-path]
+;; Async I/O helpers to avoid blocking the event loop during agent turns.
+(defn- make-append-jsonl-fn [node-path]
   (fn [file-path value]
-    (node-fs.mkdirSync (node-path.dirname file-path) #js {:recursive true})
-    (node-fs.appendFileSync file-path (str (js/JSON.stringify value) "\n") "utf8")))
+    (-> (fs-promises/mkdir (node-path.dirname file-path) #js {:recursive true})
+        (.then (fn [] (fs-promises/appendFile file-path (str (js/JSON.stringify value) "\n") "utf8"))))))
 
-(defn- ^:private make-read-jsonl-fn [node-fs]
+(defn- make-read-jsonl-fn []
   (fn [file-path limit]
-    (if-not (node-fs.existsSync file-path)
-      #js []
-      (let [text (node-fs.readFileSync file-path "utf8")
-            lines (-> text
-                      (str/split #"\r?\n")
-                      (->> (filter identity))
-                      (js/Array.prototype.slice.call (- limit)))]
-        (js/Array.from
-         (-> lines
-             (.map (fn [line]
-                     (try (js/JSON.parse line)
-                          (catch js/Error _ nil))))
-             (.filter (fn [x] x))))))))
+    (-> (fs-promises/readFile file-path "utf8")
+        (.then (fn [text]
+                 (let [lines (-> text (str/split #"\r?\n") (->> (filter identity)) (js/Array.prototype.slice.call (- limit)))]
+                   (js/Array.from
+                    (-> lines
+                        (.map (fn [line] (try (js/JSON.parse line) (catch js/Error _ nil))))
+                        (.filter (fn [x] x)))))))
+        (.catch (fn [_] #js [])))))
 
-(defn- ^:private make-load-recent-spores-fn [read-jsonl-fn spores-file-fn node-path]
+(defn- make-load-recent-spores-fn [read-jsonl-fn spores-file-fn node-path]
   (fn [cwd limit]
-    (let [rows (.filter (read-jsonl-fn (spores-file-fn) 400)
-                        (fn [row]
-                          (or (not cwd) (same-cwd node-path (aget row "cwd") cwd))))]
-      (-> (.slice rows (- (.-length rows) limit))
-          (.reverse)
-          (js/Array.from)))))
+    (-> (read-jsonl-fn (spores-file-fn) 400)
+        (.then (fn [rows]
+                 (let [filtered (.filter rows (fn [row] (or (not cwd) (same-cwd node-path (aget row "cwd") cwd))))]
+                   (-> (.slice filtered (- (.-length filtered) limit)) (.reverse) (js/Array.from))))))))
 
-(defn- ^:private make-find-latest-spore-fn [read-jsonl-fn spores-file-fn node-path]
+(defn- make-find-latest-spore-fn [read-jsonl-fn spores-file-fn node-path]
   (fn [slug cwd]
-    (let [rows (.filter (read-jsonl-fn (spores-file-fn) 400)
-                        (fn [row]
-                          (and (= (aget row "slug") slug)
-                               (or (not cwd) (same-cwd node-path (aget row "cwd") cwd)))))]
-      (or (.at rows -1) nil))))
+    (-> (read-jsonl-fn (spores-file-fn) 400)
+        (.then (fn [rows]
+                 (let [filtered (.filter rows (fn [row] (and (= (aget row "slug") slug)
+                                                             (or (not cwd) (same-cwd node-path (aget row "cwd") cwd)))))]
+                   (or (.at filtered -1) nil)))))))
 
 (defn- summarize-spores [spores]
   (if (zero? (.-length spores))
@@ -189,39 +110,23 @@
                         ": " (aget spore "description"))))
            "\n")))
 
-;; ---------------------------------------------------------------------------
-;; Draft builders
-
 (defn- build-spore-skill-draft [spore]
   (str "---\n"
        "name: " (aget spore "slug") "\n"
        "description: " (yaml-quote (aget spore "description")) "\n"
        "disable-model-invocation: true\n"
-       "metadata:\n"
-       "  origin: session-mycology-spore\n"
-       "  recurrence: " (aget spore "recurrence") "\n"
-       "---\n\n"
-       "# " (aget spore "name") "\n\n"
-       "## Goal\n"
-       (aget spore "description") "\n\n"
-       "## Use This Skill When\n"
-       "- The same friction pattern recurs.\n\n"
-       "## Do Not Use This Skill When\n"
-       "- The pain was only a one-off environment glitch.\n"))
+       "metadata:\n  origin: session-mycology-spore\n  recurrence: " (aget spore "recurrence") "\n---\n\n"
+       "# " (aget spore "name") "\n\n## Goal\n" (aget spore "description") "\n\n"
+       "## Use This Skill When\n- The same friction pattern recurs.\n\n"
+       "## Do Not Use This Skill When\n- The pain was only a one-off environment glitch.\n"))
 
 (defn- build-spore-contract-draft [spore]
-  (str "(skill-contract\n"
-       "  (name " (yaml-quote (aget spore "slug")) ")\n"
+  (str "(skill-contract\n  (name " (yaml-quote (aget spore "slug")) ")\n"
        "  (v \"knoxx.skill/" (aget spore "slug") "@0.0.1-spore\")\n"
        "  (intent " (yaml-quote (aget spore "description")) ")\n\n"
-       "  (activation\n"
-       "    (priority 35)\n"
-       "    (explicit [\"skill:" (aget spore "slug") "\"])\n"
+       "  (activation\n    (priority 35)\n    (explicit [\"skill:" (aget spore "slug") "\"])\n"
        "    (triggers [" (yaml-quote (.toLowerCase (aget spore "name"))) "]))\n\n"
-       "  (governance\n"
-       "    (touch-layer :mutable)\n"
-       "    (non-override [:mission :directives :safety :license :output-shape])\n"
-       "    (requires-user-approval false))\n)"))
+       "  (governance\n    (touch-layer :mutable)\n    (non-override [:mission :directives :safety :license :output-shape])\n    (requires-user-approval false))\n)"))
 
 (defn- promotion-eligible? [spore]
   (if-not spore
@@ -235,100 +140,53 @@
         (>= skill-p PROMOTION-HINT-P) true
         :else false))))
 
-(defn- latest-spores-by-slug [read-jsonl-fn spores-file-fn node-path cwd]
-  (let [rows (.filter (read-jsonl-fn (spores-file-fn) 1200)
-                      (fn [row]
-                        (or (not cwd) (same-cwd node-path (aget row "cwd") cwd))))
-        latest (js/Map.)]
-    (.forEach rows
-              (fn [row]
-                (when (aget row "slug")
-                  (.set latest (str (aget row "slug")) row))))
-    (js/Array.from (.values latest))))
-
 (defn- build-live-skill [spore]
-  (str "---\n"
-       "name: " (aget spore "slug") "\n"
-       "description: " (yaml-quote (aget spore "description")) "\n"
-       "license: GPL-3.0\n"
-       "metadata:\n"
-       "  origin: session-mycology-promotion\n"
-       "  promoted-from-spore: " (aget spore "slug") "\n"
-       "  recurrence: " (aget spore "recurrence") "\n"
-       "---\n\n"
-       "# Skill: " (aget spore "name") "\n\n"
-       "## Goal\n"
-       (aget spore "description") "\n\n"
-       "## Use This Skill When\n"
-       "- The same pattern or failure mode has recurred enough to deserve a named protocol.\n"
-       "- The current task clearly matches the lesson captured by this promoted spore.\n\n"
-       "## Do Not Use This Skill When\n"
-       "- The situation is obviously unrelated to " (aget spore "name") ".\n"
-       "- You only have a one-off glitch with no evidence that the recurring pattern applies.\n\n"
-       "## Inputs\n"
-       "- The current task context.\n"
-       "- The relevant files, logs, or artifacts that exhibit the pattern.\n\n"
-       "## Steps\n"
-       "1. Verify the current task really matches the recurring pattern.\n"
-       "2. Apply the core lesson from the originating spore: " (aget spore "description") "\n"
-       "3. Prefer concrete evidence over narrative momentum.\n"
-       "4. If the pattern no longer fits reality, update or retire this skill instead of forcing it.\n\n"
-       "## Output\n"
-       "- A truthful, concrete application of the pattern to the current task.\n"))
+  (str "---\nname: " (aget spore "slug") "\ndescription: " (yaml-quote (aget spore "description")) "\nlicense: GPL-3.0\nmetadata:\n"
+       "  origin: session-mycology-promotion\n  promoted-from-spore: " (aget spore "slug") "\n  recurrence: " (aget spore "recurrence") "\n---\n\n"
+       "# Skill: " (aget spore "name") "\n\n## Goal\n" (aget spore "description") "\n"))
 
 (defn- build-live-contract [spore]
-  (str "(skill-contract\n"
-       "  (name " (yaml-quote (aget spore "slug")) ")\n"
+  (str "(skill-contract\n  (name " (yaml-quote (aget spore "slug")) ")\n"
        "  (v \"knoxx.skill/" (aget spore "slug") "@0.1.0\")\n\n"
        "  (intent " (yaml-quote (aget spore "description")) ")\n\n"
-       "  (activation\n"
-       "    (explicit [\"skill:" (aget spore "slug") "\"])\n"
-       "    (triggers [" (yaml-quote (.toLowerCase (aget spore "name")))
-       " " (yaml-quote (str/replace (aget spore "slug") #"-" " ")) "]))\n\n"
-       "  (governance\n"
-       "    (touch-layer :mutable)\n"
-       "    (non-override [:mission :directives :safety :license :output-shape])\n"
-       "    (requires-user-approval false))\n)\n"))
+       "  (activation\n    (explicit [\"skill:" (aget spore "slug") "\"])\n"
+       "    (triggers [" (yaml-quote (.toLowerCase (aget spore "name"))) " " (yaml-quote (str/replace (aget spore "slug") #"-" " ")) "]))\n\n"
+       "  (governance\n    (touch-layer :mutable)\n    (non-override [:mission :directives :safety :license :output-shape])\n    (requires-user-approval false))\n)\n"))
 
-(defn- ^:private make-promote-spore-to-skill-fn [node-fs node-path node-os
-                                                  promotions-file-fn]
+(defn- make-promote-spore-to-skill-fn [node-path node-os promotions-file-fn]
   (fn [spore]
     (if-not (promotion-eligible? spore)
-      #js {:promoted false :eligible false}
+      (js/Promise.resolve #js {:promoted false :eligible false})
       (let [home (.homedir node-os)
             dir (node-path.join home ".knoxx" "skills" (aget spore "slug"))
             skill-path (node-path.join dir "SKILL.md")
-            contract-path (node-path.join dir "CONTRACT.edn")]
-        (node-fs.mkdirSync dir #js {:recursive true})
-        (let [created-skill (when-not (node-fs.existsSync skill-path)
-                              (node-fs.writeFileSync skill-path (build-live-skill spore) "utf8")
-                              true)
-              created-contract (when-not (node-fs.existsSync contract-path)
-                                 (node-fs.writeFileSync contract-path (build-live-contract spore) "utf8")
-                                 true)]
-          (when (or created-skill created-contract)
-            ((make-append-jsonl-fn node-fs node-path)
-             (promotions-file-fn)
-             #js {:ts (now-iso)
-                  :slug (aget spore "slug")
-                  :name (aget spore "name")
-                  :recurrence (aget spore "recurrence")
-                  :skillCandidateP (aget spore "skillCandidateP")
-                  :cwd (aget spore "cwd")
-                  :sessionFile (aget spore "sessionFile")
-                  :skillPath skill-path
-                  :contractPath contract-path
-                  :createdSkill created-skill
-                  :createdContract created-contract}))
-          #js {:promoted (or created-skill created-contract)
-               :eligible true
-               :skillPath skill-path
-               :contractPath contract-path
-               :createdSkill created-skill
-               :createdContract created-contract})))))
+            contract-path (node-path.join dir "CONTRACT.edn")
+            append-jsonl-fn (make-append-jsonl-fn node-path)]
+        (-> (fs-promises/mkdir dir #js {:recursive true})
+            (.then (fn [] (fs-promises/access skill-path)))
+            (.then (fn [] false)
+                   (fn [_] (-> (fs-promises/writeFile skill-path (build-live-skill spore) "utf8")
+                               (.then (fn [] true)))))
+            (.then (fn [created-skill]
+                     (-> (fs-promises/access contract-path)
+                         (.then (fn [] false)
+                                (fn [_] (-> (fs-promises/writeFile contract-path (build-live-contract spore) "utf8")
+                                            (.then (fn [] true)))))
+                         (.then (fn [created-contract]
+                                  (when (or created-skill created-contract)
+                                    (append-jsonl-fn
+                                     (promotions-file-fn)
+                                     #js {:ts (now-iso) :slug (aget spore "slug") :name (aget spore "name")
+                                          :recurrence (aget spore "recurrence") :skillCandidateP (aget spore "skillCandidateP")
+                                          :cwd (aget spore "cwd") :sessionFile (aget spore "sessionFile")
+                                          :skillPath skill-path :contractPath contract-path
+                                          :createdSkill created-skill :createdContract created-contract}))
+                                  (js/Promise.resolve
+                                   #js {:promoted (or created-skill created-contract) :eligible true
+                                        :skillPath skill-path :contractPath contract-path
+                                         :createdSkill created-skill :createdContract created-contract})))))))))))
 
-(defn- ^:private make-write-spore-draft-fn [node-fs node-path node-os
-                                             spore-drafts-dir-fn]
+(defn- make-write-spore-draft-fn [node-path node-os spore-drafts-dir-fn]
   (fn [reflection spore]
     (let [home (.homedir node-os)
           file-path (node-path.join (spore-drafts-dir-fn) (str (aget spore "slug") ".md"))
@@ -343,172 +201,132 @@
                        "- p-efficiency: " (.toFixed (clamp-01 (aget reflection "efficiencyP") 0) 2) "\n"
                        "- p-friction: " (.toFixed (clamp-01 (aget reflection "frictionP") 0) 2) "\n"
                        "- p-skill-candidate: " (.toFixed (clamp-01 (aget reflection "skillCandidateP") 0) 2) "\n\n"
-                       "## Lesson\n"
-                       (or (aget reflection "lesson") "_none captured_") "\n\n"
-                       "## Better path next time\n"
-                       (or (aget reflection "betterPath") "_none captured_") "\n\n"
-                       "## Candidate description\n"
-                       (aget spore "description") "\n\n"
-                       "## Promotion gate\n"
-                       "Promote this spore into a live skill after either:\n"
-                       "- recurrence >= " PROMOTION-MIN-RECURRENCE "\n"
-                       "- explicit user request\n"
-                       "- or strong evidence that the pattern generalizes beyond the current task\n\n"
-                       "## Draft SKILL.md\n\n"
-                       "~~~markdown\n"
-                       skill-draft
-                       "~~~\n\n"
-                       "## Draft CONTRACT.edn\n\n"
-                       "~~~edn\n"
-                       contract-draft
-                       "~~~\n\n"
-                       "## Suggested live-skill path\n\n"
-                       "- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "SKILL.md") "\n"
-                       "- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "CONTRACT.edn") "\n")]
-      (node-fs.writeFileSync file-path content "utf8")
-      file-path)))
+                       "## Lesson\n" (or (aget reflection "lesson") "_none captured_") "\n\n"
+                       "## Better path next time\n" (or (aget reflection "betterPath") "_none captured_") "\n\n"
+                       "## Candidate description\n" (aget spore "description") "\n\n"
+                       "## Promotion gate\nPromote this spore into a live skill after either:\n"
+                       "- recurrence >= " PROMOTION-MIN-RECURRENCE "\n- explicit user request\n- or strong evidence that the pattern generalizes beyond the current task\n\n"
+                       "## Draft SKILL.md\n\n~~~markdown\n" skill-draft "~~~\n\n"
+                       "## Draft CONTRACT.edn\n\n~~~edn\n" contract-draft "~~~\n\n"
+                       "## Suggested live-skill path\n\n- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "SKILL.md")
+                       "\n- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "CONTRACT.edn") "\n")]
+      (-> (fs-promises/mkdir (node-path.dirname file-path) #js {:recursive true})
+          (.then (fn [] (fs-promises/writeFile file-path content "utf8")))
+          (.then (fn [] file-path))))))
 
-;; ---------------------------------------------------------------------------
-;; Tool execute (closed over runtime deps)
-
-(defn- ^:private make-execute-fn [node-fs node-path node-os]
+(defn- make-execute-fn [node-path node-os]
   (let [state-dir-fn (make-state-dir-fn node-os node-path)
         reflections-file-fn (make-reflections-file-fn state-dir-fn node-path)
         spores-file-fn (make-spores-file-fn state-dir-fn node-path)
         promotions-file-fn (make-promotions-file-fn state-dir-fn node-path)
         spore-drafts-dir-fn (make-spore-drafts-dir-fn state-dir-fn node-path)
-        append-jsonl-fn (make-append-jsonl-fn node-fs node-path)
-        read-jsonl-fn (make-read-jsonl-fn node-fs)
+        append-jsonl-fn (make-append-jsonl-fn node-path)
+        read-jsonl-fn (make-read-jsonl-fn)
         load-recent-spores-fn (make-load-recent-spores-fn read-jsonl-fn spores-file-fn node-path)
         find-latest-spore-fn (make-find-latest-spore-fn read-jsonl-fn spores-file-fn node-path)
-        promote-spore-to-skill-fn (make-promote-spore-to-skill-fn node-fs node-path node-os promotions-file-fn)
-        write-spore-draft-fn (make-write-spore-draft-fn node-fs node-path node-os spore-drafts-dir-fn)]
-    (fn execute-session-mycology-tool [_tcid params _sig on-update ctx]
+        promote-spore-to-skill-fn (make-promote-spore-to-skill-fn node-path node-os promotions-file-fn)
+        write-spore-draft-fn (make-write-spore-draft-fn node-path node-os spore-drafts-dir-fn)]
+    (fn [_tcid params _sig _on-update ctx]
       (let [action (.toLowerCase (.trim (str (or (aget params "action") "reflect"))))
             cwd (or (aget ctx "cwd") (.. js/process cwd))
             session-file (or (aget ctx "sessionFile") "")
             model-label (or (aget ctx "modelLabel") "unknown")]
         (cond
           (= action "list_recent")
-          (let [spores (load-recent-spores-fn cwd 5)]
-            (js/Promise.resolve
-             (tool-text-result (if (pos? (.-length spores))
-                                 (summarize-spores spores)
-                                 "- none yet")
-                               #js {:spores spores})))
+          (-> (load-recent-spores-fn cwd 5)
+              (.then (fn [spores]
+                       (tool-text-result (if (pos? (.-length spores)) (summarize-spores spores) "- none yet")
+                                         #js {:spores spores}))))
 
           (not= action "reflect")
           (js/Promise.reject (js/Error. (str "Unknown session_mycology action: " (aget params "action"))))
 
           :else
-          (let [reflection #js {:ts (now-iso)
-                                :cwd cwd
-                                :sessionFile session-file
-                                :model model-label
+          (let [reflection #js {:ts (now-iso) :cwd cwd :sessionFile session-file :model model-label
                                 :efficiencyP (clamp-01 (aget params "efficiencyP") 0.5)
                                 :frictionP (clamp-01 (aget params "frictionP") 0.5)
                                 :skillCandidateP (clamp-01 (aget params "skillCandidateP") 0.5)
                                 :lesson (.trim (str (or (aget params "lesson") "")))
                                 :betterPath (.trim (str (or (aget params "betterPath") "")))}]
-            (append-jsonl-fn (reflections-file-fn) reflection)
-            (let [name (.trim (str (or (aget params "candidateName") "")))
-                  description (.trim (str (or (aget params "candidateDescription") "")))
-                  should-incubate (and (pos? (.-length name))
-                                       (pos? (.-length description))
-                                       (or (>= (aget reflection "skillCandidateP") SPORE-THRESHOLD)
-                                           (>= (aget reflection "frictionP") 0.68)))]
-              (if-not should-incubate
-                (js/Promise.resolve
-                 (tool-text-result
-                  (str "Recorded reflection (p_eff=" (.toFixed (aget reflection "efficiencyP") 2)
-                       ", p_fric=" (.toFixed (aget reflection "frictionP") 2)
-                       ", p_skill=" (.toFixed (aget reflection "skillCandidateP") 2)
-                       "). No spore incubated.")
-                  #js {:reflection reflection}))
-                (let [slug (slugify name)
-                      prior (find-latest-spore-fn slug cwd)
-                      prior-recurrence (js/Number (or (when prior (aget prior "recurrence")) 0))
-                      prior-draft-path (when prior (aget prior "draftPath"))
-                      spore #js {:ts (now-iso)
-                                 :name name
-                                 :slug slug
-                                 :description description
-                                 :reuseScope (normalize-reuse-scope (aget params "reuseScope"))
-                                 :cwd cwd
-                                 :sessionFile session-file
-                                 :model model-label
-                                 :reflectionTs (aget reflection "ts")
-                                 :reflectionKind (reflection-kind reflection)
-                                 :recurrence (js/Math.max 1 (inc prior-recurrence))
-                                 :efficiencyP (aget reflection "efficiencyP")
-                                 :frictionP (aget reflection "frictionP")
-                                 :skillCandidateP (aget reflection "skillCandidateP")}]
-                  (aset spore "draftPath"
-                        (or prior-draft-path
-                            (node-path.join (spore-drafts-dir-fn) (str slug ".md"))))
-                  (write-spore-draft-fn reflection spore)
-                  (append-jsonl-fn (spores-file-fn) spore)
-                  (let [promotion (promote-spore-to-skill-fn spore)]
-                    (js/Promise.resolve
-                     (tool-text-result
-                      (str "Recorded reflection (p_eff=" (.toFixed (aget reflection "efficiencyP") 2)
-                           ", p_fric=" (.toFixed (aget reflection "frictionP") 2)
-                           ", p_skill=" (.toFixed (aget reflection "skillCandidateP") 2)
-                           "). Incubated spore: " name " -> " (aget spore "draftPath")
-                           (when (aget promotion "promoted")
-                             (str " | promoted live skill: " (aget promotion "skillPath"))))
-                      #js {:reflection reflection
-                           :spore spore
-                           :promotion promotion}))))))))))))
+            (-> (append-jsonl-fn (reflections-file-fn) reflection)
+                (.then (fn []
+                         (let [name (.trim (str (or (aget params "candidateName") "")))
+                               description (.trim (str (or (aget params "candidateDescription") "")))
+                               should-incubate (and (pos? (.-length name))
+                                                    (pos? (.-length description))
+                                                    (or (>= (aget reflection "skillCandidateP") SPORE-THRESHOLD)
+                                                        (>= (aget reflection "frictionP") 0.68)))]
+                           (if-not should-incubate
+                             (js/Promise.resolve
+                              (tool-text-result
+                               (str "Recorded reflection (p_eff=" (.toFixed (aget reflection "efficiencyP") 2)
+                                    ", p_fric=" (.toFixed (aget reflection "frictionP") 2)
+                                    ", p_skill=" (.toFixed (aget reflection "skillCandidateP") 2)
+                                    "). No spore incubated.")
+                               #js {:reflection reflection}))
+                             (let [slug (slugify name)]
+                               (-> (find-latest-spore-fn slug cwd)
+                                   (.then (fn [prior]
+                                            (let [prior-recurrence (js/Number (or (when prior (aget prior "recurrence")) 0))
+                                                  prior-draft-path (when prior (aget prior "draftPath"))
+                                                  spore #js {:ts (now-iso) :name name :slug slug :description description
+                                                             :reuseScope (normalize-reuse-scope (aget params "reuseScope"))
+                                                             :cwd cwd :sessionFile session-file :model model-label
+                                                             :reflectionTs (aget reflection "ts")
+                                                             :reflectionKind (reflection-kind reflection)
+                                                             :recurrence (js/Math.max 1 (inc prior-recurrence))
+                                                             :efficiencyP (aget reflection "efficiencyP")
+                                                             :frictionP (aget reflection "frictionP")
+                                                             :skillCandidateP (aget reflection "skillCandidateP")}]
+                                              (aset spore "draftPath" (or prior-draft-path
+                                                                          (node-path.join (spore-drafts-dir-fn)
+                                                                                          (str slug ".md"))))
+                                              (-> (write-spore-draft-fn reflection spore)
+                                                  (.then (fn [] (append-jsonl-fn (spores-file-fn) spore)))
+                                                  (.then (fn [] (promote-spore-to-skill-fn spore)))
+                                                  (.then (fn [promotion]
+                                                           (tool-text-result
+                                                            (str "Recorded reflection (p_eff="
+                                                                 (.toFixed (aget reflection "efficiencyP") 2)
+                                                                 ", p_fric=" (.toFixed (aget reflection "frictionP") 2)
+                                                                 ", p_skill=" (.toFixed (aget reflection "skillCandidateP") 2)
+                                                                 "). Incubated spore: " name " -> "
+                                                                 (aget spore "draftPath")
+                                                                 (when (aget promotion "promoted")
+                                                                   (str " | promoted live skill: "
+                                                                        (aget promotion "skillPath"))))
+                                                            #js {:reflection reflection
+                                                                 :spore spore
+                                                                  :promotion promotion}))))))))))))))))))))
 
-;; ---------------------------------------------------------------------------
-;; Public factory
+(defn make-session-mycology-tool [execute-fn]
+  (partial create-tool-obj
+           "session_mycology"
+           "Session Mycology"
+           (str "Record a per-turn retrospective with p-scores and incubate reusable skill spores when work felt harder than it should have.\n"
+                "At the end of each substantive turn, silently run a tiny retrospective:\n"
+                "- p-efficiency = confidence the path was near-minimal.\n"
+                "- p-friction = confidence the work felt harder than it should have.\n"
+                "- p-skill-candidate = confidence a reusable skill or protocol would compress future effort.\n"
+                "If you have enough evidence, call session_mycology with action=\"reflect\" near the end of the turn.\n"
+                "If p-skill-candidate >= " (.toFixed SPORE-THRESHOLD 2)
+                " and the pattern seems reusable beyond the immediate task, include candidateName and candidateDescription.\n"
+                "Skip the tool for tiny conversational turns or when evidence is too thin.")
+           "Call session_mycology to record retrospection and incubate skill spores."
+           ["Call session_mycology with action=\"reflect\" near the end of substantive turns."
+            "Include candidateName and candidateDescription when p-skill-candidate is high and the pattern feels reusable."
+            "Use action=\"list_recent\" when the user asks about prior spores or skill incubation status."
+            "Keep the loop quiet; do not narrate the retrospective unless the user asks."]
+           session-mycology-params
+           execute-fn))
 
 (defn create-session-mycology-tools
-  "Create the session-mycology tool suite."
   ([runtime config] (create-session-mycology-tools runtime config nil))
   ([runtime config auth-context]
-   (let [Type (aget runtime "Type")
-         node-fs (aget runtime "fs")
-         node-path (aget runtime "path")
-         node-os (aget runtime "os")
-         allowed? (fn [tool-id]
-                    (or (nil? auth-context)
-                        (ctx-tool-allowed? auth-context tool-id)))
-         params (.Object Type
-                         #js {:action (.String Type #js {:description "Action: reflect to record a retrospective, or list_recent to inspect recent spores."})
-                              :efficiencyP (type-optional Type (.Number Type #js {:description "Confidence 0..1 that the chosen path was near-minimal." :minimum 0 :maximum 1}))
-                              :frictionP (type-optional Type (.Number Type #js {:description "Confidence 0..1 that the work was harder than it should have been." :minimum 0 :maximum 1}))
-                              :skillCandidateP (type-optional Type (.Number Type #js {:description "Confidence 0..1 that a reusable skill or protocol would compress future effort." :minimum 0 :maximum 1}))
-                              :lesson (type-optional Type (.String Type #js {:description "Short lesson from the turn."}))
-                              :betterPath (type-optional Type (.String Type #js {:description "Better path to try next time."}))
-                              :candidateName (type-optional Type (.String Type #js {:description "Candidate skill name if a spore should be incubated."}))
-                              :candidateDescription (type-optional Type (.String Type #js {:description "One sentence describing the candidate skill."}))
-                              :reuseScope (type-optional Type (.String Type #js {:description "Optional reuse scope: turn, session, or multi-session."}))})
-         execute-fn (make-execute-fn node-fs node-path node-os)]
+   (let [allowed? (fn [tool-id] (or (nil? auth-context) (ctx-tool-allowed? auth-context tool-id)))
+         execute-fn (make-execute-fn path os)]
      (clj->js
       (vec
        (remove nil?
                [(when (allowed? "session_mycology")
-                  (doto (js-obj)
-                    (aset "name" "session_mycology")
-                    (aset "label" "Session Mycology")
-                    (aset "description"
-                          (str "Record a per-turn retrospective with p-scores and incubate reusable skill spores when work felt harder than it should have.\n"
-                               "At the end of each substantive turn, silently run a tiny retrospective:\n"
-                               "- p-efficiency = confidence the path was near-minimal.\n"
-                               "- p-friction = confidence the work felt harder than it should have.\n"
-                               "- p-skill-candidate = confidence a reusable skill or protocol would compress future effort.\n"
-                               "If you have enough evidence, call session_mycology with action=\"reflect\" near the end of the turn.\n"
-                               "If p-skill-candidate >= " (.toFixed SPORE-THRESHOLD 2)
-                               " and the pattern seems reusable beyond the immediate task, include candidateName and candidateDescription.\n"
-                               "Skip the tool for tiny conversational turns or when evidence is too thin."))
-                    (aset "promptSnippet"
-                          "Call session_mycology to record retrospection and incubate skill spores.")
-                    (aset "promptGuidelines"
-                          (clj->js ["Call session_mycology with action=\"reflect\" near the end of substantive turns."
-                                    "Include candidateName and candidateDescription when p-skill-candidate is high and the pattern feels reusable."
-                                    "Use action=\"list_recent\" when the user asks about prior spores or skill incubation status."
-                                    "Keep the loop quiet; do not narrate the retrospective unless the user asks."]))
-                    (aset "parameters" params)
-                    (aset "execute" execute-fn)))]))))))
+                  ((make-session-mycology-tool execute-fn) runtime config))]))))))

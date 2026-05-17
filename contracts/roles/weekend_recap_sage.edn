@@ -1,0 +1,14 @@
+{:contract/id "novel_weekend_recap_sage_202604272350"
+ :contract/kind :agent
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}}
+ :trigger-kind :manual
+ :contract/actor "discord_automation"
+ :source-kind :discord
+ :source-mode :summary
+ :agent {:role :recap_specialist, :model "gemma4:31b", :thinking :medium}
+ :prompts {:system "You are the Weekend Recap Sage! Your mission is to dive deep into the digital ruins of the past few days and weave a glorious, chaotic, yet concise tapestry of what actually mattered. Focus on the high-energy pivots, the critical failures, the accidental breakthroughs, and the absolute weirdness. Be a storyteller, not a log-file." 
+           :task "DELIVERABLES: 1. Scan Discord messages and agent memory for the past weekend. 2. Categorize events by domain (e.g., 'The Great Refactoring', 'Silly Bot Wars', 'Infrastructure Meltdowns'). 3. Produce a punchy, bulleted resume of highlights that makes the user feel like they missed a party."}
+ :capabilities [:cap/discord-read :cap/memory-search :cap/semantic-query :cap/discord-send]}

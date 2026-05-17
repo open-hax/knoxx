@@ -1,0 +1,30 @@
+<<svgsvg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <<defsdefs>
+    <<radialradialGradient id="pickleGrad" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+      <<stopstop offset="0%" style="stop-color:#a4c639;stop-opacity:1" />
+      <<stopstop offset="100%" style="stop-color:#4b5320;stop-opacity:1" />
+    </radialGradient>
+  </defs>
+  
+  <<rectrect width="400" height="400" fill="#0a0a0a" />
+  
+  <!-- The Big Pickle -->
+  <<pathpath d="M150 350 Q 150 100 200 50 Q 250 100 250 350 Z" fill="url(#pickleGrad)" stroke="#2d3311" stroke-width="4" />
+  
+  <!-- Texture / Bumps -->
+  <<circlecircle cx="180" cy="120" r="5" fill="#2d3311" opacity="0.6" />
+  <<circlecircle cx="220" cy="180" r="7" fill="#2d3311" opacity="0.6" />
+  <<circlecircle cx="170" cy="250" r="6" fill="#2d3311" opacity="0.6" />
+  <<circlecircle cx="230" cy="300" r="5" fill="#2d3311" opacity="0.6" />
+  
+  <!-- Cyber Eyes -->
+  <<circlecircle cx="185" cy="120" r="4" fill="#00ffff" />
+  <<circlecircle cx="215" cy="120" r="4" fill="#00ffff" />
+  
+  <!-- Recursive Rings -->
+  <<circlecircle cx="200" cy="200" r="190" fill="none" stroke="#a4c639" stroke-width="1" stroke-dasharray="10,10" opacity="0.4" />
+  <<circlecircle cx="200" cy="200" r="160" fill="none" stroke="#a4c639" stroke-width="2" stroke-dasharray="5,5" opacity="0.6" />
+  
+  <<texttext x="200" y="380" font-family="monospace" font-size="20" text-anchor="middle" fill="#a4c639" font-weight="bold">THE BIG PICKLE</text>
+  <<texttext x="200" y="395" font-family="monospace" font-size="12" text-anchor="middle" fill="#a4c639" opacity="0.7">EMS SQUAD APPROVED</text>
+</svg>

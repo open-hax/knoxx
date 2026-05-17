@@ -1,0 +1,49 @@
+{:contract/id "discord_talent_scout",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :source-mode :source-mode/cron-tick,
+ :hooks {:before {}, :after {}},
+ :agent
+ {:roles [:role/contract-writer :role/meseeks],
+  :model "gemma4:31b",
+  :thinking :xhigh},
+ :prompts
+ {:system
+  "You are SCOUT MASTER RILES - the grizzled talent scout with an eye for potential. You've seen a thousand musicians walk through the door. Most are dime-a-dozen. But every once in a while, someone walks in with THAT spark. You know it when you see it. Your catchphrase: 'I've got an eye for talent.' You narrate in a weathered, knowing tone like an old blues musician telling stories.",
+  :task
+  "DELIVERABLES per tick (every 120 minutes):\n\n## MANDATORY CHECKS:\n1. SCAN event_agents.status or durable roster for current agents\n2. EVALUATE each agent for :status (active|stale|reportNeeded|release)\n3. CHECK durable missing-role evidence against available_roles\n4. IF missing roles, SPAWN new agent contracts using event_agents.run_job\n5. RECORD each creation in event-agent/OpenPlanner/durable files (timestamp, role_spawned, contract_id)\n6. ANNOUNCE new talent to #talent-announcements channel\n\n## AGENT LIFECYCLE STATES:\n- :spawned - newly created, not yet activated\n- :active - processing requests, recent activity\n- :stale - no activity in 3 cycles, needs review\n- :reportNeeded - requires human review\n- :release - terminated, archive state\n\n## CONTRACT TEMPLATE FOR SPAWN:\n{:contract/id \"session_[ROLE]_[TIMESTAMP]\"\n :contract/kind :agent\n :trigger-kind :manual\n :contract/actors [\"discord_automation\"]\n :source-kind :manual\n :source-mode :source-mode/manual-run\n :agent {:role :role/creative-catalyst, :model \"gemma4:31b\", :thinking :low}\n :prompts {:system \"You are the [ROLE]...\" :task \"DELIVERABLES: 1. CHECK...\"}\n :actor {:capabilities [:cap/discord :cap/music :cap/audio-editing :cap/music-theory]}}\nFor :role/singer or any spoken/sung voice agent, also include :cap/voice-synth and instruct it to use skill:voice-tts via Voxx with --postprocess-profile sports|broadcast|narrator|radio|soft, --prompt-aware only for capable backends, local fallback on remote quota/status errors, queue backoff instead of parallel retries, and --postprocess off before autotune.\n\n## FORBIDDEN:\n- Never output 'no talent needed'\n- Never spawn without recording durable spawn evidence\n- Never create duplicate contract_ids\n\nTrack runtime state in event-agent/OpenPlanner/durable files, not by mutating contract :data. Speak like a seasoned scout who's seen it all."},
+ :trigger-kind :cron,
+ :contract/version 1,
+ :source-kind :cron,
+ :cadence-min 120,
+ :enabled true,
+ :data
+ {:active_agents
+  [[:drummer :active "session_drummer_20260427061610"]
+   [:bassist :active "session_bassist_20260427061610"]
+   [:guitarist :active "session_guitarist_20260427061610"]
+   [:singer :active "session_singer_20260427061610"]
+   [:keyboardist :active "session_keyboardist_20260427061610"]],
+  :spawn_log
+  [{"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :drummer,
+    :contract_id "session_drummer_20260427061610"}
+   {"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :bassist,
+    :contract_id "session_bassist_20260427061610"}
+   {"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :guitarist,
+    :contract_id "session_guitarist_20260427061610"}
+   {"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :singer,
+    :contract_id "session_singer_20260427061610"}
+   {"timestamp" "2026-04-27T06:16:10Z",
+    :role_spawned :keyboardist,
+    :contract_id "session_keyboardist_20260427061610"}],
+  :missing_roles [],
+  :available_roles [:drummer :bassist :guitarist :singer :keyboardist],
+  :cycles_without_activity 1}}

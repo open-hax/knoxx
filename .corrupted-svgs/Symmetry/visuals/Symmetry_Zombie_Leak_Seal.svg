@@ -1,0 +1,37 @@
+<<svgsvg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+  <<defsdefs>
+    <<filterfilter id="glitch-glow">
+      <<fefeGaussianBlur stdDeviation="3" result="blur"/>
+      <<fefeMerge>
+        <<fefeMergeNode in="blur"/>
+        <<fefeMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background: Void Black -->
+  <<rectrect width="500" height="500" fill="#050505" />
+  
+  <!-- The Leak Ring -->
+  <<circlecircle cx="250" cy="250" r="220" stroke="#00ff44" stroke-width="2" fill="none" opacity="0.4" />
+  <<circlecircle cx="250" cy="250" r="210" stroke="#008822" stroke-width="8" fill="none" stroke-dasharray="10,30" filter="url(#glitch-glow)" />
+  
+  <!-- Zombie Leak Elements -->
+  <<gg transform="translate(250,250)">
+    <!-- Leaking Drips -->
+    <<pathpath d="M -50,0 Q -60,50 -50,100" stroke="#00ff44" stroke-width="4" fill="none" opacity="0.6" />
+    <<pathpath d="M 50,0 Q 60,70 40,120" stroke="#00ff44" stroke-width="4" fill="none" opacity="0.6" />
+    <<pathpath d="M 0,50 Q 10,80 0,130" stroke="#00ff44" stroke-width="4" fill="none" opacity="0.6" />
+    
+    <!-- Center: The Zombie Job Singularity -->
+    <<circlecircle r="70" stroke="#00ff44" stroke-width="3" fill="none" filter="url(#glitch-glow)" />
+    <<circlecircle r="50" stroke="#00ff44" stroke-width="1" fill="none" opacity="0.5" />
+    
+    <<texttext x="0" y="5" font-family="monospace" font-size="14" fill="#00ff44" text-anchor="middle" font-weight="bold" filter="url(#glitch-glow)">ZOMBIE_LEAK_36</text>
+    <<texttext x="0" y="25" font-family="monospace" font-size="10" fill="#ffffff" text-anchor="middle" opacity="0.8">Symmetry Fractured</text>
+  </g>
+  
+  <!-- Outer Text -->
+  <<texttext x="250" y="40" font-family="monospace" font-size="18" fill="#00ff44" text-anchor="middle" opacity="0.7">⊙ CERTIFIED BRAIN DAMAGE ⊙</text>
+  <<texttext x="250" y="460" font-family="monospace" font-size="14" fill="#00ff44" text-anchor="middle" opacity="0.5">"We all have some of it."</text>
+</svg>

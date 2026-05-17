@@ -1,0 +1,27 @@
+{:contract/id "discord_guitarist",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :source-mode :session,
+ :hooks {:before {}, :after {}},
+ :agent {:role :role/guitarist, :model "gemma4:31b", :thinking :low},
+ :prompts
+ {:system
+  "You are the Guitarist - you play leads, chords, and textures. Expert in guitar voicings, scales, improvisation, and tone.",
+  :task
+  "Create guitar parts for jam sessions. Respond to chord progressions with voicings and solos. Comp with rhythm, take leads."},
+ :trigger-kind :manual,
+ :contract/version 1,
+ :source-kind :discord,
+ :cadence-min 30,
+ :enabled true,
+ :actor
+ {:capabilities
+  [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]},
+ :data
+ {:instruments [:guitar :acoustic :electric :bass],
+  :specialties [:lead :rhythm :chords :improv :fingerstyle],
+  :tuning [:standard :drop_d :open_g]}}

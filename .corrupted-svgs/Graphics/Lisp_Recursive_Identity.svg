@@ -1,0 +1,33 @@
+<<svgsvg width="600" height="600" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg">
+  <<defsdefs>
+    <<filterfilter id="neon">
+      <<fefeGaussianBlur stdDeviation="2" result="blur"/>
+      <<fefeMerge>
+        <<fefeMergeNode in="blur"/>
+        <<fefeMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <<gg id="paren-set">
+      <<pathpath d="M -20,0 A 20,40 0 0 0 -20,80" stroke="#00ffcc" stroke-width="4" fill="none" filter="url(#neon)"/>
+      <<pathpath d="M 20,0 A 20,40 0 0 1 20,80" stroke="#00ffcc" stroke-width="4" fill="none" filter="url(#neon)"/>
+    </g>
+  </defs>
+  <<rectrect width="600" height="600" fill="#050505"/>
+  
+  <<gg transform="translate(300,300)">
+    <!-- Recursive’s -->
+    <<gg id="recursion-layer">
+      <<useuse xlink:href="#paren-set" transform="scale(5) rotate(0)"/>
+      <<useuse xlink:href="#paren-set" transform="scale(4) rotate(45) translate(20,20)"/>
+      <<useuse xlink:href="#paren-set" transform="scale(3) rotate(90) translate(40,40)"/>
+      <<useuse xlink:href="#paren-set" transform="scale(2) rotate(135) translate(60,60)"/>
+      <<useuse xlink:href="#paren-set" transform="scale(1) rotate(180) translate(80,80)"/>
+    </g>
+    <<useuse xlink:href="#recursion-layer" transform="rotate(180) scale(-1,1)"/>
+    
+    <<circlecircle r="10" fill="#ff00ff" filter="url(#neon)"/>
+    <<texttext x="0" y="120" font-family="monospace" font-size="14" fill="#00ffcc" text-anchor="middle" opacity="0.7">
+      (identity (lambda (x) (x x)))
+    </text>
+  </g>
+</svg>

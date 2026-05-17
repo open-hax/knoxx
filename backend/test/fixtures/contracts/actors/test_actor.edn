@@ -1,0 +1,4 @@
+{:actor/id "test_actor"
+ :actor/kind :agent
+ :actor/label "Test Actor"
+ :actor/roles [:role/test-role]}

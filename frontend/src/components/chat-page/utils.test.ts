@@ -13,6 +13,17 @@ describe("novelAppendedText", () => {
     expect(novelAppendedText("hello", "hello world")).toBe(" world");
     expect(novelAppendedText("hello world", "world")).toBe("");
     expect(novelAppendedText("hello world", "world again")).toBe(" again");
+    expect(novelAppendedText("The", "TheThe model should reason once.")).toBe(" model should reason once.");
+    expect(novelAppendedText("ha", "haha")).toBe("ha");
+  });
+
+  it("keeps a streamed assistant transcript monotonic across overlapping websocket chunks", () => {
+    let rendered = "";
+    for (const incoming of ["The", "The answer", "answer is", " is stable.", "The answer is stable."]) {
+      rendered = `${rendered}${novelAppendedText(rendered, incoming)}`;
+    }
+
+    expect(rendered).toBe("The answer is stable.");
   });
 });
 
@@ -77,6 +88,52 @@ describe("memoryRowsToMessages", () => {
     expect(messages[0].traceBlocks).toEqual([
       { id: "reasoning-1", kind: "reasoning", status: "done", content: "Reasoning summary", at: undefined, toolName: undefined, toolCallId: undefined, inputPreview: undefined, outputPreview: undefined, updates: undefined, isError: undefined },
       { id: "tool-1", kind: "tool_call", status: "done", content: undefined, at: undefined, toolName: "read", toolCallId: undefined, inputPreview: undefined, outputPreview: "Useful result", updates: undefined, isError: undefined },
+    ]);
+  });
+
+  it("ignores run summaries and reasoning rows when normalized chat messages are present", () => {
+    const rows: MemorySessionRow[] = [
+      {
+        id: "row-user",
+        kind: "knoxx.message",
+        role: "user",
+        text: "testing?",
+        session: "pi:test",
+        extra: { run_id: "run-2" },
+      },
+      {
+        id: "row-run",
+        kind: "knoxx.run",
+        role: "system",
+        text: "Run run-2 · completed Answer: Final answer",
+        session: "pi:test",
+        extra: { run_id: "run-2" },
+      },
+      {
+        id: "row-assistant",
+        kind: "knoxx.message",
+        role: "assistant",
+        text: "Final answer",
+        session: "pi:test",
+        extra: { run_id: "run-2" },
+      },
+      {
+        id: "row-reasoning",
+        kind: "knoxx.reasoning",
+        role: "system",
+        text: "Reasoning summary",
+        session: "pi:test",
+        extra: { run_id: "run-2" },
+      },
+    ];
+
+    const messages = memoryRowsToMessages(rows);
+
+    expect(messages).toHaveLength(2);
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(messages[1].content).toBe("Final answer");
+    expect(messages[1].traceBlocks).toEqual([
+      { id: "row-reasoning", kind: "reasoning", status: "done", at: undefined, content: "Reasoning summary" },
     ]);
   });
 });

@@ -1,0 +1,7 @@
+{:cap/id :cap/sonic-design
+ :cap/tools [:audio.spectrogram :audio.waveform :bash]
+ :cap/user-surfaces [{:surface/id :workspace/sonic-design
+                      :surface/label "Sonic design workbench"
+                      :surface/kind :editor
+                      :surface/routes ["/ops/documents"]
+                      :surface/description "Expertise in sound sculpting, frequency management, effect chain design, and spectral analysis."}]}

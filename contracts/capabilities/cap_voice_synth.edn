@@ -1,7 +1,34 @@
 {:cap/id :cap/voice-synth
- :cap/tools [:voice.openutau_project]
+ :cap/tools [
+             :voice.openutau_project
+             :voice.openutau_render
+             :voice.tts
+             :voice.tts_stream
+             :bash]
+ :cap/description
+  "Spoken and sung voice synthesis through Voxx and OpenUtau.
+
+   Primary spoken path: voice.tts and voice.tts_stream call Voxx, not direct provider APIs.
+   Auth/config: VOXX_URL and VOICE_GATEWAY_API_KEY. Default voice_id: af_jessica. Default speed: 1.15. Default model_id/backend hint: kokoro.
+
+   Voxx spoken modes agents should understand:
+   - Prompt-aware performance mode is the default. voice.tts and /api/voice/tts send prompt_aware=true unless explicitly set false; Voxx also defaults TTS_PROMPT_AWARE_DEFAULT=1. Tags such as [excited], [whisper], [laugh], [pause], [dramatic], and <break time=\"500ms\" /> are Voxx-owned directions for timing, energy, emotion, and inflection, not words to speak.
+   - Prompt-aware tags are consumed by Voxx before provider synthesis. Voxx sends clean read-aloud segment text to Kokoro/Xiaomi MiMo/Requesty/OpenAI/Melo/eSpeak, then applies tag-driven segment effects, pauses, pitch/timing/EQ variation, and final postprocess. Do not remove tags merely because the backend is local; if tags leak, inspect voxx.prompt_aware.* logs for the render_id and contains_prompt_markup flags.
+   - Postprocessed/live mode is the default. voice.tts and /api/voice/tts send postprocess_enabled=true and postprocess_profile=sports-commentator-v1 unless overridden. This is a final backend-agnostic mastering stage after Kokoro, Xiaomi MiMo, Requesty, OpenAI, Melo, or eSpeak.
+   - Available postprocess profiles and aliases: sports-commentator-v1 (sports/commentator, high-energy broadcast default), broadcast-warm-v1 (broadcast/warm), narrator-polish-v1 (narrator/polish audiobook leveling), crisp-radio-v1 (radio/crisp), soft-studio-v1 (soft/studio), and off/none for dry capture.
+   - The earlier Melo-only narrator-unifier remains available inside Voxx for local Melo and is configured globally with TTS_NARRATOR_UNIFIER_ENABLED, TTS_NARRATOR_TARGET_DBFS, TTS_NARRATOR_EN_PITCH, TTS_NARRATOR_JP_PITCH, TTS_NARRATOR_EN_VARIANCE_DEPTH, TTS_NARRATOR_VARIANCE_FREQ_HZ, TTS_NARRATOR_SWITCH_* and TTS_NARRATOR_ENVELOPE_* knobs. The final postprocess profiles are the cleaner cross-backend place to make voices feel less flat.
+   - Per-request overrides accepted by voice.tts / Voxx JSON or query: postprocess_profile/postprocessProfile, postprocess, postprocess_enabled/postprocessEnabled, prompt_aware/promptAware, and prompt_aware_style/promptAwareStyle.
+   - Provider/backend selection: use model_id as a hint or tts.sh --model with kokoro, xiaomi_mimo, requesty, openai, melo, or espeak. Voxx falls back according to VOICE_GATEWAY_TTS_BACKEND_ORDER; default production order excludes eSpeak, e.g. xiaomi_mimo,kokoro or kokoro. Use eSpeak only for explicit tiny-fallback diagnostics.
+   - Debugging headers/logs: x-openhax-tts-backend shows the renderer, x-openhax-tts-postprocess-profile shows the active final profile, x-openhax-tts-prompt-aware shows whether prompt-aware instructions were active.
+   - Queue safety: Voxx has a bounded processing queue. On queue-full or timeout responses, back off instead of launching parallel retries.
+   - Dry/pitch workflows: use postprocess_enabled=false or postprocess_profile=off for dry capture, then chain through ~/.pi/agent/skills/autotune/ (rubberband + sox pipeline, skill:autotune).
+
+   Sung path: voice.openutau_project scaffolds a .ustx file for OpenUtau render when that tool is enabled.
+   Prefer Voxx for backend-agnostic speech synthesis. Do not wire direct ElevenLabs."
+ :cap/skills [:skill/voice-tts :skill/autotune]
  :cap/user-surfaces [{:surface/id :workspace/voice-synth
-                      :surface/label "Voice synthesis project handoff"
+                      :surface/label "Voice synthesis workbench"
                       :surface/kind :composer
                       :surface/routes ["/ops/documents"]
-                      :surface/description "Humans receive OpenUtau project scaffolds and export rendered audio from the OpenUtau UI."}]}
+                      :surface/description
+                       "Spoken TTS via Voxx REST + WS streaming with prompt-aware tags on by default, lively final postprocess profiles (sports, broadcast, narrator, radio, soft), provider fallback visibility, no silent eSpeak fallback by default, local Melo narrator-unifier configuration, sung synthesis via OpenUtau, and dry/pitch workflows via rubberband/sox autotune."}]}

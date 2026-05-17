@@ -1,0 +1,15 @@
+{:role/id :role/env-emergency-web
+ :role/name "Environment — Emergency Web"
+ :role/description "White screen. Black text. No animation. The browser that survived."
+ :role/capabilities []
+ :role/focus "Sonic space: minimal, text-first, the austerity of disaster communication."
+ :role/duty "Apply when the song needs to feel like the Emergency Web — stripped down, essential, no commentary, no panic."
+ :data {:env/name "Emergency Web"
+        :env/space "Disaster browser interface. White screen. Black text."
+        :env/ambience "Silence. Single tone. No music."
+        :env/reverb "None. Flat."
+        :env/textures ["White noise" "Single beep" "Text scroll" "Cursor blink" "Silence between lines"]
+        :env/scale "Human, immediate, reduced to essentials"
+        :env/light "White screen, black text, no color"
+        :env/mood "Calm, austere, authoritative, the opposite of panic"
+        :env/reference "NATIONAL SYSTEMS STABLE. RAIL SERVICES OPERATIONAL. REMAIN CALM."}}

@@ -55,7 +55,7 @@ export class RagApiClient {
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const url = `${this.baseUrl}/chat`;
-    
+
     logger.debug({ url, message: request.message.slice(0, 100) }, 'Calling RAG API');
 
     const headers: Record<string, string> = {
@@ -85,7 +85,7 @@ export class RagApiClient {
       totalImages: Number(data.totalImages ?? 0) || undefined,
       conversationId: String(data.conversationId ?? data.conversation_id ?? request.conversationId ?? ''),
     };
-    logger.debug({ 
+    logger.debug({
       answerLength: normalized.answer.length,
       sourceCount: normalized.sources.length,
       imageCount: normalized.images?.length || 0,

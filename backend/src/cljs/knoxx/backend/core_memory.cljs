@@ -21,7 +21,7 @@
   (or (parse-json-object (:extra row)) {}))
 
 (def devel-path-pattern
-  #"((?:orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.pi)/[A-Za-z0-9._~:/+-]+)")
+  #"((?:orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.ημ)/[A-Za-z0-9._~:/+-]+)")
 
 (def url-pattern
   #"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
@@ -54,7 +54,7 @@
                     :else trimmed)
         normalized (normalize-relative-path no-prefix)]
     (when (and (not (str/blank? normalized))
-               (re-find #"^(orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.pi)/" normalized))
+               (re-find #"^(orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.ημ)/" normalized))
       normalized)))
 
 (defn extract-mentioned-urls
@@ -230,6 +230,35 @@
       (get-in hit [:metadata :session])
       (get-in hit [:extra :session])))
 
+(defn- hit-text
+  [hit]
+  (str (or (:snippet hit)
+           (:document hit)
+           (:text hit)
+           (get-in hit [:metadata :text])
+           "")))
+
+(defn- reasoning-hit?
+  [hit]
+  (let [metadata (or (:metadata hit) hit {})
+        kind (str (or (:kind hit) (:kind metadata) ""))
+        role (str (or (:role hit) (:role metadata) ""))
+        id (str (or (:id hit) (:parent_id metadata) (:parent-id metadata) ""))]
+    (or (= kind "knoxx.reasoning")
+        (= kind "reasoning")
+        (= (:node_type metadata) "reasoning")
+        (= (:node-type metadata) "reasoning")
+        (= role "reasoning")
+        (str/includes? id ":reasoning"))))
+
+(defn- operational-failure-hit?
+  [hit]
+  (let [text (hit-text hit)]
+    (boolean
+     (or (re-find #"(?i)\b403\s+No upstream providers are allowed\b" text)
+         (re-find #"(?i)\bNo upstream providers are allowed for this tenant and request\b" text)
+         (re-find #"(?i)\bprovider_not_allowed\b" text)))))
+
 (defn filter-authorized-memory-hits!
   [config ctx hits]
   (let [hits (vec hits)
@@ -238,5 +267,7 @@
         (.then (fn [allowed]
                  (->> hits
                       (filter (fn [hit]
-                                (contains? allowed (str (or (hit-session-id hit) "")))))
+                                (and (contains? allowed (str (or (hit-session-id hit) "")))
+                                     (not (reasoning-hit? hit))
+                                     (not (operational-failure-hit? hit)))))
                       vec))))))

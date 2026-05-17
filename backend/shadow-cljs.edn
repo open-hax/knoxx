@@ -1,99 +1,149 @@
-{:source-paths ["src/cljs" "test/cljs"]
-
- :dependencies [[cider/cider-nrepl "0.50.2"]
-                [refactor-nrepl "3.9.1"]
-                [com.github.seancorfield/honeysql "2.7.1368"]
-                [metosin/malli "0.16.4"]]
-
- :nrepl {:port 4500}
-
- :js-options {:js-provider :import}
-
+{:source-paths ["src/cljs" "test/cljs"],
+ :dependencies
+ [[cider/cider-nrepl "0.50.2"]
+  [refactor-nrepl "3.9.1"]
+  [com.github.seancorfield/honeysql "2.7.1368"]
+  [metosin/malli "0.16.4"]
+  [funcool/promesa "11.0.678"]],
+ :nrepl {:port 4500},
+ :js-options {:js-provider :import},
  :builds
  {:app
-  {:target :esm
-   :output-dir "dist"
-   :modules {:app {:exports {:config knoxx.backend.core/config-js
-                             ;; Single bootstrap entrypoint for the Node host shim.
-                             :bootstrap knoxx.backend.bootstrap/bootstrap!
-                             :registerAppRoutes knoxx.backend.core/register-app-routes!
-                             :registerWsRoutes knoxx.backend.core/register-ws-routes!
-                             :start knoxx.backend.core/start!
-                             :createDiscordGatewayManager knoxx.backend.discord-gateway/createDiscordGatewayManager
-                             :createPolicyDb knoxx.backend.policy-db/create-policy-db
-                             :registerAuthRoutes knoxx.backend.routes.auth/register-auth-routes
-                             :createSessionHook knoxx.backend.auth.session/create-session-hook
-                             ;; Used by MCP OAuth + capability delegation flow.
-                             :resolveAuthContext knoxx.backend.auth.session/resolve-auth-context
-                             ;; Used by the Knoxx MCP facade to expose the same tool objects as the agent runtime.
-                             :createKnoxxCustomTools knoxx.backend.mcp-expose/create-knoxx-custom-tools-js
-                             :getPiIngestStatus knoxx.backend.pi-session-ingester/get-pi-ingest-status
-                             :listPiSessions knoxx.backend.pi-session-ingester/list-pi-sessions}}}
-   :js-options {:js-provider :import
-                 :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises" "node:path" "node:crypto" "node:url"}}
-   :compiler-options {:output-feature-set :es-next
-                      :optimizations :simple
-                      :source-map true
-                      :infer-externs :auto
-
-                      :macros {:knoxx.backend.macros true}
-                      :warnings {:infer-warning false}}}
-
-  ;; All-CLJS runtime build (Node ESM) — replaces src/server.mjs.
+  {:target :esm,
+   :output-dir "dist",
+   :modules
+   {:app
+    {:exports
+     {:createSessionHook
+      knoxx.backend.auth.session/create-session-hook,
+      :listEtaMuSessions
+      knoxx.backend.eta-mu-session-ingester/list-eta-mu-sessions,
+      :registerAuthRoutes
+      knoxx.backend.routes.auth/register-auth-routes,
+      :config knoxx.backend.core/config-js,
+      :bootstrap knoxx.backend.bootstrap/bootstrap!,
+      :createDiscordGatewayManager
+      knoxx.backend.discord-gateway/createDiscordGatewayManager,
+      :createPolicyDb knoxx.backend.policy-db/create-policy-db,
+      :start knoxx.backend.core/start!,
+      :getEtaMuIngestStatus
+      knoxx.backend.eta-mu-session-ingester/get-eta-mu-ingest-status,
+      :registerAppRoutes knoxx.backend.core/register-app-routes!,
+      :createKnoxxCustomTools
+      knoxx.backend.mcp-expose/create-knoxx-custom-tools-js,
+      :registerWsRoutes knoxx.backend.core/register-ws-routes!,
+      :resolveAuthContext
+      knoxx.backend.auth.session/resolve-auth-context}}},
+   :js-options
+   {:js-provider :import,
+    :keep-as-import
+    #{"pg"
+      "node:child_process"
+      "node:fs/promises"
+      "node:crypto"
+      "@open-hax/eta-mu-cli"
+      "node:fs"
+      "node:path"
+      "node:url"
+      "redis"
+      "discord.js"
+      "@discordjs/voice"
+      "libsodium-wrappers"
+      "puppeteer-core"}},
+   :compiler-options
+   {:output-feature-set :es-next,
+    :optimizations :simple,
+    :source-map true,
+    :infer-externs :auto,
+    :macros {:knoxx.backend.macros true},
+    :warnings {:infer-warning false}}},
+  :server-dev
+  {:target :esm,
+   :runtime :node,
+   :output-dir "dist-dev",
+   :modules {:server {:init-fn knoxx.backend.entrypoint/init}},
+   :js-options
+   {:js-provider :import,
+    :keep-as-import
+    #{"puppeteer-core"
+      "@modelcontextprotocol/sdk"
+      "pg"
+      "node:child_process"
+      "node:fs/promises"
+      "node:crypto"
+      "node:fs"
+      "node:path"
+      "node:url"
+      "redis"
+      "@open-hax/eta-mu-cli"
+      "discord.js"
+      "@discordjs/voice"
+      "libsodium-wrappers"}},
+   :devtools
+   {:autoload true,
+    :preloads [shadow.cljs.devtools.client.node-esm],
+    ;; This codebase has existing infer warnings; without ignore-warnings,
+    ;; shadow compiles but refuses to hot-load changed code.
+    :ignore-warnings true,
+    :before-load-async knoxx.backend.bootstrap/stop-http-before-load!,
+    :after-load-async knoxx.backend.bootstrap/start-http-after-load!},
+   :compiler-options
+   {:output-feature-set :es-next,
+    :optimizations :none,
+    :source-map true,
+    :infer-externs :auto,
+    :macros {:knoxx.backend.macros true},
+    :warnings {:infer-warning false}}},
   :server
-  {:target :esm
-   :runtime :node
-   :output-dir "dist"
-   :modules {:server {:init-fn knoxx.backend.entrypoint/init}}
-   :js-options {:js-provider :import
-                :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
-                                  "node:path" "node:crypto" "node:url"
-                                  "@modelcontextprotocol/sdk"
-                                  }}
-  :compiler-options {:output-feature-set :es-next
-                      :optimizations :simple
-                      :source-map true
-                     :infer-externs :auto
-
-                     :macros {:knoxx.backend.macros true}
-                      :warnings {:infer-warning false}}}
-  ;; :server-repl
-  ;; {:target :node-script
-  ;;  :output-to "target/server_repl.js"
-  ;;  :main knoxx.backend.entrypoint/init
-  ;;  :js-options {:js-provider :import
-  ;;               :keep-as-import #{"pg" "discord.js" "redis" "node:fs" "node:fs/promises"
-  ;;                                 "node:path" "node:crypto" "node:url"
-  ;;                                 "@modelcontextprotocol/sdk"}}
-
-  ;;  :compiler-options {:output-feature-set :es-next
-  ;;                     :optimizations :simple
-  ;;                     :source-map true
-
-  ;;                     :macros {:knoxx.backend.macros true}
-  ;;                     :infer-externs :auto}}
-
+  {:target :esm,
+   :runtime :node,
+   :output-dir "dist",
+   :modules {:server {:init-fn knoxx.backend.entrypoint/init}},
+   :js-options
+   {:js-provider :import,
+    :keep-as-import
+    #{"puppeteer-core"
+      "@modelcontextprotocol/sdk"
+      "pg"
+      "node:child_process"
+      "node:fs/promises"
+      "node:crypto"
+      "node:fs"
+      "node:path"
+      "node:url"
+      "redis"
+      "@open-hax/eta-mu-cli"
+      "discord.js"
+      "@discordjs/voice"
+      "libsodium-wrappers"}},
+   :compiler-options
+   {:output-feature-set :es-next,
+    :optimizations :none,
+    :source-map true,
+    :infer-externs :auto,
+    :macros {:knoxx.backend.macros true},
+    :warnings {:infer-warning false}}},
   :test
-  {:target :node-test
-   :output-to "target/test/test.cjs"
-   :ns-regex ["knoxx.backend.*-test$"]
-   :autorun true
-   :compiler-options {:output-feature-set :es-next
-
-                      :macros {:knoxx.backend.macros true}
-                      :infer-externs :auto}}
-
-  ;; CI/coverage build: compile the node runner, but do not autorun.
-  ;; :optimizations :none emits individual cljs-runtime/*.js files so V8/c8
-  ;; can instrument them; sourcemaps then remap hits back to .cljs paths.
+  {:target :node-test,
+   :output-to "target/test/test.cjs",
+   :ns-regex ["knoxx.backend.*-test$"],
+   :autorun true,
+   :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
+                                                     :file "test/js/eta_mu_cli_test_stub.cjs"}}},
+   :compiler-options
+   {:output-feature-set :es-next,
+    :macros {:knoxx.backend.macros true},
+    :infer-externs :auto}},
   :test-ci
-  {:target :node-test
-   :output-to "target/test/test-ci.cjs"
-   :ns-regex ["knoxx.backend.*-test$"]
-   :autorun false
-   :compiler-options {:output-feature-set :es-next
-                      :optimizations :none
-                      :source-map true
-                      :infer-externs :auto
-                      :macros {:knoxx.backend.macros true}
-                      }}}}
+  {:target :node-test,
+   :output-to "target/test/test-ci.cjs",
+   :ns-regex ["knoxx.backend.*-test$"],
+   :autorun false,
+   :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
+                                                     :file "test/js/eta_mu_cli_test_stub.cjs"}}},
+   :compiler-options
+   {:output-feature-set :es-next,
+    :optimizations :none,
+    :source-map true,
+    :infer-externs :auto,
+    :macros {:knoxx.backend.macros true}}}}}

@@ -57,22 +57,26 @@
                #js {:message "stop"
                     :conversationId "c-1"
                     :sessionId "s-1"
-                    :runId "r-1"})]
+                    :runId "r-1"
+                    :actorId "cms_chat"})]
     (is (= "stop" (:message body)))
     (is (= "c-1"  (:conversation-id body)))
     (is (= "s-1"  (:session-id body)))
-    (is (= "r-1"  (:run-id body)))))
+    (is (= "r-1"  (:run-id body)))
+    (is (= "cms_chat" (:actor-id body)))))
 
 (deftest normalize-control-body-empty
   (let [body (shapes/normalize-control-body #js {})]
     (is (= "" (:message body)))
     (is (nil? (:conversation-id body)))
     (is (nil? (:session-id body)))
-    (is (nil? (:run-id body)))))
+    (is (nil? (:run-id body)))
+    (is (nil? (:actor-id body)))))
 
 (deftest normalize-control-body-snake-aliases
   (let [body (shapes/normalize-control-body
-               #js {:conversation_id "c-2" :session_id "s-2" :run_id "r-2"})]
+               #js {:conversation_id "c-2" :session_id "s-2" :run_id "r-2" :actor_id "broadcast_studio"})]
     (is (= "c-2" (:conversation-id body)))
     (is (= "s-2" (:session-id body)))
-    (is (= "r-2" (:run-id body)))))
+    (is (= "r-2" (:run-id body)))
+    (is (= "broadcast_studio" (:actor-id body)))))

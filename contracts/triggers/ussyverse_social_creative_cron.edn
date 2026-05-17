@@ -1,0 +1,9 @@
+{:contract/kind :trigger
+ :contract/id "ussyverse_social_creative_cron"
+ :contract/version 1
+ :enabled true
+ :trigger/kind :cron
+ :trigger/target "ussyverse_social_creative"
+ :trigger/schedule "*/30 * * * *"
+ :trigger/source {:kind :discord}
+ :data {:context {:reason "contract cron: ussyverse social creative"}}}

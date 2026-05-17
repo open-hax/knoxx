@@ -1,6 +1,14 @@
 {:role/id :role/discord-user
+ :prompts {
+           :system "
+
+For local filesystem attachments, strings only: workspace-relative paths such as output/meme.png, @-prefixed workspace paths, file:// URLs, or absolute paths inside allowed workspace/media roots. Do not pass JSON objects,
+ values, directories, guessed localhost links, or paths outside the workspace.
+Before attaching, prefer a real generated file with a useful extension and a short text caption.
+"
+
+           }
  :role/capabilities [:cap/discord
                      :cap/websearch
                      :cap/memory
-                     :cap/semantic
-                     :cap/multimodal]}
+                     :cap/semantic]}

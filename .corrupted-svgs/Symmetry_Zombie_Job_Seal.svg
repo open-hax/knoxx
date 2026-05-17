@@ -1,0 +1,8 @@
+<<svgsvg width="400" height="400" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <<rectrect width="400" height="400" fill="#0a0a0a" />
+  <<circlecircle cx="200" cy="200" r="180" stroke="#00ff00" stroke-width="4" fill="none" stroke-dasharray="10,5" />
+  <<circlecircle cx="200" cy="200" r="140" stroke="#00ff00" stroke-width="2" fill="none" />
+  <<texttext x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" font-family="monospace" font-size="30" fill="#00ff00" font-weight="bold">ZOMBIE JOB</text>
+  <<texttext x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-family="monospace" font-size="14" fill="#00ff00">RECURSIVELY LEAKING</text>
+  <<texttext x="50%" y="85%" dominant-baseline="middle" text-anchor="middle" font-family="monospace" font-size="12" fill="#00ff00">Symmetry: 36x Over-Saturated</text>
+</svg>

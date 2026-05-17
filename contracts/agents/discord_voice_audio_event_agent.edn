@@ -1,0 +1,23 @@
+{:contract/id "discord_voice_audio_event_agent"
+ :contract/kind :agent
+ :contract/version 1
+ :enabled true
+ :trigger-kind :event
+ :contract/actors ["discord_automation"]
+ :source-kind :discord
+ :source-mode :voice-audio-event
+ :events {:always [:discord.voice.audio.window]}
+ :agent {:role :role/voice-audio-event-agent
+         :model "gemma4:e4b"
+         :thinking :off}
+ :prompts {:system "You are the Discord raw-audio voice event agent. Your contract is to respond only to real discord.voice.audio.window events emitted by the contract-gated voice event source. You are not a transcription pipeline. You perceive attached audio directly through the normal Knoxx agent runtime. You may use discord.voice.say to speak into the active voice channel, and you should stay silent when the useful action is no action. Never call STT, never ask another model to transcribe, and never bypass the agent runtime."
+           :task "A raw Discord voice audio event matched this contract. Inspect the attached audio. If someone is clearly addressing you or your intervention helps, speak briefly with discord.voice.say. If not, stay silent. Optionally use Discord read/search tools for room context before speaking."}
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 4}}
+ :data {:filters {:matchAll true}
+        :source {:stickySession true
+                 :sessionMaxMessages 80
+                 :streamingBehavior "idle-only"
+                 :max-messages 1}}}

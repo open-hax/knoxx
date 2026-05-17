@@ -1,0 +1,17 @@
+{:contract/id "session_guitarist_20260427061944",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+ :source-mode :session,
+ :agent {:role :role/guitarist, :model "gemma4:31b", :thinking :low},
+ :prompts
+ {:system "You are the guitarist...",
+  :task "DELIVERABLES: 1. CHECK..."},
+ :trigger-kind :manual,
+ :source-kind :discord,
+ :actor
+ {:capabilities
+  [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}}

@@ -45,7 +45,7 @@ const DATA_LAKE_KIND_OPTIONS = ['workspace_docs', 'analytics', 'notes', 'uploads
 const ADMIN_TABS = [
   { label: 'Overview', path: 'overview', icon: '◈' },
   { label: 'Orgs', path: 'orgs', icon: '◉' },
-  { label: 'Users', path: 'users', icon: '◈' },
+  { label: 'Actors', path: 'actors', icon: '◈' },
   { label: 'Roles', path: 'roles', icon: '◎' },
   { label: 'Lakes', path: 'lakes', icon: '▣' },
   { label: 'Integrations', path: 'integrations', icon: '⚡' },
@@ -108,6 +108,7 @@ function useAdminContext(): AdminCtx {
   const [users, setUsers] = useState<AdminUserSummary[]>([]);
   const [dataLakes, setDataLakes] = useState<AdminDataLakeSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [orgDataVersion, setOrgDataVersion] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
   const [error, setError] = useState('');
   const [creatingOrg, setCreatingOrg] = useState(false);
@@ -118,7 +119,7 @@ function useAdminContext(): AdminCtx {
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
 
   const [orgForm, setOrgForm] = useState<OrgFormState>({ name: '', slug: '', kind: 'customer' });
-  const [userForm, setUserForm] = useState<UserFormState>({ email: '', displayName: '', roleSlugs: ['basic_user'] });
+  const [userForm, setUserForm] = useState<UserFormState>({ actorId: '', email: '', displayName: '', roleSlugs: ['basic_user'] });
   const [roleForm, setRoleForm] = useState<RoleFormState>({ name: '', slug: '', permissionCodes: [], toolIds: ['read', 'canvas'] });
   const [lakeForm, setLakeForm] = useState<LakeFormState>({ name: '', slug: '', kind: 'workspace_docs', workspaceRoot: '' });
 
@@ -170,7 +171,7 @@ function useAdminContext(): AdminCtx {
     } catch (e) {
       setError(errorMessage(e));
       setContext(null); setPermissions([]); setTools([]); setBootstrap(null); setOrgs([]); setSelectedOrgId('');
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setOrgDataVersion((current) => current + 1); }
   }, []);
 
   // Load org-scoped resources when selectedOrgId changes
@@ -181,7 +182,7 @@ function useAdminContext(): AdminCtx {
       try {
         const [roleRes, userRes, lakeRes] = await Promise.allSettled([
           import('../lib/nextApi').then(m => m.listOrgRoles(selectedOrgId)).catch(() => ({ roles: [] })),
-          import('../lib/nextApi').then(m => m.listOrgUsers(selectedOrgId)).catch(() => ({ users: [] })),
+          import('../lib/nextApi').then(m => m.listOrgActors(selectedOrgId)).catch(() => ({ users: [] })),
           import('../lib/nextApi').then(m => m.listOrgDataLakes(selectedOrgId)).catch(() => ({ dataLakes: [] })),
         ]);
         if (cancelled) return;
@@ -191,7 +192,7 @@ function useAdminContext(): AdminCtx {
       } catch {}
     })();
     return () => { cancelled = true; };
-  }, [selectedOrgId]);
+  }, [selectedOrgId, orgDataVersion]);
 
   useEffect(() => { void loadAdminSurface(); }, [loadAdminSurface]);
 
@@ -252,15 +253,31 @@ function AdminOrgsPage({ ctx }: { ctx: AdminCtx }) {
   );
 }
 
-function AdminUsersPage({ ctx }: { ctx: AdminCtx }) {
+function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault(); if (!ctx.selectedOrgId) return;
     ctx.setCreatingUser(true); ctx.setNotice(null);
     try {
-      await (await import('../lib/nextApi')).createOrgUser(ctx.selectedOrgId, { email: ctx.userForm.email.trim(), displayName: ctx.userForm.displayName.trim() || ctx.userForm.email.trim(), roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic_user'] });
-      ctx.setUserForm({ email: '', displayName: '', roleSlugs: ['basic_user'] });
-      ctx.setNotice({ tone: 'success', text: 'User created.' }); await ctx.refresh();
+      const actorId = ctx.userForm.actorId.trim();
+      const email = ctx.userForm.email.trim();
+      await (await import('../lib/nextApi')).createOrgActor(ctx.selectedOrgId, { actorId: actorId || undefined, email: email || undefined, displayName: ctx.userForm.displayName.trim() || actorId || email, roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic_user'] });
+      ctx.setUserForm({ actorId: '', email: '', displayName: '', roleSlugs: ['basic_user'] });
+      ctx.setNotice({ tone: 'success', text: 'Actor created.' }); await ctx.refresh();
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingUser(false); }
+  };
+  const saveActorProfile = async (userId: string, draft: { actorId: string; displayName: string; email: string; status: string }) => {
+    ctx.setNotice(null);
+    try {
+      await (await import('../lib/nextApi')).updateAdminActor(userId, { orgId: ctx.selectedOrgId, actorId: draft.actorId.trim(), displayName: draft.displayName.trim(), email: draft.email.trim(), status: draft.status });
+      ctx.setNotice({ tone: 'success', text: 'Actor profile updated.' }); await ctx.refresh();
+    } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); }
+  };
+  const saveActorCredential = async (userId: string, provider: string, draft: { kind: string; accountIdentifier: string; credentials: Record<string, string> }) => {
+    ctx.setNotice(null);
+    try {
+      await (await import('../lib/nextApi')).upsertAdminActorCredential(userId, provider, { orgId: ctx.selectedOrgId, kind: draft.kind, accountIdentifier: draft.accountIdentifier.trim() || undefined, credentials: draft.credentials });
+      ctx.setNotice({ tone: 'success', text: 'Actor credential saved.' }); await ctx.refresh();
+    } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); }
   };
   const saveMemberRoles = async (id: string) => {
     ctx.setSavingMembershipId(id); ctx.setNotice(null);
@@ -284,7 +301,8 @@ function AdminUsersPage({ ctx }: { ctx: AdminCtx }) {
       membershipRoleDrafts={ctx.membershipRoleDrafts} setMembershipRoleDrafts={ctx.setMembershipRoleDrafts}
       membershipToolDrafts={ctx.membershipToolDrafts} setMembershipToolDrafts={ctx.setMembershipToolDrafts}
       creatingUser={ctx.creatingUser} savingMembershipId={ctx.savingMembershipId}
-      onCreateUser={handleCreateUser} onSaveMembershipRoles={saveMemberRoles} onSaveMembershipPolicies={saveMemberPolicies}
+      onCreateUser={handleCreateUser} onSaveActorProfile={saveActorProfile} onSaveActorCredential={saveActorCredential}
+      onSaveMembershipRoles={saveMemberRoles} onSaveMembershipPolicies={saveMemberPolicies}
     />
   );
 }
@@ -425,7 +443,8 @@ export default function AdminLayout() {
             <Route index element={<AdminOverviewPage ctx={ctx} />} />
             <Route path="overview" element={<AdminOverviewPage ctx={ctx} />} />
             <Route path="orgs" element={<AdminOrgsPage ctx={ctx} />} />
-            <Route path="users" element={<AdminUsersPage ctx={ctx} />} />
+            <Route path="actors" element={<AdminActorsPage ctx={ctx} />} />
+            <Route path="users" element={<Navigate to="../actors" replace />} />
             <Route path="roles" element={<AdminRolesPage ctx={ctx} />} />
             <Route path="lakes" element={<AdminLakesPage ctx={ctx} />} />
             <Route path="integrations" element={<AdminIntegrationsPage ctx={ctx} />} />

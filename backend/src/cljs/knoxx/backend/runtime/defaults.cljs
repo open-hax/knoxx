@@ -1,5 +1,5 @@
 (ns knoxx.backend.runtime.defaults
-  (:require [knoxx.backend.runtime.models :refer [proxx-openai-base-url]]))
+  (:require [knoxx.backend.runtime.models :as runtime-models]))
 
 (defn default-model
   [config]
@@ -11,7 +11,7 @@
    :embedModel (:proxx-embed-model config)
    :maxContextTokens 128000
    :llmMaxTokens 8192
-   :llmBaseUrl (proxx-openai-base-url config)
+   :llmBaseUrl (runtime-models/provider-openai-base-url (:proxx-base-url config))
    :embedBaseUrl (:proxx-base-url config)
    :retrievalMode "dense"
    :retrievalTopK 6

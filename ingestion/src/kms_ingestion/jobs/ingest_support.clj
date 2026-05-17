@@ -126,7 +126,9 @@
               {:headers headers
                :body (json/generate-string payload)
                :as :json
-               :socket-timeout 60000
+               ;; Large source-backed documents may require many embedding chunks
+               ;; before OpenPlanner responds; keep the client timeout above nginx.
+               :socket-timeout 300000
                :connection-timeout 60000
                :throw-exceptions false})
         graph-events (graph/collect-devel-graph-events
@@ -157,9 +159,10 @@
        :target :openplanner
        :lake tenant-id})))
 
-(defn ingest-pi-session-via-openplanner!
-  "Ingest a pi session's events via OpenPlanner /v1/events endpoint.
-   The :content of file-data is a JSON string with {:session-id, :cwd, :events [...]}.
+(defn ingest-events-via-openplanner!
+  "Ingest pre-mapped session events via OpenPlanner /v1/events.
+
+   The :content of file-data is a JSON string with {:session-id, :events [...]}.
    Events are already mapped to OpenPlanner EventEnvelopeV1 format."
   [_job-id tenant-id _source-id openplanner-url openplanner-api-key file]
   (let [parsed (some-> (:content file) (json/parse-string keyword))
@@ -195,6 +198,11 @@
              :error (str failed-batches " batches failed")
              :target :openplanner
              :lake tenant-id}))))))
+
+(defn ingest-eta-mu-session-via-openplanner!
+  "Backward-compatible wrapper for eta-mu event-session ingestion."
+  [& args]
+  (apply ingest-events-via-openplanner! args))
 
 (defn build-semantic-edges-incremental!
   "Call OpenPlanner to build semantic edges for newly ingested documents.
