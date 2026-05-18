@@ -17,3 +17,13 @@
     (is (true? (core-memory/session-matches-page-actor-filter? {} rows "pi" [])))
     (is (false? (core-memory/session-matches-page-actor-filter? {} rows "cms_chat" [])))
     (is (false? (core-memory/session-matches-page-actor-filter? {} rows nil ["pi"])))))
+
+(deftest session-matches-contract-filter-uses-archived-agent-scope
+  (let [rows [{:extra "{\"contract_id\":\"fork_tales_creative_director\",\"sub_agent_id\":\"fork_writer\",\"actor_id\":\"agent_librarian\"}"}]]
+    (is (true? (core-memory/session-matches-contract-filter? {} rows "fork_tales_creative_director")))
+    (is (true? (core-memory/session-matches-contract-filter? {} rows "fork_writer")))
+    (is (= {:contract_id "fork_tales_creative_director"
+            :actor_id "agent_librarian"
+            :sub_agent_id "fork_writer"}
+           (core-memory/session-summary-scope-from-rows rows)))
+    (is (false? (core-memory/session-matches-contract-filter? {} rows "other_agent")))))

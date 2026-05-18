@@ -31,13 +31,16 @@
               :limit 20
               :offset 0
               :actor-id "chat_primary"
-              :exclude-actor-ids ["eta-mu" "pi"]}]
+              :exclude-actor-ids ["eta-mu" "pi"]
+              :contract-id "fork_tales_creative_director"}]
     (is (= (memory-routes/memory-sessions-cache-key base)
            (memory-routes/memory-sessions-cache-key (assoc base :exclude-actor-ids ["pi" "eta-mu"]))))
     (is (not= (memory-routes/memory-sessions-cache-key base)
               (memory-routes/memory-sessions-cache-key (assoc-in base [:ctx :userId] "user-2"))))
     (is (not= (memory-routes/memory-sessions-cache-key base)
-              (memory-routes/memory-sessions-cache-key (assoc base :actor-id "eta-mu"))))))
+              (memory-routes/memory-sessions-cache-key (assoc base :actor-id "eta-mu"))))
+    (is (not= (memory-routes/memory-sessions-cache-key base)
+              (memory-routes/memory-sessions-cache-key (assoc base :contract-id "other_agent"))))))
 
 (deftest cached-memory-sessions-source-coalesces-and-reuses-local-cache
   (async done
@@ -93,6 +96,7 @@
           session-matches-page-actor-filter? (fn [_config _rows _actor-id _exclude-actor-ids] true)]
       (-> (memory-routes/fetch-authorized-session-pages! {} {} "chat_primary"
                                                          []
+                                                         nil
                                                          openplanner-request!
                                                          authorized-session-ids!
                                                          fetch-openplanner-session-rows!
@@ -128,6 +132,7 @@
                                                      (some-> rows first :extra js/JSON.parse (aget "actor_id"))))]
       (-> (memory-routes/fetch-authorized-session-pages! {} {} nil
                                                          ["pi"]
+                                                         nil
                                                          openplanner-request!
                                                          authorized-session-ids!
                                                          fetch-openplanner-session-rows!
@@ -139,6 +144,37 @@
           (.then (fn [result]
                    (let [result (js->clj result :keywordize-keys true)]
                      (is (= ["s2"] (mapv :session (:rows result)))))))
+          (.catch (fn [err]
+                    (is nil (str "unexpected rejection: " err))))
+          (.finally (fn [] (done)))))))
+
+(deftest fetch-authorized-session-pages-honors-contract-id
+  (async done
+    (let [pages {0 {:rows [{:session "s1"} {:session "s2"}] :has_more false}}
+          openplanner-request! (fn [_config _method _path]
+                                 (js/Promise.resolve (get pages 0)))
+          authorized-session-ids! (fn [_config _ctx session-ids]
+                                    (js/Promise.resolve (set (map str session-ids))))
+          fetch-openplanner-session-rows! (fn [_config session-id]
+                                            (js/Promise.resolve [{:extra (if (= session-id "s2")
+                                                                           "{\"contract_id\":\"fork_tales_creative_director\",\"actor_id\":\"agent_librarian\"}"
+                                                                           "{\"contract_id\":\"other_agent\"}")}]))
+          session-matches-page-actor-filter? (fn [_config _rows _actor-id _exclude-actor-ids] true)]
+      (-> (memory-routes/fetch-authorized-session-pages! {} {} nil
+                                                         []
+                                                         "fork_tales_creative_director"
+                                                         openplanner-request!
+                                                         authorized-session-ids!
+                                                         fetch-openplanner-session-rows!
+                                                         session-matches-page-actor-filter?
+                                                         10
+                                                         0
+                                                         []
+                                                         10)
+          (.then (fn [result]
+                   (let [result (js->clj result :keywordize-keys true)]
+                     (is (= ["s2"] (mapv :session (:rows result))))
+                     (is (= "fork_tales_creative_director" (-> result :rows first :contract_id))))))
           (.catch (fn [err]
                     (is nil (str "unexpected rejection: " err))))
           (.finally (fn [] (done)))))))

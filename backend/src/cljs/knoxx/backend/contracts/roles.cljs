@@ -4,11 +4,6 @@
             [knoxx.backend.contracts.loader :as contract-loader]
             [knoxx.backend.tools.registry :as tools]))
 
-(def role-aliases
-  "Legacy export retained for callers that inspect it. Runtime role resolution must
-   not use hard-coded aliases; canonical role identity comes from role contracts."
-  {})
-
 (defn- keywordish-id
   [value]
   (cond

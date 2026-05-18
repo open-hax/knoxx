@@ -129,15 +129,21 @@
         :else (or (contains? membership-ids (str (ctx-membership-id ctx)))
                   (contains? user-ids (str (ctx-user-id ctx))))))))
 
+(defn session-extra-value-from-rows
+  [rows keys]
+  (some (fn [row]
+          (let [extra (row-extra-map row)]
+            (some (fn [k]
+                    (some-> (get extra k)
+                            str
+                            str/trim
+                            not-empty))
+                  keys)))
+        (reverse (vec (or rows [])))))
+
 (defn session-contract-id-from-rows
   [rows]
-  (some (fn [row]
-          (some-> (or (:contract_id (row-extra-map row))
-                      (:contract-id (row-extra-map row)))
-                  str
-                  str/trim
-                  not-empty))
-        (reverse (vec (or rows [])))))
+  (session-extra-value-from-rows rows [:contract_id :contract-id :contractId]))
 
 (defn session-contract-actors-from-rows
   [rows]
@@ -145,21 +151,51 @@
           (let [extra (row-extra-map row)
                 actors (actor-scope/normalize-actor-claims
                         (or (:contract_actors extra)
-                            (:contract-actors extra)))]
+                            (:contract-actors extra)
+                            (:contractActors extra)))]
             (when (seq actors)
               actors)))
         (reverse (vec (or rows [])))))
 
 (defn session-actor-id-from-rows
   [rows]
-  (some (fn [row]
-          (some-> (or (:actor_id (row-extra-map row))
-                      (:actor-id (row-extra-map row))
-                      (:actorId (row-extra-map row)))
-                  str
-                  str/trim
-                  not-empty))
-        (reverse (vec (or rows [])))))
+  (session-extra-value-from-rows rows [:actor_id :actor-id :actorId]))
+
+(defn session-sub-agent-id-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:sub_agent_id :sub-agent-id :subAgentId]))
+
+(defn session-parent-agent-id-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:parent_agent_id :parent-agent-id :parentAgentId]))
+
+(defn session-parent-run-id-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:parent_run_id :parent-run-id :parentRunId]))
+
+(defn session-spawn-kind-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:spawn_kind :spawn-kind :spawnKind]))
+
+(defn session-summary-scope-from-rows
+  [rows]
+  (let [contract-id (session-contract-id-from-rows rows)
+        actor-id (session-actor-id-from-rows rows)
+        contract-actors (session-contract-actors-from-rows rows)
+        wire-actors (when (seq contract-actors)
+                      (actor-scope/actor-claims->wire contract-actors))
+        sub-agent-id (session-sub-agent-id-from-rows rows)
+        parent-agent-id (session-parent-agent-id-from-rows rows)
+        parent-run-id (session-parent-run-id-from-rows rows)
+        spawn-kind (session-spawn-kind-from-rows rows)]
+    (cond-> {}
+      contract-id (assoc :contract_id contract-id)
+      actor-id (assoc :actor_id actor-id)
+      (seq wire-actors) (assoc :contract_actors wire-actors)
+      sub-agent-id (assoc :sub_agent_id sub-agent-id)
+      parent-agent-id (assoc :parent_agent_id parent-agent-id)
+      parent-run-id (assoc :parent_run_id parent-run-id)
+      spawn-kind (assoc :spawn_kind spawn-kind))))
 
 (defn session-actor-claims-from-rows
   [config rows]
@@ -174,6 +210,12 @@
                 actor-scope/normalize-actor-claims)
         legacy-fallback)))
 
+(defn- actor-claim-includes?
+  [actors actor-id]
+  (let [wanted (actor-scope/normalize-actor-claim actor-id)]
+    (and wanted
+         (contains? (actor-scope/normalize-actor-claims actors) wanted))))
+
 (defn session-matches-page-actor-filter?
   [config rows include-actor-id exclude-actor-ids]
   (let [include-actor-id (some-> include-actor-id str str/trim not-empty)
@@ -185,6 +227,20 @@
     (and (or (str/blank? (str (or include-actor-id "")))
              (actor-scope/actor-allowed? actors include-actor-id))
          (not-any? #(actor-scope/actor-allowed? actors %) exclude-actor-ids))))
+
+(defn session-matches-contract-filter?
+  [config rows contract-id]
+  (let [target (some-> contract-id str str/trim not-empty)]
+    (if-not target
+      true
+      (let [actors (session-actor-claims-from-rows config rows)
+            contract-actors (session-contract-actors-from-rows rows)]
+        (or (= target (session-contract-id-from-rows rows))
+            (= target (session-sub-agent-id-from-rows rows))
+            (= target (session-parent-agent-id-from-rows rows))
+            (= target (session-actor-id-from-rows rows))
+            (actor-claim-includes? contract-actors target)
+            (actor-claim-includes? actors target))))))
 
 (defn session-visible-for-page-actor?
   [config rows page-actor-id]

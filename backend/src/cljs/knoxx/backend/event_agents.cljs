@@ -65,17 +65,7 @@
 ;; Queue holds [deferred-resolve deferred-reject job-fn] tuples.
 (def ^:private dispatch-queue* (atom []))
 
-(defn- run-dispatch-job!
-  "Run a queued dispatch function and normalize nil/sync results to Promise.
-   Some action paths are fire-and-forget and return nil; the scheduler should
-   still complete the job instead of attempting nil.then."
-  [job-fn resolve reject]
-  (-> (js/Promise.resolve (job-fn))
-      (.then resolve)
-      (.catch reject)
-      (.finally (fn []
-                  (swap! active-dispatch-count* dec)
-                  (process-dispatch-queue!)))))
+
 
 (defn- process-dispatch-queue!
   "Process queued dispatch jobs up to the concurrency limit."
@@ -99,16 +89,7 @@
            (run-dispatch-job! job-fn resolve reject))
        (swap! dispatch-queue* conj [resolve reject job-fn])))))
 
-(defn debounced-reload!
-  "Coalesce rapid reload! calls into one, firing 2 s after the last call.
-   Public so contract watchers and admin routes can use it."
-  []
-  (when-let [t @reload-timer*] (js/clearTimeout t))
-  (reset! reload-timer*
-          (js/setTimeout (fn []
-                           (reset! reload-timer* nil)
-                           (reload!))
-                          2000)))
+
 
 
 (defn- mark-event-dispatched!
@@ -196,9 +177,7 @@
        (remove nil?)
        vec))
 
-(defn- contract-sourced-job?
-  [job]
-  (boolean (nonblank-str (:contractSourceId job))))
+
 
 (defn- job-channels
   [control job]
@@ -1701,277 +1680,30 @@
       :else
       (execute-direct-job! config job source-kind "cron.tick"))))
 
-(defn run-job!
-  [job-id]
-  (let [config (cfg)
-        control (control-config config)
-        job (some (fn [candidate] (when (= (:id candidate) job-id) candidate)) (:jobs control))]
-    (if-not job
-      (js/Promise.reject (js/Error. (str "Unknown event-agent job: " job-id)))
-      (let [started-at (record-job-run-start! job)]
-        (-> (js/Promise.resolve
-             (if (= "cron" (get-in job [:trigger :kind]))
-               (execute-cron-job! config job)
-               (execute-direct-job! config job (get-in job [:source :kind]) "manual.run")))
-            (.then (fn [result]
-                     (record-job-run-finish! job started-at "ok" nil)
-                     result))
-            (.catch (fn [err]
-                      (record-job-run-finish! job started-at "error"
-                                              (error-diagnostic err
-                                                              (event-error-context "manual-run" job {:sourceKind (get-in job [:source :kind])
-                                                                                                     :eventKind "manual.run"})))
-                      nil)))))))
+
 
 (defn- clear-interval-task!
   [task]
   (when-let [id (:id task)]
     (js/clearInterval id)))
 
-(defn stop!
-  []
-  (discord-source/stop!)
-  (doseq [[_ task] @scheduled-tasks*]
-    (when (and task (map? task) (= :interval (:type task)))
-      (clear-interval-task! task)))
-  (reset! scheduled-tasks* {})
-  (reset! running?* false)
-  ;; NOTE: dispatched-event-ids* is intentionally NOT reset on stop!/reload!
-  ;; Clearing it was the root cause of re-dispatch fan-out: in-flight event ids
-  ;; from the triggering run would be re-dispatched on every contract-file reload.
-  ;; The set is capped at 500 entries by the periodic sweep in schedule-flush-task!.
-  (reset! job-specs* {})
-  (println "[event-agents] stopped"))
 
-(defn reset-runtime!
-  [config]
-  (let [live-config (or @runtime-state/config* config)
-        pending-reload (or @reload-lock* (js/Promise.resolve nil))
-        reset-control (control-config/default-event-agent-control live-config)
-        preserved-cron-job-count (count (filter #(= "cron" (get-in % [:trigger :kind])) (:jobs reset-control)))
-        redis-patterns ["event-agent:job-state:*"
-                        "event-agent:user-job-state:*"
-                        "event-agent:job-spec:*"
-                        "event-agent:discord-last-seen:*"]]
-    (-> pending-reload
-        (.then (fn []
-                 (when-let [t @reload-timer*]
-                   (js/clearTimeout t)
-                   (reset! reload-timer* nil))
-                 (stop!)))
-        (.then (fn []
-                 (clear-runtime-state!)
-                 (if-let [client (redis/get-client)]
-                   (-> (js/Promise.all (clj->js (map #(redis-keys! client %) redis-patterns)))
-                       (.then (fn [results]
-                                (let [matched (->> (js/Array.from results)
-                                                   (mapcat (fn [result]
-                                                             (if (array? result)
-                                                               (array-seq result)
-                                                               result)))
-                                                   distinct
-                                                   vec)]
-                                  (-> (delete-redis-keys! client matched)
-                                      (.then (fn [deleted-count]
-                                               (-> (delete-redis-keys! client [event-agent-job-dirty-redis-key])
-                                                   (.then (fn [_]
-                                                            {:deletedCount deleted-count}))))))))))
-                   (js/Promise.resolve {:deletedCount 0}))))
-        (.then (fn [{:keys [deletedCount]}]
-                 (swap! runtime-state/config*
-                        (fn [current]
-                          (assoc (or current live-config) :event-agent-control reset-control)))
-                 (-> (control-config/persist-event-agent-control! reset-control)
-                     (.then (fn [_]
-                              {:ok true
-                               :deletedCount deletedCount
-                               :disabledCronJobCount 0
-                               :preservedCronJobCount preserved-cron-job-count})))))
-        (.catch (fn [err]
-                  (clear-runtime-state!)
-                  (js/Promise.reject err))))))
 
-(defn status-snapshot
-  [config]
-  (let [control (control-config config)]
-    {:running @running?*
-     :configured true
-     :sources {:discord {:lastSeenChannels (-> @source-state* :discord :last-seen keys vec)}
-               :recentEvents @recent-events*}
-     :jobs (mapv (fn [job]
-                   (merge {:id (:id job)
-                           :name (:name job)
-                           :enabled (:enabled job)
-                           :contractSourceId (:contractSourceId job)
-                           :contractSourceKind (:contractSourceKind job)
-                           :contractSourceKey (:contractSourceKey job)
-                           :trigger (:trigger job)
-                           :source (:source job)
-                           :scheduleLabel (events-cron/cadence-label (get-in job [:trigger :cadenceMinutes]))}
-                          (get @job-state* (:id job) {:runCount 0 :lastStatus "none"})))
-                 (:jobs control))}))
 
-(defn reload!
-  "Stop then start the event-agent runtime. Returns a promise.
-   Prevents concurrent reloads — if a reload is already in progress,
-   returns the existing promise."
-  []
-  ;; Cancel any pending debounced reload
-  (when-let [t @reload-timer*]
-    (js/clearTimeout t)
-    (reset! reload-timer* nil))
 
-  ;; If already reloading, return existing promise
-  (or @reload-lock*
-      (let [p (-> (js/Promise.resolve (stop!))
-                  (.then (fn []
-                           ;; Clear sticky session state to prevent cross-reload leaks.
-                           ;; Old sessions are orphaned; agent-resume cooldown keeps
-                           ;; recovery from immediately resuming them.
-                           (reset! job-state* {})
-                           (reset! user-job-state* {})
-                           (start! nil)))
-                  (.finally (fn []
-                              (reset! reload-lock* nil))))]
-        (reset! reload-lock* p)
-        p)))
 
-(defn start!
-  [_config]
-  (if (compare-and-set! running?* false true)
-    ;; =======================================================================
-    ;; Persistence: Recover event-agent-control overrides from Redis FIRST.
-    ;; This is the primary fix for "changes not sticking" — the admin panel
-    ;; writes control overrides via PUT, but they were only in memory.
-    ;; We must recover before scheduling so jobs use persisted settings.
-    ;; =======================================================================
-    (let [recovery-promise
-          (if-let [client (redis/get-client)]
-            (-> (control-config/load-event-agent-control)
-                (.then (fn [saved-control]
-                         (when saved-control
-                           (swap! runtime-state/config*
-                                  (fn [current-cfg]
-                                    (assoc (or current-cfg (cfg))
-                                           :event-agent-control saved-control)))))))
-            (js/Promise.resolve nil))]
-      (-> recovery-promise
-          (.then (fn [_]
-                   (let [config (cfg)
-                         control (control-config config)]
-                     (println "[event-agents] starting with" (count (:jobs control)) "jobs")
 
-                     ;; Recover remaining state from Redis (job state, specs,
-                     ;; last-seen) BEFORE the cron ticker starts. Otherwise a
-                     ;; reload can boot with empty in-memory state, mark every
-                     ;; cron job due "now", and duplicate scheduled runs.
-                     (-> (recover-runtime-state! control)
-                         (.then (fn [_]
-                                  ;; Schedule background SQL flush task
-                                  (schedule-flush-task!)
 
-                                  ;; Bind Discord gateway for real-time message handling
-                                  (bind-discord-gateway! config)
 
-                                  ;; One scheduler ticker evaluates all cron jobs from
-                                  ;; their persisted :nextRunAt timestamps. No per-job
-                                  ;; intervals or boot-kick timeouts are registered.
-                                  (schedule-events-cron-ticker! config)))))))
-          (.catch (fn [err]
-                    (println "[event-agents] failed to recover control config from Redis:" (.-message err))
-                    ;; Fall through — start with defaults
-                    (let [config (cfg)
-                          control (control-config config)]
-                      (println "[event-agents] starting with" (count (:jobs control)) "jobs (defaults)")
-                      (schedule-flush-task!)
-                      (bind-discord-gateway! config)
-                      (schedule-events-cron-ticker! config))))))
-    ;; Already running — return resolved promise so callers can chain uniformly
-    (js/Promise.resolve nil)))
+
 
 ;; =============================================================================
 ;; Public API: Job Management with Template Support
 ;; =============================================================================
 
-(defn upsert-job!
-  "Public API: Create or update an event-agent job.
 
-   Args:
-   - job-id: String identifier for the job
-   - job-spec: Complete job specification OR template-based spec with :templateId
 
-   If job-spec contains :templateId, instantiates from agent-templates DSL.
-   Otherwise, treats job-spec as a complete job definition.
 
-   Returns a promise that resolves to the normalized job spec.
-
-   Example (template-based):
-   (upsert-job! \"frankie-yap-bot\"
-                {:templateId :yap-bot
-                 :trigger {:kind \"event\" :cadenceMinutes 1 :eventKinds [\"discord.message.mention\"]}
-                 :filters {:channels [\"123456789\"] :keywords [\"frankie\"]}})
-
-   Example (direct spec):
-   (upsert-job! \"custom-bot\"
-                {:id \"custom-bot\"
-                 :enabled true
-                 :trigger {:kind \"cron\" :cadenceMinutes 10}
-                 :agentSpec {:role \"executive\" :model \"glm-5\" :thinkingLevel \"off\"}})"
-  [job-id job-spec]
-  (let [config (cfg)
-        template-id (or (:templateId job-spec) (:template-id job-spec))
-
-        normalized-job (if template-id
-                         ;; Template instantiation path
-                         (let [trigger (or (:trigger job-spec)
-                                           {:kind "event" :cadenceMinutes 5 :eventKinds []})
-                               source (or (:source job-spec)
-                                          {:kind "manual" :mode "respond" :config {}})
-                               filters (or (:filters job-spec)
-                                           {:channels [] :keywords []})
-                               overrides (dissoc job-spec :templateId :template-id :trigger :source :filters)]
-                           (templates/instantiate-job template-id job-id trigger source filters overrides))
-                         ;; Direct spec path - ensure required fields
-                         (merge job-spec {:id job-id}))]
-
-    ;; Normalize and persist; only reload if spec changed
-    (let [final-job  (templates/normalize-job-for-persistence normalized-job)
-          prev-spec  (or (get-in @runtime-state/config* [:event-agent-control :jobs])
-                          (when-let [s (get @job-specs* job-id)] [s]))
-          spec-sig   #(dissoc % :updatedAt :createdAt)
-          unchanged? (some #(= (spec-sig %) (spec-sig final-job)) (or prev-spec []))]
-      (update-job-spec! job-id final-job)
-      (when-not unchanged?
-        ;; Debounced: agents writing many contracts in quick succession
-        ;; will collapse to a single reload instead of N.
-        (debounced-reload!))
-      (js/Promise.resolve final-job))))
-
-(defn get-job
-  "Get a job spec by ID.
-   Loads from Redis if available, otherwise returns nil.
-   Returns a promise."
-  [job-id]
-  (let [config (cfg)
-        control (control-config config)
-        default-job (some #(when (= (:id %) job-id) %) (:jobs control))]
-    (get-job-spec job-id default-job)))
-
-(defn delete-job!
-  "Delete a job from Redis and reload runtime.
-   Note: This only removes the Redis override - the job will revert to config defaults.
-   Returns a promise."
-  [job-id]
-  (when-let [client (redis/get-client)]
-    (let [key (str "event-agent:job-spec:" job-id)
-          dirty-key "event-agent:job-dirty"]
-      (-> (redis/del client key)
-          (.then (fn []
-                   (redis/srem client dirty-key job-id)
-                   (reload!)
-                   (println "[event-agents] deleted job" job-id "from Redis")
-                   {:deleted job-id})))))
-  (js/Promise.resolve {:deleted job-id}))
 
 (defn list-templates
   "List all available agent templates.

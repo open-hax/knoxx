@@ -5,10 +5,13 @@
             [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows!
                                                session-visible?
                                                session-matches-page-actor-filter?
+                                               session-matches-contract-filter?
+                                               session-summary-scope-from-rows
                                                filter-authorized-memory-hits!
                                                authorized-session-ids!]]
             [knoxx.backend.openplanner-memory :refer [openplanner-memory-search!]]
             [knoxx.backend.realtime :refer [broadcast-ws!]]
+            [knoxx.backend.runtime.actor-scope :as actor-scope]
             [knoxx.backend.redis-client :as redis]
             [knoxx.backend.session-store :as session-store]
             [knoxx.backend.session-titles :refer [session-titles*
@@ -83,7 +86,7 @@
    :actor-id (str (or (ctx-actor-id ctx) ""))})
 
 (defn memory-sessions-cache-key
-  [{:keys [config ctx limit offset actor-id exclude-actor-ids]}]
+  [{:keys [config ctx limit offset actor-id exclude-actor-ids contract-id]}]
   (sha256
    (stable-json
     {:v 1
@@ -92,6 +95,7 @@
      :offset (max 0 (or offset 0))
      :actor-id (str (or actor-id ""))
      :exclude-actor-ids (sort (map str (or exclude-actor-ids [])))
+     :contract-id (str (or contract-id ""))
      :auth (memory-sessions-auth-scope ctx)})))
 
 (defn- memory-sessions-cache-redis-key
@@ -207,17 +211,19 @@
          vec)))
 
 (defn- filter-page-actor-rows!
-  [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids page-rows]
+  [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids contract-id page-rows]
   (if (and (str/blank? (str (or actor-id "")))
-           (empty? exclude-actor-ids))
+           (empty? exclude-actor-ids)
+           (str/blank? (str (or contract-id ""))))
     (js/Promise.resolve (vec page-rows))
     (-> (.all js/Promise
               (clj->js
                (mapv (fn [row]
                        (-> (fetch-openplanner-session-rows! config (:session row))
                            (.then (fn [rows]
-                                    {:row row
-                                     :visible (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)}))
+                                    {:row (merge row (session-summary-scope-from-rows rows))
+                                     :visible (and (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)
+                                                   (session-matches-contract-filter? config rows contract-id))}))
                            (.catch (fn [_]
                                      {:row row
                                       :visible false}))))
@@ -229,7 +235,7 @@
                       vec))))))
 
 (defn fetch-authorized-session-pages!
-  [config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
+  [config ctx actor-id exclude-actor-ids contract-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
   (-> (openplanner-request! config "GET"
                             (str "/v1/sessions?project="
                                  (js/encodeURIComponent (:session-project-name config))
@@ -248,7 +254,7 @@
                                              (filter #(contains? allowed (str (:session %))))
                                              (filter #(interactive-session-id? (:session %)))
                                              vec)]
-                    (-> (filter-page-actor-rows! config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids authorized-rows)
+                    (-> (filter-page-actor-rows! config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids contract-id authorized-rows)
                         (.then
                          (fn [actor-visible-rows]
                            (let [next-acc (into acc actor-visible-rows)
@@ -260,7 +266,7 @@
                                                     :has_more true})
 
                                (and upstream-has-more (pos? fetched-count))
-                               (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size next-offset next-acc needed-count)
+                               (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size next-offset next-acc needed-count)
 
                                :else
                                (js/Promise.resolve {:rows next-acc
@@ -336,6 +342,91 @@
          :is_active false
          :active_status "inactive"
          :has_active_stream false))
+
+(defn- agent-spec-value
+  [agent-spec keys]
+  (some (fn [k]
+          (some-> (get agent-spec k)
+                  str
+                  str/trim
+                  not-empty))
+        keys))
+
+(defn- active-session-actor-claims
+  [session]
+  (let [agent-spec (:agent_spec session)
+        contract-actors (or (:contractActors agent-spec)
+                            (:contract-actors agent-spec)
+                            (:contract_actors agent-spec))]
+    (actor-scope/normalize-actor-claims
+     (concat [(or (:actor_id session)
+                  (:actor-id session)
+                  (:actorId session))
+              (agent-spec-value agent-spec [:actor_id :actor-id :actorId])]
+             (cond
+               (set? contract-actors) contract-actors
+               (sequential? contract-actors) contract-actors
+               contract-actors [contract-actors]
+               :else [])))))
+
+(defn- active-session-matches-actor-filter?
+  [session actor-id exclude-actor-ids]
+  (let [include-actor-id (some-> actor-id str str/trim not-empty)
+        exclude-actor-ids (->> (or exclude-actor-ids [])
+                               (keep #(some-> % str str/trim not-empty))
+                               distinct
+                               vec)
+        actors (active-session-actor-claims session)]
+    (and (or (str/blank? (str (or include-actor-id "")))
+             (actor-scope/actor-allowed? actors include-actor-id))
+         (not-any? #(actor-scope/actor-allowed? actors %) exclude-actor-ids))))
+
+(defn- actor-claim-includes?
+  [actors actor-id]
+  (let [wanted (actor-scope/normalize-actor-claim actor-id)]
+    (and wanted
+         (contains? (actor-scope/normalize-actor-claims actors) wanted))))
+
+(defn- active-session-matches-contract?
+  [session contract-id]
+  (let [target (some-> contract-id str str/trim not-empty)
+        agent-spec (:agent_spec session)]
+    (or (nil? target)
+        (= target (agent-spec-value agent-spec [:contract_id :contract-id :contractId]))
+        (= target (agent-spec-value agent-spec [:sub_agent_id :sub-agent-id :subAgentId]))
+        (= target (agent-spec-value agent-spec [:parent_agent_id :parent-agent-id :parentAgentId]))
+        (= target (agent-spec-value agent-spec [:actor_id :actor-id :actorId]))
+        (actor-claim-includes? (active-session-actor-claims session) target))))
+
+(defn- active-session-synthetic-row
+  [session]
+  (let [agent-spec (:agent_spec session)
+        contract-id (agent-spec-value agent-spec [:contract_id :contract-id :contractId])
+        actor-id (or (agent-spec-value agent-spec [:actor_id :actor-id :actorId])
+                     (some-> (or (:actor_id session)
+                                 (:actor-id session)
+                                 (:actorId session))
+                             str
+                             str/trim
+                             not-empty))
+        sub-agent-id (agent-spec-value agent-spec [:sub_agent_id :sub-agent-id :subAgentId])
+        parent-agent-id (agent-spec-value agent-spec [:parent_agent_id :parent-agent-id :parentAgentId])
+        parent-run-id (agent-spec-value agent-spec [:parent_run_id :parent-run-id :parentRunId])
+        spawn-kind (agent-spec-value agent-spec [:spawn_kind :spawn-kind :spawnKind])]
+    (cond-> {:session (:conversation_id session)
+             :is_active true
+             :active_status (:status session)
+             :has_active_stream (boolean (:has_active_stream session))
+             :title (str "Running · " (or (:run_id session) (:conversation_id session)))
+             :event_count 0
+             :last_ts (:updated_at session)}
+      actor-id (assoc :actor_id actor-id)
+      contract-id (assoc :contract_id contract-id)
+      sub-agent-id (assoc :sub_agent_id sub-agent-id)
+      parent-agent-id (assoc :parent_agent_id parent-agent-id)
+      parent-run-id (assoc :parent_run_id parent-run-id)
+      spawn-kind (assoc :spawn_kind spawn-kind))))
+
 (defn- enrich-row  [redis-client row ]
   (let [session-id (str (:session row))
         titled-row (if-let [title-entry (get @session-titles* session-id)]
@@ -379,6 +470,10 @@
                              (or (aget request "query" "excludeActorIds")
                                  (aget request "query" "excludeActorId")
                                  (aget request "query" "excludeActors")))
+          contract-id (some-> (or (aget request "query" "contractId")
+                                  (aget request "query" "contract_id")
+                                  (aget request "query" "contract"))
+                             normalized-actor-id)
           offset-raw (aget request "query" "offset")
           offset-parsed (js/parseInt (str (or offset-raw "0")) 10)
           offset (if (and (js/Number.isFinite offset-parsed) (>= offset-parsed 0)) offset-parsed 0)
@@ -390,12 +485,13 @@
                                                 :limit limit
                                                 :offset offset
                                                 :actor-id actor-id
-                                                :exclude-actor-ids exclude-actor-ids})]
+                                                :exclude-actor-ids exclude-actor-ids
+                                                :contract-id contract-id})]
       (-> (cached-memory-sessions-source!
            redis-client
            cache-key
            (fn []
-             (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)))
+             (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)))
           (.then
            (fn [{:keys [value cache]}]
              (let [{:keys [rows has_more]} value
@@ -430,17 +526,10 @@
                                      synthetic (->> live
                                                     (filter #(and (:conversation_id %)
                                                                   (not (op-ids (str (:conversation_id %))))
-                                                                  (contains? #{"running" "waiting_input"} (:status %))))
-                                                    (map (fn [s]
-                                                           {:session (:conversation_id s)
-                                                            :is_active true
-                                                            :active_status (:status s)
-                                                            :has_active_stream (boolean (:has_active_stream s))
-                                                            :title (str "Running · " (or (:run_id s) (:conversation_id s)))
-                                                            :event_count 0
-                                                            :last_ts (:updated_at s)
-                                                            :actor_id (:actor_id s)
-                                                            :contract_id (get-in s [:agent_spec :contract_id])})))
+                                                                  (contains? #{"running" "waiting_input"} (:status %))
+                                                                  (active-session-matches-actor-filter? % actor-id exclude-actor-ids)
+                                                                  (active-session-matches-contract? % contract-id)))
+                                                    (map active-session-synthetic-row))
                                      all-rows (vec (concat synthetic page-rows))]
                                  (doseq [row all-rows] (warm-title-cache! (str (:session row)) config runtime))
                                  (-> (.all js/Promise (clj->js (mapv (partial enrich-row redis-client) all-rows)))
