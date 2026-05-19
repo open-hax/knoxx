@@ -7,23 +7,23 @@
    - This namespace orchestrates startup but should not be a dependency-injection
      dump for the whole backend."
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-resume :as agent-resume]
-            [knoxx.backend.auth.session :as auth-session]
-            [knoxx.backend.core :as core]
-            [knoxx.backend.discord-gateway :as discord-gateway]
-            [knoxx.backend.discord-reaction-labels :as discord-reaction-labels]
-            [knoxx.backend.graceful-shutdown :as graceful-shutdown]
-            [knoxx.backend.http-server :as http-server]
-            [knoxx.backend.lifecycle :as lifecycle]
-            [knoxx.backend.policy-db :as policy-db]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.routes.auth :as auth-routes]
-            [knoxx.backend.routes.mcp :as mcp-http]
-            [knoxx.backend.routes.tools.proxy :as proxy-routes]
+            [knoxx.backend.domain.agent.agent-resume :as agent-resume]
+            [knoxx.backend.domain.auth.session :as auth-session]
+            [knoxx.backend.infra.core :as core]
+            [knoxx.backend.domain.discord.discord-gateway :as discord-gateway]
+            [knoxx.backend.domain.discord.discord-reaction-labels :as discord-reaction-labels]
+            [knoxx.backend.infra.graceful-shutdown :as graceful-shutdown]
+            [knoxx.backend.infra.http-server :as http-server]
+            [knoxx.backend.infra.lifecycle :as lifecycle]
+            [knoxx.backend.infra.db.policy :as policy-db]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.infra.routes.auth :as auth-routes]
+            [knoxx.backend.infra.routes.mcp :as mcp-http]
+            [knoxx.backend.infra.routes.tools.proxy :as proxy-routes]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.agent-turns :refer [lounge-messages*]]))
+            [knoxx.backend.domain.agent.turn :refer [lounge-messages*]]))
 
 (defn- env
   [k default]

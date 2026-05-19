@@ -1,14 +1,15 @@
-(ns knoxx.backend.agents.runner
+(ns knoxx.backend.domain.agent.runner
   "Shared entrypoint for launching normal Knoxx agent turns.
 
    Event-triggered and chat-triggered work should converge on the same Knoxx
    turn runtime. This namespace provides a queue-style direct-start helper so
    non-HTTP callers can use the same semantics as /api/knoxx/direct/start."
-  (:require [knoxx.backend.agent-runtime :refer [active-agent-session]]
-            [knoxx.backend.agent-turns :as agent-turns]
-            [knoxx.backend.redis-client :as redis]
+  (:require [knoxx.backend.domain.agent.agent-runtime :refer [active-agent-session]]
+            [knoxx.backend.domain.agent.policy :as agent-policy]
+            [knoxx.backend.domain.agent.turn :as agent-turns]
+            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.session-store :as session-store]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
             ["node:crypto" :as crypto]))
 
 (defn current-runtime
@@ -216,7 +217,7 @@
 
 (defn- queue-turn!
   [runtime config body]
-  (-> (agent-turns/validate-chat-policy! (:auth-context body) (policy-model config body))
+  (-> (agent-policy/validate-chat-policy! (:auth-context body) (policy-model config body))
       (.then (fn [_]
                (-> (agent-turns/send-agent-turn! runtime config body)
                    (.then (fn [_] nil))

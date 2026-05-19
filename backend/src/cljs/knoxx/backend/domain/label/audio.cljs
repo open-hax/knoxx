@@ -1,4 +1,4 @@
-(ns knoxx.backend.audio-labels
+(ns knoxx.backend.domain.label.audio
   "Audio file labeling and symlink organization system.
    Labels are stored in a JSON file and can be used to organize
    audio files into symlink-based directory structures."

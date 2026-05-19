@@ -1,4 +1,4 @@
-(ns knoxx.backend.policy.edn-adapter
+(ns knoxx.backend.domain.policy.edn-adapter
   "EDN policy adapter. This is the canonical adapter for contract identity.
 
    It resolves contracts through the shared contract loader by contract identity
@@ -6,7 +6,7 @@
    open-hax.contracts.schema via the shared policy protocol."
   (:require [clojure.string :as str]
             [knoxx.backend.contracts.loader :as contracts-loader]
-            [knoxx.backend.policy.protocol :as policy]
+            [knoxx.backend.domain.policy.protocol :as policy]
             [knoxx.backend.tools.registry :as tool-registry]
             ["node:fs" :as fs]
             ["node:fs/promises" :as fs-promises]

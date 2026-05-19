@@ -6,14 +6,17 @@
             [cljs.reader :as reader]
             [clojure.string :as str]
             [knoxx.backend.contracts.loader :as loader]
-            [knoxx.backend.discord-io :as discord-io]
-            [knoxx.backend.pipeline-runner :as pipeline-runner]
+            [knoxx.backend.domain.discord.discord-io :as discord-io]
+            [knoxx.backend.infra.pipeline-runner :as pipeline-runner]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as models]
-            [knoxx.backend.tooling :as tooling]))
+            [knoxx.backend.infra.tooling :as tooling]))
 
 (defonce running?* (atom false))
 (defonce trigger-id->interval* (atom {}))
+(defonce reload-timer* (atom nil))
+
+(declare fire!)
 
 (defn- cfg [] (models/enrich-config (runtime-config/cfg)))
 
@@ -141,17 +144,19 @@
 
 (defn start!
   "Load all :trigger contracts from disk and schedule enabled cron ones."
-  []
-  (when-not @running?*
-    (reset! running?* true)
-    (let [config (cfg)]
-      (doseq [trigger-id (loader/list-contract-ids-sync config "triggers")]
-        (when-let [contract (load-contract-sync config "triggers" trigger-id)]
-          (when (:enabled contract)
-            (case (:trigger/kind contract)
-              :cron (schedule-cron-trigger! config trigger-id (:trigger/schedule contract))
-              :manual (js/console.log "[trigger-runner] registered manual trigger" trigger-id)
-              (js/console.log "[trigger-runner] unknown trigger kind" (:trigger/kind contract)))))))))
+  ([]
+   (start! (cfg)))
+  ([config]
+   (when-not @running?*
+     (reset! running?* true)
+     (doseq [trigger-id (loader/list-contract-ids-sync config "triggers")]
+       (when-let [contract (load-contract-sync config "triggers" trigger-id)]
+         (when (:enabled contract)
+           (case (:trigger/kind contract)
+             :cron (schedule-cron-trigger! config trigger-id (:trigger/schedule contract))
+             :manual (js/console.log "[trigger-runner] registered manual trigger" trigger-id)
+             :event (js/console.log "[trigger-runner] registered event trigger" trigger-id)
+             (js/console.log "[trigger-runner] unknown trigger kind" (:trigger/kind contract)))))))))
 
 (defn stop!
   "Stop all scheduled triggers."
@@ -161,6 +166,35 @@
     (js/console.log "[trigger-runner] stopped" trigger-id))
   (reset! trigger-id->interval* {})
   (reset! running?* false))
+
+(defn reload!
+  ([]
+   (reload! (cfg)))
+  ([config]
+   (stop!)
+   (start! config)
+   (js/Promise.resolve {:ok true :action "reload"})))
+
+(defn debounced-reload!
+  []
+  (when-let [timer @reload-timer*]
+    (js/clearTimeout timer))
+  (reset! reload-timer*
+          (js/setTimeout
+           (fn []
+             (reset! reload-timer* nil)
+             (reload!))
+           350)))
+
+(defn reset-runtime!
+  ([]
+   (reset-runtime! (cfg)))
+  ([config]
+   (reload! config)))
+
+(defn run-job!
+  [trigger-id]
+  (fire! trigger-id))
 
 (defn fire!
   "Manually fire a trigger by its contract id, with optional context map."

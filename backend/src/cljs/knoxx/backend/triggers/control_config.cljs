@@ -1,11 +1,11 @@
 (ns knoxx.backend.triggers.control-config
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-templates :as prompt-templates]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.runtime.contract-loader :as contract-loader]
+            [knoxx.backend.domain.agent.agent-templates :as prompt-templates]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.contracts.loader :as contract-loader]
             [knoxx.backend.runtime.models :as models]
             [knoxx.backend.runtime.roles :as roles]
-            [knoxx.backend.tooling :as tooling]
+            [knoxx.backend.infra.tooling :as tooling]
             [knoxx.backend.tools.registry :as tools]
             [knoxx.backend.util.parse :refer [parse-positive-int]]))
 

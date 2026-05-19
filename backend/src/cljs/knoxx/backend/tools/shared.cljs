@@ -4,7 +4,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.runtime.state :as runtime-state]
             [malli.json-schema :as mjs]          ;; ← add this
-            [knoxx.backend.http :refer [js-array-seq]]))
+            [knoxx.backend.infra.http :refer [js-array-seq]]))
 
 ;; ← add this
 (defn ->params

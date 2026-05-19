@@ -1,6 +1,6 @@
 (ns knoxx.backend.session-titles-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.session-titles :as titles]))
+            [knoxx.backend.domain.sessions.session-titles :as titles]))
 
 (deftest sanitize-session-title
   (is (= "this is a very long text that exceeds the maximum allowed length for a session title so should be truncated"

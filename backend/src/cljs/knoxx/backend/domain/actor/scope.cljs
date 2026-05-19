@@ -1,4 +1,4 @@
-(ns knoxx.backend.contracts.actor-scope
+(ns knoxx.backend.domain.actor.scope
   (:require [clojure.string :as str]))
 
 ;; Contract-scoped actor / principal matching.

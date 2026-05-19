@@ -1,8 +1,8 @@
 (ns knoxx.backend.tools.music
   "Music/audio identification and visualization tools."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.text :refer [tool-text-result]]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
             ["node:child_process" :refer [execFile]]

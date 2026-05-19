@@ -1,10 +1,10 @@
 (ns knoxx.backend.actions.invoke-sub-agent-test
   (:require [cljs.test :refer [async deftest is testing]]
             [clojure.string :as str]
-            [knoxx.backend.actions.invoke-sub-agent]
-            [knoxx.backend.actions.registry :as registry]
+            [knoxx.backend.domain.action.invoke-sub-agent]
+            [knoxx.backend.domain.action.registry :as registry]
             [knoxx.backend.contracts.loader :as loader]
-            [knoxx.backend.contracts.validator :as validator]))
+            [knoxx.backend.law.contracts :as validator]))
 
 ;; ── Sub-agent contract validation ──────────────────────────────────────────
 

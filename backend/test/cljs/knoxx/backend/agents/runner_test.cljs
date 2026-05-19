@@ -1,6 +1,6 @@
 (ns knoxx.backend.agents.runner-test
   (:require [cljs.test :refer-macros [deftest is testing]]
-            [knoxx.backend.agents.runner :as runner]))
+            [knoxx.backend.domain.agent.runner :as runner]))
 
 (deftest direct-start-payload->turn-params-normalizes-direct-start-shape
   (testing "snake_case direct-start payload becomes send-agent-turn! params"

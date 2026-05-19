@@ -1,11 +1,11 @@
-(ns knoxx.backend.core-memory
+(ns knoxx.backend.infra.core-memory
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
-            [knoxx.backend.document-state :refer [normalize-relative-path]]
-            [knoxx.backend.http :as backend-http :refer [js-array-seq]]
-            [knoxx.backend.runtime.actor-scope :as actor-scope]
+            [knoxx.backend.domain.auth.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
+            [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
+            [knoxx.backend.infra.http :as backend-http :refer [js-array-seq]]
+            [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.runtime.config :refer [cfg]]
-            [knoxx.backend.tooling :as tooling]))
+            [knoxx.backend.infra.tooling :as tooling]))
 
 (defn parse-json-object
   [value]

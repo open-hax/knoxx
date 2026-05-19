@@ -1,4 +1,4 @@
-(ns knoxx.backend.svg-render
+(ns knoxx.backend.domain.svg-render
   "SVG rendering via headless Chromium/Puppeteer.
 
    Keeps one browser process warm so repeated Discord image uploads avoid the

@@ -1,4 +1,4 @@
-(ns knoxx.backend.routes.workspace-media
+(ns knoxx.backend.infra.routes.workspace-media
   "HTTP routes for serving workspace media (audio/video/images/docs) as raw bytes.
 
    This is intended to support frontend embedding of media linked in Markdown.

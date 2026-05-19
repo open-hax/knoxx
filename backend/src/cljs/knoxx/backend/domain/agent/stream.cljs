@@ -1,17 +1,17 @@
-(ns knoxx.backend.agents.stream
+(ns knoxx.backend.domain.agent.stream
   "Streaming event handling for agent turns."
   (:require [clojure.string :as str]
-            [knoxx.backend.agents.content :as content :refer [diff-appended-text preview-text-nonblank tool-result-content-parts]]
-            [knoxx.backend.agents.tools :as tools :refer [tool-call-input-preview tool-call-preview-from-part assistant-tool-call-previews]]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.run-state :refer [update-run! append-run-event! update-run-tool-receipt!
+            [knoxx.backend.domain.agent.content :as content :refer [diff-appended-text preview-text-nonblank tool-result-content-parts]]
+            [knoxx.backend.domain.agent.tools :as tools :refer [tool-call-input-preview tool-call-preview-from-part assistant-tool-call-previews]]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
+            [knoxx.backend.domain.action.run-state :refer [update-run! append-run-event! update-run-tool-receipt!
                                              backfill-run-tool-input-preview! append-limited
                                              append-run-trace-text! apply-run-tool-trace-event!
                                              tool-event-payload]]
-            [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.text :refer [assistant-message-text assistant-message-reasoning-text]]
-            [knoxx.backend.turn-control :as turn-control]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
+            [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.util.time :refer [now-iso]]))
 
 (def ^:private DEATH_SPIRAL_STREAK_LIMIT 6)

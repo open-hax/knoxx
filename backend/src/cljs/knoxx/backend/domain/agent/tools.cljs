@@ -1,8 +1,8 @@
-(ns knoxx.backend.agents.tools
+(ns knoxx.backend.domain.agent.tools
   "Tool input preview and assistant tool-call helpers."
   (:require [clojure.string :as str]
-            [knoxx.backend.agents.content :refer [nonblank preview-text-nonblank json-preview-nonblank fenced]]
-            [knoxx.backend.text :refer [clip-text]]))
+            [knoxx.backend.domain.agent.content :refer [nonblank preview-text-nonblank json-preview-nonblank fenced]]
+            [knoxx.backend.domain.text :refer [clip-text]]))
 
 (defn- tool-args->markdown-preview
   "Tool-specific input previews that are always human readable (no raw JSON).

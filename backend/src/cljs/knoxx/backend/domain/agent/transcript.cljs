@@ -1,9 +1,9 @@
-(ns knoxx.backend.agents.transcript
+(ns knoxx.backend.domain.agent.transcript
   "Session transcript building and message conversion."
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-runtime :refer [sync-system-message]]
-            [knoxx.backend.agents.content :refer [nonblank assistant-content-parts session-message-text]]
-            [knoxx.backend.text :refer [content-part-text]]))
+            [knoxx.backend.domain.agent.agent-runtime :refer [sync-system-message]]
+            [knoxx.backend.domain.agent.content :refer [nonblank assistant-content-parts session-message-text]]
+            [knoxx.backend.domain.text :refer [content-part-text]]))
 
 (defn ^:export session->stored-messages
   "Exported simplified variant (no content-parts).  Used by tests and recovery."

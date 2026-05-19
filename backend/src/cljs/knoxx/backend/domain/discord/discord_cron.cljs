@@ -1,4 +1,4 @@
-(ns knoxx.backend.discord-cron
+(ns knoxx.backend.domain.discord.discord-cron
   "Discord cron compatibility shim.
    Delegates all scheduling to trigger_runner.cljs.
    Keeps status-snapshot for admin dashboard backwards compatibility."

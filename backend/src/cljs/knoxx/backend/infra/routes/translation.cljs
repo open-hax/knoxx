@@ -1,4 +1,4 @@
-(ns knoxx.backend.routes.translation
+(ns knoxx.backend.infra.routes.translation
   ;; NOTE: We import route! directly from app-shapes instead of receiving it as a parameter
   ;; to avoid a shadow-cljs :simple optimization bug where local bindings ending with `!`
   ;; get incorrectly compiled as namespace property references instead of closure captures.
@@ -10,7 +10,7 @@
   ;;
   ;; WORKAROUND: Import `route!` directly via :refer instead of passing through parameter maps.
   ;; See backend/README.md "Cannot read properties of undefined" section for full diagnosis.
-  (:require [knoxx.backend.app-shapes :refer [route!]]))
+  (:require [knoxx.backend.shape.app-shapes :refer [route!]]))
 
 (defn- reply-header!
   [^js reply name value]

@@ -1,7 +1,7 @@
-(ns knoxx.backend.run-state
+(ns knoxx.backend.domain.action.run-state
   (:require [clojure.string :as str]
             [knoxx.backend.util.time :as time]
-            [knoxx.backend.redis-client :as redis]))
+            [knoxx.backend.infra.redis-client :as redis]))
 
 (def RUN_EVENTS_KEY_PREFIX "knoxx:run_events:")
 (def RUN_EVENTS_MAX 1000)

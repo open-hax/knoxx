@@ -1,4 +1,4 @@
-(ns knoxx.backend.redis-client
+(ns knoxx.backend.infra.redis-client
   "Simple Redis client for Knoxx session storage.
 
    Uses node-redis under the hood with promise-based API."

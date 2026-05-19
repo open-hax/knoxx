@@ -1,4 +1,4 @@
-(ns knoxx.backend.agent-resume
+(ns knoxx.backend.domain.agent.agent-resume
   "Isolated module for session resumption across backend restarts.
 
    Startup:
@@ -12,11 +12,11 @@
    - Give Redis a grace window to persist final state.
    - If turns time out, mark their sessions resumable for the next startup."
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-turns :as agent-turns]
-            [knoxx.backend.agent-runtime :as agent-runtime]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.turn-control :as turn-control]
+            [knoxx.backend.domain.agent.recovery :as agent-recovery]
+            [knoxx.backend.domain.agent.agent-runtime :as agent-runtime]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.util.time :refer [now-iso]]))
 
 ;; ─── Config ───────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@
   (let [session-id (str (or (:session_id session) ""))
         conversation-id (str (or (:conversation_id session) ""))]
     (if (session-resumable? session)
-      (-> (agent-turns/resume-recovered-session!
+      (-> (agent-recovery/resume-recovered-session!
            runtime config session {:wait-for :kickoff})
           (.then (fn [result]
                    (when-not (:resumed result)
@@ -298,7 +298,7 @@
                                       (.catch (fn [err]
                                                 (log-info! app "[agent-resume] abort batch error" err)
                                                 nil)))
-                                  (-> (.all js/Promise (clj->js (mapv #(agent-turns/resume-recovered-session!
+                                  (-> (.all js/Promise (clj->js (mapv #(agent-recovery/resume-recovered-session!
                                                                        runtime config % {:wait-for :kickoff})
                                                                       resumable)))
                                       (.catch (fn [err]

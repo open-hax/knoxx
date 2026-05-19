@@ -1,6 +1,6 @@
 (ns knoxx.backend.runtime.models
   (:require [clojure.string :as str]
-            [knoxx.backend.runtime.contract-loader :as contract-loader]))
+            [knoxx.backend.contracts.loader :as contract-loader]))
 
 (def ^:private default-model-prefix-allowlist
   ["glm-5" "gpt-5" "qwen3" "gemma4:" "gemma3:" "deepseek" "kimi-k2" "nemotron" "cogito" "devstral" "minimax" "ministral" "mistral-large"])

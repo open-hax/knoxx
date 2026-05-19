@@ -1,12 +1,12 @@
-(ns knoxx.backend.routes.mcp
+(ns knoxx.backend.infra.routes.mcp
   "Serve Knoxx tools over MCP (Model Context Protocol) Streamable HTTP."
   (:require [clojure.string :as str]
             [malli.core :as m]
             [malli.error :as me]
-            [knoxx.backend.app-shapes :refer [route!]]
-            [knoxx.backend.auth.session :as auth-session]
-            [knoxx.backend.mcp-expose :as mcp-expose]
-            [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.shape.app-shapes :refer [route!]]
+            [knoxx.backend.domain.auth.session :as auth-session]
+            [knoxx.backend.infra.mcp.mcp-expose :as mcp-expose]
+            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
             ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]

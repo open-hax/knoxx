@@ -1,4 +1,4 @@
-(ns knoxx.backend.tools.policies
+(ns knoxx.backend.domain.policy.tools
   "Policy and tool-call contract loading for tool access restriction.
 
    Policy contracts (contract/kind = :policy) narrow or remove tools.

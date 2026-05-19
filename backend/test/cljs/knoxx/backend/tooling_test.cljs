@@ -2,7 +2,7 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.runtime.models :as models]
             [knoxx.backend.runtime.roles :as roles]
-            [knoxx.backend.tooling :as tooling]))
+            [knoxx.backend.infra.tooling :as tooling]))
 
 (def test-config
   (models/enrich-config {:contracts-dir "contracts"

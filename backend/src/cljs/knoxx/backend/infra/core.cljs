@@ -1,19 +1,19 @@
-(ns knoxx.backend.core
-  (:require [knoxx.backend.agent-hydration :refer [ensure-settings!]]
-            [knoxx.backend.agent-runtime :as agent-runtime]
-            [knoxx.backend.agent-turns :as agent-turns :refer [lounge-messages*]]
-            [knoxx.backend.routes.app :as app-routes]
-            [knoxx.backend.routes.contracts :as contracts-routes]
-            [knoxx.backend.events.runtime :as events-runtime]
-            [knoxx.backend.mcp-bridge :as mcp]
-            [knoxx.backend.realtime :as realtime]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.agent-resume :as agent-resume]
-            [knoxx.backend.run-state :refer [active-runs-count]]
+(ns knoxx.backend.infra.core
+  (:require [knoxx.backend.domain.agent.agent-hydration :refer [ensure-settings!]]
+            [knoxx.backend.domain.agent.agent-runtime :as agent-runtime]
+            [knoxx.backend.domain.agent.turn :as agent-turns :refer [lounge-messages*]]
+            [knoxx.backend.infra.routes.app :as app-routes]
+            [knoxx.backend.infra.routes.contracts :as contracts-routes]
+            [knoxx.backend.triggers.trigger-runner :as trigger-runtime]
+            [knoxx.backend.infra.mcp.mcp-bridge :as mcp]
+            [knoxx.backend.domain.realtime :as realtime]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.agent.agent-resume :as agent-resume]
+            [knoxx.backend.domain.action.run-state :refer [active-runs-count]]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.session-titles :refer [load-session-titles!]]
+            [knoxx.backend.domain.sessions.session-titles :refer [load-session-titles!]]
             ["fastify" :default Fastify]
             ["@fastify/cors" :default fastifyCors]
             ["@fastify/websocket" :default fastifyWebsocket]
@@ -88,13 +88,13 @@
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. Event agents and MCP discovery remain background work.
   ;;
-  ;; IMPORTANT: events-runtime/start! expects redis/get-client to be ready so it
+  ;; IMPORTANT: trigger-runtime/start! expects redis/get-client to be ready so it
   ;; can load persisted control config (disable/enable jobs) *before* scheduling.
   ;; If we start event agents before redis/init-redis!, every restart will run
   ;; the default job set, even if the admin panel disabled a crashing job.
   (-> (redis/init-redis! (:redis-url resolved-config))
       (.then (fn [_]
-               (events-runtime/start! resolved-config)))
+                (trigger-runtime/start! resolved-config)))
       (.then (fn [_]
                (contracts-routes/start-contract-watcher! resolved-config)))
       (.then (fn [_]
@@ -158,8 +158,8 @@
                                  (app-log-error! app "Failed to initialize Redis" err)
                                  nil))
                        (.then (fn [_]
-                                ;; Start generic event-agent runtime
-                                (events-runtime/start! config)
+                                 ;; Start contract trigger runtime.
+                                 (trigger-runtime/start! config)
                                 (contracts-routes/start-contract-watcher! config)
                                 (app-listen! app (:host config) (:port config)))))))
           (.then (fn [_]

@@ -1,13 +1,13 @@
-(ns knoxx.backend.routes.contracts
+(ns knoxx.backend.infra.routes.contracts
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cljs.reader :as reader]
             [knoxx.backend.contracts.resolve :as contracts-resolve]
-            [knoxx.backend.events.runtime :as events-runtime]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.runtime.actor-scope :as actor-scope]
-            [knoxx.backend.runtime.contract-loader :as loader]
-            [knoxx.backend.runtime.contract-validator :as validator]
+            [knoxx.backend.triggers.trigger-runner :as trigger-runtime]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.actor.scope :as actor-scope]
+            [knoxx.backend.contracts.loader :as loader]
+            [knoxx.backend.law.contracts :as validator]
             [knoxx.backend.util.time :refer [now-iso]]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]))
@@ -438,8 +438,8 @@
                            (println "[contracts] watcher sync failed:" (.-message err))
                            nil))
                   (.then (fn [_]
-                           (events-runtime/debounced-reload!)
-                           (println "[contracts] event-agent runtime reload scheduled after contract change")
+                            (trigger-runtime/debounced-reload!)
+                            (println "[contracts] trigger runtime reload scheduled after contract change")
                            nil))
                  (.catch (fn [err]
                            (println "[contracts] watcher reload failed:" (.-message err))

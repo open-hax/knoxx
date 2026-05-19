@@ -1,10 +1,10 @@
-;; knoxx.backend.node.path
+;; knoxx.backend.infra.node.path
 ;;
 ;; THE JS BOUNDARY FOR PATH OPS.
 ;; node:path lives HERE AND NOWHERE ELSE.
 ;; All fns are pure and synchronous — they return plain CLJS strings.
 
-(ns knoxx.backend.node.path
+(ns knoxx.backend.infra.node.path
   (:require ["node:path"    :as node-path]
             ["node:process" :as node-process]))
 

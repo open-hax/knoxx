@@ -1,6 +1,6 @@
 (ns knoxx.backend.turn-control-test
   (:require [cljs.test :refer [deftest is testing use-fixtures]]
-            [knoxx.backend.turn-control :as turn-control]))
+            [knoxx.backend.domain.voice.turn-control :as turn-control]))
 
 (use-fixtures :each
   {:before (fn [] (reset! turn-control/active-turns* {}))

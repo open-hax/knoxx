@@ -1,6 +1,6 @@
 (ns knoxx.backend.agent-templates-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.agent-templates :as templates]))
+            [knoxx.backend.domain.agent.agent-templates :as templates]))
 
 (deftest render-prompt-renders-json-round-tripped-template-vector
   (testing "template forms survive JSON/JS round-trips that turn lists/symbols into vectors/strings"

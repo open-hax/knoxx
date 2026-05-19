@@ -1,8 +1,8 @@
 (ns knoxx.backend.contracts-routes-test
   (:require [clojure.string :as str]
             [cljs.test :refer [deftest is testing async]]
-            [knoxx.backend.routes.contracts :as sut]
-            [knoxx.backend.redis-client :as redis]))
+            [knoxx.backend.infra.routes.contracts :as sut]
+            [knoxx.backend.infra.redis-client :as redis]))
 
 ;; ---------------------------------------------------------------------------
 ;; Invariant: sync-contract-index! is a no-op (not a crash) when Redis is

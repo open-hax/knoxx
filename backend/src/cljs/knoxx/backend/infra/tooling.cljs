@@ -1,10 +1,10 @@
-(ns knoxx.backend.tooling
+(ns knoxx.backend.infra.tooling
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :as authz]
+            [knoxx.backend.domain.auth.authz :as authz]
             [knoxx.backend.contracts.resolve :as contract-resolve]
             [knoxx.backend.contracts.roles :as roles]
-            [knoxx.backend.http :as backend-http]
-            [knoxx.backend.mcp-bridge :as mcp]
+            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.infra.mcp.mcp-bridge :as mcp]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.state :as state]
             [knoxx.backend.tools.registry :as tool-registry]))

@@ -1,12 +1,12 @@
-(ns knoxx.backend.tools.actors
+(ns knoxx.backend.domain.actor.tools
   "Actor-to-actor messaging tools."
   (:require [clojure.string :as str]
-            [knoxx.backend.actor-mailbox :as actor-mailbox]
-            [knoxx.backend.agent-context :as agent-context]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.text :refer [tool-text-result]]
+            [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
+            [knoxx.backend.domain.agent.agent-context :as agent-context]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.tools.shared :refer [create-tool-obj json-parse live-config maybe-tool-update!]]))
 
 (def send-message-params

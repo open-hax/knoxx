@@ -1,7 +1,7 @@
 (ns knoxx.backend.agent-hydration-test
   (:require [cljs.test :refer [async deftest is testing]]
-            [knoxx.backend.agent-hydration :as agent-hydration]
-            [knoxx.backend.http :as backend-http]))
+            [knoxx.backend.domain.agent.agent-hydration :as agent-hydration]
+            [knoxx.backend.infra.http :as backend-http]))
 
 (deftest agent-custom-tool-suite-selects-contract-librarian-runtime
   (testing "contract librarian sessions use the dedicated contract-oriented tool suite"

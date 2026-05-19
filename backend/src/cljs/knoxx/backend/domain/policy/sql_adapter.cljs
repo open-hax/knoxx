@@ -1,4 +1,4 @@
-(ns knoxx.backend.policy.sql-adapter
+(ns knoxx.backend.domain.policy.sql-adapter
   "SQL projection/secret-state adapter for policy data.
 
    This adapter does not define canonical actor identity. It projects validated
@@ -6,7 +6,7 @@
    expressed as HoneySQL data and formatted at the edge."
   (:require [clojure.string :as str]
             [honey.sql :as sql]
-            [knoxx.backend.policy.protocol :as policy]))
+            [knoxx.backend.domain.policy.protocol :as policy]))
 
 (defrecord SqlPolicyStore [query-one! query! find-org-by-slug! set-membership-roles! primary-org])
 

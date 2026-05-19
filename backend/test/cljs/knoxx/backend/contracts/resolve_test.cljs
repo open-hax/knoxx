@@ -1,6 +1,6 @@
 (ns knoxx.backend.contracts.resolve-test
   (:require [cljs.test :as t :refer [deftest is testing]]
-            [knoxx.backend.contracts.actor-scope]
+            [knoxx.backend.domain.actor.scope]
             [knoxx.backend.contracts.loader :as loader]
             [knoxx.backend.contracts.resolve :as sut]
             [knoxx.backend.contracts.roles :as roles]))
@@ -127,20 +127,20 @@
 (deftest agent-role-claims-handles-single-role
   (testing "single :role keyword is returned as a one-element vector"
     (let [contract {:agent {:role :knowledge_worker}}
-          claims   (knoxx.backend.contracts.actor-scope/agent-role-claims contract)]
+          claims   (knoxx.backend.domain.actor.scope/agent-role-claims contract)]
       (is (= [:knowledge_worker] claims)))))
 
 (deftest agent-role-claims-handles-roles-vector
   (testing ":agent {:roles [...]} returns all roles"
     (let [contract {:agent {:roles [:creative_catalyst :developer]}}
-          claims   (knoxx.backend.contracts.actor-scope/agent-role-claims contract)]
+          claims   (knoxx.backend.domain.actor.scope/agent-role-claims contract)]
       (is (= [:creative_catalyst :developer] claims)))))
 
 (deftest agent-role-claims-merges-role-and-roles
   (testing ":role and :roles are merged and deduped"
     (let [contract {:agent {:role :knowledge_worker
                             :roles [:developer :knowledge_worker]}}
-          claims   (knoxx.backend.contracts.actor-scope/agent-role-claims contract)]
+          claims   (knoxx.backend.domain.actor.scope/agent-role-claims contract)]
       (is (= 2 (count claims)))
       (is (= (set claims) #{:knowledge_worker :developer})))))
 
@@ -148,6 +148,6 @@
   (testing ":actor/roles feeds into role claims alongside :agent {:role}"
     (let [contract {:actor/roles [:basic_user]
                     :agent {:role :knowledge_worker}}
-          claims   (knoxx.backend.contracts.actor-scope/agent-role-claims contract)]
+          claims   (knoxx.backend.domain.actor.scope/agent-role-claims contract)]
       (is (contains? (set claims) :basic_user))
       (is (contains? (set claims) :knowledge_worker)))))

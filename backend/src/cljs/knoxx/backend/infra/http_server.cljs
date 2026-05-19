@@ -1,4 +1,4 @@
-(ns knoxx.backend.http-server
+(ns knoxx.backend.infra.http-server
   "Fastify HTTP server construction and lifecycle helpers."
   (:require ["fastify" :default Fastify]
             ["@fastify/cors" :default fastifyCors]

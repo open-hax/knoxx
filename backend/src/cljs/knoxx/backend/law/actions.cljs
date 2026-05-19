@@ -1,8 +1,18 @@
-(ns knoxx.backend.actions.contract
+(ns knoxx.backend.law.actions
   (:require [malli.core :as m]))
 
 (def ActionKind
-  [:enum :invoke/agent :invoke/sub-agent :invoke/http :invoke/discord-post :invoke/noop])
+  [:enum
+   :actions/start-agent-session
+   :actions/start-agent
+   :actions/agent-send-steer-message
+   :actions/agent-queue-follow-up-message
+   :actions/stop-session
+   :invoke/agent
+   :invoke/sub-agent
+   :invoke/http
+   :invoke/discord-post
+   :invoke/noop])
 
 (def ActionContract
   [:map {:closed false}

@@ -1,6 +1,6 @@
 (ns knoxx.backend.contracts.roles
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-templates :as templates]
+            [knoxx.backend.domain.agent.agent-templates :as templates]
             [knoxx.backend.contracts.loader :as contract-loader]
             [knoxx.backend.tools.registry :as tools]))
 

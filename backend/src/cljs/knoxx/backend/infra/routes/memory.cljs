@@ -1,20 +1,20 @@
-(ns knoxx.backend.routes.memory
+(ns knoxx.backend.infra.routes.memory
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
-            [knoxx.backend.http :refer [json-response! error-response! http-error openplanner-enabled? openplanner-request!]]
-            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows!
+            [knoxx.backend.infra.http :refer [json-response! error-response! http-error openplanner-enabled? openplanner-request!]]
+            [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows!
                                                session-visible?
                                                session-matches-page-actor-filter?
                                                session-matches-contract-filter?
                                                session-summary-scope-from-rows
                                                filter-authorized-memory-hits!
                                                authorized-session-ids!]]
-            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search!]]
-            [knoxx.backend.realtime :refer [broadcast-ws!]]
-            [knoxx.backend.runtime.actor-scope :as actor-scope]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.session-titles :refer [session-titles*
+            [knoxx.backend.domain.openplanner.memory :refer [openplanner-memory-search!]]
+            [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
+            [knoxx.backend.domain.actor.scope :as actor-scope]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.domain.sessions.session-titles :refer [session-titles*
                                                   session-title-promises*
                                                   session-title-backfill*
                                                   session-title-seed-text
@@ -23,7 +23,7 @@
                                                   normalize-session-title
                                                   cache-session-title!
                                                   start-session-title-backfill!]]
-            [knoxx.backend.authz :refer [ctx-actor-id
+            [knoxx.backend.domain.auth.authz :refer [ctx-actor-id
                                          ctx-membership-id
                                          ctx-org-id
                                          ctx-permitted?

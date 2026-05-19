@@ -1,6 +1,6 @@
 (ns knoxx.backend.actor-mailbox-test
   (:require [cljs.test :refer [async deftest is testing]]
-            [knoxx.backend.actor-mailbox :as mailbox]))
+            [knoxx.backend.domain.actor.mailbox :as mailbox]))
 
 (deftest mailbox-normalizers-keep-delivery-vocabulary-small
   (testing "message/followup aliases normalize to follow-up"

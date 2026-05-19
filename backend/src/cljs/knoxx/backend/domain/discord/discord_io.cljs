@@ -1,9 +1,9 @@
-(ns knoxx.backend.discord-io
+(ns knoxx.backend.domain.discord.discord-io
   "Discord I/O helpers. Pure API wrappers consumed by trigger-runner,
    pipeline-runner, and agent tools. No scheduling or job logic here."
   (:require [clojure.string :as str]
-            [knoxx.backend.agents.runner :as agents-runner]
-            [knoxx.backend.http :as http]
+            [knoxx.backend.domain.agent.runner :as agents-runner]
+            [knoxx.backend.infra.http :as http]
             [knoxx.backend.runtime.config :as runtime-config]))
 
 (defn- discord-token

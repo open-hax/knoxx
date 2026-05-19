@@ -1,6 +1,6 @@
 (ns knoxx.backend.run-state-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.run-state :as run-state]))
+            [knoxx.backend.domain.action.run-state :as run-state]))
 
 (deftest backfill-run-tool-input-preview-upgrades-missing-receipts-and-trace-blocks
   (testing "missing or sentinel tool inputs are replaced with a real preview"

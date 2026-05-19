@@ -1,4 +1,4 @@
-(ns knoxx.backend.policy-db
+(ns knoxx.backend.infra.db.policy
   "Policy database — CLJS port of policy-db.mjs.
 
    Manages orgs, users, memberships, roles, permissions, and tool policies
@@ -17,9 +17,9 @@
             [honey.sql :as sql]
             [knoxx.backend.contracts.loader :as contracts-loader]
             [knoxx.backend.contracts.roles :as contracts-roles]
-            [knoxx.backend.policy-db.actors :as policy-actors]
-            [knoxx.backend.policy.protocol :as policy]
-            [knoxx.backend.policy.sql-adapter :as sql-policy]
+            [knoxx.backend.infra.db.actors :as policy-actors]
+            [knoxx.backend.domain.policy.protocol :as policy]
+            [knoxx.backend.domain.policy.sql-adapter :as sql-policy]
             [knoxx.backend.tools.registry :as tool-registry]
             ["pg" :as pg]
             ["node:fs" :as fs]

@@ -1,9 +1,9 @@
-;; knoxx.backend.node.crypto
+;; knoxx.backend.infra.node.crypto
 ;;
 ;; THE JS BOUNDARY FOR CRYPTO OPS.
 ;; node:crypto lives HERE AND NOWHERE ELSE.
 
-(ns knoxx.backend.node.crypto
+(ns knoxx.backend.infra.node.crypto
   (:require ["node:crypto" :as node-crypto]))
 
 (defn random-hex

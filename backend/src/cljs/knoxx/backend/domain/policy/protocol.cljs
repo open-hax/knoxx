@@ -1,4 +1,4 @@
-(ns knoxx.backend.policy.protocol
+(ns knoxx.backend.domain.policy.protocol
   "Policy store protocol shared by EDN and SQL adapters.
 
    Contract-shaped values are validated with open-hax.contracts.schema at the

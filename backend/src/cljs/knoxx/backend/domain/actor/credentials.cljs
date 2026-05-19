@@ -1,11 +1,11 @@
-(ns knoxx.backend.tools.actor-credentials
+(ns knoxx.backend.domain.actor.credentials
   "Resolve per-actor tool credentials from the policy DB.
 
    Tool credentials are actor-owned state. Do not read API keys from process
    env vars here; missing credentials should be fixed in Admin → Actors."
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-context :as agent-context]
-            [knoxx.backend.authz :as authz]))
+            [knoxx.backend.domain.agent.agent-context :as agent-context]
+            [knoxx.backend.domain.auth.authz :as authz]))
 
 (defn current-actor-id
   []

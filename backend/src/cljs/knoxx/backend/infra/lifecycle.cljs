@@ -1,10 +1,10 @@
-(ns knoxx.backend.lifecycle
+(ns knoxx.backend.infra.lifecycle
   "Process-local lifecycle state shared across shadow-cljs hot reloads.
 
    Keep durable state here via defonce. The HTTP app can be closed/recreated on
    reload while runtime/config/policy handles survive in this namespace."
-  (:require [knoxx.backend.http-server :as http-server]
-            [knoxx.backend.realtime :as realtime]))
+  (:require [knoxx.backend.infra.http-server :as http-server]
+            [knoxx.backend.domain.realtime :as realtime]))
 
 (defonce http-state*
   (atom {:app nil

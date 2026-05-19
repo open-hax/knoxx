@@ -1,11 +1,11 @@
-(ns knoxx.backend.pipeline-runner
+(ns knoxx.backend.infra.pipeline-runner
   "Executes :pipeline contracts. Runs steps in dependency order,
    interpolates {{memory.temp:key}} in :context, writes :output to temp memory."
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [knoxx.backend.tools.temp-memory :as temp]
             [knoxx.backend.contracts.loader :as loader]
-            [knoxx.backend.discord-io :as discord-io]
+            [knoxx.backend.domain.discord.discord-io :as discord-io]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.models :as models]))
 

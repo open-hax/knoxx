@@ -1,8 +1,8 @@
 (ns knoxx.backend.tools.mcp
   "MCP bridge tool factory."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.mcp-bridge :as mcp]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.mcp.mcp-bridge :as mcp]
             [knoxx.backend.tools.shared :refer [sanitize-custom-tools]]))
 
 (defn create-mcp-custom-tools

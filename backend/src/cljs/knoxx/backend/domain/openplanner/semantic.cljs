@@ -1,11 +1,11 @@
-(ns knoxx.backend.tools.semantic
+(ns knoxx.backend.domain.openplanner.semantic
   "Semantic search and document-reading tools for the active Knoxx corpus."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
-            [knoxx.backend.http :refer [openplanner-enabled? js-array-seq]]
-            [knoxx.backend.openplanner-memory :refer [openplanner-semantic-search!]]
-            [knoxx.backend.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around tool-text-result semantic-search-result-text semantic-read-result-text openplanner-semantic-search-text]]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
+            [knoxx.backend.infra.http :refer [openplanner-enabled? js-array-seq]]
+            [knoxx.backend.domain.openplanner.memory :refer [openplanner-semantic-search!]]
+            [knoxx.backend.domain.text :refer [search-tokens text-like-path? clip-text semantic-score snippet-around tool-text-result semantic-search-result-text semantic-read-result-text openplanner-semantic-search-text]]
             [knoxx.backend.tools.media :refer [path-relative path-basename path-resolve path-is-absolute? fs-read-file!]]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
             ["node:fs/promises" :as fs]

@@ -1,6 +1,6 @@
-(ns knoxx.backend.stores.redis-session-store
+(ns knoxx.backend.infra.stores.redis-session-store
   (:require [shadow.cljs.modern :refer [js-await]]
-            [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.contracts.session-persistence :refer [ISessionStore assert-run!]]
             [knoxx.backend.util.time :as time]))
 

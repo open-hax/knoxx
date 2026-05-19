@@ -1,4 +1,4 @@
-(ns knoxx.backend.eta-mu-session-ingester
+(ns knoxx.backend.infra.eta-mu-session-ingester
   (:require [clojure.string :as str]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))

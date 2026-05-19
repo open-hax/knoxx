@@ -10,7 +10,7 @@
             [clojure.string :as str]
             [knoxx.backend.contracts.loader :as loader]
             [knoxx.backend.contracts.roles :as roles]
-            [knoxx.backend.tools.policies :as policies]
+            [knoxx.backend.domain.policy.tools :as policies]
             [knoxx.backend.tools.registry :as tool-registry]))
 
 (def FORBIDDEN_INPUTS

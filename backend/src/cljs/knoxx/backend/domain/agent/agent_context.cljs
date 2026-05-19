@@ -1,4 +1,4 @@
-(ns knoxx.backend.agent-context
+(ns knoxx.backend.domain.agent.agent-context
   "Global agent execution context for tools that need session/conversation IDs.
 
    Node.js is single-threaded; we track the currently executing turn's context

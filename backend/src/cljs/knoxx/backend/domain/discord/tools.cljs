@@ -1,14 +1,14 @@
-(ns knoxx.backend.tools.discord
+(ns knoxx.backend.domain.discord.tools
   "Discord API wrappers and tool factories."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.discord-gateway :as dg]
-            [knoxx.backend.http :as backend-http :refer [js-array-seq]]
-            [knoxx.backend.quality-labels :as quality-labels]
-            [knoxx.backend.svg-render :as svg-render]
-            [knoxx.backend.text :refer [sanitize-svg-content tool-text-result]]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.domain.discord.discord-gateway :as dg]
+            [knoxx.backend.infra.http :as backend-http :refer [js-array-seq]]
+            [knoxx.backend.domain.label.quality :as quality-labels]
+            [knoxx.backend.domain.svg-render :as svg-render]
+            [knoxx.backend.domain.text :refer [sanitize-svg-content tool-text-result]]
 
-            [knoxx.backend.tools.actor-credentials :as actor-credentials]
+            [knoxx.backend.domain.actor.credentials :as actor-credentials]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
 

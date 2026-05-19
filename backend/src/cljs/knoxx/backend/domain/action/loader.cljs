@@ -1,12 +1,15 @@
-(ns knoxx.backend.actions.loader)
+(ns knoxx.backend.domain.action.loader)
 
 (def well-known-actions
   {"run-agent" {:action/id "run-agent"
-                :action/kind :invoke/agent
-                :action/label "Run Knoxx Agent"}
+                 :action/kind :actions/start-agent-session
+                 :action/label "Start Agent Session"}
+   "start-agent-session" {:action/id "start-agent-session"
+                          :action/kind :actions/start-agent-session
+                          :action/label "Start Agent Session"}
    "invoke-sub-agent" {:action/id "invoke-sub-agent"
-                        :action/kind :invoke/sub-agent
-                        :action/label "Invoke Sub-Agent"}})
+                         :action/kind :invoke/sub-agent
+                         :action/label "Invoke Sub-Agent"}})
 
 (defn resolve-action!
   [_config {:keys [uses with] :as _step-spec}]

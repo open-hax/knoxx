@@ -1,9 +1,9 @@
 (ns knoxx.backend.tools.twitch
   "Twitch IRC tools for monitoring and interacting with chat."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.actor-credentials :as actor-credentials]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.domain.text :refer [tool-text-result]]
+            [knoxx.backend.domain.actor.credentials :as actor-credentials]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
 
 (defonce ^:private twitch-connections

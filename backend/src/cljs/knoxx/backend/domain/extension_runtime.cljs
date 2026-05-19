@@ -1,4 +1,4 @@
-(ns knoxx.backend.extension-runtime
+(ns knoxx.backend.domain.extension-runtime
   "Lightweight extension runtime for Knoxx.
 
   Bridges the gap between Knoxx's native agent runtime and the eta-mu

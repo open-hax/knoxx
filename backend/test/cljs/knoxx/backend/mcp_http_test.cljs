@@ -1,6 +1,6 @@
 (ns knoxx.backend.mcp-http-test
   (:require [cljs.test :refer [async deftest is testing]]
-            [knoxx.backend.redis-client :as redis]))
+            [knoxx.backend.infra.redis-client :as redis]))
 
 ;; Regression: require-redis! captured nil at route-registration time.
 ;; When Redis connects after register-mcp-http-routes! runs, the guard still held nil,

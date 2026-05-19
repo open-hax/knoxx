@@ -1,13 +1,13 @@
-(ns knoxx.backend.policy-db.actors
+(ns knoxx.backend.infra.db.actors
   "Compatibility wrapper for the policy actor slice.
 
-   New code should prefer knoxx.backend.policy.protocol plus the EDN/SQL
+   New code should prefer knoxx.backend.domain.policy.protocol plus the EDN/SQL
    adapters. This namespace remains because policy_db.cljs is still a legacy
    facade consumed by runtime JS method names."
   (:require [clojure.string :as str]
-            [knoxx.backend.policy.edn-adapter :as edn-adapter]
-            [knoxx.backend.policy.protocol :as policy]
-            [knoxx.backend.policy.sql-adapter :as sql-adapter]))
+            [knoxx.backend.domain.policy.edn-adapter :as edn-adapter]
+            [knoxx.backend.domain.policy.protocol :as policy]
+            [knoxx.backend.domain.policy.sql-adapter :as sql-adapter]))
 
 (defn normalize-actor-id
   [value]

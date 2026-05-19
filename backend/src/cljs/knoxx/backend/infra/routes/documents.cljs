@@ -1,10 +1,10 @@
-(ns knoxx.backend.routes.documents
+(ns knoxx.backend.infra.routes.documents
 
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
             [shadow.cljs.modern :refer [js-await]]
-            [knoxx.backend.authz :as authz]
-            [knoxx.backend.document-state
+            [knoxx.backend.domain.auth.authz :as authz]
+            [knoxx.backend.infra.document-state
              :refer [database-state*
                      js-array-seq
                      request-session-id

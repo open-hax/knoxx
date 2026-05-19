@@ -1,6 +1,6 @@
-(ns knoxx.backend.routes.voice
+(ns knoxx.backend.infra.routes.voice
   (:require [clojure.string :as str]
-            [knoxx.backend.http :as http]))
+            [knoxx.backend.infra.http :as http]))
 
 (def ^:private default-voxx-voice-id "af_jessica")
 (def ^:private default-voxx-model-id "kokoro")

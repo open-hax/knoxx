@@ -1,4 +1,4 @@
-(ns knoxx.backend.stores.openplanner-session-store
+(ns knoxx.backend.infra.stores.openplanner-session-store
   "OpenPlanner driver for ISessionStore.
 
    Writes runs as structured events. Reads are best-effort via graph query.
@@ -7,8 +7,8 @@
   (:require [shadow.cljs.modern :refer [js-await]]
             [clojure.string :as str]
             [knoxx.backend.contracts.session-persistence :refer [ISessionStore assert-run!]]
-            [knoxx.backend.openplanner-memory :as op-mem]
-            [knoxx.backend.http :as http]
+            [knoxx.backend.domain.openplanner.memory :as op-mem]
+            [knoxx.backend.infra.http :as http]
             [knoxx.backend.util.time :as time]))
 
 (defn- run->events

@@ -1,4 +1,4 @@
-(ns knoxx.backend.app-shapes
+(ns knoxx.backend.shape.app-shapes
   (:require [clojure.string :as str]))
 
 (def ^:private media-extension-pattern #".*\.(?:png|jpg|jpeg|gif|webp|mp4|webm|mp3|wav|ogg|m4a|flac|pdf)(?:\?.*)?$")

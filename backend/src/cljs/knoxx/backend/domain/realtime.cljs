@@ -1,4 +1,4 @@
-(ns knoxx.backend.realtime
+(ns knoxx.backend.domain.realtime
   (:require [clojure.string :as str]
             [knoxx.backend.util.time :as time]
             ["node:child_process" :refer [execFile]]

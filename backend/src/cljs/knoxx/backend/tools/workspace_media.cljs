@@ -1,6 +1,6 @@
 (ns knoxx.backend.tools.workspace-media
   "Workspace media attachment tools."
-  (:require [knoxx.backend.authz :refer [ctx-tool-allowed?]]
+  (:require [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
             ["node:fs/promises" :as fs]

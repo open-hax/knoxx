@@ -3,7 +3,7 @@
    Backed by Redis when available; falls back to a process-local atom."
   (:require [clojure.string :as str]
             [shadow.cljs.modern :refer [js-await]]
-            [knoxx.backend.redis-client :as redis]))
+            [knoxx.backend.infra.redis-client :as redis]))
 
 (defonce ^:private local-store* (atom {}))
 

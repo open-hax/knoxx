@@ -1,10 +1,10 @@
-(ns knoxx.backend.routes.models
+(ns knoxx.backend.infra.routes.models
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-hydration :refer [settings-state*]]
-            [knoxx.backend.app-shapes :refer [route!]]
-            [knoxx.backend.authz :refer [with-request-context! run-visible? ensure-permission! ctx-tool-constraints]]
-            [knoxx.backend.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq request-query-string]]
-            [knoxx.backend.run-state :refer [runs* run-order* summarize-run]]
+            [knoxx.backend.domain.agent.agent-hydration :refer [settings-state*]]
+            [knoxx.backend.shape.app-shapes :refer [route!]]
+            [knoxx.backend.domain.auth.authz :refer [with-request-context! run-visible? ensure-permission! ctx-tool-constraints]]
+            [knoxx.backend.infra.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq request-query-string]]
+            [knoxx.backend.domain.action.run-state :refer [runs* run-order* summarize-run]]
             [knoxx.backend.runtime.models :refer [allowlisted-model-id?]]
             [knoxx.backend.util.time :refer [now-iso]]
             [shadow.cljs.modern :refer [js-await]]))

@@ -1,4 +1,4 @@
-(ns knoxx.backend.turn-control
+(ns knoxx.backend.domain.voice.turn-control
   "In-process control plane for the *currently running* turn per conversation.
 
    This enables:

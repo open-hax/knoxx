@@ -1,7 +1,7 @@
 (ns knoxx.backend.model-routes-test
   (:require [cljs.test :refer [async deftest is testing]]
             [clojure.string :as str]
-            [knoxx.backend.routes.models :as model-routes]))
+            [knoxx.backend.infra.routes.models :as model-routes]))
 
 (defn- test-reply
   []

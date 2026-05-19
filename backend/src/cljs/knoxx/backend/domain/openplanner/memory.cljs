@@ -1,9 +1,9 @@
-(ns knoxx.backend.openplanner-memory
+(ns knoxx.backend.domain.openplanner.memory
   (:require [clojure.string :as str]
-            [knoxx.backend.stores.session-store-registry :as store-registry]
-            [knoxx.backend.http :as backend-http]
-            [knoxx.backend.quality-labels :as quality-labels]
-            [knoxx.backend.runtime.actor-scope :as actor-scope]
+            [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.domain.label.quality :as quality-labels]
+            [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.util.time :as time]))
 
 (defn js-array-seq

@@ -1,4 +1,4 @@
-(ns knoxx.backend.events.cron
+(ns knoxx.backend.domain.event.cron
   "Generic cron/ticker helpers for the events runtime.
 
    These helpers are parameterized over state atoms and callback functions so

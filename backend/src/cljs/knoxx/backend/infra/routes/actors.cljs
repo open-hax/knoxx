@@ -1,8 +1,8 @@
-(ns knoxx.backend.routes.actors
+(ns knoxx.backend.infra.routes.actors
   "HTTP routes for actor mailbox delivery projection operations."
   (:require [clojure.string :as str]
-            [knoxx.backend.actor-mailbox :as actor-mailbox]
-            [knoxx.backend.events.dispatch :as events-dispatch]
+            [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
+            [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.macros :refer-macros [defroute]]))
 
 (defn- query-param
@@ -61,7 +61,7 @@
   (.all js/Promise
         (clj->js
          (mapv (fn [entry]
-                 (events-dispatch/dispatch! (actor-mailbox/retry-request-event entry)))
+                  (event-dispatch/dispatch! (actor-mailbox/retry-request-event entry)))
                entries))))
 
 (defroute actor-mailbox-list-route!
@@ -69,7 +69,7 @@
   "GET" "/api/admin/config/actors/mailbox"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (-> (actor-mailbox/list-entries!
          runtime
          {:status (query-param request "status")
@@ -102,7 +102,7 @@
   "POST" "/api/admin/config/actors/mailbox/:mailboxId/ack"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (acknowledge-mailbox! runtime reply error-response! json-response! (aget request "params" "mailboxId"))
     (catch :default err
       (error-response! reply err))))
@@ -112,7 +112,7 @@
   "POST" "/api/admin/config/actors/mailbox/retry"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [body (body-map request)
           dispatch-events? (not= false (:dispatch_events body))]
       (-> (actor-mailbox/retry-eligible!

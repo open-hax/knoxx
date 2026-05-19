@@ -1,6 +1,6 @@
-(ns knoxx.backend.text
+(ns knoxx.backend.domain.text
   (:require [clojure.string :as str]
-            [knoxx.backend.http :as backend-http]))
+            [knoxx.backend.infra.http :as backend-http]))
 
 (declare value->preview-text)
 

@@ -1,4 +1,4 @@
-(ns knoxx.backend.stores.composite-session-store
+(ns knoxx.backend.infra.stores.composite-session-store
   "Writes to both Redis (live) and OpenPlanner (archive).
    On complete-run!, verifies both agree on the final run shape."
   (:require [shadow.cljs.modern :refer [js-await]]

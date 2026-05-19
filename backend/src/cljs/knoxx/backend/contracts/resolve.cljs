@@ -1,7 +1,7 @@
 (ns knoxx.backend.contracts.resolve
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-templates :as templates]
-            [knoxx.backend.contracts.actor-scope :as actor-scope]
+            [knoxx.backend.domain.agent.agent-templates :as templates]
+            [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.contracts.loader :as loader]
             [knoxx.backend.contracts.roles :as roles]
             [knoxx.backend.contracts.sources :as sources]

@@ -1,13 +1,12 @@
-(ns knoxx.backend.routes.tools
+(ns knoxx.backend.infra.routes.tools
   (:require [clojure.string :as str]
-            [knoxx.backend.discord-gateway :as dg]
-            [knoxx.backend.events.dispatch :as events-dispatch]
-            [knoxx.backend.events.runtime :as events-runtime]
-            [knoxx.backend.http :as backend-http]
+            [knoxx.backend.domain.discord.discord-gateway :as dg]
+            [knoxx.backend.domain.event.dispatch :as event-dispatch]
+            [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.macros :refer-macros [defroute]]
-            [knoxx.backend.mcp-bridge :as mcp]
+            [knoxx.backend.infra.mcp.mcp-bridge :as mcp]
             [knoxx.backend.runtime.state :as runtime-state]
-             [knoxx.backend.text :refer [sanitize-svg-content]]
+             [knoxx.backend.domain.text :refer [sanitize-svg-content]]
              [knoxx.backend.triggers.control-config :as control-config]
              [knoxx.backend.triggers.trigger-runner :as trigger-runner]
              ["node:child_process" :refer [execFile]]
@@ -48,7 +47,7 @@
 (defn- event-agents-control-response [config]
   (let [live-config (or @runtime-state/config* config)
         control     (control-config/event-agent-control-config live-config)
-        runtime     (events-runtime/status-snapshot live-config)]
+        runtime     (event-dispatch/status-snapshot live-config)]
     {:configured       false
      :tokenPreview     ""
      :availableRoles   (control-config/event-agent-role-options live-config)
@@ -320,7 +319,7 @@
   []
   "GET" "/api/admin/config/discord"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
+  (ensure-permission! ctx "org.events.control")
   (json-response! reply 200 {:configured false
                             :tokenPreview ""
                             :credentialSource "actor_credentials"
@@ -331,7 +330,7 @@
   "PUT" "/api/admin/config/discord"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (json-response! reply 410 {:ok false
                                :configured false
                                :credentialSource "actor_credentials"
@@ -343,7 +342,7 @@
   []
   "GET" "/api/admin/config/event-agents"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
+  (ensure-permission! ctx "org.events.control")
   (json-response! reply 200 (event-agents-control-response config)))
 
 (defroute register-event-agents-put-route!
@@ -351,14 +350,14 @@
   "PUT" "/api/admin/config/event-agents"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
           live-config (or @runtime-state/config* config)
           next-control (control-config/event-agent-control-config
                         (assoc live-config :event-agent-control body))]
       (swap! runtime-state/config* (fn [c] (assoc (or c config) :event-agent-control next-control)))
       (control-config/persist-event-agent-control! next-control)
-      (events-runtime/reload!)
+      (trigger-runner/reload! live-config)
       (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
     (catch :default err
       (error-response! reply err))))
@@ -368,11 +367,11 @@
   "POST" "/api/admin/config/event-agents/jobs/:jobId/run"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [job-id (or (aget request "params" "jobId") "")]
       (if (str/blank? job-id)
         (json-response! reply 400 {:detail "jobId is required"})
-        (-> (events-runtime/run-job! job-id)
+        (-> (trigger-runner/run-job! job-id)
             (.then (fn [result] (event-agent-job-run-response! reply job-id result)))
             (.catch (fn [err] (error-response! reply err))))))
     (catch :default err
@@ -383,13 +382,13 @@
   "POST" "/api/admin/config/event-agents/events/dispatch"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
-      (-> (events-dispatch/dispatch! body)
+      (-> (event-dispatch/dispatch! config body)
           (.then (fn [result]
-                   (json-response! reply 202 {:ok true
-                                              :matchedJobs (:matchedJobs result)
-                                              :event (:event result)})))
+                    (json-response! reply 202 {:ok true
+                                               :matchedTriggers (:matchedTriggers result)
+                                               :event (:event result)})))
           (.catch (fn [err] (error-response! reply err)))))
     (catch :default err
       (error-response! reply err))))
@@ -398,16 +397,16 @@
   []
   "POST" "/api/admin/config/event-agents/runtime/stop"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
-  (events-runtime/stop!)
+  (ensure-permission! ctx "org.events.control")
+  (trigger-runner/stop!)
   (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "stopped")))
 
 (defroute register-event-agents-runtime-start-route!
   []
   "POST" "/api/admin/config/event-agents/runtime/start"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
-  (events-runtime/start! config)
+  (ensure-permission! ctx "org.events.control")
+  (trigger-runner/start! config)
   (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "started")))
 
 (defroute register-event-agents-runtime-reset-route!
@@ -415,8 +414,8 @@
   "POST" "/api/admin/config/event-agents/runtime/reset"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
-    (-> (events-runtime/reset-runtime! config)
+    (ensure-permission! ctx "org.events.control")
+    (-> (trigger-runner/reset-runtime! config)
         (.then (fn [summary]
                  (json-response! reply 200
                                  (merge (event-agents-control-response config)
@@ -434,7 +433,7 @@
   []
   "GET" "/api/admin/config/events"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
+  (ensure-permission! ctx "org.events.control")
   (json-response! reply 200 (event-agents-control-response config)))
 
 (defroute register-events-put-route!
@@ -442,14 +441,14 @@
   "PUT" "/api/admin/config/events"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
           live-config (or @runtime-state/config* config)
           next-control (control-config/event-agent-control-config
                         (assoc live-config :event-agent-control body))]
       (swap! runtime-state/config* (fn [c] (assoc (or c config) :event-agent-control next-control)))
       (control-config/persist-event-agent-control! next-control)
-      (events-runtime/reload!)
+      (trigger-runner/reload! live-config)
       (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
     (catch :default err
       (error-response! reply err))))
@@ -459,11 +458,11 @@
   "POST" "/api/admin/config/events/jobs/:jobId/run"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [job-id (or (aget request "params" "jobId") "")]
       (if (str/blank? job-id)
         (json-response! reply 400 {:detail "jobId is required"})
-        (-> (events-runtime/run-job! job-id)
+        (-> (trigger-runner/run-job! job-id)
             (.then (fn [result] (event-agent-job-run-response! reply job-id result)))
             (.catch (fn [err] (error-response! reply err))))))
     (catch :default err
@@ -474,13 +473,13 @@
   "POST" "/api/admin/config/events/dispatch"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
-      (-> (events-dispatch/dispatch! body)
+      (-> (event-dispatch/dispatch! config body)
           (.then (fn [result]
-                   (json-response! reply 202 {:ok true
-                                              :matchedJobs (:matchedJobs result)
-                                              :event (:event result)})))
+                    (json-response! reply 202 {:ok true
+                                               :matchedTriggers (:matchedTriggers result)
+                                               :event (:event result)})))
           (.catch (fn [err] (error-response! reply err)))))
     (catch :default err
       (error-response! reply err))))
@@ -489,16 +488,16 @@
   []
   "POST" "/api/admin/config/events/runtime/stop"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
-  (events-runtime/stop!)
+  (ensure-permission! ctx "org.events.control")
+  (trigger-runner/stop!)
   (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "stopped")))
 
 (defroute register-events-runtime-start-route!
   []
   "POST" "/api/admin/config/events/runtime/start"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
-  (events-runtime/start! config)
+  (ensure-permission! ctx "org.events.control")
+  (trigger-runner/start! config)
   (json-response! reply 200 (assoc (event-agents-control-response config) :ok true :action "started")))
 
 (defroute register-events-runtime-reset-route!
@@ -506,8 +505,8 @@
   "POST" "/api/admin/config/events/runtime/reset"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
-    (-> (events-runtime/reset-runtime! config)
+    (ensure-permission! ctx "org.events.control")
+    (-> (trigger-runner/reset-runtime! config)
         (.then (fn [summary]
                  (json-response! reply 200
                                  (merge (event-agents-control-response config)
@@ -525,7 +524,7 @@
   []
   "GET" "/api/admin/config/discord/control"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
+  (ensure-permission! ctx "org.events.control")
   (json-response! reply 200 (event-agents-control-response config)))
 
 (defroute register-discord-control-put-route!
@@ -533,14 +532,14 @@
   "PUT" "/api/admin/config/discord/control"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
           live-config (or @runtime-state/config* config)
           next-control (control-config/event-agent-control-config
                         (assoc live-config :event-agent-control body))]
       (swap! runtime-state/config* (fn [c] (assoc (or c config) :event-agent-control next-control)))
       (control-config/persist-event-agent-control! next-control)
-      (events-runtime/reload!)
+      (trigger-runner/reload! live-config)
       (json-response! reply 200 (assoc (event-agents-control-response config) :ok true)))
     (catch :default err
       (error-response! reply err))))
@@ -550,11 +549,11 @@
   "POST" "/api/admin/config/discord/control/jobs/:jobId/run"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [job-id (or (aget request "params" "jobId") "")]
       (if (str/blank? job-id)
         (json-response! reply 400 {:detail "jobId is required"})
-        (-> (events-runtime/run-job! job-id)
+        (-> (trigger-runner/run-job! job-id)
             (.then (fn [result] (event-agent-job-run-response! reply job-id result)))
             (.catch (fn [err] (error-response! reply err))))))
     (catch :default err
@@ -564,7 +563,7 @@
   []
   "GET" "/api/admin/config/discord/cron"
   [session-guard]
-  (ensure-permission! ctx "org.event_agents.control")
+  (ensure-permission! ctx "org.events.control")
   (json-response! reply 200 (:runtime (event-agents-control-response config))))
 
 (defroute register-trigger-fire-route!
@@ -572,7 +571,7 @@
   "POST" "/api/admin/triggers/:triggerId/fire"
   [session-guard]
   (try
-    (ensure-permission! ctx "org.event_agents.control")
+    (ensure-permission! ctx "org.events.control")
     (let [trigger-id (or (aget request "params" "triggerId") "")]
       (if (str/blank? trigger-id)
         (json-response! reply 400 {:detail "triggerId is required"})

@@ -1,8 +1,8 @@
 (ns knoxx.backend.tools.contracts
   "Contract librarian tool factories."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.text :refer [tool-text-result]]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj sanitize-custom-tools filter-custom-tools-by-allow-set]]))
 
 (def contract-list-params

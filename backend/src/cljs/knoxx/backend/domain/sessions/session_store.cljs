@@ -1,4 +1,4 @@
-(ns knoxx.backend.session-store
+(ns knoxx.backend.domain.sessions.session-store
   "Redis-backed session state for resilient Knoxx sessions.
 
    Active sessions are stored in Redis with TTL. When a session completes,
@@ -11,7 +11,7 @@
    - Frontend can query session status to know if resume is needed"
   (:require
     [clojure.string :as str]
-    [knoxx.backend.redis-client :as redis]))
+    [knoxx.backend.infra.redis-client :as redis]))
 
 ;; Session state schema
 ;; {

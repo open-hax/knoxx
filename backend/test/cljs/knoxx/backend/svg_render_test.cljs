@@ -1,7 +1,7 @@
 (ns knoxx.backend.svg-render-test
   (:require [cljs.test :refer [async deftest is testing]]
             [clojure.string :as str]
-            [knoxx.backend.svg-render :as svg-render]
+            [knoxx.backend.domain.svg-render :as svg-render]
             ["node:fs" :as fs]))
 
 (def chromium-candidate-paths

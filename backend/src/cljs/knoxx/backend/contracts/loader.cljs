@@ -2,8 +2,8 @@
 (ns knoxx.backend.contracts.loader
   (:require [clojure.string :as str]
             [cljs.reader :as reader]
-            [knoxx.backend.contracts.actor-scope :as actor-scope]
-            [knoxx.backend.contracts.validator :as v]
+            [knoxx.backend.domain.actor.scope :as actor-scope]
+            [knoxx.backend.law.contracts :as v]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))

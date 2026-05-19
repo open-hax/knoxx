@@ -1,4 +1,4 @@
-(ns knoxx.backend.quality-labels
+(ns knoxx.backend.domain.label.quality
   "Helpers for OpenPlanner weak quality labels.
 
    ✅/check reactions are preferred context. ❌/cross reactions are hard

@@ -1,12 +1,12 @@
-(ns knoxx.backend.tools.openplanner
+(ns knoxx.backend.domain.openplanner.tools
   "OpenPlanner memory, graph, websearch, and translation tools."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
-            [knoxx.backend.document-state :refer [active-agent-profile normalize-relative-path]]
-            [knoxx.backend.http :as backend-http :refer [http-error]]
-            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
-            [knoxx.backend.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
+            [knoxx.backend.infra.document-state :refer [active-agent-profile normalize-relative-path]]
+            [knoxx.backend.infra.http :as backend-http :refer [http-error]]
+            [knoxx.backend.domain.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
+            [knoxx.backend.domain.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
             [knoxx.backend.tools.media :as media]
             [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
             ["node:fs/promises" :as fs]

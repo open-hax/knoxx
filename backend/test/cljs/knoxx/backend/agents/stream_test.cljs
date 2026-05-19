@@ -1,10 +1,10 @@
 (ns knoxx.backend.agents.stream-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.agents.stream :as stream]
-            [knoxx.backend.run-state :as run-state]
-            [knoxx.backend.realtime :as realtime]
-            [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.redis-client :as redis]))
+            [knoxx.backend.domain.agent.stream :as stream]
+            [knoxx.backend.domain.action.run-state :as run-state]
+            [knoxx.backend.domain.realtime :as realtime]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.infra.redis-client :as redis]))
 
 (defn- assistant-message
   [{:keys [content reasoning tool-previews]}]

@@ -1,6 +1,6 @@
 (ns knoxx.backend.session-store-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.session-store :as session-store]))
+            [knoxx.backend.domain.sessions.session-store :as session-store]))
 
 (deftest session-can-send-blocks-all-running-sessions
   (testing "running sessions stay write-locked even before the first streamed token"

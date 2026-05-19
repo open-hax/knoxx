@@ -1,5 +1,5 @@
-(ns knoxx.backend.contracts.validator
-  (:require [knoxx.backend.contracts.actor-scope :as actor-scope]
+(ns knoxx.backend.law.contracts
+  (:require [knoxx.backend.domain.actor.scope :as actor-scope]
             [malli.core :as m]
             [malli.error :as me]))
 

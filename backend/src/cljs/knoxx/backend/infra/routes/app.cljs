@@ -1,38 +1,40 @@
-(ns knoxx.backend.routes.app
+(ns knoxx.backend.infra.routes.app
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
-            [knoxx.backend.routes.admin :as admin-routes]
-            [knoxx.backend.routes.actors :as actor-routes]
-            [knoxx.backend.agent-hydration :refer [ensure-settings! settings-state*]]
-            [knoxx.backend.agent-runtime :refer [forward-knoxx-request! resolve-workspace-path active-agent-session queue-agent-control!]]
-            [knoxx.backend.agent-turns :refer [send-agent-turn! ensure-conversation-access! ensure-session-id resume-recovered-session! validate-chat-policy!]]
-            [knoxx.backend.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
-            [knoxx.backend.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
-            [knoxx.backend.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
-            [knoxx.backend.routes.contracts :as contracts-routes]
+            [knoxx.backend.infra.routes.admin :as admin-routes]
+            [knoxx.backend.infra.routes.actors :as actor-routes]
+            [knoxx.backend.domain.agent.agent-hydration :refer [ensure-settings! settings-state*]]
+            [knoxx.backend.domain.agent.agent-runtime :refer [forward-knoxx-request! resolve-workspace-path active-agent-session queue-agent-control!]]
+            [knoxx.backend.domain.agent.policy :refer [validate-chat-policy!]]
+            [knoxx.backend.domain.agent.recovery :refer [resume-recovered-session!]]
+            [knoxx.backend.domain.agent.turn :refer [send-agent-turn! ensure-conversation-access! ensure-session-id]]
+            [knoxx.backend.shape.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
+            [knoxx.backend.domain.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
+            [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
+            [knoxx.backend.infra.routes.contracts :as contracts-routes]
             [knoxx.backend.contracts.sources :as contract-sources]
-            [knoxx.backend.document-state :refer [normalize-relative-path]]
-            [knoxx.backend.routes.documents :as document-routes]
-            [knoxx.backend.guards :as guards]
-            [knoxx.backend.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
-            [knoxx.backend.routes.memory :as memory-routes]
-            [knoxx.backend.routes.models :as model-routes]
-            [knoxx.backend.openplanner-memory :refer [openplanner-memory-search! openplanner-graph-export!]]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.realtime :refer [broadcast-ws!]]
-            [knoxx.backend.run-state :as run-state :refer [runs* run-order*]]
+            [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
+            [knoxx.backend.infra.routes.documents :as document-routes]
+            [knoxx.backend.law.guards :as guards]
+            [knoxx.backend.infra.http :refer [json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
+            [knoxx.backend.infra.routes.memory :as memory-routes]
+            [knoxx.backend.infra.routes.models :as model-routes]
+            [knoxx.backend.domain.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-export!]]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
+            [knoxx.backend.domain.action.run-state :as run-state :refer [runs* run-order*]]
             [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.util.time :refer [now-iso]]
-            [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.session-titles :refer [start-session-title-backfill! session-title-backfill* session-titles* get-cached-session-title! session-title-seed-text heuristic-session-title stored-session-title-entry cache-session-title-entry! resolve-session-title! cache-session-title! normalize-session-title]]
-            [knoxx.backend.text :refer [count-occurrences replace-first clip-text]]
-            [knoxx.backend.routes.tools :as tool-routes]
-            [knoxx.backend.tooling :refer [tool-catalog ensure-role-can-use! email-enabled? effective-agent-contract agent-contract-catalog actor-catalog default-agent-contract-id default-actor-id]]
-            [knoxx.backend.turn-control :as turn-control]
-            [knoxx.backend.routes.voice :as voice-routes]
-            [knoxx.backend.routes.workspace-media :as workspace-media-routes]
-            [knoxx.backend.routes.studio :as studio-routes]
-            [knoxx.backend.routes.translation :as translation-routes]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.domain.sessions.session-titles :refer [start-session-title-backfill! session-title-backfill* session-titles* get-cached-session-title! session-title-seed-text heuristic-session-title stored-session-title-entry cache-session-title-entry! resolve-session-title! cache-session-title! normalize-session-title]]
+            [knoxx.backend.domain.text :refer [count-occurrences replace-first clip-text]]
+            [knoxx.backend.infra.routes.tools :as tool-routes]
+            [knoxx.backend.infra.tooling :refer [tool-catalog ensure-role-can-use! email-enabled? effective-agent-contract agent-contract-catalog actor-catalog default-agent-contract-id default-actor-id]]
+            [knoxx.backend.domain.voice.turn-control :as turn-control]
+            [knoxx.backend.infra.routes.voice :as voice-routes]
+            [knoxx.backend.infra.routes.workspace-media :as workspace-media-routes]
+            [knoxx.backend.infra.routes.studio :as studio-routes]
+            [knoxx.backend.infra.routes.translation :as translation-routes]
             [shadow.cljs.modern :refer (js-await)]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
@@ -1375,7 +1377,7 @@
 
 (defroute api-admin-agents-active! []
   "GET" "/api/admin/agents/active"
-  (ensure-permission! ctx "org.event_agents.control")
+  (ensure-permission! ctx "org.events.control")
   (let [limit-raw (aget request "query" "limit")
         limit (or (parse-positive-int limit-raw) 200)]
     (-> (live-active-agent-summaries! limit false)
@@ -1384,7 +1386,7 @@
 
 (defroute api-admin-agents-abort! []
   "POST" "/api/admin/agents/abort"
-  (ensure-permission! ctx "org.event_agents.control")
+  (ensure-permission! ctx "org.events.control")
   (handle-admin-abort reply ctx request))
 
 ;; Session status endpoint for frontend resume detection

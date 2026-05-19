@@ -1,6 +1,6 @@
 (ns knoxx.backend.text-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.text :as text]))
+            [knoxx.backend.domain.text :as text]))
 
 (deftest sanitize-svg-content-repairs-duplicated-open-tags
   (testing "repairs the model-corruption pattern that duplicates tag names after <<"

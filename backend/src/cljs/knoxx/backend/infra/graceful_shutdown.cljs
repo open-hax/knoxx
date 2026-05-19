@@ -1,4 +1,4 @@
-(ns knoxx.backend.graceful-shutdown
+(ns knoxx.backend.infra.graceful-shutdown
   "Graceful shutdown orchestration for PM2/system restarts.
 
    Goals:
@@ -6,14 +6,14 @@
    - allow inflight HTTP requests and active turns a bounded window to settle
    - persist any still-running sessions into a resumable Redis state
    - release timers/sockets so PM2 can restart cleanly"
-  (:require [knoxx.backend.agent-resume :as agent-resume]
-            [knoxx.backend.discord-gateway :as discord-gateway]
-            [knoxx.backend.events.runtime :as events-runtime]
-            [knoxx.backend.realtime :as realtime]
-            [knoxx.backend.redis-client :as redis]
+  (:require [knoxx.backend.domain.agent.agent-resume :as agent-resume]
+            [knoxx.backend.domain.discord.discord-gateway :as discord-gateway]
+            [knoxx.backend.triggers.trigger-runner :as trigger-runtime]
+            [knoxx.backend.domain.realtime :as realtime]
+            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.svg-render :as svg-render]
-            [knoxx.backend.turn-control :as turn-control]))
+            [knoxx.backend.domain.svg-render :as svg-render]
+            [knoxx.backend.domain.voice.turn-control :as turn-control]))
 
 (defonce shutdown-state* (atom {:installed? false
                                 :in-progress? false
@@ -61,7 +61,7 @@
                        (swap! shutdown-state* assoc :in-progress? true :signal signal)
                        (log-info! app (str "[shutdown] received " signal "; draining Knoxx"))
                        (agent-resume/stop-periodic-recovery!)
-                       (events-runtime/stop!)
+                        (trigger-runtime/stop!)
                        (discord-gateway/stop!)
                        (realtime/stop!)))
               (.then (fn [_]

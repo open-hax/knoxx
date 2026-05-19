@@ -1,4 +1,4 @@
-(ns knoxx.backend.mcp-expose
+(ns knoxx.backend.infra.mcp.mcp-expose
   "JS-facing helpers for exposing Knoxx agent tools over external protocols (MCP).
 
    These helpers exist so server.mjs can build an MCP tool catalog that matches
@@ -8,7 +8,7 @@
    resolveRequestContext) and converts it into a CLJS map before delegating to
    the agent hydration tool factories."  
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-hydration :as hydration]
+            [knoxx.backend.domain.agent.agent-hydration :as hydration]
             [knoxx.backend.contracts.loader :as contracts]
             [knoxx.backend.runtime.config :as runtime-config]
             [knoxx.backend.runtime.state :as runtime-state]))
@@ -28,6 +28,10 @@
 
 (def ^:private sub-agent-aware-tool-names
   #{"agents.spawn"
+    "events.run_job"
+    "events.upsert_job"
+    "schedule_trigger"
+    ;; Legacy aliases
     "event_agents.run_job"
     "event_agents.upsert_job"
     "schedule_event_agent"})

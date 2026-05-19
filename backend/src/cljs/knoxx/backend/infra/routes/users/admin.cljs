@@ -1,4 +1,4 @@
-(ns knoxx.backend.routes.users.admin
+(ns knoxx.backend.infra.routes.users.admin
   (:require [clojure.string :as str]))
 
 

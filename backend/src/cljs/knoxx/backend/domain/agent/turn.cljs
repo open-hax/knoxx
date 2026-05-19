@@ -1,33 +1,33 @@
-(ns knoxx.backend.agents.turn
+(ns knoxx.backend.domain.agent.turn
   "Main turn orchestrator: send-agent-turn! and supporting lifecycle functions."
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-hydration :refer [settings-state* ensure-settings!
+            [knoxx.backend.domain.agent.agent-hydration :refer [settings-state* ensure-settings!
                                                    passive-hydration! passive-memory-hydration!
                                                    build-agent-user-message
                                                    hydration-sources]]
-            [knoxx.backend.agent-runtime :refer [ensure-agent-session! remove-agent-session! prune-session-messages]]
-            [knoxx.backend.agent-templates :as templates]
-            [knoxx.backend.agents.content :as content :refer [model-ready-content-parts merge-content-parts]]
-            [knoxx.backend.agents.policy :as policy]
-            [knoxx.backend.agents.stream :as stream]
-            [knoxx.backend.agents.transcript :as transcript]
-            [knoxx.backend.authz :as authz :refer [auth-snapshot]]
-            [knoxx.backend.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
-            [knoxx.backend.http :as http]
-            [knoxx.backend.openplanner-memory :as openplanner-memory]
+            [knoxx.backend.domain.agent.agent-runtime :refer [ensure-agent-session! remove-agent-session! prune-session-messages]]
+            [knoxx.backend.domain.agent.agent-templates :as templates]
+            [knoxx.backend.domain.agent.content :as content :refer [model-ready-content-parts merge-content-parts]]
+            [knoxx.backend.domain.agent.policy :as policy]
+            [knoxx.backend.domain.agent.stream :as stream]
+            [knoxx.backend.domain.agent.transcript :as transcript]
+            [knoxx.backend.domain.auth.authz :as authz :refer [auth-snapshot]]
+            [knoxx.backend.infra.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
+            [knoxx.backend.infra.http :as http]
+            [knoxx.backend.domain.openplanner.memory :as openplanner-memory]
             [knoxx.backend.tools.media :as media]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.run-state :refer [store-run! append-run-event! update-run!
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
+            [knoxx.backend.domain.action.run-state :refer [store-run! append-run-event! update-run!
                                              finalize-run-trace-blocks! tool-event-payload
                                              record-retrieval-sample! latest-assistant-message
                                              set-event-stream-sink! clear-event-stream-sink!]]
             [knoxx.backend.runtime.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
-            [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.session-titles :refer [maybe-prime-session-title!]]
-            [knoxx.backend.text :refer [assistant-message-text assistant-message-reasoning-text]]
-   [knoxx.backend.turn-control :as turn-control]
-   [knoxx.backend.agent-context :as agent-ctx]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.domain.sessions.session-titles :refer [maybe-prime-session-title!]]
+            [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
+   [knoxx.backend.domain.voice.turn-control :as turn-control]
+   [knoxx.backend.domain.agent.agent-context :as agent-ctx]
    [knoxx.backend.util.time :refer [now-iso]]
    ["node:crypto" :as crypto]
    ["node:fs/promises" :as fs]))

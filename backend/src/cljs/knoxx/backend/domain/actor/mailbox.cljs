@@ -1,4 +1,4 @@
-(ns knoxx.backend.actor-mailbox
+(ns knoxx.backend.domain.actor.mailbox
   "Durable actor mailbox delivery ledger/projection.
 
    OpenPlanner/session/run events remain the canonical content history. This

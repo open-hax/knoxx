@@ -1,4 +1,4 @@
-(ns knoxx.backend.http
+(ns knoxx.backend.infra.http
   (:require [clojure.string :as str]))
 
 (defn reply-already-sent?

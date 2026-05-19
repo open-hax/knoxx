@@ -2,9 +2,9 @@
   "Shared media infrastructure: workspace path resolution, temp files,
    mime-type detection, data-URL decoding, and source loading."
   (:require [clojure.string :as str]
-            [knoxx.backend.document-state :refer [normalize-relative-path]]
-            [knoxx.backend.text :refer [tool-text-result]]
-            [knoxx.backend.tools.actor-credentials :as actor-credentials]
+            [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
+            [knoxx.backend.domain.text :refer [tool-text-result]]
+            [knoxx.backend.domain.actor.credentials :as actor-credentials]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]

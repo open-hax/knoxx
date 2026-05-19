@@ -1,4 +1,4 @@
-(ns knoxx.backend.actions.registry)
+(ns knoxx.backend.domain.action.registry)
 
 (defmulti run-action!
   "Dispatch an action map by :action/kind."

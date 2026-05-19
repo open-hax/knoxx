@@ -1,10 +1,11 @@
-(ns knoxx.backend.actions.dispatch
+(ns knoxx.backend.domain.action.dispatch
   (:require [shadow.cljs.modern :refer [js-await]]
-            [knoxx.backend.actions.loader :as loader]
-            [knoxx.backend.actions.contract :as contract]
-            [knoxx.backend.actions.registry :as registry]
-            [knoxx.backend.actions.invoke-agent]        ;; side-effect: registers :invoke/agent defmethod
-            [knoxx.backend.actions.invoke-sub-agent]))  ;; side-effect: registers :invoke/sub-agent defmethod
+            [knoxx.backend.domain.action.loader :as loader]
+            [knoxx.backend.law.actions :as contract]
+            [knoxx.backend.domain.action.registry :as registry]
+            [knoxx.backend.domain.action.invoke-agent]        ;; side-effect: registers :invoke/agent defmethod
+            [knoxx.backend.domain.action.invoke-sub-agent]
+            [knoxx.backend.domain.action.start-agent-session]))  ;; side-effect: registers :actions/start-agent-session defmethod
 
 (defn dispatch!
   [ctx step-spec]

@@ -1,8 +1,8 @@
-(ns knoxx.backend.agents.policy
+(ns knoxx.backend.domain.agent.policy
   "Chat policy enforcement: model allow-lists and rate-limiting."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :as authz]
-            [knoxx.backend.redis-client :as redis]))
+            [knoxx.backend.domain.auth.authz :as authz]
+            [knoxx.backend.infra.redis-client :as redis]))
 
 (defn- chat-policy-constraints
   [auth-context]

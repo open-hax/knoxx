@@ -1,4 +1,4 @@
-(ns knoxx.backend.routes.studio.discord-scan
+(ns knoxx.backend.infra.routes.studio.discord-scan
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
             [knoxx.backend.tools.media :as media]

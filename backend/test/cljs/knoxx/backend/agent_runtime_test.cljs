@@ -1,8 +1,8 @@
 (ns knoxx.backend.agent-runtime-test
   (:require [cljs.test :refer [async deftest is testing]]
-            [knoxx.backend.agent-runtime :as agent-runtime]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]
+            [knoxx.backend.domain.agent.agent-runtime :as agent-runtime]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
             ["node:path" :as node-path]))
 
 (deftest resolve-workspace-path-allows-configured-music-library-alias

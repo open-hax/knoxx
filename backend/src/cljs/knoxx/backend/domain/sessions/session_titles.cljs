@@ -1,9 +1,9 @@
-(ns knoxx.backend.session-titles
+(ns knoxx.backend.domain.sessions.session-titles
   (:require [clojure.string :as str]
-            [knoxx.backend.http :as backend-http]
-            [knoxx.backend.redis-client :as redis]
+            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.util.time :as time]
-            [knoxx.backend.text :as text]))
+            [knoxx.backend.domain.text :as text]))
 
 (defonce session-titles* (atom {}))
 (defonce session-title-promises* (atom {}))

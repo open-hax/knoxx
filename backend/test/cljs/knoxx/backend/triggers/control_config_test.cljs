@@ -1,7 +1,7 @@
 (ns knoxx.backend.triggers.control-config-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.runtime.contract-loader :as contract-loader]
-            [knoxx.backend.tooling :as tooling]
+            [knoxx.backend.contracts.loader :as contract-loader]
+            [knoxx.backend.infra.tooling :as tooling]
             [knoxx.backend.triggers.control-config :as control-config]))
 
 (def base-default-job

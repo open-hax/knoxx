@@ -1,13 +1,13 @@
-(ns knoxx.backend.events.sources.discord
+(ns knoxx.backend.domain.discord.source
   "Discord source adapter for event-agent runtime.
 
    This namespace owns Discord gateway lifecycle and Discord REST reads. It emits
    normalized message/voice callbacks to the generic event runtime instead of
    letting the runtime depend directly on discord-gateway internals."
   (:require [clojure.string :as str]
-            [knoxx.backend.discord-gateway :as dg]
-            [knoxx.backend.http :as backend-http]
-            [knoxx.backend.quality-labels :as quality-labels]))
+            [knoxx.backend.domain.discord.discord-gateway :as dg]
+            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.domain.label.quality :as quality-labels]))
 
 (defonce ^:private gateway-unsubscribe* (atom nil))
 

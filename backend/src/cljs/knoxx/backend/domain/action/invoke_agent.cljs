@@ -1,5 +1,5 @@
-(ns knoxx.backend.actions.invoke-agent
-  (:require [knoxx.backend.actions.registry :refer [run-action!]]))
+(ns knoxx.backend.domain.action.invoke-agent
+  (:require [knoxx.backend.domain.action.registry :refer [run-action!]]))
 
 (defmethod run-action! :invoke/agent
   [{:keys [run-agent! config event job]} action]

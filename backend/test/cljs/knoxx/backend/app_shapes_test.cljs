@@ -1,6 +1,6 @@
 (ns knoxx.backend.app-shapes-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.app-shapes :as shapes]))
+            [knoxx.backend.shape.app-shapes :as shapes]))
 
 ;; ─── normalize-chat-body ─────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-(ns knoxx.backend.actions.invoke-sub-agent
+(ns knoxx.backend.domain.action.invoke-sub-agent
   "Action: :invoke/sub-agent
 
    Spawns a child agent from a parent agent's context. Supports three modes:
@@ -9,7 +9,7 @@
    Sub-agent contracts live in contracts/sub_agents/*.edn. The action may also
    pass pre-resolved contracts in :action/with for tests or custom runners."
   (:require [clojure.string :as str]
-            [knoxx.backend.actions.registry :refer [run-action!]]
+            [knoxx.backend.domain.action.registry :refer [run-action!]]
             [knoxx.backend.contracts.loader :as contracts]
             [knoxx.backend.contracts.roles :as roles]
             [knoxx.backend.tools.registry :as tools]))

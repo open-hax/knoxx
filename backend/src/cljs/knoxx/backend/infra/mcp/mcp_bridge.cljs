@@ -1,4 +1,4 @@
-(ns knoxx.backend.mcp-bridge
+(ns knoxx.backend.infra.mcp.mcp-bridge
   "MCP (Model Context Protocol) gateway — CLJS implementation.
 
    Manages connections to MCP servers (HTTP and stdio transports) and routes
@@ -7,7 +7,7 @@
    Previously wrapped globalThis.__mcp_gateway exposed by mcp_gateway.mjs.
    Now self-contained in CLJS — the mjs module is no longer needed."
   (:require [clojure.string :as str]
-            [knoxx.backend.http :as http]))
+            [knoxx.backend.infra.http :as http]))
 
 (def ^:private PROTOCOL-VERSION "2024-11-05")
 

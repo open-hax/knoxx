@@ -1,4 +1,4 @@
-(ns knoxx.backend.agent-templates
+(ns knoxx.backend.domain.agent.agent-templates
   "Trusted contract template runtime for Knoxx.
 
    Contracts are filesystem/editor-authored and may contain EDN list forms such as

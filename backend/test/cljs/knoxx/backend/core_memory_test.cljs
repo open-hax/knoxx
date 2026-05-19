@@ -1,6 +1,6 @@
 (ns knoxx.backend.core-memory-test
   (:require [cljs.test :refer [deftest is]]
-            [knoxx.backend.core-memory :as core-memory]))
+            [knoxx.backend.infra.core-memory :as core-memory]))
 
 (deftest session-visible-for-page-actor-prefers-stored-contract-claims
   (let [rows [{:extra "{\"contract_actors\":[\"chat_primary\",\"cms_chat\"]}"}]]

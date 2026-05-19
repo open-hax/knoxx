@@ -1,12 +1,12 @@
-(ns knoxx.backend.agents.recovery
+(ns knoxx.backend.domain.agent.recovery
   "Session recovery after restarts: resume or abort stale runs."
   (:require [clojure.string :as str]
-            [knoxx.backend.agent-runtime :refer [ensure-agent-session!]]
-            [knoxx.backend.agents.turn :as turn]
-            [knoxx.backend.authz :as authz :refer [auth-snapshot-has-principal?]]
-            [knoxx.backend.redis-client :as redis]
-            [knoxx.backend.session-store :as session-store]
-            [knoxx.backend.turn-control :as turn-control]
+            [knoxx.backend.domain.agent.agent-runtime :refer [ensure-agent-session!]]
+            [knoxx.backend.domain.agent.turn :as turn]
+            [knoxx.backend.domain.auth.authz :as authz :refer [auth-snapshot-has-principal?]]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.util.time :refer [now-iso]]))
 
 (def ^:private RECOVERED-SESSION-KICKOFF-TIMEOUT-MS 5000)

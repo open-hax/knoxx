@@ -4,7 +4,7 @@
             [clojure.set :as set]
             [knoxx.backend.tools.resolution :as resolution]
             [knoxx.backend.tools.dispatch :as dispatch]
-            [knoxx.backend.tools.policies :as policies]))
+            [knoxx.backend.domain.policy.tools :as policies]))
 
 (defn no-policy-grants?
   "Invariant 1: No tool in :tools was granted by a policy contract."

@@ -1,15 +1,15 @@
-(ns knoxx.backend.routes.tools.proxy
+(ns knoxx.backend.infra.routes.tools.proxy
   "Fastify routes that proxy through to other internal services.
 
    These used to live in src/server.mjs; keeping them in CLJS ensures the Node
    host shim stays a pure dependency injector."
   (:require [shadow.cljs.modern :refer [js-await]]
             [clojure.string :as str]
-            [knoxx.backend.contracts.actor-scope :as actor-scope]
-            [knoxx.backend.core-memory :as core-memory]
-            [knoxx.backend.http :as backend-http]
-            [knoxx.backend.eta-mu-session-ingester :as eta-mu-sessions]
-            [knoxx.backend.opencode-session-ingester :as opencode-sessions]))
+            [knoxx.backend.domain.actor.scope :as actor-scope]
+            [knoxx.backend.infra.core-memory :as core-memory]
+            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.infra.eta-mu-session-ingester :as eta-mu-sessions]
+            [knoxx.backend.infra.opencode-session-ingester :as opencode-sessions]))
 
 (defn- enrich-session-summary!
   [config summary]

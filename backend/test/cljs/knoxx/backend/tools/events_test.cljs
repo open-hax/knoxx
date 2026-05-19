@@ -1,7 +1,7 @@
-(ns knoxx.backend.tools.event-agents-test
+(ns knoxx.backend.tools.events-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.tools.actors :as actor-tools]
-            [knoxx.backend.tools.event-agents :as event-tools]))
+            [knoxx.backend.domain.actor.tools :as actor-tools]
+            [knoxx.backend.tools.events :as event-tools]))
 
 (defn- assert-valid-self-headers
   [headers]
@@ -13,8 +13,8 @@
       (is (= "application/json" (.get h "Content-Type")))
       (is (= "test-key" (.get h "X-API-Key"))))))
 
-(deftest event-agent-self-headers-remain-fetch-compatible-with-api-key
-  (testing "agent-management tools must pass a headers object to fetch when KNOXX_API_KEY is configured"
+(deftest events-self-headers-remain-fetch-compatible-with-api-key
+  (testing "events tools must pass a headers object to fetch when KNOXX_API_KEY is configured"
     (assert-valid-self-headers (#'event-tools/self-headers {:knoxx-api-key "test-key"}))))
 
 (deftest actor-tool-self-headers-remain-fetch-compatible-with-api-key

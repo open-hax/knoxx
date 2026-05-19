@@ -3,8 +3,8 @@
 
    Knoxx-native port of the eta-mu extension session-mycology."
   (:require [clojure.string :as str]
-            [knoxx.backend.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.text :refer [tool-text-result]]
+            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.tools.shared :refer [create-tool-obj]]
             ["node:fs" :as fs]
             ["node:fs/promises" :as fs-promises]
