@@ -223,9 +223,13 @@ export function AgentAuditSessionList({ controller, builtInContractId, className
     const contractId = builtInContractId;
     setLoading(true);
     try {
-      const scoped = Boolean(contractId && contractId !== "new-agent");
+      const trimmedContractId = contractId?.trim();
+      const scopedContractId = trimmedContractId && trimmedContractId !== "new-agent" ? trimmedContractId : undefined;
       const [memoryPage, activeRuns] = await Promise.all([
-        listMemorySessions({ limit: scoped ? SCOPED_PAGE_SIZE : DEFAULT_PAGE_SIZE }),
+        listMemorySessions({
+          limit: scopedContractId ? SCOPED_PAGE_SIZE : DEFAULT_PAGE_SIZE,
+          contractId: scopedContractId,
+        }),
         listOperatorActiveAgents(),
       ]);
       if (loadSeqRef.current !== loadSeq) return;

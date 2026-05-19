@@ -134,7 +134,7 @@ describe("AgentAuditSessionList component", () => {
     expect(await screen.findByText("Fork history")).toBeInTheDocument();
     expect(screen.getByText("sub-agent fork_tales_creative_director")).toBeInTheDocument();
     expect(screen.queryByText("Other history")).not.toBeInTheDocument();
-    expect(mockListMemorySessions).toHaveBeenCalledWith({ limit: 40 });
+    expect(mockListMemorySessions).toHaveBeenCalledWith({ limit: 40, contractId: "fork_tales_creative_director" });
     expect(mockListAdminActiveAgents).toHaveBeenCalledWith(250);
 
     fireEvent.change(screen.getByLabelText("Search audit sessions"), { target: { value: "fork history" } });

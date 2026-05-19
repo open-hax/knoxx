@@ -17,7 +17,7 @@
  :cadence-min 30,
  :enabled true,
  :context {:max-messages 240
-           :max-chars 60000
+           :max-chars 600000
            :preserve-system true}
  :sub-agents [:audio_agent :research_assistant :notifier]
  :agent
@@ -33,7 +33,7 @@
      :role/fork-tales-composer
      ],
   :model "gemma4:31b",
-  :thinking :medium},
+  :thinking :high},
  :prompts
  {:system
   "

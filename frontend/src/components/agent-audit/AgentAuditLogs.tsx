@@ -643,6 +643,7 @@ export default function AgentAuditLogs({
         limit: memorySessionsPageLimit({ builtInActorId, builtInContractId, actorId }),
         offset,
         actorId,
+        contractId: builtInContractId,
       });
       const nextRows = page.rows ?? [];
 
