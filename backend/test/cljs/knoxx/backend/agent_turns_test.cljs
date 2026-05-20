@@ -1,6 +1,9 @@
 (ns knoxx.backend.agent-turns-test
   (:require [knoxx.backend.domain.auth.authz :as authz]
             [cljs.test :refer [deftest is testing async]]
+            [knoxx.backend.domain.agent.content :as content]
+            [knoxx.backend.domain.agent.tools :as tools]
+            [knoxx.backend.domain.agent.transcript :as transcript]
             [knoxx.backend.domain.agent.turn :as agent-turns]))
 
 (deftest ensure-session-id-preserves-provided-value
@@ -21,11 +24,11 @@
                                                                       (= part-type "image"))]
       (is (= [{:type "image"
                :url "file://clip.png"}]
-             (agent-turns/model-ready-content-parts
-              {}
-              "test-model"
-              [#js {:type "image"
-                    :url "file://clip.png"}]))))))
+             (content/model-ready-content-parts
+               {}
+               "test-model"
+               [#js {:type "image"
+                     :url "file://clip.png"}]))))))
 
 (deftest model-ready-content-parts-rewrites-unsupported-audio-inputs
   (testing "unsupported multimodal inputs degrade into explanatory text instead of crashing"
@@ -33,11 +36,11 @@
                                                                       (not= part-type "audio"))]
       (is (= [{:type :text
                :text "Uploaded audio source 'clip.wav' is available, but model test-model does not declare audio input. Use audio.spectrogram if you need an image-friendly audio view."}]
-             (agent-turns/model-ready-content-parts
-              {}
-              "test-model"
-              [{:type :audio
-                :filename "clip.wav"}]))))))
+             (content/model-ready-content-parts
+               {}
+               "test-model"
+               [{:type :audio
+                 :filename "clip.wav"}]))))))
 
 (deftest assistant-tool-call-previews-extracts-string-arguments-from-assistant-message
   (testing "string tool call arguments from assistant messages can backfill missing tool receipt inputs"
@@ -46,7 +49,7 @@
                                                     :id "tool-123"
                                                     :name "custom_tool"
                                                     :arguments "path=docs/guide.md limit=20"}]}
-          previews (agent-turns/assistant-tool-call-previews assistant-message)]
+          previews (tools/assistant-tool-call-previews assistant-message)]
       (is (= [{:tool_call_id "tool-123"
                :tool_name "custom_tool"
                :input_preview "path=docs/guide.md limit=20"}]
@@ -61,7 +64,7 @@
                                                     :arguments #js {:path "docs/guide.md"
                                                                     :offset 10
                                                                     :limit 20}}]}
-          previews (agent-turns/assistant-tool-call-previews assistant-message)]
+          previews (tools/assistant-tool-call-previews assistant-message)]
       (is (= [{:tool_call_id "tool-456"
                :tool_name "read"
                :input_preview "```yaml\npath: docs/guide.md\noffset: 10\nlimit: 20\n```"}]
@@ -78,7 +81,7 @@
       (is (= [{:role "system" :content "stay grounded"}
               {:role "user" :content "first request"}
               {:role "assistant" :content "first answer"}]
-             (agent-turns/session->stored-messages session))))))
+             (transcript/session->stored-messages session))))))
 
 (deftest reply-attachment-content-parts-lifts-workspace-media-tool-receipts-into-final-replies
   (testing "workspace_media.attach receipts become assistant reply content parts"
@@ -86,7 +89,7 @@
              :data "data:audio/wav;base64,QUFBQQ=="
              :mimeType "audio/wav"
              :filename "reply.wav"}]
-           (agent-turns/reply-attachment-content-parts
+           (content/reply-attachment-content-parts
             [{:tool_name "workspace_media.attach"
               :content_parts [{:type "audio"
                                :data "data:audio/wav;base64,QUFBQQ=="
@@ -107,7 +110,7 @@
              :data "data:audio/wav;base64,QUFBQQ=="
              :mimeType "audio/wav"
              :filename "reply.wav"}]
-           (agent-turns/merge-content-parts
+           (content/merge-content-parts
             [{:type "image"
               :url "/api/multimodal/files/image-1"
               :mimeType "image/png"
