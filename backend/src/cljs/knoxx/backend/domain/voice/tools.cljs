@@ -2,13 +2,13 @@
   "Voice synthesis: OpenUtau (sung) + Voxx Gateway TTS (spoken)."
   (:require [clojure.string :as str]
             [promesa.core :as p]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             ["node:fs/promises" :as fs-promises]
             ["node:path" :as path]
-            [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
-            [knoxx.backend.tools.openutau :as openutau]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.domain.media :as media :refer [normalize-tool-path-arg]]
+            [knoxx.backend.domain.openutau.tools :as openutau]
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]))
 
 ;; --- shared helpers ---

@@ -2,9 +2,9 @@
   (:require [cljs.test :refer [async deftest is testing]]
             [clojure.string :as str]
             [promesa.core :as p]
-            [knoxx.backend.runtime.models :as models]
-            [knoxx.backend.tools.blaze :as blaze]
-            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.domain.models :as models]
+            [knoxx.backend.domain.media.blaze :as blaze]
+            [knoxx.backend.domain.media :as media]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))

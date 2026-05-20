@@ -1,9 +1,9 @@
-(ns knoxx.backend.tools.contracts
+(ns knoxx.backend.domain.contracts.tools
   "Contract librarian tool factories."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj sanitize-custom-tools filter-custom-tools-by-allow-set]]))
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj sanitize-custom-tools filter-custom-tools-by-allow-set]]))
 
 (def contract-list-params
   [:map

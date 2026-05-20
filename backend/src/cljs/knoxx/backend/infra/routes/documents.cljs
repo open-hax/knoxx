@@ -3,7 +3,7 @@
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
             [shadow.cljs.modern :refer [js-await]]
-            [knoxx.backend.domain.auth.authz :as authz]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.document-state
              :refer [database-state*
                      js-array-seq
@@ -24,7 +24,7 @@
                      active-record
                      start-document-ingestion!
                      priority-ingest-workspace-files!]]
-            [knoxx.backend.util.time :as time]
+            [knoxx.backend.domain.time :as time]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 

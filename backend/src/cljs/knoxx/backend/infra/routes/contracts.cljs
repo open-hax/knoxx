@@ -2,13 +2,13 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cljs.reader :as reader]
-            [knoxx.backend.contracts.resolve :as contracts-resolve]
-            [knoxx.backend.triggers.trigger-runner :as trigger-runtime]
+            [knoxx.backend.domain.contracts.resolve :as contracts-resolve]
+            [knoxx.backend.infra.trigger-runner :as trigger-runtime]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.actor.scope :as actor-scope]
-            [knoxx.backend.contracts.loader :as loader]
+            [knoxx.backend.domain.contracts.loader :as loader]
             [knoxx.backend.law.contracts :as validator]
-            [knoxx.backend.util.time :refer [now-iso]]
+            [knoxx.backend.domain.time :refer [now-iso]]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]))
 

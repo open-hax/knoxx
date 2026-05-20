@@ -1,4 +1,4 @@
-(ns knoxx.backend.util.time)
+(ns knoxx.backend.domain.time)
 
 (defn now-iso
   []

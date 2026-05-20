@@ -8,8 +8,8 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cljs.reader :as reader]
-            [knoxx.backend.contracts.loader :as contracts-loader]
-            [knoxx.backend.tools.registry :as tool-registry]
+            [knoxx.backend.domain.contracts.loader :as contracts-loader]
+            [knoxx.backend.infra.registry.tools :as tool-registry]
             ["node:fs" :as node-fs]
             ["node:path" :as path]))
 

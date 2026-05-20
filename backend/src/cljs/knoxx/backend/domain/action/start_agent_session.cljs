@@ -2,7 +2,7 @@
   "Agent session lifecycle actions."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.action.registry :refer [run-action!]]
-            [knoxx.backend.domain.agent.runner :as agents-runner]
+            [knoxx.backend.infra.agent.runner :as agents-runner]
             [knoxx.backend.infra.tooling :as tooling]))
 
 (defn- nonblank

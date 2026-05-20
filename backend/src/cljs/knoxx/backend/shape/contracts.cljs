@@ -1,4 +1,4 @@
-(ns knoxx.backend.contracts.schema
+(ns knoxx.backend.shape.contracts
   "Malli schemas for :action, :pipeline, and :trigger contract kinds."
   (:require [malli.core :as m]))
 

@@ -1,6 +1,6 @@
 (ns knoxx.backend.tools.shared-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.tools.shared :as shared]))
+            [knoxx.backend.domain.tools :as shared]))
 
 (deftest sanitize-custom-tool-name-teaches-runtime-name
   (testing "dotted canonical tools are advertised with their callable sanitized runtime name"

@@ -1,8 +1,8 @@
 (ns knoxx.backend.triggers.control-config-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.contracts.loader :as contract-loader]
+            [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.infra.tooling :as tooling]
-            [knoxx.backend.triggers.control-config :as control-config]))
+            [knoxx.backend.infra.control-config :as control-config]))
 
 (def base-default-job
   {:id "discord_patrol"

@@ -1,3 +1,9 @@
+(ns knoxx.backend.infra.agent.provider
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.models :refer [allowlisted-model-id?]]))
+
+(defn- js-array-seq [v] (if (array? v) (array-seq v) []))
+
 (defn- proxx-models-url
   [config]
   (let [base (str (or (:proxx-base-url config) ""))]

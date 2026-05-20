@@ -1,4 +1,4 @@
-(ns knoxx.backend.tools.nrepl
+(ns knoxx.backend.domain.nrepl
   "nREPL tool for evaluating code against the live shadow-cljs runtime.
 
    This tool is intentionally *developer-only* and high risk.
@@ -11,9 +11,9 @@
    - If the JS runtime is not connected, shadow returns a map containing an
      :err string (No available JS runtime)."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             ["node:net" :as net]
             ["node:crypto" :as crypto]))
 

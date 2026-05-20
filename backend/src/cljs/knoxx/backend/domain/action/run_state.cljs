@@ -1,7 +1,8 @@
 (ns knoxx.backend.domain.action.run-state
   (:require [clojure.string :as str]
-            [knoxx.backend.util.time :as time]
-            [knoxx.backend.infra.redis-client :as redis]))
+            [knoxx.backend.domain.time :as time]
+            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.shape.agent :refer [messages]]))
 
 (def RUN_EVENTS_KEY_PREFIX "knoxx:run_events:")
 (def RUN_EVENTS_MAX 1000)
@@ -33,10 +34,8 @@
   (reset! event-stream-sink* nil))
 (defn latest-assistant-message
   [session]
-  (let [messages (if (array? (aget session "messages"))
-                   (array-seq (aget session "messages"))
-                   [])]
-    (last (filter #(= (aget % "role") "assistant") messages))))
+  (let [msgs (or (messages session) [])]
+    (last (filter #(= (aget % "role") "assistant") msgs))))
 
 (defn usage-map
   [usage]

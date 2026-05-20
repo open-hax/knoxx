@@ -1,9 +1,9 @@
 (ns knoxx.backend.agents.stream-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.domain.agent.stream :as stream]
+            [knoxx.backend.infra.agent.stream :as stream]
             [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.realtime :as realtime]
-            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.infra.redis-client :as redis]))
 
 (defn- assistant-message

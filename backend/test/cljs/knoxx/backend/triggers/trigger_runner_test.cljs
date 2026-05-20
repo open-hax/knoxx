@@ -1,5 +1,5 @@
 (ns knoxx.backend.triggers.trigger-runner-test
-  (:require [knoxx.backend.triggers.trigger-runner :as tr]
+  (:require [knoxx.backend.infra.trigger-runner :as tr]
             [knoxx.backend.domain.action.registry :as action-registry]
             [clojure.test :refer [deftest is testing async]]
             [clojure.string :as str]))

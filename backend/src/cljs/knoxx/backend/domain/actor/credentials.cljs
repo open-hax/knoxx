@@ -5,7 +5,7 @@
    env vars here; missing credentials should be fixed in Admin → Actors."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
-            [knoxx.backend.domain.auth.authz :as authz]))
+            [knoxx.backend.infra.auth.authz :as authz]))
 
 (defn current-actor-id
   []

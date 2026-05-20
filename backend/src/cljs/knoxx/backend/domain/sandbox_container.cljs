@@ -1,9 +1,9 @@
-(ns knoxx.backend.tools.sandbox-container
+(ns knoxx.backend.domain.sandbox-container
   "TTL-bound docker-exec sandbox tools for isolated development work."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]

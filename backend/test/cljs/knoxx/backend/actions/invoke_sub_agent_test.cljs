@@ -3,7 +3,7 @@
             [clojure.string :as str]
             [knoxx.backend.domain.action.invoke-sub-agent]
             [knoxx.backend.domain.action.registry :as registry]
-            [knoxx.backend.contracts.loader :as loader]
+            [knoxx.backend.domain.contracts.loader :as loader]
             [knoxx.backend.law.contracts :as validator]))
 
 ;; ── Sub-agent contract validation ──────────────────────────────────────────

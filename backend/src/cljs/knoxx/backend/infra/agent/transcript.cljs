@@ -1,16 +1,16 @@
-(ns knoxx.backend.domain.agent.transcript
+(ns knoxx.backend.infra.agent.transcript
   "Session transcript building and message conversion."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.agent.agent-runtime :refer [sync-system-message]]
+            [knoxx.backend.infra.agent.message :refer [sync-system-message]]
             [knoxx.backend.domain.agent.content :refer [nonblank assistant-content-parts session-message-text]]
-            [knoxx.backend.domain.text :refer [content-part-text]]))
+            [knoxx.backend.domain.text :refer [content-part-text]]
+            [knoxx.backend.shape.agent :refer [messages]]))
 
 (defn ^:export session->stored-messages
   "Exported simplified variant (no content-parts).  Used by tests and recovery."
   [session]
-  (let [messages (when (and session (array? (aget session "messages")))
-                   (array-seq (aget session "messages")))]
-    (->> messages
+  (let [msgs (when session (messages session))]
+    (->> msgs
          (keep (fn [message]
                  (let [role (some-> (aget message "role") str)
                        content (aget message "content")
@@ -31,9 +31,8 @@
 (defn- transcript-messages
   "Internal richer variant that preserves assistant content-parts and compaction summaries."
   [session]
-  (let [messages (when (and session (array? (aget session "messages")))
-                   (array-seq (aget session "messages")))]
-    (->> messages
+  (let [msgs (when session (messages session))]
+    (->> msgs
          (keep (fn [message]
                  (let [role (some-> (aget message "role") str)
                        summary (some-> (aget message "summary") nonblank)

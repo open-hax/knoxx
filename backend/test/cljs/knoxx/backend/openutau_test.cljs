@@ -1,7 +1,7 @@
 (ns knoxx.backend.openutau-test
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
-            [knoxx.backend.domain.openutau :as openutau]))
+            [knoxx.backend.domain.openutau.openutau :as openutau]))
 
 (deftest normalize-notes-assigns-sequential-positions-and-respects-explicit-gaps
   (testing "notes without explicit positions are sequenced after the previous note end"

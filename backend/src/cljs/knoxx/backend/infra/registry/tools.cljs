@@ -1,4 +1,4 @@
-(ns knoxx.backend.tools.registry
+(ns knoxx.backend.infra.registry.tools
   (:require [clojure.string :as str]))
 
 (def ^:private tool-meta

@@ -1,10 +1,10 @@
-(ns knoxx.backend.tools.music
+(ns knoxx.backend.domain.music
   "Music/audio identification and visualization tools."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.tools.media :as media :refer [normalize-tool-path-arg]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.domain.media :as media :refer [normalize-tool-path-arg]]
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]

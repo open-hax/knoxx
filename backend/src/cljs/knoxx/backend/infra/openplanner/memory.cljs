@@ -1,10 +1,10 @@
-(ns knoxx.backend.domain.openplanner.memory
+(ns knoxx.backend.infra.openplanner.memory
   (:require [clojure.string :as str]
             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
             [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.domain.label.quality :as quality-labels]
             [knoxx.backend.domain.actor.scope :as actor-scope]
-            [knoxx.backend.util.time :as time]))
+            [knoxx.backend.domain.time :as time]))
 
 (defn js-array-seq
   [arr]
@@ -235,6 +235,18 @@
        (take limit)
        vec))
 
+(defn- ^:async fetch-session-summary!
+  [config session-id]
+  (let [rows (or (:rows (await (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" session-id)))) [])
+        row (or (last (filter #(and (contains? #{"assistant" "system"} (:role %))
+                                   (default-memory-hit? %))
+                               rows))
+                (last (filter default-memory-hit? rows)))]
+    (when row
+      {:session session-id
+       :role (:role row)
+       :text (:text row)})))
+
 (defn ^:async openplanner-recent-session-summaries!
   [config]
   (let [session-ids (->> (or (:rows (await (backend-http/openplanner-request!
@@ -248,24 +260,11 @@
                          (take 4)
                          vec)]
     (if (seq session-ids)
-      (-> (.all js/Promise
-                (clj->js
-                 (map (fn [session-id]
-                        (let [rows (or (:rows (await (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" session-id)))) [])
-                              row (or (last (filter #(and (contains? #{"assistant" "system"} (:role %))
-                                                          (default-memory-hit? %))
-                                                    rows))
-                                      (last (filter default-memory-hit? rows)))]
-                          (when row
-                            {:session session-id
-                             :role (:role row)
-                             :text (:text row)})))
-                      session-ids)))
-          (.then (fn [results]
-                   (->> (js->clj results :keywordize-keys true)
-                        (remove nil?)
-                        vec))))
-      (js/Promise.resolve []))))
+      (let [results (await (.all js/Promise (clj->js (map #(fetch-session-summary! config %) session-ids))))]
+        (->> (js->clj results :keywordize-keys true)
+             (remove nil?)
+             vec))
+      [])))
 
 (defn ^:async openplanner-memory-search!
   [config {:keys [query k session-id]}]

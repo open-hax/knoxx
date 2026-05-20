@@ -3,11 +3,11 @@
    interpolates {{memory.temp:key}} in :context, writes :output to temp memory."
   (:require [promesa.core :as p]
             [clojure.string :as str]
-            [knoxx.backend.tools.temp-memory :as temp]
-            [knoxx.backend.contracts.loader :as loader]
+            [knoxx.backend.infra.temp-memory :as temp]
+            [knoxx.backend.domain.contracts.loader :as loader]
             [knoxx.backend.domain.discord.discord-io :as discord-io]
-            [knoxx.backend.runtime.config :as runtime-config]
-            [knoxx.backend.runtime.models :as models]))
+            [knoxx.backend.infra.config :as runtime-config]
+            [knoxx.backend.domain.models :as models]))
 
 (defn- cfg [] (models/enrich-config (runtime-config/cfg)))
 

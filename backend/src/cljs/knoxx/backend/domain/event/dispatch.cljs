@@ -2,15 +2,15 @@
   "Contract-native event dispatcher."
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [knoxx.backend.contracts.loader :as loader]
+            [knoxx.backend.domain.contracts.loader :as loader]
             [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.action.start-agent-session]
             [knoxx.backend.domain.action.run-pipeline]
             [knoxx.backend.domain.condition.registry :as condition-registry]
             [knoxx.backend.domain.event.normalize :as event-normalize]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
-            [knoxx.backend.runtime.config :as runtime-config]
-            [knoxx.backend.runtime.models :as runtime-models]))
+            [knoxx.backend.infra.config :as runtime-config]
+            [knoxx.backend.domain.models :as runtime-models]))
 
 (defonce dispatched-event-ids* (atom #{}))
 (defonce recent-events* (atom []))
@@ -68,12 +68,6 @@
     (or (empty? keywords)
         (some #(str/includes? content %) keywords))))
 
-(defn- predicate-matches?
-  "Legacy predicate check (channels + keywords). Used when no :trigger/condition is set."
-  [trigger event]
-  (let [predicate (:trigger/predicate trigger)]
-    (and (channel-matches? predicate event)
-         (keyword-matches? predicate event))))
 
 (defn- source-matches?
   [trigger event]
@@ -98,11 +92,13 @@
 
 (defn- condition-matches?
   "Evaluate the trigger's condition expression against the event.
-   Falls back to legacy predicate (channels + keywords) if no condition expr."
+  If no condition, then true.
+  "
   [trigger event]
   (if-let [expr (:trigger/condition trigger)]
     (condition-registry/evaluate expr event nil trigger nil)
-    (predicate-matches? trigger event)))
+    true
+    ))
 
 (defn- trigger-matches?
   [trigger event]

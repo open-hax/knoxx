@@ -1,7 +1,7 @@
 (ns knoxx.backend.contracts.loader-test
   (:require [clojure.string :as str]
             [cljs.test :refer [deftest is testing async]]
-            [knoxx.backend.contracts.loader :as sut]))
+            [knoxx.backend.domain.contracts.loader :as sut]))
 
 ;; ---------------------------------------------------------------------------
 ;; normalize-contract-class

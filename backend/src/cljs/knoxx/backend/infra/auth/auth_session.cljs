@@ -1,5 +1,5 @@
-(ns knoxx.backend.domain.auth.auth-session
-  (:require [knoxx.backend.domain.auth.session :as session]
+(ns knoxx.backend.infra.auth.auth-session
+  (:require [knoxx.backend.infra.auth.session :as session]
             [knoxx.backend.infra.routes.auth :as auth-routes]))
 
 (def register-auth-routes auth-routes/register-auth-routes)

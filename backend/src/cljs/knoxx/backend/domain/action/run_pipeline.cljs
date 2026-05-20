@@ -1,7 +1,7 @@
 (ns knoxx.backend.domain.action.run-pipeline
   "Built-in action: run a :pipeline contract."
   (:require [clojure.string :as str]
-            [knoxx.backend.contracts.loader :as loader]
+            [knoxx.backend.domain.contracts.loader :as loader]
             [knoxx.backend.domain.action.registry :refer [run-action!]]
             [knoxx.backend.infra.pipeline-runner :as pipeline-runner]))
 

@@ -1,11 +1,11 @@
-;; knoxx.backend.infra.node.fs
+;; knoxx.backend.domain.node.fs
 ;;
 ;; THE JS BOUNDARY FOR FILESYSTEM OPS.
 ;; node:fs, node:fs/promises, and Dirent objects live HERE AND NOWHERE ELSE.
 ;; Every fn accepts CLJS strings/maps, returns CLJS values or Promise<CLJS>.
 ;; js/Array.from conversions happen at the edge — nothing leaks out.
 
-(ns knoxx.backend.infra.node.fs
+(ns knoxx.backend.domain.node.fs
   (:require [clojure.string :as str]
             ["node:fs"           :as node-fs]
             ["node:fs/promises"  :as fs]

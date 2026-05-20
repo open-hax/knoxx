@@ -1,9 +1,9 @@
 (ns knoxx.backend.contracts.resolve-test
   (:require [cljs.test :as t :refer [deftest is testing]]
             [knoxx.backend.domain.actor.scope]
-            [knoxx.backend.contracts.loader :as loader]
-            [knoxx.backend.contracts.resolve :as sut]
-            [knoxx.backend.contracts.roles :as roles]))
+            [knoxx.backend.domain.contracts.loader :as loader]
+            [knoxx.backend.domain.contracts.resolve :as sut]
+            [knoxx.backend.domain.contracts.roles :as roles]))
 
 (deftest actor-extras-test
   (let [actor-spec {:id "test-actor"

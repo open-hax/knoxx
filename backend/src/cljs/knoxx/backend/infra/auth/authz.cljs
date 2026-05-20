@@ -1,6 +1,6 @@
-(ns knoxx.backend.domain.auth.authz
+(ns knoxx.backend.infra.auth.authz
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.session :as auth-session]
+            [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.http :as http]
             [knoxx.backend.runtime.state :as runtime-state]))
 

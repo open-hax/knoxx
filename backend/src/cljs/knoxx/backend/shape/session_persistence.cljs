@@ -1,4 +1,4 @@
-(ns knoxx.backend.contracts.session-persistence
+(ns knoxx.backend.shape.session-persistence
   "Shared persistence contract for knoxx session state.
 
    Both Redis and OpenPlanner implement ISessionStore.

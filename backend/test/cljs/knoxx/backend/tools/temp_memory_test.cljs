@@ -1,5 +1,5 @@
 (ns knoxx.backend.tools.temp-memory-test
-  (:require [knoxx.backend.tools.temp-memory :as temp]
+  (:require [knoxx.backend.infra.temp-memory :as temp]
             [promesa.core :as p]
             [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]))
@@ -26,17 +26,17 @@
 
 (deftest local-set-and-get
   (testing "set then get returns value"
-    (p/let [_ (temp/set! "test-key" "hello" {:ttl 60})
-            v (temp/get "test-key")]
+    (p/let [_ (temp/mem-set! "test-key" "hello" {:ttl 60})
+            v (temp/mem-get "test-key")]
       (is (= "hello" v))))
   (testing "get missing key returns nil"
-    (p/let [v (temp/get "missing-key")]
+    (p/let [v (temp/mem-get "missing-key")]
       (is (nil? v)))))
 
 (deftest local-expiry
   (testing "expired key returns nil"
-    (p/let [_ (temp/set! "exp-key" "value" {:ttl 0.001})]
+    (p/let [_ (temp/mem-set! "exp-key" "value" {:ttl 0.001})]
       (p/then (p/delay 10)
               (fn [_]
-                (p/let [v (temp/get "exp-key")]
+                (p/let [v (temp/mem-get "exp-key")]
                   (is (nil? v))))))))

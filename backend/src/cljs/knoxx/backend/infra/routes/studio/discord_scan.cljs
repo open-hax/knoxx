@@ -1,8 +1,8 @@
 (ns knoxx.backend.infra.routes.studio.discord-scan
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
-            [knoxx.backend.tools.media :as media]
-            [knoxx.backend.tools.shared :refer [live-config]]
+            [knoxx.backend.domain.media :as media]
+            [knoxx.backend.domain.tools :refer [live-config]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 

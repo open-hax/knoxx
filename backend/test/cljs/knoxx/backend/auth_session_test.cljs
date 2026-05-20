@@ -1,6 +1,6 @@
 (ns knoxx.backend.auth-session-test
   (:require [cljs.test :refer [async deftest is testing]]
-            [knoxx.backend.domain.auth.session :as auth-session]))
+            [knoxx.backend.infra.auth.session :as auth-session]))
 
 (defn- with-env!
   [bindings f]

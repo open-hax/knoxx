@@ -1,7 +1,7 @@
-(ns knoxx.backend.domain.agent.policy
+(ns knoxx.backend.infra.agent.policy
   "Chat policy enforcement: model allow-lists and rate-limiting."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :as authz]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.redis-client :as redis]))
 ;; This kind of file isn't suposed to exist at all
 ;; these should all be things we can define in the contract DSL

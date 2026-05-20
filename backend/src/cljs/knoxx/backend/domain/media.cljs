@@ -1,4 +1,4 @@
-(ns knoxx.backend.tools.media
+(ns knoxx.backend.domain.media
   "Shared media infrastructure: workspace path resolution, temp files,
    mime-type detection, data-URL decoding, and source loading."
   (:require [clojure.string :as str]

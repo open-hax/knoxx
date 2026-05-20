@@ -6,10 +6,10 @@
    In-flight runs are owned by Redis."
   (:require [shadow.cljs.modern :refer [js-await]]
             [clojure.string :as str]
-            [knoxx.backend.contracts.session-persistence :refer [ISessionStore assert-run!]]
-            [knoxx.backend.domain.openplanner.memory :as op-mem]
+            [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run!]]
+            [knoxx.backend.infra.openplanner.memory :as op-mem]
             [knoxx.backend.infra.http :as http]
-            [knoxx.backend.util.time :as time]))
+            [knoxx.backend.domain.time :as time]))
 
 (defn- run->events
   "Translate a KnoxxRun into the openplanner.event.v1 wire format."

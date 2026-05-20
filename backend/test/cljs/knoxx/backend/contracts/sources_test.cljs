@@ -1,7 +1,7 @@
 (ns knoxx.backend.contracts.sources-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.contracts.loader :as loader]
-            [knoxx.backend.contracts.sources :as sut]))
+            [knoxx.backend.domain.contracts.loader :as loader]
+            [knoxx.backend.domain.contracts.sources :as sut]))
 
 (def openplanner-source-contract
   {:contract/id "openplanner-memory"

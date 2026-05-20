@@ -6,13 +6,13 @@
    - allow inflight HTTP requests and active turns a bounded window to settle
    - persist any still-running sessions into a resumable Redis state
    - release timers/sockets so PM2 can restart cleanly"
-  (:require [knoxx.backend.domain.agent.agent-resume :as agent-resume]
-            [knoxx.backend.domain.discord.discord-gateway :as discord-gateway]
-            [knoxx.backend.triggers.trigger-runner :as trigger-runtime]
+  (:require [knoxx.backend.infra.agent.resume :as agent-resume]
+            [knoxx.backend.domain.discord.gateway :as discord-gateway]
+            [knoxx.backend.infra.trigger-runner :as trigger-runtime]
             [knoxx.backend.domain.realtime :as realtime]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.domain.svg-render :as svg-render]
+            [knoxx.backend.infra.svg-render :as svg-render]
             [knoxx.backend.domain.voice.turn-control :as turn-control]))
 
 (defonce shutdown-state* (atom {:installed? false

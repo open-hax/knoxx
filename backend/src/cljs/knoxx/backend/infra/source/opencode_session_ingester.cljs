@@ -1,4 +1,4 @@
-(ns knoxx.backend.infra.opencode-session-ingester
+(ns knoxx.backend.infra.source.opencode-session-ingester
   "Small OpenCode session API client used by Knoxx admin routes.
 
    The ingestion service owns durable ingestion. This namespace provides the

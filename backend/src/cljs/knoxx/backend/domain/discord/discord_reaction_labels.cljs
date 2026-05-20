@@ -5,9 +5,9 @@
    OpenPlanner corpus. The reaction is also written as a weak quality claim when
    it has a reserved meaning: ✅ = good output, ❌ = bad output."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.discord.discord-gateway :as dg]
+            [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.infra.http :as http]
-            [knoxx.backend.util.time :as time]))
+            [knoxx.backend.domain.time :as time]))
 
 (defonce ^:private reaction-unsubscribe* (atom nil))
 

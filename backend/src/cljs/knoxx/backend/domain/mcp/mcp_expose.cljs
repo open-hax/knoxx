@@ -1,4 +1,4 @@
-(ns knoxx.backend.infra.mcp.mcp-expose
+(ns knoxx.backend.domain.mcp.mcp-expose
   "JS-facing helpers for exposing Knoxx agent tools over external protocols (MCP).
 
    These helpers exist so server.mjs can build an MCP tool catalog that matches
@@ -8,9 +8,9 @@
    resolveRequestContext) and converts it into a CLJS map before delegating to
    the agent hydration tool factories."  
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.agent.agent-hydration :as hydration]
-            [knoxx.backend.contracts.loader :as contracts]
-            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.infra.agent.hydration :as hydration]
+            [knoxx.backend.domain.contracts.loader :as contracts]
+            [knoxx.backend.infra.config :as runtime-config]
             [knoxx.backend.runtime.state :as runtime-state]))
 
 (defn- resolve-config

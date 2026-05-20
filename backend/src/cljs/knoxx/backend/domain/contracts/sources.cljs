@@ -1,4 +1,4 @@
-(ns knoxx.backend.contracts.sources
+(ns knoxx.backend.domain.contracts.sources
   "Runtime context source contract resolution.
 
    A runtime source is not an ingestion source. Ingestion sources decide what is
@@ -6,7 +6,7 @@
    execution. Source refs compose from actor -> role -> agent -> run overrides
    and dedupe by :source/id."
   (:require [clojure.string :as str]
-            [knoxx.backend.contracts.loader :as loader]))
+            [knoxx.backend.domain.contracts.loader :as loader]))
 
 (defn deep-merge
   "Recursively merge maps; later maps win for scalar/vector values."

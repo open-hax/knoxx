@@ -1,6 +1,6 @@
 (ns knoxx.backend.session-titles-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.domain.sessions.session-titles :as titles]))
+            [knoxx.backend.infra.stores.session-titles :as titles]))
 
 (deftest sanitize-session-title
   (is (= "this is a very long text that exceeds the maximum allowed length for a session title so should be truncated"
@@ -24,3 +24,9 @@
     (is (= "Valid Title" (:title result)))
     (is (nil? (:title_model result)))
     (is (string? (:updated_at result)))))
+
+(deftest session-title-row-entry-parses-extra-json-at-extern-boundary
+  (let [result (titles/session-title-row-entry
+                {:extra "{\"kind\":\"knoxx.session_title\",\"title\":\"Extern Boundary\",\"title_model\":\"model-x\"}"})]
+    (is (= "Extern Boundary" (:title result)))
+    (is (= "model-x" (:title_model result)))))

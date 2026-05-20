@@ -1,6 +1,6 @@
 (ns knoxx.backend.infra.routes.auth
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.session :as auth-session]))
+            [knoxx.backend.infra.auth.session :as auth-session]))
 
 
 (defn register-auth-routes

@@ -5,7 +5,7 @@
    normalized message/voice callbacks to the generic event runtime instead of
    letting the runtime depend directly on discord-gateway internals."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.discord.discord-gateway :as dg]
+            [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.domain.label.quality :as quality-labels]))
 

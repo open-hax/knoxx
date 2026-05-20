@@ -2,12 +2,12 @@
   "Discord voice channel tools: join, leave, say, listen."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.agent-context :as agent-ctx]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.domain.discord.discord-gateway :as dg]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]))
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]))
 
 (defn- gw [] (dg/gateway-manager))
 

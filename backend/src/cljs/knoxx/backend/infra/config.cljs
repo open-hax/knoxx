@@ -1,4 +1,4 @@
-(ns knoxx.backend.runtime.config
+(ns knoxx.backend.infra.config
   (:require [clojure.string :as str]))
 
 (defn- env-path-list

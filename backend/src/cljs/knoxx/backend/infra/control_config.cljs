@@ -1,13 +1,13 @@
-(ns knoxx.backend.triggers.control-config
+(ns knoxx.backend.infra.control-config
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.agent-templates :as prompt-templates]
             [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.contracts.loader :as contract-loader]
-            [knoxx.backend.runtime.models :as models]
+            [knoxx.backend.domain.contracts.loader :as contract-loader]
+            [knoxx.backend.domain.models :as models]
             [knoxx.backend.runtime.roles :as roles]
             [knoxx.backend.infra.tooling :as tooling]
-            [knoxx.backend.tools.registry :as tools]
-            [knoxx.backend.util.parse :refer [parse-positive-int]]))
+            [knoxx.backend.infra.registry.tools :as tools]
+            [knoxx.backend.shape.parse :refer [parse-positive-int]]))
 
 (defn- env
   [k default]

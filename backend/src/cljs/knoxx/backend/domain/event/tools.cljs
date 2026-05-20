@@ -1,10 +1,10 @@
-(ns knoxx.backend.tools.events
+(ns knoxx.backend.domain.event.tools
   "Custom-tool entrypoint for the generic events/triggers surface."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.agent.agent-templates :as templates]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj json-parse live-config]]))
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj json-parse live-config]]))
 
 (def status-params [:map])
 

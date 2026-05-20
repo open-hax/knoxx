@@ -1,4 +1,4 @@
-(ns knoxx.backend.util.parse
+(ns knoxx.backend.shape.parse
   (:require [clojure.string :as str]))
 
 (defn parse-positive-int

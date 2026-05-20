@@ -1,6 +1,6 @@
 (ns knoxx.backend.authz-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.domain.auth.authz :as authz]))
+            [knoxx.backend.infra.auth.authz :as authz]))
 
 ;; ─── fixtures ────────────────────────────────────────────────────
 

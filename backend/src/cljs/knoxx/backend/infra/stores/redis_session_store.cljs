@@ -1,8 +1,8 @@
 (ns knoxx.backend.infra.stores.redis-session-store
   (:require [shadow.cljs.modern :refer [js-await]]
             [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.contracts.session-persistence :refer [ISessionStore assert-run!]]
-            [knoxx.backend.util.time :as time]))
+            [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run!]]
+            [knoxx.backend.domain.time :as time]))
 
 (def ^:private RUN_PREFIX "knoxx:run:")
 (def ^:private RUN_TTL 7200)

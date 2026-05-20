@@ -1,4 +1,4 @@
-(ns knoxx.backend.domain.agent.tools
+(ns knoxx.backend.infra.agent.tools
   "Tool input preview and assistant tool-call helpers."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.content :refer [nonblank preview-text-nonblank json-preview-nonblank fenced]]

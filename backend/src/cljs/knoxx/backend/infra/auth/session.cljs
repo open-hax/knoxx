@@ -1,4 +1,4 @@
-(ns knoxx.backend.domain.auth.session
+(ns knoxx.backend.infra.auth.session
   (:refer-clojure :exclude [set])
   (:require [clojure.string :as str]
             ["node:crypto" :as crypto]

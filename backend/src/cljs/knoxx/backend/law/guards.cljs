@@ -1,5 +1,5 @@
 (ns knoxx.backend.law.guards
-  (:require [knoxx.backend.domain.auth.authz :as authz]))
+  (:require [knoxx.backend.infra.auth.authz :as authz]))
 
 ;; ── Fastify preHandler factories ─────────────────────────────────────────────
 ;;

@@ -1,4 +1,4 @@
-(ns knoxx.backend.domain.agent.agent-resume
+(ns knoxx.backend.infra.agent.resume
   "Isolated module for session resumption across backend restarts.
 
    Startup:
@@ -12,12 +12,13 @@
    - Give Redis a grace window to persist final state.
    - If turns time out, mark their sessions resumable for the next startup."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.agent.recovery :as agent-recovery]
-            [knoxx.backend.domain.agent.agent-runtime :as agent-runtime]
+            [knoxx.backend.infra.agent.recovery :as agent-recovery]
+            [knoxx.backend.infra.agent.session :as agent-session]
             [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
-            [knoxx.backend.util.time :refer [now-iso]]))
+            [knoxx.backend.domain.time :refer [now-iso]]
+            [knoxx.backend.shape.agent :refer [streaming?]]))
 
 ;; ─── Config ───────────────────────────────────────────────────────────
 
@@ -79,14 +80,14 @@
 
 (defn- runtime-processing-session?
   [conversation-id]
-  (let [active (agent-runtime/active-agent-session conversation-id)
-        streaming? (and active (true? (aget active "isStreaming")))
-        current-turn? (and active
-                           (try
-                             (some? (aget active "currentTurn"))
-                             (catch js/Error _ false)))
+  (let [active (agent-session/active-agent-session conversation-id)
+        active-streaming? (and active (streaming? active))
+        active-turn? (and active
+                          (try
+                            (some? (knoxx.backend.shape.agent/current-turn active))
+                            (catch js/Error _ false)))
         registered-turn? (some? (turn-control/active-turn conversation-id))]
-    (or streaming? current-turn? registered-turn?)))
+    (or active-streaming? active-turn? registered-turn?)))
 
 (defn- session-hot?
   "A session is 'hot' if it was updated very recently. Recovery skips hot

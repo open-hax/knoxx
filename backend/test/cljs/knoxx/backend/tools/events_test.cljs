@@ -1,7 +1,7 @@
 (ns knoxx.backend.tools.events-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.actor.tools :as actor-tools]
-            [knoxx.backend.tools.events :as event-tools]))
+            [knoxx.backend.domain.event.tools :as event-tools]))
 
 (defn- assert-valid-self-headers
   [headers]

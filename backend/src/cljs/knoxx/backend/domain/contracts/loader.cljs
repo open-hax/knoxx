@@ -1,5 +1,5 @@
 ;; contracts/loader.cljs
-(ns knoxx.backend.contracts.loader
+(ns knoxx.backend.domain.contracts.loader
   (:require [clojure.string :as str]
             [cljs.reader :as reader]
             [knoxx.backend.domain.actor.scope :as actor-scope]

@@ -1,5 +1,5 @@
-(ns knoxx.backend.runtime.defaults
-  (:require [knoxx.backend.runtime.models :as runtime-models]))
+(ns knoxx.backend.infra.defaults
+  (:require [knoxx.backend.domain.models :as runtime-models]))
 
 (defn default-model
   [config]

@@ -1,39 +1,12 @@
+(ns knoxx.backend.infra.agent.message
+  (:require [clojure.string :as str]
+            [knoxx.backend.extern.agent-message :as xagent-message]))
+
 (defn stored-session-message->agent-message
   [message]
-  (let [role (some-> (:role message) str)
-        content (some-> (:content message) str)
-        content-parts (vec (keep stored-content-part->agent-part (or (:content-parts message) [])))
-        payload (cond
-                  (seq content-parts) (clj->js content-parts)
-                  (not (str/blank? content)) #js [#js {:type "text" :text content}]
-                  :else nil)]
-    (cond
-      (= "compactionSummary" role)
-      (when-let [summary (some-> (or (:summary message) (:content message)) str str/trim not-empty)]
-        #js {:role "compactionSummary"
-             :summary summary
-             :tokensBefore (or (:tokensBefore message) (:tokens-before message) 0)
-             :timestamp (.now js/Date)})
+  (xagent-message/stored-message->agent-message message))
 
-      (and (contains? #{"user" "assistant" "system"} role)
-           payload)
-      (let [agent-message #js {:role role
-                               :content payload
-                               :timestamp (.now js/Date)}]
-        ;; Eta-mu auto-compaction's pre-prompt check assumes assistant messages
-        ;; have a fully populated usage map. Rehydrated Knoxx transcripts often
-        ;; predate usage persistence, so provide a zero-value sentinel instead
-        ;; of crashing on `usage.totalTokens` before the next sticky turn.
-        (when (= "assistant" role)
-          (aset agent-message "usage" (clj->js (or (:usage message)
-                                                    {:input 0
-                                                     :output 0
-                                                     :cacheRead 0
-                                                     :cacheWrite 0
-                                                     :totalTokens 0}))))
-        agent-message))))
-
-(defn- planner-row->stored-session-message
+(defn planner-row->stored-session-message
   [row]
   (let [role (some-> (:role row) str)
         text (some-> (:text row) str)]
@@ -42,19 +15,7 @@
       {:role role
        :content text})))
 
-(defn- fetch-openplanner-session-messages!
-  [config conversation-id]
-  (if (or (str/blank? conversation-id)
-          (not (http/openplanner-enabled? config)))
-    (js/Promise.resolve [])
-    (-> (http/openplanner-request! config "GET" (str "/v1/sessions/" conversation-id))
-        (.then (fn [body]
-                 (->> (or (:rows body) [])
-                      (keep planner-row->stored-session-message)
-                      vec)))
-        (.catch (fn [err]
-                  (.warn js/console "[knoxx] failed to fetch OpenPlanner session transcript" err)
-                  [])))))
+
 
 (defn- comparable-session-message
   [message]
@@ -103,79 +64,13 @@
                       (or (:content-parts message) (:contentParts message) [])))))
 (defn stored-content-part->agent-part
   [part]
-  (let [part-type (some-> (:type part) str str/lower-case)
-        text (some-> (:text part) str)
-        url (some-> (:url part) str)
-        data (some-> (:data part) str)
-        mime-type (some-> (:mimeType part) str)
-        filename (some-> (:filename part) str)]
-    (case part-type
-      "text" (when (not (str/blank? (str text)))
-               #js {:type "text" :text text})
-      ;; Image part routing for the eta-mu SDK:
-      ;; eta-mu requires {type "image" :data <RAW-base64-no-prefix> :mimeType "image/..."}.
-      ;; Never use image_url shape — eta-mu does not handle it.
-      ;; Remote URLs should have been materialized (fetched → data URI) before reaching here.
-      "image" (cond
-                (and (string? data) (not (str/blank? data)) (str/starts-with? data "data:"))
-                (let [comma (.indexOf data ",")
-                      raw   (if (>= comma 0) (.slice data (inc comma)) data)
-                      mime  (or mime-type
-                                (second (re-find #"data:([^;,]+)" data))
-                                "image/png")]
-                  #js {:type "image" :data raw :mimeType mime})
+  (xagent-message/content-part->agent-part part))
 
-                (and (string? data) (not (str/blank? data)))
-                #js {:type "image" :data data :mimeType (or mime-type "image/png")}
+(defn mime->audio-format
+  [mime-type]
+  (xagent-message/mime->audio-format mime-type))
 
-                (and (string? url) (not (str/blank? url)))
-                #js {:type "image_url" :image_url #js {:url url}}
-
-                :else nil)
-      "audio" (cond
-                (and (string? data) (not (str/blank? data)) (str/starts-with? data "data:"))
-                (let [comma (.indexOf data ",")
-                      raw   (if (>= comma 0) (.slice data (inc comma)) data)
-                      mime  (or mime-type
-                                (second (re-find #"data:([^;,]+)" data))
-                                "audio/mpeg")]
-                  #js {:type "audio"
-                       :data raw
-                       :mimeType mime
-                       :format (or (mime->audio-format mime) "mp3")})
-
-                (and (string? data) (not (str/blank? data)))
-                #js {:type "audio"
-                     :data data
-                     :mimeType mime-type
-                     :format (or (mime->audio-format mime-type) "mp3")}
-
-                (and (string? url) (not (str/blank? url)))
-                #js {:type "audio"
-                     :data url
-                     :mimeType mime-type
-                     :format (or (mime->audio-format mime-type) "mp3")}
-
-                :else nil)
-      "video" (when (not (str/blank? (str (or data url))))
-                #js {:type "video" :data (or data url) :mimeType mime-type})
-      "document" (when (not (str/blank? (str (or data url))))
-                   #js {:type "document" :data (or data url) :mimeType mime-type :filename filename})
-      nil)))
-
-(defn- mime->audio-format [mime-type]
-  (let [mime (some-> mime-type str str/lower-case)]
-    (case mime
-      "audio/mpeg" "mp3"
-      "audio/mp4" "mp4"
-      "audio/wav" "wav"
-      "audio/x-wav" "wav"
-      "audio/ogg" "ogg"
-      "audio/flac" "flac"
-      "audio/aac" "aac"
-      (some-> mime (str/split #"/") second))))
-
-(defn- split-think-tags
+(defn split-think-tags
   "Extract a leading <think>...</think> block from assistant text.
 
    Some Gemma-family models emit thinking traces inline instead of as structured

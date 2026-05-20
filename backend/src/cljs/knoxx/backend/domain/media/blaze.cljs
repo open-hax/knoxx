@@ -1,11 +1,11 @@
-(ns knoxx.backend.tools.blaze
+(ns knoxx.backend.domain.media.blaze
   "BlazeAPI-backed media and chat generation tools."
   (:require [clojure.string :as str]
             [promesa.core :as p]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.tools.media :as media]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.domain.media :as media]
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs-promises]
             ["node:path" :as path]))

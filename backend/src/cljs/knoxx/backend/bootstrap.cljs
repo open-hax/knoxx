@@ -7,23 +7,27 @@
    - This namespace orchestrates startup but should not be a dependency-injection
      dump for the whole backend."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.agent.agent-resume :as agent-resume]
-            [knoxx.backend.domain.auth.session :as auth-session]
+            [knoxx.backend.infra.agent.resume :as agent-resume]
+            [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.core :as core]
-            [knoxx.backend.domain.discord.discord-gateway :as discord-gateway]
+            [knoxx.backend.domain.discord.gateway :as discord-gateway]
             [knoxx.backend.domain.discord.discord-reaction-labels :as discord-reaction-labels]
             [knoxx.backend.infra.graceful-shutdown :as graceful-shutdown]
             [knoxx.backend.infra.http-server :as http-server]
             [knoxx.backend.infra.lifecycle :as lifecycle]
             [knoxx.backend.infra.db.policy :as policy-db]
             [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.infra.stores.composite-session-store :refer [->CompositeSessionStore]]
+            [knoxx.backend.infra.stores.openplanner-session-store :refer [->OpenPlannerSessionStore]]
+            [knoxx.backend.infra.stores.redis-session-store :refer [->RedisSessionStore]]
+            [knoxx.backend.infra.stores.session-store-registry :as store-registry]
             [knoxx.backend.infra.routes.auth :as auth-routes]
             [knoxx.backend.infra.routes.mcp :as mcp-http]
             [knoxx.backend.infra.routes.tools.proxy :as proxy-routes]
-            [knoxx.backend.runtime.config :as runtime-config]
-            [knoxx.backend.runtime.models :as runtime-models]
+            [knoxx.backend.infra.config :as runtime-config]
+            [knoxx.backend.domain.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.domain.agent.turn :refer [lounge-messages*]]))
+            [knoxx.backend.infra.agent.turn :refer [lounge-messages*]]))
 
 (defn- env
   [k default]
@@ -130,6 +134,10 @@
                        (.then (fn [client]
                                 (when client
                                   (.info log "Redis connected for session persistence")
+                                  (reset! store-registry/session-store*
+                                          (->CompositeSessionStore
+                                           (->RedisSessionStore client)
+                                           (->OpenPlannerSessionStore cfg)))
                                   ;; Fire-and-forget: must not block startup.
                                   ;; Guarded so shadow-cljs hot reload does not spawn
                                   ;; recovery jobs as if the Node process had restarted.

@@ -4,9 +4,9 @@
    Supports images, audio, video, and documents for multimodal AI interactions.
    Files are stored temporarily and served back to the frontend for preview/playback."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :refer [ensure-tool!]]
+            [knoxx.backend.infra.auth.authz :refer [ensure-tool!]]
             [knoxx.backend.infra.http :refer [js-array-seq]]
-            [knoxx.backend.util.time :refer [now-iso]]
+            [knoxx.backend.domain.time :refer [now-iso]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 

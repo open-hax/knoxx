@@ -1,10 +1,10 @@
-;; Tests for knoxx.backend.infra.node.path and knoxx.backend.infra.node.crypto
+;; Tests for knoxx.backend.domain.node.path and knoxx.backend.domain.node.crypto
 ;; Pure fns — no async, no fixtures needed.
 
 (ns knoxx.backend.node.path-crypto-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.infra.node.path :as path]
-            [knoxx.backend.infra.node.crypto :as crypto]))
+            [knoxx.backend.domain.node.path :as path]
+            [knoxx.backend.domain.node.crypto :as crypto]))
 
 ;; -- path ------------------------------------------------------------------
 

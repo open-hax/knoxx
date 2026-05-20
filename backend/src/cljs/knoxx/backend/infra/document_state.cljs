@@ -1,8 +1,8 @@
 (ns knoxx.backend.infra.document-state
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :as authz]
-            [knoxx.backend.util.time :as time]
-            [knoxx.backend.domain.openplanner.memory :as op-memory]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.domain.time :as time]
+            [knoxx.backend.infra.openplanner.memory :as op-memory]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))

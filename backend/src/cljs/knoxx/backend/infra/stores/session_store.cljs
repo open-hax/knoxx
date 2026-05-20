@@ -1,4 +1,4 @@
-(ns knoxx.backend.domain.sessions.session-store
+(ns knoxx.backend.infra.stores.session-store
   "Redis-backed session state for resilient Knoxx sessions.
 
    Active sessions are stored in Redis with TTL. When a session completes,

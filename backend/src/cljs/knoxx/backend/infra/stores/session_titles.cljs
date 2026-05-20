@@ -1,8 +1,11 @@
-(ns knoxx.backend.domain.sessions.session-titles
+(ns knoxx.backend.infra.stores.session-titles
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.json :as xjson]
+            [knoxx.backend.extern.promise :as promise]
+            [knoxx.backend.extern.proxx :as proxx]
             [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.util.time :as time]
+            [knoxx.backend.domain.time :as time]
             [knoxx.backend.domain.text :as text]))
 
 (defonce session-titles* (atom {}))
@@ -135,12 +138,7 @@
 
 (defn parse-json-object
   [value]
-  (cond
-    (map? value) value
-    (string? value) (try
-                      (js->clj (.parse js/JSON value) :keywordize-keys true)
-                      (catch :default _ nil))
-    :else nil))
+  (xjson/parse-object value))
 
 (defn session-title-row-entry
   [row]
@@ -318,8 +316,7 @@
                                         vec)]
                    (if (empty? session-ids)
                      @session-titles*
-                     (-> (.all js/Promise
-                               (clj->js (map preload-session-title-entry! (repeat config) session-ids)))
+                     (-> (promise/all-vec (mapv preload-session-title-entry! (repeat config) session-ids))
                          (.then (fn [_]
                                   @session-titles*)))))))
         (.catch (fn [err]
@@ -346,36 +343,23 @@
             (str/blank? (:proxx-auth-token config)))
       (js/Promise.resolve {:title fallback
                            :title_model nil})
-      (let [payload #js {:model "auto:cheapest"
-                         :messages (clj->js [{:role "system"
-                                              :content "You create very short, useful session titles. Return only the title text, 2 to 6 words, with no quotes, no markdown, and no explanation."}
-                                             {:role "user"
-                                              :content (str "Create a concise title for this Knoxx session based on the opening request.\n\nRequest:\n"
-                                                            (or (text/value->preview-text seed-text 900) ""))}])
-                         :temperature 0.1
-                         :max_tokens 24
-                         :stream false}]
-        (-> (backend-http/fetch-json (str (:proxx-base-url config) "/v1/chat/completions")
-                                     #js {:method "POST"
-                                          :headers (backend-http/bearer-headers (:proxx-auth-token config))
-                                          :body (.stringify js/JSON payload)})
-            (.then (fn [resp]
-                     (if (aget resp "ok")
-                       (let [body (aget resp "body")
-                             choices (or (aget body "choices") #js [])
-                             first-choice (aget choices 0)
-                             message (or (aget first-choice "message") #js {})
-                             content (or (aget message "content")
-                                         (aget first-choice "text")
-                                         "")
-                             reasoning-content (or (aget message "reasoning_content")
-                                                   (aget message "reasoningContent")
-                                                   "")
-                             title-candidate (or (normalize-session-title content)
+      (let [request {:model "auto:cheapest"
+                     :messages [{:role "system"
+                                 :content "You create very short, useful session titles. Return only the title text, 2 to 6 words, with no quotes, no markdown, and no explanation."}
+                                {:role "user"
+                                 :content (str "Create a concise title for this Knoxx session based on the opening request.\n\nRequest:\n"
+                                               (or (text/value->preview-text seed-text 900) ""))}]
+                     :temperature 0.1
+                     :max_tokens 24
+                     :stream false}]
+        (-> (proxx/chat-completion! config request)
+            (.then (fn [{:keys [ok? model content reasoning-content]}]
+                     (if ok?
+                       (let [title-candidate (or (normalize-session-title content)
                                                  (title-from-reasoning-content reasoning-content)
                                                  fallback)]
                          {:title (or (normalize-session-title title-candidate fallback) fallback)
-                          :title_model (or (aget body "model") "auto:cheapest")})
+                          :title_model (or model "auto:cheapest")})
                        {:title fallback
                         :title_model nil})))
             (.catch (fn [_]

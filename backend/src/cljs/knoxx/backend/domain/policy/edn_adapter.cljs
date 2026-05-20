@@ -5,9 +5,9 @@
    rather than trusting directory placement. Actor maps are validated through
    open-hax.contracts.schema via the shared policy protocol."
   (:require [clojure.string :as str]
-            [knoxx.backend.contracts.loader :as contracts-loader]
+            [knoxx.backend.domain.contracts.loader :as contracts-loader]
             [knoxx.backend.domain.policy.protocol :as policy]
-            [knoxx.backend.tools.registry :as tool-registry]
+            [knoxx.backend.infra.registry.tools :as tool-registry]
             ["node:fs" :as fs]
             ["node:fs/promises" :as fs-promises]
             ["node:path" :as path]))

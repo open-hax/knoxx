@@ -1,11 +1,11 @@
-(ns knoxx.backend.contracts.resolve
+(ns knoxx.backend.domain.contracts.resolve
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.agent-templates :as templates]
             [knoxx.backend.domain.actor.scope :as actor-scope]
-            [knoxx.backend.contracts.loader :as loader]
-            [knoxx.backend.contracts.roles :as roles]
-            [knoxx.backend.contracts.sources :as sources]
-            [knoxx.backend.tools.registry :as tool-registry]))
+            [knoxx.backend.domain.contracts.loader :as loader]
+            [knoxx.backend.domain.contracts.roles :as roles]
+            [knoxx.backend.domain.contracts.sources :as sources]
+            [knoxx.backend.infra.registry.tools :as tool-registry]))
 
 (def known-actor-keys #{:id :kind :default-agent :role-slugs :capability-ids :system-prompt :task-prompt :thinking-level :model :contract-id :model-profile :tool-policies :ui/actions :actor/sources :sources})
 (def known-role-keys #{:id :role/capabilities :role/permissions :role/prompts :role/sources :sources})

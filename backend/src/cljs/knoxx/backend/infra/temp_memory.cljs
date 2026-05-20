@@ -1,4 +1,4 @@
-(ns knoxx.backend.tools.temp-memory
+(ns knoxx.backend.infra.temp-memory
   "Short-term memory tool. Agents read/write keyed blobs with TTL.
    Backed by Redis when available; falls back to a process-local atom."
   (:require [knoxx.backend.infra.redis-client :as redis]))

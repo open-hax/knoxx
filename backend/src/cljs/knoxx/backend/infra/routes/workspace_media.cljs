@@ -10,7 +10,7 @@
    no auth context exists (typical for local/dev)."
   (:require [clojure.string :as str]
             [promesa.core :as p]
-            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.domain.media :as media]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))

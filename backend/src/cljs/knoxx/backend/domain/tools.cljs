@@ -1,4 +1,4 @@
-(ns knoxx.backend.tools.shared
+(ns knoxx.backend.domain.tools
   "Shared utilities for agent tool factories.
    Sanitization, TypeBox helpers, and generic tool-update callbacks."
   (:require [clojure.string :as str]

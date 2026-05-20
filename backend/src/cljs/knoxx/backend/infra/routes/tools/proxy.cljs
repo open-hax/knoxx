@@ -9,7 +9,7 @@
             [knoxx.backend.infra.core-memory :as core-memory]
             [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.infra.eta-mu-session-ingester :as eta-mu-sessions]
-            [knoxx.backend.infra.opencode-session-ingester :as opencode-sessions]))
+            [knoxx.backend.infra.source.opencode-session-ingester :as opencode-sessions]))
 
 (defn- enrich-session-summary!
   [config summary]

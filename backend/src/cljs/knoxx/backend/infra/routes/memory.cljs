@@ -9,12 +9,12 @@
                                                session-summary-scope-from-rows
                                                filter-authorized-memory-hits!
                                                authorized-session-ids!]]
-            [knoxx.backend.domain.openplanner.memory :refer [openplanner-memory-search!]]
+            [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search!]]
             [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.domain.sessions.session-store :as session-store]
-            [knoxx.backend.domain.sessions.session-titles :refer [session-titles*
+            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.session-titles :refer [session-titles*
                                                   session-title-promises*
                                                   session-title-backfill*
                                                   session-title-seed-text
@@ -23,15 +23,15 @@
                                                   normalize-session-title
                                                   cache-session-title!
                                                   start-session-title-backfill!]]
-            [knoxx.backend.domain.auth.authz :refer [ctx-actor-id
+            [knoxx.backend.infra.auth.authz :refer [ctx-actor-id
                                          ctx-membership-id
                                          ctx-org-id
                                          ctx-permitted?
                                          ctx-user-id
                                          system-admin?
                                          ensure-permission!]]
-            [knoxx.backend.util.parse :refer [parse-positive-int truthy-param?]]
-            [knoxx.backend.util.time :refer [now-iso]]
+            [knoxx.backend.shape.parse :refer [parse-positive-int truthy-param?]]
+            [knoxx.backend.domain.time :refer [now-iso]]
             [shadow.cljs.modern :refer [js-await]]
             ["node:crypto" :as crypto]))
 

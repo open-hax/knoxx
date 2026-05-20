@@ -1,4 +1,4 @@
-(ns knoxx.backend.tools.openutau
+(ns knoxx.backend.domain.openutau.tools
   (:require [clojure.string :as str]))
 
 (def default-ustx-version "0.6")

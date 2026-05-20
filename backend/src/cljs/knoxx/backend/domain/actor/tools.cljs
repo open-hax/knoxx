@@ -3,11 +3,11 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.tools.shared :refer [create-tool-obj json-parse live-config maybe-tool-update!]]))
+            [knoxx.backend.domain.tools :refer [create-tool-obj json-parse live-config maybe-tool-update!]]))
 
 (def send-message-params
   [:map

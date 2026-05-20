@@ -1,36 +1,40 @@
-(ns knoxx.backend.domain.agent.turn
+(ns knoxx.backend.infra.agent.turn
   "Main turn orchestrator: send-agent-turn! and supporting lifecycle functions."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.agent.agent-hydration :refer [settings-state* ensure-settings!
+            [knoxx.backend.infra.agent.hydration :refer [settings-state* ensure-settings!
                                                                 passive-hydration! passive-memory-hydration!
                                                                 build-agent-user-message
                                                                 hydration-sources]]
-            [knoxx.backend.domain.agent.agent-runtime :refer [ensure-agent-session! remove-agent-session! prune-session-messages]]
+            [knoxx.backend.infra.agent.session :refer [ensure-agent-session! remove-agent-session! prune-session-messages]]
+            [knoxx.backend.infra.agent.message :as msg]
+            [knoxx.backend.extern.agent-turn-media :as xturn-media]
+            [knoxx.backend.extern.agent-turn-node :as xturn-node]
+            [knoxx.backend.extern.agent-turn-prompt :as xturn-prompt]
+            [knoxx.backend.extern.agent-turn-result :as xturn-result]
+            [knoxx.backend.extern.promise :as xpromise]
             [knoxx.backend.domain.agent.agent-templates :as templates]
             [knoxx.backend.domain.agent.content :as content :refer [model-ready-content-parts merge-content-parts]]
-            [knoxx.backend.domain.agent.policy :as policy]
-            [knoxx.backend.domain.agent.stream :as stream]
-            [knoxx.backend.domain.agent.transcript :as transcript]
-            [knoxx.backend.domain.auth.authz :as authz :refer [auth-snapshot]]
+            [knoxx.backend.infra.agent.policy :as policy]
+            [knoxx.backend.infra.agent.stream :as stream]
+            [knoxx.backend.infra.agent.transcript :as transcript]
+            [knoxx.backend.infra.auth.authz :as authz :refer [auth-snapshot]]
             [knoxx.backend.infra.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
             [knoxx.backend.infra.http :as http]
-            [knoxx.backend.domain.openplanner.memory :as openplanner-memory]
-            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.infra.openplanner.memory :as openplanner-memory]
+            [knoxx.backend.domain.media :as media]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.domain.action.run-state :refer [store-run! append-run-event! update-run!
                                                            finalize-run-trace-blocks! tool-event-payload
                                                            record-retrieval-sample! latest-assistant-message
                                                            set-event-stream-sink! clear-event-stream-sink!]]
-            [knoxx.backend.runtime.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
-            [knoxx.backend.domain.sessions.session-store :as session-store]
-            [knoxx.backend.domain.sessions.session-titles :refer [maybe-prime-session-title!]]
+            [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
+            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.domain.agent.agent-context :as agent-ctx]
-            [knoxx.backend.util.time :refer [now-iso]]
-            ["node:crypto" :as crypto]
-            ["node:fs/promises" :as fs]))
+            [knoxx.backend.domain.time :refer [now-iso]]))
 
 (defonce conversation-access* (atom {}))
 (defonce lounge-messages* (atom []))
@@ -60,9 +64,9 @@
         (assoc :roleSlugs [(:role agent-spec)])))))
 
 (defn ensure-session-id
-  [node-crypto session-id]
+  [session-id]
   (or (content/nonblank session-id)
-      (.randomUUID node-crypto)))
+      (xturn-node/random-uuid!)))
 
 
 
@@ -171,7 +175,7 @@
                    (assistant-message-text assistant-message)
                    chunked))
         assistant-content-parts (content/assistant-content-parts assistant-message)
-        usage (or (aget assistant-message "usage") #js {})
+        usage-tokens (xturn-result/usage-tokens assistant-message)
         reasoning-text (let [streamed (apply str @(:reasoning-chunks state))
                              final-reasoning (assistant-message-reasoning-text assistant-message)]
                          (cond
@@ -181,7 +185,7 @@
         ;; If the provider didn't supply structured reasoning, try to extract a
         ;; leading <think>...</think> block from the assistant message.
         think-split (when (str/blank? (str reasoning-text))
-                      (split-think-tags answer))
+                      (msg/split-think-tags answer))
         answer (if (and think-split (:hadThinkTags think-split))
                  (:answer think-split)
                  answer)
@@ -189,7 +193,7 @@
                          (:reasoning think-split)
                          reasoning-text)
         elapsed (- (.now js/Date) started-ms)
-        output-tokens (or (aget usage "output") 0)
+        output-tokens (:output-tokens usage-tokens)
         tokens-per-second (when (and (pos? output-tokens) (pos? elapsed))
                             (* 1000 (/ output-tokens elapsed)))
         sources (hydration-sources hydration)
@@ -218,7 +222,7 @@
                                              (assoc :updated_at (now-iso)
                                                     :status "completed"
                                                     :total_time_ms elapsed
-                                                    :input_tokens (or (aget usage "input") 0)
+                                                    :input_tokens (:input-tokens usage-tokens)
                                                     :output_tokens output-tokens
                                                     :tokens_per_s tokens-per-second
                                                     :answer answer
@@ -328,7 +332,7 @@
       (let [raw-data (content/nonblank (:data part))
             parsed (when (= "image" part-type)
                      (data-url->image-attachment raw-data))
-            data (or (:data parsed) (strip-data-url raw-data))
+            data (or (:data parsed) (xturn-media/strip-data-url raw-data))
             mime-type (content/nonblank
                        (some-> (or (:mimeType part) (:mimeType parsed))
                                name))
@@ -366,10 +370,10 @@
 
       :else "")))
 (defn- prompt-and-await!
-  [ config session-id run-id conversation-id started-ms model-id mode
+  [config session-id run-id conversation-id started-ms model-id mode
    session message prompt-content-parts hydration memory-hydration
    persisted-request-messages agent-spec]
-  (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms crypto)
+  (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms xturn-node/random-uuid!)
         abort! (fn [reason] (stream/request-abort! state session reason))
         _registered (stream/register-active-turn! state abort! agent-spec)
         unsubscribe (.subscribe session (stream/build-subscribe-handler state session))
@@ -386,35 +390,21 @@
         final-text (cond-> base-text
                      (pos? omitted-count)
                      (str "\n\n" "[Note: " omitted-count " unsupported attachment(s) were omitted for this model/runtime.]"))
-        content (if (seq media-parts)
-                  (clj->js (conj media-parts {:type "text" :text final-text}))
-                  final-text)]
-    (let [hash-data (fn [s] (str "[img:sha=" (.slice (.toString (.from js/Buffer s "base64") "hex") 0 12) " len=" (count s) "]"))
-          safe-part (fn [p]
-                      (let [m (js->clj p :keywordize-keys true)]
-                        (if (and (:data m) (> (count (:data m)) 64))
-                          (clj->js (assoc m :data (hash-data (:data m))))
-                          p)))
-          log-content (if (array? content)
-                        (clj->js (mapv safe-part (array-seq content)))
-                        content)]
-      (js/console.log "[prompt-and-await!]"
-                      (js/JSON.stringify
-                       #js {:run_id run-id
-                            :session_id session-id
-                            :conversation_id conversation-id
-                            :model_id model-id
-                            :mode mode
-                            :parts_count (count parts)
-                            :media_parts_count (count media-parts)
-                            :omitted_count omitted-count
-                            :content_type (if (array? content) "multipart" "text")
-                            :content log-content})))
+        content (xturn-prompt/prompt-content media-parts final-text)]
+    (xturn-prompt/log-prompt! {:run-id run-id
+                               :session-id session-id
+                               :conversation-id conversation-id
+                               :model-id model-id
+                               :mode mode
+                               :parts-count (count parts)
+                               :media-parts-count (count media-parts)
+                               :omitted-count omitted-count
+                               :content content})
     (agent-ctx/set-context! {:session-id session-id
                              :conversation-id conversation-id
                              :run-id run-id
                              :agent-spec agent-spec})
-    (-> (.sendUserMessage session content)
+    (-> (xturn-prompt/send-user-message! session content)
         (.then (fn [_]
                  (agent-ctx/clear-context!)
                  (unsubscribe)
@@ -431,81 +421,34 @@
 
 
 
-(defn studio-stream-path  [value]
-  (try
-    (let [u (js/URL. (resolve-media-url value))]
-      (when (= (.-pathname u) "/api/studio/stream")
-        (some-> (.-searchParams u) (.get "path") str str/trim not-empty)))
-    (catch :default _ nil)))
-(defn read-workspace-media-data-url!  [raw-path fallback-mime label]
+(defn studio-stream-path
+  [value]
+  (xturn-media/studio-stream-path value))
+
+(defn read-workspace-media-data-url!
+  [runtime config max-bytes raw-path fallback-mime label]
   (let [normalized (media/normalize-tool-path-arg raw-path)
         {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)
         mime (or (media/workspace-media-mime-type relative) fallback-mime)]
-    (-> (media/fs-stat! fs absolute)
-        (.then (fn [stat]
-                 (when-not (.isFile stat)
-                   (throw (js/Error. (str "Attached " label " is not a file"))))
-                 (let [size (.-size stat)]
-                   (when (> size max-bytes)
-                     (throw (js/Error. (str "Attached " label " exceeds max bytes: " size "; max=" max-bytes))))
-                   (.readFile fs absolute))))
-        (.then (fn [buf]
-                 (str "data:" mime ";base64," (.toString buf "base64")))))))
+    (xturn-node/file-data-url! absolute mime label max-bytes)))
 
 
-(defn fetch-media-data-url!  [url fallback-mime label]
+(defn fetch-media-data-url!
+  [runtime config auth-context max-bytes url fallback-mime label]
   (if-let [stream-path (studio-stream-path url)]
-    (read-workspace-media-data-url! stream-path fallback-mime label)
-    (let [url (resolve-media-url url)
-          headers #js {}
-          auth-email (or (some-> auth-context :userEmail str str/trim not-empty)
-                         (some-> auth-context :user-email str str/trim not-empty)
-                         (some-> auth-context :user :email str str/trim not-empty))
-          auth-org-slug (or (some-> auth-context :orgSlug str str/trim not-empty)
-                            (some-> auth-context :org-slug str str/trim not-empty)
-                            (some-> auth-context :org :slug str str/trim not-empty))
-          auth-membership-id (or (some-> auth-context :membershipId str str/trim not-empty)
-                                 (some-> auth-context :membership-id str str/trim not-empty)
-                                 (some-> auth-context :membership :id str str/trim not-empty))
-          local-knoxx-url? (and (string? url)
-                                (or (str/starts-with? url "http://127.0.0.1:8000/")
-                                    (str/starts-with? url "http://localhost:8000/")
-                                    (str/starts-with? url "http://0.0.0.0:8000/")
-                                    (str/starts-with? url "http://knoxx.promethean.rest/")
-                                    (str/starts-with? url "https://knoxx.promethean.rest/")))]
-      (when (and local-knoxx-url? auth-email)
-        (aset headers "x-knoxx-user-email" auth-email))
-      (when (and local-knoxx-url? auth-org-slug)
-        (aset headers "x-knoxx-org-slug" auth-org-slug))
-      (when (and local-knoxx-url? auth-membership-id)
-        (aset headers "x-knoxx-membership-id" auth-membership-id))
-      (-> (js/fetch url #js {:method "GET"
-                             :headers headers})
-          (.then (fn [resp]
-                   (when-not (.-ok resp)
-                     (throw (js/Error. (str "Failed to fetch " label ": HTTP " (.-status resp)))))
-                   (let [len-h (some-> resp (.-headers) (.get "content-length"))
-                         len (when len-h (js/parseInt len-h 10))]
-                     (when (and (number? len) (pos? len) (> len max-bytes))
-                       (throw (js/Error. (str "Remote " label " exceeds max bytes: " len))))
-                     (-> (.arrayBuffer resp)
-                         (.then (fn [ab]
-                                  (let [buf (js/Buffer.from ab)
-                                        size (.-length buf)
-                                        _ (when (> size max-bytes)
-                                            (throw (js/Error. (str "Remote " label " exceeds max bytes: " size))))
-                                        mime (or (some-> resp (.-headers) (.get "content-type")) fallback-mime)
-                                        b64 (.toString buf "base64")]
-                                    (str "data:" mime ";base64," b64))))))))))))
-(defn materialize-part!  [part]
+    (read-workspace-media-data-url! runtime config max-bytes stream-path fallback-mime label)
+    (xturn-media/fetch-data-url! url fallback-mime label max-bytes auth-context)))
+
+(defn materialize-part!
+  [runtime config auth-context max-bytes part]
   (let [part-type (content-part-type part)]
     (cond
       (not (#{"image" "audio"} part-type)) (js/Promise.resolve part)
 
-      (data-url? (:data part)) (js/Promise.resolve part)
+      (xturn-media/data-url? (:data part)) (js/Promise.resolve part)
 
-      (media-url? (:data part))
-      (-> (fetch-media-data-url! (:data part)
+      (xturn-media/media-url? (:data part))
+      (-> (fetch-media-data-url! runtime config auth-context max-bytes (:data part)
                                  (if (= part-type "audio") "audio/mpeg" "image/png")
                                  part-type)
           (.then (fn [data-url]
@@ -513,8 +456,8 @@
                        (dissoc :url)
                        (assoc :data data-url)))))
 
-      (media-url? (:url part))
-      (-> (fetch-media-data-url! (:url part)
+      (xturn-media/media-url? (:url part))
+      (-> (fetch-media-data-url! runtime config auth-context max-bytes (:url part)
                                  (if (= part-type "audio") "audio/mpeg" "image/png")
                                  part-type)
           (.then (fn [data-url]
@@ -523,26 +466,26 @@
                        (assoc :data data-url)))))
 
       :else (js/Promise.resolve part))))
-(defn materialize-content-parts!  [parts]
+(defn materialize-content-parts!
+  [runtime config model-id auth-context max-bytes parts]
   (let [parts (vec (or parts []))
         should-materialize? (some (fn [part]
                                     (let [part-type (content-part-type part)]
-                                      (and part-type
+                                      (and (#{"image" "audio"} part-type)
                                            (model-supports-input? config model-id part-type))))
                                   parts)]
     (if-not (and (seq parts) should-materialize?)
       (js/Promise.resolve parts)
-      (-> (js/Promise.all (clj->js (map materialize-part! parts)))
-          (.then (fn [items]
-                   (vec (array-seq items))))))))
+      (xpromise/all-vec
+       (mapv #(materialize-part! runtime config auth-context max-bytes %) parts)))))
 (defn send-agent-turn!
   [runtime config {:keys [conversation-id session-id message content-parts template-context model mode run-id auth-context thinking-level agent-spec]}]
   (js/Promise.
    (fn [resolve reject]
      (try
        (resolve
-        (let [conversation-id (or conversation-id (.randomUUID crypto))
-              session-id (ensure-session-id crypto session-id)
+        (let [conversation-id (or conversation-id (xturn-node/random-uuid!))
+              session-id (ensure-session-id session-id)
               auth-context (auth-context-for-agent-turn auth-context agent-spec)
               agent-spec (templates/render-agent-prompts agent-spec auth-context template-context)
               _ (ensure-conversation-access! auth-context conversation-id)
@@ -557,7 +500,7 @@
                                                                            thinking-level-raw
                                                                            (:agent-thinking-level config)
                                                                            "off"))
-              run-id (or run-id (.randomUUID crypto))
+              run-id (or run-id (xturn-node/random-uuid!))
               started-at (now-iso)
               started-ms (.now js/Date)
               existing-messages (vec (or (:messages (session-store/get-session-sync session-id)) []))
@@ -578,16 +521,13 @@
                          ;; the actual attachment payload instead of a brittle reference.
                          ;; -------------------------------------------------------------------
                          (let [max-bytes 32000000]
-                           (-> (.all js/Promise
-                                     #js [(passive-hydration! runtime config mode message auth-context)
-                                          (passive-memory-hydration! config conversation-id message auth-context agent-spec)
-                                          (materialize-content-parts! content-parts)
-                                          (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)])
-                               (.then (fn [results]
-                                        (let [hydration (aget results 0)
-                                              memory-hydration (aget results 1)
-                                              materialized-content-parts (vec (or (aget results 2) []))
-                                              session (aget results 3)
+                           (-> (xpromise/all-vec
+                                [(passive-hydration! runtime config mode message auth-context)
+                                 (passive-memory-hydration! config conversation-id message auth-context agent-spec)
+                                 (materialize-content-parts! runtime config model-id auth-context max-bytes content-parts)
+                                 (ensure-agent-session! runtime config conversation-id model-id auth-context thinking-level session-id agent-spec)])
+                               (.then (fn [[hydration memory-hydration materialized-content-parts session]]
+                                        (let [materialized-content-parts (vec (or materialized-content-parts []))
                                               turn-message (content/nonblank message)
                                               user-message (if (seq materialized-content-parts)
                                                              {:role "user" :content turn-message :content-parts materialized-content-parts}
@@ -631,7 +571,7 @@
                                                                             :messages persisted-request-messages
                                                                             :conversation_id conversation-id
                                                                             :run_id run-id})
-                                            (prompt-and-await! runtime config session-id run-id conversation-id started-ms model-id mode
+                                            (prompt-and-await! config session-id run-id conversation-id started-ms model-id mode
                                                                session turn-message prompt-content-parts hydration memory-hydration
                                                                persisted-request-messages agent-spec))))))))))))
         )

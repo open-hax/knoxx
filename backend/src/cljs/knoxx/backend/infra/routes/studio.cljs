@@ -1,7 +1,7 @@
 (ns knoxx.backend.infra.routes.studio
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
-            [knoxx.backend.tools.media :as media]
+            [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.label.audio :as labels]
             [knoxx.backend.infra.routes.studio.discord-scan :as studio-discord-scan]
             ["node:fs" :as node-fs]

@@ -1,31 +1,31 @@
-(ns knoxx.backend.domain.agent.agent-hydration
+(ns knoxx.backend.infra.agent.hydration
   "Agent hydration orchestration: settings, passive RAG/memory hydration,
    message assembly, and tool-suite composition.  All implementation lives
    in vertical domain slices under knoxx.backend.tools.<domain>."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.core-memory :refer [filter-authorized-memory-hits!]]
-            [knoxx.backend.contracts.sources :as sources]
+            [knoxx.backend.domain.contracts.sources :as sources]
             [knoxx.backend.infra.http :refer [openplanner-enabled?]]
-            [knoxx.backend.domain.openplanner.memory :refer [openplanner-memory-search!]]
-            [knoxx.backend.runtime.defaults :refer [default-settings]]
+            [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search!]]
+            [knoxx.backend.infra.defaults :refer [default-settings]]
             [knoxx.backend.domain.text :refer [value->preview-text]]
-            [knoxx.backend.tools.shared :as shared]
-            [knoxx.backend.domain.openplanner.semantic :as semantic]
+            [knoxx.backend.domain.tools :as shared]
+            [knoxx.backend.infra.openplanner.semantic :as semantic]
             [knoxx.backend.domain.discord.tools :as discord]
             [knoxx.backend.domain.discord.voice-tools :as discord-voice]
-            [knoxx.backend.tools.events :as events]
+            [knoxx.backend.domain.event.tools :as events]
             [knoxx.backend.domain.actor.tools :as actors]
-            [knoxx.backend.domain.openplanner.tools :as openplanner]
-            [knoxx.backend.tools.music :as music]
+            [knoxx.backend.infra.openplanner.tools :as openplanner]
+            [knoxx.backend.domain.music :as music]
             [knoxx.backend.domain.voice.tools :as voice]
-            [knoxx.backend.tools.blaze :as blaze]
-            [knoxx.backend.tools.bluesky :as bluesky]
-            [knoxx.backend.tools.multimodal :as multimodal]
-            [knoxx.backend.tools.workspace-media :as workspace-media]
+            [knoxx.backend.domain.media.blaze :as blaze]
+            [knoxx.backend.domain.bluesky.bluesky :as bluesky]
+            [knoxx.backend.domain.media.multimodal :as multimodal]
+            [knoxx.backend.domain.media.workspace :as workspace-media]
             [knoxx.backend.tools.mcp :as mcp]
-            [knoxx.backend.tools.contracts :as contracts]
-            [knoxx.backend.tools.nrepl :as nrepl]
-            [knoxx.backend.tools.session-mycology :as session-mycology]))
+            [knoxx.backend.domain.contracts.tools :as contracts]
+            [knoxx.backend.domain.nrepl :as nrepl]
+            [knoxx.backend.domain.session-mycology :as session-mycology]))
 
 (defonce settings-state* (atom nil))
 
@@ -40,6 +40,19 @@
   [message]
   (boolean (re-find #"(?i)\b(previous|earlier|before|remember|last time|prior|session|you said|you did|we talked|we discussed)\b"
                     (or message ""))))
+
+(defn passive-hydration!
+  ([runtime config mode message] (passive-hydration! runtime config mode message nil))
+  ([runtime config mode message auth-context]
+   (if (= mode "rag")
+     (let [started-ms (.now js/Date)
+           top-k (max 1 (min 4 (or (:retrievalTopK @settings-state*) 3)))]
+       (-> (semantic/semantic-search-documents! runtime config {:query message
+                                                               :top-k top-k
+                                                               :max-snippet-chars 240} auth-context)
+           (.then (fn [result]
+                    (assoc result :elapsedMs (- (.now js/Date) started-ms))))))
+     (js/Promise.resolve nil))))
 
 (defn- openplanner-memory-source-options
   [config agent-spec]

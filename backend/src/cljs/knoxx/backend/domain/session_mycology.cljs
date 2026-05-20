@@ -1,11 +1,11 @@
-(ns knoxx.backend.tools.session-mycology
+(ns knoxx.backend.domain.session-mycology
   "Per-turn retrospection with p-scores and skill-spore incubation.
 
    Knoxx-native port of the eta-mu extension session-mycology."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.tools.shared :refer [create-tool-obj]]
+            [knoxx.backend.domain.tools :refer [create-tool-obj]]
             ["node:fs" :as fs]
             ["node:fs/promises" :as fs-promises]
             ["node:os" :as os]

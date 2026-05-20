@@ -1,14 +1,14 @@
-(ns knoxx.backend.domain.openplanner.tools
+(ns knoxx.backend.infra.openplanner.tools
   "OpenPlanner memory, graph, websearch, and translation tools."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
             [knoxx.backend.infra.document-state :refer [active-agent-profile normalize-relative-path]]
             [knoxx.backend.infra.http :as backend-http :refer [http-error]]
-            [knoxx.backend.domain.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
+            [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
             [knoxx.backend.domain.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
-            [knoxx.backend.tools.media :as media]
-            [knoxx.backend.tools.shared :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.domain.media :as media]
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 

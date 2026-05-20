@@ -1,13 +1,13 @@
 (ns knoxx.backend.infra.tooling
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.auth.authz :as authz]
-            [knoxx.backend.contracts.resolve :as contract-resolve]
-            [knoxx.backend.contracts.roles :as roles]
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.domain.contracts.resolve :as contract-resolve]
+            [knoxx.backend.domain.contracts.roles :as roles]
             [knoxx.backend.infra.http :as backend-http]
-            [knoxx.backend.infra.mcp.mcp-bridge :as mcp]
-            [knoxx.backend.runtime.config :as runtime-config]
+            [knoxx.backend.domain.mcp.mcp-bridge :as mcp]
+            [knoxx.backend.infra.config :as runtime-config]
             [knoxx.backend.runtime.state :as state]
-            [knoxx.backend.tools.registry :as tool-registry]))
+            [knoxx.backend.infra.registry.tools :as tool-registry]))
 
 (defn- current-config
   []

@@ -1,7 +1,7 @@
 (ns knoxx.backend.tools.music-test
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
-            [knoxx.backend.tools.music :as music]))
+            [knoxx.backend.domain.music :as music]))
 
 (deftest ensure-json-string-accepts-native-json-object
   (testing "AI tool callers may pass spec_json as an object even when the schema says string"

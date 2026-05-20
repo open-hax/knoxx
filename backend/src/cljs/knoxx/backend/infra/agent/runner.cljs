@@ -1,16 +1,18 @@
-(ns knoxx.backend.domain.agent.runner
+(ns knoxx.backend.infra.agent.runner
   "Shared entrypoint for launching normal Knoxx agent turns.
 
    Event-triggered and chat-triggered work should converge on the same Knoxx
    turn runtime. This namespace provides a queue-style direct-start helper so
    non-HTTP callers can use the same semantics as /api/knoxx/direct/start."
-  (:require [knoxx.backend.domain.agent.runtime :refer [active-agent-session]]
-            [knoxx.backend.domain.agent.policy :as agent-policy]
-            [knoxx.backend.domain.agent.turn :as agent-turns]
+  (:require [knoxx.backend.infra.agent.session :refer [active-agent-session]]
+            [knoxx.backend.shape.agent :refer [streaming?]]
+            [knoxx.backend.infra.agent.policy :as agent-policy]
+            [knoxx.backend.infra.agent.turn :as agent-turns]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.domain.sessions.session-store :as session-store]
-            ["node:crypto" :as crypto]))
+            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.extern.agent-runner :as xrunner]
+            [knoxx.backend.extern.agent-turn-node :as xturn-node]))
 
 (defn current-runtime
   []
@@ -18,10 +20,7 @@
 
 (defn- normalize-tool-policy
   [policy]
-  (let [policy (cond
-                 (map? policy) policy
-                 (some? policy) (js->clj policy :keywordize-keys true)
-                 :else {})
+  (let [policy (xrunner/to-cljs-map policy)
         tool-id (some-> (or (:toolId policy)
                             (:tool-id policy)
                             (:tool_id policy))
@@ -33,10 +32,7 @@
 
 (defn- normalize-agent-spec
   [value]
-  (let [spec (cond
-               (map? value) value
-               (some? value) (js->clj value :keywordize-keys true)
-               :else {})
+  (let [spec (xrunner/to-cljs-map value)
         contract-id (some-> (or (:contract_id spec)
                                 (:contract-id spec)
                                 (:contractId spec)
@@ -131,7 +127,8 @@
 
 (defn direct-start-payload->turn-params
   [payload]
-  (let [auth-context (or (:auth_context payload)
+  (let [payload (xrunner/to-cljs-map payload)
+        auth-context (or (:auth_context payload)
                          (:auth-context payload))
         template-context (or (:template_context payload)
                              (:template-context payload)
@@ -170,51 +167,6 @@
    :model (or (:model body)
               (get-in body [:agent-spec :model]))})
 
-(defn- err-prop
-  [err prop]
-  (try
-    (aget err prop)
-    (catch :default _ nil)))
-
-(defn- err-message
-  [err]
-  (or (some-> (err-prop err "message") str not-empty)
-      (some-> err str not-empty)
-      "Unknown error"))
-
-(defn- safe-ex-data
-  [err]
-  (try
-    (ex-data err)
-    (catch :default _ nil)))
-
-(defn- safe-json
-  [value]
-  (try
-    (.stringify js/JSON (clj->js value) nil 2)
-    (catch :default _
-      (str value))))
-
-(defn- log-async-spawn-error!
-  [body err]
-  (let [diagnostic (cond-> {:message (err-message err)
-                            :runId (:run-id body)
-                            :conversationId (:conversation-id body)
-                            :sessionId (:session-id body)
-                            :model (or (:model body)
-                                       (get-in body [:agent-spec :model]))
-                            :contractId (get-in body [:agent-spec :contract-id])
-                            :actorId (get-in body [:agent-spec :actor-id])}
-                     (some-> (err-prop err "name") str not-empty)
-                     (assoc :name (str (err-prop err "name")))
-                     (some-> (err-prop err "stack") str not-empty)
-                     (assoc :stack (str (err-prop err "stack")))
-                     (safe-ex-data err)
-                     (assoc :data (safe-ex-data err)))]
-    (.error js/console "[agents.runner] async direct spawn failed" (safe-json diagnostic))
-    (when-let [stack (:stack diagnostic)]
-      (.error js/console "[agents.runner] stack\n" stack))))
-
 (defn- queue-turn!
   [runtime config body]
   (-> (agent-policy/validate-chat-policy! (:auth-context body) (policy-model config body))
@@ -222,7 +174,7 @@
                (-> (agent-turns/send-agent-turn! runtime config body)
                    (.then (fn [_] nil))
                    (.catch (fn [err]
-                             (log-async-spawn-error! body err))))
+                             (xrunner/log-async-spawn-error! body err))))
                (accepted-response body)))))
 
 (defn- busy-error
@@ -233,9 +185,9 @@
   [_runtime payload]
   (let [params (direct-start-payload->turn-params payload)
         provided-session-id (:session-id params)
-        session-id (agent-turns/ensure-session-id crypto provided-session-id)
-        conversation-id (or (:conversation-id params) (.randomUUID crypto))
-        run-id (or (:run-id params) (.randomUUID crypto))]
+        session-id (agent-turns/ensure-session-id provided-session-id)
+        conversation-id (or (:conversation-id params) (xturn-node/random-uuid!))
+        run-id (or (:run-id params) (xturn-node/random-uuid!))]
     (assoc params
            :session-id session-id
            :conversation-id conversation-id
@@ -248,7 +200,8 @@
   ([runtime config payload]
    (if-not runtime
      (busy-error "Knoxx runtime unavailable for direct agent spawn")
-     (let [body (normalize-body runtime payload)
+     (let [payload (xrunner/to-cljs-map payload)
+           body (normalize-body runtime payload)
            provided-session-id (or (:session_id payload)
                                    (:session-id payload))]
        (if-not provided-session-id
@@ -260,8 +213,7 @@
                   (if-not (:can-send can-send-result)
                     (busy-error (str "agent_already_processing: " (:reason can-send-result)))
                     (let [agent-session (active-agent-session (:conversation-id body))
-                          actively-streaming? (and agent-session
-                                                   (true? (aget agent-session "isStreaming")))]
+                          actively-streaming? (and agent-session (streaming? agent-session))]
                       (if actively-streaming?
                         (busy-error "agent_already_processing: active stream")
                         (queue-turn! runtime config body)))))))))))))

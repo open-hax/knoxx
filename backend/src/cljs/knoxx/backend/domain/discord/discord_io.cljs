@@ -2,13 +2,13 @@
   "Discord I/O helpers. Pure API wrappers consumed by trigger-runner,
    pipeline-runner, and agent tools. No scheduling or job logic here."
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.agent.runner :as agents-runner]
+            [knoxx.backend.infra.agent.runner :as agents-runner]
             [knoxx.backend.infra.http :as http]
-            [knoxx.backend.runtime.config :as runtime-config]))
+            [knoxx.backend.infra.config :as runtime-config]))
 
 (defn- discord-token
   []
-  (or (some-> (knoxx.backend.runtime.config/cfg) :discord-bot-token)
+  (or (some-> (knoxx.backend.infra.config/cfg) :discord-bot-token)
       (throw (js/Error. "Discord bot token not configured"))))
 
 (defn- discord-headers

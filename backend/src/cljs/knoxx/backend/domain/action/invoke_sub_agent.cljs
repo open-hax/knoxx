@@ -10,9 +10,9 @@
    pass pre-resolved contracts in :action/with for tests or custom runners."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.action.registry :refer [run-action!]]
-            [knoxx.backend.contracts.loader :as contracts]
-            [knoxx.backend.contracts.roles :as roles]
-            [knoxx.backend.tools.registry :as tools]))
+            [knoxx.backend.domain.contracts.loader :as contracts]
+            [knoxx.backend.domain.contracts.roles :as roles]
+            [knoxx.backend.infra.registry.tools :as tools]))
 
 (defn- id->string
   [value]

@@ -1,6 +1,6 @@
 (ns knoxx.backend.domain.realtime
   (:require [clojure.string :as str]
-            [knoxx.backend.util.time :as time]
+            [knoxx.backend.domain.time :as time]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
             ["node:os" :as os]

@@ -1,30 +1,30 @@
-(ns knoxx.backend.domain.agent.stream
+(ns knoxx.backend.infra.agent.stream
   "Streaming event handling for agent turns."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.content :as content :refer [diff-appended-text preview-text-nonblank tool-result-content-parts]]
-            [knoxx.backend.domain.agent.tools :as tools :refer [tool-call-input-preview tool-call-preview-from-part assistant-tool-call-previews]]
+            [knoxx.backend.infra.agent.tools :as tools :refer [tool-call-input-preview tool-call-preview-from-part assistant-tool-call-previews]]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.domain.action.run-state :refer [update-run! append-run-event! update-run-tool-receipt!
                                              backfill-run-tool-input-preview! append-limited
                                              append-run-trace-text! apply-run-tool-trace-event!
                                              tool-event-payload]]
-            [knoxx.backend.domain.sessions.session-store :as session-store]
+            [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
-            [knoxx.backend.util.time :refer [now-iso]]))
+            [knoxx.backend.domain.time :refer [now-iso]]))
 
 (def ^:private DEATH_SPIRAL_STREAK_LIMIT 6)
 (def ^:private DEATH_SPIRAL_TOTAL_LIMIT 12)
 
 (defn make-stream-state
-  [run-id conversation-id session-id started-at started-ms node-crypto]
+  [run-id conversation-id session-id started-at started-ms random-uuid!]
   {:run-id run-id
    :conversation-id conversation-id
    :session-id session-id
    :started-at started-at
    :started-ms started-ms
-   :node-crypto node-crypto
+   :random-uuid! random-uuid!
    :chunks (atom [])
    :reasoning-chunks (atom [])
    :ttft-recorded? (atom false)
@@ -273,7 +273,7 @@
 (defn- handle-tool-execution-start!
   [state _session event]
   (let [tool-name (or (aget event "toolName") "tool")
-        tool-call-id (or (aget event "toolCallId") (.randomUUID (:node-crypto state)))
+        tool-call-id (or (aget event "toolCallId") ((:random-uuid! state)))
         raw-args (or (aget event "params")
                      (aget event "toolArgs")
                      (aget event "args")
@@ -365,7 +365,7 @@
 (defn- handle-tool-execution-end!
   [state event]
   (let [tool-name (or (aget event "toolName") "tool")
-        tool-call-id (or (aget event "toolCallId") (.randomUUID (:node-crypto state)))
+        tool-call-id (or (aget event "toolCallId") ((:random-uuid! state)))
         is-error (boolean (aget event "isError"))
         raw-result (or (aget event "result")
                        (aget event "toolResult")

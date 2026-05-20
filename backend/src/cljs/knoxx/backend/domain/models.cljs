@@ -1,6 +1,6 @@
-(ns knoxx.backend.runtime.models
+(ns knoxx.backend.domain.models
   (:require [clojure.string :as str]
-            [knoxx.backend.contracts.loader :as contract-loader]))
+            [knoxx.backend.domain.contracts.loader :as contract-loader]))
 
 (def ^:private default-model-prefix-allowlist
   ["glm-5" "gpt-5" "qwen3" "gemma4:" "gemma3:" "deepseek" "kimi-k2" "nemotron" "cogito" "devstral" "minimax" "ministral" "mistral-large"])
@@ -415,7 +415,7 @@
 (defn enrich-config
   "Augment an env-only config map with derived model config fields.
 
-   Keeps knoxx.backend.runtime.config strictly env-only, while ensuring legacy
+   Keeps knoxx.backend.infra.config strictly env-only, while ensuring legacy
    call sites continue to find these keys."
   [config]
   (merge

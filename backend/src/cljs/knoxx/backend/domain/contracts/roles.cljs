@@ -1,8 +1,8 @@
-(ns knoxx.backend.contracts.roles
+(ns knoxx.backend.domain.contracts.roles
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.agent-templates :as templates]
-            [knoxx.backend.contracts.loader :as contract-loader]
-            [knoxx.backend.tools.registry :as tools]))
+            [knoxx.backend.domain.contracts.loader :as contract-loader]
+            [knoxx.backend.infra.registry.tools :as tools]))
 
 (defn- keywordish-id
   [value]

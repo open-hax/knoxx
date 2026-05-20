@@ -1,4 +1,4 @@
-(ns knoxx.backend.infra.mcp.mcp-bridge
+(ns knoxx.backend.domain.mcp.mcp-bridge
   "MCP (Model Context Protocol) gateway — CLJS implementation.
 
    Manages connections to MCP servers (HTTP and stdio transports) and routes

@@ -1,4 +1,4 @@
-(ns knoxx.backend.triggers.trigger-runner
+(ns knoxx.backend.infra.trigger-runner
   "Generic trigger dispatcher. Reads :trigger contracts, schedules cron/event
    dispatches, and fires actions through the action registry.
 
@@ -13,12 +13,12 @@
             ["node:path" :as path]
             [cljs.reader :as reader]
             [clojure.string :as str]
-            [knoxx.backend.contracts.loader :as loader]
+            [knoxx.backend.domain.contracts.loader :as loader]
             [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.action.start-agent-session]
             [knoxx.backend.domain.action.run-pipeline]
-            [knoxx.backend.runtime.config :as runtime-config]
-            [knoxx.backend.runtime.models :as models]))
+            [knoxx.backend.infra.config :as runtime-config]
+            [knoxx.backend.domain.models :as models]))
 
 (defonce running?* (atom false))
 (defonce trigger-id->interval* (atom {}))
