@@ -61,12 +61,13 @@ Over:
 
 Always prefer modern shadow-cljs patterns over legacy verbose forms:
 
-- Use `(require [shadow.cljs.modern :refer [js-await]])` and `js-await` for async/await instead of `(.then ...)` chains
+- Use `(require [shadow.cljs.modern :refer [js-await]])` and `js-await` for async/await in `defn` bodies
+- Use `^:async` + `await` for async tests and top-level async functions (ClojureScript 1.12.145+)
 - Use `when-let` instead of nesting `let` + `if` checks
 - Prefer threading macros `->` and `->>` over manual nested let forms
 - Use `some->` for optional chaining through potential nils
 
-### Why js-await
+### Why js-await in defn
 
 ```cljs
 ;; Instead of this:
@@ -82,6 +83,33 @@ Always prefer modern shadow-cljs patterns over legacy verbose forms:
 ```
 
 The `js-await` form is flatter, easier to read, and more debuggable.
+
+### Why ^:async / await in deftest
+
+ClojureScript 1.12.145 supports `^:async` on `deftest` and `defn`, emitting native JS async functions. Use `await` (not `js-await`) inside them:
+
+```cljs
+;; Instead of this (breaks on rejected promises):
+(deftest my-async-test
+  (async done
+    (-> (some-async-fn)
+        (.then (fn [v] (is ...) (done)))
+        (.catch (fn [e] (is false) (done))))))
+
+;; Prefer this:
+(deftest ^:async my-async-test
+  (try
+    (let [v (await (some-async-fn))]
+      (is (= 42 v)))
+    (catch :default e
+      (is false (str "threw: " (.-message e))))))
+```
+
+**Rules:**
+- `await` only works inside `^:async` functions
+- Rejected promises throw synchronously inside `await`; catch them with `(catch :default e ...)`
+- Never return a rejected promise disguised as a success map — errors must remain errors
+- `js-await` and `await` are not interchangeable: `js-await` is a macro for `let` binding; `await` is a special form inside `^:async`
 
 ## Licensing & Copyleft Doctrine
 
