@@ -83,7 +83,9 @@
    [:contract/kind     [:= :trigger]]
    [:contract/id       ContractId]
    [:trigger/kind      [:enum :cron :event :webhook :manual]]
-   [:trigger/target    ContractId]
+   [:trigger/action    {:optional true} ContractId]
+   [:trigger/agent     {:optional true} ContractId]
+   [:trigger/with      {:optional true} [:map {:closed false}]]
    [:trigger/schedule  {:optional true} :string]
    [:trigger/source    {:optional true}
     [:map

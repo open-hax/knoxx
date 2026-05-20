@@ -5,6 +5,8 @@
             [knoxx.backend.contracts.loader :as loader]
             [knoxx.backend.domain.action.registry :as action-registry]
             [knoxx.backend.domain.action.start-agent-session]
+            [knoxx.backend.domain.action.run-pipeline]
+            [knoxx.backend.domain.condition.registry :as condition-registry]
             [knoxx.backend.domain.event.normalize :as event-normalize]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
             [knoxx.backend.runtime.config :as runtime-config]
@@ -67,6 +69,7 @@
         (some #(str/includes? content %) keywords))))
 
 (defn- predicate-matches?
+  "Legacy predicate check (channels + keywords). Used when no :trigger/condition is set."
   [trigger event]
   (let [predicate (:trigger/predicate trigger)]
     (and (channel-matches? predicate event)
@@ -79,11 +82,27 @@
     (or (nil? required)
         (= required actual))))
 
+(defn- emitter-matches?
+  "True if the trigger's emitter matches the event's actor."
+  [trigger event]
+  (let [trigger-emitter (nonblank (:trigger/emitter trigger))
+        event-actor (nonblank (:event/actor event))]
+    (or (nil? trigger-emitter)
+        (= trigger-emitter event-actor))))
+
 (defn- event-type-matches?
   [trigger event]
   (let [trigger-types (set (:trigger/events trigger))]
     (and (seq trigger-types)
          (seq (set/intersection trigger-types (set (:event/types event)))))))
+
+(defn- condition-matches?
+  "Evaluate the trigger's condition expression against the event.
+   Falls back to legacy predicate (channels + keywords) if no condition expr."
+  [trigger event]
+  (if-let [expr (:trigger/condition trigger)]
+    (condition-registry/evaluate expr event nil trigger nil)
+    (predicate-matches? trigger event)))
 
 (defn- trigger-matches?
   [trigger event]
@@ -91,21 +110,19 @@
        (= :event (:trigger/kind trigger))
        (event-type-matches? trigger event)
        (source-matches? trigger event)
-       (predicate-matches? trigger event)))
-
-(defn- action-map
-  [trigger]
-  {:action/id (name (:trigger/action trigger))
-   :action/kind (:trigger/action trigger)
-   :action/with {:agent-id (:trigger/agent trigger)}})
+       (emitter-matches? trigger event)
+       (condition-matches? trigger event)))
 
 (defn- actor-context
   [config trigger event]
   {:config config
    :event event
    :trigger trigger
-   :actor/id (:trigger/listener trigger)
-   :agent/id (:trigger/agent trigger)})
+   :actor/id (or (nonblank (:trigger/actor trigger))
+                 (nonblank (:trigger/listener trigger)))
+   :agent/id (:trigger/agent trigger)
+   :trigger-ctx (merge (get-in trigger [:data :context]) {}
+                       (get-in event [:event/payload]) {})})
 
 (defn dispatch!
   ([event]
@@ -127,7 +144,7 @@
                (mapv (fn [trigger]
                        (action-registry/run-action!
                         (actor-context config trigger event')
-                        (action-map trigger)))
+                        (action-registry/action-map trigger)))
                      matching-triggers)))
              (.then (fn [results]
                       {:matchedTriggers (mapv :trigger/id matching-triggers)

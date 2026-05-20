@@ -235,75 +235,55 @@
        (take limit)
        vec))
 
-(defn openplanner-recent-session-summaries!
+(defn ^:async openplanner-recent-session-summaries!
   [config]
-  (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions?project=" (js/encodeURIComponent (:session-project-name config))))
-      (.then (fn [body]
-               (let [session-ids (->> (or (:rows body) [])
-                                      (map :session)
-                                      (remove str/blank?)
-                                      distinct
-                                      (take 4)
-                                      vec)]
-                 (if (seq session-ids)
-                   (-> (.all js/Promise
-                             (clj->js
-                              (map (fn [session-id]
-                                     (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" session-id))
-                                         (.then (fn [session-body]
-                                                  (let [rows (or (:rows session-body) [])
-                                                        row (or (last (filter #(and (contains? #{"assistant" "system"} (:role %))
-                                                                                    (default-memory-hit? %))
-                                                                              rows))
-                                                                (last (filter default-memory-hit? rows)))]
-                                                    (when row
-                                                      {:session session-id
-                                                       :role (:role row)
-                                                       :text (:text row)}))))
-                                         (.catch (fn [_] nil))))
-                                   session-ids)))
-                       (.then (fn [results]
-                                (->> (js->clj results :keywordize-keys true)
-                                     (remove nil?)
-                                     vec))))
-                   (js/Promise.resolve [])))))
-      (.catch (fn [_] (js/Promise.resolve [])))))
+  (let [session-ids (->> (or (:rows (await (backend-http/openplanner-request!
+                                            config
+                                            "GET"
+                                            (str "/v1/sessions?project="
+                                                 (js/encodeURIComponent (:session-project-name config)))))) [])
+                         (map :session)
+                         (remove str/blank?)
+                         distinct
+                         (take 4)
+                         vec)]
+    (if (seq session-ids)
+      (-> (.all js/Promise
+                (clj->js
+                 (map (fn [session-id]
+                        (let [rows (or (:rows (await (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" session-id)))) [])
+                              row (or (last (filter #(and (contains? #{"assistant" "system"} (:role %))
+                                                          (default-memory-hit? %))
+                                                    rows))
+                                      (last (filter default-memory-hit? rows)))]
+                          (when row
+                            {:session session-id
+                             :role (:role row)
+                             :text (:text row)})))
+                      session-ids)))
+          (.then (fn [results]
+                   (->> (js->clj results :keywordize-keys true)
+                        (remove nil?)
+                        vec))))
+      (js/Promise.resolve []))))
 
-(defn openplanner-memory-search!
+(defn ^:async openplanner-memory-search!
   [config {:keys [query k session-id]}]
+  "Search OpenPlanner's indexed document corpus via vector similarity.
+   Returns {:query, :mode, :hits} where each hit has :id, :document, :metadata, :distance. "
   (let [query (str/trim (or query ""))
         k (max 1 (min 12 (or k 7)))
         fetch-k (max k (min 36 (* k 3)))]
     (if (str/blank? query)
-      (js/Promise.resolve {:query "" :hits [] :mode :none})
-      (-> (backend-http/openplanner-request! config "POST" "/v1/search/vector"
-                                             (cond-> {:q query
-                                                      :k fetch-k
-                                                      :source "knoxx"
-                                                      :project (:session-project-name config)}
-                                               (not (str/blank? session-id)) (assoc :session session-id)))
-          (.then (fn [body]
-                   {:query query
-                    :mode :vector
-                    :hits (default-memory-hits (vector-result-hits (:result body)) k)}))
-          (.catch (fn [_]
-                    (-> (backend-http/openplanner-request! config "POST" "/v1/search/fts"
-                                                           (cond-> {:q query
-                                                                    :limit fetch-k
-                                                                    :source "knoxx"
-                                                                    :project (:session-project-name config)}
-                                                             (not (str/blank? session-id)) (assoc :session session-id)))
-                        (.then (fn [body]
-                                 (let [hits (default-memory-hits (or (:rows body) []) k)]
-                                   (if (seq hits)
-                                     {:query query
-                                      :mode :fts
-                                      :hits hits}
-                                     (-> (openplanner-recent-session-summaries! config)
-                                         (.then (fn [recent]
-                                                  {:query query
-                                                   :mode :recent
-                                                   :hits (default-memory-hits recent k)}))))))))))))))
+      (throw (js/Error "Must provide query string for memory search"))
+      {:query query
+       :mode :vector
+       :hits (default-memory-hits (vector-result-hits (:result (await (backend-http/openplanner-request! config "POST" "/v1/search/vector"
+                                                                                                         (cond-> {:q query
+                                                                                                                  :k fetch-k
+                                                                                                                  :source "knoxx"
+                                                                                                                  :project (:session-project-name config)}
+                                                                                                           (not (str/blank? session-id)) (assoc :session session-id)))))) k)})))
 
 (defn openplanner-graph-query!
   [config {:keys [query lake node-type limit edge-limit]}]
@@ -322,31 +302,18 @@
        edge-limit (assoc :maxCost (/ 1.0 (max 0.01 (or edge-limit 16))))))))
 
 (defn openplanner-semantic-search!
-  "Search OpenPlanner's indexed document corpus via vector similarity.
-   Returns {:query, :mode, :hits} where each hit has :id, :document, :metadata, :distance.
-   Falls back to FTS if vector search fails."
   [config {:keys [query k project source kind visibility]}]
   (let [query (str/trim (or query ""))
         k (max 1 (min 20 (or k 10)))]
     (if (str/blank? query)
       (js/Promise.resolve {:query "" :hits [] :mode :none})
-      (-> (backend-http/openplanner-request! config "POST" "/v1/search/vector"
-                                             (cond-> {:q query :k k :project (or project (:project-name config) "devel")}
-                                               source (assoc :source source)
-                                               kind (assoc :kind kind)
-                                               visibility (assoc :visibility visibility)))
-          (.then (fn [body]
-                   {:query query
-                    :mode :vector
-                    :hits (vector-result-hits (:result body))}))
-          (.catch (fn [_]
-                    (-> (backend-http/openplanner-request! config "POST" "/v1/search/fts"
-                                                           (cond-> {:q query :limit k :project (or project (:project-name config) "devel")}
-                                                             source (assoc :source source)))
-                        (.then (fn [body]
-                                 {:query query
-                                  :mode :fts
-                                  :hits (vec (or (:rows body) []))})))))))))
+      {:query query
+       :mode :vector
+       :hits (vector-result-hits (:result (backend-http/openplanner-request! config "POST" "/v1/search/vector"
+                                                                             (cond-> {:q query :k k :project (or project (:project-name config) "devel")}
+                                                                               source (assoc :source source)
+                                                                               kind (assoc :kind kind)
+                                                                               visibility (assoc :visibility visibility)))))})))
 
 (defn openplanner-graph-export!
   [config request]

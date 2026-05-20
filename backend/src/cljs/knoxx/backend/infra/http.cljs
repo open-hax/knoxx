@@ -243,3 +243,22 @@
           (instance? js/Buffer body)) body
       (no-content? body) nil
       :else (.stringify js/JSON body))))
+(defn request-stream-body
+  [request]
+  (let [method (str/upper-case (or (aget request "method") "GET"))
+        body (request-forward-body request)
+        content-type (str/lower-case (str (or (aget request "headers" "content-type") "")))]
+    (cond
+      (contains? #{"GET" "HEAD"} method) #js {}
+      (some? body) #js {:body body}
+      (str/includes? content-type "multipart/form-data") #js {:body (aget request "raw")
+                                                              :duplex "half"}
+      :else #js {})))
+
+(defn forward-knoxx-request!
+  [config request method path extra]
+  (let [target-url (str (:knoxx-base-url config) "/api/" path (request-query-string request))
+        base #js {:method method
+                  :headers (request-forward-headers request {"x-api-key" (when-not (str/blank? (:knoxx-api-key config)) (:knoxx-api-key config))})}
+        stream-opts (request-stream-body request)]
+    (js/fetch target-url (.assign js/Object base stream-opts (clj->js extra)))))

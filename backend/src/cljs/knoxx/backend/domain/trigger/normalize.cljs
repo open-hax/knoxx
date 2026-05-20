@@ -13,11 +13,6 @@
       (:source-kind trigger)
       (:sourceKind trigger)))
 
-(defn- default-actor-for-source
-  [kind]
-  (case (keyword kind)
-    :discord "discord_automation"
-    nil))
 
 (defn trigger-event-types
   [trigger]
@@ -35,24 +30,32 @@
   [trigger]
   (let [kind (or (:trigger/kind trigger) :event)
         src-kind (source-kind trigger)
-        target (nonblank (:trigger/target trigger))]
+        target (nonblank (:trigger/target trigger))
+        explicit-actor (nonblank (:trigger/actor trigger))
+        explicit-emitter (nonblank (:trigger/emitter trigger))
+        explicit-listener (nonblank (:trigger/listener trigger))
+        contract-actors (when (sequential? (:contract/actors trigger))
+                          (first (:contract/actors trigger)))
+        emitter (or explicit-emitter explicit-actor )
+        listener (or explicit-listener explicit-actor contract-actors )]
     {:trigger/id (or (nonblank (:contract/id trigger))
                      (nonblank (:trigger/id trigger)))
      :trigger/kind kind
      :trigger/enabled? (not (false? (:enabled trigger)))
      :trigger/events (trigger-event-types trigger)
-     :trigger/emitter (or (nonblank (:trigger/emitter trigger))
-                          (default-actor-for-source src-kind))
-     :trigger/listener (or (nonblank (:trigger/listener trigger))
-                           (first (:contract/actors trigger))
-                           (default-actor-for-source src-kind))
+     :trigger/actor explicit-actor
+     :trigger/emitter emitter
+     :trigger/listener listener
      :trigger/predicate (or (:trigger/predicate trigger)
                             (get-in trigger [:data :filters])
                             {})
+     :trigger/condition (or (:trigger/condition trigger)
+                            (get-in trigger [:data :condition]))
      :trigger/action (or (:trigger/action trigger)
                          (when target :actions/start-agent-session))
      :trigger/agent (or (nonblank (:trigger/agent trigger))
                         target)
+     :trigger/with (:trigger/with trigger)
      :trigger/context (or (get-in trigger [:data :context]) {})
      :trigger/source-kind src-kind
      :trigger/raw trigger}))

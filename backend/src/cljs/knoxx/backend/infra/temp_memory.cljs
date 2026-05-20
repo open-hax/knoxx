@@ -1,9 +1,7 @@
 (ns knoxx.backend.tools.temp-memory
   "Short-term memory tool. Agents read/write keyed blobs with TTL.
    Backed by Redis when available; falls back to a process-local atom."
-  (:require [clojure.string :as str]
-            [shadow.cljs.modern :refer [js-await]]
-            [knoxx.backend.infra.redis-client :as redis]))
+  (:require [knoxx.backend.infra.redis-client :as redis]))
 
 (defonce ^:private local-store* (atom {}))
 

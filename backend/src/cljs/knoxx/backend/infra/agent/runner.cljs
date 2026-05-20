@@ -4,7 +4,7 @@
    Event-triggered and chat-triggered work should converge on the same Knoxx
    turn runtime. This namespace provides a queue-style direct-start helper so
    non-HTTP callers can use the same semantics as /api/knoxx/direct/start."
-  (:require [knoxx.backend.domain.agent.agent-runtime :refer [active-agent-session]]
+  (:require [knoxx.backend.domain.agent.runtime :refer [active-agent-session]]
             [knoxx.backend.domain.agent.policy :as agent-policy]
             [knoxx.backend.domain.agent.turn :as agent-turns]
             [knoxx.backend.infra.redis-client :as redis]

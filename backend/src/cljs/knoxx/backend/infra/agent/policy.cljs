@@ -3,6 +3,8 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.auth.authz :as authz]
             [knoxx.backend.infra.redis-client :as redis]))
+;; This kind of file isn't suposed to exist at all
+;; these should all be things we can define in the contract DSL
 
 (defn- chat-policy-constraints
   [auth-context]
@@ -12,15 +14,7 @@
       (and constraints (= "object" (goog/typeOf constraints))) (js->clj constraints :keywordize-keys true)
       :else {})))
 
-(defn- positive-int
-  [value]
-  (cond
-    (number? value) (let [n (int value)]
-                      (when (pos? n) n))
-    (string? value) (let [parsed (js/parseInt value 10)]
-                      (when (and (not (js/isNaN parsed)) (> parsed 0))
-                        parsed))
-    :else nil))
+
 
 (defn- allowed-models
   [constraints]

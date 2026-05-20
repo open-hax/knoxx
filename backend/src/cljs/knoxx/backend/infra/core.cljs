@@ -14,6 +14,10 @@
             [knoxx.backend.runtime.models :as runtime-models]
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.domain.sessions.session-titles :refer [load-session-titles!]]
+            [knoxx.backend.domain.discord.source :as discord-source]
+            [knoxx.backend.domain.event.dispatch :as event-dispatch]
+            [knoxx.backend.domain.condition.builtin :as condition-builtins]
+            [knoxx.backend.infra.lifecycle :as lifecycle]
             ["fastify" :default Fastify]
             ["@fastify/cors" :default fastifyCors]
             ["@fastify/websocket" :default fastifyWebsocket]
@@ -41,14 +45,6 @@
   [runtime app]
   (realtime/register-ws-routes! runtime app active-runs-count lounge-messages*))
 
-(defn- prewarm-sdk-runtime!
-  [runtime app resolved-config]
-  (-> (agent-runtime/ensure-sdk-runtime! runtime resolved-config)
-      (.then (fn [_]
-               (app-log-info! app "Knoxx SDK runtime prewarmed")))
-      (.catch (fn [err]
-                (app-log-error! app "Knoxx SDK runtime prewarm failed" err)
-                (js/Promise.reject err)))))
 
 (defn config-js
   []
@@ -85,6 +81,7 @@
 
 (defn- start-background-services!
   [app resolved-config]
+  (condition-builtins/register-builtins!)
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. Event agents and MCP discovery remain background work.
   ;;
@@ -94,9 +91,27 @@
   ;; the default job set, even if the admin panel disabled a crashing job.
   (-> (redis/init-redis! (:redis-url resolved-config))
       (.then (fn [_]
-                (trigger-runtime/start! resolved-config)))
+               (trigger-runtime/start! resolved-config)))
       (.then (fn [_]
                (contracts-routes/start-contract-watcher! resolved-config)))
+      (.then (fn [_]
+               (let [policyDb (:policyDb (lifecycle/context))]
+                 (when policyDb
+                   (discord-source/bind-gateways!
+                    {:policy-db policyDb
+                      :on-message! (fn [msg]
+                                     (event-dispatch/dispatch!
+                                      resolved-config
+                                      {:sourceKind "discord"
+                                       :eventKind "discord.message"
+                                       :actorId (:gatewayActorId msg)
+                                       :payload msg}))
+                     :on-voice-state! (fn [state]
+                                        (event-dispatch/dispatch!
+                                         resolved-config
+                                         {:sourceKind "discord"
+                                          :eventKind "discord.voice.state_update"
+                                          :payload state}))})))))
       (.then (fn [_]
                (initialize-mcp-gateway! app resolved-config)))
       (.catch (fn [err]
@@ -158,8 +173,8 @@
                                  (app-log-error! app "Failed to initialize Redis" err)
                                  nil))
                        (.then (fn [_]
-                                 ;; Start contract trigger runtime.
-                                 (trigger-runtime/start! config)
+                                ;; Start contract trigger runtime.
+                                (trigger-runtime/start! config)
                                 (contracts-routes/start-contract-watcher! config)
                                 (app-listen! app (:host config) (:port config)))))))
           (.then (fn [_]

@@ -57,7 +57,8 @@
 (def create-file-params
   [:map
    [:title {:optional true :description "Human-readable title for the new artifact."} :string]
-   [:path {:optional true :description "Relative path for the new file inside the active docs root."} :string]
+   [:path {:optional true :description
+           "Relative path for the new file inside the active docs root."} :string]
    [:content {:optional true :description "Initial markdown content to write into the new file."} :string]])
 
 (def push-claim-params

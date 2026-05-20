@@ -1,4 +1,4 @@
-(ns knoxx.backend.domain.discord.discord-gateway
+(ns knoxx.backend.domain.discord.gateway
   "Discord gateway manager — native CLJS implementation using discord.js.
 
    Uses direct discord.js import via shadow-cljs :keep-as-import.

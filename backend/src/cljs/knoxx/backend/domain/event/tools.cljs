@@ -150,8 +150,8 @@
       (throw (js/Error. "message is required")))
     (maybe-tool-update! on-update "Spawning one-off agent run…")
     (-> (fetch-json! config "POST" "/api/knoxx/direct/start" {:message message
-                                                                 :model model
-                                                                 :agent_spec agent-spec})
+                                                              :model model
+                                                              :agent_spec agent-spec})
         (.then (fn [result]
                  (let [result* (js->clj result :keywordize-keys true)]
                    (tool-text-result (str "Spawned one-off agent run " (:run_id result*))
@@ -187,121 +187,70 @@
 
 (def events-status-tool
   (partial create-tool-obj
-           "events.status"
-           "Events Status"
-           "Inspect the current generic events runtime state and trigger configuration."
-           "Inspect event sources, triggers, and runtime state before dispatching or resetting events."
-           ["Use this before dispatching events or resetting the scheduler."]
-           status-params
-           events-status-execute))
+     "events.status"
+     "Events Status"
+     "Inspect the current generic events runtime state and trigger configuration."
+     "Inspect event sources, triggers, and runtime state before dispatching or resetting events."
+     ["Use this before dispatching events or resetting the scheduler."]
+     status-params
+     events-status-execute))
 
 (def events-dispatch-tool
   (partial create-tool-obj
-           "events.dispatch"
-           "Events Dispatch"
-           "Dispatch a normalized event onto the generic events runtime."
-           "Publish a manual or synthetic event so matching triggers can react immediately."
-           ["Use source_kind/manual for synthetic triggers you want to test immediately."
-            "Put complex payload fields into payload_json as a JSON object string."]
-           dispatch-params
-           events-dispatch-execute))
+     "events.dispatch"
+     "Events Dispatch"
+     "Dispatch a normalized event onto the generic events runtime."
+     "Publish a manual or synthetic event so matching triggers can react immediately."
+     ["Use source_kind/manual for synthetic triggers you want to test immediately."
+      "Put complex payload fields into payload_json as a JSON object string."]
+     dispatch-params
+     events-dispatch-execute))
 
 (def agents-spawn-tool
   (partial create-tool-obj
-           "agents.spawn"
-           "Agents Spawn"
-           "Launch a one-off Knoxx agent run without creating or mutating an event trigger job."
-           "Spawn a normal Knoxx agent directly through the shared agent runtime."
-           ["Use this for one-off agent execution."
-            "Pass direct-start style agent overrides in agent_spec_json when you need a specific role, contract, actor, or tool policy surface."]
-           spawn-agent-params
-           agent-spawn-execute))
+     "agents.spawn"
+     "Agents Spawn"
+     "Launch a one-off Knoxx agent run without creating or mutating an event trigger job."
+     "Spawn a normal Knoxx agent directly through the shared agent runtime."
+     ["Use this for one-off agent execution."
+      "Pass direct-start style agent overrides in agent_spec_json when you need a specific role, contract, actor, or tool policy surface."]
+     spawn-agent-params
+     agent-spawn-execute))
 
 (def events-run-job-tool
   (partial create-tool-obj
-           "events.run_job"
-           "Events Run Job"
-           "Run a configured trigger job immediately without waiting for its schedule."
-           "Trigger a job now."
-           ["Use this for manual patrol/synthesis/response runs after inspecting status."
-            "Provide the exact job id."]
-           run-job-params
-           events-run-job-execute))
+     "events.run_job"
+     "Events Run Job"
+     "Run a configured trigger job immediately without waiting for its schedule."
+     "Trigger a job now."
+     ["Use this for manual patrol/synthesis/response runs after inspecting status."
+      "Provide the exact job id."]
+     run-job-params
+     events-run-job-execute))
 
 (def events-upsert-job-tool
   (partial create-tool-obj
-           "events.upsert_job"
-           "Events Upsert Job"
-           "Create or update a scheduled trigger job, then reload the runtime."
-           "Create or update a generic scheduled trigger job using JSON job config."
-           ["Use this to create new cron/event-driven agents or revise existing jobs."
-            "Pass a full JSON job object in job_json; include trigger, source, filters, and agentSpec when you need precise control."]
-           upsert-job-params
-           events-upsert-job-execute))
+     "events.upsert_job"
+     "Events Upsert Job"
+     "Create or update a scheduled trigger job, then reload the runtime."
+     "Create or update a generic scheduled trigger job using JSON job config."
+     ["Use this to create new cron/event-driven agents or revise existing jobs."
+      "Pass a full JSON job object in job_json; include trigger, source, filters, and agentSpec when you need precise control."]
+     upsert-job-params
+     events-upsert-job-execute))
 
 (def schedule-trigger-tool
   (partial create-tool-obj
-           "schedule_trigger"
-           "Schedule Trigger"
-           "Create or update a scheduled trigger job with explicit trigger, source, prompts, and tool policies."
-           "Schedule an event-driven agent job that can react to Discord, GitHub, cron, or manual events."
-           ["Use this when the user wants to create or revise an event-based agent from conversation."
-            "Provide a full job object in job_json, including trigger, source, filters, and agentSpec."
-            "Use role slugs like translator, system_admin, or executive and include explicit toolPolicies so the scheduled agent has exactly the tools it needs."]
-           upsert-job-params
-           schedule-trigger-execute))
+     "schedule_trigger"
+     "Schedule Trigger"
+     "Create or update a scheduled trigger job with explicit trigger, source, prompts, and tool policies."
+     "Schedule an event-driven agent job that can react to Discord, GitHub, cron, or manual events."
+     ["Use this when the user wants to create or revise an event-based agent from conversation."
+      "Provide a full job object in job_json, including trigger, source, filters, and agentSpec."
+      "Use role slugs like translator, system_admin, or executive and include explicit toolPolicies so the scheduled agent has exactly the tools it needs."]
+     upsert-job-params
+     schedule-trigger-execute))
 
-;; Legacy vocabulary (backward compatibility)
-
-(def event-agent-status-tool
-  (partial create-tool-obj
-           "event_agents.status"
-           "Event Agent Status"
-           "Inspect the current scheduled event-agent runtime configuration and live state."
-           "Inspect event-agent jobs, sources, and runtime state before changing schedules or dispatching events."
-           ["Deprecated: use events.status instead."]
-           status-params
-           events-status-execute))
-
-(def event-agent-dispatch-tool
-  (partial create-tool-obj
-           "event_agents.dispatch"
-           "Event Agent Dispatch"
-           "Dispatch a structured event into the generic event-agent runtime."
-           "Dispatch manual or synthetic events so matching event-agent jobs can react immediately."
-           ["Deprecated: use events.dispatch instead."]
-           dispatch-params
-           events-dispatch-execute))
-
-(def event-agent-run-job-tool
-  (partial create-tool-obj
-           "event_agents.run_job"
-           "Event Agent Run Job"
-           "Run a configured event-agent job immediately without waiting for its schedule."
-           "Trigger an event-agent job now."
-           ["Deprecated: use events.run_job or agents.spawn instead."]
-           run-job-params
-           events-run-job-execute))
-
-(def event-agent-upsert-job-tool
-  (partial create-tool-obj
-           "event_agents.upsert_job"
-           "Event Agent Upsert Job"
-           "Create or update a scheduled event-agent job, then reload the runtime."
-           "Create or update a generic scheduled event-agent job using JSON job config."
-           ["Deprecated: use events.upsert_job instead."]
-           upsert-job-params
-           events-upsert-job-execute))
-
-(def schedule-event-agent-tool
-  (partial create-tool-obj
-           "schedule_event_agent"
-           "Schedule Event Agent"
-           "Create or update a scheduled event-agent job with explicit trigger, source, prompts, and tool policies."
-           "Schedule an event-driven agent job that can react to Discord, GitHub, cron, or manual events."
-           ["Deprecated: use schedule_trigger instead."]
-           upsert-job-params
-           schedule-trigger-execute))
 
 (defn create-events-custom-tools
   ([runtime config] (create-events-custom-tools runtime config nil))
@@ -314,23 +263,17 @@
        (remove nil?
                [(when (allowed-any? "events.status" "event_agents.status")
                   (events-status-tool runtime config))
-                (when (allowed-any? "events.status" "event_agents.status")
-                  (event-agent-status-tool runtime config))
+
                 (when (allowed-any? "events.dispatch" "event_agents.dispatch")
                   (events-dispatch-tool runtime config))
-                (when (allowed-any? "events.dispatch" "event_agents.dispatch")
-                  (event-agent-dispatch-tool runtime config))
+
                 (when (allowed-any? "events.run_job" "event_agents.run_job" "agents.spawn")
                   (events-run-job-tool runtime config))
-                (when (allowed-any? "events.run_job" "event_agents.run_job" "agents.spawn")
-                  (event-agent-run-job-tool runtime config))
+
                 (when (allowed-any? "agents.spawn")
                   (agents-spawn-tool runtime config))
                 (when (allowed-any? "events.upsert_job" "event_agents.upsert_job")
                   (events-upsert-job-tool runtime config))
-                (when (allowed-any? "events.upsert_job" "event_agents.upsert_job")
-                  (event-agent-upsert-job-tool runtime config))
+
                 (when (allowed-any? "schedule_trigger" "schedule_event_agent")
-                  (schedule-trigger-tool runtime config))
-                (when (allowed-any? "schedule_trigger" "schedule_event_agent")
-                  (schedule-event-agent-tool runtime config))]))))))
+                  (schedule-trigger-tool runtime config))]))))))

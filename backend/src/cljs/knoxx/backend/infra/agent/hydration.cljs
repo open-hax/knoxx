@@ -35,18 +35,6 @@
     (reset! settings-state* (default-settings config)))
   @settings-state*)
 
-(defn passive-hydration!
-  ([runtime config mode message] (passive-hydration! runtime config mode message nil))
-  ([runtime config mode message auth-context]
-   (if (= mode "rag")
-     (let [started-ms (.now js/Date)
-           top-k (max 1 (min 4 (or (:retrievalTopK @settings-state*) 3)))]
-       (-> (semantic/semantic-search-documents! runtime config {:query message
-                                                      :top-k top-k
-                                                      :max-snippet-chars 240} auth-context)
-           (.then (fn [result]
-                    (assoc result :elapsedMs (- (.now js/Date) started-ms))))))
-     (js/Promise.resolve nil))))
 
 (defn memory-hydration-trigger?
   [message]

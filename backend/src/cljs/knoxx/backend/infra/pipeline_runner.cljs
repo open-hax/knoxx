@@ -31,12 +31,12 @@
         all-keys (->> m
                      vals
                      (keep (fn [v] (when (string? v)
-                                     (->> (str/re-seq re v) (map second)))))
+                                     (->> (re-seq re v) (map second)))))
                      (apply concat)
                      distinct
                      vec)]
     (p/let [resolved (->> all-keys
-                      (mapv (fn [k] (p/then (temp/get k) (fn [v] [k v]))))
+                       (mapv (fn [k] (p/then (temp/mem-get k) (fn [v] [k v]))))
                       (p/all))]
       (p/then resolved (fn [pairs] (into {} pairs))))))
 
@@ -68,8 +68,8 @@
   "Execute an :action step."
   [_step]
   (js/console.log "[pipeline]" (:step/id _step) "action step")
-  (p/let [_ (temp/set! (str "step:" (:step/id _step))
-                      {:done true :step (:step/id _step)})]
+  (p/let [_ (temp/mem-set! (str "step:" (:step/id _step))
+                           {:done true :step (:step/id _step)})]
     {:step-id (:step/id _step) :status "ok"}))
 
 (defn- run-agent-step!
@@ -132,9 +132,9 @@
                         ordered)
               output (:output pipeline-contract)]
         (when output
-          (temp/set! (:key output)
-                     {:done true :steps (count ordered)}
-                     {:ttl (:ttl output)}))
+          (temp/mem-set! (:key output)
+                         {:done true :steps (count ordered)}
+                         {:ttl (:ttl output)}))
         {:pipeline-id (:contract/id pipeline-contract)
          :steps-run  (count ordered)
          :status      "ok"}))))

@@ -84,24 +84,7 @@
         suffix (if (< end (count raw)) "…" "")]
     (str prefix (compact-whitespace (.slice raw start end)) suffix)))
 
-(defn semantic-score
-  [{:keys [query tokens rel-path name text indexed]}]
-  (let [query (str/lower-case (str query))
-        rel-lower (str/lower-case (str rel-path))
-        name-lower (str/lower-case (str name))
-        text-lower (str/lower-case (str text))
-        phrase-score (+ (if (and (not (str/blank? query)) (str/includes? name-lower query)) 10 0)
-                        (if (and (not (str/blank? query)) (str/includes? rel-lower query)) 8 0)
-                        (if (and (not (str/blank? query)) (str/includes? text-lower query)) 6 0))
-        token-score (reduce (fn [total token]
-                              (+ total
-                                 (if (str/includes? name-lower token) 3 0)
-                                 (if (str/includes? rel-lower token) 2 0)
-                                 (min 3 (* 0.6 (count-occurrences text-lower token)))))
-                            0
-                            tokens)
-        indexed-bonus (if indexed 0.75 0)]
-    (+ phrase-score token-score indexed-bonus)))
+
 
 (defn tool-text-result
   [text details]
