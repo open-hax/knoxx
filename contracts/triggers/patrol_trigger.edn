@@ -1,7 +1,10 @@
 {:contract/kind   :trigger
  :contract/id     "patrol_trigger"
+ :contract/version 3
  :trigger/kind    :cron
- :trigger/target  "patrol_pipeline"
+ :trigger/actor   "discord_automation"
+ :trigger/action  :actions/run-pipeline
+ :trigger/with    {:pipeline-id "patrol_pipeline"}
  :trigger/schedule "*/5 * * * *"
  :enabled         true
  :data

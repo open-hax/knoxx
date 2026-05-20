@@ -1,6 +1,6 @@
 {:contract/kind  :pipeline
  :contract/id    "patrol_pipeline"
- :enabled        true
+ :enabled        false
  :pipeline/steps
  [{:step/id       "patrol"
    :step/contract "discord_patrol"

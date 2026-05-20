@@ -1,8 +1,12 @@
 {:contract/kind   :trigger
  :contract/id     "mentions_trigger"
- :trigger/kind    :cron
- :trigger/target  "mentions_pipeline"
- :trigger/schedule "*/2 * * * *"
+ :contract/version 3
+ :trigger/kind    :event
+ :trigger/actor   "discord_automation"
+ :trigger/events  [:discord.message]
+ :trigger/condition (conditions/discord.mention event)
+ :trigger/action  :actions/run-pipeline
+ :trigger/with    {:pipeline-id "mentions_pipeline"}
  :enabled         true
  :data
  {:context {:check-mentions true}}}

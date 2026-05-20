@@ -1,9 +1,10 @@
 {:contract/kind :trigger
  :contract/id "fork_tales_creative_director_cron"
- :contract/version 1
- :enabled true
+ :contract/version 3
  :trigger/kind :cron
- :trigger/target "fork_tales_creative_director"
+ :trigger/actor "discord_automation"
+ :trigger/action :actions/start-agent-session
+ :trigger/agent "fork_tales_creative_director"
  :trigger/schedule "*/30 * * * *"
- :trigger/source {:kind :discord}
+ :enabled true
  :data {:context {:reason "contract cron: fork tales creative director"}}}

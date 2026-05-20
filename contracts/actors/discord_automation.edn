@@ -1,5 +1,5 @@
 {:actor/id "discord_automation"
- :actor/kind :agent
+ :actor/kind :agent ;; this should be assistent. Cause it's just gonna confuse you.
  :actor/org "open-hax"
  :actor/label "Discord Automation"
  :actor/default-agent "ussyverse_social_creative"

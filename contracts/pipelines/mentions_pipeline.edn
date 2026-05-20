@@ -1,6 +1,6 @@
 {:contract/kind  :pipeline
  :contract/id    "mentions_pipeline"
- :enabled        true
+ :enabled        false
  :pipeline/steps
  [{:step/id       "check"
    :step/contract "discord_mention_check"
