@@ -5,6 +5,7 @@
    host shim stays a pure dependency injector."
   (:require [shadow.cljs.modern :refer [js-await]]
             [clojure.string :as str]
+            [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.infra.core-memory :as core-memory]
             [knoxx.backend.infra.http :as backend-http]
@@ -155,15 +156,13 @@
                                      (.catch (fn [_] #js []))
                                      (.then (fn [jobs]
                                               #js {:ok true :source eta-mu-source :jobs jobs}))))))))]
-            (-> (js/Promise.all #js [legacy-p kms-p])
+            (-> (promise/all-vec [legacy-p kms-p])
                 (.then
-                 (fn [parts]
-                   (let [legacy (aget parts 0)
-                         kms (aget parts 1)]
-                     (.send reply #js {:ok true
-                                       :legacy legacy
-                                       :kms_ingestion kms
-                                       :time (now-iso)}))))
+                 (fn [[legacy kms]]
+                   (.send reply #js {:ok true
+                                     :legacy legacy
+                                     :kms_ingestion kms
+                                     :time (now-iso)})))
                 (.catch
                  (fn [err]
                    (.code reply 500)
@@ -253,12 +252,12 @@
                                      (.catch (fn [_] #js []))
                                      (.then (fn [jobs]
                                               #js {:ok true :source opencode-source :jobs jobs}))))))))]
-            (-> (js/Promise.all #js [opencode-p kms-p])
+            (-> (promise/all-vec [opencode-p kms-p])
                 (.then
-                 (fn [parts]
+                 (fn [[opencode kms]]
                    (.send reply #js {:ok true
-                                     :opencode (aget parts 0)
-                                     :kms_ingestion (aget parts 1)
+                                     :opencode opencode
+                                     :kms_ingestion kms
                                      :time (now-iso)})))
                 (.catch
                  (fn [err]

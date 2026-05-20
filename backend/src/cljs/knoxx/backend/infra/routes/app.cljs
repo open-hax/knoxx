@@ -37,6 +37,7 @@
             [knoxx.backend.infra.routes.workspace-media :as workspace-media-routes]
             [knoxx.backend.infra.routes.studio :as studio-routes]
             [knoxx.backend.infra.routes.translation :as translation-routes]
+            [knoxx.backend.extern.promise :as promise]
             [shadow.cljs.modern :refer (js-await)]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
@@ -351,10 +352,8 @@
   (.error js/console "Session status check failed" err)
   (queue-turn! "Async agent chat failed"))
 
-(defn- health-deps-ok [reply proxx-configured openplanner-configured parts]
-  (let [proxx-res (aget parts 0)
-        openplanner-res (aget parts 1)
-        proxx-ok (and proxx-configured (aget proxx-res "ok"))
+(defn- health-deps-ok [reply proxx-configured openplanner-configured [proxx-res openplanner-res]]
+  (let [proxx-ok (and proxx-configured (aget proxx-res "ok"))
         openplanner-ok (and openplanner-configured (aget openplanner-res "ok"))
         healthy (and proxx-ok openplanner-ok)]
     (json-response!
@@ -745,7 +744,7 @@
                               (js/Promise.resolve #js {:ok false
                                                        :status 503
                                                        :body #js {:detail "OpenPlanner is not configured"}}))]
-    (-> (js/Promise.all #js [proxx-promise openplanner-promise])
+    (-> (promise/all-vec [proxx-promise openplanner-promise])
         (.then (partial health-deps-ok reply proxx-configured openplanner-configured))
         (.catch (partial health-deps-err reply)))))
 

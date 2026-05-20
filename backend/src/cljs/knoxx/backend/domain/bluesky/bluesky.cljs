@@ -1,6 +1,7 @@
 (ns knoxx.backend.domain.bluesky.bluesky
   "Bluesky ATProto tool factories."
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
             [knoxx.backend.domain.actor.credentials :as actor-credentials]
@@ -375,8 +376,8 @@
 (defn- bluesky-publish! [runtime config text images image-alts reply-to]
   (-> (bluesky-create-session! runtime)
       (.then (fn [session]
-               (-> (js/Promise.all #js [(load-and-upload-images! runtime config session images image-alts)
-                                        (resolve-reply-refs! reply-to)])
+               (-> (promise/all-vec [(load-and-upload-images! runtime config session images image-alts)
+                                     (resolve-reply-refs! reply-to)])
                    (.then (fn [[embed reply-refs]]
                             (let [facets (build-hashtag-facets text)
                                   record #js {"$type" "app.bsky.feed.post"

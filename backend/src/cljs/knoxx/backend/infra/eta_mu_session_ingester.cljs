@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.eta-mu-session-ingester
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.promise :as promise]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 
@@ -442,7 +443,7 @@
 
 (defn get-eta-mu-ingest-status
   []
-  (-> (js/Promise.all #js [(load-ingest-state) (discover-session-files 0)])
+  (-> (promise/all-vec [(load-ingest-state) (discover-session-files 0)])
       (.then
        (fn [[state all-files]]
          (let [ingested-ids (js/Set. (js/Object.keys (.-sessions state)))
