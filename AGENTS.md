@@ -1,23 +1,31 @@
 # Knoxx Agent Style Guide
 
-## Vertical Domain-Driven Slices
+# Architecture Paradigm: Categories vs. Contracts
+When modeling domains, you must strictly differentiate between the grammar of motion and the enforcement of that motion.
+- Categories: Describe the space of lawful possible transformations. They dictate "what kind of move this is" and define the state space, transition vocabulary, and general laws of composition for the runtime or a subsystem.
+- Contracts: Decide whether a particular runtime entity, event, or transition is admissible under current obligations. They dictate "whether you are allowed to count it as a valid move right now" by defining guards, admissibility checks, evidence requirements, delivery expectations, and side-effect constraints.
 
-We organize agent tooling into **vertical domain-driven slices**, not horizontal layers.
+# House Rules: The Constitution (`eta-mu-sol` style)
+- Zero Warnings: Zero warnings in CI for `clj-kondo`, type checking, and tests. Warnings are failed contracts, not noise. 
+- Linter Enforcement: Turn on optional `clj-kondo` linters for `:missing-docstring`, `:unused-value`, `:shadowed-var`, `:used-underscored-binding`, `:warn-on-reflection`, `:unsorted-required-namespaces`, and `:refer`. Ban broad `:refer :all`.
+- No Junk Drawers: Do not use `utils` namespaces.
+- Architecture Split: Honor a strict four-category namespace architecture:
+  1. `domain.*`: Pure business logic, typed data, domain-level decisions. No I/O.
+  2. `infra.*` or `http/db/queue/*`: Effectful functor layer (transport, persistence). No domain policy.
+  3. `shape.*`: Structure-only morphisms over data shapes. Must be pure and domain-agnostic.
+  4. `law.*` or `contract/guard/*`: Contracts, validators (e.g., Malli), assertions. No I/O.
+- Boundary Contracts: Every boundary-crossing function must name or call an explicit contract/schema validator (e.g., Malli) reflecting the Contract obligations of the relevant Category.
+- Custom Macros: Macros must expand to ordinary, lintable shapes. Register custom macros in `.clj-kondo/config.edn` using `:lint-as` (e.g., `clj-kondo.lint-as/def-catch-all`) on day one. Do not invent a shadow legal system.
 
-Prefer:
-- `knoxx.backend.tools.discord` — everything Discord (API wrappers, tool factories, formatting)
-- `knoxx.backend.tools.music` — everything music/audio identification
-- `knoxx.backend.tools.openplanner` — graph, memory, websearch, translation
-- `knoxx.backend.tools.contracts` — contract librarian read/write tooling
-
-Over:
-- ~utils.cljs~ with scattered helpers
-- ~agent_hydration.cljs~ as a 45k-token god namespace
-
-### Why
-- A domain can be understood, tested, and replaced in isolation.
-- Tool factories live next to the private functions that power them.
-- Shared infrastructure (media loading, path resolution, TypeBox helpers) is extracted explicitly into `tools.shared` and `tools.media`, not copy-pasted.
+# Coding Directives & Clean Code Doctrine
+- Optimize for the human reader's working memory: reveal intent through explicit naming, isolate responsibilities, and arrest entropy on contact.
+- Continuous Truth (XP): Tighten the loop. Favor small, verifiable state changes over speculative architecture.
+- Modern Asynchrony: ClojureScript 1.12.145+ supports native async/await. Always use the `^:async` metadata hint for functions and tests instead of legacy `core.async` channels, Promise chains, or shadow-cljs specific wrappers when targeting modern environments. 
+  - Functions: `(defn ^:async foo [n] ... (await (Promise/resolve ...)))`
+  - Tests: `(deftest ^:async foo-test ... (await (foo ...)))`
+- Clojure Idioms:
+  - Use `when-let` instead of nesting `let` and `if` checks.
+  - Strongly prefer threading macros (`->` and `->>`) over manual nested let forms to maintain linear readability.
 
 ## Data-Oriented Design
 
@@ -82,3 +90,5 @@ ClojureScript 1.12.145 supports `^:async` on `deftest` and `defn`, emitting nati
 - Rejected promises throw synchronously inside `await`; catch them with `(catch :default e ...)`
 - Never return a rejected promise disguised as a success map — errors must remain errors
 - `js-await` and `await` are not interchangeable: `js-await` is a macro for `let` binding; `await` is a special form inside `^:async`
+
+
