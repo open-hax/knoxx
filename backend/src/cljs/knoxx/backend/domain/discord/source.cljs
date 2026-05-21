@@ -6,7 +6,8 @@
    letting the runtime depend directly on discord-gateway internals."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.discord.gateway :as dg]
-            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.domain.discord.rest-client :as discord-rest]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.label.quality :as quality-labels]))
 
 (defonce ^:private gateway-unsubscribe* (atom nil))
@@ -47,52 +48,36 @@
         (let [status (.status manager)]
           (some-> (aget status "userId") str str/trim not-empty)))))
 
-(defn- discord-headers
-  [token]
-  #js {"Authorization" (str "Bot " token)
-       "Content-Type" "application/json"})
-
-(defn- fetch-json!
-  [url options]
-  (-> (js/fetch url options)
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.json resp)
-                 (-> (.text resp)
-                     (.then (fn [text]
-                              (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
-
 (defn- message-role-ids
   [msg]
-  (->> (if (array? (aget msg "member" "roles"))
-         (array-seq (aget msg "member" "roles"))
-         [])
+  (->> (or (get-in msg [:member :roles]) [])
        (map str)
        vec))
 
 (defn map-message
   [msg]
-  {:id (aget msg "id")
-   :channelId (or (aget msg "channel_id") "")
-   :guildId (or (aget msg "guild_id") "")
-   :content (or (aget msg "content") "")
-   :authorId (or (aget msg "author" "id") "")
-   :authorUsername (or (aget msg "author" "username") "unknown")
-   :authorIsBot (boolean (aget msg "author" "bot"))
-   :authorRoleIds (message-role-ids msg)
-   :timestamp (or (aget msg "timestamp") "")
-   :attachments (->> (if (array? (aget msg "attachments")) (array-seq (aget msg "attachments")) [])
-                     (mapv (fn [attachment]
-                             {:id (or (aget attachment "id") "")
-                              :filename (or (aget attachment "filename") "")
-                              :contentType (or (aget attachment "content_type") (aget attachment "contentType"))
-                              :size (or (aget attachment "size") 0)
-                              :url (or (aget attachment "url") "")})))
-   :embeds (->> (if (array? (aget msg "embeds")) (array-seq (aget msg "embeds")) [])
-                (mapv (fn [embed]
-                        {:title (or (aget embed "title") nil)
-                         :description (or (aget embed "description") nil)
-                         :url (or (aget embed "url") nil)})))})
+  (let [author (or (:author msg) {})]
+    {:id (:id msg)
+     :channelId (or (:channel_id msg) (:channelId msg) "")
+     :guildId (or (:guild_id msg) (:guildId msg) "")
+     :content (or (:content msg) "")
+     :authorId (or (:id author) "")
+     :authorUsername (or (:username author) "unknown")
+     :authorIsBot (boolean (:bot author))
+     :authorRoleIds (message-role-ids msg)
+     :timestamp (or (:timestamp msg) "")
+     :attachments (->> (or (:attachments msg) [])
+                       (mapv (fn [attachment]
+                               {:id (or (:id attachment) "")
+                                :filename (or (:filename attachment) "")
+                                :contentType (or (:content_type attachment) (:contentType attachment))
+                                :size (or (:size attachment) 0)
+                                :url (or (:url attachment) "")})))
+     :embeds (->> (or (:embeds msg) [])
+                  (mapv (fn [embed]
+                          {:title (:title embed)
+                           :description (:description embed)
+                           :url (:url embed)})))}))
 
 (defn- sort-newest-first
   [messages]
@@ -108,21 +93,21 @@
       (get labels (keyword rid))
       {}))
 
-(defn- attach-openplanner-labels!
+(defn- ^:async attach-openplanner-labels!
   [config messages]
-  (if (or (empty? messages) (not (backend-http/openplanner-enabled? config)))
-    (js/Promise.resolve (quality-labels/good-first-then-not-bad messages))
-    (let [ids (mapv record-id messages)]
-      (-> (backend-http/openplanner-request! config "POST" "/v1/labels/records/lookup" {:ids ids})
-          (.then (fn [response]
-                   (let [labels (:labels response)]
-                     (->> messages
-                          (mapv (fn [message]
-                                  (assoc message :openplannerLabels (label-for-record-id labels (record-id message)))))
-                          quality-labels/good-first-then-not-bad))))
-          (.catch (fn [error]
-                    (.warn js/console "[event-agents.discord] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad Discord context" error)
-                    []))))))
+  (let [client (openplanner-client/client config)]
+    (if (or (empty? messages) (not (openplanner-client/enabled? client)))
+      (quality-labels/good-first-then-not-bad messages)
+      (try
+        (let [ids (mapv record-id messages)
+              labels (:labels (await (openplanner-client/request! client "POST" "/v1/labels/records/lookup" {:ids ids})))]
+          (->> messages
+               (mapv (fn [message]
+                       (assoc message :openplannerLabels (label-for-record-id labels (record-id message)))))
+               quality-labels/good-first-then-not-bad))
+        (catch :default error
+          (.error js/console "[event-agents.discord] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad Discord context" error)
+          [])))))
 
 (defn- fetch-channel-from-gateway-entries!
   [entries channel-id opts]
@@ -145,12 +130,9 @@
     (let [token (bot-token config)]
       (if (str/blank? token)
         (js/Promise.reject (js/Error. "Discord bot token not configured"))
-        (-> (fetch-json!
-             (str "https://discord.com/api/v10/channels/" channel-id "/messages?limit=" (max 1 (min 100 (or limit 25))))
-             #js {:method "GET"
-                  :headers (discord-headers token)})
+        (-> (discord-rest/channel-messages! (discord-rest/client token) channel-id {:limit (max 1 (min 100 (or limit 25)))})
             (.then (fn [payload]
-                     (->> (if (array? payload) (array-seq payload) [])
+                     (->> (or payload [])
                           (map map-message)
                           sort-newest-first
                           vec)))

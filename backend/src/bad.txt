@@ -1,0 +1,51 @@
+cljs/knoxx/backend/domain/discord/tools.cljs:            [knoxx.backend.extern.js :as xjs]
+cljs/knoxx/backend/domain/discord/tools.cljs:                              (let [channels (->> (xjs/js-array-seq payloads)
+cljs/knoxx/backend/domain/discord/tools.cljs:                             xjs/js-array-seq
+cljs/knoxx/backend/domain/discord/rest_client.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/domain/discord/rest_client.cljs:                    :body (xjson/stringify {:recipient_id user-id})}
+cljs/knoxx/backend/domain/discord/rest_client.cljs:                    :body (xjson/stringify payload)}
+cljs/knoxx/backend/domain/discord/rest_client.cljs:                      :body (xjson/stringify payload)}
+cljs/knoxx/backend/domain/voice/client.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/domain/voice/client.cljs:            parsed-lines (keep xjson/parse-object lines)
+cljs/knoxx/backend/domain/voice/client.cljs:      (or (xjson/parse-object s) {}))))
+cljs/knoxx/backend/domain/voice/client.cljs:                                                 :body (xjson/stringify body)}
+cljs/knoxx/backend/domain/voice/client.cljs:                  _ (js/console.log "[voice:stt] JSON parsed:" (xjson/stringify j))
+cljs/knoxx/backend/domain/tools.cljs:            [knoxx.backend.extern.js :as xjs]
+cljs/knoxx/backend/domain/tools.cljs:  (let [items (xjs/js-array-seq guidelines)]
+cljs/knoxx/backend/domain/tools.cljs:  (let [items (xjs/js-array-seq tools)]
+cljs/knoxx/backend/domain/tools.cljs:             (xjs/js-array-seq tools)))))
+cljs/knoxx/backend/infra/http.cljs:            [knoxx.backend.extern.js :as xjs]
+cljs/knoxx/backend/infra/http.cljs:    (doseq [key (xjs/js-array-seq (.keys js/Object query))]
+cljs/knoxx/backend/infra/http.cljs:    (doseq [key (xjs/js-array-seq (.keys js/Object source))]
+cljs/knoxx/backend/domain/contracts/client.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/domain/contracts/client.cljs:                                       :body (xjson/stringify {:edn_text edn-text
+cljs/knoxx/backend/infra/core_memory.cljs:            [knoxx.backend.extern.js :as xjs]
+cljs/knoxx/backend/infra/core_memory.cljs:               (->> (xjs/js-array-seq results)
+cljs/knoxx/backend/infra/stores/session_titles.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/infra/stores/session_titles.cljs:  (xjson/parse-object value))
+cljs/knoxx/backend/infra/clients/openplanner.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/infra/clients/openplanner.cljs:                   body (assoc :body (xjson/stringify body)))]
+cljs/knoxx/backend/domain/bluesky/client.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/domain/bluesky/client.cljs:                                      (some? body) (assoc :body (xjson/stringify body)))
+cljs/knoxx/backend/infra/clients/knoxx_control.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/infra/clients/knoxx_control.cljs:                                      body (assoc :body (xjson/stringify body)))
+cljs/knoxx/backend/infra/routes/voice.cljs:            [knoxx.backend.extern.js :as xjs]
+cljs/knoxx/backend/infra/routes/voice.cljs:                                   (let [part-seq (xjs/js-array-seq parts)
+cljs/knoxx/backend/infra/routes/multimodal.cljs:            [knoxx.backend.extern.js :as xjs]
+cljs/knoxx/backend/infra/routes/multimodal.cljs:                       (let [part-seq (xjs/js-array-seq parts)
+cljs/knoxx/backend/infra/routes/multimodal.cljs:                            (let [uploads (xjs/js-array-seq results)
+cljs/knoxx/backend/infra/routes/multimodal.cljs:                     (let [matching (first (filter #(str/starts-with? % file-id) (xjs/js-array-seq files)))]
+cljs/knoxx/backend/infra/routes/multimodal.cljs:                         (let [matching (first (filter #(str/starts-with? % file-id) (xjs/js-array-seq files)))]
+cljs/knoxx/backend/infra/clients/proxx.cljs:            [knoxx.backend.extern.json :as xjson]))
+cljs/knoxx/backend/infra/clients/proxx.cljs:    (or (map? body) (vector? body) (set? body)) (xjson/stringify body)
+cljs/knoxx/backend/extern/proxx.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/extern/proxx.cljs:        body (xjson/to-cljs (:body resp))
+cljs/knoxx/backend/extern/proxx.cljs:            :body (xjson/stringify request)})
+cljs/knoxx/backend/infra/agent/session.cljs:            [knoxx.backend.extern.js :as xjs]
+cljs/knoxx/backend/infra/agent/session.cljs:                                (xjs/object {:conversationId conversation-id
+cljs/knoxx/backend/infra/agent/session.cljs:               (xjs/empty-object) {}
+cljs/knoxx/backend/infra/agent/session.cljs:                                  (xjs/object {:conversationId conversation-id})
+cljs/knoxx/backend/extern/fetch.cljs:            [knoxx.backend.extern.json :as xjson]
+cljs/knoxx/backend/extern/fetch.cljs:      (xjson/to-cljs (.parse js/JSON text))
+cljs/knoxx/backend/infra/routes/app.cljs:            [knoxx.backend.extern.js :as xjs]
+cljs/knoxx/backend/infra/routes/app.cljs:                                 :imported_item_count (count (xjs/js-array-seq (aget body "items")))}))))

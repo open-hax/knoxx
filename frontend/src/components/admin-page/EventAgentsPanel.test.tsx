@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { EventAgentsPanel } from "./EventAgentsPanel";
 
 describe("EventAgentsPanel", () => {
@@ -19,7 +19,7 @@ describe("EventAgentsPanel", () => {
     expect(screen.getByText(/Loading runtime jobs/i)).toBeInTheDocument();
   });
 
-  it("falls back to the TS panel when the CLJS module is not available after timeout", async () => {
+  it("shows a loud integration error when the CLJS module is not available after timeout", async () => {
     vi.useFakeTimers();
 
     render(
@@ -30,11 +30,13 @@ describe("EventAgentsPanel", () => {
     );
 
     // Fast-forward past the 1.5s timeout
-    vi.advanceTimersByTime(2000);
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
     vi.useRealTimers();
 
     await waitFor(() => {
-      expect(screen.getByText(/Loading event-agent control plane/i)).toBeInTheDocument();
+      expect(screen.getByText(/Runtime jobs \(shadow-cljs\) failed to load/i)).toBeInTheDocument();
     });
   });
 

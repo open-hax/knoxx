@@ -3,7 +3,9 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.discord.gateway :as dg]
-            [knoxx.backend.infra.http :as backend-http :refer [js-array-seq]]
+            [knoxx.backend.domain.discord.rest-client :as discord-rest]
+            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.label.quality :as quality-labels]
             [knoxx.backend.infra.svg-render :as svg-render]
             [knoxx.backend.domain.text :refer [sanitize-svg-content tool-text-result]]
@@ -33,62 +35,42 @@
                    (throw (js/Error. "Discord bot actor credential must include botToken.")))
                  token)))))
 
-(defn- discord-rest-headers
-  [token]
-  #js {"Authorization" (str "Bot " token)
-       "Content-Type" "application/json"})
-
-(defn- discord-query-url
-  [base params]
-  (let [search (js/URLSearchParams.)]
-    (doseq [[k v] params]
-      (when-not (or (nil? v) (and (string? v) (str/blank? v)))
-        (.append search (name k) (str v))))
-    (let [query (.toString search)]
-      (if (str/blank? query)
-        base
-        (str base "?" query)))))
-
-(defn- discord-fetch-json!
-  [url options]
-  (-> (js/fetch url options)
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.json resp)
-                 (-> (.text resp)
-                     (.then (fn [text]
-                              (throw (js/Error. (str "Discord API error " (.-status resp) ": " text)))))))))))
-
+(defn- discord-client!
+  [runtime]
+  (-> (discord-token! runtime)
+      (.then (fn [token]
+               (discord-rest/client token)))))
 
 (defn- discord-attachments
   [message]
-  (->> (if (array? (aget message "attachments")) (array-seq (aget message "attachments")) [])
+  (->> (or (:attachments message) [])
        (mapv (fn [attachment]
-               {:id (or (aget attachment "id") "")
-                :filename (or (aget attachment "filename") "")
-                :contentType (aget attachment "content_type")
-                :size (or (aget attachment "size") 0)
-                :url (or (aget attachment "url") "")}))))
+               {:id (or (:id attachment) "")
+                :filename (or (:filename attachment) "")
+                :contentType (or (:content_type attachment) (:contentType attachment))
+                :size (or (:size attachment) 0)
+                :url (or (:url attachment) "")}))))
 
 (defn- discord-embeds
   [message]
-  (->> (if (array? (aget message "embeds")) (array-seq (aget message "embeds")) [])
+  (->> (or (:embeds message) [])
        (mapv (fn [embed]
-               {:title (aget embed "title")
-                :description (aget embed "description")
-                :url (aget embed "url")}))))
+               {:title (:title embed)
+                :description (:description embed)
+                :url (:url embed)}))))
 
 (defn- discord-message->map
   [message]
-  {:id (or (aget message "id") "")
-   :channelId (or (aget message "channel_id") "")
-   :content (or (aget message "content") "")
-   :authorId (or (aget message "author" "id") "")
-   :authorUsername (or (aget message "author" "username") "unknown")
-   :authorIsBot (boolean (aget message "author" "bot"))
-   :timestamp (or (aget message "timestamp") "")
+  (let [author (or (:author message) {})]
+    {:id (or (:id message) "")
+     :channelId (or (:channel_id message) (:channelId message) "")
+     :content (or (:content message) "")
+     :authorId (or (:id author) "")
+     :authorUsername (or (:username author) "unknown")
+     :authorIsBot (boolean (:bot author))
+     :timestamp (or (:timestamp message) "")
    :attachments (discord-attachments message)
-   :embeds (discord-embeds message)})
+     :embeds (discord-embeds message)}))
 
 (defn- discord-message-line
   [message]
@@ -170,41 +152,38 @@
 
 (defn- attach-openplanner-labels!
   [config messages]
-  (if (or (empty? messages) (not (backend-http/openplanner-enabled? config)))
-    (js/Promise.resolve (good-first-then-not-bad messages))
-    (let [ids (mapv discord-record-id messages)]
-      (-> (backend-http/openplanner-request! config "POST" "/v1/labels/records/lookup" {:ids ids})
-          (.then (fn [response]
-                   (let [labels (:labels response)]
-                     (->> messages
-                          (mapv (fn [message]
-                                  (assoc message :openplannerLabels (label-for-record-id labels (discord-record-id message)))))
-                          good-first-then-not-bad))))
-          (.catch (fn [error]
-                    (.warn js/console "[discord-tools] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad messages" error)
-                    []))))))
+  (let [client (openplanner-client/client config)]
+    (if (or (empty? messages) (not (openplanner-client/enabled? client)))
+      (js/Promise.resolve (good-first-then-not-bad messages))
+      (let [ids (mapv discord-record-id messages)]
+        (-> (openplanner-client/request! client "POST" "/v1/labels/records/lookup" {:ids ids})
+            (.then (fn [response]
+                     (let [labels (:labels response)]
+                       (->> messages
+                            (mapv (fn [message]
+                                    (assoc message :openplannerLabels (label-for-record-id labels (discord-record-id message)))))
+                            good-first-then-not-bad))))
+            (.catch (fn [error]
+                      (.warn js/console "[discord-tools] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad messages" error)
+                      [])))))))
 (defn- discord-fetch-channel-messages!
   [runtime config channel-id {:keys [limit before after around]}]
   (do
     (when (str/blank? channel-id)
       (throw (js/Error. "channel_id is required")))
-    (-> (discord-token! runtime)
-          (.then (fn [token]
-                   (-> (discord-fetch-json!
-                        (discord-query-url (str "https://discord.com/api/v10/channels/" channel-id "/messages")
-                                           {:limit (max 1 (min 100 (or limit 50)))
-                                            :before before
-                                            :after after
-                                            :around around})
-                        #js {:method "GET"
-                             :headers (discord-rest-headers token)})
-                       (.then (fn [payload]
-                                (let [messages (->> (if (array? payload) (array-seq payload) [])
-                                                    (map discord-message->map)
-                                                    vec)]
-                                  {:messages messages
-                                   :count (count messages)
-                                   :channelId channel-id})))))))))
+    (-> (discord-client! runtime)
+        (.then (fn [client]
+                 (-> (discord-rest/channel-messages! client channel-id {:limit limit
+                                                                        :before before
+                                                                        :after after
+                                                                        :around around})
+                     (.then (fn [payload]
+                              (let [messages (->> (or payload [])
+                                                  (map discord-message->map)
+                                                  vec)]
+                                {:messages messages
+                                 :count (count messages)
+                                 :channelId channel-id})))))))))
 
 
 
@@ -218,19 +197,15 @@
   [runtime user-id]
   (when (str/blank? user-id)
     (throw (js/Error. "user_id is required")))
-  (-> (discord-token! runtime)
-      (.then (fn [token]
-               (discord-fetch-json!
-                "https://discord.com/api/v10/users/@me/channels"
-                #js {:method "POST"
-                     :headers (discord-rest-headers token)
-                     :body (.stringify js/JSON #js {:recipient_id user-id})})))))
+  (-> (discord-client! runtime)
+      (.then (fn [client]
+               (discord-rest/open-dm-channel! client user-id)))))
 
 (defn- discord-fetch-dm-messages!
   [runtime config user-id {:keys [limit before]}]
   (-> (discord-open-dm-channel! runtime user-id)
         (.then (fn [channel]
-                 (let [channel-id (or (aget channel "id") "")]
+                 (let [channel-id (or (:id channel) "")]
                    (-> (discord-fetch-channel-messages! runtime config channel-id {:limit limit :before before})
                        (.then (fn [result]
                                 (assoc result :dmChannelId channel-id :userId user-id)))))))))
@@ -357,21 +332,17 @@
               :buffer buffer}))))
 
       (media/source-http-url? source)
-      (-> (js/fetch source #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0"}})
-          (.then (fn [resp]
-                   (if (.-ok resp)
-                     (.then (.arrayBuffer resp)
-                            (fn [buf]
-                              (let [buffer (.from js/Buffer buf)
-                                    mime-type (media/sanitize-mime-type (.get (.-headers resp) "content-type")
-                                                                        (media/workspace-media-mime-type source))]
-                                (media/ensure-source-size! (.-length buffer) media/workspace-media-max-bytes "Discord attachment")
-                                {:name (infer-upload-filename source idx)
-                                 :mimeType mime-type
-                                 :buffer buffer})))
-                     (-> (.text resp)
-                         (.then (fn [text]
-                                  (throw (js/Error. (str "Attachment fetch failed " (.-status resp) ": " text))))))))))
+      (-> (discord-rest/fetch-attachment! (discord-rest/client nil) source)
+          (.then (fn [{:keys [ok status headers body]}]
+                   (if ok
+                     (let [buffer (.from js/Buffer body)
+                           mime-type (media/sanitize-mime-type (get headers "content-type")
+                                                               (media/workspace-media-mime-type source))]
+                       (media/ensure-source-size! (.-length buffer) media/workspace-media-max-bytes "Discord attachment")
+                       {:name (infer-upload-filename source idx)
+                        :mimeType mime-type
+                        :buffer buffer})
+                     (throw (js/Error. (str "Attachment fetch failed " status)))))))
 
       :else
       ;; Local file path — resolve through shared workspace media rules so
@@ -415,28 +386,19 @@
   form)
 
 (defn- post-discord-message-chunk!
-  [token channel-id reply-to file-list chunk state]
+  [client channel-id reply-to file-list chunk state]
   (let [form (js/FormData.)
         payload (discord-message-payload chunk reply-to state)]
     (.append form "payload_json" (.stringify js/JSON (clj->js payload)))
     (append-discord-files! form file-list)
-    (-> (js/fetch (str "https://discord.com/api/v10/channels/" channel-id "/messages")
-                  #js {:method "POST"
-                       :headers #js {"Authorization" (str "Bot " token)}
-                       :body form})
-        (.then (fn [resp]
-                 (if (.-ok resp)
-                   (.json resp)
-                   (-> (.text resp)
-                       (.then (fn [text]
-                                (throw (js/Error. (str "Discord API error " (.-status resp) ": " text))))))))))))
+    (discord-rest/create-channel-message-form! client channel-id form)))
 
 (defn- post-discord-message-chunks!
-  [token channel-id reply-to file-list chunks]
+  [client channel-id reply-to file-list chunks]
   (reduce (fn [promise chunk]
             (.then promise
                    (fn [state]
-                     (post-discord-message-chunk! token channel-id reply-to file-list chunk state))))
+                     (post-discord-message-chunk! client channel-id reply-to file-list chunk state))))
           (js/Promise.resolve nil)
           chunks))
 
@@ -466,15 +428,15 @@
                                all-urls)))
         (.then (fn [files]
                  (let [file-list (vec (array-seq files))]
-                   (-> (discord-token! runtime)
-                       (.then (fn [token]
+                   (-> (discord-client! runtime)
+                       (.then (fn [client]
                                 (let [chunks (discord-message-chunks normalized)]
-                                  (-> (post-discord-message-chunks! token channel-id reply-to file-list chunks)
+                                  (-> (post-discord-message-chunks! client channel-id reply-to file-list chunks)
                                       (.then (fn [result]
                                                {:channelId channel-id
-                                                :messageId (or (aget result "id") "")
+                                                :messageId (or (:id result) "")
                                                 :sent true
-                                                :timestamp (or (aget result "timestamp") "")
+                                                :timestamp (or (:timestamp result) "")
                                                 :chunkCount (count chunks)
                                                 :attachmentCount (count file-list)})))))))))))))
 
@@ -488,21 +450,14 @@
     (throw (js/Error. "message_id is required")))
   (when (str/blank? emoji)
     (throw (js/Error. "emoji is required")))
-  (let [encoded-emoji (js/encodeURIComponent emoji)]
-    (-> (discord-token! runtime)
-        (.then (fn [token]
-                 (-> (js/fetch (str "https://discord.com/api/v10/channels/" channel-id "/messages/" message-id "/reactions/" encoded-emoji "/@me")
-                               #js {:method "PUT"
-                                    :headers #js {"Authorization" (str "Bot " token)}})
-                     (.then (fn [resp]
-                              (if (.-ok resp)
-                                {:channelId channel-id
-                                 :messageId message-id
-                                 :emoji emoji
-                                 :reacted true}
-                                (-> (.text resp)
-                                    (.then (fn [text]
-                                             (throw (js/Error. (str "Discord API error " (.-status resp) ": " text)))))))))))))))
+  (-> (discord-client! runtime)
+      (.then (fn [client]
+               (-> (discord-rest/add-reaction! client channel-id message-id emoji)
+                   (.then (fn [_]
+                            {:channelId channel-id
+                             :messageId message-id
+                             :emoji emoji
+                             :reacted true})))))))
 
 (defn- discord-thread-create!
   "Create a thread in a channel or from a message."
@@ -511,26 +466,14 @@
     (throw (js/Error. "channel_id is required")))
   (when (str/blank? name)
     (throw (js/Error. "name is required")))
-  (let [url (if (str/blank? message-id)
-              (str "https://discord.com/api/v10/channels/" channel-id "/threads")
-              (str "https://discord.com/api/v10/channels/" channel-id "/messages/" message-id "/threads"))
-        body (clj->js {:name name
-                       :auto_archive_duration (or auto-archive-duration 1440)
-                       :type 11})]
-    (-> (discord-token! runtime)
-        (.then (fn [token]
-                 (js/fetch url
-                           #js {:method "POST"
-                                :headers (discord-rest-headers token)
-                                :body (.stringify js/JSON body)})))
-        (.then (fn [resp]
-                 (if (.-ok resp)
-                   (.json resp)
-                   (-> (.text resp)
-                       (.then (fn [text]
-                                (throw (js/Error. (str "Discord API error " (.-status resp) ": " text)))))))))
+  (let [body {:name name
+              :auto_archive_duration (or auto-archive-duration 1440)
+              :type 11}]
+    (-> (discord-client! runtime)
+        (.then (fn [client]
+                 (discord-rest/create-thread! client channel-id message-id body)))
         (.then (fn [result]
-                 {:threadId (or (aget result "id") "")
+                 {:threadId (or (:id result) "")
                   :channelId channel-id
                   :messageId (or message-id "")
                   :name name
@@ -538,39 +481,35 @@
 
 (defn- discord-list-guilds!
   [runtime]
-  (-> (discord-token! runtime)
-      (.then (fn [token]
-               (discord-fetch-json! "https://discord.com/api/v10/users/@me/guilds"
-                                    #js {:method "GET"
-                                         :headers (discord-rest-headers token)})))
+  (-> (discord-client! runtime)
+      (.then (fn [client]
+               (discord-rest/current-user-guilds! client)))
       (.then (fn [payload]
-               (let [servers (->> (if (array? payload) (array-seq payload) [])
+               (let [servers (->> (or payload [])
                                   (mapv (fn [guild]
-                                          {:id (or (aget guild "id") "")
-                                           :name (or (aget guild "name") "")
-                                           :memberCount (aget guild "approximate_member_count")})))]
+                                          {:id (or (:id guild) "")
+                                           :name (or (:name guild) "")
+                                           :memberCount (:approximate_member_count guild)})))]
                  {:servers servers
                   :count (count servers)})))))
 
 (defn- text-channel-type?
   [channel]
-  (contains? #{0 5 11 12} (aget channel "type")))
+  (contains? #{0 5 11 12} (:type channel)))
 
 (defn- discord-list-guild-channels!
   [runtime guild-id]
-  (-> (discord-token! runtime)
-      (.then (fn [token]
-               (discord-fetch-json! (str "https://discord.com/api/v10/guilds/" guild-id "/channels")
-                                    #js {:method "GET"
-                                         :headers (discord-rest-headers token)})))
+  (-> (discord-client! runtime)
+      (.then (fn [client]
+               (discord-rest/guild-channels! client guild-id)))
       (.then (fn [payload]
-               (let [channels (->> (if (array? payload) (array-seq payload) [])
+               (let [channels (->> (or payload [])
                                    (filter text-channel-type?)
                                    (mapv (fn [channel]
-                                           {:id (or (aget channel "id") "")
-                                            :name (or (aget channel "name") "")
+                                           {:id (or (:id channel) "")
+                                            :name (or (:name channel) "")
                                             :guildId guild-id
-                                            :type (str (or (aget channel "type") ""))})))]
+                                            :type (str (or (:type channel) ""))})))]
                  {:channels channels
                   :count (count channels)})))))
 
@@ -584,7 +523,7 @@
                                        (discord-list-guild-channels! runtime (:id server)))
                                      (:servers result))))
                      (.then (fn [payloads]
-                              (let [channels (->> (js-array-seq payloads)
+                              (let [channels (->> (xjs/js-array-seq payloads)
                                                   (mapcat :channels)
                                                   vec)]
                                 {:channels channels
@@ -604,7 +543,7 @@
         attachment-urls (->> (or (aget params "attachment_urls")
                                  (aget params "attachmentUrls")
                                  #js [])
-                             js-array-seq
+                             xjs/js-array-seq
                              (map strip-path-delims)
                              (remove str/blank?)
                              clj->js)]

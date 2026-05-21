@@ -18,7 +18,9 @@
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
             [knoxx.backend.law.guards :as guards]
-            [knoxx.backend.infra.http :refer [forward-knoxx-request! json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string http-error error-response! js-array-seq]]
+            [knoxx.backend.infra.clients.proxx :as proxx-client]
+            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.infra.http :refer [forward-knoxx-request! json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string request-body http-error error-response!]]
             [knoxx.backend.infra.routes.memory :as memory-routes]
             [knoxx.backend.infra.routes.models :as model-routes]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-export!]]
@@ -318,7 +320,7 @@
   (json-response! reply 502 {:detail (str prefix err)}))
 
 (defn- fetch-json-ok [reply resp]
-  (json-response! reply (or (aget resp "status") 200) (aget resp "body")))
+  (json-response! reply (or (:status resp) 200) (:body resp)))
 
 (defn- fetch-json-err [reply err]
   (json-response! reply 502 {:error (.-message err)}))
@@ -353,9 +355,9 @@
   (queue-turn! "Async agent chat failed"))
 
 (defn- health-deps-ok [reply proxx-configured openplanner-configured [proxx-res openplanner-res]]
-  (let [proxx-ok (and proxx-configured (aget proxx-res "ok"))
-        openplanner-ok (and openplanner-configured (aget openplanner-res "ok"))
-        healthy (and proxx-ok openplanner-ok)]
+  (let [proxx-ok       (and proxx-configured (:ok proxx-res))
+        openplanner-ok (and openplanner-configured (:ok openplanner-res))
+        healthy        (and proxx-ok openplanner-ok)]
     (json-response!
      reply
      (if healthy 200 503)
@@ -363,12 +365,12 @@
       :service "knoxx-backend-cljs"
       :dependencies {:proxx {:configured proxx-configured
                              :reachable (boolean proxx-ok)
-                             :status_code (aget proxx-res "status")
-                             :detail (js->clj (aget proxx-res "body") :keywordize-keys true)}
+                             :status_code (:status proxx-res)
+                             :detail (:body proxx-res)}
                      :openplanner {:configured openplanner-configured
                                    :reachable (boolean openplanner-ok)
-                                   :status_code (aget openplanner-res "status")
-                                   :detail (js->clj (aget openplanner-res "body") :keywordize-keys true)}}})))
+                                   :status_code (:status openplanner-res)
+                                   :detail (:body openplanner-res)}}})))
 
 (defn- health-deps-err [reply err]
   (json-response! reply 503 {:status "unhealthy"
@@ -442,8 +444,8 @@
   (json-response! reply 500 {:error (str err)}))
 
 (defn- shibboleth-ok [reply request body data]
-  (let [session (or (aget data "session") #js {})
-        session-id (str (or (aget session "id") ""))
+  (let [session (or (:session data) {})
+        session-id (str (or (:id session) ""))
         ui-url (if (and (not (str/blank? session-id))
                         (not (str/blank? (:shibboleth-ui-url config))))
                  (with-query-param (rewrite-localhost-url (:shibboleth-ui-url config) request)
@@ -455,12 +457,12 @@
       (json-response! reply 200 {:ok true
                                  :session_id session-id
                                  :ui_url ui-url
-                                 :imported_item_count (count (js-array-seq (aget body "items")))}))))
+                                 :imported_item_count (count (xjs/js-array-seq (aget body "items")))}))))
 
 (defn- shibboleth-import-failed [reply resp]
   (json-response! reply 502 {:detail (str "Shibboleth import failed: "
-                                          (or (aget (aget resp "body") "raw")
-                                              (js/JSON.stringify (aget resp "body"))))}))
+                                          (or (:raw (:body resp))
+                                              (js/JSON.stringify (clj->js (:body resp)))))}))
 
 (defn- shibboleth-unreachable [reply err]
   (json-response! reply 502 {:detail (str "Shibboleth is unreachable: " err)}))
@@ -494,7 +496,7 @@
 
 (defn- handle-chat-start [runtime config reply ctx request]
   (let [node-crypto crypto
-        parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+        parsed0 (normalize-chat-body (request-body request))
         parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
         agent-ctx (effective-auth-context ctx parsed)
         policy-model (or (:model parsed)
@@ -551,7 +553,7 @@
 
 (defn- handle-direct-start [runtime config reply ctx request]
   (let [node-crypto crypto
-        parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+        parsed0 (normalize-chat-body (request-body request))
         parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
         agent-ctx (effective-auth-context ctx parsed)
         policy-model (or (:model parsed)
@@ -604,7 +606,7 @@
                (queue-turn! "Async direct agent chat failed"))))))
 
 (defn- handle-admin-abort [reply ctx request]
-  (let [raw (or (aget request "body") #js {})
+  (let [raw (request-body request)
         requested-conversation-id (str (or (aget raw "conversation_id")
                                            (aget raw "conversationId")
                                            ""))
@@ -733,17 +735,16 @@
                               (not (str/blank? (:proxx-auth-token config))))
         openplanner-configured (openplanner-enabled? config)
         proxx-promise (if proxx-configured
-                        (fetch-json (str (:proxx-base-url config) "/health")
-                                    #js {:headers (bearer-headers (:proxx-auth-token config))})
-                        (js/Promise.resolve #js {:ok false
-                                                 :status 503
-                                                 :body #js {:detail "Proxx is not configured"}}))
+                        (proxx-client/health! (proxx-client/client config))
+                        (js/Promise.resolve {:ok false
+                                             :status 503
+                                             :body {:detail "Proxx is not configured"}}))
         openplanner-promise (if openplanner-configured
                               (fetch-json (openplanner-url config "/v1/health")
-                                          #js {:headers (openplanner-headers config)})
-                              (js/Promise.resolve #js {:ok false
-                                                       :status 503
-                                                       :body #js {:detail "OpenPlanner is not configured"}}))]
+                                          {:headers (openplanner-headers config)})
+                              (js/Promise.resolve {:ok false
+                                                   :status 503
+                                                   :body {:detail "OpenPlanner is not configured"}}))]
     (-> (promise/all-vec [proxx-promise openplanner-promise])
         (.then (partial health-deps-ok reply proxx-configured openplanner-configured))
         (.catch (partial health-deps-err reply)))))
@@ -873,7 +874,7 @@
   (let [ingestion-base (:ingestion-base-url config)
         qs (request-query-string request)
         target-url (str ingestion-base "/api/ingestion/browse" qs)]
-    (-> (fetch-json target-url #js {:method "GET"})
+    (-> (fetch-json target-url {:method "GET"})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -882,14 +883,14 @@
   (let [ingestion-base (:ingestion-base-url config)
         qs (request-query-string request)
         target-url (str ingestion-base "/api/ingestion/file" qs)]
-    (-> (fetch-json target-url #js {:method "GET"})
+    (-> (fetch-json target-url {:method "GET"})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-ingestion-file-put! []
   "PUT" "/api/ingestion/file"
   (let [workspace-root (:workspace-root config)
-        body (or (aget request "body") #js {})
+        body (request-body request)
         file-path (or (aget body "path") "")
         content (or (aget body "content") "")
         safe-path (normalize-relative-path file-path)]
@@ -899,7 +900,7 @@
         (if (not (str/starts-with? absolute-path workspace-root))
           (json-response! reply 400 {:detail "Path escapes workspace"})
           (let [dir (.dirname path absolute-path)]
-            (-> (.mkdir fs dir #js {:recursive true})
+            (-> (.mkdir fs dir (clj->js {:recursive true}))
                 (.then (fn [] (.writeFile fs absolute-path content "utf8")))
                 (.then (fn [] (json-response! reply 200 {:ok true :path safe-path})))
                 (.catch (fn [err]
@@ -908,7 +909,7 @@
 (defroute api-ingestion-sources! []
   "GET" "/api/ingestion/sources"
   (let [ingestion-base (:ingestion-base-url config)]
-    (-> (fetch-json (str ingestion-base "/api/ingestion/sources") #js {:method "GET"})
+    (-> (fetch-json (str ingestion-base "/api/ingestion/sources") {:method "GET"})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -917,7 +918,7 @@
   (let [ingestion-base (:ingestion-base-url config)
         qs (request-query-string request)
         target-url (str ingestion-base "/api/ingestion/jobs" qs)]
-    (-> (fetch-json target-url #js {:method "GET"})
+    (-> (fetch-json target-url {:method "GET"})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -926,9 +927,9 @@
   (let [ingestion-base (:ingestion-base-url config)
         body (aget request "body")
         target-url (str ingestion-base "/api/ingestion/jobs")]
-    (-> (fetch-json target-url #js {:method "POST"
-                                    :headers #js {"Content-Type" "application/json"}
-                                    :body (js/JSON.stringify (or body #js {}))})
+    (-> (fetch-json target-url {:method "POST"
+                                :headers {"Content-Type" "application/json"}
+                                :body (or (some-> body js/JSON.stringify) "{}")})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -938,7 +939,7 @@
         path (aget request "params" "*")
         qs (request-query-string request)
         target-url (str ingestion-base "/api/ingestion/" path qs)]
-    (-> (fetch-json target-url #js {:method "GET"})
+    (-> (fetch-json target-url {:method "GET"})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err-detail reply "Ingestion proxy failed: ")))))
 
@@ -948,9 +949,9 @@
         path (aget request "params" "*")
         target-url (str ingestion-base "/api/ingestion/" path)
         body (aget request "body")]
-    (-> (fetch-json target-url #js {:method "POST"
-                                    :headers #js {"Content-Type" "application/json"}
-                                    :body (js/JSON.stringify (or body #js {}))})
+    (-> (fetch-json target-url {:method "POST"
+                                :headers {"Content-Type" "application/json"}
+                                :body (or (some-> body js/JSON.stringify) "{}")})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err-detail reply "Ingestion proxy failed: ")))))
 
@@ -959,7 +960,7 @@
   (let [ingestion-base (:ingestion-base-url config)
         path (aget request "params" "*")
         target-url (str ingestion-base "/api/ingestion/" path)]
-    (-> (fetch-json target-url #js {:method "DELETE"})
+    (-> (fetch-json target-url {:method "DELETE"})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err-detail reply "Ingestion proxy failed: ")))))
 
@@ -973,8 +974,8 @@
         op-key (:openplanner-api-key config)
         tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/" path qs)
-                    #js {:headers #js {"Authorization" (str "Bearer " op-key)
-                                        "X-Tenant-ID" tenant-id}})
+                    {:headers {"Authorization" (str "Bearer " op-key)
+                               "X-Tenant-ID" tenant-id}})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -986,11 +987,11 @@
         op-key (:openplanner-api-key config)
         tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/" path)
-                    #js {:method "POST"
-                         :headers #js {"Content-Type" "application/json"
-                                       "Authorization" (str "Bearer " op-key)
-                                       "X-Tenant-ID" tenant-id}
-                         :body (js/JSON.stringify (or body #js {}))})
+                    {:method "POST"
+                     :headers {"Content-Type" "application/json"
+                               "Authorization" (str "Bearer " op-key)
+                               "X-Tenant-ID" tenant-id}
+                     :body (or (some-> body js/JSON.stringify) "{}")})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -1001,9 +1002,9 @@
         op-key (:openplanner-api-key config)
         tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/" path)
-                    #js {:method "DELETE"
-                         :headers #js {"Authorization" (str "Bearer " op-key)
-                                       "X-Tenant-ID" tenant-id}})
+                    {:method "DELETE"
+                     :headers {"Authorization" (str "Bearer " op-key)
+                               "X-Tenant-ID" tenant-id}})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -1015,11 +1016,11 @@
         op-key (:openplanner-api-key config)
         tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/" path)
-                    #js {:method "PATCH"
-                         :headers #js {"Content-Type" "application/json"
-                                       "Authorization" (str "Bearer " op-key)
-                                       "X-Tenant-ID" tenant-id}
-                         :body (js/JSON.stringify (or body #js {}))})
+                    {:method "PATCH"
+                     :headers {"Content-Type" "application/json"
+                               "Authorization" (str "Bearer " op-key)
+                               "X-Tenant-ID" tenant-id}
+                     :body (or (some-> body js/JSON.stringify) "{}")})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -1029,19 +1030,25 @@
         op-base (:openplanner-base-url config)
         op-key (:openplanner-api-key config)
         proxx-base (:proxx-base-url config)
-        proxx-key (:proxx-auth-token config)
         check (fn [url headers]
-                (-> (fetch-json url #js {:headers (or headers #js {}) :method "GET"})
-                    (.then (fn [resp] {:ok (aget resp "ok")
-                                       :status (aget resp "status")
+                (-> (fetch-json url {:headers (or headers {}) :method "GET"})
+                    (.then (fn [resp] {:ok (:ok resp)
+                                       :status (:status resp)
                                        :url url
-                                       :detail (aget resp "body")}))
-                    (.catch (fn [err] {:ok false :error (.-message err) :url url}))))]
+                                       :detail (:body resp)}))
+                    (.catch (fn [err] {:ok false :error (.-message err) :url url}))))
+        proxx-check (fn []
+                      (-> (proxx-client/health! (proxx-client/client config))
+                          (.then (fn [resp] {:ok (:ok resp)
+                                             :status (:status resp)
+                                             :url (str proxx-base "/health")
+                                             :detail (:body resp)}))
+                          (.catch (fn [err] {:ok false :error (.-message err) :url (str proxx-base "/health")}))))]
     (-> (js/Promise.all
          (into-array
-           [(check (str op-base "/v1/health") #js {"Authorization" (str "Bearer " op-key)
-                                                     "X-Tenant-ID" (or (:session-project-name config) "knoxx-session")})
-            (check (str proxx-base "/health") #js {"Authorization" (str "Bearer " proxx-key)})
+           [(check (str op-base "/v1/health") {"Authorization" (str "Bearer " op-key)
+                                               "X-Tenant-ID" (or (:session-project-name config) "knoxx-session")})
+            (proxx-check)
             (check (str ingestion-base "/health") nil)
            (check "http://127.0.0.1:8796/api/status" nil)
            (check "http://127.0.0.1:3777/health" nil)
@@ -1059,11 +1066,11 @@
     (-> (js/Promise.all
          (into-array
           [(fetch-json (str op-base "/v1/documents/stats")
-                       #js {:headers #js {"Authorization" (str "Bearer " op-key)
-                                           "X-Tenant-ID" tenant-id}})
+                       {:headers {"Authorization" (str "Bearer " op-key)
+                                  "X-Tenant-ID" tenant-id}})
            (fetch-json (str op-base "/v1/graph/monitoring")
-                       #js {:headers #js {"Authorization" (str "Bearer " op-key)
-                                           "X-Tenant-ID" tenant-id}})]))
+                       {:headers {"Authorization" (str "Bearer " op-key)
+                                  "X-Tenant-ID" tenant-id}})]))
         (.then (partial mongo-collections-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -1073,23 +1080,23 @@
         op-key (:openplanner-api-key config)
         tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/mongo/collections")
-                    #js {:headers #js {"Authorization" (str "Bearer " op-key)
-                                        "X-Tenant-ID" tenant-id}})
+                    {:headers {"Authorization" (str "Bearer " op-key)
+                               "X-Tenant-ID" tenant-id}})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-mongo-query! []
   "POST" "/api/data/mongo/query"
-  (let [body (or (aget request "body") #js {})
+  (let [body (request-body request)
         op-base (:openplanner-base-url config)
         op-key (:openplanner-api-key config)
         tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/mongo/query")
-                    #js {:method "POST"
-                         :headers #js {"Content-Type" "application/json"
-                                       "Authorization" (str "Bearer " op-key)
-                                       "X-Tenant-ID" tenant-id}
-                         :body (js/JSON.stringify body)})
+                    {:method "POST"
+                     :headers {"Content-Type" "application/json"
+                               "Authorization" (str "Bearer " op-key)
+                               "X-Tenant-ID" tenant-id}
+                     :body (or (some-> body js/JSON.stringify) "{}")})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
@@ -1103,24 +1110,24 @@
 
 (defroute api-data-jobs-build-semantic-edges! []
   "POST" "/api/data/jobs/build-semantic-edges"
-  (let [body (or (aget request "body") #js {})
+  (let [body (request-body request)
         k (or (aget body "k") 8)
         min-sim (or (aget body "minSimilarity") 0.3)
         op-base (:openplanner-base-url config)
         op-key (:openplanner-api-key config)
         tenant-id (or (:session-project-name config) "knoxx-session")]
     (-> (fetch-json (str op-base "/v1/jobs/build-semantic-edges")
-                    #js {:method "POST"
-                         :headers #js {"Content-Type" "application/json"
-                                       "Authorization" (str "Bearer " op-key)
-                                       "X-Tenant-ID" tenant-id}
-                         :body (js/JSON.stringify #js {:k k :minSimilarity min-sim})})
+                    {:method "POST"
+                     :headers {"Content-Type" "application/json"
+                               "Authorization" (str "Bearer " op-key)
+                               "X-Tenant-ID" tenant-id}
+                     :body (js/JSON.stringify (clj->js {:k k :minSimilarity min-sim}))})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-pg-query! []
   "POST" "/api/data/pg/query"
-  (let [body (or (aget request "body") #js {})
+  (let [body (request-body request)
         raw-sql (or (aget body "sql") "")
         table (or (aget body "table") "")
         limit (or (aget body "limit") 50)
@@ -1141,7 +1148,7 @@
                 final-sql (if has-limit
                             trimmed
                             (str trimmed " LIMIT " enforced-limit))]
-            (-> (query-fn final-sql #js [])
+            (-> (query-fn final-sql (clj->js []))
                 (.then (partial pg-query-ok reply))
                 (.catch (partial pg-query-err reply))))))
 
@@ -1153,7 +1160,7 @@
       :else
       (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
             sql-str (str "SELECT * FROM " table " LIMIT " enforced-limit)]
-        (-> (query-fn sql-str #js [])
+        (-> (query-fn sql-str (clj->js []))
             (.then (partial pg-query-table-ok reply table))
             (.catch (partial pg-query-err reply)))))))
 
@@ -1180,18 +1187,18 @@
 
 (defroute api-data-graphql! []
   "POST" "/api/data/graphql"
-  (let [body (or (aget request "body") #js {})
+  (let [body (request-body request)
         gw-url "http://127.0.0.1:8796/graphql"]
     (-> (fetch-json gw-url
-                    #js {:method "POST"
-                         :headers #js {"Content-Type" "application/json"}
-                         :body (js/JSON.stringify body)})
+                    {:method "POST"
+                     :headers {"Content-Type" "application/json"}
+                     :body (or (some-> body js/JSON.stringify) "{}")})
         (.then (partial fetch-json-ok reply))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-graph-status! []
   "GET" "/api/data/graph/status"
-  (-> (fetch-json "http://127.0.0.1:8796/api/status" #js {:method "GET"})
+  (-> (fetch-json "http://127.0.0.1:8796/api/status" {:method "GET"})
       (.then (partial fetch-json-ok reply))
       (.catch (partial fetch-json-err reply))))
 
@@ -1221,7 +1228,7 @@
 (defroute api-knoxx-chat! []
   "POST" "/api/knoxx/chat"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
-  (let [parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+  (let [parsed0 (normalize-chat-body (request-body request))
         parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
         agent-ctx (effective-auth-context ctx parsed)
         body (assoc parsed
@@ -1240,7 +1247,7 @@
 (defroute api-knoxx-direct! []
   "POST" "/api/knoxx/direct"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
-  (let [parsed0 (normalize-chat-body (or (aget request "body") #js {}))
+  (let [parsed0 (normalize-chat-body (request-body request))
         parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
         agent-ctx (effective-auth-context ctx parsed)
         body (assoc parsed
@@ -1264,7 +1271,7 @@
 (defroute api-knoxx-steer! []
   "POST" "/api/knoxx/steer"
   (when ctx (ensure-permission! ctx "agent.controls.steer"))
-  (let [body (assoc (normalize-control-body (or (aget request "body") #js {})) :kind "steer")
+  (let [body (assoc (normalize-control-body (request-body request)) :kind "steer")
         actor-ctx (auth-context-with-actor ctx (:actor-id body))]
     (ensure-conversation-access! actor-ctx (:conversation-id body))
     (-> (queue-agent-control! runtime config body)
@@ -1274,7 +1281,7 @@
 (defroute api-knoxx-follow-up! []
   "POST" "/api/knoxx/follow-up"
   (when ctx (ensure-permission! ctx "agent.controls.follow_up"))
-  (let [body (assoc (normalize-control-body (or (aget request "body") #js {})) :kind "follow_up")
+  (let [body (assoc (normalize-control-body (request-body request)) :kind "follow_up")
         actor-ctx (auth-context-with-actor ctx (:actor-id body))]
     (ensure-conversation-access! actor-ctx (:conversation-id body))
     (-> (queue-agent-control! runtime config body)
@@ -1289,7 +1296,7 @@
 (defroute api-knoxx-abort! []
   "POST" "/api/knoxx/abort"
   (when ctx (ensure-permission! ctx "agent.controls.steer"))
-  (let [raw (or (aget request "body") #js {})
+  (let [raw (request-body request)
         conversation-id (or (aget raw "conversation_id") (aget raw "conversationId") "")
         actor-id (or (aget raw "actor_id") (aget raw "actorId") (aget raw "actor-id"))
         actor-ctx (auth-context-with-actor ctx actor-id)
@@ -1305,7 +1312,7 @@
 (defroute api-knoxx-session-undo! []
   "POST" "/api/knoxx/session/undo"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
-  (let [raw (or (aget request "body") #js {})
+  (let [raw (request-body request)
         session-id (str (or (aget raw "session_id")
                             (aget raw "sessionId")
                             ""))
@@ -1425,23 +1432,23 @@
 
 (defroute api-shibboleth-handoff! []
   "POST" "/api/shibboleth/handoff"
-  (let [body (or (aget request "body") #js {})]
+  (let [body (request-body request)]
     (if (str/blank? (:shibboleth-base-url config))
       (json-response! reply 503 {:detail "SHIBBOLETH_BASE_URL is not configured"})
-      (let [payload #js {:source_app "knoxx"
-                         :model (aget body "model")
-                         :system_prompt (aget body "system_prompt")
-                         :provider (aget body "provider")
-                         :conversation_id (aget body "conversation_id")
-                         :fake_tools_enabled (boolean (aget body "fake_tools_enabled"))
-                         :items (or (aget body "items") #js [])}]
+      (let [payload {:source_app "knoxx"
+                     :model (aget body "model")
+                     :system_prompt (aget body "system_prompt")
+                     :provider (aget body "provider")
+                     :conversation_id (aget body "conversation_id")
+                     :fake_tools_enabled (boolean (aget body "fake_tools_enabled"))
+                     :items (or (some-> (aget body "items") js->clj) [])}]
         (-> (fetch-json (str (:shibboleth-base-url config) "/api/chat/import")
-                        #js {:method "POST"
-                             :headers #js {"Content-Type" "application/json"}
-                             :body (.stringify js/JSON payload)})
+                        {:method "POST"
+                         :headers {"Content-Type" "application/json"}
+                         :body (js/JSON.stringify (clj->js payload))})
             (.then (fn [resp]
-                     (if (aget resp "ok")
-                       (shibboleth-ok reply request body (aget resp "body"))
+                     (if (:ok resp)
+                       (shibboleth-ok reply request body (:body resp))
                        (shibboleth-import-failed reply resp))))
             (.catch (partial shibboleth-unreachable reply)))))))
 

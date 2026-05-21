@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
+            [knoxx.backend.infra.clients.proxx :as proxx-client]
             [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.macros :refer-macros [defroute]]
             [knoxx.backend.domain.mcp.mcp-bridge :as mcp]
@@ -27,17 +28,17 @@
     (if (or (str/blank? email) (str/blank? password))
       (js/Promise.reject (js/Error. "Gmail credentials not configured"))
       (let [transporter (.createTransport nodemailer
-                                          #js {:host   "smtp.gmail.com"
-                                               :port   587
-                                               :secure false
-                                               :auth   #js {:user email :pass password}})]
+                                          (clj->js {:host   "smtp.gmail.com"
+                                                    :port   587
+                                                    :secure false
+                                                    :auth   {:user email :pass password}}))]
         (.sendMail transporter
-                   #js {:from    email
-                        :to      (str/join ", " to)
-                        :cc      (when (seq cc)  (str/join ", " cc))
-                        :bcc     (when (seq bcc) (str/join ", " bcc))
-                        :subject subject
-                        :text    text-body})))))
+                   (clj->js {:from    email
+                              :to      (str/join ", " to)
+                              :cc      (when (seq cc)  (str/join ", " cc))
+                              :bcc     (when (seq bcc) (str/join ", " bcc))
+                              :subject subject
+                              :text    text-body}))))))
 
 (defn- masked-discord-token [token]
   (if (and (string? token) (> (count token) 8))
@@ -112,12 +113,12 @@
   "POST" "/api/tools/email/send"
   [session-guard]
   (try
-    (let [body              (or (aget request "body") #js {})
+    (let [body              (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role              (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "email.send" agent-contract-id)
-          to                (or (aget body "to") #js [])
-          cc                (or (aget body "cc") #js [])
-          bcc               (or (aget body "bcc") #js [])
+          to                (or (aget body "to") (js/Array.))
+          cc                (or (aget body "cc") (js/Array.))
+          bcc               (or (aget body "bcc") (js/Array.))
           subject           (str (or (aget body "subject") "(no subject)"))
           markdown          (str (or (aget body "markdown") ""))]
       (if (empty? to)
@@ -136,30 +137,27 @@
   "POST" "/api/tools/websearch"
   [session-guard]
   (try
-    (let [body              (or (aget request "body") #js {})
+    (let [body              (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role              (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "websearch" agent-contract-id)
           query             (str/trim (str (or (aget body "query") "")))
           num-results       (or (aget body "numResults") 8)
           search-context-size (aget body "searchContextSize")
-          allowed-domains   (or (aget body "allowedDomains") #js [])
+          allowed-domains   (or (aget body "allowedDomains") [])
           model             (aget body "model")]
       (if (str/blank? query)
         (json-response! reply 400 {:detail "query is required"})
-        (-> (backend-http/fetch-json (str (:proxx-base-url config) "/api/tools/websearch")
-                                     #js {:method  "POST"
-                                          :headers (bearer-headers (:proxx-auth-token config))
-                                          :body    (.stringify js/JSON
-                                                               #js {:query             query
-                                                                    :numResults        num-results
-                                                                    :searchContextSize search-context-size
-                                                                    :allowedDomains    allowed-domains
-                                                                    :model             model})})
+        (-> (proxx-client/websearch! (proxx-client/client config)
+                                     {:query query
+                                      :numResults num-results
+                                      :searchContextSize search-context-size
+                                      :allowedDomains allowed-domains
+                                      :model model})
             (.then (fn [resp]
-                     (if (aget resp "ok")
-                       (json-response! reply 200 (assoc (js->clj (aget resp "body") :keywordize-keys true) :role role))
-                       (json-response! reply (or (aget resp "status") 502)
-                                       {:detail (pr-str (js->clj (aget resp "body") :keywordize-keys true))}))))
+                     (if (:ok resp)
+                       (json-response! reply 200 (assoc (:body resp) :role role))
+                       (json-response! reply (or (:status resp) 502)
+                                       {:detail (pr-str (:body resp))}))))
             (.catch (fn [err] (json-response! reply 502 {:detail (str err)}))))))
     (catch :default err
       (error-response! reply err))))
@@ -169,7 +167,7 @@
   "POST" "/api/tools/read"
   [session-guard]
   (try
-    (let [body    (or (aget request "body") #js {})
+    (let [body    (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "read" agent-contract-id)
           path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
@@ -178,7 +176,7 @@
       (-> (.stat fs path-str)
           (.then (fn [stat]
                    (if (.isDirectory stat)
-                     (-> (.readdir fs path-str #js {:withFileTypes true})
+                     (-> (.readdir fs path-str (clj->js {:withFileTypes true}))
                          (.then (fn [entries]
                                   (let [content-lines (map (fn [e] (str (aget e "name") (when (.isDirectory e) "/")))
                                                            (array-seq entries))
@@ -206,7 +204,7 @@
   "POST" "/api/tools/write"
   [session-guard]
   (try
-    (let [body    (or (aget request "body") #js {})
+    (let [body    (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write" agent-contract-id)
           path-str  (resolve-workspace-path runtime config (or (aget body "path") ""))
@@ -224,7 +222,7 @@
                               (.catch (fn [_] (js/Promise.resolve nil)))))]
       (-> check-promise
           (.then (fn [] (if create-parents
-                          (.mkdir fs parent #js {:recursive true})
+                          (.mkdir fs parent (clj->js {:recursive true}))
                           (js/Promise.resolve nil))))
           (.then (fn [] (.writeFile fs path-str content "utf8")))
           (.then (fn [] (json-response! reply 200 {:ok true :role role :path path-str
@@ -238,7 +236,7 @@
   "POST" "/api/tools/edit"
   [session-guard]
   (try
-    (let [body    (or (aget request "body") #js {})
+    (let [body    (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "edit" agent-contract-id)
           path-str  (resolve-workspace-path runtime config (or (aget body "path") ""))
@@ -265,7 +263,7 @@
   "POST" "/api/tools/bash"
   [session-guard]
   (try
-    (let [body     (or (aget request "body") #js {})
+    (let [body     (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role     (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "bash" agent-contract-id)
           ;; Keep live-server shell tools short. Long recursive scans have left
@@ -276,11 +274,11 @@
                      (resolve-workspace-path runtime config raw-wd)
                      (.resolve path (:workspace-root config)))]
       (-> (exec-file-async "/bin/bash"
-                            #js ["-lc" (or (aget body "command") "")]
-                            #js {:cwd workdir
-                                 :timeout timeout-ms
-                                 :killSignal "SIGKILL"
-                                 :maxBuffer 1048576})
+                            (clj->js ["-lc" (or (aget body "command") "")])
+                            (clj->js {:cwd workdir
+                                      :timeout timeout-ms
+                                      :killSignal "SIGKILL"
+                                      :maxBuffer 1048576}))
           (.then (fn [result]
                    (let [[stdout _]  (clip-text (or (aget result "stdout") "") 24000)
                          [stderr __] (clip-text (or (aget result "stderr") "") 12000)]
@@ -305,7 +303,7 @@
   "POST" "/api/tools/discord/publish"
   [session-guard]
   (try
-    (let [body (or (aget request "body") #js {})
+    (let [body (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))]
       (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "discord.publish" agent-contract-id)
       (json-response! reply 410 {:ok false
@@ -351,7 +349,7 @@
   [session-guard]
   (try
     (ensure-permission! ctx "org.events.control")
-    (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+    (let [body        (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
           live-config (or @runtime-state/config* config)
           next-control (control-config/event-agent-control-config
                         (assoc live-config :event-agent-control body))]
@@ -383,7 +381,7 @@
   [session-guard]
   (try
     (ensure-permission! ctx "org.events.control")
-    (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
+    (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
       (-> (event-dispatch/dispatch! config body)
           (.then (fn [result]
                     (json-response! reply 202 {:ok true
@@ -442,7 +440,7 @@
   [session-guard]
   (try
     (ensure-permission! ctx "org.events.control")
-    (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+    (let [body        (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
           live-config (or @runtime-state/config* config)
           next-control (control-config/event-agent-control-config
                         (assoc live-config :event-agent-control body))]
@@ -474,7 +472,7 @@
   [session-guard]
   (try
     (ensure-permission! ctx "org.events.control")
-    (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
+    (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
       (-> (event-dispatch/dispatch! config body)
           (.then (fn [result]
                     (json-response! reply 202 {:ok true
@@ -533,7 +531,7 @@
   [session-guard]
   (try
     (ensure-permission! ctx "org.events.control")
-    (let [body        (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+    (let [body        (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
           live-config (or @runtime-state/config* config)
           next-control (control-config/event-agent-control-config
                         (assoc live-config :event-agent-control body))]
@@ -606,9 +604,9 @@
   [session-guard]
   (try
     (ensure-permission! ctx "agent.chat.use")
-    (let [body    (or (aget request "body") #js {})
+    (let [body    (or (aget request "body") (js/Object.))
           tool-id (str (or (aget body "toolId") ""))
-          args    (js->clj (or (aget body "arguments") #js {}) :keywordize-keys true)]
+          args    (js->clj (or (aget body "arguments") (js/Object.)) :keywordize-keys true)]
       (if (str/blank? tool-id)
         (json-response! reply 400 {:detail "toolId is required"})
         (-> (mcp/call-tool! tool-id args)

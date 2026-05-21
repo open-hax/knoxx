@@ -1,0 +1,259 @@
+---
+original_name: "2026.05.20.js-cljs-boundary-report.md"
+title: "JS CLJS Boundary Report"
+summary: "Report on JavaScript and ClojureScript boundary cleanup."
+category: "architecture"
+created: "2026-05-20"
+---
+
+# JS ↔ CLJS Data Boundary Report
+
+## Audit summary (2026-05-20)
+
+The earlier extern-boundary cleanup (`2026.05.20.extern-boundary.md`) addressed *module imports* — who requires `@open-hax/eta-mu-cli`, `node:fs`, `node:path`. That work is complete. This report covers the larger remaining problem: **data boundary crossing** — business logic that creates, reads, and mutates raw JS objects inline rather than going through typed CLJS maps.
+
+### Numbers
+
+| Pattern | Total | Inside `extern/` | **Outside `extern/`** |
+|---|---|---|---|
+| `#js` reader | 811 | 26 | **785** |
+| `aget` | ~2,400 | — | **2,336** |
+| `aset` | ~100 | — | **97** |
+| `clj->js` | ~260 | — | **241** |
+| `js->clj` | ~160 | — | **145** |
+
+96.8 % of all `#js` usage lives outside the extern boundary.
+
+### Top offenders (non-extern, by `#js` count)
+
+| Rank | File | `#js` |
+|---|---|---|
+| 1 | `infra/routes/app.cljs` | 65 |
+| 2 | `infra/routes/tools/proxy.cljs` | 61 |
+| 3 | `infra/eta_mu_session_ingester.cljs` | 60 |
+| 4 | `infra/db/policy.cljs` | 57 |
+| 5 | `domain/bluesky/bluesky.cljs` | 53 |
+| 6 | `infra/routes/mcp.cljs` | 44 |
+| 7 | `domain/discord/gateway.cljs` | 36 |
+| 8 | `infra/routes/tools.cljs` | 27 |
+| 9 | `infra/routes/models.cljs` | 21 |
+| 10 | `domain/discord/voice_tools.cljs` | 20 |
+| 11 | `infra/routes/studio.cljs` | 19 |
+| 12 | `infra/auth/session.cljs` | 19 |
+| 13 | `domain/discord/tools.cljs` | 18 |
+| 14 | `infra/http.cljs` | 14 |
+| 15 | `infra/routes/users/admin.cljs` | 13 |
+
+---
+
+## What is actually happening
+
+Four repeating patterns account for most of the mass:
+
+### Pattern A — Fastify response construction
+Route handlers build raw JS response shapes inline.
+```clojure
+;; before
+(js/Promise.resolve #js {:ok false :body #js {:detail "not found"}})
+(.send #js {:ok true :source eta-mu-source :jobs jobs})
+```
+Files: `app.cljs`, `proxy.cljs`, `mcp.cljs`, `tools.cljs`, `models.cljs`, `studio.cljs`, `admin.cljs` and most other route files (~170 combined `#js` uses).
+
+### Pattern B — `js/Promise.all` arrays
+`extern/promise.cljs` already exposes `all-vec`. It is simply not being used.
+```clojure
+;; before
+(js/Promise.all #js [p1 p2])
+;; should be
+(promise/all-vec [p1 p2])
+```
+Scattered across ~30 files.
+
+### Pattern C — External API payload construction
+Each third-party API (Bluesky, Discord gateway, eta-mu session ingester, OpenPlanner events) leaks its wire-format into domain logic.
+```clojure
+;; bluesky.cljs
+#js {"$type" "app.bsky.richtext.facet" :features #js [...]}
+;; eta_mu_session_ingester.cljs
+#js {:schema "openplanner.event.v1" :id id :timestamp ts}
+```
+Files: `bluesky.cljs` (53), `eta_mu_session_ingester.cljs` (60), `gateway.cljs` (36), `voice_tools.cljs` (20).
+
+### Pattern D — Policy/auth DB response shaping
+The `infra/db/policy.cljs` namespace builds JS response objects that cross the policy-DB JS boundary.
+```clojure
+#js {:credential (clj->js credential)}
+#js {:permissions (into-array permissions)}
+```
+
+---
+
+## Remediation tracks
+
+Goal: every file outside `extern/` reasons only over CLJS maps and vectors. `#js`, `aget`, `aset` are allowed only in `extern/` namespaces and the `domain/node/*` wrappers.
+
+---
+
+### Track A — Fastify response extern
+
+**Files to create / modify**
+
+| File | Change |
+|---|---|
+| `extern/fastify.cljs` | **NEW** — typed response helpers: `ok`, `error`, `not-found`, `forbidden`, `send!`, `reply!` |
+| `infra/routes/app.cljs` | Replace `#js {:ok …}` patterns with `(fastify/ok …)` etc. |
+| `infra/routes/tools/proxy.cljs` | Same |
+| `infra/routes/mcp.cljs` | Same |
+| `infra/routes/tools.cljs` | Same |
+| `infra/routes/models.cljs` | Same |
+| `infra/routes/studio.cljs` | Same |
+| `infra/routes/users/admin.cljs` | Same |
+
+**Invariant after completion:** no `#js` in any `infra/routes/` file.
+
+**Work log**
+
+**Sub-track A1 — `fetch-json`/`bearer-headers`/`openplanner-headers` return type fix (completed 2026-05-20)**
+
+Instead of creating `extern/fastify.cljs` first, the approach taken was to fix `infra/http.cljs` so that `fetch-json` returns a CLJS map `{:ok :status :body :headers}` and `bearer-headers`/`openplanner-headers` return CLJS string maps. `fetch-with-timeout` accepts either CLJS maps or JS objects for opts. `request-body` helper added to encapsulate the `(or (aget request "body") (js/Object.))` Fastify boundary.
+
+Cascaded through all callers:
+
+- [x] `infra/http.cljs` — `fetch-json`, `bearer-headers`, `openplanner-headers`, `fetch-with-timeout`, `openplanner-request!`, added `request-body` — 2026-05-20
+- [x] `infra/routes/app.cljs` — fetch opts + response reading migrated — 2026-05-20
+- [x] `infra/routes/models.cljs` — all `#js` fetch opts, `aget resp` → keywords, proxy routes → `fetch-with-timeout` — 2026-05-20
+- [x] `infra/routes/tools.cljs` — websearch fetch opts + response reading — 2026-05-20
+- [x] `infra/routes/voice.cljs` — `voxx-headers`/`voxx-health-headers` → CLJS, STT/TTS fetch opts, response reading — 2026-05-20
+- [x] `infra/routes/translation.cljs` — SFT export `js/fetch` headers via `clj->js`; all `#js {}` fallbacks → `(js/Object.)` — 2026-05-20
+- [x] `infra/openplanner/tools.cljs` — websearch fetch opts + response reading — 2026-05-20
+- [x] `extern/proxx.cljs` — `aget resp "ok/status/body"` → keyword access — 2026-05-20
+- [ ] `infra/routes/tools/proxy.cljs` — remaining `#js {:headers kms-headers}` (proxy-specific; kms-headers still `#js`) — pending Track A2
+- [ ] `infra/routes/mcp.cljs` — pending Track A2
+- [ ] `infra/routes/studio.cljs` — pending Track A2
+- [ ] `infra/routes/users/admin.cljs` — pending Track A2
+- [ ] `infra/routes/` `#js` count verified at zero — _date_
+
+---
+
+### Track B — `promise/all-vec` adoption
+
+**Files to modify:** every file calling `(js/Promise.all #js […])` — approximately 30 files.
+
+`extern/promise.cljs` already exports `all-vec`. This is a mechanical substitution.
+
+```clojure
+;; before
+(js/Promise.all #js [p1 p2 p3])
+;; after
+(promise/all-vec [p1 p2 p3])
+```
+
+**Work log**
+
+- [x] `grep -rn 'Promise.all #js'` baseline count recorded — 2026-05-20 (5 occurrences, 4 files)
+- [x] Mechanical substitution pass complete — 2026-05-20; `bluesky.cljs`, `eta_mu_session_ingester.cljs`, `routes/app.cljs`, `routes/tools/proxy.cljs`; also converted `(aget parts N)` accesses to CLJS destructuring at each call site
+- [x] Zero remaining `Promise.all #js` occurrences verified — 2026-05-20
+
+---
+
+### Track C — External API externs
+
+Each third-party API gets its own extern namespace. Business logic calls into the extern and gets back a CLJS map.
+
+#### C1 — Bluesky (`domain/bluesky/bluesky.cljs`, 53 `#js`)
+
+| File | Change |
+|---|---|
+| `extern/bluesky.cljs` | **NEW** — HTTP request builders, rich-text facet constructors, image embed builder, session/auth shape |
+| `domain/bluesky/bluesky.cljs` | Remove all `#js`; call extern fns; operate on CLJS maps |
+
+**Work log**
+
+- [ ] `extern/bluesky.cljs` created — _date / commit_
+- [ ] `domain/bluesky/bluesky.cljs` migrated — _date / commit_
+- [ ] `#js` count in bluesky.cljs verified at zero — _date_
+
+#### C2 — Discord gateway (`domain/discord/gateway.cljs`, 36 `#js`; `voice_tools.cljs`, 20; `tools.cljs`, 18)
+
+| File | Change |
+|---|---|
+| `extern/discord.cljs` | **NEW** — gateway event mappers, channel/voice payload constructors, REST request builders |
+| `domain/discord/gateway.cljs` | Remove `#js`; call extern fns |
+| `domain/discord/voice_tools.cljs` | Same |
+| `domain/discord/tools.cljs` | Same |
+| `domain/discord/source.cljs` | Same (already has `#js` for headers/fetch — move to extern) |
+
+**Work log**
+
+- [ ] `extern/discord.cljs` created — _date / commit_
+- [ ] `domain/discord/gateway.cljs` migrated — _date / commit_
+- [ ] `domain/discord/voice_tools.cljs` migrated — _date / commit_
+- [ ] `domain/discord/tools.cljs` migrated — _date / commit_
+- [ ] `domain/discord/source.cljs` migrated — _date / commit_
+- [ ] `#js` count in `domain/discord/` verified at zero — _date_
+
+#### C3 — Eta-mu session ingester (`infra/eta_mu_session_ingester.cljs`, 60 `#js`)
+
+The ingester builds raw event objects (`#js {:schema "openplanner.event.v1" …}`) and reads back raw JS session structures.
+
+| File | Change |
+|---|---|
+| `extern/eta_mu.cljs` | Add event-construction helpers: `make-event`, `make-session-snapshot`, `sessions-object` |
+| `infra/eta_mu_session_ingester.cljs` | Remove `#js`; call extern helpers; operate on CLJS maps |
+
+**Work log**
+
+- [ ] Event-construction helpers added to `extern/eta_mu.cljs` — _date / commit_
+- [ ] `infra/eta_mu_session_ingester.cljs` migrated — _date / commit_
+- [ ] `#js` count in ingester verified at zero — _date_
+
+---
+
+### Track D — Policy DB response shaping (`infra/db/policy.cljs`, 57 `#js`)
+
+The policy DB is a JS layer; its response construction belongs in a boundary namespace.
+
+| File | Change |
+|---|---|
+| `extern/policy_db.cljs` | **NEW** — response constructors (`credential-response`, `permissions-response`, `user-response`, etc.) |
+| `infra/db/policy.cljs` | Remove `#js`; call extern constructors; internal logic on CLJS maps |
+
+**Work log**
+
+- [ ] `extern/policy_db.cljs` created — _date / commit_
+- [ ] `infra/db/policy.cljs` migrated — _date / commit_
+- [ ] `#js` count in policy.cljs verified at zero — _date_
+
+---
+
+### Track E — `domain/node/*` adoption (carry-over from prior plan)
+
+35 files still import `node:fs*` / `node:path` directly instead of using `domain/node/fs` and `domain/node/path`. Do file-by-file alongside other work.
+
+The residual in `extern/eta_mu.cljs` itself (`write-file!`, `mkdirp!`, `path-join` helpers still using `node:fs/promises` and `node:path` directly) is the first item here.
+
+**Work log**
+
+- [ ] `extern/eta_mu.cljs` internal helpers migrated to `domain/node/fs` + `domain/node/path` — _date / commit_
+- [ ] Remaining 35 files — opportunistic, file-by-file as other work touches them
+
+---
+
+## Sequencing recommendation
+
+1. **Track B** — zero-risk mechanical pass, shrinks the number immediately (~30 files, one grep/replace)
+2. **Track A** — highest file-count payoff; creates the Fastify extern that sets the pattern
+3. **Track D** — self-contained, no new extern API surface (policy DB is internal)
+4. **Track C1** — Bluesky is isolated; good test case for the API-extern pattern
+5. **Track C2** — Discord is bigger but follows the same pattern
+6. **Track C3** — eta-mu ingester; extends existing `extern/eta_mu.cljs`
+7. **Track E** — opportunistic, no dedicated sprint
+
+---
+
+## Done when
+
+`grep -rn '#js\|aget\|aset' backend/src/cljs/knoxx/backend/` returns hits **only** in:
+- `extern/*.cljs`
+- `domain/node/*.cljs`
+- `shape/*.cljs` (TypeBox schema constructors — legitimately JS)

@@ -1,0 +1,120 @@
+---
+original_name: "2026.05.20.extern-boundary.md"
+title: "Extern Boundary"
+summary: "Report or note about JavaScript extern boundary handling."
+category: "architecture"
+created: "2026-05-20"
+---
+
+# Extern boundary cleanup — session / stores layer
+
+## What we found
+
+**788 `#js` reader usages** across backend source.  
+**35 files** bypass `domain/node/fs` and `domain/node/path` wrappers and import `node:fs*` / `node:path` directly.  
+**1 file** still imports `@open-hax/eta-mu-cli` outside `extern/eta-mu.cljs`: `infra/agent/session.cljs`.
+
+The session fetch functions (`fetch-openplanner-session-messages!`, `fetch-session-messages!`, `fetch-session-parts-from-all-sources!`) live in `infra/agent/session.cljs` but are storage-layer concerns. That file has grown into the wrong abstraction level: it owns session lifecycle, runtime setup, media materialization, *and* message hydration.
+
+---
+
+## Existing extern wrappers (already correct)
+
+| Package | Wrapper |
+|---|---|
+| `@open-hax/eta-mu-cli` (session object) | `extern/eta-mu.cljs` → `EtaMuSession` / `wrap-eta-mu-session` |
+| `node:fs` / `node:fs/promises` | `domain/node/fs.cljs` |
+| `node:path` | `domain/node/path.cljs` |
+| `node:crypto` | `domain/node/crypto.cljs` |
+
+These exist. The problem is adoption — they're not being used.
+
+---
+
+## Plan
+
+### Track 1 — `IMessageSource` protocol (highest value, tightly scoped)
+
+Create `infra/stores/message-source.cljc` (or `.cljs`):
+
+```clojure
+(defprotocol IMessageSource
+  (fetch-messages! [src conversation-id]
+    "Returns Promise<vec<stored-message>> for the given conversation."))
+```
+
+Implementations in `infra/stores/`:
+
+- `OpenPlannerMessageSource` — wraps the existing `fetch-openplanner-session-messages!` logic  
+- `RedisMessageSource` — wraps `fetch-session-messages!` + conversation→session index lookup  
+- `CompositeMessageSource` — runs both in parallel (`.all js/Promise`), delegates merge to `msg/merge-restored-session-messages`
+
+`rehydrate-session-manager-from-redis!` in `session.cljs` becomes `rehydrate-session-manager!` that accepts an `IMessageSource`.  The `session-id` preference logic moves into `RedisMessageSource`.
+
+This lets us test message hydration without standing up a session manager or eta-mu runtime.
+
+### Track 2 — Extract `ensure-eta-mu-runtime!` into `extern/eta-mu.cljs`
+
+`infra/agent/session.cljs` does heavy raw `aget` on the eta-mu module to build the runtime:
+
+```clojure
+(aget eta-mu "SettingsManager")
+(aget eta-mu "AuthStorage")
+(aget eta-mu "ModelRegistry")
+(aget eta-mu "DefaultResourceLoader")
+(aget eta-mu "SessionManager")
+(aget eta-mu "createAgentSession")
+(aget eta-mu "runtimeDir")
+```
+
+All of this should move to `extern/eta-mu.cljs` as a `setup-runtime!` function that returns a CLJS map:
+
+```clojure
+;; extern/eta-mu.cljs
+(defn setup-runtime!
+  "Initialise eta-mu runtime. Returns Promise<{:auth-storage :model-registry
+   :settings-manager :loader :runtime-dir}>."
+  [config provider-tokens])
+```
+
+`create-session!` similarly uses `createAgentSession` — should be a thin wrapper in `extern/eta-mu.cljs`.
+
+Once done `infra/agent/session.cljs` can drop `["@open-hax/eta-mu-cli"]`, `["node:fs/promises"]`, `["node:path"]` entirely.
+
+### Track 3 — `domain/node/*` adoption (long tail, ~35 files)
+
+Mechanical substitution: replace direct `node:fs*` / `node:path` requires with `[knoxx.backend.domain.node.fs :as node-fs]` / `[knoxx.backend.domain.node.path :as node-path]`.
+
+The existing wrappers already cover `read-file!`, `write-file!`, `mkdir!`, `stat!`, `readdir!`, `readdir-deep!`, `join`, `resolve`, `dirname`, `basename` — no new fns needed for most cases.
+
+Do this file-by-file alongside other work rather than as a mass rename, so each change is reviewable.
+
+---
+
+## Sequencing
+
+1. **Track 1** — `IMessageSource` + move fetch fns out of `session.cljs`. Testable in isolation, unblocks coverage of the stores layer.
+2. **Track 2** — `extern/eta-mu.cljs` runtime setup. Removes the last direct eta-mu import from `session.cljs`.
+3. **Track 3** — opportunistic, file at a time.
+
+---
+
+## Files touched in Track 1
+
+| File | Change |
+|---|---|
+| `infra/stores/message-source.cljs` | **NEW** — `IMessageSource` protocol |
+| `infra/stores/openplanner-message-source.cljs` | **NEW** — `OpenPlannerMessageSource` |
+| `infra/stores/redis-message-source.cljs` | **NEW** — `RedisMessageSource` |
+| `infra/stores/composite-message-source.cljs` | **NEW** — `CompositeMessageSource` |
+| `infra/agent/session.cljs` | Remove `fetch-*` fns; `rehydrate-session-manager-from-redis!` → `rehydrate-session-manager!` accepting `IMessageSource` |
+| `bootstrap.cljs` | Wire `CompositeMessageSource` into session registry or pass to agent setup |
+| `test/…/message_source_test.cljs` | **NEW** — `MemoryMessageSource` test double, `^:async` tests |
+
+## Files touched in Track 2
+
+| File | Change |
+|---|---|
+| `extern/eta-mu.cljs` | Add `setup-runtime!`, `create-session-fn`, `make-session-manager!` |
+| `infra/agent/session.cljs` | Remove `["@open-hax/eta-mu-cli"]`, `["node:fs/promises"]`, `["node:path"]`; call extern fns |
+| `test/…/session_setup_test.cljs` | **NEW** — stub `setup-runtime!`, test `create-session-manager!` shape |

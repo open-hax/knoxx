@@ -2,6 +2,7 @@
   "Custom-tool entrypoint for the generic events/triggers surface."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
+            [knoxx.backend.infra.clients.knoxx-control :as knoxx-client]
             [knoxx.backend.domain.agent.agent-templates :as templates]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj json-parse live-config]]))
@@ -29,32 +30,9 @@
    [:model {:optional true :description "Optional model id override."} :string]
    [:agent_spec_json {:optional true :description "Optional JSON object with direct-start style agent_spec fields such as role, contract_id, actor_id, system_prompt, task_prompt, thinking_level, and tool_policies."} :string]])
 
-(defn- self-headers
-  [config]
-  (let [api-key (:knoxx-api-key (live-config config))
-        headers #js {"Content-Type" "application/json"
-                     "x-knoxx-user-email" "system-admin@open-hax.local"}]
-    (when-not (str/blank? (str api-key))
-      (aset headers "X-API-Key" api-key))
-    headers))
-
-(defn- api-base
-  [config]
-  (or (:knoxx-base-url (live-config config))
-      "http://127.0.0.1:8000"))
-
 (defn- fetch-json!
   [config method path body]
-  (-> (js/fetch (str (api-base config) path)
-                #js {:method method
-                     :headers (self-headers config)
-                     :body (when body (.stringify js/JSON (clj->js body)))})
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.json resp)
-                 (-> (.text resp)
-                     (.then (fn [text]
-                              (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
+  (knoxx-client/request-json! (knoxx-client/client (live-config config)) method path body))
 
 (defn- events-status!
   [config]

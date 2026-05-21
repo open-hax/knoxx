@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.routes.voice
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.js :as xjs]
             [knoxx.backend.infra.http :as http]))
 
 (def ^:private default-voxx-voice-id "af_jessica")
@@ -91,14 +92,14 @@
 
 (defn- voxx-headers
   [api-key]
-  #js {"Content-Type" "application/json"
-       "Accept" "audio/mpeg"
-       "Authorization" (str "Bearer " api-key)})
+  {"Content-Type" "application/json"
+   "Accept" "audio/mpeg"
+   "Authorization" (str "Bearer " api-key)})
 
 (defn- voxx-health-headers
   [api-key]
-  #js {"Content-Type" "application/json"
-       "Authorization" (str "Bearer " api-key)})
+  {"Content-Type" "application/json"
+   "Authorization" (str "Bearer " api-key)})
 
 (defn- voxx-tts-url
   [config]
@@ -158,19 +159,19 @@
 (defn- register-voice-ws-route!
   [app _config]
   (app-route! app
-              #js {:method "GET"
-                   :url "/ws/voice/tts"
-                   :handler (fn [_request reply]
-                              (-> (.code reply 426)
-                                  (.type "application/json")
-                                  (.send #js {:error "WebSocket upgrade required"})))
-                   :wsHandler (fn [socket _request]
-                                (let [client (or (aget socket "socket") socket)]
-                                  (ws-send-json!
-                                   client
-                                   {:type "error"
-                                    :detail "Voxx streaming TTS is not exposed by this Knoxx bridge yet. Use voice.tts or POST /api/voice/tts for Voxx /v1/audio/speech."})
-                                  (ws-close! client 1000 "voxx_streaming_tts_unavailable")))}))
+              (clj->js {:method "GET"
+                        :url "/ws/voice/tts"
+                        :handler (fn [_request reply]
+                                   (-> (.code reply 426)
+                                       (.type "application/json")
+                                       (.send (clj->js {:error "WebSocket upgrade required"}))))
+                        :wsHandler (fn [socket _request]
+                                     (let [client (or (aget socket "socket") socket)]
+                                       (ws-send-json!
+                                        client
+                                        {:type "error"
+                                         :detail "Voxx streaming TTS is not exposed by this Knoxx bridge yet. Use voice.tts or POST /api/voice/tts for Voxx /v1/audio/speech."})
+                                       (ws-close! client 1000 "voxx_streaming_tts_unavailable")))})))
 
 (defn- request-parts-promise
   [^js request]
@@ -202,11 +203,11 @@
                   (let [base (stt-base-url config)]
                     (if (str/blank? base)
                       (json-response! reply 503 {:detail "KNOXX_STT_BASE_URL is not configured"})
-                      (-> (fetch-stt-json base "/health" #js {:method "GET"})
+                      (-> (fetch-stt-json base "/health" {:method "GET"})
                           (.then (fn [resp]
                                    (json-response! reply
-                                                  (if (aget resp "ok") 200 502)
-                                                  (js->clj (aget resp "body") :keywordize-keys true))))
+                                                  (if (:ok resp) 200 502)
+                                                  (:body resp))))
                           (.catch (fn [err]
                                     (json-response! reply 502 {:detail (str "STT health failed: " err)}))))))))))
 
@@ -222,39 +223,39 @@
                             (-> (request-parts-promise request)
                                 (.then
                                  (fn [parts]
-                                   (let [part-seq (http/js-array-seq parts)
+                                   (let [part-seq (xjs/js-array-seq parts)
                                          file-part (first (filter #(= (aget % "type") "file") part-seq))]
                                      (if-not file-part
-                                       #js {:error #js {:status 400
-                                                        :detail "No file uploaded. Send multipart/form-data with a file part."}}
+                                       {:error {:status 400
+                                               :detail "No file uploaded. Send multipart/form-data with a file part."}}
                                        (-> (.arrayBuffer (js/Response. (aget file-part "file")))
                                            (.then
                                             (fn [buf]
                                               (let [mime (or (aget file-part "mimetype")
                                                              (aget file-part "type")
                                                              "application/octet-stream")
-                                                    headers #js {"Content-Type" (str mime)}
+                                                    headers {"Content-Type" (str mime)}
                                                     body (.from js/Buffer buf)]
                                                 (fetch-stt-json
                                                  base
                                                  "/transcribe"
-                                                 #js {:method "POST"
-                                                      :headers headers
-                                                      :body body})))))))))
+                                                 {:method "POST"
+                                                  :headers headers
+                                                  :body body})))))))))
                                 (.then
                                  (fn [resp]
                                    (cond
-                                     (and resp (aget resp "error"))
-                                     (let [err (aget resp "error")]
-                                       (json-response! reply (aget err "status") (js->clj err :keywordize-keys true)))
+                                     (and resp (:error resp))
+                                     (let [err (:error resp)]
+                                       (json-response! reply (:status err) err))
 
-                                     (and resp (aget resp "ok"))
-                                     (json-response! reply 200 (js->clj (aget resp "body") :keywordize-keys true))
+                                     (and resp (:ok resp))
+                                     (json-response! reply 200 (:body resp))
 
                                      :else
                                      (json-response! reply 502 {:detail "STT service error"
-                                                                :status (aget resp "status")
-                                                                :body (js->clj (aget resp "body") :keywordize-keys true)}))))
+                                                                :status (:status resp)
+                                                                :body (:body resp)}))))
                                 (.catch
                                  (fn [err]
                                    (json-response! reply 500 {:detail (str "STT request failed: " err)}))))]
@@ -270,16 +271,16 @@
                     (if (str/blank? api-key)
                       (json-response! reply 503 {:detail "VOICE_GATEWAY_API_KEY is not configured"})
                       (-> (http/fetch-json (voxx-v1-url config "/voices")
-                                           #js {:method "GET"
-                                                :headers (voxx-health-headers api-key)})
+                                           {:method "GET"
+                                            :headers (voxx-health-headers api-key)})
                           (.then (fn [resp]
                                    (json-response!
                                     reply
-                                    (if (aget resp "ok") 200 502)
+                                    (if (:ok resp) 200 502)
                                     {:provider "voxx"
                                      :configured true
-                                     :reachable (boolean (aget resp "ok"))
-                                     :status_code (aget resp "status")
+                                     :reachable (boolean (:ok resp))
+                                     :status_code (:status resp)
                                      :default_voice_id (voxx-default-voice-id config)
                                      :default_model_id (voxx-default-model-id config)
                                      :default_speed (voxx-default-speed config)
@@ -295,7 +296,7 @@
                 (fn [ctx]
                   (when ctx (ensure-tool! ctx "multimodal.upload"))
                   (let [api-key (voice-gateway-api-key config)
-                        body (or (aget request "body") #js {})
+                        body (http/request-body request)
                         text (-> (or (aget body "text") "") str)
                         voice-id-raw (trim-or-empty (or (aget body "voice_id") (aget body "voiceId") ""))
                         voice-id (if (str/blank? voice-id-raw)
@@ -361,10 +362,10 @@
                                        (and voice-settings (not (nil? voice-settings)))
                                        (assoc :voice_settings (js->clj voice-settings))))
                             url (voxx-tts-url config)
-                            opts #js {:method "POST"
-                                      :headers (voxx-headers api-key)
-                                      :body (.stringify js/JSON payload)}]
-                        (-> (js/fetch url opts)
+                            opts {:method "POST"
+                                  :headers (voxx-headers api-key)
+                                  :body (.stringify js/JSON payload)}]
+                        (-> (http/fetch-with-timeout url opts 30000)
                             (.then
                              (fn [resp]
                                (if (.-ok resp)

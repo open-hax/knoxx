@@ -108,7 +108,7 @@
                                    (reply-header! reply "Content-Disposition" (safe-content-disposition filename))
                                    (if range
                                      (let [{:keys [start end length]} range
-                                           stream (.createReadStream node-fs absolute #js {:start start :end end})]
+                                           stream (.createReadStream node-fs absolute (clj->js {:start start :end end}))]
                                        (reply-header! reply "Content-Range" (str "bytes " start "-" end "/" total-size))
                                        (reply-header! reply "Content-Length" (str length))
                                        (.code reply 206)
@@ -144,7 +144,7 @@
   [root-dir base-relative depth max-depth]
   (if (> depth max-depth)
     (p/resolved [])
-    (-> (.readdir fs root-dir #js {:withFileTypes true})
+    (-> (.readdir fs root-dir (clj->js {:withFileTypes true}))
         (.then (fn [entries]
                  (let [entries-arr (vec (array-seq entries))
                        promises (mapv
@@ -236,13 +236,13 @@
                 (try
                   (when ctx
                     (ensure-tool! ctx "write"))
-                  (let [body (or (aget request "body") #js {})
+                  (let [body (or (aget request "body") (js/Object.))
                         dir-path (or (aget body "path") "")]
                     (if (str/blank? dir-path)
                       (json-response! reply 400 {:detail "path is required"})
                       (let [normalized (media/normalize-tool-path-arg dir-path)
                             {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)]
-                        (-> (.mkdir fs absolute #js {:recursive true})
+                        (-> (.mkdir fs absolute (clj->js {:recursive true}))
                             (.then (fn []
                                      (json-response! reply 200 {:ok true :path relative})))
                             (.catch (fn [err]
@@ -258,7 +258,7 @@
                 (try
                   (when ctx
                     (ensure-tool! ctx "write"))
-                  (let [body (or (aget request "body") #js {})
+                  (let [body (or (aget request "body") (js/Object.))
                         from-path (or (aget body "from") "")
                         to-path (or (aget body "to") "")]
                     (cond

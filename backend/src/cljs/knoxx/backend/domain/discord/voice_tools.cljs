@@ -4,59 +4,19 @@
             [knoxx.backend.domain.agent.agent-context :as agent-ctx]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.discord.gateway :as dg]
+            [knoxx.backend.domain.voice.client :as voice-client]
+            [knoxx.backend.infra.clients.knoxx-control :as knoxx-client]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.domain.text :refer [tool-text-result]]
-            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]))
+            [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
+            [promesa.core :as p]))
 
 (defn- gw [] (dg/gateway-manager))
 
-(defn- resolve-voice-key [config]
-  (or (when (map? config) (get config :voxx-api-key))
-      (some-> js/process .-env (aget "VOICE_GATEWAY_API_KEY"))
-      (some-> js/process .-env (aget "KNOXX_VOICE_GATEWAY_API_KEY"))))
-
-(defn- voice-gateway-url [config]
-  (or (when (map? config) (get config :voxx-url))
-      (some-> js/process .-env (aget "VOXX_URL"))
-      "http://127.0.0.1:8787"))
-
-(defn- tts-url [config]
-  (let [base (str/replace (voice-gateway-url config) #"/+$" "")]
-    (cond
-      (str/ends-with? base "/v1/audio/speech") base
-      (str/ends-with? base "/v1") (str base "/audio/speech")
-      :else (str base "/v1/audio/speech"))))
-
-(defn- default-tts-speed [config]
-  (or (when (map? config) (get config :voxx-default-speed))
-      (some-> js/process .-env (aget "KNOXX_VOXX_DEFAULT_SPEED"))
-      (some-> js/process .-env (aget "VOICE_GATEWAY_TTS_DEFAULT_SPEED"))
-      "1.15"))
-
-(defn- stt-url [config]
-  (or (when (map? config) (or (get config :stt-url)
-                              (get config :stt-base-url)))
-      (some-> js/process .-env (aget "KNOXX_STT_URL"))
-      (some-> js/process .-env (aget "KNOXX_STT_BASE_URL"))
-      "http://127.0.0.1:8010"))
-
-(defn- knoxx-base [config]
-  (or (when (map? config) (get config :knoxx-base-url))
-      (some-> js/process .-env (aget "KNOXX_BASE_URL"))
-      "http://127.0.0.1:8000"))
-
-(defn- knoxx-key [config]
-  (or (when (map? config) (get config :knoxx-api-key))
-      (some-> js/process .-env (aget "KNOXX_API_KEY"))))
-
-(defn- knoxx-control-headers [config]
-  (let [api-key (knoxx-key config)
-        headers #js {"Content-Type" "application/json"
-                     "x-knoxx-user-email" "system-admin@open-hax.local"}]
-    (when-not (str/blank? (str api-key))
-      (aset headers "X-API-Key" api-key))
-    headers))
+(defn- knoxx-control-client
+  [config]
+  (knoxx-client/client config))
 
 (defn- param-int [params key camel default]
   (let [raw (or (aget params key) (aget params camel))
@@ -64,137 +24,45 @@
     (if (or (nil? raw) (js/isNaN n)) default n)))
 
 (defn- fetch-tts! [config text voice-id model-id]
-  (let [api-key (or (resolve-voice-key config) (throw (js/Error. "VOICE_GATEWAY_API_KEY not configured")))
-        body {:input text :voice (or voice-id "af_jessica") :model (or model-id "kokoro")
-              :response_format "mp3" :speed (default-tts-speed config) :postprocess_enabled false}]
-    (-> (js/fetch (tts-url config)
-                  #js {:method "POST"
-                       :headers #js {"Authorization" (str "Bearer " api-key) "Content-Type" "application/json" "Accept" "audio/mpeg"}
-                       :body (.stringify js/JSON (clj->js body))})
-        (.then (fn [r] (if (.-ok r) (.arrayBuffer r) (throw (js/Error. (str "TTS " (.-status r)))))))
-        (.then (fn [b] (.from js/Buffer (js/Uint8Array. b)))))))
-
-(defn- parse-stt-json-text [raw]
-  ;; Some STT deployments respond as SSE-ish text where the JSON is prefixed with
-  ;; "data: ", e.g. "data: {\"text\":...}". Accept both plain JSON and SSE.
-  ;; For chunked (streaming) responses, concatenate all text segments.
-  (let [s (str/trim (str raw))]
-    (if (str/includes? s "data:")
-      ;; SSE format — collect all data: lines and merge text fields
-      (let [lines (->> (str/split-lines s)
-                       (keep (fn [line]
-                               (let [t (str/trim line)]
-                                 (when (str/starts-with? t "data:")
-                                   (str/trim (subs t 5)))))))
-            ;; Parse each line, collect non-empty text segments
-            segments (keep (fn [text]
-                             (when (seq text)
-                               (try
-                                 (let [j (js/JSON.parse text)
-                                       txt (or (.-text j) (.-transcription j) "")]
-                                   (when (seq txt) txt))
-                                 (catch js/Error _ nil))))
-                           lines)
-            final-segment (last (keep (fn [text]
-                                        (when (seq text)
-                                          (try
-                                            (js/JSON.parse text)
-                                            (catch js/Error _ nil))))
-                                      lines))
-            merged-text (str/trim (str/join " " segments))]
-        ;; Return a synthetic JS object with merged text and final flag
-        #js {:text merged-text
-             :final (or (when final-segment (.-final final-segment)) true)})
-      ;; Plain JSON
-      (js/JSON.parse s))))
-
-(defn- stt-text-garbage?
-  "Detect repetitive/garbage STT output (e.g. NPU KV-cache stuck)."
-  [text]
-  (when (seq text)
-    (let [t (str/trim text)]
-      (and (> (count t) 10)
-           ;; Fewer than 3 unique non-space characters = repetitive garbage
-           (let [chars (set (remove #(or (= % " ") (= % "\n")) t))]
-             (<= (count chars) 2))
-           ;; Contains no ASCII letters or digits
-           (not (re-find #"[a-zA-Z0-9]" t))))))
+  (voice-client/synthesize! (voice-client/tts-client config)
+                            {:text text
+                             :voice-id voice-id
+                             :model-id model-id
+                             :response-format "mp3"}))
 
 (defn- transcribe! [config audio-buffer]
   ;; Knoxx STT service expects raw audio bytes (not multipart). It runs ffmpeg
   ;; server-side, so WAV is the safest on-the-wire format.
-  (js/console.log "[voice:stt] === TRANSCRIBE START ===" (.-length audio-buffer) "bytes from" (stt-url config))
-  (js/console.log "[voice:stt] sending POST to" (str (stt-url config) "/transcribe"))
-  (-> (js/fetch (str (stt-url config) "/transcribe")
-                #js {:method "POST"
-                     :headers #js {"Content-Type" "audio/wav"
-                                   "Accept" "application/json, text/plain, text/event-stream"}
-                     :body audio-buffer})
-      (.then (fn [r]
-               (js/console.log "[voice:stt] response received, status:" (.-status r) "ok:" (.-ok r))
-               (if (.-ok r)
-                 (do (js/console.log "[voice:stt] parsing response body") (.text r))
-                 (do (js/console.error "[voice:stt] HTTP FAILED:" (.-status r))
-                     (throw (js/Error. (str "STT " (.-status r))))))))
-      (.then (fn [raw]
-               (js/console.log "[voice:stt] raw body prefix:" (.slice (str raw) 0 80))
-               (let [j (parse-stt-json-text raw)]
-                 (js/console.log "[voice:stt] JSON parsed:" (js/JSON.stringify j))
-                 (let [text (or (.-text j) (.-transcription j) "")]
-                   (if (stt-text-garbage? text)
-                     (do (js/console.warn "[voice:stt] GARBAGE detected, discarding:" (.slice text 0 60))
-                         "")
-                     (do (js/console.log "[voice:stt] extracted text:" (if (str/blank? text) "[EMPTY]" text))
-                         text))))))
-      (.catch (fn [err]
-                (js/console.error "[voice:stt] === TRANSCRIBE ERROR ===" (.-message err))
-                (throw err)))))
+  (voice-client/transcribe! (voice-client/stt-client config) audio-buffer nil))
 
 (defn- steer! [config session-id conversation-id text]
   (js/console.log "[voice:steer] injecting into session:" session-id "conv:" conversation-id "text:" (.slice text 0 60))
   (let [body {:message (str "[Voice] " text) :conversation_id conversation-id :session_id session-id}]
-    (-> (js/fetch (str (knoxx-base config) "/api/knoxx/steer")
-                  #js {:method "POST"
-                       :headers (knoxx-control-headers config)
-                       :body (.stringify js/JSON (clj->js body))})
-        (.then (fn [r]
-                 (-> (.text r)
-                     (.then (fn [raw]
-                              (if (.-ok r)
-                                (do (js/console.log "[voice:steer] ok") raw)
-                                (do (js/console.error "[voice:steer] failed:" (.-status r) raw)
-                                    (throw (js/Error. (str "Steer " (.-status r) ": " raw)))))))))))))
+    (p/let [result (knoxx-client/steer! (knoxx-control-client config) body)]
+      (js/console.log "[voice:steer] ok")
+      result)))
 
 (defn- session-agent-spec [session]
   (or (:agent_spec session)
       (:agentSpec session)))
 
 (defn- direct-start-voice-turn! [config body]
-  (-> (js/fetch (str (knoxx-base config) "/api/knoxx/direct/start")
-                #js {:method "POST"
-                     :headers (knoxx-control-headers config)
-                     :body (.stringify js/JSON (clj->js body))})
-      (.then (fn [r]
-               (-> (.text r)
-                   (.then (fn [raw]
-                            (if (.-ok r)
-                              (do (js/console.log "[voice:direct-start] ok") raw)
-                              (do (js/console.error "[voice:direct-start] failed:" (.-status r) raw)
-                                  (throw (js/Error. (str "Direct start " (.-status r) ": " raw))))))))))))
+  (p/let [result (knoxx-client/direct-start! (knoxx-control-client config) body)]
+    (js/console.log "[voice:direct-start] ok")
+    result))
 
 (defn- start-voice-turn! [config session-id conversation-id text]
   (js/console.log "[voice:direct-start] starting idle session:" session-id "conv:" conversation-id)
-  (-> (session-store/get-session (redis/get-client) session-id)
-      (.then (fn [session]
-               (let [agent-spec (session-agent-spec session)
-                     body (cond-> {:message (str "[Voice] " text)
-                                   :conversation_id conversation-id
-                                   :session_id session-id}
-                            agent-spec (assoc :agent_spec agent-spec))]
-                 (when agent-spec
-                   (js/console.log "[voice:direct-start] resuming agent spec:"
-                                   (js/JSON.stringify (clj->js (select-keys agent-spec [:contractId :contract-id :actorId :actor-id :role :model])))))
-                 (direct-start-voice-turn! config body))))))
+  (p/let [session (session-store/get-session (redis/get-client) session-id)
+          agent-spec (session-agent-spec session)
+          body (cond-> {:message (str "[Voice] " text)
+                        :conversation_id conversation-id
+                        :session_id session-id}
+                 agent-spec (assoc :agent_spec agent-spec))]
+    (when agent-spec
+      (js/console.log "[voice:direct-start] resuming agent spec:"
+                      (js/JSON.stringify (clj->js (select-keys agent-spec [:contractId :contract-id :actorId :actor-id :role :model])))))
+    (direct-start-voice-turn! config body)))
 
 (defn- inactive-steer-error? [err]
   (let [message (str/lower-case (str (.-message err)))]
@@ -203,12 +71,12 @@
         (str/includes? message "not active in the agent runtime"))))
 
 (defn- deliver-voice-text! [config sid cid text]
-  (-> (steer! config sid cid text)
-      (.catch (fn [err]
-                (if (inactive-steer-error? err)
-                  (do (js/console.log "[voice:deliver] steer target idle; starting a normal voice turn")
-                      (start-voice-turn! config sid cid text))
-                  (throw err))))))
+  (p/catch (steer! config sid cid text)
+    (fn [err]
+      (if (inactive-steer-error? err)
+        (do (js/console.log "[voice:deliver] steer target idle; starting a normal voice turn")
+            (start-voice-turn! config sid cid text))
+        (throw err)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Hoisted tool definitions: params, execute, tool-obj per tool
@@ -431,16 +299,7 @@
                         :content "Raw Discord voice audio window(s) are attached. Do not require ASR; perceive the audio directly if the model supports it."
                         :summary (str "Discord voice audio event with " (count windows) " window(s).")
                         :content_parts windows}}]
-    (-> (js/fetch (str (knoxx-base config) "/api/admin/config/events/dispatch")
-                  #js {:method "POST"
-                       :headers (knoxx-control-headers config)
-                       :body (.stringify js/JSON (clj->js body))})
-        (.then (fn [resp]
-                 (if (.-ok resp)
-                   (.json resp)
-                   (-> (.text resp)
-                       (.then (fn [text]
-                                (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))
+    (-> (knoxx-client/dispatch-event! (knoxx-control-client config) body)
         (.then (fn [_]
                  {:event_id event-id :windows (count windows)})))))
 

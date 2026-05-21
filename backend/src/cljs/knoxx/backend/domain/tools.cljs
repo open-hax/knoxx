@@ -3,14 +3,14 @@
    Sanitization, TypeBox helpers, and generic tool-update callbacks."
   (:require [clojure.string :as str]
             [knoxx.backend.runtime.state :as runtime-state]
-            [malli.json-schema :as mjs]          ;; ← add this
-            [knoxx.backend.infra.http :refer [js-array-seq]]))
+            [knoxx.backend.extern.js :as xjs]
+            [malli.json-schema :as mjs]))
 
-;; ← add this
 (defn ->params
   "Convert a Malli schema to a Pi tool :parameters JS object."
   [schema]
   (clj->js (mjs/transform schema)))
+
 (defn create-tool-obj [ name label description prompt prompt-guidelines params  execute  runtime config]
 
   #js {:name name
@@ -37,7 +37,7 @@
 
 (defn- sanitize-tool-guidelines
   [guidelines original-name sanitized-name]
-  (let [items (if (array? guidelines) (array-seq guidelines) [])]
+  (let [items (xjs/js-array-seq guidelines)]
     (clj->js
      (mapv (fn [guideline]
              (str "Use " sanitized-name " (canonical " original-name ") when "
@@ -67,7 +67,7 @@
 
 (defn sanitize-custom-tools
   [tools]
-  (let [items (if (array? tools) (array-seq tools) [])]
+  (let [items (xjs/js-array-seq tools)]
     (into-array (map sanitize-custom-tool-name items))))
 
 (defn filter-custom-tools-by-allow-set
@@ -82,7 +82,7 @@
                      original-id (some-> tool (aget "originalName") str str/trim not-empty)]
                  (or (and runtime-id (contains? allowed-tool-ids runtime-id))
                      (and original-id (contains? allowed-tool-ids original-id)))))
-             (js-array-seq tools)))))
+             (xjs/js-array-seq tools)))))
 
 (defn json-parse
   "Parse JSON string to Clojure data."

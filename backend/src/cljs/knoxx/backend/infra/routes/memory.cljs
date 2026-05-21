@@ -572,7 +572,7 @@
   "POST" "/api/memory/sessions/backfill-titles"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-    (let [body (or (aget request "body") #js {})
+    (let [body (or (aget request "body") (js/Object.))
           limit (or (parse-positive-int (aget body "limit"))
                     (parse-positive-int (aget request "query" "limit")))
           force? (or (truthy-param? (aget body "force"))
@@ -589,7 +589,7 @@
   "POST" "/api/memory/sessions/import-titles"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-    (let [body (js->clj (or (aget request "body") #js {}))
+    (let [body (js->clj (or (aget request "body") (js/Object.)))
           titles (or (get body "titles") {})
           updated (reduce-kv (fn [total session-id entry]
                                (let [session-id (str session-id)
@@ -635,7 +635,7 @@
   "POST" "/api/memory/search"
   (if-not (openplanner-enabled? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-    (let [body (or (aget request "body") #js {})
+    (let [body (or (aget request "body") (js/Object.))
           query (or (aget body "query") "")
           k (aget body "k")
           actor-id (normalized-actor-id (or (aget body "actorId")
@@ -670,7 +670,7 @@
 
 (defroute lounge-messages-create-route! []
   "POST" "/api/lounge/messages"
-  (let [body (or (aget request "body") #js {})
+  (let [body (or (aget request "body") (js/Object.))
         session-id (str (or (aget body "session_id") ""))
         alias (str/trim (str (or (aget body "alias") "anonymous")))
         text (str/trim (str (or (aget body "text") "")))]

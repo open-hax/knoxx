@@ -11,6 +11,8 @@ class MockMediaRecorder {
 
   public mimeType = "audio/webm";
 
+  public state = "recording";
+
   public ondataavailable: ((event: { data: Blob; size?: number }) => void) | null = null;
 
   public onstop: (() => void) | null = null;
@@ -20,29 +22,56 @@ class MockMediaRecorder {
   constructor(_stream: MediaStream, _options?: MediaRecorderOptions) {}
 
   start(): void {
-    // noop: we only need to prove the mic flow starts.
+    this.state = "recording";
   }
 
   stop(): void {
+    this.state = "inactive";
     this.onstop?.();
   }
 }
 
+class MockAudioContext {
+  public sampleRate = 44_100;
+
+  public destination = {};
+
+  createMediaStreamSource(): MediaStreamAudioSourceNode {
+    return { connect: vi.fn() } as unknown as MediaStreamAudioSourceNode;
+  }
+
+  createScriptProcessor(): ScriptProcessorNode {
+    return {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      onaudioprocess: null,
+    } as unknown as ScriptProcessorNode;
+  }
+
+  createAnalyser(): AnalyserNode {
+    return {
+      connect: vi.fn(),
+      fftSize: 512,
+      smoothingTimeConstant: 0.3,
+      getByteTimeDomainData: vi.fn(),
+    } as unknown as AnalyserNode;
+  }
+
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 describe("VoiceInputButton", () => {
-  const originalMediaRecorder = globalThis.MediaRecorder;
   const originalMediaDevices = navigator.mediaDevices;
 
   beforeEach(() => {
     vi.stubGlobal("MediaRecorder", MockMediaRecorder);
+    vi.stubGlobal("AudioContext", MockAudioContext);
   });
 
   afterEach(() => {
-    if (originalMediaRecorder) {
-      vi.stubGlobal("MediaRecorder", originalMediaRecorder);
-    } else {
-      vi.unstubAllGlobals();
-    }
-
+    vi.unstubAllGlobals();
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: originalMediaDevices,

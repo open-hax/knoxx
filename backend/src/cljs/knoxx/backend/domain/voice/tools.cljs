@@ -9,6 +9,7 @@
             [knoxx.backend.domain.media :as media :refer [normalize-tool-path-arg]]
             [knoxx.backend.domain.openutau.tools :as openutau]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
+            [knoxx.backend.domain.voice.client :as voice-client]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]))
 
 ;; --- shared helpers ---
@@ -53,36 +54,12 @@
       (some-> js/process .-env (aget "VOICE_GATEWAY_API_KEY") blank->nil)
       (some-> js/process .-env (aget "KNOXX_VOICE_GATEWAY_API_KEY") blank->nil)))
 
-(defn- voice-gateway-url [config]
-  (or (blank->nil (config-value config :voxx-url "voxx-url" "voxxUrl"))
-      (some-> js/process .-env (aget "VOXX_URL") blank->nil)
-      "http://127.0.0.1:8787"))
-
-(defn- tts-url [config]
-  (let [base (str/replace (voice-gateway-url config) #"/+$" "")]
-    (cond
-      (str/ends-with? base "/v1/audio/speech") base
-      (str/ends-with? base "/v1") (str base "/audio/speech")
-      :else (str base "/v1/audio/speech"))))
 
 (defn- voice-settings-payload [params]
   (cond-> {}
     (aget params "stability")        (assoc :stability        (aget params "stability"))
     (aget params "similarity_boost") (assoc :similarity_boost (aget params "similarity_boost"))))
 
-(defn- tts-body [text voice-id model-id output-format params options]
-  (let [vs (voice-settings-payload params)
-        {:keys [speed postprocess-profile postprocess-enabled prompt-aware prompt-aware-style]} options]
-    (cond-> {:input text
-             :voice voice-id
-             :model model-id
-             :response_format output-format
-             :speed speed
-             :postprocess_enabled postprocess-enabled
-             :prompt_aware prompt-aware}
-      postprocess-profile (assoc :postprocess_profile postprocess-profile)
-      prompt-aware-style  (assoc :prompt_aware_style prompt-aware-style)
-      (seq vs)            (assoc :voice_settings vs))))
 
 ;; --- voice.tts ---
 
@@ -108,17 +85,14 @@
    [:stability {:optional true :description "Stability 0-1 for compatible providers."} [:double {:min 0 :max 1}]]
    [:similarity_boost {:optional true :description "Similarity boost 0-1 for compatible providers."} [:double {:min 0 :max 1}]]])
 
-(defn- fetch-tts-audio! [url api-key body]
-  (p/let [res (js/fetch url #js {:method  "POST"
-                                :headers #js {"Authorization" (str "Bearer " api-key)
-                                              "Content-Type" "application/json"
-                                              "Accept"       "audio/mpeg"}
-                                :body    (.stringify js/JSON (clj->js body))})
-         _   (when-not (.-ok res)
-               (p/let [msg (.text res)]
-                 (throw (js/Error. (str "Voice Gateway " (.-status res) ": " msg)))))
-         arr (.arrayBuffer res)]
-    (.from js/Buffer (js/Uint8Array. arr))))
+(defn- synthesize-tts-audio! [config text voice-id model-id output-format params options]
+  (voice-client/synthesize! (voice-client/tts-client config)
+                            {:text text
+                             :voice-id voice-id
+                             :model-id model-id
+                             :response-format output-format
+                             :speed (:speed options)
+                             :options (assoc options :voice-settings (voice-settings-payload params))}))
 
 (defn- write-audio-file! [node-path buf absolute relative voice-id model-id fmt]
   (p/do
@@ -131,7 +105,6 @@
 (defn tts-rest-execute [runtime config]
   (fn [_call-id params on-update & _]
     (let [text      (or (blank->nil (aget params "text")) (throw (js/Error. "voice.tts: text required")))
-          api-key   (or (resolve-voice-key config) (throw (js/Error. "voice.tts: VOICE_GATEWAY_API_KEY not configured")))
           voice-id  (or (blank->nil (aget params "voice_id"))
                         (blank->nil (config-value config :voxx-voice-id "voxx-voice-id" "voxxVoiceId"))
                         "af_jessica")
@@ -163,7 +136,7 @@
                                          " via " model-id ", voice=" voice-id ", speed=" speed
                                          ", postprocess=" (if postprocess-enabled postprocess-profile "off")
                                          ", prompt-aware=" prompt-aware "..."))
-      (p/let [buf (fetch-tts-audio! (tts-url config) api-key (tts-body text voice-id model-id out-fmt params options))]
+      (p/let [buf (synthesize-tts-audio! config text voice-id model-id out-fmt params options)]
         (write-audio-file! path buf absolute relative voice-id model-id out-fmt)))))
 
 ;; --- voice.tts_stream ---

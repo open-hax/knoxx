@@ -28,7 +28,7 @@
            (fn [req reply]
              (if-not policyDb
                (.send (.code reply 503) (clj->js {:error "Knoxx policy database is not configured"}))
-               (let [body (or (aget req "body") #js {})
+               (let [body (or (aget req "body") (js/Object.))
                      email (str/lower-case (str/trim (str (or (aget body "email") ""))))
                      display-name (str/trim (str (or (aget body "displayName")
                                                      (aget body "display_name")
@@ -41,23 +41,23 @@
                                       org-id (aget primary-org "id")
                                       org-slug (aget primary-org "slug")]
                                   (-> (.createUser policyDb
-                                                   #js {:email email
-                                                        :displayName (or display-name email)
-                                                        :orgId org-id
-                                                        :roleSlugs #js ["basic_user"]
-                                                        :authProvider "signup"
-                                                        :status "active"
-                                                        :membershipStatus "active"
-                                                        :isDefault true})
+                                                   (clj->js {:email email
+                                                             :displayName (or display-name email)
+                                                             :orgId org-id
+                                                             :roleSlugs ["basic_user"]
+                                                             :authProvider "signup"
+                                                             :status "active"
+                                                             :membershipStatus "active"
+                                                             :isDefault true}))
                                       (.then (fn [_]
                                                (.resolveRequestContext policyDb
-                                                                       #js {"x-knoxx-user-email" email
-                                                                            "x-knoxx-org-slug" org-slug})))
+                                                                       (clj->js {"x-knoxx-user-email" email
+                                                                                 "x-knoxx-org-slug" org-slug}))))
                                       (.then (fn [ctx]
                                                (auth-session/create-session-from-context! reply public-base-url ctx
-                                                                                          #js {:email email
-                                                                                               :displayName (or display-name email)
-                                                                                               :authProvider "signup"}))))))
+                                                                                          (clj->js {:email email
+                                                                                                    :displayName (or display-name email)
+                                                                                                    :authProvider "signup"})))))))
                        (.then (fn [result]
                                 (.send reply result)))
                        (.catch (fn [err]
@@ -130,7 +130,7 @@
                           (let [org-id (or (some-> req (aget "body") (aget "orgId"))
                                            (some-> ctx (aget "org") (aget "id")))
                                 email (some-> req (aget "body") (aget "email"))
-                                role-slugs (or (some-> req (aget "body") (aget "roleSlugs")) #js ["knowledge_worker"])]
+                                role-slugs (or (some-> req (aget "body") (aget "roleSlugs")) (clj->js ["knowledge_worker"]))]
                             (if (str/blank? email)
                               (.send (.code reply 400) (clj->js {:error "email is required"}))
                               (-> (.createInvite policyDb

@@ -1,0 +1,88 @@
+---
+original_name: "2026.05.06.20.12.13.md"
+title: "Sub-Agent Communication Paths"
+summary: "Assessment of current communication paths for independent fire-and-forget sub-agent runs."
+category: "architecture"
+created: "2026-05-06"
+---
+
+ Signal
+
+ Not yet as a clean first-class actor mailbox.
+
+ Fire-and-forget sub-agents are now real independent agent runs, but they currently communicate mostly through the same
+ channels any normal Knoxx agent can use: audit logs, OpenPlanner memory, Discord/tools, events, spawned child runs, and
+ explicit runtime endpoints if something external calls them.
+
+ They do not yet have a dedicated “send message to parent/sibling actor” tool.
+
+ Evidence
+
+ - Fire-and-forget sub-agent behavior:
+     - Parent invokes :invoke/sub-agent.
+     - Child run is queued with its own session/run/job identity.
+     - Parent does not wait for the child answer.
+     - Child proceeds as a normal Knoxx agent turn.
+ - Existing communication paths:
+     - A child can write/publish through tools it is allowed to use, such as Discord tools, memory/search/write-style
+ tools, events dispatch, or agent-spawn tools.
+     - The backend already has runtime concepts for active sessions, steering, follow-up, active run status, run events,
+ and audit traces.
+     - Event-agent code already uses steer/follow-up internally when a sticky session is busy.
+ - Missing first-class piece:
+     - There is not currently a clean tool like agents.message, agents.steer, or actors.send exposed to spawned agents
+ for “message my parent”, “queue a follow-up to this actor”, or “steer that sibling session”.
+
+ Frames
+
+ - Fire-and-forget sub-agents are asynchronous workers, not callback functions; they can finish later and be inspected
+ through audit/memory, but the parent does not automatically receive their answer.
+ - Steering/follow-up exists as a runtime behavior, but it is not yet elevated into an actor-to-actor messaging API for
+ sub-agents to call directly.
+ - The actor model wants a mailbox layer: agents should address each other by actor/session/lineage, send messages, queue
+ follow-ups, and leave receipts without requiring the parent to block.
+
+ Countermoves
+
+ What can happen today:
+
+ 1. A spawned agent can post to Discord or another external surface if its tool suite allows it.
+ 2. A spawned agent can dispatch events if it has events.dispatch or event_agents.dispatch.
+ 3. A spawned agent can spawn another normal agent run if it has agents.spawn.
+ 4. An operator/backend can steer or follow up an active session if it knows the target conversation/session ID.
+
+ What cannot happen cleanly yet:
+
+ 1. A fire-and-forget child cannot automatically “return” a value to the parent.
+ 2. A child does not currently have a first-class send message to parent tool.
+ 3. A child does not currently have a first-class queue follow-up to sibling/parent actor tool.
+ 4. Parent/child message passing is not yet represented as a proper mailbox with delivery status, audit labels, and
+ lineage.
+
+ The shape I’d add next is probably:
+
+ ```clojure
+   :actors.send-message
+ ```
+
+ with parameters like:
+
+ ```json
+   {
+     "target": "parent | actor-id | session-id | conversation-id",
+     "mode": "message | steer | follow-up | event",
+     "content": "...",
+     "metadata": {
+       "parentRunId": "...",
+       "subAgentId": "audio_agent"
+     }
+   }
+ ```
+
+ Then fire-and-forget agents could report progress/results without blocking the parent, and busy targets could receive
+ queued follow-ups instead of dropped or rejected turns.
+
+ Next
+
+ - Add a first-class actors.send-message tool that can route child-agent messages to parent/sibling sessions as steer or
+ queued follow-up while preserving audit lineage.

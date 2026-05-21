@@ -1,6 +1,7 @@
 (ns knoxx.backend.domain.agent.content
   "Content-part, media, and text helpers for agent turns."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.agent.text-delta :as text-delta]
             [knoxx.backend.domain.models :refer [model-supports-input?]]
             [knoxx.backend.domain.text :refer [value->preview-text content-part-text]]))
 
@@ -62,17 +63,7 @@
 
 (defn diff-appended-text
   [previous current]
-  (let [previous (str (or previous ""))
-        current (str (or current ""))]
-    (cond
-      (str/blank? current) ""
-      (str/blank? previous) current
-      (= current previous) ""
-      (str/starts-with? current previous) (let [appended (.slice current (count previous))]
-                                            (if (duplicated-prefix? previous appended)
-                                              (.slice appended (count previous))
-                                              appended))
-      :else (.slice current (max-overlap previous current)))))
+  (text-delta/diff-appended-text previous current))
 
 (defn media-part-url
   [part]

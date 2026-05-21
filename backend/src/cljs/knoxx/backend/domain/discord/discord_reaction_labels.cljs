@@ -6,7 +6,7 @@
    it has a reserved meaning: ✅ = good output, ❌ = bad output."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.discord.gateway :as dg]
-            [knoxx.backend.infra.http :as http]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.time :as time]))
 
 (defonce ^:private reaction-unsubscribe* (atom nil))
@@ -76,19 +76,20 @@
         user-id (str (or (js-get reaction "userId") ""))
         channel-id (str (or (js-get reaction "channelId") ""))
         message-id (str (or (js-get reaction "messageId") ""))]
-    (if (or (str/blank? emoji) (str/blank? channel-id) (str/blank? message-id) (not (http/openplanner-enabled? config)))
-      (js/Promise.resolve {:ok false :skipped true})
-      (let [record-id (discord-record-id channel-id message-id)
-            event (message->openplanner-event config message emoji user-id)]
-        (-> (http/openplanner-request! config "POST" "/v1/events" {:events [event]})
-            (.then (fn [_]
-                     (http/openplanner-request! config "POST" (str "/v1/labels/records/" (js/encodeURIComponent record-id) "/reaction")
-                                                {:emoji emoji
-                                                 :source "discord-gateway-reaction"
-                                                 :user_id user-id})))
-            (.catch (fn [err]
-                      (.warn js/console "[discord-reaction-labels] failed to ingest reaction" err)
-                      {:ok false :error (.-message err)})))))))
+    (let [client (openplanner-client/client config)]
+      (if (or (str/blank? emoji) (str/blank? channel-id) (str/blank? message-id) (not (openplanner-client/enabled? client)))
+        (js/Promise.resolve {:ok false :skipped true})
+        (let [record-id (discord-record-id channel-id message-id)
+              event (message->openplanner-event config message emoji user-id)]
+          (-> (openplanner-client/request! client "POST" "/v1/events" {:events [event]})
+              (.then (fn [_]
+                       (openplanner-client/request! client "POST" (str "/v1/labels/records/" (js/encodeURIComponent record-id) "/reaction")
+                                                   {:emoji emoji
+                                                    :source "discord-gateway-reaction"
+                                                    :user_id user-id})))
+              (.catch (fn [err]
+                        (.warn js/console "[discord-reaction-labels] failed to ingest reaction" err)
+                        {:ok false :error (.-message err)}))))))))
 
 (defn bind!
   [config]

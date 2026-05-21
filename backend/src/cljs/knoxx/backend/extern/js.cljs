@@ -12,3 +12,10 @@
   "Return a fresh empty JS object."
   []
   #js {})
+
+(defn js-array-seq
+  "Return a seq for a native JS array, or an empty vector for non-arrays."
+  [value]
+  (if (array? value)
+    (array-seq value)
+    []))

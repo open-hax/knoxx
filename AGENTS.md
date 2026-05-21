@@ -61,30 +61,13 @@ Over:
 
 Always prefer modern shadow-cljs patterns over legacy verbose forms:
 
-- Use `(require [shadow.cljs.modern :refer [js-await]])` and `js-await` for async/await in `defn` bodies
 - Use `^:async` + `await` for async tests and top-level async functions (ClojureScript 1.12.145+)
 - Use `when-let` instead of nesting `let` + `if` checks
 - Prefer threading macros `->` and `->>` over manual nested let forms
 - Use `some->` for optional chaining through potential nils
 
-### Why js-await in defn
 
-```cljs
-;; Instead of this:
-(-> (js/fetch url)
-    (.then (fn [resp] (.json resp)))
-    (.catch (fn [err] ...)))
-
-;; Prefer this:
-(js-await [resp (js/fetch url)]
-  (when-not (.-ok resp)
-    (throw (js/Error. "Failed")))
-  (.json resp))
-```
-
-The `js-await` form is flatter, easier to read, and more debuggable.
-
-### Why ^:async / await in deftest
+### Why ^:async / await in deftest and defn
 
 ClojureScript 1.12.145 supports `^:async` on `deftest` and `defn`, emitting native JS async functions. Use `await` (not `js-await`) inside them:
 
@@ -103,6 +86,12 @@ ClojureScript 1.12.145 supports `^:async` on `deftest` and `defn`, emitting nati
       (is (= 42 v)))
     (catch :default e
       (is false (str "threw: " (.-message e))))))
+```
+
+```cljs
+(defn ^:async my-async-func []
+    (await (some-async-func)))
+
 ```
 
 **Rules:**

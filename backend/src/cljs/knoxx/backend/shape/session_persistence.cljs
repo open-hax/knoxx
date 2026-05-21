@@ -7,13 +7,22 @@
             [malli.error :as me]))
 
 (def RunStatus
-  [:enum "queued" "running" "completed" "failed" "waiting_input"])
+  [:enum "queued" "running" "completed" "failed" "waiting_input" "cancelled"])
+
+(def ToolReceiptStatus
+  "Runtime status vocabulary accepts current stream values plus legacy
+   trace/persistence values during migration. Prefer running/completed/failed at
+   runtime; translate done/error only at compatibility boundaries."
+  [:enum "running" "completed" "failed" "done" "error"])
+
+(def TraceBlockStatus
+  [:enum "streaming" "done" "error" "completed" "failed"])
 
 (def ToolReceipt
   [:map {:closed false}
    [:id :string]
    [:tool_name :string]
-   [:status [:enum "running" "done" "error"]]
+   [:status ToolReceiptStatus]
    [:started_at {:optional true} :string]
    [:ended_at {:optional true} :string]
    [:input_preview {:optional true} [:maybe :string]]
@@ -22,8 +31,8 @@
 (def TraceBlock
   [:map {:closed false}
    [:id :string]
-   [:kind [:enum :tool_call :text :reasoning]]
-   [:status [:enum "streaming" "done" "error"]]
+   [:kind [:enum :tool_call :text :reasoning :agent_message]]
+   [:status TraceBlockStatus]
    [:at {:optional true} :string]])
 
 (def Message

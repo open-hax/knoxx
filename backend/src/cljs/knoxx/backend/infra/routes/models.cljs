@@ -3,16 +3,15 @@
             [knoxx.backend.infra.agent.hydration :refer [settings-state*]]
             [knoxx.backend.shape.app-shapes :refer [route!]]
             [knoxx.backend.infra.auth.authz :refer [with-request-context! run-visible? ensure-permission! ctx-tool-constraints]]
-            [knoxx.backend.infra.http :refer [json-response! fetch-json bearer-headers require-openai-key! openai-auth-error send-fetch-response! error-response! http-error js-array-seq request-query-string]]
+            [knoxx.backend.infra.clients.proxx :as proxx-client]
+            [knoxx.backend.infra.http :refer [json-response! require-openai-key! openai-auth-error send-fetch-response! error-response! http-error request-body request-query-string]]
             [knoxx.backend.domain.action.run-state :refer [runs* run-order* summarize-run]]
             [knoxx.backend.domain.models :refer [allowlisted-model-id?]]
-            [knoxx.backend.domain.time :refer [now-iso]]
-            [shadow.cljs.modern :refer [js-await]]))
+            [knoxx.backend.domain.time :refer [now-iso]]))
 
 (defn- proxx-configured?
   [config]
-  (and (not (str/blank? (:proxx-base-url config)))
-       (not (str/blank? (:proxx-auth-token config)))))
+  (proxx-client/configured? config))
 
 (defn- request-session-key
   "Best-effort extraction of a stable Knoxx session key from request headers.
@@ -20,7 +19,7 @@
    Knoxx frontend always sends x-knoxx-session-id. We map that to Proxx's
    prompt_cache_key for provider+account session affinity." 
   [request]
-  (let [headers (or (aget request "headers") #js {})
+  (let [headers (or (aget request "headers") (js/Object.))
         v (or (aget headers "x-knoxx-session-id")
               (aget headers "x-session-id")
               (aget headers "x-open-hax-session-id"))]
@@ -61,7 +60,7 @@
   [ctx items config]
   (let [allowed-by-policy (model-policy-allowed-ids ctx)]
     (filter (fn [item]
-              (let [model-id (aget item "id")]
+              (let [model-id (:id item)]
                 (and (allowlisted-model-id? config model-id)
                      (or (empty? allowed-by-policy)
                          (contains? allowed-by-policy model-id)))))
@@ -73,7 +72,8 @@
    :request request
    :reply reply
    :configured (proxx-configured? config)
-   :default-model (:llmModel @settings-state*)})
+   :default-model (:llmModel @settings-state*)
+   :proxx-client (proxx-client/client config)})
 
 (defn- send-proxx-health-unconfigured!
   [{:keys [config reply default-model]}]
@@ -85,24 +85,23 @@
   reply)
 
 (defn- fetch-proxx-health
-  [{:keys [config]}]
-  (fetch-json (str (:proxx-base-url config) "/health")
-              #js {:headers (bearer-headers (:proxx-auth-token config))}))
+  [{:keys [proxx-client]}]
+  (proxx-client/health! proxx-client))
 
 (defn- send-proxx-health-success!
   [{:keys [config reply default-model]} resp]
-  (let [body (aget resp "body")
-        key-pool (aget body "keyPool")]
-    (json-response! reply 200 {:reachable (boolean (aget resp "ok"))
+  (let [body (:body resp)
+        key-pool (:keyPool body)]
+    (json-response! reply 200 {:reachable (boolean (:ok resp))
                                :configured true
                                :base_url (:proxx-base-url config)
-                               :status_code (aget resp "status")
+                               :status_code (:status resp)
                                :model_count (cond
-                                              (number? (aget body "modelCount"))
-                                              (aget body "modelCount")
+                                              (number? (:modelCount body))
+                                              (:modelCount body)
 
-                                              (number? (aget key-pool "totalKeys"))
-                                              (aget key-pool "totalKeys")
+                                              (number? (:totalKeys key-pool))
+                                              (:totalKeys key-pool)
 
                                               :else nil)
                                :default_model default-model})
@@ -121,10 +120,11 @@
   [ctx]
   (if-not (:configured ctx)
     (send-proxx-health-unconfigured! ctx)
-    (js-await [resp (fetch-proxx-health ctx)]
-      (send-proxx-health-success! ctx resp)
-      (catch _err
-        (send-proxx-health-failure! ctx)))))
+    (-> (fetch-proxx-health ctx)
+        (.then (fn [resp]
+                 (send-proxx-health-success! ctx resp)))
+        (.catch (fn [_err]
+                  (send-proxx-health-failure! ctx))))))
 
 (defn proxx-models-ctx
   [config request reply auth-ctx]
@@ -132,21 +132,20 @@
    :request request
    :reply reply
    :auth auth-ctx
-   :fetch-json! fetch-json})
+   :proxx-client (proxx-client/client config)})
 
 (defn- fetch-proxx-models
-  [{:keys [config fetch-json!]}]
-  (fetch-json! (str (:proxx-base-url config) "/v1/models")
-               #js {:headers (bearer-headers (:proxx-auth-token config))}))
+  [{:keys [proxx-client]}]
+  (proxx-client/models! proxx-client))
 
 (defn- send-proxx-models-success!
   [{:keys [auth config reply]} resp]
-  (if (aget resp "ok")
-    (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
-          filtered (into-array (filter-model-items-for-ctx auth items config))]
+  (if (:ok resp)
+    (let [items (or (get-in resp [:body :data]) [])
+          filtered (vec (filter-model-items-for-ctx auth items config))]
       (json-response! reply 200 {:models filtered}))
     (json-response! reply 502 {:error "Proxx model list failed"
-                               :details (js->clj (aget resp "body") :keywordize-keys true)}))
+                               :details (:body resp)}))
   reply)
 
 (defn- send-proxx-models-failure!
@@ -156,10 +155,11 @@
 
 (defn send-proxx-models!
   [ctx]
-  (js-await [resp (fetch-proxx-models ctx)]
-    (send-proxx-models-success! ctx resp)
-    (catch err
-      (send-proxx-models-failure! ctx err))))
+  (-> (fetch-proxx-models ctx)
+      (.then (fn [resp]
+               (send-proxx-models-success! ctx resp)))
+      (.catch (fn [err]
+                (send-proxx-models-failure! ctx err)))))
 
 (defn register-model-routes!
   [app runtime config]
@@ -182,13 +182,12 @@
                   (ensure-permission! ctx "org.proxx.observability.read")
                   (if-not (proxx-configured? config)
                     (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (fetch-json (str (:proxx-base-url config) "/api/v1/request-logs" (request-query-string request))
-                                    #js {:headers (bearer-headers (:proxx-auth-token config))})
+                    (-> (proxx-client/request-logs! (proxx-client/client config) (request-query-string request))
                         (.then (fn [resp]
-                                 (if (aget resp "ok")
-                                   (json-response! reply 200 (js->clj (aget resp "body") :keywordize-keys true))
+                                 (if (:ok resp)
+                                   (json-response! reply 200 (:body resp))
                                    (json-response! reply 502 {:error "Proxx request logs failed"
-                                                              :details (js->clj (aget resp "body") :keywordize-keys true)}))))
+                                                              :details (:body resp)}))))
                         (.catch (fn [err]
                                   (json-response! reply 502 {:error (str err)})))))
                   (catch :default err
@@ -202,13 +201,12 @@
                   (ensure-permission! ctx "org.proxx.observability.read")
                   (if-not (proxx-configured? config)
                     (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (fetch-json (str (:proxx-base-url config) "/api/v1/dashboard/overview" (request-query-string request))
-                                    #js {:headers (bearer-headers (:proxx-auth-token config))})
+                    (-> (proxx-client/dashboard-overview! (proxx-client/client config) (request-query-string request))
                         (.then (fn [resp]
-                                 (if (aget resp "ok")
-                                   (json-response! reply 200 (js->clj (aget resp "body") :keywordize-keys true))
+                                 (if (:ok resp)
+                                   (json-response! reply 200 (:body resp))
                                    (json-response! reply 502 {:error "Proxx dashboard overview failed"
-                                                              :details (js->clj (aget resp "body") :keywordize-keys true)}))))
+                                                              :details (:body resp)}))))
                         (.catch (fn [err]
                                   (json-response! reply 502 {:error (str err)})))))
                   (catch :default err
@@ -222,13 +220,12 @@
                   (ensure-permission! ctx "org.proxx.observability.read")
                   (if-not (proxx-configured? config)
                     (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (fetch-json (str (:proxx-base-url config) "/api/v1/analytics/provider-model" (request-query-string request))
-                                    #js {:headers (bearer-headers (:proxx-auth-token config))})
+                    (-> (proxx-client/provider-model-analytics! (proxx-client/client config) (request-query-string request))
                         (.then (fn [resp]
-                                 (if (aget resp "ok")
-                                   (json-response! reply 200 (js->clj (aget resp "body") :keywordize-keys true))
+                                 (if (:ok resp)
+                                   (json-response! reply 200 (:body resp))
                                    (json-response! reply 502 {:error "Proxx provider-model analytics failed"
-                                                              :details (js->clj (aget resp "body") :keywordize-keys true)}))))
+                                                              :details (:body resp)}))))
                         (.catch (fn [err]
                                   (json-response! reply 502 {:error (str err)})))))
                   (catch :default err
@@ -243,34 +240,31 @@
 
   (route! app "POST" "/api/proxx/chat"
           (fn [request reply]
-            (let [body (or (aget request "body") #js {})
-                  payload (ensure-prompt-cache-key!
-                           request
-                           #js {:model (or (aget body "model") (:llmModel @settings-state*))
-                                :messages (or (aget body "messages") #js [])
-                                :temperature (aget body "temperature")
-                                :top_p (aget body "top_p")
-                                :max_tokens (aget body "max_tokens")
-                                :stop (aget body "stop")
-                                :stream false})]
-              (-> (fetch-json (str (:proxx-base-url config) "/v1/chat/completions")
-                              #js {:method "POST"
-                                   :headers (bearer-headers (:proxx-auth-token config))
-                                   :body (.stringify js/JSON payload)})
+            (let [body (request-body request)
+                  session-key (request-session-key request)
+                  payload (cond-> {:model (or (aget body "model") (:llmModel @settings-state*))
+                                   :messages (or (aget body "messages") [])
+                                   :temperature (aget body "temperature")
+                                   :top_p (aget body "top_p")
+                                   :max_tokens (aget body "max_tokens")
+                                   :stop (aget body "stop")
+                                   :stream false}
+                            session-key (assoc :prompt_cache_key session-key))]
+              (-> (proxx-client/chat-completions! (proxx-client/client config) payload)
                   (.then (fn [resp]
-                           (if (aget resp "ok")
-                             (let [data (aget resp "body")
-                                   choices (or (aget data "choices") #js [])
-                                   first-choice (aget choices 0)
-                                   message (or (aget first-choice "message") #js {})
-                                   content (or (aget message "content")
-                                               (aget first-choice "text")
+                           (if (:ok resp)
+                             (let [data (:body resp)
+                                   choices (or (:choices data) [])
+                                   first-choice (first choices)
+                                   message (or (:message first-choice) {})
+                                   content (or (:content message)
+                                               (:text first-choice)
                                                "")]
                                (json-response! reply 200 {:answer content
-                                                          :model (or (aget data "model") (aget payload "model"))
+                                                          :model (or (:model data) (:model payload))
                                                           :rag_context nil}))
                              (json-response! reply 502 {:error "Proxx chat failed"
-                                                        :details (js->clj (aget resp "body") :keywordize-keys true)}))))
+                                                        :details (:body resp)}))))
                   (.catch (fn [err]
                             (json-response! reply 502 {:error (str err)})))))))
 
@@ -279,14 +273,13 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
-                (-> (fetch-json (str (:proxx-base-url config) "/v1/models")
-                                #js {:headers (bearer-headers (:proxx-auth-token config))})
+                (-> (proxx-client/models! (proxx-client/client config))
                     (.then (fn [resp]
-                             (if (aget resp "ok")
-                               (let [items (js-array-seq (or (aget (aget resp "body") "data") #js []))
+                             (if (:ok resp)
+                               (let [items (or (get-in resp [:body :data]) [])
                                      models (mapv (fn [item]
-                                                    {:id (str (or (aget item "id") ""))
-                                                     :name (str (or (aget item "id") ""))
+                                                    {:id (str (or (:id item) ""))
+                                                     :name (str (or (:id item) ""))
                                                      :path ""
                                                      :size_bytes 0
                                                      :modified_at (now-iso)
@@ -329,11 +322,10 @@
   (route! app "GET" "/v1/models"
           (fn [request reply]
             (when (require-openai-key! config request reply)
-              (-> (fetch-json (str (:proxx-base-url config) "/v1/models")
-                              #js {:headers (bearer-headers (:proxx-auth-token config))})
+              (-> (proxx-client/models! (proxx-client/client config))
                   (.then (fn [resp]
-                           (if (aget resp "ok")
-                             (json-response! reply 200 (js->clj (aget resp "body") :keywordize-keys true))
+                           (if (:ok resp)
+                             (json-response! reply 200 (:body resp))
                              (openai-auth-error reply 502 "Upstream model list failed" "upstream_error"))))
                   (.catch (fn [err]
                             (openai-auth-error reply 502 (str "Upstream model list failed: " err) "upstream_error")))))))
@@ -341,11 +333,8 @@
   (route! app "POST" "/v1/chat/completions"
           (fn [request reply]
             (when (require-openai-key! config request reply)
-              (let [payload (ensure-prompt-cache-key! request (or (aget request "body") #js {}))]
-                (-> (js/fetch (str (:proxx-base-url config) "/v1/chat/completions")
-                              #js {:method "POST"
-                                   :headers (bearer-headers (:proxx-auth-token config))
-                                   :body (.stringify js/JSON payload)})
+              (let [payload (ensure-prompt-cache-key! request (request-body request))]
+                (-> (proxx-client/chat-completions-response! (proxx-client/client config) payload)
                     (.then (fn [resp]
                              (send-fetch-response! reply resp)))
                     (.catch (fn [err]
@@ -354,15 +343,12 @@
   (route! app "POST" "/v1/embeddings"
           (fn [request reply]
             (when (require-openai-key! config request reply)
-              (let [body (or (aget request "body") #js {})
+              (let [body (request-body request)
                     payload (ensure-prompt-cache-key!
                              request
-                             (doto (.assign js/Object #js {} body)
+                             (doto (.assign js/Object (js/Object.) body)
                                (aset "model" (or (aget body "model") (:embedModel @settings-state*) (:proxx-embed-model config)))))]
-                (-> (js/fetch (str (:proxx-base-url config) "/v1/embeddings")
-                              #js {:method "POST"
-                                   :headers (bearer-headers (:proxx-auth-token config))
-                                   :body (.stringify js/JSON payload)})
+                (-> (proxx-client/embeddings-response! (proxx-client/client config) payload)
                     (.then (fn [resp]
                              (send-fetch-response! reply resp)))
                     (.catch (fn [err]

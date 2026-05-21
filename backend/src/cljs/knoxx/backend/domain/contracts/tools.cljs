@@ -1,6 +1,7 @@
 (ns knoxx.backend.domain.contracts.tools
   "Contract librarian tool factories."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.contracts.client :as contract-client]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj sanitize-custom-tools filter-custom-tools-by-allow-set]]))
@@ -47,27 +48,13 @@
   [params]
   (param-string params "contract_class" "contractClass" "agents"))
 
-(defn- class-query
-  [klass]
-  (str "?kind=" (js/encodeURIComponent (or klass "agents"))))
-
-(defn- fetch-text-result
-  [url options]
-  (-> (js/fetch url options)
-      (.then (fn [resp]
-               (-> (.text resp)
-                   (.then (fn [text]
-                            {:ok (.-ok resp)
-                             :status (.-status resp)
-                             :text text})))))))
 
 (defn contract-list-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         klass (contract-class-param params)
-        base-url (or (:knoxx-base-url config) "")]
+        client (contract-client/client config)]
     (maybe-tool-update! on-update (str "Listing " klass " contracts…"))
-    (-> (fetch-text-result (str base-url "/api/agent/contracts" (class-query klass))
-                           #js {:method "GET"})
+    (-> (contract-client/list-contracts! client klass)
         (.then (fn [{:keys [ok status text]}]
                  (tool-text-result
                   (str (if ok "Contract list" "Contract list failed")
@@ -78,12 +65,11 @@
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         contract-id (param-string params "contract_id" "contractId" "")
         klass (contract-class-param params)
-        base-url (or (:knoxx-base-url config) "")]
+        client (contract-client/client config)]
     (when (str/blank? contract-id)
       (throw (js/Error. "contract_id is required")))
     (maybe-tool-update! on-update (str "Reading " klass "/" contract-id "…"))
-    (-> (fetch-text-result (str base-url "/api/agent/contracts/" (js/encodeURIComponent contract-id) (class-query klass))
-                           #js {:method "GET"})
+    (-> (contract-client/read-contract! client klass contract-id)
         (.then (fn [{:keys [ok status text]}]
                  (tool-text-result
                   (str (if ok "Contract read" "Contract read failed")
@@ -95,16 +81,13 @@
         contract-id (param-string params "contract_id" "contractId" "")
         edn-text (param-text params "edn_text" "ednText" "")
         klass (contract-class-param params)
-        base-url (or (:knoxx-base-url config) "")]
+        client (contract-client/client config)]
     (when (str/blank? contract-id)
       (throw (js/Error. "contract_id is required")))
     (when (str/blank? edn-text)
       (throw (js/Error. "edn_text is required")))
     (maybe-tool-update! on-update (str "Saving " klass "/" contract-id "…"))
-    (-> (fetch-text-result (str base-url "/api/agent/contracts/" (js/encodeURIComponent contract-id) (class-query klass))
-                           #js {:method "PUT"
-                                :headers #js {"Content-Type" "text/plain; charset=utf-8"}
-                                :body edn-text})
+    (-> (contract-client/write-contract! client klass contract-id edn-text)
         (.then (fn [{:keys [ok status text]}]
                  (tool-text-result
                   (str (if ok "Contract save result" "Contract save failed")
@@ -115,18 +98,13 @@
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         edn-text (param-text params "edn_text" "ednText" "")
         klass (contract-class-param params)
-        base-url (or (:knoxx-base-url config) "")]
+        client (contract-client/client config)]
     (when (str/blank? edn-text)
       (throw (js/Error. "edn_text is required")))
     (maybe-tool-update! on-update (str "Validating " klass " contract EDN…"))
-    (-> (js/fetch (str base-url "/api/agent/contracts/validate")
-                  #js {:method "POST"
-                       :headers #js {"Content-Type" "application/json"}
-                       :body (.stringify js/JSON #js {:edn_text edn-text :contract_class klass})})
-        (.then (fn [resp] (.json resp)))
-        (.then (fn [result]
-                 (let [r (js->clj result :keywordize-keys true)
-                       ok? (:ok r)
+    (-> (contract-client/validate-contract! client klass edn-text)
+        (.then (fn [r]
+                 (let [ok? (:ok r)
                        errors (or (:errors r) [])
                        warnings (or (:warnings r) [])]
                    (tool-text-result

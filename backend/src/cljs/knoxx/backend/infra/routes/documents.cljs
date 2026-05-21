@@ -110,7 +110,7 @@
     (if (or (str/starts-with? rel-to-root "..")
             (path-is-absolute? path rel-to-root))
       (json-response! reply 403 {:detail "Path escapes active docs root"})
-      (-> (fs-rm! fs abs-path #js {:force true})
+      (-> (fs-rm! fs abs-path (clj->js {:force true}))
           (.then (fn []
                    (swap! database-state* update-in [:records db-id :indexed] dissoc rel-path)
                    (json-response! reply 200 {:ok true :path rel-path})))
@@ -121,7 +121,7 @@
   "POST" "/api/documents/ingest"
   (when ctx (ensure-permission! ctx "datalake.ingest"))
   (let [profile (active-database-profile runtime config request ctx)
-        body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)]
+        body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
     (-> (start-document-ingestion! runtime config profile body)
         (.then (fn [resp] (json-response! reply 200 resp)))
         (.catch (fn [err]
@@ -130,7 +130,7 @@
 (defroute api-documents-ingest-priority! []
   "POST" "/api/documents/ingest/priority"
   (when ctx (ensure-permission! ctx "datalake.ingest"))
-  (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+  (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
         paths (vec (or (:paths body) (:files body) []))
         project (:project body)]
     (if (empty? paths)
@@ -188,7 +188,7 @@
 (defroute api-chat-retrieval-debug! []
   "POST" "/api/chat/retrieval-debug"
   (when ctx (ensure-permission! ctx "datalake.query"))
-  (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+  (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
         query (str/trim (str (:message body)))
         top-k (or (:topK body) 5)]
     (if (str/blank? query)
@@ -244,7 +244,7 @@
 (defroute api-settings-databases-create! []
   "POST" "/api/settings/databases"
   (when ctx (ensure-permission! ctx "org.datalakes.create"))
-  (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+  (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
         name (str/trim (str (:name body)))
         session-id (request-session-id request)]
     (if (str/blank? name)
@@ -285,7 +285,7 @@
 (defroute api-settings-databases-activate! []
   "POST" "/api/settings/databases/activate"
   (when ctx (ensure-permission! ctx "org.datalakes.read"))
-  (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+  (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
         db-id (str (:id body))
         session-id (request-session-id request)
         profile (get-in (ensure-database-state! runtime config ctx) [:profiles db-id])]
@@ -301,7 +301,7 @@
   "PATCH" "/api/settings/databases/:id"
   (when ctx (ensure-permission! ctx "org.datalakes.update"))
   (let [db-id (str (aget request "params" "id"))
-        body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+        body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
         session-id (request-session-id request)
         profile (get-in (ensure-database-state! runtime config ctx) [:profiles db-id])]
     (cond

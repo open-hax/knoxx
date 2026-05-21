@@ -35,7 +35,7 @@
         (with-request-context! runtime request reply
           (fn [ctx]
             (when ctx (ensure-permission! ctx "org.translations.read"))
-            (let [query (or (aget request "query") #js {})
+            (let [query (or (aget request "query") (js/Object.))
                   project (or (aget query "project") (:session-project-name config))
                   status (aget query "status")
                   source-lang (aget query "source_lang")
@@ -74,7 +74,7 @@
           (fn [ctx]
             (when ctx (ensure-permission! ctx "org.translations.review"))
             (let [segment-id (aget request "params" "id")
-                  body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+                  body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
                   body-with-auth (merge body
                                         {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
                                          :labeler_email (str (or (ctx-user-email ctx) "unknown"))
@@ -92,7 +92,7 @@
         (with-request-context! runtime request reply
           (fn [ctx]
             (when ctx (ensure-permission! ctx "org.translations.export"))
-            (let [query (or (aget request "query") #js {})
+            (let [query (or (aget request "query") (js/Object.))
                   project (or (aget query "project") (:session-project-name config))]
               (-> (openplanner-request! config "GET"
                     (str "/v1/translations/export/manifest?project=" (js/encodeURIComponent project)))
@@ -106,7 +106,7 @@
         (with-request-context! runtime request reply
           (fn [ctx]
             (when ctx (ensure-permission! ctx "org.translations.export"))
-            (let [query (or (aget request "query") #js {})
+            (let [query (or (aget request "query") (js/Object.))
                   project (or (aget query "project") (:session-project-name config))
                   target-lang (aget query "target_lang")
                   include-corrected (aget query "include_corrected")
@@ -114,7 +114,7 @@
                               (when target-lang (str "&target_lang=" (js/encodeURIComponent target-lang)))
                               (when include-corrected (str "&include_corrected=" (js/encodeURIComponent include-corrected))))]
               (-> (js/fetch (openplanner-url config suffix)
-                    #js {:method "GET" :headers (openplanner-headers config)})
+                    (clj->js {:method "GET" :headers (openplanner-headers config)}))
                   (.then (fn [resp]
                     (-> (.text resp)
                         (.then (fn [text]
@@ -130,7 +130,7 @@
         (with-request-context! runtime request reply
           (fn [ctx]
             (when ctx (ensure-permission! ctx "org.translations.manage"))
-            (let [body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+            (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
                   body-with-auth (assoc body :org_id (str (or (ctx-org-id ctx) "")))]
               (-> (openplanner-request! config "POST" "/v1/translations/segments/batch" (clj->js body-with-auth))
                   (.then (fn [resp] (json-response! reply 200 resp)))
@@ -144,7 +144,7 @@
         (with-request-context! runtime request reply
           (fn [ctx]
             (when ctx (ensure-permission! ctx "org.translations.read"))
-            (let [query (or (aget request "query") #js {})
+            (let [query (or (aget request "query") (js/Object.))
                   project (or (aget query "project") (:session-project-name config))
                   target-lang (aget query "target_lang")
                   source-lang (aget query "source_lang")
@@ -179,7 +179,7 @@
             (when ctx (ensure-permission! ctx "org.translations.review"))
             (let [doc-id (aget request "params" "documentId")
                   target-lang (aget request "params" "targetLang")
-                  body (js->clj (or (aget request "body") #js {}) :keywordize-keys true)
+                  body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)
                   body-with-auth (merge body
                                         {:labeler_id (str (or (ctx-user-id ctx) "unknown"))
                                          :labeler_email (str (or (ctx-user-email ctx) "unknown"))})]
@@ -209,7 +209,7 @@
         (with-request-context! runtime request reply
           (fn [ctx]
             (when ctx (ensure-permission! ctx "org.translations.read"))
-            (let [query (or (aget request "query") #js {})
+            (let [query (or (aget request "query") (js/Object.))
                   status (aget query "status")
                   garden-id (aget query "garden_id")
                   target-lang (aget query "target_lang")

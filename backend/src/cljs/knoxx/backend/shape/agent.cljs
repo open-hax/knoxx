@@ -1,6 +1,79 @@
 (ns knoxx.backend.shape.agent
-  "Protocol for a running agent session.
-   Implementations live under extern/ — no JS interop here.")
+  "Protocol and schemas for agent request/session state.
+   Implementations live under extern/ — no JS interop here."
+  (:require [knoxx.backend.shape.agent.message :as message]
+            [malli.core :as m]
+            [malli.error :as me]))
+
+(def ToolPolicy
+  [:map {:closed false}
+   [:toolId :string]
+   [:effect [:enum "allow" "deny"]]])
+
+(def AgentRequestSpec
+  [:map {:closed false}
+   [:contract-id {:optional true} [:maybe :string]]
+   [:actor-id {:optional true} [:maybe :string]]
+   [:contract-actors {:optional true} [:maybe [:vector [:map {:closed false}]]]]
+   [:role {:optional true} [:maybe :string]]
+   [:system-prompt {:optional true} [:maybe :string]]
+   [:task-prompt {:optional true} [:maybe :string]]
+   [:model {:optional true} [:maybe :string]]
+   [:thinking-level {:optional true} [:maybe :string]]
+   [:tool-policies {:optional true} [:maybe [:vector ToolPolicy]]]
+   [:resource-policies {:optional true} any?]
+   [:sources {:optional true} any?]
+   [:memory-hydration {:optional true} any?]
+   [:context-policy {:optional true} [:maybe [:map {:closed false}]]]
+   [:sub-agent-id {:optional true} [:maybe :string]]
+   [:parent-agent-id {:optional true} [:maybe :string]]
+   [:parent-run-id {:optional true} [:maybe :string]]
+   [:spawn-kind {:optional true} [:maybe :string]]])
+
+(def AgentSpec
+  "Canonical agent specification shape used by agent runtime requests. Kept as
+   an alias during migration so older call sites can continue to refer to
+   AgentRequestSpec."
+  AgentRequestSpec)
+
+(def ChatBody
+  [:map {:closed false}
+   [:message :string]
+   [:conversation-id {:optional true} [:maybe :string]]
+   [:session-id {:optional true} [:maybe :string]]
+   [:run-id {:optional true} [:maybe :string]]
+   [:model {:optional true} [:maybe :string]]
+   [:thinking-level {:optional true} [:maybe :string]]
+   [:content-parts {:optional true} [:vector message/ContentPart]]
+   [:template-context {:optional true} [:maybe message/TemplateContext]]
+   [:mode :string]
+   [:agent-spec {:optional true} [:maybe AgentRequestSpec]]
+   [:auth-context {:optional true} [:maybe [:map {:closed false}]]]])
+
+(def ControlBody
+  [:map {:closed false}
+   [:message :string]
+   [:conversation-id {:optional true} [:maybe :string]]
+   [:session-id {:optional true} [:maybe :string]]
+   [:run-id {:optional true} [:maybe :string]]
+   [:actor-id {:optional true} [:maybe :string]]
+   [:metadata {:optional true} [:map {:closed false}]]])
+
+(defn valid-agent-request-spec?
+  [value]
+  (m/validate AgentRequestSpec value))
+
+(defn valid-chat-body?
+  [value]
+  (m/validate ChatBody value))
+
+(defn valid-control-body?
+  [value]
+  (m/validate ControlBody value))
+
+(defn explain-agent-request-spec
+  [value]
+  (me/humanize (m/explain AgentRequestSpec value)))
 
 (defprotocol IAgentSession
   (streaming? [s]

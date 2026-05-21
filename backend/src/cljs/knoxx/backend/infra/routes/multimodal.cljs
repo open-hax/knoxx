@@ -5,7 +5,7 @@
    Files are stored temporarily and served back to the frontend for preview/playback."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ensure-tool!]]
-            [knoxx.backend.infra.http :refer [js-array-seq]]
+            [knoxx.backend.extern.js :as xjs]
             [knoxx.backend.domain.time :refer [now-iso]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
@@ -57,7 +57,7 @@
   [_runtime]
   (let [upload-path (.join path upload-dir)]
     (.then
-     (fs-mkdir! fs upload-path #js {:recursive true})
+     (fs-mkdir! fs upload-path (clj->js {:recursive true}))
      (fn [] upload-path))))
 
 (defn- fs-readdir!
@@ -125,7 +125,7 @@
                 (-> (request-parts-promise request)
                     (.then
                      (fn [parts]
-                       (let [part-seq (js-array-seq parts)
+                       (let [part-seq (xjs/js-array-seq parts)
                              file-parts (filter #(= (aget % "type") "file") part-seq)
                              upload-promises
                              (mapv
@@ -151,7 +151,7 @@
                          (.then
                           (js/Promise.all (clj->js upload-promises))
                           (fn [results]
-                            (let [uploads (js-array-seq results)
+                            (let [uploads (xjs/js-array-seq results)
                                   successful (filter #(not (:error %)) uploads)
                                   failed (filter :error uploads)]
                               (json-response! reply 200
@@ -171,7 +171,7 @@
               (-> (fs-readdir! fs (.join path upload-dir))
                   (.then
                    (fn [files]
-                     (let [matching (first (filter #(str/starts-with? % file-id) (js-array-seq files)))]
+                     (let [matching (first (filter #(str/starts-with? % file-id) (xjs/js-array-seq files)))]
                        (if matching
                          (let [abs-path (.join path upload-dir matching)]
                            (-> (fs-read-file! fs abs-path)
@@ -212,7 +212,7 @@
                   (-> (fs-readdir! fs (.join path upload-dir))
                       (.then
                        (fn [files]
-                         (let [matching (first (filter #(str/starts-with? % file-id) (js-array-seq files)))]
+                         (let [matching (first (filter #(str/starts-with? % file-id) (xjs/js-array-seq files)))]
                            (if matching
                              (let [abs-path (.join path upload-dir matching)]
                                (-> (fs-rm! fs abs-path)

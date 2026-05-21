@@ -381,7 +381,7 @@
                                 vec)]
                    (-> (redis/smembers client contracts-index-key)
                        (.then (fn [existing]
-                                (let [existing-set (set (map str (js/Array.from (or existing #js []))))
+                                (let [existing-set (set (map str (js/Array.from (or existing (js/Array.)))))
                                       desired-set (set ids)
                                       to-add (vec (sort (set/difference desired-set existing-set)))
                                       to-remove (vec (sort (set/difference existing-set desired-set)))
@@ -457,7 +457,7 @@
                        (try
                          (.watch node-fs
                                  root
-                                 #js {:recursive true}
+                                 (clj->js {:recursive true})
                                  (fn [event-type filename]
                                    (let [filename-str (some-> filename str)]
                                      (when (watchable-contract-change? filename-str)
@@ -615,11 +615,11 @@
 
 (defn- text-response!
   [reply status text]
-  (.end reply (.status reply status) text #js {"Content-Type" "text/plain; charset=utf-8"}))
+  (.end reply (.status reply status) text (clj->js {"Content-Type" "text/plain; charset=utf-8"})))
 
 (defn- body-map
   [request]
-  (js->clj (or (aget request "body") #js {}) :keywordize-keys true))
+  (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true))
 
 (defn- request-contract-class
   [request default]

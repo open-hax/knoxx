@@ -6,6 +6,7 @@
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.clients.knoxx-control :as knoxx-client]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.tools :refer [create-tool-obj json-parse live-config maybe-tool-update!]]))
 
@@ -20,32 +21,9 @@
    [:run_id {:optional true :description "Optional target/current run id for audit linkage."} :string]
    [:metadata_json {:optional true :description "Optional JSON object with lineage/audit metadata, e.g. parentRunId or subAgentId."} :string]])
 
-(defn- self-headers
-  [config]
-  (let [api-key (:knoxx-api-key (live-config config))
-        headers #js {"Content-Type" "application/json"
-                     "x-knoxx-user-email" "system-admin@open-hax.local"}]
-    (when-not (str/blank? (str api-key))
-      (aset headers "X-API-Key" api-key))
-    headers))
-
-(defn- api-base
-  [config]
-  (or (:knoxx-base-url (live-config config))
-      "http://127.0.0.1:8000"))
-
 (defn- fetch-json!
   [config method path body]
-  (-> (js/fetch (str (api-base config) path)
-                #js {:method method
-                     :headers (self-headers config)
-                     :body (when body (.stringify js/JSON (clj->js body)))})
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.json resp)
-                 (-> (.text resp)
-                     (.then (fn [text]
-                              (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
+  (knoxx-client/request-json! (knoxx-client/client (live-config config)) method path body))
 
 (defn- normalize-mode
   [mode]

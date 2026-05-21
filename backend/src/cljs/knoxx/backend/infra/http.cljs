@@ -1,5 +1,9 @@
 (ns knoxx.backend.infra.http
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.extern.fetch :as xfetch]
+            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [promesa.core :as p]))
 
 (defn reply-already-sent?
   [reply]
@@ -59,10 +63,8 @@
 
 (defn bearer-headers
   [token]
-  (let [headers #js {"Content-Type" "application/json"}]
-    (when-not (str/blank? token)
-      (aset headers "Authorization" (str "Bearer " token)))
-    headers))
+  (cond-> {"Content-Type" "application/json"}
+    (not (str/blank? token)) (assoc "Authorization" (str "Bearer " token))))
 
 (defn openai-auth-error
   [reply status-code message code]
@@ -88,72 +90,45 @@
       :else true)))
 
 (defn fetch-with-timeout
-  "Fetch a URL with an AbortController timeout. Returns a Promise<Response>."
+  "Compatibility wrapper around the extern fetch client. Accepts a CLJS map or
+   JS object for opts and returns Promise<Response>. New call sites should
+   prefer protocol clients that call `knoxx.backend.extern.fetch/json!`,
+   `text!`, or `array-buffer!`."
   ([url opts] (fetch-with-timeout url opts 30000))
   ([url opts timeout-ms]
-   (let [controller (js/AbortController.)
-         timeout-id (js/setTimeout #(.abort controller) timeout-ms)]
-     (-> (js/fetch url (js/Object.assign #js {:signal (.-signal controller)} opts))
-         (.finally (fn [] (js/clearTimeout timeout-id)))))))
+   (xfetch/response! xfetch/default-client {:url url
+                                            :opts opts
+                                            :timeout-ms timeout-ms})))
 
 (def ^:private default-fetch-timeout-ms 30000)
 
 (defn fetch-json
+  "Compatibility wrapper around the extern fetch client. Fetch url with optional
+   CLJS map or JS object opts. Returns Promise<{:ok :status :body :headers}>
+   where :body and :headers are CLJS data."
   ([url opts]
    (fetch-json url opts default-fetch-timeout-ms))
   ([url opts timeout-ms]
-   (-> (fetch-with-timeout url opts timeout-ms)
-       (.then (fn [resp]
-                (-> (.text resp)
-                    (.then (fn [text]
-                             (let [body (if (str/blank? text)
-                                          #js {}
-                                          (try
-                                            (.parse js/JSON text)
-                                            (catch :default _ #js {:raw text})))]
-                               #js {:ok (.-ok resp)
-                                    :status (.-status resp)
-                                    :body body
-                                    :headers resp.headers})))))))))
-
-(defn trim-trailing-slashes
-  [s]
-  (str/replace (str (or s "")) #"/+$" ""))
+   (xfetch/json! xfetch/default-client {:url url
+                                        :opts opts
+                                        :timeout-ms timeout-ms})))
 
 (defn openplanner-enabled?
   [config]
-  (and (not (str/blank? (:openplanner-base-url config)))
-       (not (str/blank? (:openplanner-api-key config)))))
+  (openplanner-client/configured? config))
 
 (defn openplanner-url
   [config suffix]
-  (str (trim-trailing-slashes (:openplanner-base-url config)) suffix))
+  (openplanner-client/url-for (openplanner-client/client config) suffix))
 
 (defn openplanner-headers
   [config]
-  #js {"Content-Type" "application/json"
-       "Authorization" (str "Bearer " (:openplanner-api-key config))
-       "X-Tenant-ID" (or (:session-project-name config) "knoxx-session")})
-
-(def ^:private openplanner-timeout-ms 60000)
+  (openplanner-client/headers-for config))
 
 (defn openplanner-request!
   ([config method suffix] (openplanner-request! config method suffix nil))
   ([config method suffix body]
-   (if-not (openplanner-enabled? config)
-     (js/Promise.reject (js/Error. "OpenPlanner is not configured"))
-     (let [opts #js {:method method
-                     :headers (openplanner-headers config)}]
-       (when body
-         (aset opts "body" (.stringify js/JSON (clj->js body))))
-       (-> (fetch-json (openplanner-url config suffix) opts openplanner-timeout-ms)
-           (.then (fn [resp]
-                    (if (aget resp "ok")
-                      (js->clj (aget resp "body") :keywordize-keys true)
-                      (throw (js/Error. (str "OpenPlanner request failed ("
-                                             (aget resp "status")
-                                             "): "
-                                             (pr-str (js->clj (aget resp "body") :keywordize-keys true)))))))))))))
+   (openplanner-client/request! (openplanner-client/client config) method suffix body)))
 
 (defn http-error
   [status code message]
@@ -182,10 +157,6 @@
   [x]
   (or (nil? x) (= js/undefined x)))
 
-(defn js-array-seq
-  [value]
-  (if (array? value) (array-seq value) []))
-
 (defn copy-response-headers!
   [reply headers]
   (.forEach headers
@@ -196,16 +167,20 @@
 (defn send-fetch-response!
   [reply resp]
   (copy-response-headers! reply (.-headers resp))
-  (-> (.arrayBuffer resp)
-      (.then (fn [buf]
-               (-> (.code reply (.-status resp))
-                   (.send (.from js/Buffer buf)))))))
+  (p/let [buf (.arrayBuffer resp)]
+    (-> (.code reply (.-status resp))
+        (.send (.from js/Buffer buf)))))
+
+(defn request-body
+  "Return the parsed Fastify request body as a JS object, or an empty JS object."
+  [request]
+  (or (aget request "body") (js/Object.)))
 
 (defn request-query-string
   [request]
   (let [params (js/URLSearchParams.)
         query (or (aget request "query") #js {})]
-    (doseq [key (js-array-seq (.keys js/Object query))]
+    (doseq [key (xjs/js-array-seq (.keys js/Object query))]
       (let [value (aget query key)]
         (cond
           (no-content? value) nil
@@ -219,7 +194,7 @@
   [request extra]
   (let [headers (js/Headers.)
         source (or (aget request "headers") #js {})]
-    (doseq [key (js-array-seq (.keys js/Object source))]
+    (doseq [key (xjs/js-array-seq (.keys js/Object source))]
       (let [lower (str/lower-case key)
             value (aget source key)]
         (when (and (not (contains? #{"host" "connection" "content-length" "transfer-encoding"} lower))
@@ -261,4 +236,4 @@
         base #js {:method method
                   :headers (request-forward-headers request {"x-api-key" (when-not (str/blank? (:knoxx-api-key config)) (:knoxx-api-key config))})}
         stream-opts (request-stream-body request)]
-    (js/fetch target-url (.assign js/Object base stream-opts (clj->js extra)))))
+    (fetch-with-timeout target-url (.assign js/Object base stream-opts (clj->js extra)))))

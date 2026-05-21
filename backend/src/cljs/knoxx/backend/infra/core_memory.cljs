@@ -2,7 +2,8 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
-            [knoxx.backend.infra.http :as backend-http :refer [js-array-seq]]
+            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.infra.config :refer [cfg]]
             [knoxx.backend.infra.tooling :as tooling]))
@@ -258,7 +259,7 @@
                                 :allowed false})))
                     session-ids)))
              (fn [results]
-               (->> (js-array-seq results)
+               (->> (xjs/js-array-seq results)
                     (filter :allowed)
                     (map :session)
                     set))))))

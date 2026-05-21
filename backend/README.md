@@ -1,252 +1,336 @@
 # Knoxx Backend
 
-CLJS-based backend service for the Knoxx agent runtime.
+Knoxx backend is the Node 22 + shadow-cljs + Fastify control plane for the
+Knoxx agent workbench. It owns HTTP/WebSocket transport, auth/RBAC, contract
+loading and policy materialization, agent runtime orchestration, MCP exposure,
+OpenAI-compatible model proxying, and integrations with Proxx, OpenPlanner,
+Redis, PostgreSQL, ingestion, voice, Discord, media, studio/audio, and workspace
+tools.
 
-## Architecture
+## Current architecture
 
+```text
+backend/
+├── package.json
+├── shadow-cljs.edn
+├── scripts/
+│   ├── run-shadow-tests-ci.mjs
+│   ├── run-shadow-tests-coverage-ci.mjs
+│   └── start-server-dev.cljs
+├── src/cljs/knoxx/backend/
+│   ├── entrypoint.cljs      # shadow-cljs :server/:server-dev init-fn
+│   ├── bootstrap.cljs       # startup, Fastify registration, lifecycle hooks
+│   ├── domain/              # business domains: agent, contracts, MCP, Discord, media, voice, etc.
+│   ├── infra/               # config, HTTP, DB, Redis, stores, route registration
+│   ├── shape/               # route/tool/session data-shape helpers
+│   ├── runtime/             # process-local runtime state
+│   ├── law/                 # contract/law helpers
+│   ├── extern/              # JS/eta-mu/Proxx interop adapters
+│   └── tools/               # tool adapters and MCP helpers
+├── test/cljs/               # cljs.test suites
+├── dist-dev/                # server-dev watch output, not committed as source
+└── dist/                    # production/verification output, not committed as source
 ```
-src/
-├── server.mjs        # JS bootstrap (Node.js entry point)
-├── policy-db.mjs     # Policy database migrations
-└── cljs/knoxx/backend/
-    ├── core.cljs     # App initialization
-    ├── app_routes.cljs  # HTTP routes
-    ├── agent_runtime.cljs  # Agent execution
-    └── ...
 
-dist/
-└── app.js            # Compiled CLJS output (shadow-cljs)
+The active runtime is all-CLJS after shadow compilation. There is no current
+`src/server.mjs` bootstrap in the source tree. Node/npm modules are imported
+from CLJS namespaces through shadow-cljs `:js-provider :import` and
+`:keep-as-import` settings.
+
+## Build targets
+
+Defined in `shadow-cljs.edn`:
+
+| Build | Purpose | Output |
+|-------|---------|--------|
+| `:server-dev` | Hot-reload development runtime with node ESM devtools | `dist-dev/server.js` |
+| `:server` | Production/verification runtime | `dist/server.js` |
+| `:test` | Interactive/autorun node test build | `target/test/test.cjs` |
+| `:test-ci` | CI test build used by `scripts/run-shadow-tests-ci.mjs` | `target/test/test-ci.cjs` |
+| `:app` | Legacy/export compatibility build; not the normal server runtime | `dist/app.js` |
+
+Normal backend startup path:
+
+```text
+shadow-cljs :server or :server-dev
+  -> knoxx.backend.entrypoint/init
+  -> knoxx.backend.bootstrap/bootstrap!
+  -> Fastify app + routes + background services
 ```
 
-### JS Bootstrap Pattern
+## Development workflow
 
-The backend uses a **JS bootstrap pattern** where:
-- `server.mjs` is the Node.js entry point
-- It imports compiled CLJS from `dist/app.js`
-- This allows Node.js built-ins (fs, stream, etc.) to work correctly
-
-**Why this pattern?**
-- shadow-cljs `:target :esm` with `:js-provider :import` doesn't bundle Node built-ins
-- The JS bootstrap imports packages with built-ins and passes them via runtime object
-- CLJS code receives runtime objects and can use Node.js APIs
-
-## Build Process
-
-### Prerequisites
-
-1. Java 11+ installed (for shadow-cljs)
-2. Node.js 22+ with pnpm
-3. Docker (for containerized deployment)
-
-### Quick Rebuild
+From the repo root:
 
 ```bash
-# From workspace root
-./orgs/open-hax/openplanner/packages/knoxx/backend/scripts/rebuild-image.sh
+pnpm -C backend install
 ```
 
-### Manual Build Steps
+Run a backend watch build and dev server in two terminals:
 
 ```bash
-# 1. Navigate to backend directory
-cd orgs/open-hax/openplanner/packages/knoxx/backend
+# Terminal 1: compile and hot-reload backend CLJS
+pnpm -C backend run watch
 
-# 2. Install dependencies (if needed)
-pnpm install
-
-# 3. Compile CLJS
-npx shadow-cljs release app
-
-# 4. Build Docker image
-docker build -t knoxx-knoxx-backend:latest .
-
-# 5. Restart container
-cd ../../../services/openplanner
-docker compose up -d knoxx-backend
+# Terminal 2: wait for the watch artifact, patch devtools defines if needed,
+# then import dist-dev/server.js
+pnpm -C backend run start:dev
 ```
 
-## Development Mode
-
-For development, the docker-compose.yml uses bind mounts:
-- `dist/` is bind-mounted into the container
-- Compile locally with `npx shadow-cljs watch app`
-- Container picks up changes automatically
+Or use the single-terminal helper, which starts both processes and shuts them
+down together:
 
 ```bash
-# Terminal 1: Watch mode compilation
-cd orgs/open-hax/openplanner/packages/knoxx/backend
-npx shadow-cljs watch app
-
-# Terminal 2: Start container
-cd services/openplanner
-docker compose up -d knoxx-backend
-docker compose logs -f knoxx-backend
+backend/scripts/dev-watch.sh
 ```
 
-## shadow-cljs Configuration
+If you explicitly need to import an already-built dev artifact without the
+launcher, use:
 
-See `shadow-cljs.edn` for build configuration.
-
-Key settings:
-- `:target :esm` - Output ES modules
-- `:js-provider :import` - Import Node.js packages at runtime
-- `:output-dir "dist"` - Compiled output directory
-- `:modules {:app {:exports {}}}` - Single module with all code
-
-## Dockerfile
-
-The Dockerfile:
-1. Uses `node:22-bookworm-slim` base image
-2. Copies `dist/` and `src/server.mjs`
-3. Installs production dependencies only
-4. Runs as non-root user (UID 1000)
-
-## Troubleshooting
-
-### "fs not available" error
-
-This happens when shadow-cljs tries to bundle Node.js built-ins.
-Solution: Use `:js-provider :import` and ensure server.mjs imports packages with built-ins.
-
-### Container crash on startup
-
-Check the logs:
 ```bash
-docker compose logs knoxx-backend --tail=50
+pnpm -C backend run start:dev:direct
 ```
 
-Common causes:
-- Missing `dist/app.js` - compile CLJS first
-- Syntax error in CLJS - check shadow-cljs output
-- Missing dependency - run `pnpm install`
+For the full local Knoxx stack, prefer the repo-root PM2 ecosystem:
 
-### Image not updating
-
-If the container doesn't pick up changes:
 ```bash
-# Force rebuild with no cache
-docker build --no-cache -t knoxx-knoxx-backend:latest .
-docker compose up -d knoxx-backend --force-recreate
+# From the Knoxx root
+pm2 start ecosystem.config.cjs
+
+# Or from backend/
+pm2 start ../ecosystem.config.cjs
 ```
 
-### "Cannot read properties of undefined (reading 'cljs$core$IFn$_invoke$arity$4')"
+Do not use PM2 file watching for backend source or `dist*` output. shadow-cljs
+owns hot reload; PM2 should only own long-running process supervision.
 
-This is a **shadow-cljs `:optimizations :simple` bug** where local bindings named with `!` suffix
-get incorrectly compiled as namespace property references instead of closure captures.
+## Production-style build
 
-#### Root Cause
-
-When using `:optimizations :simple`, shadow-cljs generates:
-- **Correct**: `d.cljs$core$IFn$_invoke$arity$4?d.cljs$core$IFn$_invoke$arity$4(...)` (uses local variable `d`)
-- **Buggy**: `knoxx.backend.translation_routes.route_BANG_(...)` (references undefined namespace property)
-
-The bug occurs when:
-1. A function like `route!` is passed as a parameter through a destructured map
-2. The parameter name ends with `!` (e.g., `:route!` → `route!`)
-3. Some calls to the function are generated **outside the function body** as namespace-level code
-4. These outer calls reference `knoxx.backend.translation_routes.route_BANG_` instead of the local binding
-
-#### Diagnosis Steps
-
-1. **Check the error location**:
-   ```bash
-   docker compose logs knoxx-backend --tail=50
-   ```
-   Look for `TypeError: Cannot read properties of undefined (reading 'cljs$core$IFn$_invoke$arity$4')`
-
-2. **Examine compiled output**:
-   ```bash
-   grep -n 'route_BANG_' dist/app.js | head -20
-   ```
-   Look for namespace property references like `knoxx.backend.translation_routes.route_BANG_`
-
-3. **Check for `!` suffix parameters**:
-   Look in your CLJS source for destructured parameters with `!` suffix:
-   ```clojure
-   (defn register-routes! [app runtime config {:keys [route! json-response! ...]}]
-   ```
-
-#### Solution Pattern
-
-**Before (buggy)**:
-```clojure
-(ns knoxx.backend.translation-routes
-  (:require [knoxx.backend.app-shapes :as shapes]))
-
-(defn register-translation-routes!
-  [app runtime config {:keys [route! json-response! error-response! ...]}]
-  ;; route! is passed as parameter - BUG: shadow-cljs may generate
-  ;; namespace property references outside this function body
-  (route! app "GET" "/api/translations/segments" ...))
+```bash
+pnpm -C backend run build
+pnpm -C backend run start
 ```
 
-**After (fixed)**:
-```clojure
-(ns knoxx.backend.translation-routes
-  ;; Import directly from defining namespace
-  (:require [knoxx.backend.app-shapes :refer [route!]]))
+Equivalent direct commands from `backend/`:
 
-(defn register-translation-routes!
-  [app runtime config {:keys [json-response! error-response! ...]}]
-  ;; route! now refers to the namespace-level var, not a local binding
-  ;; shadow-cljs correctly generates direct calls
-  (route! app "GET" "/api/translations/segments" ...))
+```bash
+pnpm exec shadow-cljs release server
+node dist/server.js
 ```
 
-#### When to Suspect This Bug
+## Configuration
 
-- Container crashes immediately on startup with `cljs$core$IFn$_invoke$arity$4` error
-- Error references a function with `!` suffix
-- Function is passed through destructured parameter map
-- Some routes work but later ones fail (outer calls are generated last)
+Runtime config is read in `src/cljs/knoxx/backend/infra/config.cljs`. Important
+variables:
 
-#### Prevention
+```bash
+HOST=0.0.0.0
+PORT=8000
+APP_NAME="Knoxx Backend CLJS"
 
-1. **Avoid `!` suffix in parameter names**: Use `register-route` instead of `route!`
-2. **Import directly**: Use `:refer [function!]` instead of passing through maps
-3. **Consider `:optimizations :advanced`**: Higher optimization level may avoid this bug
-4. **Check compiled output**: After major refactors, grep for namespace property references
+WORKSPACE_ROOT=/path/to/workspace
+KNOXX_EXTRA_WORKSPACE_ROOTS=/path/one:/path/two
+KNOXX_MUSIC_LIBRARY_ROOT=/path/to/music
+CONTRACTS_DIR=/path/to/knoxx/contracts
 
-#### Reference
+KNOXX_POLICY_DATABASE_URL=postgresql://user:pass@host:5432/knoxx
+DATABASE_URL=postgresql://user:pass@host:5432/knoxx
+REDIS_URL=redis://127.0.0.1:6379
 
-See commit `96f76d41` for the fix that resolved this issue.
+PROXX_BASE_URL=http://127.0.0.1:8789
+PROXX_AUTH_TOKEN=...
+PROXX_DEFAULT_MODEL=glm-5
+PROXX_EMBED_MODEL=nomic-embed-text:latest
 
-## Knoxx MCP (HTTP) facade
+OPENPLANNER_BASE_URL=http://127.0.0.1:7777
+OPENPLANNER_API_KEY=...
+KMS_INGESTION_URL=http://127.0.0.1:3003
 
-Knoxx now exposes an **MCP (Model Context Protocol) server over HTTP** at:
+KNOXX_BASE_URL=http://127.0.0.1:8000
+KNOXX_PUBLIC_BASE_URL=http://localhost
+KNOXX_API_KEY=...
+KNOXX_API_KEY_USER_EMAIL=pi@open-hax.local
 
-- `POST /mcp` (JSON-RPC)
-- `GET /mcp` (SSE/session transport)
-- `DELETE /mcp` (session close)
+MCP_ENABLED=true
+MCP_SERVERS=name:http://127.0.0.1:8010/mcp:http
+OPENPLANNER_MCP_BASE_URL=http://openplanner-mcp:8010
+SHOEDELUSSY_MCP_BASE_URL=
 
-### Auth model
+VOXX_URL=http://127.0.0.1:8787
+VOICE_GATEWAY_API_KEY=dev-token
+KNOXX_STT_BASE_URL=http://127.0.0.1:8010
+```
 
-The MCP server is protected behind the same GitHub OAuth login used by the Knoxx UI.
+Do not print or commit real env files. The root PM2 ecosystem loads host secrets
+from `~/.knoxx/.env` by default.
 
-Flow:
+## Route registration map
 
-1. An MCP client sends the user to the OAuth authorize endpoint:
-   `GET /api/mcp/oauth/authorize?...`
-2. The user logs in via Knoxx `/api/auth/login` if needed.
-3. Knoxx shows a consent screen with **capability dials** (tool allowlist).
-4. The client exchanges the code at `POST /api/mcp/oauth/token` (PKCE S256).
-5. The client calls MCP endpoints with `Authorization: Bearer <access_token>`.
+Startup route flow:
 
-Discovery:
+1. `bootstrap.cljs` creates the Fastify app and registers default plugins.
+2. `infra.core/register-ws-routes!` registers `/ws/stream` realtime routes.
+3. `infra.routes.auth/register-auth-routes` registers GitHub OAuth, signup,
+   invite, cookie-session, and auth context routes.
+4. `infra.core/register-app-routes!` calls `infra.routes.app/register-routes!`,
+   which composes most `/api/*`, `/v1/*`, tool, memory, admin, model, document,
+   studio, voice, translation, and workspace routes.
+5. `infra.routes.tools.proxy/register-proxy-routes!` adds compatibility proxy
+   surfaces for ingestion/OpenPlanner/session ingestion helpers.
+6. `infra.routes.mcp/register-mcp-http-routes!` adds MCP OAuth and `/mcp`.
+
+Representative backend surfaces:
+
+| Area | Routes |
+|------|--------|
+| Health/config | `GET /health`, `GET /api/config`, `GET /api/data/health` |
+| Auth | `GET /api/auth/config`, `GET /api/auth/login`, `GET /api/auth/context`, `POST /api/auth/logout`, signup/invite routes |
+| Agent runtime | `POST /api/knoxx/chat`, `POST /api/knoxx/chat/start`, `POST /api/knoxx/direct`, `POST /api/knoxx/direct/start`, steer/follow-up/abort routes, run/session status routes |
+| Realtime | `WS /ws/stream` |
+| OpenAI compatibility | `GET /v1/models`, `POST /v1/chat/completions`, `POST /v1/embeddings` |
+| Proxx | `GET /api/proxx/health`, `GET /api/proxx/models`, `POST /api/proxx/chat`, observability routes |
+| Memory | `GET /api/memory/sessions`, `GET /api/memory/sessions/:sessionId`, `POST /api/memory/search` |
+| Contracts | `/api/agent/contracts*`, `/api/admin/contracts*` |
+| Admin/RBAC | `/api/admin/*` org, role, user, membership, actor mailbox, event-agent, Discord, trigger routes |
+| Tools | `/api/tools/catalog`, read/write/edit/bash, websearch, email, Discord publish, MCP call routes |
+| MCP facade | `/.well-known/oauth-*`, `/api/mcp/oauth/*`, `/api/mcp/tokens`, `GET/POST/DELETE /mcp` |
+| Data/OpenPlanner | `/api/data/*`, `/api/openplanner/*`, document/database/graph routes |
+| Ingestion proxy | `/api/ingestion/*`, `/api/ingestion-proxy/*` |
+| Studio/audio | `/api/studio/*`, playlist, labels, audio asset, Discord media scan routes |
+| Workspace media | `/api/workspace-media/raw`, `/api/workspace-media/audio-library`, ensure-dir/rename routes |
+| Voice | STT/TTS HTTP routes plus `WS /ws/voice/tts` |
+| Translation | `/api/translations/*` |
+
+## Contracts, auth, and policy
+
+Contracts are runtime inputs, not static documentation. Backend contract logic is
+centered under `src/cljs/knoxx/backend/domain/contracts/` and route/admin glue
+under `src/cljs/knoxx/backend/infra/routes/contracts.cljs`.
+
+Policy data is materialized through PostgreSQL via
+`src/cljs/knoxx/backend/infra/db/policy.cljs`. The backend synchronizes
+contract-backed actors/users/memberships during startup. In development, an
+`X-API-Key` matching `KNOXX_API_KEY` can resolve to
+`KNOXX_API_KEY_USER_EMAIL` or `pi@open-hax.local` and then reapply that actor's
+contract before serving the request.
+
+## MCP HTTP facade
+
+Knoxx exposes a Model Context Protocol server over HTTP:
+
+- `POST /mcp` — JSON-RPC / Streamable HTTP requests.
+- `GET /mcp` — SSE/session transport.
+- `DELETE /mcp` — session close.
+
+Auth flow:
+
+1. MCP client starts at `GET /api/mcp/oauth/authorize?...`.
+2. User logs in through Knoxx `/api/auth/login` if needed.
+3. Knoxx presents consent/capability dials.
+4. Client exchanges the PKCE code at `POST /api/mcp/oauth/token`.
+5. Client calls `/mcp` with `Authorization: Bearer <access_token>`.
+
+Discovery and management:
 
 - `GET /.well-known/oauth-authorization-server`
-
-Client registration (for MCP clients that auto-register):
-
-- `POST /api/mcp/oauth/register` (public clients, no client_secret)
-
-Token management (browser-session only):
-
+- `GET /.well-known/oauth-protected-resource`
+- `POST /api/mcp/oauth/register`
 - `GET /api/mcp/tokens`
 - `DELETE /api/mcp/tokens/:tokenId`
 
-### Notes
+MCP access tokens are stored in Redis and intersected with the user's current
+policy context; a token cannot grant capabilities above the user's membership.
 
-- Tokens are stored in Redis (same `REDIS_URL` as Knoxx sessions).
-- Delegated tools are intersected with the user's current Knoxx policy context, so
-  tokens cannot grant capabilities above the user's membership.
+## Verification
+
+For backend code changes, run the backend shadow test build and inspect test
+output for failures even if the compiler exits zero:
+
+```bash
+pnpm -C backend exec shadow-cljs compile test
+```
+
+Preferred package commands:
+
+```bash
+pnpm -C backend run lint
+pnpm -C backend run typecheck
+pnpm -C backend run test
+pnpm -C backend run test:coverage
+```
+
+For production/runtime changes, also run:
+
+```bash
+pnpm -C backend exec shadow-cljs compile server
+```
+
+For docs-only changes, at minimum run a whitespace check from the repo root:
+
+```bash
+git diff --check backend/README.md
+```
+
+## Troubleshooting
+
+### `dist-dev/server.js` does not exist
+
+Run the watch build first:
+
+```bash
+pnpm -C backend run watch
+```
+
+Or build production output:
+
+```bash
+pnpm -C backend run build
+```
+
+### shadow-cljs watch is running but the dev server does not import
+
+Use the dev launcher instead of importing `dist-dev/server.js` by hand:
+
+```bash
+pnpm -C backend exec nbb scripts/start-server-dev.cljs
+```
+
+The launcher waits for the shadow dev server and a runnable artifact, then
+patches devtools defines only when needed.
+
+### Node built-ins such as `fs` or `crypto` fail to resolve
+
+Check the build's `:js-options` in `shadow-cljs.edn`. Runtime builds use
+`:js-provider :import` and `:keep-as-import` for Node/npm modules that should
+remain runtime imports.
+
+### Route handler compiles but fails at runtime
+
+Route helpers live in `knoxx.backend.shape.app-shapes`. Prefer small, explicit
+route helper imports and keep route registration in domain-specific namespaces
+under `infra/routes/`. If a route namespace grows too large, split by vertical
+domain rather than creating generic utility dumps.
+
+### `cljs$core$IFn$_invoke$arity$*` on a function ending in `!`
+
+This has historically appeared in legacy/simple-optimized builds when `!`-suffixed
+functions such as `route!` were passed through destructured maps and emitted as
+namespace property references. If you see it:
+
+1. Confirm which build target produced the JS.
+2. Grep the compiled output for the generated symbol, for example
+   `route_BANG_`.
+3. Prefer direct namespace imports for core route helpers instead of passing them
+   through large destructured helper maps in affected code.
+
+### Legacy references to avoid
+
+Some older helper scripts and docs may still mention `src/server.mjs`,
+`src/policy-db.mjs`, `shadow-cljs release app`, local GGUF server control, or
+`dist/app.js` as the main runtime. Those are legacy model-lab/export assumptions.
+The normal backend service is `:server-dev`/`dist-dev/server.js` for development
+and `:server`/`dist/server.js` for production-style verification.
+
+## License
+
+GPL-3.0-or-later, matching the package and repository license.

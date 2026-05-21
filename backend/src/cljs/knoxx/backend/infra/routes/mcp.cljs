@@ -80,9 +80,9 @@
 
 (defn- resolve-session-id
   [req]
-  (let [headers (or (aget req "headers") #js {})
+  (let [headers (or (aget req "headers") (js/Object.))
         header-id (aget headers "mcp-session-id")
-        q (or (aget req "query") #js {})
+        q (or (aget req "query") (js/Object.))
         query-id (aget q "sessionId")]
     (cond
       (and (string? header-id) (not (str/blank? header-id))) header-id
@@ -139,8 +139,8 @@
 (defn- ensure-streamable-accept!
   [req]
   (let [raw         (aget req "raw")
-        headers     (or (aget raw "headers") #js {})
-        raw-headers (or (aget raw "rawHeaders") #js [])
+        headers     (or (aget raw "headers") (js/Object.))
+        raw-headers (or (aget raw "rawHeaders") (js/Array.))
         accept-value "application/json, text/event-stream"
         accept      (str/lower-case (str (or (aget headers "accept") "")))
         has-json?   (str/includes? accept "application/json")
@@ -224,7 +224,7 @@
 ;; ──────────────────────────────────────────────────────────────
 
 (defn- parse-register-client-body [req]
-  (let [body   (or (aget req "body") #js {})
+  (let [body   (or (aget req "body") (js/Object.))
         value  {:redirect-uris (if (array? (aget body "redirect_uris"))
                                  (mapv str (array-seq (aget body "redirect_uris")))
                                  [])
@@ -237,7 +237,7 @@
     parsed))
 
 (defn- parse-authorize-query [req]
-  (let [q (or (aget req "query") #js {})]
+  (let [q (or (aget req "query") (js/Object.))]
     (validate! AuthorizeQuery
                {:client-id             (str (or (aget q "client_id") ""))
                 :redirect-uri          (str (or (aget q "redirect_uri") ""))
@@ -248,7 +248,7 @@
                {:status 400 :error "invalid_request"})))
 
 (defn- parse-authorize-confirm-query [req]
-  (let [q (or (aget req "query") #js {})]
+  (let [q (or (aget req "query") (js/Object.))]
     (validate! AuthorizeConfirmQuery
                {:client-id             (str (or (aget q "client_id") ""))
                 :redirect-uri          (str (or (aget q "redirect_uri") ""))
@@ -260,7 +260,7 @@
                {:status 400 :error "invalid_request"})))
 
 (defn- parse-token-exchange-body [req]
-  (let [body (or (aget req "body") #js {})]
+  (let [body (or (aget req "body") (js/Object.))]
     (validate! TokenExchangeBody
                {:grant-type    (str (or (aget body "grant_type") (aget body "grantType") ""))
                 :code          (str (or (aget body "code") ""))
@@ -270,7 +270,7 @@
                {:status 400 :error "invalid_request"})))
 
 (defn- parse-revoke-token-params [req]
-  (let [params (or (aget req "params") #js {})]
+  (let [params (or (aget req "params") (js/Object.))]
     (validate! RevokeTokenParams
                {:token-id (str (or (aget params "tokenId") ""))}
                {:status 400 :error "invalid_request"})))
@@ -299,14 +299,14 @@
 
 (defn- redirect-uri-allowed? [client redirect-uri]
   (if-not client true
-    (boolean (.includes (js/Array.from (or (aget client "redirect_uris") #js [])) redirect-uri))))
+    (boolean (.includes (js/Array.from (or (aget client "redirect_uris") (js/Array.))) redirect-uri))))
 
 (defn- ensure-redirect-uri-allowed! [client redirect-uri error-code]
   (when (and client (not (redirect-uri-allowed? client redirect-uri)))
     (throw (http-error 400 error-code "redirect_uri not allowed for registered client"))))
 
 (defn- available-tools [runtime config auth-context]
-  (or (mcp-expose/create-knoxx-custom-tools-js runtime config auth-context) #js []))
+  (or (mcp-expose/create-knoxx-custom-tools-js runtime config auth-context) (js/Array.)))
 
 (defn- tool-name-set [tools]
   (into #{} (keep (fn [t] (some-> (aget t "name") str str/trim not-empty))) (array-seq tools)))
@@ -402,7 +402,7 @@
         (.catch (fn [_] nil)))))
 
 (defn- resolve-token-context! [policy-db token-record]
-  (let [headers-like #js {}
+  (let [headers-like (js/Object.)
         resolver     (aget policy-db "resolveRequestContext")]
     (when-let [mid (aget token-record "membershipId")]  (aset headers-like "x-knoxx-membership-id" mid))
     (when-let [ue  (aget token-record "userEmail")]      (aset headers-like "x-knoxx-user-email" ue))
@@ -421,7 +421,7 @@
                "integer" (-> (.number z) (.int))
                "boolean" (.boolean z)
                "array"   (.array z (or (typebox->zod-node z (aget schema-json "items")) (.any z)))
-               "object"  (or (typebox->zod-shape z schema-json) (.object z #js {}))
+               "object"  (or (typebox->zod-shape z schema-json) (.object z (js-obj)))
                (.any z))]
     (-> node
         (apply-zod-description schema-json)
@@ -429,8 +429,8 @@
         ((fn [n] (if-let [max (aget schema-json "maximum")] (.max n max) n))))))
 
 (defn- typebox->zod-shape [^js z ^js schema-json]
-  (let [properties   (or (aget schema-json "properties") #js {})
-        required-set (into #{} (map str) (array-seq (or (aget schema-json "required") #js [])))
+  (let [properties   (or (aget schema-json "properties") (js/Object.))
+        required-set (into #{} (map str) (array-seq (or (aget schema-json "required") (js/Array.))))
         entries      (.entries js/Object properties)]
     (when (seq (array-seq entries))
       (reduce (fn [shape entry]
@@ -450,23 +450,23 @@
 
 (defroute mcp-discovery-metadata! [base] "GET" "/.well-known/oauth-authorization-server"
   (let [issuer (js/URL. (.toString base))]
-    (.send reply
-           #js {:issuer                              (-> (.toString issuer) (.replace (js/RegExp. "/$") ""))
-                :authorization_endpoint              (.toString (js/URL. "/api/mcp/oauth/authorize" issuer))
-                :token_endpoint                      (.toString (js/URL. "/api/mcp/oauth/token" issuer))
-                :registration_endpoint               (.toString (js/URL. "/api/mcp/oauth/register" issuer))
-                :response_types_supported            #js ["code"]
-                :grant_types_supported               #js ["authorization_code"]
-                :code_challenge_methods_supported    #js ["S256"]
-                :token_endpoint_auth_methods_supported #js ["none"]})))
+    (json-send! reply 200
+                {:issuer                              (-> (.toString issuer) (.replace (js/RegExp. "/$") ""))
+                 :authorization_endpoint              (.toString (js/URL. "/api/mcp/oauth/authorize" issuer))
+                 :token_endpoint                      (.toString (js/URL. "/api/mcp/oauth/token" issuer))
+                 :registration_endpoint               (.toString (js/URL. "/api/mcp/oauth/register" issuer))
+                 :response_types_supported            ["code"]
+                 :grant_types_supported               ["authorization_code"]
+                 :code_challenge_methods_supported    ["S256"]
+                 :token_endpoint_auth_methods_supported ["none"]})))
 
 (defroute mcp-protected-resource-metadata! [base] "GET" "/.well-known/oauth-protected-resource"
   (let [issuer (-> (.toString (js/URL. (.toString base))) (.replace (js/RegExp. "/$") ""))]
-    (.send reply
-           #js {:resource                (.toString (js/URL. "/mcp" base))
-                :authorization_servers   #js [issuer]
-                :scopes_supported        #js ["mcp:tools"]
-                :bearer_methods_supported #js ["header"]})))
+    (json-send! reply 200
+                {:resource                (.toString (js/URL. "/mcp" base))
+                 :authorization_servers   [issuer]
+                 :scopes_supported        ["mcp:tools"]
+                 :bearer_methods_supported ["header"]})))
 
 ;; preHandler-mode routes
 
@@ -474,15 +474,15 @@
   (let [redis  (aget request "redis")
         {:keys [redirect-uris client-name]} (parse-register-client-body request)
         client-id (.randomUUID crypto)
-        client    #js {:client_id                  client-id
-                       :client_name                (or client-name "mcp-client")
-                       :redirect_uris              (clj->js redirect-uris)
-                       :token_endpoint_auth_method "none"
-                       :grant_types                #js ["authorization_code"]
-                       :response_types             #js ["code"]
-                       :created_at                 (.toISOString (js/Date.))}]
-    (-> (redis-set! redis (str "knoxx:mcp:client:" client-id) (js/JSON.stringify client) js/undefined)
-        (.then (fn [_] (-> (.code reply 201) (.send client))))
+        client    {:client_id                  client-id
+                   :client_name                (or client-name "mcp-client")
+                   :redirect_uris              redirect-uris
+                   :token_endpoint_auth_method "none"
+                   :grant_types                ["authorization_code"]
+                   :response_types             ["code"]
+                   :created_at                 (.toISOString (js/Date.))}]
+    (-> (redis-set! redis (str "knoxx:mcp:client:" client-id) (js/JSON.stringify (clj->js client)) js/undefined)
+        (.then (fn [_] (json-send! reply 201 client)))
         (.catch (fn [err] (throw (http-error 500 "registration_failed" (or (.-message err) (str err)))))))))
 
 (defroute mcp-authorize-client! [base config runtime redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize" [redis-guard browser-auth-guard]
@@ -519,12 +519,12 @@
                          user-email    (str (or (aget auth-context "user" "email") (aget auth-context "userEmail") ""))
                          org-slug      (str (or (aget auth-context "org" "slug") (aget auth-context "orgSlug") ""))
                          code          (.randomUUID crypto)
-                         payload       #js {:code code :clientId client-id :redirectUri redirect-uri
-                                           :codeChallenge code-challenge :codeChallengeMethod "S256"
-                                           :tools (clj->js requested)
-                                           :membershipId membership-id :userEmail user-email :orgSlug org-slug
-                                           :createdAt (.toISOString (js/Date.))}]
-                     (-> (redis-set! redis (str "knoxx:mcp:code:" code) (js/JSON.stringify payload) #js {:EX code-ttl})
+                         payload       {:code code :clientId client-id :redirectUri redirect-uri
+                                        :codeChallenge code-challenge :codeChallengeMethod "S256"
+                                        :tools requested
+                                        :membershipId membership-id :userEmail user-email :orgSlug org-slug
+                                        :createdAt (.toISOString (js/Date.))}]
+                     (-> (redis-set! redis (str "knoxx:mcp:code:" code) (js/JSON.stringify (clj->js payload)) (clj->js {:EX code-ttl}))
                          (.then (fn [_]
                                   (let [redir (js/URL. redirect-uri)]
                                     (.set (.-searchParams redir) "code" code)
@@ -533,22 +533,22 @@
 
 (defn- persist-access-token! [redis crypto token-ttl client-id record]
   (let [access-token (.randomUUID crypto)
-        token-value  #js {:accessToken access-token :clientId client-id
-                          :membershipId (aget record "membershipId")
-                          :userEmail    (aget record "userEmail")
-                          :orgSlug      (aget record "orgSlug")
-                          :tools        (aget record "tools")
-                          :createdAt    (.toISOString (js/Date.))
-                          :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
-    (-> (redis-set! redis (str "knoxx:mcp:token:" access-token) (js/JSON.stringify token-value) #js {:EX token-ttl})
+        token-value  {:accessToken access-token :clientId client-id
+                      :membershipId (aget record "membershipId")
+                      :userEmail    (aget record "userEmail")
+                      :orgSlug      (aget record "orgSlug")
+                      :tools        (aget record "tools")
+                      :createdAt    (.toISOString (js/Date.))
+                      :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
+    (-> (redis-set! redis (str "knoxx:mcp:token:" access-token) (js/JSON.stringify (clj->js token-value)) (clj->js {:EX token-ttl}))
         (.then (fn [_]
                  (if-let [mid (aget record "membershipId")]
                    (redis-sadd! redis (str "knoxx:mcp:user:" mid ":tokens") access-token)
                    (js/Promise.resolve nil))))
         (.then (fn [_]
-                 #js {:access_token access-token :token_type "Bearer"
-                      :scope        (->> (array-seq (or (aget record "tools") #js [])) (str/join " "))
-                      :expires_in   token-ttl})))))
+                 {:access_token access-token :token_type "Bearer"
+                  :scope        (->> (array-seq (or (aget record "tools") (js/Array.))) (str/join " "))
+                  :expires_in   token-ttl})))))
 
 (defroute mcp-exchange-token! [crypto token-ttl redis-guard] "POST" "/api/mcp/oauth/token" [redis-guard]
   (let [redis (aget request "redis")
@@ -573,7 +573,7 @@
                      (throw (http-error 400 "invalid_grant" "PKCE verification failed")))
                    (-> (redis-del! redis (str "knoxx:mcp:code:" code))
                        (.then (fn [_] (persist-access-token! redis crypto token-ttl client-id record)))))))
-        (.then (fn [token-response] (.send reply token-response))))))
+        (.then (fn [token-response] (json-send! reply 200 token-response))))))
 
 (defroute mcp-list-user-tokens! [redis-guard browser-auth-guard] "GET" "/api/mcp/tokens" [redis-guard browser-auth-guard]
   (let [redis         (aget request "redis")
@@ -590,7 +590,7 @@
                                            (when raw (try (js/JSON.parse raw)
                                                          (catch :default _ nil)))))))))))
         (.then (fn [records]
-                 (.send reply #js {:ok true :tokens (->> (array-seq records) (remove nil?) into-array)}))))))
+                 (json-send! reply 200 {:ok true :tokens (->> (array-seq records) (remove nil?) into-array)}))))))
 
 (defroute mcp-revoke-user-token! [redis-guard browser-auth-guard] "DELETE" "/api/mcp/tokens/:tokenId" [redis-guard browser-auth-guard]
   (let [redis         (aget request "redis")
@@ -601,7 +601,7 @@
       (throw (http-error 400 "invalid_request" "membership and tokenId are required")))
     (-> (redis-del! redis (str "knoxx:mcp:token:" token-id))
         (.then (fn [_] (redis-srem! redis (str "knoxx:mcp:user:" membership-id ":tokens") token-id)))
-        (.then (fn [_] (.send reply #js {:ok true}))))))
+        (.then (fn [_] (json-send! reply 200 {:ok true}))))))
 
 (defroute mcp-handle-session! [base bearer-token-guard] "GET" "/mcp" [bearer-token-guard]
   (let [bearer     (aget request "bearerToken")
@@ -640,33 +640,33 @@
         redis   (redis/get-client)
         bearer  (bearer-token request)]
     (if (str/blank? bearer)
-      (do (.writeHead raw-res 401 #js {"WWW-Authenticate" (www-authenticate-challenge base)
-                                        "Content-Type" "text/plain"})
+      (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
+                                             "Content-Type" "text/plain"}))
           (.end raw-res "Unauthorized"))
       (-> (load-token-record! redis bearer)
           (.then
            (fn [token-record]
              (if-not token-record
-               (do (.writeHead raw-res 401 #js {"WWW-Authenticate" (www-authenticate-challenge base)
-                                                  "Content-Type" "text/plain"})
+               (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
+                                                      "Content-Type" "text/plain"}))
                    (.end raw-res "Unauthorized"))
                (-> (resolve-token-context! policy-db token-record)
                    (.then
                     (fn [token-ctx]
                       (let [all-tools (available-tools runtime config token-ctx)
-                            allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") #js [])))
+                            allowed   (into #{} (map str) (array-seq (or (aget token-record "tools") (js/Array.))))
                             effective (->> (array-seq all-tools)
                                            (filter (fn [t] (contains? allowed (str (aget t "name")))))
                                            into-array)
-                            server    (new McpServer #js {:name "knoxx" :version "0.1.0"})
+                            server    (new McpServer (clj->js {:name "knoxx" :version "0.1.0"}))
                             transport (new StreamableHTTPServerTransport
-                                          #js {:sessionIdGenerator js/undefined})]
+                                          (clj->js {:sessionIdGenerator js/undefined}))]
                         (doseq [tool (array-seq effective)]
                           (let [n (some-> (aget tool "name") str str/trim not-empty)
-                                s (or (when z (typebox->zod-shape z (or (aget tool "parameters") #js {}))) #js {})]
+                                s (or (when z (typebox->zod-shape z (or (aget tool "parameters") (js/Object.)))) (js-obj))]
                             (when n
-                              (let [tool-config #js {:description (str (or (aget tool "description") (aget tool "label") n))
-                                                     :inputSchema s}]
+                              (let [tool-config (clj->js {:description (str (or (aget tool "description") (aget tool "label") n))
+                                                          :inputSchema s})]
                                 (when-let [title (some-> (or (aget tool "label") (aget tool "title")) str str/trim not-empty)]
                                   (aset tool-config "title" title))
                                 (when-let [annotations (aget tool "annotations")]
@@ -683,9 +683,10 @@
           (.catch (fn [err]
                     (.error js/console "[knoxx-mcp] post failed" err)
                     (when-not (.-headersSent raw-res)
-                      (.writeHead raw-res 500 #js {"Content-Type" "application/json"})
-                      (.end raw-res (js/JSON.stringify #js {:error "mcp_post_failed"
-                                                             :detail (or (.-message err) (str err))})))))))))
+                      (.writeHead raw-res 500 (clj->js {"Content-Type" "application/json"}))
+                      (.end raw-res (js/JSON.stringify (clj->js {:error "mcp_post_failed"
+                                                                  :detail (or (.-message err) (str err))}))))))))))
+
 (defn register-mcp-http-routes!
   [app runtime config]
   (let [redis-client (redis/get-client)

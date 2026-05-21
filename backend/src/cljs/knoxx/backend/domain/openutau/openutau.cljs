@@ -6,6 +6,29 @@
 (def default-renderer "WORLDLINE-R")
 (def default-track-color "Blue")
 
+;; Available singers with their phonemizers.
+(def available-singers
+  {"teto" {:name "重音テト OU用日本語統合ライブラリー"
+           :phonemizer "OpenUtau.Core.Ustx.JapaneseCVPhonemizer"
+           :language "ja"
+           :description "Kasane Teto - Japanese integrated voicebank"}
+   "ritsu" {:name "波音リツ連続音Ver1.5.1"
+            :phonemizer "OpenUtau.Plugin.Builtin.JapaneseVCVPhonemizer"
+            :language "ja"
+            :description "Namine Ritsu - Japanese VCV connected voicebank"}
+   "teto-en" {:name "重音テト音声ライブラリー"
+              :phonemizer "OpenUtau.Plugin.Builtin.ArpasingPhonemizer"
+              :language "en"
+              :description "Kasane Teto - English voicebank"}})
+
+(def default-singer "teto")
+
+(defn resolve-singer
+  "Resolve singer config by ID or return default."
+  [singer-id]
+  (or (get available-singers (str/lower-case (str singer-id)))
+      (get available-singers default-singer)))
+
 (defn slugify
   [value]
   (let [base (-> (str (or value "openutau-project"))
@@ -54,6 +77,26 @@
           (max min-value)
           (min max-value)))))
 
+(def ^:private known-problematic-lyrics
+  "Lyric strings that hang OpenUTAU's renderer after phonemization.
+   Map of problematic -> safe replacement."
+  {"kyoukai" "kaikyou"})
+
+(defn sanitize-lyric
+  "Sanitize lyric text to avoid OpenUTAU renderer hangs.
+   - Removes hyphens and spaces
+   - Replaces known problematic romaji patterns
+   - Falls back to 'a' for empty strings"
+  [lyric]
+  (when lyric
+    (let [cleaned (-> lyric
+                      str/trim
+                      (str/replace #"[-\s]+" "")
+                      str/lower-case)]
+      (or (get known-problematic-lyrics cleaned)
+          (not-empty cleaned)
+          "a"))))
+
 (defn lyric-text
   [note]
   (let [lyric (some-> (or (:lyric note) (:text note)) str str/trim not-empty)
@@ -62,10 +105,43 @@
                                   (:phoneticHint note))
                               str str/trim not-empty)]
     (cond
-      (and lyric phonetic-hint) (str lyric " [" phonetic-hint "]")
+      (and lyric phonetic-hint) (str (sanitize-lyric lyric) " [" phonetic-hint "]")
       phonetic-hint (str "[" phonetic-hint "]")
-      lyric lyric
+      lyric (sanitize-lyric lyric)
       :else "a")))
+
+(def ^:const min-renderable-notes
+  "OpenUTAU's WORLDLINE-R renderer appears to hang when processing
+   voice parts with fewer than ~12 notes. Pad with safe syllables to ensure
+   reliable headless rendering."
+  12)
+
+(def ^:private hiragana-pad-lyrics
+  "Cyclic pool of safe hiragana syllables for note padding.
+   JapaneseCVPhonemizer accepts these; romaji vowels like 'a' hang."
+  ["あ" "い" "う" "え" "お" "か" "き" "く" "け" "こ" "さ" "し"])
+
+(defn- pad-notes
+  "Ensure at least MIN-RENDERABLE-NOTES by appending hiragana pad notes.
+   OpenUTAU's WORLDLINE-R renderer hangs with fewer than ~12 singable notes.
+   Pads with cyclic hiragana (never rests/romaji) to keep phonemizer happy."
+  [notes]
+  (let [current-count (count notes)]
+    (if (>= current-count min-renderable-notes)
+      notes
+      (let [last-end (if (seq notes)
+                       (+ (:position (last notes)) (:duration (last notes)))
+                       0)
+            pad-duration default-ticks-per-quarter
+            needed (- min-renderable-notes current-count)
+            pad-notes (mapv (fn [i]
+                              {:position (+ last-end (* i pad-duration))
+                               :duration pad-duration
+                               :tone 60
+                               :lyric (nth hiragana-pad-lyrics
+                                           (mod i (count hiragana-pad-lyrics)))})
+                            (range needed))]
+        (into notes pad-notes)))))
 
 (defn normalize-notes
   [notes]
@@ -73,7 +149,7 @@
          cursor 0
          normalized []]
     (if-not remaining
-      normalized
+      (pad-notes normalized)
       (let [note (first remaining)
             explicit-position (parse-number (or (:position note) (:start_tick note) (:start-tick note)))
             position (if (nil? explicit-position)
@@ -100,96 +176,108 @@
              normalized-notes)
      default-ticks-per-quarter))
 
+(defn- project-name
+  [opts]
+  (or (some-> (:project_name opts) str str/trim not-empty)
+      (some-> (:project-name opts) str str/trim not-empty)
+      "Knoxx OpenUtau Project"))
+
+(defn- time-signature
+  [opts]
+  [(clamp-int (or (:beat_per_bar opts)
+                  (:beat-per-bar opts)
+                  (get-in opts [:time_signature :beat_per_bar])
+                  (get-in opts [:time_signature :beat-per-bar])
+                  (get-in opts [:time-signature :beat_per_bar])
+                  (get-in opts [:time-signature :beat-per-bar]))
+              4
+              1
+              32)
+   (clamp-int (or (:beat_unit opts)
+                  (:beat-unit opts)
+                  (get-in opts [:time_signature :beat_unit])
+                  (get-in opts [:time_signature :beat-unit])
+                  (get-in opts [:time-signature :beat_unit])
+                  (get-in opts [:time-signature :beat-unit]))
+              4
+              1
+              32)])
+
+(defn- singer-settings
+  [opts]
+  (let [singer-config (resolve-singer (or (:singer_id opts) (:singer-id opts)))]
+    {:singer-id (:name singer-config)
+     :phonemizer (or (some-> (:phonemizer opts) str str/trim not-empty)
+                     (:phonemizer singer-config))}))
+
+(defn- ustx-note
+  [{:keys [position duration tone lyric]}]
+  (array-map
+   "position" position
+   "duration" duration
+   "tone" tone
+   "lyric" lyric
+   "pitch" (array-map
+            "data" [(array-map "x" -40 "y" 0 "shape" "io")
+                    (array-map "x" 40 "y" 0 "shape" "io")]
+            "snap_first" true)
+   "vibrato" (array-map
+              "length" 0
+              "period" 175
+              "depth" 25
+              "in" 10
+              "out" 10
+              "shift" 0
+              "drift" 0
+              "vol_link" 0)
+   "phoneme_expressions" []
+   "phoneme_overrides" []))
+
+(defn- track-settings
+  [opts singer-id phonemizer]
+  (array-map
+   "singer" singer-id
+   "phonemizer" phonemizer
+   "renderer_settings" (array-map "renderer" default-renderer)
+   "track_name" (or (some-> (:track_name opts) str str/trim not-empty)
+                    (some-> (:track-name opts) str str/trim not-empty)
+                    "Vocal")
+   "track_color" default-track-color
+   "mute" false
+   "solo" false
+   "volume" 0
+   "pan" 0
+   "voice_color_names" [""]))
+
+(defn- voice-part
+  [opts normalized-notes]
+  (array-map
+   "duration" (voice-part-duration normalized-notes)
+   "name" (or (some-> (:part_name opts) str str/trim not-empty)
+              (some-> (:part-name opts) str str/trim not-empty)
+              "Main Part")
+   "track_no" 0
+   "position" 0
+   "notes" (mapv ustx-note normalized-notes)
+   "curves" []))
+
 (defn build-project
   [opts normalized-notes]
-  (let [project-name (or (some-> (:project_name opts) str str/trim not-empty)
-                         (some-> (:project-name opts) str str/trim not-empty)
-                         "Knoxx OpenUtau Project")
-        bpm (clamp-float (:tempo opts) 120 20 300)
-        beat-per-bar (clamp-int (or (:beat_per_bar opts)
-                                    (:beat-per-bar opts)
-                                    (get-in opts [:time_signature :beat_per_bar])
-                                    (get-in opts [:time_signature :beat-per-bar])
-                                    (get-in opts [:time-signature :beat_per_bar])
-                                    (get-in opts [:time-signature :beat-per-bar]))
-                                4
-                                1
-                                32)
-        beat-unit (clamp-int (or (:beat_unit opts)
-                                 (:beat-unit opts)
-                                 (get-in opts [:time_signature :beat_unit])
-                                 (get-in opts [:time_signature :beat-unit])
-                                 (get-in opts [:time-signature :beat_unit])
-                                 (get-in opts [:time-signature :beat-unit]))
-                             4
-                             1
-                             32)
-        singer-id (or (some-> (:singer_id opts) str str/trim not-empty)
-                      (some-> (:singer-id opts) str str/trim not-empty)
-                      "")
-        phonemizer (or (some-> (:phonemizer opts) str str/trim not-empty) "")
-        track-name (or (some-> (:track_name opts) str str/trim not-empty)
-                       (some-> (:track-name opts) str str/trim not-empty)
-                       "Vocal")
-        part-name (or (some-> (:part_name opts) str str/trim not-empty)
-                      (some-> (:part-name opts) str str/trim not-empty)
-                      "Main Part")
-        comment (or (some-> (:comment opts) str str/trim not-empty)
-                    "Generated by Knoxx for OpenUtau. Open in OpenUtau and export audio from the UI.")]
+  (let [[beat-per-bar beat-unit] (time-signature opts)
+        {:keys [singer-id phonemizer]} (singer-settings opts)]
     (array-map
-     "name" project-name
-     "comment" comment
+     "name" (project-name opts)
+     "comment" (or (some-> (:comment opts) str str/trim not-empty)
+                   "Generated by Knoxx for OpenUtau. Open in OpenUtau and export audio from the UI.")
      "output_dir" "Export"
      "cache_dir" "UCache"
      "ustx_version" default-ustx-version
      "resolution" default-ticks-per-quarter
      "key" (clamp-int (:key opts) 0 0 11)
-     "time_signatures" [(array-map
-                          "bar_position" 0
-                          "beat_per_bar" beat-per-bar
-                          "beat_unit" beat-unit)]
-     "tempos" [(array-map
-                 "position" 0
-                 "bpm" bpm)]
-     "tracks" [(array-map
-                 "singer" singer-id
-                 "phonemizer" phonemizer
-                 "renderer_settings" (array-map "renderer" default-renderer)
-                 "track_name" track-name
-                 "track_color" default-track-color
-                 "mute" false
-                 "solo" false
-                 "volume" 0
-                 "pan" 0
-                 "voice_color_names" [""])]
-     "voice_parts" [(array-map
-                      "duration" (voice-part-duration normalized-notes)
-                      "name" part-name
-                      "track_no" 0
-                      "position" 0
-                      "notes" (mapv (fn [{:keys [position duration tone lyric]}]
-                                       (array-map
-                                        "position" position
-                                        "duration" duration
-                                        "tone" tone
-                                        "lyric" lyric
-                                        "pitch" (array-map
-                                                 "data" [(array-map "x" -40 "y" 0 "shape" "io")
-                                                         (array-map "x" 40 "y" 0 "shape" "io")]
-                                                 "snap_first" true)
-                                        "vibrato" (array-map
-                                                   "length" 0
-                                                   "period" 175
-                                                   "depth" 25
-                                                   "in" 10
-                                                   "out" 10
-                                                   "shift" 0
-                                                   "drift" 0
-                                                   "vol_link" 0)
-                                        "phoneme_expressions" []
-                                        "phoneme_overrides" []))
-                                     normalized-notes)
-                      "curves" [])]
+     "time_signatures" [(array-map "bar_position" 0 "beat_per_bar" beat-per-bar "beat_unit" beat-unit)]
+     "tempos" [(array-map "position" 0 "bpm" (clamp-float (:tempo opts) 120 20 300))]
+     "tracks" [(track-settings opts singer-id phonemizer)]
+     "voice_parts" [(voice-part opts normalized-notes)]
      "wave_parts" [])))
 
 (defn- yaml-scalar
@@ -280,5 +368,11 @@
        "2. If singer or phonemizer is blank, select them on the vocal track.\n"
        "3. Review lyrics, phonemes, and pitch/timing.\n"
        "4. Export audio with `File > Export Audio > Export wav Files` or `Mixdown To Wav File`.\n\n"
-       "## Research note\n"
-       "OpenUtau currently documents UI-based export and does not expose a supported headless `.ustx -> .wav` workflow for backend automation, so Knoxx generates a ready-to-edit project instead of pretending it already rendered audio.\n"))
+       "## Headless render\n"
+       "Use the `voice.openutau_render` tool to render this project to WAV without opening the UI.\n"
+       "Requires: Xvfb + OpenUTAU + voicebank + WORLDLINE-R renderer.\n"
+       "\n"
+       "## Available singers\n"
+       "- `teto` — 重音テト OU用日本語統合ライブラリー (Kasane Teto - Japanese)\n"
+       "- `ritsu` — 波音リツ連続音Ver1.5.1 (Namine Ritsu - Japanese)\n"
+       "- `teto-en` — 重音テト音声ライブラリー (Kasane Teto - English)\n"))

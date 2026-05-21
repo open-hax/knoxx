@@ -28,7 +28,7 @@
   (route! app "POST" "/api/admin/users"
           (fn [request reply]
             (if-let [db (policy-db runtime)]
-              (let [body (or (aget request "body") #js {})
+              (let [body (or (aget request "body") (js/Object.))
                     org-id (or (aget body "orgId") (aget body "org_id") "")]
                 (with-request-context! runtime request reply
                   (fn [ctx]
@@ -65,8 +65,8 @@
           (fn [request reply]
             (if-let [db (policy-db runtime)]
               (let [org-id (or (aget request "params" "orgId") "")
-                    body (or (aget request "body") #js {})
-                    payload (.assign js/Object #js {} body (clj->js {:orgId org-id}))]
+                    body (or (aget request "body") (js/Object.))
+                    payload (.assign js/Object (js/Object.) body (clj->js {:orgId org-id}))]
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (ensure-org-scope! ctx org-id "org.users.create")
@@ -77,8 +77,8 @@
           (fn [request reply]
             (if-let [db (policy-db runtime)]
               (let [org-id (or (aget request "params" "orgId") "")
-                    body (or (aget request "body") #js {})
-                    payload (.assign js/Object #js {} body (clj->js {:orgId org-id}))]
+                    body (or (aget request "body") (js/Object.))
+                    payload (.assign js/Object (js/Object.) body (clj->js {:orgId org-id}))]
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (ensure-org-scope! ctx org-id "org.users.create")
@@ -89,7 +89,7 @@
           (fn [request reply]
             (if-let [db (policy-db runtime)]
               (let [user-id (or (aget request "params" "userId") "")
-                    body (or (aget request "body") #js {})
+                    body (or (aget request "body") (js/Object.))
                     org-id (or (aget body "orgId") (aget body "org_id") "")]
                 (with-request-context! runtime request reply
                   (fn [ctx]
@@ -103,7 +103,7 @@
           (fn [request reply]
             (if-let [db (policy-db runtime)]
               (let [user-id (or (aget request "params" "userId") "")
-                    body (or (aget request "body") #js {})
+                    body (or (aget request "body") (js/Object.))
                     org-id (or (aget body "orgId") (aget body "org_id") "")]
                 (with-request-context! runtime request reply
                   (fn [ctx]
@@ -118,9 +118,9 @@
             (if-let [db (policy-db runtime)]
               (let [user-id (or (aget request "params" "userId") "")
                     provider (or (aget request "params" "provider") "")
-                    body (or (aget request "body") #js {})
+                    body (or (aget request "body") (js/Object.))
                     org-id (or (aget body "orgId") (aget body "org_id") "")
-                    payload (.assign js/Object #js {} body (clj->js {:provider provider}))]
+                    payload (.assign js/Object (js/Object.) body (clj->js {:provider provider}))]
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (when (str/blank? (str org-id))
@@ -134,9 +134,9 @@
             (if-let [db (policy-db runtime)]
               (let [user-id (or (aget request "params" "userId") "")
                     provider (or (aget request "params" "provider") "")
-                    body (or (aget request "body") #js {})
+                    body (or (aget request "body") (js/Object.))
                     org-id (or (aget body "orgId") (aget body "org_id") "")
-                    payload (.assign js/Object #js {} body (clj->js {:provider provider}))]
+                    payload (.assign js/Object (js/Object.) body (clj->js {:provider provider}))]
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (when (str/blank? (str org-id))
@@ -168,7 +168,7 @@
                                                       (when-not membership
                                                         (throw (http-error 404 "membership_not_found" "membership not found")))
                                                       (ensure-org-scope! ctx (:orgId membership) "org.members.update")
-                                                      (.setMembershipRoles db membership-id (or (aget request "body") #js {})))))))))
+                                                      (.setMembershipRoles db membership-id (or (aget request "body") (js/Object.))))))))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"})))))
 
   (route! app "PATCH" "/api/admin/memberships/:membershipId/tool-policies"
@@ -184,7 +184,7 @@
                                                       (when-not membership
                                                         (throw (http-error 404 "membership_not_found" "membership not found")))
                                                       (ensure-org-scope! ctx (:orgId membership) "org.user_policy.update")
-                                                      (.setMembershipToolPolicies db membership-id (or (aget request "body") #js {})))))))))
+                                                      (.setMembershipToolPolicies db membership-id (or (aget request "body") (js/Object.))))))))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"})))))
 
   nil)

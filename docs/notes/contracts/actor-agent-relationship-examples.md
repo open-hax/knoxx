@@ -60,9 +60,11 @@ The contract chat agent has it's own actor, set of base tools base prompts, and 
  :enabled          true
  :contract/actor   "discord_automation"
  :actor/roles      [:role/knowledge-worker]
- :trigger          {:kind :event :event-kinds [:discord/message]}
- :prompts          {:system "..." :task "..."}
- :data             {:filters {:channels [] :keywords []}}}
+ ;; :trigger          {:kind :event :event-kinds [:discord/message]} ;; we could probably allow this? but it probably currently  doesn't follow the real  trigger contract.
+ :prompts          {:system "..." ;;:task "..."
+ }
+ ;; :data             {:filters {:channels [] :keywords []}} ;; this stuff also, doesn't belong on this  contract. We figure  these out from the call site. Probably a trigger that runs a start agent session action
+ }
 
 ;; contracts/agents/audio_producer.edn
 {:contract/id      "audio_producer"
@@ -71,6 +73,9 @@ The contract chat agent has it's own actor, set of base tools base prompts, and 
  :enabled          true
  :actor/roles      [:role/]
  :trigger          {:kind :event :event-kinds [:discord/message]}
- :prompts          {:system "..." :task "..."}
- :data             {:filters {:channels [] :keywords []}}}
+ :prompts          {:system "..."  ;; :task "..."  ;; We aren't doing the task prompts in the agent contracts any more. It's better if we the invoker of an agent contrct handles the task prompt
+ ;;
+ }
+ ;; :data             {:filters {:channels [] :keywords []}}
+ }
 ```

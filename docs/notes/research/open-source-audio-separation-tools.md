@@ -1,0 +1,129 @@
+---
+original_name: "2026.05.13.16.54.39.md"
+title: "Open Source Audio Separation Tools"
+summary: "Research on open-source audio separation tools and piano stem extraction options."
+category: "research"
+created: "2026-05-13"
+---
+
+
+## Best open-source choice
+
+The strongest open-source operational choice I found is `python-audio-separator`, which is MIT-licensed and supports multiple model families including MDX-Net, VR, Demucs, and MDXC, with the ability to output a single stem such as Piano. Its docs explicitly say the available models can separate Drums, Bass, Guitar, Piano, and other stems, and it provides CLI plus Python APIs for swapping models without rebuilding your own tooling. [latouchemusicale](https://latouchemusicale.com/en/tools/wav-to-midi-converter/)
+
+That matters because Demucs alone explicitly says its 6-stem piano source has “a lot of bleeding and artifacts,” and the maintained way to get better piano results in practice is usually to test several open models rather than trust a single separator architecture. `python-audio-separator` is basically the cleanest open-source harness for doing exactly that. [airapgen](https://www.airapgen.com/audio-to-midi/en)
+
+## What I’d use
+
+Facts:
+- Demucs is open source under MIT, but its own README warns that `htdemucs_6s` piano is weak. [airapgen](https://www.airapgen.com/audio-to-midi/en)
+- `python-audio-separator` is open source under MIT and supports multiple architectures plus single-stem output for Piano. [latouchemusicale](https://latouchemusicale.com/en/tools/wav-to-midi-converter/)
+- Open-Unmix and Spleeter are also open-source, but their standard pretrained models are the usual 4-stem or 2-stem families, not piano-specialized end-user tools. [github](https://github.com/deezer/spleeter)
+
+Interpretation:
+- If you need an open-source **workflow**, use `python-audio-separator` first. [latouchemusicale](https://latouchemusicale.com/en/tools/wav-to-midi-converter/)
+- If you need an open-source **baseline model**, Demucs is still worth testing, but not as your only piano strategy. [airapgen](https://www.airapgen.com/audio-to-midi/en)
+- If you need research-grade piano-specific work and your material resembles concerto or classical piano/orchestra textures, the piano-concerto separation line of work is interesting, but it is niche and likely mismatched to Suno-style full productions. [github](https://github.com/yiitozer/pc-separation)
+
+## Recommended stack
+
+I’d rank the open-source options like this:
+
+| Use case | Best open-source choice | Why |
+|---|---|---|
+| Practical piano extraction from mixed songs | `python-audio-separator` | MIT-licensed, model-swapping, Piano single-stem support, UVR ecosystem access  [latouchemusicale](https://latouchemusicale.com/en/tools/wav-to-midi-converter/) |
+| Baseline direct test | Demucs `htdemucs_6s` | Open, easy to run, but piano quality explicitly weak  [airapgen](https://www.airapgen.com/audio-to-midi/en) |
+| General research-friendly separator | Open-Unmix | Open and solid, but not piano-targeted in standard release  [sigsep.github](https://sigsep.github.io/open-unmix/) |
+| Fast basic splitter | Spleeter | Open and easy, but not piano-specific in common pretrained use  [github](https://github.com/deezer/spleeter) |
+
+## Concrete recommendation
+
+If I were setting this up on your machine, I would do:
+
+1. Install `python-audio-separator`. It is MIT-licensed and built for exactly this kind of model selection workflow. [latouchemusicale](https://latouchemusicale.com/en/tools/wav-to-midi-converter/)
+2. List available models and filter for piano-capable ones, then benchmark 2 to 4 candidates on the same Suno track excerpt. The CLI supports model listing and filtering by stem type. [latouchemusicale](https://latouchemusicale.com/en/tools/wav-to-midi-converter/)
+3. Output only the piano stem with `--single_stem Piano`, then score the result by bleed, transient integrity, and sustain smear. [latouchemusicale](https://latouchemusicale.com/en/tools/wav-to-midi-converter/)
+4. Keep Demucs `htdemucs_6s` only as one comparator, not the presumed winner. Demucs itself warns you off trusting its piano source too much. [airapgen](https://www.airapgen.com/audio-to-midi/en)
+
+## Honest constraint
+
+The hidden truth is: there may not be one universally best open-source piano model for your material. Piano extraction sits in a messy timbral overlap zone, so the winning strategy is often “ensemble by audition” — run a few open models and keep the least contaminated output — rather than betting on one canonical separator. [airapgen](https://www.airapgen.com/audio-to-midi/en)
+
+So if it **must** be open source, my answer is: use `python-audio-separator` as the front door, and treat piano extraction as a model-selection problem inside that ecosystem. [latouchemusicale](https://latouchemusicale.com/en/tools/wav-to-midi-converter/)
+
+
+---
+The most famous and robust open-source engine for this exact use case (dense, complex piano) is the **ByteDance High-Resolution Piano Transcription system** by Qiuqiang Kong. [github](https://github.com/qiuqiangkong/piano_transcription_inference)
+
+Here is why it is the correct tool for your aggressively arpeggiated Suno track:
+
+### 1. It Uses an "Onsets and Offsets" Architecture
+Basic Pitch works by tracking pitch contours frame-by-frame and trying to guess when notes start and stop. This fails spectacularly on fast arpeggios or dense chords because the notes blur together.
+The ByteDance model explicitly uses a Convolutional Recurrent Neural Network (CRNN) that treats *onsets* (note strikes) and *offsets* (note releases) as separate prediction targets from the frame-wise pitch.  This means it can actually hear a fast machine-gun arpeggio as individual note strikes, even if the pitches are ringing out simultaneously. [github](https://github.com/bytedance/piano_transcription)
+
+### 2. It Understands Sustain Pedals
+Fast piano is impossible to transcribe accurately if you don't model the sustain pedal. If the pedal is down, the piano strings ring out, and a frame-based pitch tracker will think a 16th-note arpeggio is actually one giant, muddy 8-note chord being held down. The ByteDance model explicitly detects sustain pedal events and translates them into MIDI CC-64 events, separating the physical "key press duration" from the "acoustic ringing duration." [github](https://github.com/azuwis/pianotrans)
+
+### 3. It Handles High Note Density
+This model was trained on the MAESTRO dataset (massive amounts of virtuosic classical piano) and explicitly designed to handle "complex musical structures and provide accurate transcription of high-density notes."  It won't freak out if the Suno AI plays something a human literally could not physically stretch their hands to play. [huggingface](https://huggingface.co/Genius-Society/piano_trans)
+
+### How to use it in your pipeline
+
+Since you are looking for verifiable, small state changes, you can swap out Basic Pitch for this. There is a packaged inference library called `piano_transcription_inference` that is incredibly easy to drop in. [github](https://github.com/qiuqiangkong/piano_transcription_inference)
+
+**1. Isolate the piano stem first.**
+Keep using the UVR/MDX piano separator (`python-audio-separator`) to isolate the piano from the vocals and drums. Even the best piano transcriber will hallucinate if you feed it a snare drum.
+
+**2. Run the ByteDance Inference.**
+Install the package via pip:
+```bash
+pip install piano_transcription_inference
+```
+
+**3. The Python Execution Script:**
+```python
+import librosa
+from piano_transcription_inference import PianoTranscription, sample_rate
+
+# 1. Load your separated piano stem
+audio_path = 'output/separated_piano_stem.wav'
+audio, _ = librosa.load(path=audio_path, sr=sample_rate, mono=True)
+
+# 2. Initialize the Transcriptor (uses GPU if available, CPU if not)
+transcriptor = PianoTranscription(device='cuda') # change to 'cpu' if no nvidia GPU
+
+# 3. Transcribe directly to a MIDI file
+transcribed_dict = transcriptor.transcribe(audio, 'output/suno_aggressive_piano.mid')
+```
+
+If you feed the ByteDance transcriber an *un-smeared* piano stem (which we confirmed you need based on those spectrogram diffs), it will give you the most accurate procedural capture of those insane arpeggios that currently exists in open source.
+
+---
+## 1. The Transients are Getting Smashed
+Look at the **RMS Difference (V5 minus Original)** graph. - The line is consistently hovering in the negative range (below 0 dB) for almost the entire duration, meaning V5 has less overall energy.
+- More importantly, there are massive negative spikes (plunging to -20 dB or -30 dB) that happen extremely fast. These are transients — the sharp, percussive hammer strikes of the piano keys. The V5 model is failing to preserve the peak amplitude of these strikes.
+- At the very end of the track (around 300 seconds), there is a massive positive spike (+60 dB). This is a classic signature of a separation model misinterpreting silence, reverb tails, or a fade-out as noise and artificially boosting a harmonic artifact.
+
+## 2. Onset Timing is Degraded
+Look at the **Normalized Onset Strength** graph. - The blue lines (original) show sharp, distinct vertical spikes. This represents exactly when a piano note is struck.
+- The orange lines (V5) show a much "fuzzier" density. The peaks are lower, and there is a lot more low-level noise between the peaks.
+- Interpretation: The separation process is smearing the attacks. If you run Basic Pitch or a MIDI extractor on the V5 audio, the MIDI notes are going to have sloppy start times, or the extractor will misinterpret the "fuzz" as rapidly re-triggering ghost notes.
+
+## 3. High Frequencies are Being Discarded
+Look at the **V5 minus Original Spectrogram Difference** graph. - The bright blue color dominates the top third of the graph (from roughly 4096 Hz up to 16384 Hz). Blue means V5 has *less* energy than the original.
+- The red color is clustered at the bottom (below 256 Hz). Red means V5 has *more* energy than the original.
+- Interpretation: The separation model is acting like a low-pass filter. It is deleting the upper harmonics and "air" of the piano (the bright blue wash) while artificially boosting or failing to separate low-end mud/bass (the red blobs at the bottom).
+
+## 4. Spectrogram Blurring
+Compare the **Original Spectrogram**  to the **V5 Spectrogram**. - In the original, the vertical lines (the transients of the piano strikes) go all the way from the bottom to the top (16 kHz+).
+- In the V5 spectrogram, those vertical lines are visibly truncated and blur out above 4-8 kHz. The background between the notes is also darker in V5, meaning it successfully removed the "other" noise, but it took the life out of the piano with it.
+
+## What this means for your extraction pipeline
+
+If your goal is to extract a MIDI sequence, these graphs explain exactly why your downstream MIDI might be failing or hallucinating:
+
+1. **Pitch Trackers will fail on the low end:** Because V5 is injecting false energy in the low frequencies (the red blobs in the diff graph), your MIDI extractor is going to hallucinate low bass notes that weren't actually played.
+2. **Timing will be sloppy:** Because the transients are smeared (shown in the RMS and Onset graphs), the MIDI extractor won't know exactly when a note starts.
+3. **Harmonic confusion:** Because the high frequencies are deleted, the MIDI extractor has less harmonic data to rely on to identify chords, increasing the chance of wrong notes in dense passages.
+
+**The Fix:** This confirms that you need a model that explicitly respects transients. MDX-Net models (which use frequency-domain separation) are notorious for exactly this kind of high-frequency smearing and phase phase-shifting. For piano, you should test an MDXC architecture or a time-domain model (like Demucs `htdemucs_6s`, despite its flaws) because time-domain models usually preserve transient strikes much better than purely frequency-domain models.

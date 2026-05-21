@@ -3,7 +3,6 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.infra.document-state :refer [active-agent-profile ensure-dir! list-files-recursive! normalize-relative-path indexed-meta]]
-            [knoxx.backend.infra.http :refer [openplanner-enabled? js-array-seq]]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-semantic-search!]]
             [knoxx.backend.domain.text :refer [search-tokens text-like-path? clip-text snippet-around tool-text-result semantic-read-result-text openplanner-semantic-search-text]]
             [knoxx.backend.domain.media :refer [path-relative path-basename path-resolve path-is-absolute? fs-read-file!]]

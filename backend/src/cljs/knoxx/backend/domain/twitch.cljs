@@ -34,7 +34,7 @@
                  (when (or (str/blank? (str token))
                            (str/blank? (str user)))
                    (throw (js/Error. "Twitch actor credential must include username and oauthToken.")))
-                 {:token (str/replace token #"^oauth:" "") :user user}))))
+                 {:token (str/replace token #"^oauth:" "") :user user})))))
 
 (defn- parse-twitch-message [msg]
   (let [text-msg (str msg)]
@@ -80,7 +80,7 @@
                        (.on ws "error" (fn [err]
                                           (println "Twitch connection error:" js/JSON.stringify err)))
                        (do (swap! twitch-connections assoc user ws)
-                           ws)))))))
+                           ws))))))))
 
 (defn- twitch-send-message! [runtime channel-id text]
   (-> (connect-twitch! runtime)

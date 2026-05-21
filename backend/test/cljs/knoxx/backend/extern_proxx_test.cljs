@@ -1,7 +1,6 @@
 (ns knoxx.backend.extern-proxx-test
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.extern.json :as xjson]
-            [knoxx.backend.extern.js :as xjs]
             [knoxx.backend.extern.proxx :as proxx]))
 
 (deftest parse-object-keywordizes-json
@@ -19,12 +18,11 @@
         fetch-json (fn [url opts]
                      (reset! seen* {:url url :opts opts})
                      (js/Promise.resolve
-                      (xjs/object
-                       {:ok true
-                        :status 200
-                        :body {:model "title-model"
-                               :choices [{:message {:content "Boundary Cleanup"
-                                                    :reasoning_content "I will go with \"Boundary Cleanup\""}}]}})))]
+                      {:ok true
+                       :status 200
+                       :body {:model "title-model"
+                              :choices [{:message {:content "Boundary Cleanup"
+                                                   :reasoning_content "I will go with \"Boundary Cleanup\""}}]}}))]
     (let [result (await (proxx/chat-completion-with-fetch!
                          fetch-json
                          {:proxx-base-url "http://proxx.local"

@@ -21,9 +21,9 @@
 
 (defn- normalize-chat-completion-response
   [resp]
-  (let [ok? (true? (aget resp "ok"))
-        status (aget resp "status")
-        body (xjson/to-cljs (aget resp "body"))
+  (let [ok? (true? (:ok resp))
+        status (:status resp)
+        body (xjson/to-cljs (:body resp))
         first-choice (first (:choices body))
         message (:message first-choice)
         content (or (:content message)

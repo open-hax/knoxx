@@ -41,7 +41,7 @@
 (defn- walk-audio-files! [node-fs node-path root-dir base-relative depth max-depth]
   (if (> depth max-depth)
     (.resolve js/Promise [])
-    (-> (.readdir node-fs root-dir #js {:withFileTypes true})
+    (-> (.readdir node-fs root-dir (clj->js {:withFileTypes true}))
         (.then (fn [entries]
                  (let [promises (mapv #(process-entry node-fs node-path root-dir base-relative depth max-depth %) (vec (array-seq entries)))]
                    (-> (.all js/Promise (into-array promises))
@@ -79,7 +79,7 @@
             org-id (or (:org-id ctx) (some-> ctx :org :id))
             kind (or (aget request "query" "kind") "player")]
         (if (and user-id org-id)
-          (-> (.query db "SELECT state_json FROM studio_state WHERE user_id = $1 AND org_id = $2 AND kind = $3" #js [user-id org-id kind])
+          (-> (.query db "SELECT state_json FROM studio_state WHERE user_id = $1 AND org_id = $2 AND kind = $3" (clj->js [user-id org-id kind]))
               (.then (fn [res]
                        (let [row (some-> res .-rows (aget 0))]
                          (json-response! reply 200 {:ok true :state (if row (js->clj (.-state_json row) :keywordize-keys true) {})}))))
@@ -94,11 +94,11 @@
     (if db
       (let [user-id (or (:user-id ctx) (some-> ctx :user :id))
             org-id (or (:org-id ctx) (some-> ctx :org :id))
-            body (or (aget request "body") #js {})
+            body (or (aget request "body") (js/Object.))
             kind (or (aget body "kind") "player")
-            state (js->clj (or (aget body "state") #js {}) :keywordize-keys true)]
+            state (js->clj (or (aget body "state") (js/Object.)) :keywordize-keys true)]
         (if (and user-id org-id)
-          (-> (.query db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW() RETURNING *" #js [user-id org-id kind (.stringify js/JSON (clj->js state))])
+          (-> (.query db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW() RETURNING *" (clj->js [user-id org-id kind (.stringify js/JSON (clj->js state))]))
               (.then (fn [_] (json-response! reply 200 {:ok true :saved true})))
               (.catch (fn [err] (json-response! reply 500 {:detail (str "Save failed: " err)}))))
           (json-response! reply 400 {:detail "User context required"})))
@@ -112,7 +112,7 @@
       (let [user-id (or (:user-id ctx) (some-> ctx :user :id))
             org-id (or (:org-id ctx) (some-> ctx :org :id))]
         (if (and user-id org-id)
-          (-> (.query db "SELECT state_json FROM studio_state WHERE user_id=$1 AND org_id=$2 AND kind='playlist'" #js [user-id org-id])
+          (-> (.query db "SELECT state_json FROM studio_state WHERE user_id=$1 AND org_id=$2 AND kind='playlist'" (clj->js [user-id org-id]))
               (.then (fn [res]
                        (let [row (some-> res .-rows (aget 0))
                              state (if row (js->clj (.-state_json row) :keywordize-keys true) {})]
@@ -128,10 +128,10 @@
     (if db
       (let [user-id (or (:user-id ctx) (some-> ctx :user :id))
             org-id (or (:org-id ctx) (some-> ctx :org :id))
-            body (or (aget request "body") #js {})
-            items (js->clj (or (aget body "items") #js []) :keywordize-keys true)]
+            body (or (aget request "body") (js/Object.))
+            items (js->clj (or (aget body "items") (js/Array.)) :keywordize-keys true)]
         (if (and user-id org-id)
-          (-> (.query db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,'playlist',$3::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW()" #js [user-id org-id (.stringify js/JSON (clj->js {:items items}))])
+          (-> (.query db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,'playlist',$3::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW()" (clj->js [user-id org-id (.stringify js/JSON (clj->js {:items items}))]))
               (.then (fn [_] (json-response! reply 200 {:ok true :saved true :count (count items)})))
               (.catch (fn [err] (json-response! reply 500 {:detail (str "Save failed: " err)}))))
           (json-response! reply 400 {:detail "User context required"})))
@@ -162,8 +162,8 @@
 (defroute studio-save-m3u! []
   "POST" "/api/studio/save-m3u"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
-  (let [body (or (aget request "body") #js {})
-        items (js->clj (or (aget body "items") #js []) :keywordize-keys true)
+  (let [body (or (aget request "body") (js/Object.))
+        items (js->clj (or (aget body "items") (js/Array.)) :keywordize-keys true)
         name (or (aget body "name") (str "playlist-" (.toISOString (js/Date.))))
         ;; Build M3U content
         m3u-lines (concat
@@ -178,7 +178,7 @@
         {:keys [absolute]} (media/resolve-workspace-media-path runtime config normalized)
         safe-name (str/replace name #"[^a-zA-Z0-9_-]" "_")
         file-path (.join path absolute (str safe-name ".m3u"))]
-    (-> (.mkdir fs absolute #js {:recursive true})
+    (-> (.mkdir fs absolute (clj->js {:recursive true}))
         (.then (fn [_] (.writeFile fs file-path m3u-content "utf8")))
         (.then (fn [_] (json-response! reply 200 {:ok true :path (str "Music/playlists/" safe-name ".m3u") :count (count items)})))
         (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to save playlist: " err)}))))))
@@ -186,8 +186,8 @@
 (defroute studio-save-m3u-download! []
   "POST" "/api/studio/download-m3u"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
-  (let [body (or (aget request "body") #js {})
-        items (js->clj (or (aget body "items") #js []) :keywordize-keys true)
+  (let [body (or (aget request "body") (js/Object.))
+        items (js->clj (or (aget body "items") (js/Array.)) :keywordize-keys true)
         name (or (aget body "name") "playlist")
         ;; Build M3U content
         m3u-lines (concat
@@ -283,7 +283,7 @@
   "POST" "/api/studio/labels/add"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
   (let [workspace-root (:workspace-root config)
-        body (or (aget request "body") #js {})
+        body (or (aget request "body") (js/Object.))
         file-path (aget body "path")
         label (aget body "label")]
     (if (and file-path label)
@@ -296,7 +296,7 @@
   "POST" "/api/studio/labels/remove"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
   (let [workspace-root (:workspace-root config)
-        body (or (aget request "body") #js {})
+        body (or (aget request "body") (js/Object.))
         file-path (aget body "path")
         label (aget body "label")]
     (if (and file-path label)
@@ -333,7 +333,7 @@
         audio-path (aget request "query" "path")
         asset-type (aget request "query" "type")]
     (if (and audio-path asset-type)
-      (-> (.query db "SELECT image_data, mime_type, width, height FROM studio_audio_assets WHERE audio_path = $1 AND asset_type = $2" #js [audio-path asset-type])
+      (-> (.query db "SELECT image_data, mime_type, width, height FROM studio_audio_assets WHERE audio_path = $1 AND asset_type = $2" (clj->js [audio-path asset-type]))
           (.then (fn [res]
                    (if (.-rows res)
                      (let [row (first (js->clj (.-rows res)))]
@@ -351,7 +351,7 @@
   "POST" "/api/studio/audio-asset"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
   (let [db (policy-db runtime)
-        body (or (aget request "body") #js {})
+        body (or (aget request "body") (js/Object.))
         audio-path (aget body "path")
         asset-type (aget body "type")
         image-data (aget body "imageData")
@@ -361,7 +361,7 @@
     (if (and audio-path asset-type image-data)
       (let [buffer (js/Buffer.from image-data "base64")]
         (-> (.query db "INSERT INTO studio_audio_assets (audio_path, asset_type, image_data, mime_type, width, height) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (audio_path, asset_type) DO UPDATE SET image_data = $3, mime_type = $4, width = $5, height = $6, created_at = NOW()"
-                    #js [audio-path asset-type buffer mime-type width height])
+                    (clj->js [audio-path asset-type buffer mime-type width height]))
             (.then (fn [_] (json-response! reply 200 {:ok true :path audio-path :type asset-type})))
             (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)})))))
       (json-response! reply 400 {:detail "Missing path, type, or imageData"}))))

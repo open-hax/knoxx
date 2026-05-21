@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.agent.message
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.agent.reasoning :as reasoning]
             [knoxx.backend.extern.agent-message :as xagent-message]))
 
 (defn stored-session-message->agent-message
@@ -77,23 +78,7 @@
    reasoning parts. This keeps the assistant answer clean while preserving
    the trace in :reasoning."
   [text]
-  (let [text (str (or text ""))
-        open-idx (.indexOf text "<think>")
-        close-idx (.indexOf text "</think>")]
-    (if (and (>= open-idx 0)
-             (>= close-idx 0)
-             (< open-idx 64)
-             (> close-idx open-idx))
-      (let [thinking (subs text (+ open-idx (count "<think>")) close-idx)
-            after (subs text (+ close-idx (count "</think>")))
-            before (subs text 0 open-idx)
-            answer (str (or before "") (or after ""))]
-        {:reasoning (str/trim thinking)
-         :answer (str/trim answer)
-         :hadThinkTags true})
-      {:reasoning ""
-       :answer text
-       :hadThinkTags false})))
+  (reasoning/split-think-tags text))
 
 (defn content-part-type  [part]
   (cond

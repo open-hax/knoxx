@@ -2,6 +2,7 @@
   "Bluesky ATProto tool factories."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.promise :as promise]
+            [knoxx.backend.domain.bluesky.client :as bsky-client]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [clip-text tool-text-result]]
             [knoxx.backend.domain.actor.credentials :as actor-credentials]
@@ -74,28 +75,8 @@
    [:messageId {:description "Message ID to react to."} :string]
    [:emoji {:description "Emoji reaction (e.g. ❤️, 🔥, 😂)."} :string]])
 
-(defn- bluesky-service-base-url []
-  "https://bsky.social")
-
-(defn- bluesky-public-base-url []
-  "https://public.api.bsky.app")
-
-(defn- query-url [base params]
-  (let [search (js/URLSearchParams.)]
-    (doseq [[k v] params]
-      (when-not (or (nil? v) (and (string? v) (str/blank? v)))
-        (.append search (name k) (str v))))
-    (let [query (.toString search)]
-      (if (str/blank? query) base (str base "?" query)))))
-
-(defn- bluesky-json-fetch! [url options label]
-  (-> (js/fetch url options)
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.json resp)
-                 (-> (.text resp)
-                     (.then (fn [text]
-                              (throw (js/Error. (str label " error " (.-status resp) ": " text)))))))))))
+(defn- bluesky-client []
+  (bsky-client/client))
 
 (defn- bluesky-auth-config! [runtime]
   (-> (actor-credentials/get-credential! runtime "bluesky")
@@ -110,53 +91,17 @@
 
 (defn- bluesky-create-session! [runtime]
   (-> (bluesky-auth-config! runtime)
-      (.then (fn [{:keys [identifier password]}]
-               (bluesky-json-fetch!
-                (str (bluesky-service-base-url) "/xrpc/com.atproto.server.createSession")
-                #js {:method "POST"
-                     :headers #js {"Content-Type" "application/json"
-                                   "User-Agent" "Knoxx-Agent/1.0"}
-                     :body (.stringify js/JSON #js {:identifier identifier :password password})}
-                "Bluesky auth")))))
+      (.then (fn [credentials]
+               (bsky-client/create-session! (bluesky-client) credentials)))))
 
 (defn- bluesky-upload-blob! [session buffer mime-type]
-  (-> (js/fetch (str (bluesky-service-base-url) "/xrpc/com.atproto.repo.uploadBlob")
-                #js {:method "POST"
-                     :headers #js {"Content-Type" mime-type
-                                   "Authorization" (str "Bearer " (aget session "accessJwt"))}
-                     :body buffer})
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.json resp)
-                 (-> (.text resp)
-                     (.then (fn [text]
-                              (throw (js/Error. (str "Blob upload error " (.-status resp) ": " text)))))))))))
+  (bsky-client/upload-blob! (bluesky-client) session buffer mime-type))
 
 (defn- bluesky-create-record! [session collection record]
-  (bluesky-json-fetch!
-   (str (bluesky-service-base-url) "/xrpc/com.atproto.repo.createRecord")
-   #js {:method "POST"
-        :headers #js {"Content-Type" "application/json"
-                      "User-Agent" "Knoxx-Agent/1.0"
-                      "Authorization" (str "Bearer " (aget session "accessJwt"))}
-        :body (.stringify js/JSON
-                          #js {:repo (aget session "did")
-                               :collection collection
-                               :record record})}
-   "Bluesky create record"))
+  (bsky-client/create-record! (bluesky-client) session collection record))
 
 (defn- bluesky-delete-record! [session collection rkey]
-  (bluesky-json-fetch!
-   (str (bluesky-service-base-url) "/xrpc/com.atproto.repo.deleteRecord")
-   #js {:method "POST"
-        :headers #js {"Content-Type" "application/json"
-                      "User-Agent" "Knoxx-Agent/1.0"
-                      "Authorization" (str "Bearer " (aget session "accessJwt"))}
-        :body (.stringify js/JSON
-                          #js {:repo (aget session "did")
-                               :collection collection
-                               :rkey rkey})}
-   "Bluesky delete record"))
+  (bsky-client/delete-record! (bluesky-client) session collection rkey))
 
 (defn- parse-at-uri [uri]
   (let [parts (some-> uri str (str/split #"/"))
@@ -167,25 +112,7 @@
       {:repo repo :collection collection :rkey rkey})))
 
 (defn- bluesky-resolve-post! [uri]
-  (-> (bluesky-json-fetch!
-       (query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.feed.getPosts")
-                  {:uris uri})
-       #js {:method "GET"
-            :headers #js {"Accept" "application/json"
-                          "User-Agent" "Knoxx-Agent/1.0"}}
-       "Bluesky resolve post")
-      (.then (fn [payload]
-               (let [posts (if (array? (aget payload "posts"))
-                             (array-seq (aget payload "posts"))
-                             [])
-                     post (first posts)]
-                 (when-not post
-                   (throw (js/Error. (str "Could not resolve post: " uri))))
-                 {:uri uri
-                  :cid (aget post "cid")
-                  :text (or (some-> post (aget "record") (aget "text")) "")
-                  :authorHandle (or (some-> post (aget "author") (aget "handle")) "")
-                  :authorDid (or (some-> post (aget "author") (aget "did")) "")})))))
+  (bsky-client/resolve-post! (bluesky-client) uri))
 
 (defn- bluesky-post-url [handle uri]
   (let [post-id (some-> uri str (str/split #"/") last)]
@@ -204,44 +131,34 @@
     (str prefix (when-not (str/blank? lines) (str "\n" lines)))))
 
 (defn- bluesky-search! [runtime query kind limit]
-  (let [kind (if (= kind "actors") "actors" "posts")
-        endpoint (if (= kind "actors") "app.bsky.actor.searchActors" "app.bsky.feed.searchPosts")]
+  (let [kind (if (= kind "actors") "actors" "posts")]
     (-> (bluesky-create-session! runtime)
         (.then (fn [session]
-                 (bluesky-json-fetch!
-                  (query-url (str (bluesky-service-base-url) "/xrpc/" endpoint)
-                             {:q query :limit limit})
-                  #js {:method "GET"
-                       :headers #js {"Accept" "application/json"
-                                     "User-Agent" "Knoxx-Agent/1.0"
-                                     "Authorization" (str "Bearer " (aget session "accessJwt"))}}
-                  "Bluesky search")))
+                 (if (= kind "actors")
+                   (bsky-client/search-actors! (bluesky-client) session query limit)
+                   (bsky-client/search-posts! (bluesky-client) session query limit))))
         (.then (fn [payload]
                  (if (= kind "actors")
-                   (let [results (->> (if (array? (aget payload "actors"))
-                                        (array-seq (aget payload "actors"))
-                                        [])
+                   (let [results (->> (or (:actors payload) [])
                                       (mapv (fn [actor]
-                                              {:handle (or (aget actor "handle") "")
-                                               :displayName (or (aget actor "displayName") "")
-                                               :description (or (aget actor "description") "")
-                                               :did (or (aget actor "did") "")
-                                               :url (when-let [handle (some-> (aget actor "handle") str not-empty)]
+                                              {:handle (or (:handle actor) "")
+                                               :displayName (or (:displayName actor) "")
+                                               :description (or (:description actor) "")
+                                               :did (or (:did actor) "")
+                                               :url (when-let [handle (some-> (:handle actor) str not-empty)]
                                                       (str "https://bsky.app/profile/" handle))})))]
                      {:kind kind :results results})
-                   (let [results (->> (if (array? (aget payload "posts"))
-                                        (array-seq (aget payload "posts"))
-                                        [])
+                   (let [results (->> (or (:posts payload) [])
                                       (mapv (fn [post]
-                                              (let [author (aget post "author")
-                                                    record (aget post "record")
-                                                    handle (or (aget author "handle") "")]
+                                              (let [author (:author post)
+                                                    record (:record post)
+                                                    handle (or (:handle author) "")]
                                                 {:handle handle
-                                                 :displayName (or (aget author "displayName") "")
-                                                 :text (or (aget record "text") "")
-                                                 :createdAt (or (aget record "createdAt") "")
-                                                 :uri (or (aget post "uri") "")
-                                                 :url (bluesky-post-url handle (aget post "uri"))}))))]
+                                                 :displayName (or (:displayName author) "")
+                                                 :text (or (:text record) "")
+                                                 :createdAt (or (:createdAt record) "")
+                                                 :uri (or (:uri post) "")
+                                                 :url (bluesky-post-url handle (:uri post))}))))]
                      {:kind kind :results results})))))))
 
 (defn- bluesky-profile! [runtime actor]
@@ -249,80 +166,57 @@
         actor-promise (if (str/blank? actor)
                         (-> (bluesky-create-session! runtime)
                             (.then (fn [session]
-                                     (or (aget session "handle") (aget session "did")))))
+                                     (or (:handle session) (:did session)))))
                         (js/Promise.resolve actor))]
     (-> actor-promise
         (.then (fn [resolved-actor]
-                 (bluesky-json-fetch!
-                  (query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.actor.getProfile")
-                             {:actor resolved-actor})
-                  #js {:method "GET"
-                       :headers #js {"Accept" "application/json"
-                                     "User-Agent" "Knoxx-Agent/1.0"}}
-                  "Bluesky profile")))
+                 (bsky-client/profile! (bluesky-client) resolved-actor)))
         (.then (fn [profile]
-                 {:did (or (aget profile "did") "")
-                  :handle (or (aget profile "handle") "")
-                  :displayName (or (aget profile "displayName") "")
-                  :description (or (aget profile "description") "")
-                  :followersCount (or (aget profile "followersCount") 0)
-                  :followsCount (or (aget profile "followsCount") 0)
-                  :postsCount (or (aget profile "postsCount") 0)
-                  :url (when-let [handle (some-> (aget profile "handle") str not-empty)]
+                 {:did (or (:did profile) "")
+                  :handle (or (:handle profile) "")
+                  :displayName (or (:displayName profile) "")
+                  :description (or (:description profile) "")
+                  :followersCount (or (:followersCount profile) 0)
+                  :followsCount (or (:followsCount profile) 0)
+                  :postsCount (or (:postsCount profile) 0)
+                  :url (when-let [handle (some-> (:handle profile) str not-empty)]
                          (str "https://bsky.app/profile/" handle))})))))
 
 (defn- bluesky-author-feed! [actor limit]
-  (-> (bluesky-json-fetch!
-       (query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.feed.getAuthorFeed")
-                  {:actor actor :limit limit})
-       #js {:method "GET"
-            :headers #js {"Accept" "application/json"
-                          "User-Agent" "Knoxx-Agent/1.0"}}
-       "Bluesky author feed")
+  (-> (bsky-client/actor-feed! (bluesky-client) nil actor limit)
       (.then (fn [payload]
-               (let [results (->> (if (array? (aget payload "feed"))
-                                    (array-seq (aget payload "feed"))
-                                    [])
+               (let [results (->> (or (:feed payload) [])
                                   (mapv (fn [entry]
-                                          (let [post (aget entry "post")
-                                                author (aget post "author")
-                                                record (aget post "record")
-                                                handle (or (aget author "handle") "")]
+                                          (let [post (:post entry)
+                                                author (:author post)
+                                                record (:record post)
+                                                handle (or (:handle author) "")]
                                             {:handle handle
-                                             :displayName (or (aget author "displayName") "")
-                                             :text (or (aget record "text") "")
-                                             :createdAt (or (aget record "createdAt") "")
-                                             :uri (or (aget post "uri") "")
-                                             :url (bluesky-post-url handle (aget post "uri"))}))))]
+                                             :displayName (or (:displayName author) "")
+                                             :text (or (:text record) "")
+                                             :createdAt (or (:createdAt record) "")
+                                             :uri (or (:uri post) "")
+                                             :url (bluesky-post-url handle (:uri post))}))))]
                  {:actor actor :results results})))))
 
 (defn- bluesky-timeline! [runtime limit cursor]
   (-> (bluesky-create-session! runtime)
       (.then (fn [session]
-               (bluesky-json-fetch!
-                (query-url (str (bluesky-service-base-url) "/xrpc/app.bsky.feed.getTimeline")
-                           {:limit limit :cursor cursor})
-                #js {:method "GET"
-                     :headers #js {"Accept" "application/json"
-                                   "User-Agent" "Knoxx-Agent/1.0"
-                                   "Authorization" (str "Bearer " (aget session "accessJwt"))}}
-                "Bluesky timeline")))
+               (bsky-client/timeline! (bluesky-client) session {:limit limit :cursor cursor})))
       (.then (fn [payload]
-               (let [results (->> (if (array? (aget payload "feed"))
-                                    (array-seq (aget payload "feed"))
-                                    [])
+               (let [results (->> (or (:feed payload) [])
                                   (mapv (fn [entry]
-                                          (let [post (aget entry "post")
-                                                author (aget post "author")
-                                                record (aget post "record")
-                                                handle (or (aget author "handle") "")]
+                                          (let [post (:post entry)
+                                                author (:author post)
+                                                record (:record post)
+                                                handle (or (:handle author) "")]
                                             {:handle handle
-                                             :displayName (or (aget author "displayName") "")
-                                             :text (or (aget record "text") "")
-                                             :createdAt (or (aget record "createdAt") "")
-                                             :uri (or (aget post "uri") "")
-                                             :url (bluesky-post-url handle (aget post "uri"))}))))]
-                 {:cursor (aget payload "cursor") :results results})))))
+                                             :displayName (or (:displayName author) "")
+                                             :text (or (:text record) "")
+                                             :createdAt (or (:createdAt record) "")
+                                             :uri (or (:uri post) "")
+                                             :url (bluesky-post-url handle (:uri post))}))))]
+                 {:cursor (:cursor payload) :results results})))))
 
 (defn- text->utf8-bytes [text]
   (js/Uint8Array.from (js/Array.from (.encode (js/TextEncoder.) text))))
@@ -336,16 +230,15 @@
                     (let [full-match (aget m 0)
                           tag (aget m 1)
                           start-char (.-index m)
-                          end-char (+ start-char (.-length full-match))
                           prefix (.substring text 0 start-char)
                           start-byte (.-length (text->utf8-bytes prefix))
                           end-byte (+ start-byte (.-length (text->utf8-bytes full-match)))]
                       (recur (.exec hashtag-re text)
-                             (conj acc #js {"$type" "app.bsky.richtext.facet"
-                                            :index #js {:byteStart start-byte :byteEnd end-byte}
-                                            :features #js [#js {"$type" "app.bsky.richtext.facet#tag"
-                                                                :tag tag}]})))))]
-    (when (seq matches) (clj->js matches))))
+                             (conj acc {"$type" "app.bsky.richtext.facet"
+                                        :index {:byteStart start-byte :byteEnd end-byte}
+                                        :features [{"$type" "app.bsky.richtext.facet#tag"
+                                                    :tag tag}]})))))]
+    (when (seq matches) matches)))
 
 (defn- load-and-upload-images! [runtime config session images alts]
   (if (seq images)
@@ -357,12 +250,12 @@
                  (.then (fn [source]
                           (bluesky-upload-blob! session (:buffer source) (:mime-type source))))
                  (.then (fn [blob-result]
-                          (let [blob (or (aget blob-result "blob") blob-result)
+                          (let [blob (or (:blob blob-result) blob-result)
                                 alt (or (nth alts idx nil) "")]
-                            #js {:alt alt :image blob})))))
+                            {:alt alt :image blob})))))
            images)))
         (.then (fn [uploaded]
-                 #js {"$type" "app.bsky.embed.images" :images uploaded})))
+                 {"$type" "app.bsky.embed.images" :images (vec (array-seq uploaded))})))
     (js/Promise.resolve nil)))
 
 (defn- resolve-reply-refs! [reply-to-uri]
@@ -370,8 +263,8 @@
     (js/Promise.resolve nil)
     (-> (bluesky-resolve-post! reply-to-uri)
         (.then (fn [parent]
-                 #js {:parent #js {:uri (:uri parent) :cid (:cid parent)}
-                      :root #js {:uri (:uri parent) :cid (:cid parent)}})))))
+                 {:parent {:uri (:uri parent) :cid (:cid parent)}
+                  :root {:uri (:uri parent) :cid (:cid parent)}})))))
 
 (defn- bluesky-publish! [runtime config text images image-alts reply-to]
   (-> (bluesky-create-session! runtime)
@@ -380,18 +273,18 @@
                                      (resolve-reply-refs! reply-to)])
                    (.then (fn [[embed reply-refs]]
                             (let [facets (build-hashtag-facets text)
-                                  record #js {"$type" "app.bsky.feed.post"
-                                              :text text
-                                              :createdAt (.toISOString (js/Date.))}]
-                              (when facets (aset record "facets" facets))
-                              (when embed (aset record "embed" embed))
-                              (when reply-refs (aset record "reply" reply-refs))
+                                  record (cond-> {"$type" "app.bsky.feed.post"
+                                                  :text text
+                                                  :createdAt (.toISOString (js/Date.))}
+                                           facets (assoc :facets facets)
+                                           embed (assoc :embed embed)
+                                           reply-refs (assoc :reply reply-refs))]
                               (-> (bluesky-create-record! session "app.bsky.feed.post" record)
                                   (.then (fn [result]
-                                           (let [uri (or (aget result "uri") "")]
+                                           (let [uri (or (:uri result) "")]
                                              {:uri uri
-                                              :cid (or (aget result "cid") "")
-                                              :url (or (bluesky-post-url (aget session "handle") uri) "")}))))))))))))
+                                              :cid (or (:cid result) "")
+                                              :url (or (bluesky-post-url (:handle session) uri) "")}))))))))))))
 
 (defn publish-execute [runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
@@ -471,9 +364,9 @@
                    (.then (fn [post]
                             (bluesky-create-record!
                              session "app.bsky.feed.repost"
-                             #js {"$type" "app.bsky.feed.repost"
-                                  :subject #js {:uri (:uri post) :cid (:cid post)}
-                                  :createdAt (.toISOString (js/Date.))}))))))))
+                             {"$type" "app.bsky.feed.repost"
+                              :subject {:uri (:uri post) :cid (:cid post)}
+                              :createdAt (.toISOString (js/Date.))}))))))))
 
 (defn- bluesky-like! [runtime uri]
   (-> (bluesky-create-session! runtime)
@@ -482,9 +375,9 @@
                    (.then (fn [post]
                             (bluesky-create-record!
                              session "app.bsky.feed.like"
-                             #js {"$type" "app.bsky.feed.like"
-                                  :subject #js {:uri (:uri post) :cid (:cid post)}
-                                  :createdAt (.toISOString (js/Date.))}))))))))
+                             {"$type" "app.bsky.feed.like"
+                              :subject {:uri (:uri post) :cid (:cid post)}
+                              :createdAt (.toISOString (js/Date.))}))))))))
 
 (defn- bluesky-unlike! [runtime uri]
   (-> (bluesky-create-session! runtime)
@@ -501,9 +394,9 @@
                    (.then (fn [profile]
                             (bluesky-create-record!
                              session "app.bsky.graph.follow"
-                             #js {"$type" "app.bsky.graph.follow"
-                                  :subject (:did profile)
-                                  :createdAt (.toISOString (js/Date.))}))))))))
+                             {"$type" "app.bsky.graph.follow"
+                              :subject (:did profile)
+                              :createdAt (.toISOString (js/Date.))}))))))))
 
 (defn- bluesky-unfollow! [runtime uri]
   (-> (bluesky-create-session! runtime)
@@ -526,13 +419,13 @@
 ;; -------------------------------------------------------------------------
 
 (defn- format-thread-reply [reply depth]
-  (let [post (aget reply "post")
-        author (when post (aget post "author"))
-        record (when post (aget post "record"))
-        handle (or (when author (aget author "handle")) "")
-        display-name (or (when author (aget author "displayName")) "")
-        text (or (when record (aget record "text")) "")
-        uri (or (when post (aget post "uri")) "")
+  (let [post (:post reply)
+        author (when post (:author post))
+        record (when post (:record post))
+        handle (or (when author (:handle author)) "")
+        display-name (or (when author (:displayName author)) "")
+        text (or (when record (:text record)) "")
+        uri (or (when post (:uri post)) "")
         indent (str/join "" (repeat depth "  "))]
     (str indent "- " (or (not-empty display-name) handle "unknown")
          (when-not (str/blank? handle) (str " (@" handle ")"))
@@ -542,31 +435,23 @@
 (defn- collect-thread-replies [thread-node depth max-depth acc]
   (if (> depth max-depth)
     acc
-    (let [replies (when thread-node (aget thread-node "replies"))
-          reply-vec (if (array? replies) (array-seq replies) [])]
-      (reduce (fn [a reply]
-                (let [new-acc (conj a (format-thread-reply reply depth))]
-                  (collect-thread-replies reply (inc depth) max-depth new-acc)))
-              acc
-              reply-vec))))
+    (reduce (fn [a reply]
+              (let [new-acc (conj a (format-thread-reply reply depth))]
+                (collect-thread-replies reply (inc depth) max-depth new-acc)))
+            acc
+            (or (:replies thread-node) []))))
 
 (defn- bluesky-thread! [uri depth]
-  (-> (bluesky-json-fetch!
-       (query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.feed.getPostThread")
-                  {:uri uri :depth depth})
-       #js {:method "GET"
-            :headers #js {"Accept" "application/json"
-                          "User-Agent" "Knoxx-Agent/1.0"}}
-       "Bluesky thread")
+  (-> (bsky-client/thread! (bluesky-client) nil uri depth)
       (.then (fn [payload]
-               (let [thread (aget payload "thread")
-                     root-post (when thread (aget thread "post"))
-                     root-author (when root-post (aget root-post "author"))
-                     root-record (when root-post (aget root-post "record"))
-                     root-handle (or (when root-author (aget root-author "handle")) "")
-                     root-display (or (when root-author (aget root-author "displayName")) "")
-                     root-text (or (when root-record (aget root-record "text")) "")
-                     root-uri (or (when root-post (aget root-post "uri")) "")
+               (let [thread (:thread payload)
+                     root-post (when thread (:post thread))
+                     root-author (when root-post (:author root-post))
+                     root-record (when root-post (:record root-post))
+                     root-handle (or (when root-author (:handle root-author)) "")
+                     root-display (or (when root-author (:displayName root-author)) "")
+                     root-text (or (when root-record (:text root-record)) "")
+                     root-uri (or (when root-post (:uri root-post)) "")
                      root-line (str "- " (or (not-empty root-display) root-handle "unknown")
                                     (when-not (str/blank? root-handle) (str " (@" root-handle ")"))
                                     ": " (clip-text root-text 200)
@@ -578,109 +463,56 @@
 (defn- bluesky-notifications! [runtime limit]
   (-> (bluesky-create-session! runtime)
       (.then (fn [session]
-               (bluesky-json-fetch!
-                (query-url (str (bluesky-service-base-url) "/xrpc/app.bsky.notification.listNotifications")
-                           {:limit limit})
-                #js {:method "GET"
-                     :headers #js {"Accept" "application/json"
-                                   "User-Agent" "Knoxx-Agent/1.0"
-                                   "Authorization" (str "Bearer " (aget session "accessJwt"))}}
-                "Bluesky notifications")))))
+               (bsky-client/notifications! (bluesky-client) session {:limit limit})))))
 
 (defn- bluesky-followers! [actor limit]
-  (-> (bluesky-json-fetch!
-       (query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.graph.getFollowers")
-                  {:actor actor :limit limit})
-       #js {:method "GET"
-            :headers #js {"Accept" "application/json"
-                          "User-Agent" "Knoxx-Agent/1.0"}}
-       "Bluesky followers")
+  (-> (bsky-client/followers! (bluesky-client) actor limit)
       (.then (fn [payload]
-               (let [followers (if (array? (aget payload "followers"))
-                                 (array-seq (aget payload "followers"))
-                                 [])]
-                 {:actor actor
-                  :results (mapv (fn [f]
-                                   {:handle (or (aget f "handle") "")
-                                    :displayName (or (aget f "displayName") "")
-                                    :did (or (aget f "did") "")})
-                                 followers)})))))
+               {:actor actor
+                :results (mapv (fn [f]
+                                 {:handle (or (:handle f) "")
+                                  :displayName (or (:displayName f) "")
+                                  :did (or (:did f) "")})
+                               (or (:followers payload) []))}))))
 
 (defn- bluesky-follows! [actor limit]
-  (-> (bluesky-json-fetch!
-       (query-url (str (bluesky-public-base-url) "/xrpc/app.bsky.graph.getFollows")
-                  {:actor actor :limit limit})
-       #js {:method "GET"
-            :headers #js {"Accept" "application/json"
-                          "User-Agent" "Knoxx-Agent/1.0"}}
-       "Bluesky follows")
+  (-> (bsky-client/follows! (bluesky-client) actor limit)
       (.then (fn [payload]
-               (let [follows (if (array? (aget payload "follows"))
-                               (array-seq (aget payload "follows"))
-                               [])]
-                 {:actor actor
-                  :results (mapv (fn [f]
-                                   {:handle (or (aget f "handle") "")
-                                    :displayName (or (aget f "displayName") "")
-                                    :did (or (aget f "did") "")})
-                                 follows)})))))
+               {:actor actor
+                :results (mapv (fn [f]
+                                 {:handle (or (:handle f) "")
+                                  :displayName (or (:displayName f) "")
+                                  :did (or (:did f) "")})
+                               (or (:follows payload) []))}))))
 
 ;; -------------------------------------------------------------------------
 ;; Chat / DM
 ;; -------------------------------------------------------------------------
 
-(def ^:private bluesky-chat-base-url "https://api.bsky.chat")
-
-(defn- bluesky-chat-fetch! [session endpoint params method label]
-  (bluesky-json-fetch!
-   (query-url (str bluesky-chat-base-url "/xrpc/" endpoint) params)
-   #js {:method method
-        :headers #js {"Accept" "application/json"
-                      "User-Agent" "Knoxx-Agent/1.0"
-                      "Authorization" (str "Bearer " (aget session "accessJwt"))}}
-   label))
-
 (defn- bluesky-chat-list! [runtime limit]
   (-> (bluesky-create-session! runtime)
       (.then (fn [session]
-               (bluesky-chat-fetch! session "chat.bsky.convo.listConvos" {:limit limit} "GET" "Bluesky chat list")))))
+               (bsky-client/chat-list! (bluesky-client) session {:limit limit})))))
 
 (defn- bluesky-chat-messages! [runtime convo-id limit]
   (-> (bluesky-create-session! runtime)
       (.then (fn [session]
-               (bluesky-chat-fetch! session "chat.bsky.convo.getMessages" {:convoId convo-id :limit limit} "GET" "Bluesky chat messages")))))
+               (bsky-client/chat-read! (bluesky-client) session convo-id {:limit limit})))))
 
 (defn- bluesky-chat-send! [runtime convo-id text reply-to-msg-id]
   (-> (bluesky-create-session! runtime)
       (.then (fn [session]
-               (let [msg #js {"$type" "chat.bsky.convo.defs#messageInput"
-                              :text text}]
-                 (when-not (str/blank? reply-to-msg-id)
-                   (aset msg "replyTo" #js {"$type" "chat.bsky.convo.defs#messageRef"
-                                            :messageId reply-to-msg-id}))
-                 (bluesky-json-fetch!
-                  (str bluesky-chat-base-url "/xrpc/chat.bsky.convo.sendMessage")
-                  #js {:method "POST"
-                       :headers #js {"Content-Type" "application/json"
-                                     "User-Agent" "Knoxx-Agent/1.0"
-                                     "Authorization" (str "Bearer " (aget session "accessJwt"))}
-                       :body (.stringify js/JSON #js {:convoId convo-id :message msg})}
-                  "Bluesky chat send"))))))
+               (let [msg (cond-> {"$type" "chat.bsky.convo.defs#messageInput"
+                                  :text text}
+                           (not (str/blank? reply-to-msg-id))
+                           (assoc :replyTo {"$type" "chat.bsky.convo.defs#messageRef"
+                                            :messageId reply-to-msg-id}))]
+                 (bsky-client/chat-send! (bluesky-client) session convo-id msg))))))
 
 (defn- bluesky-chat-react! [runtime convo-id message-id emoji]
   (-> (bluesky-create-session! runtime)
       (.then (fn [session]
-               (bluesky-json-fetch!
-                (str bluesky-chat-base-url "/xrpc/chat.bsky.convo.addReaction")
-                #js {:method "POST"
-                     :headers #js {"Content-Type" "application/json"
-                                   "User-Agent" "Knoxx-Agent/1.0"
-                                   "Authorization" (str "Bearer " (aget session "accessJwt"))}
-                     :body (.stringify js/JSON
-                                       #js {:convoId convo-id
-                                            :messageId message-id
-                                            :value emoji})}
-                "Bluesky chat react")))))
+               (bsky-client/chat-react! (bluesky-client) session convo-id message-id emoji)))))
 
 ;; -------------------------------------------------------------------------
 ;; Execute functions for new tools
@@ -694,7 +526,7 @@
     (maybe-tool-update! on-update "Reposting on Bluesky…")
     (-> (bluesky-repost! runtime uri)
         (.then (fn [result]
-                 (tool-text-result (str "Reposted Bluesky post\n" (or (aget result "uri") uri))
+                 (tool-text-result (str "Reposted Bluesky post\n" (or (:uri result) uri))
                                    result))))))
 
 (defn like-execute [runtime _config _tool-call-id params a b c]
@@ -705,7 +537,7 @@
     (maybe-tool-update! on-update "Liking Bluesky post…")
     (-> (bluesky-like! runtime uri)
         (.then (fn [result]
-                 (tool-text-result (str "Liked Bluesky post\n" (or (aget result "uri") uri))
+                 (tool-text-result (str "Liked Bluesky post\n" (or (:uri result) uri))
                                    result))))))
 
 (defn unlike-execute [runtime _config _tool-call-id params a b c]
@@ -726,7 +558,7 @@
     (maybe-tool-update! on-update (str "Following " actor " on Bluesky…"))
     (-> (bluesky-follow! runtime actor)
         (.then (fn [result]
-                 (tool-text-result (str "Followed " actor "\n" (or (aget result "uri") ""))
+                 (tool-text-result (str "Followed " actor "\n" (or (:uri result) ""))
                                    result))))))
 
 (defn unfollow-execute [runtime _config _tool-call-id params a b c]
@@ -767,17 +599,15 @@
     (maybe-tool-update! on-update "Reading Bluesky notifications…")
     (-> (bluesky-notifications! runtime limit)
         (.then (fn [payload]
-                 (let [notifications (if (array? (aget payload "notifications"))
-                                       (array-seq (aget payload "notifications"))
-                                       [])
+                 (let [notifications (or (:notifications payload) [])
                        lines (mapv (fn [n]
-                                     (let [author (aget n "author")
-                                           reason (aget n "reason")
-                                           post (aget n "post")
-                                           text (or (some-> post (aget "record") (aget "text")) "")]
+                                     (let [author (:author n)
+                                           reason (:reason n)
+                                           post (:post n)
+                                           text (or (get-in post [:record :text]) "")]
                                        (str "- [" reason "] "
-                                            (or (some-> author (aget "displayName")) "")
-                                            " (@" (or (some-> author (aget "handle")) "") "): "
+                                            (or (:displayName author) "")
+                                            " (@" (or (:handle author) "") "): "
                                             (clip-text text 120))))
                                    notifications)]
                    (tool-text-result (str "Bluesky notifications (" (count notifications) ")\n"
@@ -814,18 +644,14 @@
     (maybe-tool-update! on-update "Listing Bluesky conversations…")
     (-> (bluesky-chat-list! runtime limit)
         (.then (fn [payload]
-                 (let [convos (if (array? (aget payload "convos"))
-                                (array-seq (aget payload "convos"))
-                                [])
+                 (let [convos (or (:convos payload) [])
                        lines (mapv (fn [convo]
-                                     (let [members (if (array? (aget convo "members"))
-                                                     (array-seq (aget convo "members"))
-                                                     [])
-                                           names (str/join ", " (map #(or (aget % "displayName") (aget % "handle") "") members))
-                                           last-msg (aget convo "lastMessage")]
-                                       (str "- " (aget convo "id") ": " names
+                                     (let [members (or (:members convo) [])
+                                           names (str/join ", " (map #(or (:displayName %) (:handle %) "") members))
+                                           last-msg (:lastMessage convo)]
+                                       (str "- " (:id convo) ": " names
                                             (when last-msg
-                                              (str " — " (clip-text (or (aget last-msg "text") "") 80))))))
+                                              (str " — " (clip-text (or (:text last-msg) "") 80))))))
                                    convos)]
                    (tool-text-result (str "Bluesky conversations (" (count convos) ")\n"
                                           (str/join "\n" lines))
@@ -855,16 +681,14 @@
     (maybe-tool-update! on-update (str "Reading Bluesky DMs in " convo-id "…"))
     (-> (bluesky-chat-messages! runtime convo-id limit)
         (.then (fn [payload]
-                 (let [messages (if (array? (aget payload "messages"))
-                                  (array-seq (aget payload "messages"))
-                                  [])
+                 (let [messages (or (:messages payload) [])
                        lines (mapv (fn [msg]
-                                     (let [sender (aget msg "sender")
-                                           text (or (aget msg "text") "")
-                                           msg-id (or (aget msg "id") "")]
+                                     (let [sender (:sender msg)
+                                           text (or (:text msg) "")
+                                           msg-id (or (:id msg) "")]
                                        (str "- [" msg-id "] "
-                                            (or (some-> sender (aget "displayName")) "")
-                                            " (@" (or (some-> sender (aget "handle")) "") "): "
+                                            (or (:displayName sender) "")
+                                            " (@" (or (:handle sender) "") "): "
                                             (clip-text text 200))))
                                    messages)]
                    (tool-text-result (str "Bluesky DMs (" (count messages) ")\n"

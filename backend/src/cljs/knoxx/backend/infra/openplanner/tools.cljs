@@ -4,6 +4,7 @@
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
             [knoxx.backend.infra.document-state :refer [active-agent-profile normalize-relative-path]]
+            [knoxx.backend.infra.clients.proxx :as proxx-client]
             [knoxx.backend.infra.http :as backend-http :refer [http-error]]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
             [knoxx.backend.domain.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
@@ -146,23 +147,19 @@
         query (or (aget params "query") "")
         num-results (or (aget params "numResults") 8)
         search-context-size (aget params "searchContextSize")
-        allowed-domains (or (aget params "allowedDomains") #js [])
+        allowed-domains (or (aget params "allowedDomains") [])
         model (aget params "model")]
     (maybe-tool-update! on-update "Searching the live web through Proxx…")
-    (-> (backend-http/fetch-json (str (:proxx-base-url config) "/api/tools/websearch")
-                                 #js {:method "POST"
-                                      :headers (backend-http/bearer-headers (:proxx-auth-token config))
-                                      :body (.stringify js/JSON #js {:query query
-                                                                     :numResults num-results
-                                                                     :searchContextSize search-context-size
-                                                                     :allowedDomains allowed-domains
-                                                                     :model model})})
+    (-> (proxx-client/websearch! (proxx-client/client config)
+                                 {:query query
+                                  :numResults num-results
+                                  :searchContextSize search-context-size
+                                  :allowedDomains allowed-domains
+                                  :model model})
         (.then (fn [resp]
-                 (if (aget resp "ok")
-                   (let [result (js->clj (aget resp "body") :keywordize-keys true)]
-                     (tool-text-result (websearch-result-text result) result))
-                   (throw (js/Error. (str "websearch failed: "
-                                          (pr-str (js->clj (aget resp "body") :keywordize-keys true)))))))))))
+                 (if (:ok resp)
+                   (tool-text-result (websearch-result-text (:body resp)) (:body resp))
+                   (throw (js/Error. (str "websearch failed: " (pr-str (:body resp)))))))))))
 
 (defn web-read-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))

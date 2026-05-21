@@ -2,8 +2,8 @@
   "Discord I/O helpers. Pure API wrappers consumed by trigger-runner,
    pipeline-runner, and agent tools. No scheduling or job logic here."
   (:require [clojure.string :as str]
+            [knoxx.backend.domain.discord.rest-client :as discord-rest]
             [knoxx.backend.infra.agent.runner :as agents-runner]
-            [knoxx.backend.infra.http :as http]
             [knoxx.backend.infra.config :as runtime-config]))
 
 (defn- discord-token
@@ -11,32 +11,20 @@
   (or (some-> (knoxx.backend.infra.config/cfg) :discord-bot-token)
       (throw (js/Error. "Discord bot token not configured"))))
 
-(defn- discord-headers
-  [token]
-  #js {"Authorization" (str "Bot " token)
-       "Content-Type" "application/json"})
-
-(def ^:private discord-timeout-ms 15000)
-
-(defn- fetch-json!
-  [url options]
-  (-> (http/fetch-with-timeout url options discord-timeout-ms)
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.json resp)
-                 (-> (.text resp)
-                     (.then (fn [text]
-                              (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))))
+(defn- discord-client
+  []
+  (discord-rest/client (discord-token)))
 
 (defn- map-message
   [msg]
-  {:id (aget msg "id")
-   :channelId (or (aget msg "channel_id") "")
-   :content (or (aget msg "content") "")
-   :authorId (or (aget msg "author" "id") "")
-   :authorUsername (or (aget msg "author" "username") "unknown")
-   :authorIsBot (boolean (aget msg "author" "bot"))
-   :timestamp (or (aget msg "timestamp") "")})
+  (let [author (or (:author msg) {})]
+    {:id (:id msg)
+     :channelId (or (:channel_id msg) "")
+     :content (or (:content msg) "")
+     :authorId (or (:id author) "")
+     :authorUsername (or (:username author) "unknown")
+     :authorIsBot (boolean (:bot author))
+     :timestamp (or (:timestamp msg) "")}))
 
 (defn- sort-newest-first
   [messages]
@@ -46,17 +34,12 @@
   "Fetch up to `limit` messages from `channel-id` (max 100).
    Returns Promise<[{:id :channelId :content :authorId :authorUsername :authorIsBot :timestamp}]>."
   [channel-id & [limit]]
-  (let [token (discord-token)]
-    (-> (fetch-json!
-         (str "https://discord.com/api/v10/channels/" channel-id "/messages?limit="
-              (max 1 (min 100 (or limit 25))))
-         #js {:method "GET"
-              :headers (discord-headers token)})
-        (.then (fn [payload]
-                 (->> (if (array? payload) (array-seq payload) [])
-                      (map map-message)
-                      sort-newest-first
-                      vec))))))
+  (-> (discord-rest/channel-messages! (discord-client) channel-id {:limit (max 1 (min 100 (or limit 25)))})
+      (.then (fn [payload]
+               (->> (or payload [])
+                    (map map-message)
+                    sort-newest-first
+                    vec)))))
 
 (defn search-channel!
   "Return messages in `channel-id` whose content contains `query`
@@ -74,32 +57,26 @@
 (defn list-guilds!
   "List guilds the bot is a member of."
   []
-  (let [token (discord-token)]
-    (-> (fetch-json! "https://discord.com/api/v10/users/@me/guilds"
-                     #js {:method "GET"
-                          :headers (discord-headers token)})
-        (.then (fn [payload]
-                 (->> (if (array? payload) (array-seq payload) [])
-                      (mapv (fn [guild]
-                              {:id (aget guild "id")
-                               :name (aget guild "name")}))))))))
+  (-> (discord-rest/current-user-guilds! (discord-client))
+      (.then (fn [payload]
+               (->> (or payload [])
+                    (mapv (fn [guild]
+                            {:id (:id guild)
+                             :name (:name guild)})))))))
 
 (defn list-channels!
   "List channels in `guild-id` (types 0, 5, 11, 12 only)."
   [guild-id]
-  (let [token (discord-token)]
-    (-> (fetch-json! (str "https://discord.com/api/v10/guilds/" guild-id "/channels")
-                     #js {:method "GET"
-                          :headers (discord-headers token)})
-        (.then (fn [payload]
-                 (->> (if (array? payload) (array-seq payload) [])
-                      (filter (fn [channel]
-                                (contains? #{0 5 11 12} (aget channel "type"))))
-                      (mapv (fn [channel]
-                              {:id (aget channel "id")
-                               :guildId guild-id
-                               :name (or (aget channel "name") "")
-                               :type (aget channel "type")}))))))))
+  (-> (discord-rest/guild-channels! (discord-client) guild-id)
+      (.then (fn [payload]
+               (->> (or payload [])
+                    (filter (fn [channel]
+                              (contains? #{0 5 11 12} (:type channel))))
+                    (mapv (fn [channel]
+                            {:id (:id channel)
+                             :guildId guild-id
+                             :name (or (:name channel) "")
+                             :type (:type channel)})))))))
 
 (def ^:private default-discord-tool-policies
   [{:toolId "discord.read" :effect "allow"}

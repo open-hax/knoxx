@@ -61,7 +61,7 @@
 
 (defn- request-query-string
   [req]
-  (let [query (or (aget req "query") #js {})
+  (let [query (or (aget req "query") (js/Object.))
         params (js/URLSearchParams.)]
     (doseq [key (array-seq (.keys js/Object query))]
       (let [value (aget query key)]
@@ -84,9 +84,8 @@
 (defn- send-proxy-error!
   [reply prefix err]
   (when-not (reply-sent? reply)
-    (-> (.code reply 502)
-        (.send #js {:ok false
-                    :error (str prefix ": " (or (aget err "message") (str err)))}))))
+    (backend-http/json-response! reply 502 {:ok false
+                                            :error (str prefix ": " (or (aget err "message") (str err)))})))
 
 (defn- request-body
   [req]
@@ -96,11 +95,12 @@
 
 (defn- proxy-fetch!
   [target-url req reply headers error-prefix]
-  (let [fetch-promise (js/fetch target-url
-                                #js {:method (aget req "method")
-                                     :headers headers
-                                     :body (request-body req)
-                                     :signal (timeout-signal 60000)})]
+  (let [fetch-promise (backend-http/fetch-with-timeout
+                        target-url
+                        {:method (aget req "method")
+                         :headers headers
+                         :body (request-body req)}
+                        60000)]
     (.then fetch-promise
            (fn [resp]
              (let [content-type (json-content-type resp)
@@ -131,93 +131,92 @@
   (.get app "/api/admin/eta-mu-sessions/status"
         (fn [_req reply]
           (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
-                kms-headers #js {"x-knoxx-user-email" "system-admin@open-hax.local"
-                                "x-knoxx-org-slug" "open-hax"}
+                kms-headers {"x-knoxx-user-email" "system-admin@open-hax.local"
+                             "x-knoxx-org-slug" "open-hax"}
                 legacy-p (-> (eta-mu-sessions/get-eta-mu-ingest-status)
                              (.catch (fn [err]
-                                       #js {:ok false :error (.-message err)})))
-                kms-p (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
-                                    #js {:headers kms-headers
-                                         :signal (timeout-signal 15000)})
+                                       {:ok false :error (.-message err)})))
+                kms-p (-> (backend-http/fetch-with-timeout
+                            (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
+                            {:headers kms-headers}
+                            15000)
                           (.then (fn [r]
-                                   (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
-                          (.catch (fn [_] #js []))
+                                   (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
+                          (.catch (fn [_] (js/Array.)))
                           (.then
                            (fn [sources]
-                             (let [sources (if (array? sources) sources #js [])
+                             (let [sources (if (array? sources) sources (js/Array.))
                                    eta-mu-source (.find sources (fn [s] (= (aget s "driver_type") "eta-mu-sessions")))]
                                (if-not eta-mu-source
-                                 #js {:ok false :error "eta-mu-sessions source not found" :sources sources}
-                                 (-> (js/fetch (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget eta-mu-source "source_id"))
-                                               #js {:headers kms-headers
-                                                    :signal (timeout-signal 15000)})
+                                 {:ok false :error "eta-mu-sessions source not found" :sources sources}
+                                 (-> (backend-http/fetch-with-timeout
+                                       (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget eta-mu-source "source_id"))
+                                       {:headers kms-headers}
+                                       15000)
                                      (.then (fn [r]
-                                              (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
-                                     (.catch (fn [_] #js []))
+                                              (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
+                                     (.catch (fn [_] (js/Array.)))
                                      (.then (fn [jobs]
-                                              #js {:ok true :source eta-mu-source :jobs jobs}))))))))]
+                                              {:ok true :source eta-mu-source :jobs jobs}))))))))]
             (-> (promise/all-vec [legacy-p kms-p])
                 (.then
                  (fn [[legacy kms]]
-                   (.send reply #js {:ok true
-                                     :legacy legacy
-                                     :kms_ingestion kms
-                                     :time (now-iso)})))
+                   (backend-http/json-response! reply 200 {:ok true
+                                                           :legacy legacy
+                                                           :kms_ingestion kms
+                                                           :time (now-iso)})))
                 (.catch
                  (fn [err]
-                   (.code reply 500)
-                   (.send reply #js {:ok false :error (.-message err)})))))))
+                   (backend-http/json-response! reply 500 {:ok false :error (.-message err)})))))))
 
   ;; GET /api/admin/eta-mu-sessions — list available eta-mu sessions
   (.get app "/api/admin/eta-mu-sessions"
         (fn [req reply]
           (try
-            (let [q (or (aget req "query") #js {})
+            (let [q (or (aget req "query") (js/Object.))
                   limit (min (js/parseInt (or (aget q "limit") "50") 10) 200)
                   offset (js/parseInt (or (aget q "offset") "0") 10)
                   workspace (aget q "workspace")]
               (-> (eta-mu-sessions/list-eta-mu-sessions {:limit limit :offset offset :workspace workspace})
                   (.then (fn [result] (.send reply result)))
                   (.catch (fn [err]
-                            (.code reply 500)
-                            (.send reply #js {:ok false :error (.-message err)})))))
+                            (backend-http/json-response! reply 500 {:ok false :error (.-message err)})))))
             (catch :default err
-              (.code reply 500)
-              (.send reply #js {:ok false :error (str err)})))))
+              (backend-http/json-response! reply 500 {:ok false :error (str err)})))))
 
   ;; POST /api/admin/eta-mu-sessions/ingest — proxy to ingestion service
   (.post app "/api/admin/eta-mu-sessions/ingest"
          (fn [req reply]
            (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
-                 kms-headers #js {"content-type" "application/json"
-                                 "x-knoxx-user-email" "system-admin@open-hax.local"
-                                 "x-knoxx-org-slug" "open-hax"}
-                 body (or (aget req "body") #js {})
+                 kms-headers {"content-type" "application/json"
+                              "x-knoxx-user-email" "system-admin@open-hax.local"
+                              "x-knoxx-org-slug" "open-hax"}
+                 body (or (aget req "body") (js/Object.))
                  force? (boolean (aget body "force"))]
-             (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
-                           #js {:headers kms-headers
-                                :signal (timeout-signal 20000)})
-                 (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
-                 (.catch (fn [_] #js []))
+             (-> (backend-http/fetch-with-timeout
+                   (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
+                   {:headers kms-headers}
+                   20000)
+                 (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
+                 (.catch (fn [_] (js/Array.)))
                  (.then
                   (fn [sources]
-                    (let [sources (if (array? sources) sources #js [])
+                    (let [sources (if (array? sources) sources (js/Array.))
                           eta-mu-source (.find sources (fn [s] (= (aget s "driver_type") "eta-mu-sessions")))]
                       (if-not eta-mu-source
-                        (do (.code reply 404)
-                            (.send reply #js {:ok false :error "eta-mu-sessions source not found in ingestion service"}))
-                        (-> (js/fetch (str kms-base "/api/ingestion/jobs")
-                                      #js {:method "POST"
-                                           :headers kms-headers
-                                           :body (js/JSON.stringify #js {:source_id (aget eta-mu-source "source_id")
-                                                                        :full_scan force?})
-                                           :signal (timeout-signal 20000)})
+                        (backend-http/json-response! reply 404 {:ok false :error "eta-mu-sessions source not found in ingestion service"})
+                        (-> (backend-http/fetch-with-timeout
+                              (str kms-base "/api/ingestion/jobs")
+                              {:method "POST"
+                               :headers kms-headers
+                               :body (js/JSON.stringify (clj->js {:source_id (aget eta-mu-source "source_id")
+                                                                  :full_scan force?}))}
+                              20000)
                             (.then (fn [r] (if (.-ok r) (.json r) (safe-json r))))
                             (.then (fn [job]
-                                     (.send reply #js {:ok true :job job})))
+                                     (backend-http/json-response! reply 200 {:ok true :job job})))
                             (.catch (fn [err]
-                                      (.code reply 500)
-                                      (.send reply #js {:ok false :error (.-message err)}))))))))))))
+                                      (backend-http/json-response! reply 500 {:ok false :error (.-message err)}))))))))))))
 
   ;; ---------------------------------------------------------------------------
   ;; OpenCode Session Ingestion Routes
@@ -227,48 +226,49 @@
   (.get app "/api/admin/opencode-sessions/status"
         (fn [_req reply]
           (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
-                kms-headers #js {"x-knoxx-user-email" "system-admin@open-hax.local"
-                                "x-knoxx-org-slug" "open-hax"}
+                kms-headers {"x-knoxx-user-email" "system-admin@open-hax.local"
+                             "x-knoxx-org-slug" "open-hax"}
                 opencode-p (-> (opencode-sessions/get-opencode-ingest-status)
                                (.catch (fn [err]
-                                         #js {:ok false :error (.-message err)})))
-                kms-p (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
-                                    #js {:headers kms-headers
-                                         :signal (timeout-signal 15000)})
+                                         {:ok false :error (.-message err)})))
+                kms-p (-> (backend-http/fetch-with-timeout
+                            (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
+                            {:headers kms-headers}
+                            15000)
                           (.then (fn [r]
-                                   (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
-                          (.catch (fn [_] #js []))
+                                   (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
+                          (.catch (fn [_] (js/Array.)))
                           (.then
                            (fn [sources]
-                             (let [sources (if (array? sources) sources #js [])
+                             (let [sources (if (array? sources) sources (js/Array.))
                                    opencode-source (.find sources (fn [s] (= (aget s "driver_type") "opencode-sessions")))]
                                (if-not opencode-source
-                                 #js {:ok false :error "opencode-sessions source not found" :sources sources}
-                                 (-> (js/fetch (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget opencode-source "source_id"))
-                                               #js {:headers kms-headers
-                                                    :signal (timeout-signal 15000)})
+                                 {:ok false :error "opencode-sessions source not found" :sources sources}
+                                 (-> (backend-http/fetch-with-timeout
+                                       (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget opencode-source "source_id"))
+                                       {:headers kms-headers}
+                                       15000)
                                      (.then (fn [r]
-                                              (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
-                                     (.catch (fn [_] #js []))
+                                              (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
+                                     (.catch (fn [_] (js/Array.)))
                                      (.then (fn [jobs]
-                                              #js {:ok true :source opencode-source :jobs jobs}))))))))]
+                                              {:ok true :source opencode-source :jobs jobs}))))))))]
             (-> (promise/all-vec [opencode-p kms-p])
                 (.then
                  (fn [[opencode kms]]
-                   (.send reply #js {:ok true
-                                     :opencode opencode
-                                     :kms_ingestion kms
-                                     :time (now-iso)})))
+                   (backend-http/json-response! reply 200 {:ok true
+                                                           :opencode opencode
+                                                           :kms_ingestion kms
+                                                           :time (now-iso)})))
                 (.catch
                  (fn [err]
-                   (.code reply 500)
-                   (.send reply #js {:ok false :error (.-message err)})))))))
+                   (backend-http/json-response! reply 500 {:ok false :error (.-message err)})))))))
 
   ;; GET /api/admin/opencode-sessions — list available OpenCode sessions via server API
   (.get app "/api/admin/opencode-sessions"
         (fn [req reply]
           (try
-            (let [q (or (aget req "query") #js {})
+            (let [q (or (aget req "query") (js/Object.))
                   limit (min (js/parseInt (or (aget q "limit") "50") 10) 200)
                   cursor (aget q "cursor")
                   directory (aget q "directory")
@@ -283,45 +283,43 @@
                                                              :archived archived})
                   (.then (fn [result] (.send reply result)))
                   (.catch (fn [err]
-                            (.code reply 500)
-                            (.send reply #js {:ok false :error (.-message err)})))))
+                            (backend-http/json-response! reply 500 {:ok false :error (.-message err)})))))
             (catch :default err
-              (.code reply 500)
-              (.send reply #js {:ok false :error (str err)})))))
+              (backend-http/json-response! reply 500 {:ok false :error (str err)})))))
 
   ;; POST /api/admin/opencode-sessions/ingest — proxy to ingestion service
   (.post app "/api/admin/opencode-sessions/ingest"
          (fn [req reply]
            (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
-                 kms-headers #js {"content-type" "application/json"
-                                 "x-knoxx-user-email" "system-admin@open-hax.local"
-                                 "x-knoxx-org-slug" "open-hax"}
-                 body (or (aget req "body") #js {})
+                 kms-headers {"content-type" "application/json"
+                              "x-knoxx-user-email" "system-admin@open-hax.local"
+                              "x-knoxx-org-slug" "open-hax"}
+                 body (or (aget req "body") (js/Object.))
                  force? (boolean (aget body "force"))]
-             (-> (js/fetch (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
-                           #js {:headers kms-headers
-                                :signal (timeout-signal 20000)})
-                 (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve #js []))))
-                 (.catch (fn [_] #js []))
+             (-> (backend-http/fetch-with-timeout
+                   (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
+                   {:headers kms-headers}
+                   20000)
+                 (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
+                 (.catch (fn [_] (js/Array.)))
                  (.then
                   (fn [sources]
-                    (let [sources (if (array? sources) sources #js [])
+                    (let [sources (if (array? sources) sources (js/Array.))
                           opencode-source (.find sources (fn [s] (= (aget s "driver_type") "opencode-sessions")))]
                       (if-not opencode-source
-                        (do (.code reply 404)
-                            (.send reply #js {:ok false :error "opencode-sessions source not found in ingestion service"}))
-                        (-> (js/fetch (str kms-base "/api/ingestion/jobs")
-                                      #js {:method "POST"
-                                           :headers kms-headers
-                                           :body (js/JSON.stringify #js {:source_id (aget opencode-source "source_id")
-                                                                        :full_scan force?})
-                                           :signal (timeout-signal 20000)})
+                        (backend-http/json-response! reply 404 {:ok false :error "opencode-sessions source not found in ingestion service"})
+                        (-> (backend-http/fetch-with-timeout
+                              (str kms-base "/api/ingestion/jobs")
+                              {:method "POST"
+                               :headers kms-headers
+                               :body (js/JSON.stringify (clj->js {:source_id (aget opencode-source "source_id")
+                                                                  :full_scan force?}))}
+                              20000)
                             (.then (fn [r] (if (.-ok r) (.json r) (safe-json r))))
                             (.then (fn [job]
-                                     (.send reply #js {:ok true :job job})))
+                                     (backend-http/json-response! reply 200 {:ok true :job job})))
                             (.catch (fn [err]
-                                      (.code reply 500)
-                                      (.send reply #js {:ok false :error (.-message err)}))))))))))))
+                                      (backend-http/json-response! reply 500 {:ok false :error (.-message err)}))))))))))))
 
   ;; ---------------------------------------------------------------------------
   ;; Ingestion Service Proxy
@@ -332,7 +330,7 @@
           (let [kms-base (or (:ingestion-base-url config) "http://localhost:3003")
                 sub-path (aget (aget req "params") "*")
                 target-url (str kms-base "/api/ingestion/" sub-path (request-query-string req))
-                headers (js/Object.assign #js {} (aget req "headers"))]
+                headers (js/Object.assign (js/Object.) (aget req "headers"))]
             (js/Reflect.deleteProperty headers "host")
             (js/Reflect.deleteProperty headers "connection")
             (js/Reflect.deleteProperty headers "content-length")
@@ -360,9 +358,9 @@
                 key (or (:openplanner-api-key config) "change-me")
                 sub-path (aget (aget req "params") "*")
                 target-url (str base "/" sub-path (request-query-string req))
-                fwd-headers #js {"content-type" "application/json"
-                                 "authorization" (str "Bearer " key)
-                                 "x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
-                                 "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}]
+                fwd-headers {"content-type" "application/json"
+                             "authorization" (str "Bearer " key)
+                             "x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
+                             "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}]
             (proxy-fetch! target-url req reply fwd-headers "OpenPlanner proxy error"))))
   )

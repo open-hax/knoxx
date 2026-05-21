@@ -54,7 +54,7 @@
               (with-request-context! runtime request reply
                 (fn [ctx]
                   (ensure-permission! ctx "platform.org.create")
-                  (policy-db-promise runtime reply 201 (.createOrg db (or (aget request "body") #js {})))))
+                  (policy-db-promise runtime reply 201 (.createOrg db (or (aget request "body") (js/Object.))))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"}))))
 
   (users-admin/register-user-admin-routes! app runtime deps)
@@ -73,8 +73,8 @@
           (fn [request reply]
             (if-let [db (policy-db runtime)]
               (let [org-id (or (aget request "params" "orgId") "")
-                    body (or (aget request "body") #js {})
-                    payload (.assign js/Object #js {} body (clj->js {:orgId org-id}))]
+                    body (or (aget request "body") (js/Object.))
+                    payload (.assign js/Object (js/Object.) body (clj->js {:orgId org-id}))]
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (ensure-org-scope! ctx org-id "org.roles.create")
@@ -94,7 +94,7 @@
                                                       (when-not role
                                                         (throw (http-error 404 "role_not_found" "role not found")))
                                                       (ensure-org-scope! ctx (:orgId role) "org.tool_policy.update")
-                                                      (.setRoleToolPolicies db role-id (or (aget request "body") #js {})))))))))
+                                                      (.setRoleToolPolicies db role-id (or (aget request "body") (js/Object.))))))))))
               (json-response! reply 503 {:detail "Knoxx policy database is not configured"})))))
 
   (route! app "GET" "/api/admin/orgs/:orgId/data-lakes"
@@ -111,8 +111,8 @@
           (fn [request reply]
             (if-let [db (policy-db runtime)]
               (let [org-id (or (aget request "params" "orgId") "")
-                    body (or (aget request "body") #js {})
-                    payload (.assign js/Object #js {} body (clj->js {:orgId org-id}))]
+                    body (or (aget request "body") (js/Object.))
+                    payload (.assign js/Object (js/Object.) body (clj->js {:orgId org-id}))]
                 (with-request-context! runtime request reply
                   (fn [ctx]
                     (ensure-org-scope! ctx org-id "org.datalakes.create")

@@ -103,16 +103,16 @@
   (if-not @db-session-store
     (js/Promise.resolve nil)
     (let [db @db-session-store
-          payload #js {:token       token
-                      :userId      (or (aget session-data "userId") "")
-                      :membershipId (or (aget session-data "membershipId") "")
-                      :orgId       (or (aget session-data "orgId") "")
-                      :email       (or (aget session-data "email") "")
-                      :displayName (or (aget session-data "displayName") "")
-                      :authProvider (or (aget session-data "authProvider") "github")
-                      :externalSubject (or (aget session-data "externalId") nil)
-                      :ipAddress   (or (aget session-data "ipAddress") nil)
-                      :userAgent   (or (aget session-data "userAgent") nil)}]
+          payload (clj->js {:token       token
+                            :userId      (or (aget session-data "userId") "")
+                            :membershipId (or (aget session-data "membershipId") "")
+                            :orgId       (or (aget session-data "orgId") "")
+                            :email       (or (aget session-data "email") "")
+                            :displayName (or (aget session-data "displayName") "")
+                            :authProvider (or (aget session-data "authProvider") "github")
+                            :externalSubject (or (aget session-data "externalId") nil)
+                            :ipAddress   (or (aget session-data "ipAddress") nil)
+                            :userAgent   (or (aget session-data "userAgent") nil)})]
       (.catch (.createSession db payload) (fn [_] nil)))))
 
 (defn- db-load-session
@@ -123,17 +123,17 @@
         (.then (fn [result]
                  (when (and result (aget result "session"))
                    (let [s (aget result "session")]
-                     #js {:id            (aget s "id")
-                          :userId        (aget s "userId")
-                          :membershipId  (aget s "membershipId")
-                          :email         (aget s "email")
-                          :orgSlug       nil ;; resolved from membership if needed
-                          :orgId         (aget s "orgId")
-                          :displayName   (aget s "displayName")
-                          :githubLogin   nil
-                          :githubId      nil
-                          :authProvider  (aget s "authProvider")
-                          :createdAt     (aget s "createdAt")}))))
+                     (clj->js {:id            (aget s "id")
+                               :userId        (aget s "userId")
+                               :membershipId  (aget s "membershipId")
+                               :email         (aget s "email")
+                               :orgSlug       nil
+                               :orgId         (aget s "orgId")
+                               :displayName   (aget s "displayName")
+                               :githubLogin   nil
+                               :githubId      nil
+                               :authProvider  (aget s "authProvider")
+                               :createdAt     (aget s "createdAt")})))))
         (.catch (fn [_] nil)))))
 
 (defn- get-redis
@@ -207,9 +207,9 @@
                           :headers {:Content-Type "application/json"
                                     :Accept "application/json"}
                           :body (js/JSON.stringify
-                                  #js {:client_id client-id
-                                       :client_secret client-secret
-                                       :code code})}))
+                                  (clj->js {:client_id client-id
+                                            :client_secret client-secret
+                                            :code code}))}))
       (.then
        (fn [resp]
          (if (not (.-ok resp))
@@ -331,7 +331,7 @@
                                   vec)]
     (cond
       (= normalized-email bootstrap-admin-email)
-      #js ["system_admin"]
+      (clj->js ["system_admin"])
 
       (contains? allowlisted-emails normalized-email)
       (clj->js (if (seq allowlist-role-slugs)
@@ -339,7 +339,7 @@
                  ["knowledge_worker"]))
 
       :else
-      #js ["knowledge_worker"])))
+      (clj->js ["knowledge_worker"]))))
 
 (defn- bootstrap-admin-email?
   [email]
@@ -370,25 +370,25 @@
              (bootstrap-admin-email? email)
              (not (has-system-admin-role? ctx)))
       (-> (.setMembershipRoles policyDb membership-id
-                               #js {:orgId org-id
-                                    :roleSlugs #js ["system_admin"]})
+                               (clj->js {:orgId org-id
+                                         :roleSlugs ["system_admin"]}))
           (.then (fn [_]
-                   (.resolveRequestContext policyDb #js {"x-knoxx-membership-id" membership-id}))))
+                   (.resolveRequestContext policyDb (clj->js {"x-knoxx-membership-id" membership-id})))))
       (js/Promise.resolve ctx))))
 
 (defn- ensure-email-membership!
   [policyDb {:keys [email display-name auth-provider external-subject]}]
   (let [normalized-email (some-> email str str/trim not-empty)
         headers-like (when normalized-email
-                       #js {"x-knoxx-user-email" normalized-email})
+                       (clj->js {"x-knoxx-user-email" normalized-email}))
         sync-user-from-actor-contract (aget policyDb "syncUserFromActorContract")]
     (if-not normalized-email
       (js/Promise.reject (http-error 401 "Not authenticated" "no_email"))
       (-> (if sync-user-from-actor-contract
-            (sync-user-from-actor-contract #js {:email normalized-email
-                                                :displayName (or display-name normalized-email)
-                                                :authProvider (or auth-provider "github")
-                                                :externalSubject external-subject})
+            (sync-user-from-actor-contract (clj->js {:email normalized-email
+                                                     :displayName (or display-name normalized-email)
+                                                     :authProvider (or auth-provider "github")
+                                                     :externalSubject external-subject}))
             (js/Promise.resolve nil))
           (.then (fn [_]
                    (.resolveRequestContext policyDb headers-like)))))))

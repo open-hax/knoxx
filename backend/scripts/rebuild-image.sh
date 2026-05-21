@@ -1,66 +1,94 @@
 #!/usr/bin/env bash
-# Knoxx Backend Image Rebuild Script
+# Build the current Knoxx backend runtime image.
 #
-# This script rebuilds the knoxx-knoxx-backend Docker image.
-# Run from the workspace root: ./orgs/open-hax/openplanner/packages/knoxx/backend/scripts/rebuild-image.sh
+# Current backend runtime:
+#   shadow-cljs release server -> dist/server.js
+#   Docker CMD                 -> node dist/server.js
 #
-# Prerequisites:
-#   - Java 11+ installed (for shadow-cljs)
-#   - Docker installed
-#   - pnpm installed
-#
-# What this script does:
-#   1. Compiles CLJS to dist/app.js using shadow-cljs
-#   2. Builds the Docker image knoxx-knoxx-backend:latest
-#   3. Restarts the knoxx-backend container via docker compose
-#
-# Architecture:
-#   - CLJS source: src/cljs/knoxx/backend/*.cljs
-#   - JS bootstrap: src/server.mjs (imports from dist/app.js)
-#   - Compiled output: dist/app.js
-#   - Container mounts dist/ for hot-reload during dev
-
+# Optional compose restart:
+#   KNOXX_BACKEND_COMPOSE_FILE=/path/to/compose.yml \
+#   KNOXX_BACKEND_COMPOSE_SERVICE=knoxx-backend \
+#     backend/scripts/rebuild-image.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
-WORKSPACE_ROOT="$(cd "$BACKEND_DIR/../../../.." && pwd)"
-COMPOSE_DIR="$WORKSPACE_ROOT/services/openplanner"
+IMAGE="${KNOXX_BACKEND_IMAGE:-knoxx-backend:latest}"
+COMPOSE_FILE="${KNOXX_BACKEND_COMPOSE_FILE:-}"
+COMPOSE_SERVICE="${KNOXX_BACKEND_COMPOSE_SERVICE:-knoxx-backend}"
+SKIP_COMPILE="${KNOXX_BACKEND_SKIP_COMPILE:-0}"
+SKIP_DOCKER="${KNOXX_BACKEND_SKIP_DOCKER:-0}"
 
-echo "=== Knoxx Backend Rebuild ==="
-echo "Backend dir: $BACKEND_DIR"
-echo "Workspace root: $WORKSPACE_ROOT"
-echo "Compose dir: $COMPOSE_DIR"
-echo
-
-# Step 1: Compile CLJS
-echo ">>> Step 1: Compiling CLJS..."
 cd "$BACKEND_DIR"
-if command -v shadow-cljs &> /dev/null; then
-    shadow-cljs release app
-else
-    npx shadow-cljs release app
+
+echo "=== Knoxx backend image helper ==="
+echo "Backend dir: $BACKEND_DIR"
+echo "Image:       $IMAGE"
+echo
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  corepack enable >/dev/null 2>&1 || true
+  corepack prepare pnpm@10.14.0 --activate >/dev/null 2>&1 || true
 fi
-echo "CLJS compilation complete."
-echo
 
-# Step 2: Build Docker image
-echo ">>> Step 2: Building Docker image..."
-docker build -t knoxx-knoxx-backend:latest .
-echo "Docker image built."
-echo
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "pnpm is required" >&2
+  exit 1
+fi
 
-# Step 3: Restart container
-echo ">>> Step 3: Restarting knoxx-backend container..."
-cd "$COMPOSE_DIR"
-docker compose up -d knoxx-backend
-echo "Container restarted."
-echo
+if [[ "$SKIP_COMPILE" != "1" ]]; then
+  if ! command -v java >/dev/null 2>&1; then
+    echo "java is required for shadow-cljs builds" >&2
+    exit 1
+  fi
 
-# Step 4: Show logs
-echo ">>> Step 4: Container logs (last 20 lines)..."
-docker compose logs knoxx-backend --tail=20
-echo
+  if [[ ! -d node_modules ]]; then
+    echo ">>> Installing backend dependencies from lockfile"
+    pnpm install --frozen-lockfile
+    echo
+  fi
 
-echo "=== Rebuild complete ==="
-echo "To follow logs: docker compose -f $COMPOSE_DIR/docker-compose.yml logs -f knoxx-backend"
+  echo ">>> Compiling backend (:server)"
+  pnpm run build
+  echo
+else
+  echo ">>> Skipping compile because KNOXX_BACKEND_SKIP_COMPILE=1"
+  echo
+fi
+
+if [[ ! -f dist/server.js ]]; then
+  echo "Expected dist/server.js to exist. Run: pnpm -C backend run build" >&2
+  exit 1
+fi
+
+if [[ "$SKIP_DOCKER" != "1" ]]; then
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "docker is required unless KNOXX_BACKEND_SKIP_DOCKER=1" >&2
+    exit 1
+  fi
+
+  echo ">>> Building Docker image"
+  docker build -t "$IMAGE" .
+  echo
+else
+  echo ">>> Skipping Docker build because KNOXX_BACKEND_SKIP_DOCKER=1"
+  echo
+fi
+
+if [[ -n "$COMPOSE_FILE" ]]; then
+  echo ">>> Restarting compose service"
+  docker compose -f "$COMPOSE_FILE" up -d "$COMPOSE_SERVICE"
+  docker compose -f "$COMPOSE_FILE" logs "$COMPOSE_SERVICE" --tail=20
+else
+  cat <<EOF
+No compose restart requested.
+
+To restart a compose-managed backend, rerun with:
+  KNOXX_BACKEND_COMPOSE_FILE=/path/to/compose.yml \\
+  KNOXX_BACKEND_COMPOSE_SERVICE=$COMPOSE_SERVICE \\
+    $SCRIPT_DIR/rebuild-image.sh
+EOF
+fi
+
+echo
+echo "=== Knoxx backend image helper complete ==="

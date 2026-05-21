@@ -1,35 +1,36 @@
 # Knoxx Backend Dockerfile
-# Builds the CLJS-based Knoxx backend service
+# Builds the current shadow-cljs/Fastify backend runtime.
 #
-# Build: docker build -t knoxx-knoxx-backend:latest .
-# Run:   docker compose -f services/openplanner/docker-compose.yml up -d knoxx-backend
+# Build prerequisite from backend/:
+#   pnpm run build          # writes dist/server.js
 #
-# Prerequisites:
-#   1. CLJS must be compiled first: npx shadow-cljs release app
-#   2. dist/app.js must exist before building this image
+# Build image:
+#   docker build -t knoxx-backend:latest .
+#
+# Runtime entrypoint:
+#   node dist/server.js
 
 FROM node:22-bookworm-slim
 
 ENV NODE_ENV=production
 WORKDIR /app
 
-# Install pnpm
 COPY package.json pnpm-lock.yaml ./
-RUN corepack enable && corepack prepare pnpm@10.14.0 --activate
-RUN pnpm install --prod --no-frozen-lockfile
+RUN corepack enable \
+ && corepack prepare pnpm@10.14.0 --activate \
+ && pnpm install --prod --frozen-lockfile
 
-# Copy compiled CLJS and server bootstrap
+# Compiled by `shadow-cljs release server` before `docker build`.
 COPY dist ./dist
-COPY src/server.mjs ./src/server.mjs
-COPY src/policy-db.mjs ./src/policy-db.mjs
-# .env.example is optional - compose provides environment
-RUN touch .env.example
 
-# Ensure the non-root user can write to runtime directories
-RUN useradd --uid 1000 --create-home --shell /bin/bash agent || true
-RUN mkdir -p /runs/knoxx-agent && chown -R 1000:1000 /runs /app
+# Compose/deployment should normally mount or copy real contract files and
+# workspace roots. Create writable/default directories so the process can still
+# boot far enough to report configuration errors instead of failing on mkdir.
+RUN useradd --uid 1000 --create-home --shell /bin/bash agent || true \
+ && mkdir -p /runs/knoxx-agent /tmp/knoxx-agent /app/contracts /app/workspace \
+ && chown -R 1000:1000 /runs /tmp/knoxx-agent /app
 
 USER 1000
 
 EXPOSE 8000
-CMD ["node", "src/server.mjs"]
+CMD ["node", "dist/server.js"]

@@ -15,7 +15,7 @@
 
 (defn- body-map
   [request]
-  (js->clj (or (aget request "body") #js {}) :keywordize-keys true))
+  (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true))
 
 (defn- statuses-from-body
   [body]
