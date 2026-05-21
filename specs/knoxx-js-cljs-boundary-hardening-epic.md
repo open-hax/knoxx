@@ -82,7 +82,7 @@ A refreshed inventory should be the first implementation step because adjacent d
 | `knoxx-js-boundary-tool-runtime-adapter.md` | 5 | done | Tool definition construction, tool params normalization, update callback payloads, custom tool sanitation. |
 | `knoxx-js-boundary-discord-adapter.md` | 8 | done | Discord REST, multipart upload, tool params, guild/channel/message result normalization. |
 | `knoxx-js-boundary-fastify-media-adapter.md` | 8 | done | Fastify request/reply, query/header/body forwarding, multipart parts, websocket sends, multimodal file route arrays. |
-| `knoxx-js-boundary-stores-memory-codecs.md` | 5 | todo | JSON row codecs and promise array/result normalization in session titles and core memory. |
+| `knoxx-js-boundary-stores-memory-codecs.md` | 5 | done | JSON row codecs and promise array/result normalization in session titles and core memory. |
 
 ## Suggested sequence
 

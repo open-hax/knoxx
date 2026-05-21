@@ -1,7 +1,7 @@
 # Knoxx JS Boundary — Stores and Core Memory Codecs
 
 Date: 2026-05-21
-Status: todo
+Status: done
 Parent epic: `knoxx-js-cljs-boundary-hardening-epic.md`
 Story points: 5
 
@@ -73,5 +73,16 @@ Keep storage behavior unchanged. The migration should only change where JSON par
 
 ```bash
 rg -n "knoxx\.backend\.extern\.(js|json)|xjs/js-array-seq|xjson/parse-object|js/JSON|js->clj|js/Promise\.all|clj->js" backend/src/cljs/knoxx/backend/infra/core_memory.cljs backend/src/cljs/knoxx/backend/infra/stores/session_titles.cljs
+pnpm -C backend boundary:check
 pnpm -C backend exec shadow-cljs compile test
+pnpm -C backend exec shadow-cljs compile server
 ```
+
+Latest verification (2026-05-21):
+
+- Target grep returned no matches for generic JSON/JS boundary forms in `infra/core_memory.cljs` and `infra/stores/session_titles.cljs`.
+- `infra/openplanner/memory.cljs` also no longer imports `knoxx.backend.extern.js` or performs local `Promise.all`/`js->clj` result aggregation for the touched flows.
+- `pnpm -C backend boundary:check` passed with 2 remaining allow-listed non-extern generic extern import files.
+- `pnpm -C backend exec shadow-cljs compile test` passed: 358 tests, 954 assertions, 0 failures, 0 errors.
+- `pnpm -C backend exec shadow-cljs compile server` exited 0 with existing warnings.
+- `git diff --check` passed for touched stores/memory codec files, tests, specs, inventory, and allow-list.
