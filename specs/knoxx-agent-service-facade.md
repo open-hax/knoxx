@@ -1,7 +1,7 @@
 # Knoxx Agent Service Facade
 
 Date: 2026-05-21
-Status: todo
+Status: done
 Parent epic: `knoxx-agent-service-protocol-split-epic.md`
 Source report: `docs/notes/architecture/agent-service-protocol-split.md`
 Story points: 5

@@ -1,7 +1,8 @@
 (ns knoxx.backend.infra.routes.memory
   (:require-macros [knoxx.backend.macros :refer [defroute]])
   (:require [clojure.string :as str]
-            [knoxx.backend.infra.http :refer [json-response! error-response! http-error openplanner-enabled? openplanner-request!]]
+            [knoxx.backend.infra.http :refer [json-response! error-response! http-error]]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows!
                                                session-visible?
                                                session-matches-page-actor-filter?
@@ -51,6 +52,10 @@
   [limit offset]
   (min max-session-list-upstream-page-size
        (max 10 (+ (max 0 offset) (max 1 limit) 1))))
+
+(defn- openplanner-ready?
+  [config]
+  (openplanner-client/enabled? (openplanner-client/client config)))
 
 (def memory-sessions-cache-ttl-seconds 10)
 (def ^:private memory-sessions-cache-ttl-ms (* memory-sessions-cache-ttl-seconds 1000))
@@ -235,12 +240,12 @@
                       vec))))))
 
 (defn fetch-authorized-session-pages!
-  [config ctx actor-id exclude-actor-ids contract-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
-  (-> (openplanner-request! config "GET"
-                            (str "/v1/sessions?project="
-                                 (js/encodeURIComponent (:session-project-name config))
-                                 "&limit=" upstream-page-size
-                                 "&offset=" upstream-offset))
+  [config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
+  (-> (openplanner-client/sessions! (or (:openplanner-client config)
+                                        (openplanner-client/client config))
+                                    {:project (:session-project-name config)
+                                     :limit upstream-page-size
+                                     :offset upstream-offset})
       (.then
        (fn [body]
          (let [page-rows (vec (or (:rows body) []))
@@ -266,7 +271,7 @@
                                                     :has_more true})
 
                                (and upstream-has-more (pos? fetched-count))
-                               (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size next-offset next-acc needed-count)
+                               (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size next-offset next-acc needed-count)
 
                                :else
                                (js/Promise.resolve {:rows next-acc
@@ -453,13 +458,11 @@
                                    (inactive-row titled-row)))))))
           (.catch (fn [_]
                     (inactive-row titled-row)))))))
-(defroute memory-sessions-route! [openplanner-enabled?
-                                  openplanner-request!
-                                  authorized-session-ids!
+(defroute memory-sessions-route! [authorized-session-ids!
                                   fetch-openplanner-session-rows!
                                   session-matches-page-actor-filter?]
   "GET" "/api/memory/sessions"
-  (if-not (openplanner-enabled? config)
+  (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (let [limit-raw (aget request "query" "limit")
           limit (session-list-limit limit-raw)
@@ -491,7 +494,7 @@
            redis-client
            cache-key
            (fn []
-             (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id openplanner-request! authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)))
+             (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)))
           (.then
            (fn [{:keys [value cache]}]
              (let [{:keys [rows has_more]} value
@@ -562,7 +565,7 @@
 
 (defroute memory-session-titles-status-route! []
   "GET" "/api/memory/session-titles/status"
-  (if-not (openplanner-enabled? config)
+  (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (json-response! reply 200 {:ok true
                                :status @session-title-backfill*
@@ -570,7 +573,7 @@
 
 (defroute memory-backfill-titles-route! [fetch-openplanner-session-rows!]
   "POST" "/api/memory/sessions/backfill-titles"
-  (if-not (openplanner-enabled? config)
+  (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (let [body (or (aget request "body") (js/Object.))
           limit (or (parse-positive-int (aget body "limit"))
@@ -587,7 +590,7 @@
 
 (defroute memory-import-titles-route! []
   "POST" "/api/memory/sessions/import-titles"
-  (if-not (openplanner-enabled? config)
+  (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (let [body (js->clj (or (aget request "body") (js/Object.)))
           titles (or (get body "titles") {})
@@ -615,7 +618,7 @@
 
 (defroute memory-session-by-id-route! [fetch-openplanner-session-rows!]
   "GET" "/api/memory/sessions/:sessionId"
-  (if-not (openplanner-enabled? config)
+  (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (let [session-id (or (aget request "params" "sessionId") "")]
       (if (str/blank? session-id)
@@ -633,7 +636,7 @@
 (defroute memory-search-route! [fetch-openplanner-session-rows!
                                 session-matches-page-actor-filter?]
   "POST" "/api/memory/search"
-  (if-not (openplanner-enabled? config)
+  (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (let [body (or (aget request "body") (js/Object.))
           query (or (aget body "query") "")

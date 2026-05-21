@@ -7,7 +7,6 @@
    SDK boundary and should get their own gateway adapter methods."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.fetch :as xfetch]
-            [knoxx.backend.extern.json :as xjson]
             [promesa.core :as p]))
 
 (defprotocol IDiscordRestClient
@@ -93,7 +92,7 @@
                    (str discord-base-url "/users/@me/channels")
                    {:method "POST"
                     :headers (bot-headers bot-token)
-                    :body (xjson/stringify {:recipient_id user-id})}
+                    :json {:recipient_id user-id}}
                    (or timeout-ms 15000)
                    "Open DM channel"))
   (create-channel-message! [_ channel-id payload]
@@ -102,7 +101,7 @@
                    (str discord-base-url "/channels/" channel-id "/messages")
                    {:method "POST"
                     :headers (bot-headers bot-token)
-                    :body (xjson/stringify payload)}
+                    :json payload}
                    (or timeout-ms 15000)
                    "Create message"))
   (create-channel-message-form! [_ channel-id form-data]
@@ -130,7 +129,7 @@
                      url
                      {:method "POST"
                       :headers (bot-headers bot-token)
-                      :body (xjson/stringify payload)}
+                      :json payload}
                      (or timeout-ms 15000)
                      "Create thread")))
   (fetch-attachment! [_ url]

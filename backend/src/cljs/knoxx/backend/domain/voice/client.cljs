@@ -6,7 +6,6 @@
    access via `extern.fetch`."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.fetch :as xfetch]
-            [knoxx.backend.extern.json :as xjson]
             [promesa.core :as p]))
 
 (defprotocol ITtsClient
@@ -92,7 +91,7 @@
                                (let [t (str/trim line)]
                                  (when (str/starts-with? t "data:")
                                    (str/trim (subs t 5)))))))
-            parsed-lines (keep xjson/parse-object lines)
+            parsed-lines (keep xfetch/parse-json-object lines)
             segments (keep (fn [j]
                              (let [txt (or (:text j) (:transcription j) "")]
                                (when (seq txt) txt)))
@@ -100,7 +99,7 @@
             final-segment (last parsed-lines)]
         {:text (str/trim (str/join " " segments))
          :final (or (:final final-segment) true)})
-      (or (xjson/parse-object s) {}))))
+      (or (xfetch/parse-json-object s) {}))))
 
 (defn- stt-text-garbage?
   "Detect repetitive/garbage STT output (e.g. NPU KV-cache stuck)."
@@ -124,7 +123,7 @@
                                                  :headers {"Authorization" (str "Bearer " api-key)
                                                            "Content-Type" "application/json"
                                                            "Accept" "audio/mpeg"}
-                                                 :body (xjson/stringify body)}
+                                                 :json body}
                                           :timeout-ms 60000})]
         (if (:ok resp)
           (.from js/Buffer (js/Uint8Array. (:body resp)))
@@ -149,7 +148,7 @@
             (let [raw (:body resp)
                   _ (js/console.log "[voice:stt] raw body prefix:" (.slice (str raw) 0 80))
                   j (parse-stt-json-text raw)
-                  _ (js/console.log "[voice:stt] JSON parsed:" (xjson/stringify j))
+                  _ (js/console.log "[voice:stt] JSON parsed:" (pr-str j))
                   text (or (:text j) (:transcription j) "")]
               (if (stt-text-garbage? text)
                 (do (js/console.warn "[voice:stt] GARBAGE detected, discarding:" (.slice text 0 60))

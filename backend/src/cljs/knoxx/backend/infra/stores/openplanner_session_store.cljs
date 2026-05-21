@@ -8,7 +8,7 @@
             [clojure.string :as str]
             [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run!]]
             [knoxx.backend.infra.openplanner.memory :as op-mem]
-            [knoxx.backend.infra.http :as http]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.time :as time]))
 
 (defn- run->events
@@ -84,16 +84,15 @@
   (put-run! [_ run]
     (assert-run! run "OpenPlannerSessionStore/put-run!")
     (let [events (run->events config run)]
-      (js-await [_ (http/openplanner-request! config "POST" "/v1/events"
-                                               {:events events})]
+      (js-await [_ (openplanner-client/events! (openplanner-client/client config) events)]
         run)))
 
   (get-run [_ run-id]
-    (js-await [result (http/openplanner-request! config "POST" "/v1/search/vector"
-                        {:q run-id
-                         :k 1
-                         :project (:session-project-name config)
-                         :kind "knoxx.run"})]
+    (js-await [result (openplanner-client/vector-search! (openplanner-client/client config)
+                                                          {:q run-id
+                                                           :k 1
+                                                           :project (:session-project-name config)
+                                                           :kind "knoxx.run"})]
       (when-let [hit (first (:hits result))]
         (some-> hit :metadata :run_payload))))
 

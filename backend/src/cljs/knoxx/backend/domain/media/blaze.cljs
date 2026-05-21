@@ -5,6 +5,7 @@
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.media :as media]
+            [knoxx.backend.domain.media.blaze-client :as blaze-client]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs-promises]
@@ -88,21 +89,7 @@
 
 (defn- proxx-base-url
   [config]
-  (str/replace
-   (or (blank->nil (config-value config :proxx-base-url "proxx-base-url" "proxxBaseUrl"))
-       (env-value "PROXX_BASE_URL")
-       "http://proxx:8789")
-   #"/+$" ""))
-
-(defn- generation-url
-  [config modality]
-  (str (proxx-base-url config)
-       (case modality
-         "image" "/v1/images/generations"
-         "video" "/v1/videos/generations"
-         "music" "/v1/music/generations"
-         "tts" "/v1/audio/speech"
-         "/v1/chat/completions")))
+  (blaze-client/proxx-base-url config))
 
 (defn- normalize-modality
   [value]
@@ -353,35 +340,12 @@
 
       :else nil)))
 
-(defn- fetch-json!
-  [url api-key body log-context]
-  (let [start-ms (now-ms)
-        headers #js {"Authorization" (str "Bearer " api-key)
-                     "Content-Type" "application/json"
-                     "Accept" "application/json"}]
-    (when-let [tool-call-id (:tool_call_id log-context)]
-      (aset headers "X-Open-Hax-Tool-Call-Id" tool-call-id))
+(defn- generate-payload!
+  [config body modality log-context]
+  (let [start-ms (now-ms)]
     (log-info! "request-start" (assoc log-context
-                                      :url url
                                       :body (summarize-body body)))
-    (p/let [res (js/fetch url #js {:method "POST"
-                                   :headers headers
-                                   :signal (js/AbortSignal.timeout 1200000)
-                                   :body (.stringify js/JSON (clj->js body))})
-            elapsed (- (now-ms) start-ms)
-            _ (log-info! "response-status" (assoc log-context
-                                                   :http_status (.-status res)
-                                                   :ok (.-ok res)
-                                                   :elapsed_ms elapsed))
-            _ (when-not (.-ok res)
-                (p/let [msg (.text res)]
-                  (log-warn! "http-error" (assoc log-context
-                                                 :http_status (.-status res)
-                                                 :elapsed_ms elapsed
-                                                 :body_preview (.slice (str msg) 0 500)))
-                  (throw (js/Error. (str "Proxx Blaze proxy HTTP " (.-status res) ": " msg)))))
-            payload (.json res)
-            payload-clj (js->clj payload :keywordize-keys true)
+    (p/let [payload-clj (blaze-client/generate! (blaze-client/client config) modality body log-context)
             _ (log-info! "payload" (assoc log-context
                                            :elapsed_ms (- (now-ms) start-ms)
                                            :payload (summarize-payload payload-clj)))
@@ -481,24 +445,13 @@
     "application/octet-stream"))
 
 (defn- fetch-media-url!
-  [url]
+  [config url]
   (log-info! "asset-download-start" {:url url})
-  (p/let [res (js/fetch url #js {:headers #js {"Accept" "image/*,audio/*,video/*,*/*"}
-                                 :signal (js/AbortSignal.timeout 120000000)
-
-                                 })
-          _ (when-not (.-ok res)
-              (p/let [msg (.text res)]
-                (throw (js/Error. (str "Generated asset download HTTP " (.-status res) ": " msg)))))
-          arr (.arrayBuffer res)
-          mime (media/sanitize-mime-type (.get (.-headers res) "content-type") "application/octet-stream")
-          buffer (.from js/Buffer (js/Uint8Array. arr))]
+  (p/let [asset (blaze-client/fetch-generated-media! (blaze-client/client config) url)]
     (log-info! "asset-download-complete" {:url url
-                                           :mime_type mime
-                                           :bytes (.-length buffer)})
-    {:mime-type mime
-     :buffer buffer
-     :source-url url}))
+                                           :mime_type (:mime-type asset)
+                                           :bytes (.-length (:buffer asset))})
+    asset))
 
 (defn- default-output-path
   [modality mime-type]
@@ -545,7 +498,7 @@
                        (or output-path (default-output-path modality (modality-mime-type modality)))
                        (.from js/Buffer b64 "base64"))
         (if-let [url (first-media-url text)]
-          (p/let [asset (fetch-media-url! url)
+          (p/let [asset (fetch-media-url! config url)
                   saved (write-buffer! runtime config (or output-path (default-output-path modality (:mime-type asset))) (:buffer asset))]
             (assoc saved :source-url (:source-url asset)))
           (p/resolved nil))))))
@@ -555,7 +508,7 @@
   (str (or (.-message err) err)))
 
 (defn- attempt-generation!
-  [config api-key params modality prompt models attempts log-context]
+  [config params modality prompt models attempts log-context]
   (if-let [model (first models)]
     (let [body (build-body params modality model prompt)
           attempt-context (assoc log-context
@@ -563,7 +516,7 @@
                                  :model model)]
       (log-info! "attempt-start" (assoc attempt-context
                                         :remaining_models (count models)))
-      (-> (fetch-json! (generation-url config modality) api-key body attempt-context)
+      (-> (generate-payload! config body modality attempt-context)
           (.then (fn [payload]
                    (log-info! "attempt-ok" (assoc attempt-context
                                                   :payload (summarize-payload payload)))
@@ -578,7 +531,7 @@
                       (log-warn! "attempt-failed" (assoc attempt-context
                                                          :error msg
                                                          :attempts next-attempts))
-                      (attempt-generation! config api-key params modality prompt (rest models)
+                      (attempt-generation! config params modality prompt (rest models)
                                            next-attempts log-context))))))
     (do
       (log-error! "all-attempts-failed" (assoc log-context :attempts attempts))
@@ -668,8 +621,8 @@
         requested-model (blank->nil (aget params "model"))
         models (candidate-models modality requested-model)
         output-path (media/normalize-tool-path-arg (aget params "output_path"))
-        api-key (or (proxx-api-key config)
-                    (throw (js/Error. (str tool-name ": PROXX_AUTH_TOKEN/PROXY_AUTH_TOKEN not configured for Proxx-authenticated Blaze proxying"))))
+        _api-key (or (proxx-api-key config)
+                     (throw (js/Error. (str tool-name ": PROXX_AUTH_TOKEN/PROXY_AUTH_TOKEN not configured for Proxx-authenticated Blaze proxying"))))
         log-context {:tool tool-name
                      :tool_call_id (blank->nil tool-call-id)
                      :modality modality
@@ -686,7 +639,7 @@
                      :proxx_base_url (proxx-base-url config)}]
     (log-info! "execute-start" log-context)
     (maybe-tool-update! on-update (str "Proxx Blaze " modality " generation via " (str/join ", " models) "…"))
-    (p/let [result (attempt-generation! config api-key params modality prompt models [] log-context)
+    (p/let [result (attempt-generation! config params modality prompt models [] log-context)
             model (:model result)
             payload (:payload result)
             text (response-text payload)

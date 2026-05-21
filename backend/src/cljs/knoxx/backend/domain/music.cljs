@@ -4,6 +4,7 @@
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.media :as media :refer [normalize-tool-path-arg]]
+            [knoxx.backend.domain.music.audd-client :as audd-client]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
@@ -16,75 +17,36 @@
 (defn- music-audd-lookup!
   "Identify a song from an audio file using AudD API."
   [runtime config source]
-  (let [audd-token (:audd-api-token config)]
-    (if (str/blank? audd-token)
-      (js/Promise.resolve {:error "AUDD_API_TOKEN not configured"
-                           :hint "Set AUDD_API_TOKEN to enable music identification"})
-      (-> (media/materialize-media-source! runtime config source media/audio-render-max-bytes)
-          (.then (fn [media]
-                   (let [form (js/FormData.)]
-                     (.append form "api_token" audd-token)
-                     (.append form "return" "apple_music,spotify,deezer")
-                     (.append form "file"
-                              (js/Blob. #js [(:buffer media)] #js {:type (:mime-type media)})
-                              (:filename media))
-                     (-> (js/fetch "https://api.audd.io/" #js {:method "POST" :body form})
-                         (.then (fn [resp]
-                                  (if-not (.-ok resp)
-                                    (-> (.text resp)
-                                        (.then (fn [text]
-                                                 (throw (js/Error. (str "AudD HTTP " (.-status resp) ": " text))))))
-                                    (.json resp))))
-                         (.then (fn [payload]
-                                  (let [status (or (aget payload "status") "unknown")
-                                        result (aget payload "result")]
-                                    {:status status
-                                     :source source
-                                     :filename (:filename media)
-                                     :result (when result (js->clj result :keywordize-keys true))})))))))))))
+  (if (str/blank? (:audd-api-token config))
+    (js/Promise.resolve {:error "AUDD_API_TOKEN not configured"
+                         :hint "Set AUDD_API_TOKEN to enable music identification"})
+    (-> (media/materialize-media-source! runtime config source media/audio-render-max-bytes)
+        (.then (fn [media]
+                 (-> (audd-client/recognize! (audd-client/client config) media)
+                     (.then (fn [payload]
+                              {:status (or (:status payload) "unknown")
+                               :source source
+                               :filename (:filename media)
+                               :result (:result payload)}))))))))
 
 (defn- music-acoustid-lookup!
   "Look up audio fingerprint via AcoustID API."
   [config fingerprint duration]
-  (let [acoustid-key (:acoustid-api-key config)]
-    (if (str/blank? acoustid-key)
-      (js/Promise.resolve {:error "ACOUSTID_API_KEY not configured"
-                          :hint "Set acoustid-api-key in Knoxx config to enable AcoustID lookups"})
-      (let [url (str "https://api.acoustid.org/v2/lookup?client=" acoustid-key
-                    "&duration=" (or duration 25)
-                    "&fingerprint=" fingerprint
-                    "&meta=recordings+recordingids+releasegroups")]
-        (-> (js/fetch url)
-            (.then (fn [resp]
-                     (if (.-ok resp)
-                       (.json resp)
-                       (-> (.text resp)
-                           (.then (fn [text]
-                                    (throw (js/Error. (str "AcoustID HTTP " (.-status resp) ": " text))))))))
-            (.then (fn [result]
-                     {:status "ok"
-                      :result (js->clj result :keywordize-keys true)}))))))))
+  (-> (audd-client/acoustid-lookup! (audd-client/client config) fingerprint duration)
+      (.then (fn [result]
+               (if (:error result)
+                 result
+                 {:status "ok"
+                  :result result})))))
 
 (defn- music-musicbrainz-recording!
   "Look up MusicBrainz recording by MBID."
-  [mbid]
-  (let [url (str "https://musicbrainz.org/ws/2/recording/" mbid
-                "?inc=isrcs+releases+release-groups&fmt=json")]
-    (-> (js/Promise.resolve nil)
-        (.then (fn [_]
-                 ;; Rate limiting: wait 1.1s before MusicBrainz requests
-                 (js/Promise. (fn [resolve]
-                                (js/setTimeout resolve 1100)))))
-        (.then (fn [_]
-                 (js/fetch url #js {:headers #js {"User-Agent" "Knoxx-Agent/1.0 (discord bot)"}})))
-        (.then (fn [resp]
-                 (if (.-ok resp)
-                   (.json resp)
-                   {:error (str "MusicBrainz HTTP " (.-status resp))})))
-        (.then (fn [result]
-                 {:status "ok"
-                  :mbid mbid
-                  :result (js->clj result :keywordize-keys true)})))))
+  [config mbid]
+  (-> (audd-client/musicbrainz-recording! (audd-client/client config) mbid)
+      (.then (fn [result]
+               {:status "ok"
+                :mbid mbid
+                :result result}))))
 
 (defn- music-copyright-check!
   "Check if audio is likely copyrighted based on ISRC presence."
@@ -214,11 +176,11 @@
                          (str " - found " (count results) " matches")))
                   result))))))
 
-(defn musicbrainz-execute [_runtime _config _tool-call-id params a b c]
+(defn musicbrainz-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         mbid (aget params "mbid")]
     (maybe-tool-update! on-update (str "Looking up MusicBrainz recording " mbid "…"))
-    (-> (music-musicbrainz-recording! mbid)
+    (-> (music-musicbrainz-recording! config mbid)
         (.then (fn [result]
                  (tool-text-result
                   (str "MusicBrainz recording: " mbid

@@ -5,7 +5,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.core-memory :refer [filter-authorized-memory-hits!]]
             [knoxx.backend.domain.contracts.sources :as sources]
-            [knoxx.backend.infra.http :refer [openplanner-enabled?]]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search!]]
             [knoxx.backend.infra.defaults :refer [default-settings]]
             [knoxx.backend.domain.text :refer [value->preview-text]]
@@ -105,7 +105,7 @@
   ([config conversation-id message auth-context] (passive-memory-hydration! config conversation-id message auth-context nil))
   ([config conversation-id message auth-context agent-spec]
    (let [opts (or (passive-memory-hydration-options config agent-spec) {})]
-     (if (and (openplanner-enabled? config)
+     (if (and (openplanner-client/enabled? (openplanner-client/client config))
               (passive-memory-hydration-enabled? opts)
               (passive-memory-hydration-should-run? message opts))
        (let [started-ms (.now js/Date)

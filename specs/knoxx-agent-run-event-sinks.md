@@ -1,7 +1,7 @@
 # Knoxx Agent Run Event Sinks
 
 Date: 2026-05-21
-Status: todo
+Status: done
 Parent epic: `knoxx-agent-service-protocol-split-epic.md`
 Source report: `docs/notes/architecture/agent-service-protocol-split.md`
 Story points: 5
@@ -70,8 +70,32 @@ Exact method names may change. Implementations may be split if one port becomes 
 3. Sink failure behavior is documented and covered by at least one test.
 4. `stream.cljs` clearly separates reducer invocation from sink side effects.
 
+## Implementation result
+
+Completed on 2026-05-21.
+
+Touched files:
+
+- `backend/src/cljs/knoxx/backend/infra/agent/stream/sinks.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/stream.cljs`
+- `backend/test/cljs/knoxx/backend/agents/stream_test.cljs`
+
+Notes:
+
+- Added `infra.agent.stream.sinks/IRunEventSink` plus `LiveRunEventSink` for run-state, session-store, and WebSocket stream side effects.
+- `stream.cljs` now routes run events, token events, run updates, session streaming flags, trace text, tool receipts, tool trace events, and tool input-preview backfills through the sink boundary.
+- Added fake-sink tests proving token/run/session/trace effects can be exercised without Redis, run-state, or WebSocket mutation.
+- Added a synchronous sink failure test documenting the error policy: sink wiring bugs propagate instead of being silently hidden.
+
 ## Verification
 
 ```bash
 pnpm -C backend exec shadow-cljs compile test
+pnpm -C backend exec shadow-cljs compile server
 ```
+
+Results:
+
+- `compile test`: exit 0; 327 tests, 817 assertions, 0 failures, 0 errors; 220 existing warnings.
+- `compile server`: exit 0; build completed; 301 existing warnings.
+- `git diff --check`: passed for touched tracked files plus no-index check for the new sink namespace.

@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.eta-mu-session-ingester
   (:require [clojure.string :as str]
             [knoxx.backend.extern.promise :as promise]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 
@@ -313,7 +314,7 @@
 
 
 (defn- ingest-session-file
-  [file-path session-file-meta openplanner-request-fn]
+  [file-path session-file-meta client]
   (-> (parse-session-file file-path)
       (.then
        (fn [{:keys [events session-meta]}]
@@ -334,7 +335,7 @@
                  (when (< i (.-length all-op-events))
                    (let [batch (.slice all-op-events i (+ i MAX-EVENTS-PER-BATCH))]
                      (.push promises
-                            (-> (openplanner-request-fn "POST" "/v1/events" #js {:events batch})
+                            (-> (openplanner-client/events! client batch)
                                 (.then (fn [_]
                                          (swap! events-ingested + (.-length batch))
                                          (swap! batches inc)))
@@ -352,11 +353,13 @@
 
 
 (defn run-eta-mu-session-ingest
-  [{:keys [openplanner-request-fn force limit session-dirs]
+  [{:keys [openplanner-client config force limit session-dirs]
     :or {force false limit 50}}]
-  (when (not openplanner-request-fn)
-    (throw (js/Error. "openplannerRequestFn is required")))
-  (let [limit (or limit 50)]
+  (let [client (or openplanner-client
+                   (when config (openplanner-client/client config)))]
+    (when-not client
+      (throw (js/Error. "OpenPlanner client or config is required")))
+    (let [limit (or limit 50)]
     (-> (if force
           (js/Promise.resolve #js {:sessions (js/Object.create nil)})
           (load-ingest-state))
@@ -391,7 +394,7 @@
                                (-> promise-chain
                                    (.then
                                     (fn [_]
-                                      (-> (ingest-session-file (.-path file) file openplanner-request-fn)
+                                      (-> (ingest-session-file (.-path file) file client)
                                           (.then
                                            (fn [result]
                                              (aset (.-sessions state) (.-sessionId file)
@@ -437,7 +440,7 @@
 
         (.catch
          (fn [err]
-           #js {:ok false :error (.-message err)})))
+           #js {:ok false :error (.-message err)}))))
 
 
 

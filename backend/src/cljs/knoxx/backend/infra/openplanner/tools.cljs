@@ -5,7 +5,8 @@
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! filter-authorized-memory-hits! session-visible?]]
             [knoxx.backend.infra.document-state :refer [active-agent-profile normalize-relative-path]]
             [knoxx.backend.infra.clients.proxx :as proxx-client]
-            [knoxx.backend.infra.http :as backend-http :refer [http-error]]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.http :refer [http-error]]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-query! openplanner-event]]
             [knoxx.backend.domain.text :refer [tool-text-result openplanner-memory-search-text openplanner-session-text graph-query-result-text websearch-result-text]]
             [knoxx.backend.domain.media :as media]
@@ -209,7 +210,7 @@
                                            :text claim
                                            :extra {:claim claim :evidence (clj->js evidence) :p p :src source}})]
       (maybe-tool-update! on-update (str "Pushing claim to graph: " claim "…"))
-      (-> (backend-http/openplanner-request! config "POST" "/v1/events" {:events [event]})
+      (-> (openplanner-client/events! (openplanner-client/client config) [event])
           (.then (fn [resp]
                    (tool-text-result (str "Successfully pushed claim to graph: " claim) resp)))))))
 
@@ -246,19 +247,9 @@
                    :project project
                    :segment_index segment-index
                    :status "pending"
-                   :mt_model "translation-agent"}
-          url (str (:openplanner-base-url config) "/v1/translations/segments")]
+                   :mt_model "translation-agent"}]
       (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
-      (-> (js/fetch url #js {:method "POST"
-                             :headers #js {"Content-Type" "application/json"
-                                           "Authorization" (str "Bearer " (:openplanner-api-key config))}
-                             :body (.stringify js/JSON (clj->js segment))})
-          (.then (fn [resp]
-                   (if (.-ok resp)
-                     (.json resp)
-                     (-> (.text resp)
-                         (.then (fn [text]
-                                  (throw (js/Error. (str "HTTP " (.-status resp) ": " text)))))))))
+      (-> (openplanner-client/create-translation-segment! (openplanner-client/client config) segment)
           (.then (fn [result]
                    (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
                                      result)))))))

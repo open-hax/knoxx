@@ -1,7 +1,7 @@
 # Knoxx Agent Session Registry and Provider Ports
 
 Date: 2026-05-21
-Status: todo
+Status: done
 Parent epic: `knoxx-agent-service-protocol-split-epic.md`
 Source report: `docs/notes/architecture/agent-service-protocol-split.md`
 Story points: 5
@@ -74,8 +74,34 @@ Exact names may change, but the behavioral split should remain.
 3. `session.cljs` loses direct ownership of either registry internals or provider runtime setup, or delegates those concerns clearly.
 4. Existing agent turn behavior remains compatible.
 
+## Implementation result
+
+Completed on 2026-05-21.
+
+Touched files:
+
+- `backend/src/cljs/knoxx/backend/infra/agent/session_registry.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/provider/eta_mu.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/session.cljs`
+- `backend/test/cljs/knoxx/backend/agents/session_registry_provider_test.cljs`
+
+Notes:
+
+- Added `IActiveSessionRegistry` with an atom-backed implementation supporting active lookup, put, touch, remove, TTL sweep, and max-size eviction.
+- `session.cljs` now delegates active-session lookup, insertion, TTL sweeping, and removal to the registry port while preserving the existing `sessions*` atom backing store.
+- Added `IAgentProviderAdapter` and `EtaMuProviderAdapter` for eta-mu runtime setup, model resolution, and provider session creation.
+- `session.cljs` now delegates eta-mu runtime setup, model lookup, and provider session creation through the adapter boundary.
+- Added tests for registry touch/remove/sweep/eviction and a fake provider adapter that proves provider calls are mockable without eta-mu runtime startup.
+
 ## Verification
 
 ```bash
 pnpm -C backend exec shadow-cljs compile test
+pnpm -C backend exec shadow-cljs compile server
 ```
+
+Results:
+
+- `compile test`: exit 0; 329 tests, 828 assertions, 0 failures, 0 errors; 220 existing warnings.
+- `compile server`: exit 0; build completed; 301 existing warnings.
+- `git diff --check`: passed for touched tracked files plus no-index checks for new registry/provider/test namespaces.

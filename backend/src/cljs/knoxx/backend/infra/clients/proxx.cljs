@@ -7,8 +7,7 @@
    construction, auth headers, JSON encoding, and native fetch access via
    `extern.fetch`."
   (:require [clojure.string :as str]
-            [knoxx.backend.extern.fetch :as xfetch]
-            [knoxx.backend.extern.json :as xjson]))
+            [knoxx.backend.extern.fetch :as xfetch]))
 
 (defprotocol IProxxClient
   (health! [client])
@@ -41,20 +40,13 @@
     (not (str/blank? (:proxx-auth-token config)))
     (assoc "Authorization" (str "Bearer " (:proxx-auth-token config)))))
 
-(defn- stringify-body
-  [body]
-  (cond
-    (nil? body) nil
-    (or (map? body) (vector? body) (set? body)) (xjson/stringify body)
-    :else (.stringify js/JSON body)))
-
 (defn- json-request!
   [http-client config method suffix body timeout-ms]
   (xfetch/json! (or http-client xfetch/default-client)
                 {:url (url-for config suffix)
                  :opts (cond-> {:method method
                                 :headers (headers-for config)}
-                         (some? body) (assoc :body (stringify-body body)))
+                         (some? body) (assoc :json body))
                  :timeout-ms (or timeout-ms 30000)}))
 
 (defn- response-request!
@@ -63,7 +55,7 @@
                     {:url (url-for config suffix)
                      :opts (cond-> {:method method
                                     :headers (headers-for config)}
-                             (some? body) (assoc :body (stringify-body body)))
+                             (some? body) (assoc :json body))
                      :timeout-ms (or timeout-ms 30000)}))
 
 (defrecord FetchProxxClient [config http-client]

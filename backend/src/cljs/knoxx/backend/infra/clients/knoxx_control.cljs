@@ -9,7 +9,6 @@
    encoding, and native fetch details."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.fetch :as xfetch]
-            [knoxx.backend.extern.json :as xjson]
             [promesa.core :as p]))
 
 (defprotocol IKnoxxControlClient
@@ -60,7 +59,7 @@
                              {:url (str (trim-trailing-slashes (base-url config)) path)
                               :opts (cond-> {:method method
                                              :headers (headers-for config)}
-                                      body (assoc :body (xjson/stringify body)))
+                                      body (assoc :json body))
                               :timeout-ms timeout-ms})]
     (if (:ok resp)
       (:body resp)

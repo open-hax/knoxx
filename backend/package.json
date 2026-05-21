@@ -14,6 +14,8 @@
     "test:shadow": "shadow-cljs compile test",
     "test:e2e": "node --test tests/*.e2e.test.mjs",
     "lint": "clj-kondo --lint src/cljs test/cljs",
+    "boundary:check": "node scripts/check-js-boundary.mjs --check",
+    "boundary:inventory": "node scripts/check-js-boundary.mjs --markdown",
     "typecheck": "shadow-cljs compile server",
     "lint:size": "node ../scripts/lint-file-sizes.mjs backend/src/cljs"
   },

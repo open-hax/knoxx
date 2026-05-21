@@ -32,7 +32,8 @@
       (tool-call-input-preview tool-name (:arguments args-by-key))
       (tool-call-input-preview tool-name (:input args-by-key))
       (tool-call-input-preview tool-name (:parameters args-by-key))
-      (tool-call-input-preview tool-name raw-args)))
+      (tool-call-input-preview tool-name raw-args)
+      (some-> (js->data raw-args) pr-str)))
 
 (defn- normalize-message-update
   [event]

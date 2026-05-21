@@ -2,24 +2,20 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [system-admin? ctx-org-id ctx-membership-id ctx-user-id ctx-permitted?]]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
-            [knoxx.backend.extern.js :as xjs]
-            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.extern.promise :as promise]
+            [knoxx.backend.extern.row-extra :as row-extra]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.infra.config :refer [cfg]]
             [knoxx.backend.infra.tooling :as tooling]))
 
 (defn parse-json-object
   [value]
-  (cond
-    (map? value) value
-    (string? value) (try
-                      (js->clj (.parse js/JSON value) :keywordize-keys true)
-                      (catch :default _ nil))
-    :else nil))
+  (row-extra/parse-core-memory-extra value))
 
 (defn row-extra-map
   [row]
-  (or (parse-json-object (:extra row)) {}))
+  (or (row-extra/parse-core-memory-extra (:extra row)) {}))
 
 (def devel-path-pattern
   #"((?:orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.ημ)/[A-Za-z0-9._~:/+-]+)")
@@ -232,9 +228,10 @@
 
 (defn fetch-openplanner-session-rows!
   [config session-id]
-  (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" (js/encodeURIComponent (str session-id))
-                                               "?project=" (js/encodeURIComponent (:session-project-name config))
-                                               "&mode=full"))
+  (-> (openplanner-client/session! (openplanner-client/client config)
+                                   session-id
+                                   {:project (:session-project-name config)
+                                    :mode "full"})
       (.then (fn [body]
                (vec (or (:rows body) []))))))
 
@@ -247,19 +244,18 @@
                          vec)]
     (if (or (nil? ctx) (system-admin? ctx) (empty? session-ids))
       (js/Promise.resolve (set session-ids))
-      (.then (js/Promise.all
-              (clj->js
-               (map (fn [session-id]
-                      (.then (fetch-openplanner-session-rows! config session-id)
-                             (fn [rows]
-                               {:session session-id
-                                :allowed (session-visible? ctx rows)})
-                             (fn [_]
-                               {:session session-id
-                                :allowed false})))
-                    session-ids)))
+      (.then (promise/all-vec
+              (map (fn [session-id]
+                     (.then (fetch-openplanner-session-rows! config session-id)
+                            (fn [rows]
+                              {:session session-id
+                               :allowed (session-visible? ctx rows)})
+                            (fn [_]
+                              {:session session-id
+                               :allowed false})))
+                   session-ids))
              (fn [results]
-               (->> (xjs/js-array-seq results)
+               (->> results
                     (filter :allowed)
                     (map :session)
                     set))))))

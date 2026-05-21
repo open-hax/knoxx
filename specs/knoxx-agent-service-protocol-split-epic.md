@@ -1,7 +1,7 @@
 # Knoxx Agent Service Protocol Split Epic
 
 Date: 2026-05-21
-Status: draft
+Status: done
 Source report: `docs/notes/architecture/agent-service-protocol-split.md`
 Story points: 35
 
@@ -86,12 +86,12 @@ Malli/data shapes live under `knoxx.backend.shape.*`; protocols are reserved for
 ## Child specs
 
 - `knoxx-agent-runtime-shapes.md` (5 pts, done) — canonical runtime schemas and status vocabulary.
-- `knoxx-agent-service-facade.md` (5 pts) — `IAgentService` facade and compatibility exports.
-- `knoxx-agent-session-registry-provider-ports.md` (5 pts) — active-session registry and provider adapter extraction.
-- `knoxx-agent-content-history-tooling-ports.md` (5 pts) — content/media, transcript/history, and tool catalog/policy ports.
-- `knoxx-agent-stream-normalizer-reducer.md` (5 pts) — provider event normalization and pure stream reducer extraction.
-- `knoxx-agent-run-event-sinks.md` (5 pts) — run-state/session-store/WS sinks separated from stream semantics.
-- `knoxx-agent-recovery-policy-hydration-ports.md` (5 pts) — recovery, policy, and hydration as lifecycle/service ports.
+- `knoxx-agent-service-facade.md` (5 pts, done) — `IAgentService` facade and compatibility exports.
+- `knoxx-agent-session-registry-provider-ports.md` (5 pts, done) — active-session registry and provider adapter extraction.
+- `knoxx-agent-content-history-tooling-ports.md` (5 pts, done) — content/media, transcript/history, and tool catalog/policy ports.
+- `knoxx-agent-stream-normalizer-reducer.md` (5 pts, done) — provider event normalization and pure stream reducer extraction.
+- `knoxx-agent-run-event-sinks.md` (5 pts, done) — run-state/session-store/WS sinks separated from stream semantics.
+- `knoxx-agent-recovery-policy-hydration-ports.md` (5 pts, done) — recovery, policy, and hydration as lifecycle/service ports.
 
 ## Suggested sequence
 

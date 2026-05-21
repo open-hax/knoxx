@@ -4,7 +4,6 @@
    Covers `/api/agent/contracts`, contract read/write, and validation calls."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.fetch :as xfetch]
-            [knoxx.backend.extern.json :as xjson]
             [promesa.core :as p]))
 
 (defprotocol IContractLibrarianClient
@@ -61,8 +60,8 @@
                                {:url (contract-url base-url "/api/agent/contracts/validate")
                                 :opts {:method "POST"
                                        :headers {"Content-Type" "application/json"}
-                                       :body (xjson/stringify {:edn_text edn-text
-                                                               :contract_class klass})}
+                                       :json {:edn_text edn-text
+                                              :contract_class klass}}
                                 :timeout-ms 30000})]
       (:body resp))))
 

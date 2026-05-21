@@ -100,7 +100,7 @@
       (quality-labels/good-first-then-not-bad messages)
       (try
         (let [ids (mapv record-id messages)
-              labels (:labels (await (openplanner-client/request! client "POST" "/v1/labels/records/lookup" {:ids ids})))]
+              labels (:labels (await (openplanner-client/record-labels! client ids)))]
           (->> messages
                (mapv (fn [message]
                        (assoc message :openplannerLabels (label-for-record-id labels (record-id message)))))

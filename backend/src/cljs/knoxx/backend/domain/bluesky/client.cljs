@@ -6,7 +6,6 @@
    fetch calls inline."
   (:require [clojure.string :as str]
             [knoxx.backend.extern.fetch :as xfetch]
-            [knoxx.backend.extern.json :as xjson]
             [promesa.core :as p]))
 
 (defprotocol IBlueskyClient
@@ -59,7 +58,7 @@
                              {:url url
                               :opts (cond-> {:method method
                                              :headers headers}
-                                      (some? body) (assoc :body (xjson/stringify body)))
+                                      (some? body) (assoc :json body))
                               :timeout-ms (or timeout-ms 30000)})]
     (if (:ok resp)
       (:body resp)

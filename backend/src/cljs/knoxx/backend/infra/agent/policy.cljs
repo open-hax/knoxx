@@ -39,6 +39,12 @@
       (get-in auth-context [:user :email])
       (:userEmail auth-context)))
 
+(defn- positive-int
+  [value]
+  (let [parsed (js/parseInt value 10)]
+    (when (and (number? parsed) (not (js/isNaN parsed)) (pos? parsed))
+      parsed)))
+
 (defn- rate-limit-error
   [max-requests window-seconds]
   (doto (js/Error. (str "Chat rate limit exceeded: more than " max-requests
@@ -88,6 +94,34 @@
       :else
       (js/Promise.resolve nil))))
 
+(defprotocol IPolicyEngine
+  (authorize-turn [engine turn-request])
+  (resolve-model-policy [engine auth-context requested-model])
+  (resolve-tool-policy [engine auth-context agent-spec])
+  (resolve-resource-policy [engine auth-context agent-spec]))
+
+(defrecord ChatPolicyEngine []
+  IPolicyEngine
+  (authorize-turn [_ turn-request]
+    (enforce-chat-policy! (:auth-context turn-request)
+                          (or (:model turn-request)
+                              (get-in turn-request [:agent-spec :model]))))
+
+  (resolve-model-policy [_ auth-context requested-model]
+    (-> (enforce-chat-policy! auth-context requested-model)
+        (.then (fn [_] {:model requested-model :allowed true}))))
+
+  (resolve-tool-policy [_ auth-context agent-spec]
+    (js/Promise.resolve {:auth-context auth-context
+                         :agent-spec agent-spec}))
+
+  (resolve-resource-policy [_ auth-context agent-spec]
+    (js/Promise.resolve {:auth-context auth-context
+                         :agent-spec agent-spec})))
+
+(def default-policy-engine
+  (->ChatPolicyEngine))
+
 (defn validate-chat-policy!
   [auth-context model-id]
-  (enforce-chat-policy! auth-context model-id))
+  (resolve-model-policy default-policy-engine auth-context model-id))

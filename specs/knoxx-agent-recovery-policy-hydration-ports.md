@@ -1,7 +1,7 @@
 # Knoxx Agent Recovery, Policy, and Hydration Ports
 
 Date: 2026-05-21
-Status: todo
+Status: done
 Parent epic: `knoxx-agent-service-protocol-split-epic.md`
 Source report: `docs/notes/architecture/agent-service-protocol-split.md`
 Story points: 5
@@ -74,9 +74,35 @@ Exact method names may change, but the separation should remain.
 3. Existing hydration result payloads are preserved or translated through explicit codecs.
 4. Existing recovery/resume behavior is preserved for representative active and missing session cases.
 
+## Implementation result
+
+Completed on 2026-05-21.
+
+Touched files:
+
+- `backend/src/cljs/knoxx/backend/infra/agent/policy.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/hydration_sources.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/recovery_coordinator.cljs`
+- `backend/test/cljs/knoxx/backend/agents/recovery_policy_hydration_ports_test.cljs`
+
+Notes:
+
+- Added `IPolicyEngine` and `ChatPolicyEngine` around existing chat/model policy enforcement.
+- `validate-chat-policy!` now delegates through the default policy engine while preserving allowed/denied behavior for callers that await the promise.
+- Added `IHydrationSource` adapters for semantic/RAG hydration and conversational memory hydration, plus a composite source.
+- Added `IRecoveryCoordinator` over process-startup recovery, explicit recovered-session resume, and shutdown recovery stop.
+- Added fake-port and default-delegation tests for policy, hydration, and recovery seams.
+- Also added the missing local `positive-int` helper in `policy.cljs`, eliminating its existing undeclared-var warning.
+
 ## Verification
 
 ```bash
 pnpm -C backend exec shadow-cljs compile test
 pnpm -C backend exec shadow-cljs compile server
 ```
+
+Results:
+
+- `compile test`: exit 0; 344 tests, 899 assertions, 0 failures, 0 errors; 218 existing warnings.
+- `compile server`: exit 0; build completed; 299 existing warnings.
+- `git diff --check`: pending in final receipt command.

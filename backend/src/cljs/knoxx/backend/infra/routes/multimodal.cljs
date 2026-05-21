@@ -5,7 +5,9 @@
    Files are stored temporarily and served back to the frontend for preview/playback."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ensure-tool!]]
-            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.extern.fastify :as xfastify]
+            [knoxx.backend.extern.multipart :as xmultipart]
+            [knoxx.backend.extern.node-fs :as xnode-fs]
             [knoxx.backend.domain.time :refer [now-iso]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
@@ -57,32 +59,32 @@
   [_runtime]
   (let [upload-path (.join path upload-dir)]
     (.then
-     (fs-mkdir! fs upload-path (clj->js {:recursive true}))
+     (fs-mkdir! fs upload-path {:recursive true})
      (fn [] upload-path))))
 
 (defn- fs-readdir!
   [^js node-fs path]
-  (.readdir node-fs path))
+  (xnode-fs/readdir-vector! node-fs path))
 
 (defn- fs-rm!
   [^js node-fs path]
-  (.rm node-fs path))
+  (xnode-fs/rm! node-fs path))
 
 (defn- fs-read-file!
   [^js node-fs path]
-  (.readFile node-fs path))
+  (xnode-fs/read-file! node-fs path))
 
 (defn- fs-write-buffer!
   [^js node-fs path content]
-  (.writeFile node-fs path content))
+  (xnode-fs/write-buffer! node-fs path content))
 
 (defn- reply-header!
   [^js reply name value]
-  (.header reply name value))
+  (xfastify/reply-header! reply name value))
 
 (defn- request-parts-promise
-  [^js request]
-  (.fromAsync js/Array (.parts request)))
+  [request]
+  (xmultipart/parts! request)
 
 (defn- save-upload-file!
   "Save an uploaded file and return its metadata."
@@ -99,7 +101,7 @@
            stored-name (str file-id ext)
            abs-path (.join path upload-path stored-name)]
        (.then
-        (.arrayBuffer (js/Response. (aget file-part "file")))
+        (xmultipart/part-array-buffer! file-part)
         (fn [buf]
           (.then
            (fs-write-buffer! fs abs-path (.from js/Buffer buf))
@@ -125,18 +127,17 @@
                 (-> (request-parts-promise request)
                     (.then
                      (fn [parts]
-                       (let [part-seq (xjs/js-array-seq parts)
-                             file-parts (filter #(= (aget % "type") "file") part-seq)
+                       (let [file-parts (xmultipart/file-parts parts)
                              upload-promises
                              (mapv
                               (fn [part]
-                                (let [filename (or (aget part "filename") "upload.bin")
-                                      mime-type (or (aget part "type") "application/octet-stream")]
+                                (let [filename (xmultipart/part-filename part)
+                                      mime-type (xmultipart/part-mime-type part)]
                                   (if-not (mime-type-supported? mime-type)
                                     (js/Promise.resolve
                                      {:error (str "Unsupported file type: " mime-type)
                                       :filename filename})
-                                    (if (> (aget part "size" 0) max-file-size-bytes)
+                                    (if (> (xmultipart/part-size part) max-file-size-bytes)
                                       (js/Promise.resolve
                                        {:error (str "File too large. Max: " (/ max-file-size-bytes 1024 1024) "MB")
                                         :filename filename})
@@ -149,10 +150,9 @@
                                                 :uploaded_at (now-iso))))))))
                               file-parts)]
                          (.then
-                          (js/Promise.all (clj->js upload-promises))
-                          (fn [results]
-                            (let [uploads (xjs/js-array-seq results)
-                                  successful (filter #(not (:error %)) uploads)
+                          (xnode-fs/promise-all-vector upload-promises)
+                          (fn [uploads]
+                            (let [successful (filter #(not (:error %)) uploads)
                                   failed (filter :error uploads)]
                               (json-response! reply 200
                                               {:ok true
@@ -167,11 +167,11 @@
   ;; Serve uploaded files
   (route! app "GET" "/api/multimodal/files/:fileId"
           (fn [request reply]
-            (let [file-id (aget request "params" "fileId")]
+            (let [file-id (xfastify/request-param request :fileId)]
               (-> (fs-readdir! fs (.join path upload-dir))
                   (.then
                    (fn [files]
-                     (let [matching (first (filter #(str/starts-with? % file-id) (xjs/js-array-seq files)))]
+                     (let [matching (first (filter #(str/starts-with? % file-id) files))]
                        (if matching
                          (let [abs-path (.join path upload-dir matching)]
                            (-> (fs-read-file! fs abs-path)
@@ -208,11 +208,11 @@
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-tool! ctx "multimodal.upload"))
-                (let [file-id (aget request "params" "fileId")]
+                (let [file-id (xfastify/request-param request :fileId)]
                   (-> (fs-readdir! fs (.join path upload-dir))
                       (.then
                        (fn [files]
-                         (let [matching (first (filter #(str/starts-with? % file-id) (xjs/js-array-seq files)))]
+                         (let [matching (first (filter #(str/starts-with? % file-id) files))]
                            (if matching
                              (let [abs-path (.join path upload-dir matching)]
                                (-> (fs-rm! fs abs-path)

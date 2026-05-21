@@ -1,16 +1,20 @@
 (ns knoxx.backend.infra.openplanner.memory
   (:require [clojure.string :as str]
             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
-            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.extern.fastify :as fastify]
+            [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.label.quality :as quality-labels]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.domain.time :as time]))
 
-(defn js-array-seq
-  [arr]
-  (when (some? arr)
-    (for [i (range (.-length arr))]
-      (aget arr i))))
+(defn- openplanner-configured?
+  [config]
+  (openplanner-client/enabled? (openplanner-client/client config)))
+
+(defn- request-query-map
+  [request]
+  (fastify/request-query-string-map request))
 
 ;; ---------------------------------------------------------------------------
 ;; Document Ingestion
@@ -35,7 +39,7 @@
   "Send a document to OpenPlanner's /v1/documents endpoint for indexing.
    Returns {:ok true, :document ...} on success, or {:ok false ...} on failure."
   [config {:keys [id rel-path content project kind title source-path domain visibility extra]}]
-  (when-not (backend-http/openplanner-enabled? config)
+  (when-not (openplanner-configured? config)
     (throw (js/Error. "OpenPlanner is not configured")))
   (let [doc-id (or id (str "knoxx-doc:" (or rel-path (.randomUUID js/crypto))))
         doc-kind (or kind (guess-document-kind rel-path))
@@ -55,7 +59,7 @@
                             :createdBy "knoxx-ingestion"
                             :metadata (merge {:indexed_from "knoxx"}
                                              extra)}}]
-    (-> (backend-http/openplanner-request! config "POST" "/v1/documents" payload)
+    (-> (openplanner-client/upsert-document! (openplanner-client/client config) (:document payload))
         (.then (fn [resp]
                  {:ok true
                   :document (:document resp)
@@ -82,7 +86,7 @@
                          :indexed-count 0
                          :failed-count 0})
 
-    (not (backend-http/openplanner-enabled? config))
+    (not (openplanner-configured? config))
     (js/Promise.resolve {:ok false
                          :indexed []
                          :failed []
@@ -96,17 +100,16 @@
           results (atom {:indexed []
                          :failed []})
           process-chunk! (fn [chunk]
-                           (-> (.all js/Promise
-                                     (clj->js
-                                      (map (fn [doc]
-                                             (upsert-openplanner-document! config
-                                                                           (merge {:project project
-                                                                                   :visibility visibility
-                                                                                   :extra extra}
-                                                                                  doc)))
-                                           chunk)))
+                           (-> (promise/all-vec
+                                (map (fn [doc]
+                                       (upsert-openplanner-document! config
+                                                                     (merge {:project project
+                                                                             :visibility visibility
+                                                                             :extra extra}
+                                                                            doc)))
+                                     chunk))
                                (.then (fn [chunk-results]
-                                        (doseq [result (js-array-seq chunk-results)]
+                                        (doseq [result chunk-results]
                                           (if (:ok result)
                                             (swap! results update :indexed conj result)
                                             (swap! results update :failed conj result)))
@@ -158,9 +161,9 @@
 (defn rehydrate-session-manager!
   [config session-manager conversation-id _model-id]
   (if (or (str/blank? conversation-id)
-          (not (backend-http/openplanner-enabled? config)))
+          (not (openplanner-configured? config)))
     (js/Promise.resolve session-manager)
-    (-> (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" conversation-id))
+    (-> (openplanner-client/session! (openplanner-client/client config) conversation-id nil)
         (.then (fn [body]
                  (doseq [row (or (:rows body) [])]
                    (when-let [message (planner-row->agent-message row)]
@@ -237,7 +240,7 @@
 
 (defn- ^:async fetch-session-summary!
   [config session-id]
-  (let [rows (or (:rows (await (backend-http/openplanner-request! config "GET" (str "/v1/sessions/" session-id)))) [])
+  (let [rows (or (:rows (await (openplanner-client/session! (openplanner-client/client config) session-id nil))) [])
         row (or (last (filter #(and (contains? #{"assistant" "system"} (:role %))
                                    (default-memory-hit? %))
                                rows))
@@ -249,19 +252,17 @@
 
 (defn ^:async openplanner-recent-session-summaries!
   [config]
-  (let [session-ids (->> (or (:rows (await (backend-http/openplanner-request!
-                                            config
-                                            "GET"
-                                            (str "/v1/sessions?project="
-                                                 (js/encodeURIComponent (:session-project-name config)))))) [])
+  (let [session-ids (->> (or (:rows (await (openplanner-client/sessions!
+                                            (openplanner-client/client config)
+                                            {:project (:session-project-name config)}))) [])
                          (map :session)
                          (remove str/blank?)
                          distinct
                          (take 4)
                          vec)]
     (if (seq session-ids)
-      (let [results (await (.all js/Promise (clj->js (map #(fetch-session-summary! config %) session-ids))))]
-        (->> (js->clj results :keywordize-keys true)
+      (let [results (await (promise/all-vec (map #(fetch-session-summary! config %) session-ids)))]
+        (->> results
              (remove nil?)
              vec))
       [])))
@@ -277,22 +278,23 @@
       (throw (js/Error "Must provide query string for memory search"))
       {:query query
        :mode :vector
-       :hits (default-memory-hits (vector-result-hits (:result (await (backend-http/openplanner-request! config "POST" "/v1/search/vector"
-                                                                                                         (cond-> {:q query
-                                                                                                                  :k fetch-k
-                                                                                                                  :source "knoxx"
-                                                                                                                  :project (:session-project-name config)}
-                                                                                                           (not (str/blank? session-id)) (assoc :session session-id)))))) k)})))
+       :hits (default-memory-hits (vector-result-hits (:result (await (openplanner-client/vector-search!
+                                                                        (openplanner-client/client config)
+                                                                        (cond-> {:q query
+                                                                                 :k fetch-k
+                                                                                 :source "knoxx"
+                                                                                 :project (:session-project-name config)}
+                                                                          (not (str/blank? session-id)) (assoc :session session-id)))))) k)})))
 
 (defn openplanner-graph-query!
   [config {:keys [query lake node-type limit edge-limit]}]
   (let [k (max 1 (min 60 (or limit 15)))
         node-types (when-not (str/blank? (or node-type ""))
-                     (js/JSON.parse (js/JSON.stringify (clj->js (str/split node-type #",")))))
+                     (vec (str/split node-type #",")))
         lakes (when-not (str/blank? (or lake ""))
-                (js/JSON.parse (js/JSON.stringify (clj->js (str/split lake #",")))))]
-    (backend-http/openplanner-request!
-     config "POST" "/v1/graph/memory"
+                (vec (str/split lake #",")))]
+    (openplanner-client/graph-memory!
+     (openplanner-client/client config)
      (cond-> {:q (or query "")
               :k k
               :includeText true}
@@ -308,15 +310,16 @@
       (js/Promise.resolve {:query "" :hits [] :mode :none})
       {:query query
        :mode :vector
-       :hits (vector-result-hits (:result (backend-http/openplanner-request! config "POST" "/v1/search/vector"
-                                                                             (cond-> {:q query :k k :project (or project (:project-name config) "devel")}
-                                                                               source (assoc :source source)
-                                                                               kind (assoc :kind kind)
-                                                                               visibility (assoc :visibility visibility)))))})))
+       :hits (vector-result-hits (:result (openplanner-client/vector-search!
+                                           (openplanner-client/client config)
+                                           (cond-> {:q query :k k :project (or project (:project-name config) "devel")}
+                                             source (assoc :source source)
+                                             kind (assoc :kind kind)
+                                             visibility (assoc :visibility visibility)))))})))
 
 (defn openplanner-graph-export!
   [config request]
-  (backend-http/openplanner-request! config "GET" (str "/v1/graph/export" (backend-http/request-query-string request))))
+  (openplanner-client/graph-export! (openplanner-client/client config) (request-query-map request)))
 
 (defn operational-failure-text?
   [text]
@@ -338,6 +341,8 @@
   [text]
   (when (operational-failure-text? text)
     (quality-label-extra "bad" "operational provider error, not useful assistant output")))
+
+(declare index-run-memory-legacy!)
 
 (defn openplanner-event
   [config {:keys [id ts kind project session message role model text extra]}]
@@ -520,7 +525,7 @@
 
 (defn index-run-memory!
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
-  (if-not (backend-http/openplanner-enabled? config)
+  (if-not (openplanner-configured? config)
     (js/Promise.resolve nil)
     (if-let [store @store-registry/session-store*]
       (.complete-run! store (:run_id run)
@@ -710,7 +715,7 @@
                                               :content_parts_summary (mapv #(select-keys % [:type :mimeType :filename :url])
                                                                            content-parts)})})])
           all-events (vec (concat base-events graph-events tool-events media-events))]
-      (-> (backend-http/openplanner-request! config "POST" "/v1/events" {:events all-events})
+      (-> (openplanner-client/events! (openplanner-client/client config) all-events)
           (.catch (fn [err]
                     (.warn js/console "[knoxx] failed to index run memory into OpenPlanner" err)
                     nil)))))

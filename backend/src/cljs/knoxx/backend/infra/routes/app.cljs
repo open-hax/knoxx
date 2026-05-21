@@ -4,12 +4,11 @@
             [knoxx.backend.infra.routes.admin :as admin-routes]
             [knoxx.backend.infra.routes.actors :as actor-routes]
             [knoxx.backend.infra.agent.hydration :refer [ensure-settings! settings-state*]]
-            [knoxx.backend.infra.agent.runtime :refer [resolve-workspace-path queue-agent-control!]]
-            [knoxx.backend.infra.agent.session :refer [active-agent-session]]
+            [knoxx.backend.infra.agent.runtime :refer [resolve-workspace-path]]
+            [knoxx.backend.infra.agent.service :refer [active-agent-session queue-agent-control! resume-recovered-session! send-agent-turn!]]
             [knoxx.backend.shape.agent :refer [streaming? current-turn]]
             [knoxx.backend.infra.agent.policy :refer [validate-chat-policy!]]
-            [knoxx.backend.infra.agent.recovery :refer [resume-recovered-session!]]
-            [knoxx.backend.infra.agent.turn :refer [send-agent-turn! ensure-conversation-access! ensure-session-id]]
+            [knoxx.backend.infra.agent.turn :refer [ensure-conversation-access! ensure-session-id]]
             [knoxx.backend.shape.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
             [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
@@ -19,8 +18,9 @@
             [knoxx.backend.infra.routes.documents :as document-routes]
             [knoxx.backend.law.guards :as guards]
             [knoxx.backend.infra.clients.proxx :as proxx-client]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.extern.js :as xjs]
-            [knoxx.backend.infra.http :refer [forward-knoxx-request! json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openplanner-enabled? openplanner-request! openplanner-url openplanner-headers openai-auth-error send-fetch-response! request-query-string request-body http-error error-response!]]
+            [knoxx.backend.infra.http :refer [forward-knoxx-request! json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openai-auth-error send-fetch-response! request-query-string request-body http-error error-response!]]
             [knoxx.backend.infra.routes.memory :as memory-routes]
             [knoxx.backend.infra.routes.models :as model-routes]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-export!]]
@@ -407,10 +407,16 @@
    :session-guard nil
    :optional-session-guard nil})
 
+(defn- response-body
+  [resp]
+  (or (:body resp) (aget resp "body")))
+
 (defn- mongo-collections-ok [reply results]
-  (let [r (js->clj results :keywordize-keys true)]
+  (let [r (vec (js->clj results :keywordize-keys true))]
     (json-response! reply 200
-                    {:ok true :documents (aget (nth r 0) "body") :graph (aget (nth r 1) "body")})))
+                    {:ok true
+                     :documents (response-body (nth r 0))
+                     :graph (response-body (nth r 1))})))
 
 (defn- undo-session-ok [reply session-id conversation-id removed-count rewound-messages]
   (json-response! reply 200 {:ok true
@@ -733,18 +739,14 @@
   "GET" "/health"
   (let [proxx-configured (and (not (str/blank? (:proxx-base-url config)))
                               (not (str/blank? (:proxx-auth-token config))))
-        openplanner-configured (openplanner-enabled? config)
+        openplanner-client (openplanner-client/client config)
+        openplanner-configured (openplanner-client/enabled? openplanner-client)
         proxx-promise (if proxx-configured
                         (proxx-client/health! (proxx-client/client config))
                         (js/Promise.resolve {:ok false
                                              :status 503
                                              :body {:detail "Proxx is not configured"}}))
-        openplanner-promise (if openplanner-configured
-                              (fetch-json (openplanner-url config "/v1/health")
-                                          {:headers (openplanner-headers config)})
-                              (js/Promise.resolve {:ok false
-                                                   :status 503
-                                                   :body {:detail "OpenPlanner is not configured"}}))]
+        openplanner-promise (openplanner-client/health! openplanner-client)]
     (-> (promise/all-vec [proxx-promise openplanner-promise])
         (.then (partial health-deps-ok reply proxx-configured openplanner-configured))
         (.catch (partial health-deps-err reply)))))
@@ -969,66 +971,37 @@
   (let [path (aget request "params" "*")
         raw-url (aget request "raw" "url")
         query-idx (.indexOf raw-url "?")
-        qs (if (>= query-idx 0) (subs raw-url query-idx) "")
-        op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
-        tenant-id (or (:session-project-name config) "knoxx-session")]
-    (-> (fetch-json (str op-base "/v1/" path qs)
-                    {:headers {"Authorization" (str "Bearer " op-key)
-                               "X-Tenant-ID" tenant-id}})
-        (.then (partial fetch-json-ok reply))
+        qs (if (>= query-idx 0) (subs raw-url query-idx) "")]
+    (-> (openplanner-client/v1-json! (openplanner-client/client config) "GET" (str path qs) nil)
+        (.then (fn [body] (json-response! reply 200 body)))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-op-post! []
   "POST" "/api/data/op/*"
   (let [path (aget request "params" "*")
-        body (aget request "body")
-        op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
-        tenant-id (or (:session-project-name config) "knoxx-session")]
-    (-> (fetch-json (str op-base "/v1/" path)
-                    {:method "POST"
-                     :headers {"Content-Type" "application/json"
-                               "Authorization" (str "Bearer " op-key)
-                               "X-Tenant-ID" tenant-id}
-                     :body (or (some-> body js/JSON.stringify) "{}")})
-        (.then (partial fetch-json-ok reply))
+        body (aget request "body")]
+    (-> (openplanner-client/v1-json! (openplanner-client/client config) "POST" path body)
+        (.then (fn [resp] (json-response! reply 200 resp)))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-op-delete! []
   "DELETE" "/api/data/op/*"
-  (let [path (aget request "params" "*")
-        op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
-        tenant-id (or (:session-project-name config) "knoxx-session")]
-    (-> (fetch-json (str op-base "/v1/" path)
-                    {:method "DELETE"
-                     :headers {"Authorization" (str "Bearer " op-key)
-                               "X-Tenant-ID" tenant-id}})
-        (.then (partial fetch-json-ok reply))
+  (let [path (aget request "params" "*")]
+    (-> (openplanner-client/v1-json! (openplanner-client/client config) "DELETE" path nil)
+        (.then (fn [resp] (json-response! reply 200 resp)))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-op-patch! []
   "PATCH" "/api/data/op/*"
   (let [path (aget request "params" "*")
-        body (aget request "body")
-        op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
-        tenant-id (or (:session-project-name config) "knoxx-session")]
-    (-> (fetch-json (str op-base "/v1/" path)
-                    {:method "PATCH"
-                     :headers {"Content-Type" "application/json"
-                               "Authorization" (str "Bearer " op-key)
-                               "X-Tenant-ID" tenant-id}
-                     :body (or (some-> body js/JSON.stringify) "{}")})
-        (.then (partial fetch-json-ok reply))
+        body (aget request "body")]
+    (-> (openplanner-client/v1-json! (openplanner-client/client config) "PATCH" path body)
+        (.then (fn [resp] (json-response! reply 200 resp)))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-health! []
   "GET" "/api/data/health"
   (let [ingestion-base (:ingestion-base-url config)
-        op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
         proxx-base (:proxx-base-url config)
         check (fn [url headers]
                 (-> (fetch-json url {:headers (or headers {}) :method "GET"})
@@ -1037,6 +1010,13 @@
                                        :url url
                                        :detail (:body resp)}))
                     (.catch (fn [err] {:ok false :error (.-message err) :url url}))))
+        openplanner-check (fn []
+                            (-> (openplanner-client/health! (openplanner-client/client config))
+                                (.then (fn [resp] {:ok (:ok resp)
+                                                   :status (:status resp)
+                                                   :url "openplanner:/v1/health"
+                                                   :detail (:body resp)}))
+                                (.catch (fn [err] {:ok false :error (.-message err) :url "openplanner:/v1/health"}))))
         proxx-check (fn []
                       (-> (proxx-client/health! (proxx-client/client config))
                           (.then (fn [resp] {:ok (:ok resp)
@@ -1046,8 +1026,7 @@
                           (.catch (fn [err] {:ok false :error (.-message err) :url (str proxx-base "/health")}))))]
     (-> (js/Promise.all
          (into-array
-           [(check (str op-base "/v1/health") {"Authorization" (str "Bearer " op-key)
-                                               "X-Tenant-ID" (or (:session-project-name config) "knoxx-session")})
+           [(openplanner-check)
             (proxx-check)
             (check (str ingestion-base "/health") nil)
            (check "http://127.0.0.1:8796/api/status" nil)
@@ -1060,44 +1039,28 @@
 
 (defroute api-data-mongo-collections! []
   "GET" "/api/data/mongo/collections"
-  (let [op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
-        tenant-id (or (:session-project-name config) "knoxx-session")]
+  (let [client (openplanner-client/client config)]
     (-> (js/Promise.all
          (into-array
-          [(fetch-json (str op-base "/v1/documents/stats")
-                       {:headers {"Authorization" (str "Bearer " op-key)
-                                  "X-Tenant-ID" tenant-id}})
-           (fetch-json (str op-base "/v1/graph/monitoring")
-                       {:headers {"Authorization" (str "Bearer " op-key)
-                                  "X-Tenant-ID" tenant-id}})]))
-        (.then (partial mongo-collections-ok reply))
+          [(openplanner-client/documents-stats! client)
+           (openplanner-client/graph-monitoring! client)]))
+        (.then (fn [results]
+                 (let [[docs graph] (vec (js->clj results :keywordize-keys true))]
+                   (mongo-collections-ok reply [{:ok true :body docs}
+                                                {:ok true :body graph}]))))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-mongo-list! []
   "GET" "/api/data/mongo/list"
-  (let [op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
-        tenant-id (or (:session-project-name config) "knoxx-session")]
-    (-> (fetch-json (str op-base "/v1/mongo/collections")
-                    {:headers {"Authorization" (str "Bearer " op-key)
-                               "X-Tenant-ID" tenant-id}})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err reply)))))
+  (-> (openplanner-client/mongo-collections! (openplanner-client/client config))
+      (.then (fn [body] (json-response! reply 200 body)))
+      (.catch (partial fetch-json-err reply))))
 
 (defroute api-data-mongo-query! []
   "POST" "/api/data/mongo/query"
-  (let [body (request-body request)
-        op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
-        tenant-id (or (:session-project-name config) "knoxx-session")]
-    (-> (fetch-json (str op-base "/v1/mongo/query")
-                    {:method "POST"
-                     :headers {"Content-Type" "application/json"
-                               "Authorization" (str "Bearer " op-key)
-                               "X-Tenant-ID" tenant-id}
-                     :body (or (some-> body js/JSON.stringify) "{}")})
-        (.then (partial fetch-json-ok reply))
+  (let [body (request-body request)]
+    (-> (openplanner-client/mongo-query! (openplanner-client/client config) body)
+        (.then (fn [resp] (json-response! reply 200 resp)))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-pg-tables! []
@@ -1112,17 +1075,10 @@
   "POST" "/api/data/jobs/build-semantic-edges"
   (let [body (request-body request)
         k (or (aget body "k") 8)
-        min-sim (or (aget body "minSimilarity") 0.3)
-        op-base (:openplanner-base-url config)
-        op-key (:openplanner-api-key config)
-        tenant-id (or (:session-project-name config) "knoxx-session")]
-    (-> (fetch-json (str op-base "/v1/jobs/build-semantic-edges")
-                    {:method "POST"
-                     :headers {"Content-Type" "application/json"
-                               "Authorization" (str "Bearer " op-key)
-                               "X-Tenant-ID" tenant-id}
-                     :body (js/JSON.stringify (clj->js {:k k :minSimilarity min-sim}))})
-        (.then (partial fetch-json-ok reply))
+        min-sim (or (aget body "minSimilarity") 0.3)]
+    (-> (openplanner-client/build-semantic-edges! (openplanner-client/client config)
+                                                  {:k k :minSimilarity min-sim})
+        (.then (fn [resp] (json-response! reply 200 resp)))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-pg-query! []
@@ -1485,8 +1441,6 @@
                                           :session-title-backfill* session-title-backfill*
                                           :session-titles* session-titles*
                                           :get-cached-session-title! get-cached-session-title!
-                                          :openplanner-enabled? openplanner-enabled?
-                                          :openplanner-request! openplanner-request!
                                           :fetch-openplanner-session-rows! fetch-openplanner-session-rows!
                                           :session-title-seed-text session-title-seed-text
                                           :heuristic-session-title heuristic-session-title
@@ -1640,10 +1594,6 @@
                                                     :error-response! error-response!
                                                     :with-request-context! with-request-context!
                                                     :ensure-permission! ensure-permission!
-                                                    :openplanner-enabled? openplanner-enabled?
-                                                    :openplanner-request! openplanner-request!
-                                                    :openplanner-url openplanner-url
-                                                    :openplanner-headers openplanner-headers
                                                     :ctx-user-id ctx-user-id
                                                     :ctx-user-email ctx-user-email
                                                     :ctx-org-id ctx-org-id}))

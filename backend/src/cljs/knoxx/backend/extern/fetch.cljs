@@ -31,6 +31,43 @@
     (or (map? value) (vector? value) (set? value)) (clj->js value)
     :else value))
 
+(defn- header-key?
+  [headers wanted]
+  (boolean
+   (some (fn [k]
+           (= (str/lower-case (name k)) wanted))
+         (keys headers))))
+
+(defn- json-headers
+  [headers]
+  (let [headers (or headers {})]
+    (if (header-key? headers "content-type")
+      headers
+      (assoc headers "Content-Type" "application/json"))))
+
+(defn- request-opts
+  [{:keys [opts method headers json body form]}]
+  (let [{:keys [method headers json body form]}
+        (if (map? opts)
+          {:method (or (:method opts) method)
+           :headers (or (:headers opts) headers)
+           :json (or (:json opts) json)
+           :body (or (:body opts) body)
+           :form (or (:form opts) form)}
+          {:method method
+           :headers headers
+           :json json
+           :body body
+           :form form})]
+    (if (and opts (not (map? opts)))
+      opts
+      (cond-> {:method (or method "GET")}
+        (seq headers) (assoc :headers headers)
+        (some? json) (assoc :headers (json-headers headers)
+                            :body (xjson/stringify json))
+        (some? body) (assoc :body body)
+        (some? form) (assoc :body form)))))
+
 (defn- opts->js
   [opts signal]
   (let [out (js/Object.)]
@@ -57,6 +94,18 @@
                             (swap! acc assoc (str/lower-case key) value))))
               @acc)})
 
+(defn parse-json-object
+  "Parse a JSON object string into a CLJS map. Returns nil for invalid JSON or
+   non-object values. CLJS maps pass through unchanged."
+  [value]
+  (cond
+    (map? value) value
+    (string? value) (try
+                      (let [parsed (xjson/to-cljs (.parse js/JSON value))]
+                        (when (map? parsed) parsed))
+                      (catch :default _ nil))
+    :else nil))
+
 (defn- parse-json-text
   [text]
   (if (str/blank? text)
@@ -68,11 +117,11 @@
 
 (defrecord NativeFetchClient [default-timeout-ms fetch-fn]
   IHttpClient
-  (response! [_ {:keys [url opts timeout-ms]}]
+  (response! [_ {:keys [url timeout-ms] :as request}]
     (let [controller (js/AbortController.)
           effective-timeout-ms (or timeout-ms default-timeout-ms 30000)
           timeout-id (js/setTimeout #(.abort controller) effective-timeout-ms)
-          request-init (opts->js opts (.-signal controller))
+          request-init (opts->js (request-opts request) (.-signal controller))
           do-fetch (or fetch-fn js/fetch)]
       (-> (do-fetch url request-init)
           (.finally (fn [] (js/clearTimeout timeout-id))))))

@@ -36,20 +36,6 @@ motif comes from digital-garden publishing and curated knowledge spaces.
 └──────────┘   └──────────┘   └──────────┘   └──────────────┘
 ```
 
-Important current shifts from the older README:
-
-- The active backend is ClojureScript compiled by shadow-cljs and served by
-  Fastify; it is no longer the old Python/FastAPI model-lab backend.
-- The frontend runtime is shadow-cljs-owned. Vite is used to build TypeScript
-  React bridge bundles into `frontend/dist/bridge`.
-- The ingestion worker still exists as a separate JVM Clojure service and now
-  defaults to port `3003`.
-- Contracts in `contracts/` are first-class runtime inputs for actors, users,
-  roles, policies, capabilities, agents, models, triggers, and source behavior.
-- `ecosystem.config.cjs` is the live host-dev stack definition. The root
-  `docker-compose.yml` is legacy model-lab shaped and should not be treated as
-  the canonical Knoxx dev stack without review.
-
 ## Repository layout
 
 ```text

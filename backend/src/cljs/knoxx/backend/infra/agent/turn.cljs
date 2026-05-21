@@ -19,7 +19,7 @@
             [knoxx.backend.infra.agent.transcript :as transcript]
             [knoxx.backend.infra.auth.authz :as authz :refer [auth-snapshot]]
             [knoxx.backend.infra.core-memory :refer [extract-mentioned-devel-paths extract-mentioned-urls]]
-            [knoxx.backend.infra.http :as http]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.openplanner.memory :as openplanner-memory]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.infra.redis-client :as redis]
@@ -124,26 +124,27 @@
     (store-run! run-id base-run)
     (set-event-stream-sink!
      (fn [event]
-       (when (http/openplanner-enabled? config)
-         (-> (http/openplanner-request! config "POST" "/v1/events"
-                                        {:events [(openplanner-memory/openplanner-event
-                                                   config
-                                                   {:id        (str (:run_id event) ":"
-                                                                    (:type event) ":"
-                                                                    (:at event))
-                                                    :ts        (:at event)
-                                                    :kind      (str "knoxx." (:type event))
-                                                    :session   (:conversation_id event)
-                                                    :message   (:run_id event)
-                                                    :role      "system"
-                                                    :text      (str (:type event)
-                                                                    (when (:tool_name event)
-                                                                      (str ": " (:tool_name event)))
-                                                                    (when (:preview event)
-                                                                      (str "\n" (:preview event))))
-                                                    :extra     event})]}
-                                        )
-             (.catch (fn [_] nil))))))
+       (let [client (openplanner-client/client config)]
+         (when (openplanner-client/enabled? client)
+           (-> (openplanner-client/events!
+                client
+                [(openplanner-memory/openplanner-event
+                  config
+                  {:id        (str (:run_id event) ":"
+                                   (:type event) ":"
+                                   (:at event))
+                   :ts        (:at event)
+                   :kind      (str "knoxx." (:type event))
+                   :session   (:conversation_id event)
+                   :message   (:run_id event)
+                   :role      "system"
+                   :text      (str (:type event)
+                                   (when (:tool_name event)
+                                     (str ": " (:tool_name event)))
+                                   (when (:preview event)
+                                     (str "\n" (:preview event))))
+                   :extra     event})])
+               (.catch (fn [_] nil)))))))
     (session-store/put-session! (redis/get-client)
                                 (merge (cond-> {:session_id session-id
                                                 :conversation_id conversation-id

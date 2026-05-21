@@ -8,6 +8,7 @@
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.infra.core-memory :as core-memory]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.infra.eta-mu-session-ingester :as eta-mu-sessions]
             [knoxx.backend.infra.source.opencode-session-ingester :as opencode-sessions]))
@@ -345,22 +346,37 @@
   ;; Knoxx reconstructs it from the archived session rows.
   (.get app "/api/openplanner/v1/sessions"
         (fn [req reply]
-          (js-await [body (backend-http/openplanner-request! config "GET" (str "/v1/sessions" (request-query-string req)))]
+          (js-await [body (openplanner-client/sessions!
+                           (openplanner-client/client config)
+                           (js->clj (or (aget req "query") (js/Object.)) :keywordize-keys true))]
             (js-await [enriched (js/Promise.all
                                   (clj->js (map #(enrich-session-summary! config %) (vec (or (:rows body) [])))))]
               (.send reply (clj->js (assoc body :rows (vec (array-seq enriched)))))))))
 
   ;; Frontend calls /api/openplanner/v1/* but OpenPlanner serves /v1/*.
-  ;; Proxy: strip /api/openplanner prefix, add Authorization header.
+  ;; Keep the proxy transport details inside the OpenPlanner client boundary.
   (.all app "/api/openplanner/*"
         (fn [req reply]
-          (let [base (or (:openplanner-base-url config) "http://localhost:7777")
-                key (or (:openplanner-api-key config) "change-me")
+          (let [body (request-body req)
                 sub-path (aget (aget req "params") "*")
-                target-url (str base "/" sub-path (request-query-string req))
-                fwd-headers {"content-type" "application/json"
-                             "authorization" (str "Bearer " key)
-                             "x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
-                             "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}]
-            (proxy-fetch! target-url req reply fwd-headers "OpenPlanner proxy error"))))
-  )
+                fwd-headers {"x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
+                             "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}
+                request* (cond-> {:method (aget req "method")
+                                  :path sub-path
+                                  :query-string (request-query-string req)
+                                  :headers fwd-headers}
+                           (not= body js/undefined) (assoc :body body))]
+            (-> (openplanner-client/forward-v1! (openplanner-client/client config) request*)
+                (.then (fn [resp]
+                         (let [content-type (json-content-type resp)
+                               body-promise (if (str/includes? content-type "application/json")
+                                              (safe-json resp)
+                                              (safe-text resp))]
+                           (.then body-promise
+                                  (fn [resp-body]
+                                    (reply-send-with-content-type! reply (.-status resp) content-type resp-body))
+                                  (fn [err]
+                                    (send-proxy-error! reply "OpenPlanner proxy error" err)))))
+                (.catch (fn [err]
+                          (send-proxy-error! reply "OpenPlanner proxy error" err)))))))
+  ))

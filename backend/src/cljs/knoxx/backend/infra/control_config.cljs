@@ -7,6 +7,7 @@
             [knoxx.backend.runtime.roles :as roles]
             [knoxx.backend.infra.tooling :as tooling]
             [knoxx.backend.infra.registry.tools :as tools]
+            [knoxx.backend.law.control :as control-law]
             [knoxx.backend.shape.parse :refer [parse-positive-int]]))
 
 (defn- env
@@ -20,7 +21,7 @@
        (remove nil?)
        vec))
 
-(declare default-discord-model clamp-max-messages clamp-max-message-chars event-agent-trigger-kinds)
+(declare default-discord-model)
 
 (defn- keywordish->string
   [value]
@@ -159,6 +160,7 @@
     (string? value) (parse-string-list value)
     :else []))
 
+;; TODO belongs in shapes
 (defn- contract-source-spec
   [contract source-kind source-mode source-mode-contract]
   (let [source-config (or (get-in contract [:data :source]) {})
@@ -181,15 +183,16 @@
                                    str str/trim not-empty)]
     {:kind source-kind
      :mode source-mode
-     :config (cond-> {:maxMessages (clamp-max-messages (get-in contract [:data :source :max-messages])
-                                                       (get-in contract [:data :source :maxMessages]))}
-               max-total-messages (assoc :maxTotalMessages (clamp-max-messages max-total-messages max-total-messages))
-               max-message-chars (assoc :maxMessageChars (clamp-max-message-chars max-message-chars max-message-chars))
+     :config (cond-> {:maxMessages (control-law/clamp-max-messages (get-in contract [:data :source :max-messages])
+                                                                   (get-in contract [:data :source :maxMessages]))}
+               max-total-messages (assoc :maxTotalMessages (control-law/clamp-max-messages max-total-messages max-total-messages))
+               max-message-chars (assoc :maxMessageChars (control-law/clamp-max-message-chars max-message-chars max-message-chars))
                trusted-role-ids (assoc :trustedRoleIds (vec trusted-role-ids))
                sticky-session? (assoc :stickySession true)
                session-max-messages (assoc :sessionMaxMessages session-max-messages)
                streaming-behavior (assoc :streamingBehavior streaming-behavior))}))
 
+;; TODO belongs in shapes
 (defn- contract-agent-spec
   [config contract-id contract resolved source-mode-ref source-mode-task-prompt]
   (let [role (:role resolved)]
@@ -215,13 +218,13 @@
      :sourceMode (keywordish->string source-mode-ref)
      :actorId (:actor-id resolved)
      :contractActors (vec (or (:contract-actor-ids resolved) []))}))
-
+;; TODO Legacy  smell event agent not good.
 (defn- contract->event-agent-job
   [config contract-id contract contract-hash]
   (let [trigger-kind (keywordish->string (:trigger-kind contract))
         resolved (tooling/resolve-agent-contract config contract-id)]
     (when (and (= :agent (:contract/kind contract))
-               (contains? event-agent-trigger-kinds trigger-kind))
+               (contains? control-law/trigger-kinds trigger-kind))
       (let [{:keys [always-kinds maybe-kinds event-kinds]} (contract-event-kinds contract)
             {:keys [source-mode-ref source-mode-contract source-kind source-mode source-mode-task-prompt]}
             (contract-source-mode-context config contract)]
@@ -265,7 +268,7 @@
 (defn- default-discord-channels
   []
   (parse-string-list (env "DISCORD_CHANNEL_IDS" "")))
-
+;; TODO Extract  discord related logic from control config
 (defn- default-discord-keywords
   []
   (let [keywords (parse-string-list (env "DISCORD_TARGET_KEYWORDS" "knoxx,cephalon"))]
@@ -274,49 +277,10 @@
       ["knoxx" "cephalon"])))
 
 (def ^:private event-agent-control-redis-key "event-agent:control-config")
-(def ^:private event-agent-trigger-kinds #{"cron" "event"})
 
-(def ^:private max-messages-limit 100)
-(def ^:private max-message-chars-limit 8000)
-
-(defn- clamp-max-messages
-  [value fallback]
-  (let [n (or (parse-positive-int value)
-              (parse-positive-int fallback)
-              25)]
-    (max 1 (min max-messages-limit n))))
-
-(defn- clamp-max-message-chars
-  [value fallback]
-  (let [n (or (parse-positive-int value)
-              (parse-positive-int fallback)
-              1200)]
-    (max 120 (min max-message-chars-limit n))))
-
-(defn- clamp-source-config
-  [source-config default-config]
-  (let [cfg (or source-config {})]
-    (cond-> (assoc cfg :maxMessages (clamp-max-messages (:maxMessages cfg)
-                                                        (:maxMessages (or default-config {}))))
-      (parse-positive-int (or (:maxTotalMessages cfg) (:max-total-messages cfg)))
-      (assoc :maxTotalMessages (clamp-max-messages (or (:maxTotalMessages cfg)
-                                                       (:max-total-messages cfg))
-                                                   (:maxMessages cfg)))
-
-      (parse-positive-int (or (:maxMessageChars cfg) (:max-message-chars cfg) (:max_message_chars cfg)))
-      (assoc :maxMessageChars (clamp-max-message-chars (or (:maxMessageChars cfg)
-                                                           (:max-message-chars cfg)
-                                                           (:max_message_chars cfg))
-                                                       (:maxMessageChars (or default-config {}))))
-
-      (contains? cfg :stickySession)
-      (assoc :stickySession (boolean (:stickySession cfg)))
-
-      (parse-positive-int (:sessionMaxMessages cfg))
-      (assoc :sessionMaxMessages (parse-positive-int (:sessionMaxMessages cfg))))))
-
+;; TODO Legacy concept event-agent  is  smell
 (defn persist-event-agent-control!
-  "Persist the event-agent-control overrides to Redis so they survive restarts." 
+  "Persist the event-agent-control overrides to Redis so they survive restarts."
   [control]
   (if-let [client (redis/get-client)]
     (-> (redis/set-json client event-agent-control-redis-key control)
@@ -328,8 +292,9 @@
                   control)))
     (js/Promise.resolve control)))
 
+;; TODO Legacy concept event-agent  is  smell
 (defn load-event-agent-control
-  "Load event-agent-control overrides from Redis. Returns nil if not found." 
+  "Load event-agent-control overrides from Redis. Returns nil if not found."
   []
   (if-let [client (redis/get-client)]
     (-> (redis/get-json client event-agent-control-redis-key)
@@ -345,9 +310,10 @@
 (defn discord-agent-role-options
   "Roles that can be used for scheduled Discord jobs.
 
-   Source of truth lives in contracts/roles/*.edn." 
+   Source of truth lives in contracts/roles/*.edn."
   [config]
   (roles/list-role-slugs config))
+
 
 (defn- default-discord-agent-jobs
   [config]
@@ -480,34 +446,11 @@
 
 (defn event-agent-source-kind-options
   []
-  ["discord" "github" "cron" "manual"])
+  control-law/source-kinds)
 
 (defn event-agent-trigger-kind-options
   []
-  ["cron" "event"])
-
-(defn- normalize-tool-policy-entry
-  [policy]
-  (let [tool-id (some-> (or (:toolId policy)
-                            (:tool-id policy)
-                            (:tool_id policy))
-                        str
-                        str/trim
-                        not-empty)
-        effect (some-> (or (:effect policy) "allow")
-                       str
-                       str/trim
-                       str/lower-case
-                       not-empty)]
-    (when tool-id
-      {:toolId tool-id
-       :effect (if (#{"allow" "deny"} effect) effect "allow")})))
-
-(defn- normalize-tool-policy-list
-  [policies]
-  (->> (or policies [])
-       (keep normalize-tool-policy-entry)
-       vec))
+  control-law/trigger-kind-options)
 
 (defn- default-discord-tool-policies
   []
@@ -633,8 +576,8 @@
                :eventKinds event-kinds}
      :source {:kind source-kind
               :mode source-mode
-              :config (clamp-source-config (:config source-config)
-                                          (get-in default-job [:source :config]))}
+              :config (control-law/clamp-source-config (:config source-config)
+                                                      (get-in default-job [:source :config]))}
      :filters (or (:filters source) (:filters default-job) {})
      :agentSpec (cond-> {:role role
                         :model (or (some-> (:model agent-source) str str/trim not-empty)
@@ -647,10 +590,10 @@
                         :taskPrompt (or (prompt-templates/prompt-value (:taskPrompt agent-source))
                                         (prompt-templates/prompt-value (:taskPrompt (:agentSpec default-job)))
                                         "")
-                        :toolPolicies (let [normalized (normalize-tool-policy-list (:toolPolicies agent-source))]
+                        :toolPolicies (let [normalized (control-law/normalize-tool-policy-list (:toolPolicies agent-source))]
                                         (if (and (seq normalized) (every? some? normalized))
                                           normalized
-                                          (normalize-tool-policy-list (:toolPolicies (:agentSpec default-job)))))
+                                          (control-law/normalize-tool-policy-list (:toolPolicies (:agentSpec default-job)))))
                         :contractId (or (nonblank-str (:contractId agent-source))
                                         (nonblank-str (:contractSourceId source))
                                         (nonblank-str (:contractSourceId default-job)))

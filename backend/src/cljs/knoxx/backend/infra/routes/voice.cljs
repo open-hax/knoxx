@@ -1,6 +1,8 @@
 (ns knoxx.backend.infra.routes.voice
   (:require [clojure.string :as str]
-            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.extern.fastify :as xfastify]
+            [knoxx.backend.extern.multipart :as xmultipart]
+            [knoxx.backend.extern.websocket :as xws]
             [knoxx.backend.infra.http :as http]))
 
 (def ^:private default-voxx-voice-id "af_jessica")
@@ -40,7 +42,7 @@
 (defn- first-body-value
   [body names]
   (some (fn [name]
-          (let [value (aget body name)]
+          (let [value (get body (keyword name))]
             (when-not (nil? value) value)))
         names))
 
@@ -109,24 +111,16 @@
 
 (defn- message-data->string
   [value]
-  (cond
-    (string? value) value
-    (instance? js/Buffer value) (.toString value "utf8")
-    (instance? js/Uint8Array value) (.toString (.from js/Buffer value) "utf8")
-    :else (str value)))
+  (xws/message-data->string value))
 
 (defn- ws-send-json!
   [socket payload]
-  (when (= 1 (aget socket "readyState"))
-    (.send socket (.stringify js/JSON (clj->js payload)))))
+  (xws/send-json! socket payload))
 
 (defn- ws-close!
   ([socket] (ws-close! socket 1000 ""))
   ([socket code reason]
-   (when socket
-     (try
-       (.close socket code reason)
-       (catch :default _ nil)))))
+   (xws/close! socket code reason)))
 
 (defn- normalize-voice-stream-text
   [value]
@@ -140,54 +134,38 @@
 
 (defn- relay-voice-stream!
   [client payload]
-  (let [audio (aget payload "audio")
-        is-final (true? (aget payload "isFinal"))]
-    (cond
-      (string? audio)
-      (ws-send-json! client {:type "audio"
-                             :audio audio
-                             :alignment (js->clj (aget payload "alignment") :keywordize-keys true)
-                             :normalized_alignment (js->clj (aget payload "normalizedAlignment") :keywordize-keys true)})
-
-      is-final
-      (ws-send-json! client {:type "final" :isFinal true})
-
-      :else
-      (ws-send-json! client {:type "event"
-                             :payload (js->clj payload :keywordize-keys true)}))))
+  (ws-send-json! client (xws/voice-stream-event payload)))
 
 (defn- register-voice-ws-route!
   [app _config]
   (app-route! app
-              (clj->js {:method "GET"
-                        :url "/ws/voice/tts"
-                        :handler (fn [_request reply]
-                                   (-> (.code reply 426)
-                                       (.type "application/json")
-                                       (.send (clj->js {:error "WebSocket upgrade required"}))))
-                        :wsHandler (fn [socket _request]
-                                     (let [client (or (aget socket "socket") socket)]
-                                       (ws-send-json!
-                                        client
-                                        {:type "error"
-                                         :detail "Voxx streaming TTS is not exposed by this Knoxx bridge yet. Use voice.tts or POST /api/voice/tts for Voxx /v1/audio/speech."})
-                                       (ws-close! client 1000 "voxx_streaming_tts_unavailable")))})))
+              {:method "GET"
+               :url "/ws/voice/tts"
+               :handler (fn [_request reply]
+                          (xfastify/send-json! reply 426 {:error "WebSocket upgrade required"}))
+               :wsHandler (fn [socket _request]
+                            (let [client (xws/client-socket socket)]
+                              (ws-send-json!
+                               client
+                               {:type "error"
+                                :detail "Voxx streaming TTS is not exposed by this Knoxx bridge yet. Use voice.tts or POST /api/voice/tts for Voxx /v1/audio/speech."})
+                              (ws-close! client 1000 "voxx_streaming_tts_unavailable")))}))
 
 (defn- request-parts-promise
   [^js request]
-  (.fromAsync js/Array (.parts request)))
+  (xmultipart/parts! request))
 
 (defn- reply-header!
   [^js reply name value]
-  (.header reply name value))
+  (xfastify/reply-header! reply name value))
 
 (defn- ws-on!
   [^js socket event-name handler]
-  (.on socket event-name handler))
+  (xws/on! socket event-name handler))
 
 (defn- app-route!
   [^js app opts]
-  (.route app opts))
+  (xfastify/route! app opts))
 
 (defn register-voice-routes!
   [app runtime config handlers]
@@ -223,19 +201,15 @@
                             (-> (request-parts-promise request)
                                 (.then
                                  (fn [parts]
-                                   (let [part-seq (xjs/js-array-seq parts)
-                                         file-part (first (filter #(= (aget % "type") "file") part-seq))]
+                                   (let [file-part (first (xmultipart/file-parts parts))]
                                      (if-not file-part
                                        {:error {:status 400
                                                :detail "No file uploaded. Send multipart/form-data with a file part."}}
-                                       (-> (.arrayBuffer (js/Response. (aget file-part "file")))
+                                       (-> (xmultipart/part-buffer! file-part)
                                            (.then
-                                            (fn [buf]
-                                              (let [mime (or (aget file-part "mimetype")
-                                                             (aget file-part "type")
-                                                             "application/octet-stream")
-                                                    headers {"Content-Type" (str mime)}
-                                                    body (.from js/Buffer buf)]
+                                            (fn [body]
+                                              (let [mime (xmultipart/part-mime-type file-part)
+                                                    headers {"Content-Type" (str mime)}]
                                                 (fetch-stt-json
                                                  base
                                                  "/transcribe"
@@ -297,22 +271,22 @@
                   (when ctx (ensure-tool! ctx "multimodal.upload"))
                   (let [api-key (voice-gateway-api-key config)
                         body (http/request-body request)
-                        text (-> (or (aget body "text") "") str)
-                        voice-id-raw (trim-or-empty (or (aget body "voice_id") (aget body "voiceId") ""))
+                        text (-> (or (:text body) "") str)
+                        voice-id-raw (trim-or-empty (or (:voice_id body) (:voiceId body) ""))
                         voice-id (if (str/blank? voice-id-raw)
                                    (voxx-default-voice-id config)
                                    voice-id-raw)
-                        model-id-raw (trim-or-empty (or (aget body "model_id")
-                                                        (aget body "modelId")
-                                                        (aget body "model")
+                        model-id-raw (trim-or-empty (or (:model_id body)
+                                                        (:modelId body)
+                                                        (:model body)
                                                         ""))
                         model-id (if (str/blank? model-id-raw)
                                    (voxx-default-model-id config)
                                    model-id-raw)
-                        output-format-raw (trim-or-empty (or (aget body "output_format")
-                                                             (aget body "outputFormat")
-                                                             (aget body "response_format")
-                                                             (aget body "responseFormat")
+                        output-format-raw (trim-or-empty (or (:output_format body)
+                                                             (:outputFormat body)
+                                                             (:response_format body)
+                                                             (:responseFormat body)
                                                              ""))
                         output-format (if (str/blank? output-format-raw)
                                         default-voxx-output-format
@@ -336,7 +310,7 @@
                                                  true)
                         prompt-aware-style (trim-or-empty (first-body-value body ["prompt_aware_style"
                                                                                   "promptAwareStyle"]))
-                        voice-settings (aget body "voice_settings")]
+                        voice-settings (:voice_settings body)]
                     (cond
                       (str/blank? api-key)
                       (json-response! reply 503 {:detail "VOICE_GATEWAY_API_KEY is not configured"})
@@ -345,26 +319,25 @@
                       (json-response! reply 400 {:detail "Missing required field: text"})
 
                       :else
-                      (let [payload (clj->js
-                                     (cond-> {:input text
-                                              :voice voice-id
-                                              :model model-id
-                                              :response_format output-format
-                                              :speed speed
-                                              :postprocess_enabled postprocess-enabled
-                                              :prompt_aware prompt-aware}
-                                       postprocess-profile
-                                       (assoc :postprocess_profile postprocess-profile)
+                      (let [payload (cond-> {:input text
+                                             :voice voice-id
+                                             :model model-id
+                                             :response_format output-format
+                                             :speed speed
+                                             :postprocess_enabled postprocess-enabled
+                                             :prompt_aware prompt-aware}
+                                      postprocess-profile
+                                      (assoc :postprocess_profile postprocess-profile)
 
-                                       (not (str/blank? prompt-aware-style))
-                                       (assoc :prompt_aware_style prompt-aware-style)
+                                      (not (str/blank? prompt-aware-style))
+                                      (assoc :prompt_aware_style prompt-aware-style)
 
-                                       (and voice-settings (not (nil? voice-settings)))
-                                       (assoc :voice_settings (js->clj voice-settings))))
+                                      (and voice-settings (not (nil? voice-settings)))
+                                      (assoc :voice_settings voice-settings))
                             url (voxx-tts-url config)
                             opts {:method "POST"
                                   :headers (voxx-headers api-key)
-                                  :body (.stringify js/JSON payload)}]
+                                  :json payload}]
                         (-> (http/fetch-with-timeout url opts 30000)
                             (.then
                              (fn [resp]

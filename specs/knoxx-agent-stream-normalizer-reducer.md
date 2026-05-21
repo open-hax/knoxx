@@ -1,7 +1,7 @@
 # Knoxx Agent Stream Normalizer and Reducer
 
 Date: 2026-05-21
-Status: todo
+Status: done
 Parent epic: `knoxx-agent-service-protocol-split-epic.md`
 Source report: `docs/notes/architecture/agent-service-protocol-split.md`
 Story points: 5
@@ -81,8 +81,40 @@ The semantic parts should be pure; mutation and broadcasting should be sinks.
 3. `stream.cljs` becomes thinner composition code, or at minimum delegates semantic decisions to extracted functions.
 4. Existing streaming output behavior is preserved for representative fixtures.
 
+## Implementation result
+
+Completed on 2026-05-21.
+
+Touched files:
+
+- `backend/src/cljs/knoxx/backend/domain/agent/text_delta.cljs`
+- `backend/src/cljs/knoxx/backend/domain/agent/reasoning.cljs`
+- `backend/src/cljs/knoxx/backend/domain/agent/tool_lifecycle.cljs`
+- `backend/src/cljs/knoxx/backend/domain/agent/turn_guards.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/stream/provider_events.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/stream/reducer.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/stream.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/message.cljs`
+- `backend/src/cljs/knoxx/backend/domain/agent/content.cljs`
+- `backend/test/cljs/knoxx/backend/agents/stream_normalizer_reducer_test.cljs`
+
+Notes:
+
+- Provider JS stream events now normalize through `provider-events/normalize` before `build-subscribe-handler` dispatches to stream handlers.
+- Text delta append/replay suppression is available as pure `domain.agent.text-delta` functions and stream delegates to them.
+- `<think>` routing and terminal split logic are centralized in `domain.agent.reasoning` and reused by message finalization.
+- Tool lifecycle receipt/run/trace payload decisions are extracted to `domain.agent.tool-lifecycle`.
+- Death-spiral repeated-tool-call detection is extracted to pure `domain.agent.turn-guards`.
+- Added `infra.agent.stream.reducer` as a pure reducer for stream semantic tests without Redis, run-state, or WebSocket sinks.
+
 ## Verification
 
 ```bash
 pnpm -C backend exec shadow-cljs compile test
+pnpm -C backend exec shadow-cljs compile server
 ```
+
+Results:
+
+- `compile test`: exit 0; 325 tests, 813 assertions, 0 failures, 0 errors; 220 existing warnings.
+- `compile server`: exit 0; build completed; 301 existing warnings.

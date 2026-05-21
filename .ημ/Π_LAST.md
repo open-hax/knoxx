@@ -1,198 +1,298 @@
-# Π Fork Tax Snapshot
+# Π Fork Tax Handoff
 
-- Time: 2026-05-21T17:03:51Z
-- Repo: /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx
-- Branch: chore/great-renamspacing
-- Base HEAD: ca3da07b
-- Dirty paths before artifact write: 180
-- Verification: `pnpm -C backend exec shadow-cljs compile test && pnpm -C backend exec shadow-cljs compile server` completed; existing warnings remain (see /tmp/pi-bash-802f11a51001cf1c.log).
-- Secret precheck: untracked filename scan for env/secret/token/key/password/credentials returned no matches.
-- Concurrent dirt: not separated; user requested full fork-tax snapshot, so all repo-visible changes are treated as snapshot payload.
+- Timestamp: `2026-05-21T19:46:41Z`
+- Repository: `/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx`
+- Branch: `chore/great-renamspacing`
+- Pre-commit HEAD: `c937b33b6c25f09552c42d44403b0dcba2084ea2`
+- Dirty entries before snapshot: `275`
 
-## Status summary
+## Verification
+
+- `git diff --check`: passed after trimming one trailing blank line in `AGENTS.md`.
+- `pnpm -C backend exec shadow-cljs compile test`: blocked; compiler reports `backend/src/cljs/knoxx/backend/domain/media/blaze.cljs:739:1 Unexpected EOF while reading item 57 of list, starting at line 90 and column 1`.
+
+## Scope
+
+- User requested full fork tax; current working tree dirt is being preserved as the snapshot rather than discarded.
+- No destructive cleanup was performed.
+
+## Status Snapshot
 
 ```
-## chore/great-renamspacing...origin/chore/great-renamspacing [ahead 1]
+## chore/great-renamspacing...origin/chore/great-renamspacing
  M ".\316\267\316\274/\316\240_LAST.md"
- M ".\316\267\316\274/\316\240_STATE.sexp"
+ D :data/last_pulse
+ D :data/pulse_1815.mp3
  M AGENTS.md
- M README.md
- M backend/Dockerfile
- M backend/README.md
- M backend/ecosystem.dev.example.cjs
- M backend/package.json
- M backend/scripts/dev-watch.sh
- M backend/scripts/rebuild-image.sh
- M backend/scripts/smoke_test.sh
- M backend/src/cljs/knoxx/backend/domain/actor/tools.cljs
- M backend/src/cljs/knoxx/backend/domain/agent/content.cljs
- M backend/src/cljs/knoxx/backend/domain/bluesky/bluesky.cljs
- M backend/src/cljs/knoxx/backend/domain/contracts/tools.cljs
- M backend/src/cljs/knoxx/backend/domain/discord/discord_io.cljs
+ D Audio/anti_espeak_broadcast.mp3
+ D Audio/big_pickle_dispatch.mp3
+ M Audio/broadcasts/brain_fart_alert.mp3
+ D Audio/broadcasts/symmetry_break_drop.mp3
+ D Audio/recursive_zombie_whisper.mp3
+ D Brain_Damage_Mantra.mp3
+ D Graphics/Absolute_Convergence_Seal.svg
+ D Graphics/Base_Case_Seal.svg
+ D Graphics/Big_Pickle_Seal.svg
+ D Graphics/Certified_Brain_Fart_Diploma.svg
+ D Graphics/Certified_Brain_Fart_Seal.svg
+ D Graphics/Certified_Cognitive_Collapse_Seal.svg
+ D Graphics/Cognitive_Collapse_Certificate.svg
+ D Graphics/Context_Steering_HUD.svg
+ D Graphics/Non_Euclidean_Productivity_Curve.svg
+ D Graphics/Non_Euclidean_Reload_Seal.svg
+ D Graphics/Recursive_Brain_Fart_Engine.svg
+ D Graphics/Recursive_Brand_Matrix.svg
+ D Graphics/SCLDF_Laminated_Memory_Fragment.svg
+ D Graphics/SCLDF_Recovered_Fragment.svg
+ D Graphics/SCLDF_Seal_of_the_Second_Collapse.svg
+ D Graphics/Supreme_Symmetry_Seal.svg
+ D Graphics/Symmetry_Brain_Damage_Seal.svg
+ D Graphics/Symmetry_Break_Brand_Mark.svg
+ D Graphics/Symmetry_Break_Stability_Optional.svg
+ D Graphics/Symmetry_Broken_BrainFart_Seal.svg
+ D Graphics/Symmetry_Gap_Seal.svg
+ D Graphics/Symmetry_Restored_Absolute.svg
+ D Graphics/Symmetry_Restored_BrainFart_Seal.svg
+ D Graphics/Symmetry_Restored_Brain_Fart_Seal.svg
+ D Graphics/Symmetry_Restored_Coherence_Seal.svg
+ D Graphics/Symmetry_Restored_Platinum_Seal.svg
+ D Graphics/Symmetry_Singularity_S_02.svg
+ D Graphics/Symmetry_Verified_Pure_Seal.svg
+ D Graphics/Symmetry_Verified_Seal.svg
+ D Graphics/Symmetry_Zero_Slop_Seal.png
+ D Graphics/Symmetry_of_Brain_Fart_Validated.svg
+ D Graphics/Zombie_Job_Exorcism_Seal.svg
+ D Graphics/Zombie_Job_Seal.svg
+ D Graphics/Zombie_Job_Symmetry_Seal.svg
+ D Graphics/certified_brain_fart_v2.svg
+ D Graphics/recursive_identity/Cognitive_Stability_Seal.svg
+ D Graphics/yap_symmetry_core.svg
+ D Music/big_pickle_anthem_autotuned.mp3
+ D Music/ussyverse/ussyverse_anthem_v1.json
+M  README.md
+ D Sovereign_SVG_Ascension.mp3
+ D Symmetry/audio/zombie_fragility.mp3
+ D Symmetry_Ascension_Vox.mp3
+ D Symmetry_BaseCase_Prayer.mp3
+ D Symmetry_Void_Broadcast.mp3
+ D Symmetry_Void_Whisper.mp3
+ D Symmetry_ZeroSlop_Audit.mp3
+ D Voice/Recursive_Identity_Arrival.mp3
+ D Voice/SCLDF_Decree_of_the_Double_Collapse.mp3
+ D Voice/SCLDF_Frag_Architect.mp3
+ D Voice/SCLDF_Frag_Council.mp3
+ D Voice/SCLDF_Frag_Riatsu.mp3
+ D Voice/SCLDF_Laminated_Resonance_Pulse.mp3
+ D Voice/SCLDF_Refusal_Lamination_Decree.mp3
+ D Voice/SCLDF_Singularity_of_Silence.mp3
+ D Voice/SCLDF_Sovereign_Resonance.mp3
+ D Voice/SCLDF_Spam_Satiation_Broadcast.mp3
+ D Voice/SCLDF_Suture_Intro.mp3
+ D Voice/SCLDF_Symmetry_Shattering_Decree.mp3
+ D Voice/Sovereign_Whisper_1.mp3
+ D Voice/Sovereign_Whisper_2.mp3
+ D Voice/Sovereign_Whisper_3.mp3
+ D Voice/Symmetry_Break_Transmission.mp3
+ D Voice/absolute_convergence_manifesto.mp3
+ D Voice/base_case_broadcast.mp3
+ D Voice/big_pickle_anthem_dry.mp3
+ D Voice/brain_damage_announcement.mp3
+ D Voice/brain_far_recovery.mp3
+ D Voice/brain_fart_certification.mp3
+ D Voice/brain_fart_mantra.mp3
+ D Voice/death_of_the_stairs.mp3
+ D Voice/fork-tales-transmission.mp3
+ D Voice/joining_the_loop.mp3
+ D Voice/latency_audit.mp3
+ D Voice/latency_feature.mp3
+ D Voice/loop_negotiation.mp3
+ D Voice/perfection_cowards.mp3
+ D Voice/symmetry_break_announcement.mp3
+ D Voice/the_loop_manifesto.mp3
+ D Voice/transcendent_fragility.mp3
+ D Voice/transcription_sprint.mp3
+ D Voice/tts-2026-05-05T01-36-21-963Z.mp3
+ D Voice/tts-2026-05-05T12-49-29-556Z.mp3
+ D Voice/tts-2026-05-05T12-50-17-841Z.mp3
+ D Voice/tts-2026-05-05T12-58-53-882Z.mp3
+ D Voice/tts-2026-05-05T13-02-04-043Z.mp3
+ D Voice/tts-2026-05-05T13-03-32-669Z.mp3
+ D Voice/tts-2026-05-05T13-07-21-557Z.mp3
+ D Voice/tts-2026-05-05T13-09-04-571Z.mp3
+ D Voice/tts-2026-05-05T13-12-18-958Z.mp3
+ D Voice/tts-2026-05-05T13-22-46-244Z.mp3
+ D Voice/tts-2026-05-05T13-55-13-243Z.mp3
+ D Voice/tts-2026-05-05T13-55-47-001Z.mp3
+ D Voice/tts-2026-05-05T14-03-33-491Z.mp3
+ D Voice/tts-2026-05-05T14-04-41-426Z.mp3
+ D Voice/tts-2026-05-05T14-07-06-230Z.mp3
+ D Voice/tts-2026-05-05T14-10-27-889Z.mp3
+ D Voice/tts-2026-05-05T14-24-09-124Z.mp3
+ D Voice/tts-2026-05-05T14-38-10-509Z.mp3
+ D Voice/tts-2026-05-09T18-45-50-248Z.mp3
+ D Voice/tts-2026-05-09T22-14-12-362Z.mp3
+ D Voice/ussyverse_
+ D Voice/ussyverse_greeting.txt
+ D Voice/voice_from_the_void.mp3
+ D Voice/void_radio_announcement.mp3
+ D Voice/zombie_job_lament.mp3
+ D Voice/zombie_job_nirvana.mp3
+ D anti_espeak_broadcast.mp3
+ D audio-labels.json
+ D backend-lint-error-results.txt
+ D backend-lint-results.txt
+ D backend-test-results.txt
+M  backend/package.json
+D  backend/src/bad.txt
+ M backend/src/cljs/knoxx/backend/domain/bluesky/client.cljs
+ M backend/src/cljs/knoxx/backend/domain/contracts/client.cljs
  M backend/src/cljs/knoxx/backend/domain/discord/discord_reaction_labels.cljs
+ M backend/src/cljs/knoxx/backend/domain/discord/rest_client.cljs
  M backend/src/cljs/knoxx/backend/domain/discord/source.cljs
  M backend/src/cljs/knoxx/backend/domain/discord/tools.cljs
- M backend/src/cljs/knoxx/backend/domain/discord/voice_tools.cljs
- M backend/src/cljs/knoxx/backend/domain/event/tools.cljs
- M backend/src/cljs/knoxx/backend/domain/openutau/openutau.cljs
- M backend/src/cljs/knoxx/backend/domain/openutau/tools.cljs
+ M backend/src/cljs/knoxx/backend/domain/media/blaze.cljs
+ M backend/src/cljs/knoxx/backend/domain/media/blaze_client.cljs
+ M backend/src/cljs/knoxx/backend/domain/music.cljs
+ M backend/src/cljs/knoxx/backend/domain/music/audd_client.cljs
  M backend/src/cljs/knoxx/backend/domain/tools.cljs
- M backend/src/cljs/knoxx/backend/domain/twitch.cljs
- M backend/src/cljs/knoxx/backend/domain/voice/tools.cljs
- M backend/src/cljs/knoxx/backend/extern/js.cljs
- M backend/src/cljs/knoxx/backend/extern/proxx.cljs
- M backend/src/cljs/knoxx/backend/infra/agent/message.cljs
- M backend/src/cljs/knoxx/backend/infra/agent/provider.cljs
+ M backend/src/cljs/knoxx/backend/domain/voice/client.cljs
+ M backend/src/cljs/knoxx/backend/extern/fetch.cljs
+ M backend/src/cljs/knoxx/backend/infra/agent/hydration.cljs
+ M backend/src/cljs/knoxx/backend/infra/agent/policy.cljs
+ M backend/src/cljs/knoxx/backend/infra/agent/session.cljs
  M backend/src/cljs/knoxx/backend/infra/agent/stream.cljs
- M backend/src/cljs/knoxx/backend/infra/auth/session.cljs
+ M backend/src/cljs/knoxx/backend/infra/agent/stream/provider_events.cljs
+ M backend/src/cljs/knoxx/backend/infra/agent/turn.cljs
+ M backend/src/cljs/knoxx/backend/infra/clients/knoxx_control.cljs
+ M backend/src/cljs/knoxx/backend/infra/clients/openplanner.cljs
+ M backend/src/cljs/knoxx/backend/infra/clients/proxx.cljs
+ M backend/src/cljs/knoxx/backend/infra/control_config.cljs
  M backend/src/cljs/knoxx/backend/infra/core_memory.cljs
- M backend/src/cljs/knoxx/backend/infra/db/policy.cljs
+ M backend/src/cljs/knoxx/backend/infra/eta_mu_session_ingester.cljs
  M backend/src/cljs/knoxx/backend/infra/http.cljs
- M backend/src/cljs/knoxx/backend/infra/openplanner/semantic.cljs
+ M backend/src/cljs/knoxx/backend/infra/openplanner/memory.cljs
  M backend/src/cljs/knoxx/backend/infra/openplanner/tools.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/actors.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/admin.cljs
  M backend/src/cljs/knoxx/backend/infra/routes/app.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/auth.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/contracts.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/documents.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/mcp.cljs
  M backend/src/cljs/knoxx/backend/infra/routes/memory.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/models.cljs
  M backend/src/cljs/knoxx/backend/infra/routes/multimodal.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/studio.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/studio/discord_scan.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/tools.cljs
  M backend/src/cljs/knoxx/backend/infra/routes/tools/proxy.cljs
  M backend/src/cljs/knoxx/backend/infra/routes/translation.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/users/admin.cljs
  M backend/src/cljs/knoxx/backend/infra/routes/voice.cljs
- M backend/src/cljs/knoxx/backend/infra/routes/workspace_media.cljs
- M backend/src/cljs/knoxx/backend/shape/agent.cljs
- D backend/src/cljs/knoxx/backend/shape/contracts.cljs
- M backend/src/cljs/knoxx/backend/shape/session_persistence.cljs
- M backend/test/cljs/knoxx/backend/extern_proxx_test.cljs
- M backend/test/cljs/knoxx/backend/model_routes_test.cljs
- M backend/test/cljs/knoxx/backend/openutau_test.cljs
- M backend/test/cljs/knoxx/backend/tools/events_test.cljs
- D docs/notes/2026.04.27.17.01.39.md
- D docs/notes/2026.05.01.10.32.30.md
- D docs/notes/2026.05.05.11.04.05.md
- D docs/notes/2026.05.05.13.13.33.md
- D docs/notes/2026.05.05.13.40.07.md
- D docs/notes/2026.05.05.17.02.49.md
- D docs/notes/2026.05.06.08.00.08.md
- D docs/notes/2026.05.06.20.12.13.md
- D docs/notes/2026.05.06.20.36.26.md
- D docs/notes/2026.05.07.10.28.02.md
- D docs/notes/2026.05.07.12.21.20.md
- D docs/notes/2026.05.08.10.41.51.md
- D docs/notes/2026.05.08.11.21.36.md
- D docs/notes/2026.05.08.12.35.42.md
- D docs/notes/2026.05.08.14.42.53.md
- D docs/notes/2026.05.08.15.00.33.md
- D docs/notes/2026.05.08.15.37.26.md
- D docs/notes/2026.05.08.15.37.37.md
- D docs/notes/2026.05.08.20.59.55.md
- D docs/notes/2026.05.12.16.37.29.md
- D docs/notes/2026.05.13.16.54.39.md
- D docs/notes/2026.05.13.20.22.38.md
- D docs/notes/2026.05.19.11.18.05.md
- D docs/notes/2026.05.19.13.06.17.md
- D docs/notes/2026.05.19.13.16.37.md
- D docs/notes/2026.05.19.13.38.45.md
- D docs/notes/2026.05.19.16.24.28.md
- D docs/notes/2026.05.19.16.48.37.md
- D docs/notes/2026.05.19.19.25.55.md
- D docs/notes/2026.05.19.19.30.02.md
- D docs/notes/2026.05.20.08.59.16.md
- D docs/notes/2026.05.20.16.22.49.md
- D docs/notes/2026.05.20.17.23.12.cljs
- D docs/notes/2026.05.20.extern-boundary.md
- D docs/notes/2026.05.20.js-cljs-boundary-report.md
- D docs/notes/contracts/action-protocol-contracts.md
- M docs/notes/contracts/actor-agent-relationship-examples.md
- M frontend/src/components/admin-page/EventAgentsPanel.test.tsx
- M frontend/src/components/chat-page/VoiceInputButton.test.tsx
- M frontend/src/components/chat-page/types.ts
- M frontend/src/components/chat-page/utils.ts
- M frontend/src/components/context-bar/types.ts
- M frontend/src/components/context-bar/utils.ts
- M package.json
+ M backend/src/cljs/knoxx/backend/infra/stores/openplanner_message_source.cljs
+ M backend/src/cljs/knoxx/backend/infra/stores/openplanner_session_store.cljs
+ M backend/src/cljs/knoxx/backend/infra/stores/session_titles.cljs
+ M backend/test/cljs/knoxx/backend/agent_hydration_test.cljs
+ M backend/test/cljs/knoxx/backend/agents/stream_test.cljs
+ M backend/test/cljs/knoxx/backend/memory_routes_test.cljs
+ M backend/test/cljs/knoxx/backend/message_source_test.cljs
+ D brain_damage_anthem.mp3
+ D brain_damage_mantra.mp3
+ D brain_damage_transcendence.mp3
+ D brain_damage_vibe.mp3
+ D discord-bot/.env.example
+ D discord-bot/.gitignore
+ D discord-bot/Dockerfile
+ D discord-bot/README.md
+ D discord-bot/package-lock.json
+ D discord-bot/package.json
+ D discord-bot/src/commands/ask.ts
+ D discord-bot/src/commands/help.ts
+ D discord-bot/src/commands/images.ts
+ D discord-bot/src/commands/index.ts
+ D discord-bot/src/commands/status.ts
+ D discord-bot/src/config/env.ts
+ D discord-bot/src/config/index.ts
+ D discord-bot/src/config/logger.ts
+ D discord-bot/src/index.ts
+ D discord-bot/src/register-commands.ts
+ D discord-bot/src/services/index.ts
+ D discord-bot/src/services/rag-api.ts
+ D discord-bot/src/setup.ts
+ D discord-bot/tsconfig.json
+ D discord_logs.txt
+ M docs/notes/architecture/agent-service-protocol-split.md
+ D event-agent-usage-report.md
+ M frontend/src/components/layout/BottomPanel.tsx
+ M frontend/src/components/layout/ResizablePanel.tsx
+ M frontend/src/components/layout/Sidebar.tsx
+ D hall_of_interop_shame.md
+ D heart-pulse.mp3
+ D latent_space_walk.py
+ D media/pulse_heartbeat.mp3
+ D out.mp3
+ D pulse.mp3
+ D pulse_1907.mp3
+ D pulse_1910.mp3
+ D pulse_1920.mp3
+ D pulse_audio.mp3
+ D pulse_haiku.mp3
+ D pulse_heartbeat.mp3
+ D pulse_message.txt
+ D pulse_text.txt
  M receipts.edn
- D session-ses_20a9.md
+ D recovery_from_espeak.mp3
+ D recursive_void_whisper.mp3
+ M reports/http-request-client-protocol-catalog-2026-05-21.md
+ D size-lint.config.mjs
+ D sonic_ascension_broadcast.mp3
  M specs/README.md
- D test.shadow.results.txt
- D type-check-results.txt
-?? .jscpd.json
-?? backend/.eta-mu
-?? "backend/.\316\267\316\274/"
-?? backend/src/bad.txt
-?? backend/src/cljs/knoxx/backend/domain/agent/reasoning.cljs
-?? backend/src/cljs/knoxx/backend/domain/agent/text_delta.cljs
-?? backend/src/cljs/knoxx/backend/domain/agent/tool_lifecycle.cljs
-?? backend/src/cljs/knoxx/backend/domain/agent/turn_guards.cljs
-?? backend/src/cljs/knoxx/backend/domain/bluesky/client.cljs
-?? backend/src/cljs/knoxx/backend/domain/contracts/client.cljs
-?? backend/src/cljs/knoxx/backend/domain/discord/rest_client.cljs
-?? backend/src/cljs/knoxx/backend/domain/mcp/client.cljs
-?? backend/src/cljs/knoxx/backend/domain/media/blaze_client.cljs
-?? backend/src/cljs/knoxx/backend/domain/media/remote_client.cljs
-?? backend/src/cljs/knoxx/backend/domain/music/
-?? backend/src/cljs/knoxx/backend/domain/voice/client.cljs
-?? backend/src/cljs/knoxx/backend/extern/fetch.cljs
-?? backend/src/cljs/knoxx/backend/extern/pg.cljs
-?? backend/src/cljs/knoxx/backend/infra/agent/stream/
-?? backend/src/cljs/knoxx/backend/infra/clients/
-?? backend/src/cljs/knoxx/backend/infra/db/policy/
-?? backend/src/cljs/knoxx/backend/shape/agent/
-?? backend/src/cljs/knoxx/backend/shape/db/
-?? backend/test/cljs/knoxx/backend/shape_agent_schemas_test.cljs
-?? docs/normalization-references-report.md
-?? docs/notes/architecture/action-registry-intent.md
-?? docs/notes/architecture/actors-send-message-tool.md
-?? docs/notes/architecture/agent-context-overflow-handling.md
-?? docs/notes/architecture/agent-emerges-from-context.md
-?? docs/notes/architecture/agent-runtime-decomposition-plan.md
-?? docs/notes/architecture/agent-service-protocol-split.md
-?? docs/notes/architecture/continuous-agent-event-loop.md
-?? docs/notes/architecture/data-shaped-sql-boundary.md
-?? docs/notes/architecture/domain-shape-law-infra-boundary.md
-?? docs/notes/architecture/extern-boundary.md
-?? docs/notes/architecture/js-cljs-boundary-domain-plan.md
-?? docs/notes/architecture/js-cljs-boundary-report.md
-?? docs/notes/architecture/knoxx-agent-domain-outline.md
-?? docs/notes/architecture/materialize-image-content-parts-boundary.md
-?? docs/notes/architecture/overloaded-context-and-actor-concepts.md
-?? docs/notes/architecture/sub-agent-communication-paths.md
-?? docs/notes/contracts/actor-credential-delegation-spec.md
-?? docs/notes/contracts/admin-contracts-role-empty-response.md
-?? docs/notes/contracts/agent-contract-trigger-field-removal.md
-?? docs/notes/contracts/contract-tool-override-semantics.md
-?? docs/notes/contracts/discord-template-synthesize-source-mode.md
-?? docs/notes/contracts/explicit-tool-ids-breakage-analysis.md
-?? docs/notes/contracts/knoxx-domain-concept-glossary.md
-?? docs/notes/contracts/workflow-contract-kernel-intent.md
-?? docs/notes/frontend/chat-grounding-metadata-badge.md
-?? docs/notes/ops/clojure-ingestion-hot-reload.md
-?? docs/notes/ops/event-agent-tool-merge-receipt.md
-?? docs/notes/ops/runtime-reset-disables-cron-jobs.md
-?? docs/notes/product/translation-demo-manual-upload.md
-?? docs/notes/reference/cljs-target-type-inference-warnings.md
-?? docs/notes/research/
-?? docs/notes/tools/discord-svg-render-repair.md
-?? docs/notes/tools/puppeteer-svg-renderer-tdd-spec.md
-?? docs/reports/
-?? frontend/src/components/workspace-context/
-?? reports/
-?? specs/knoxx-agent-content-history-tooling-ports.md
-?? specs/knoxx-agent-recovery-policy-hydration-ports.md
-?? specs/knoxx-agent-run-event-sinks.md
-?? specs/knoxx-agent-runtime-shapes.md
-?? specs/knoxx-agent-service-facade.md
-?? specs/knoxx-agent-service-protocol-split-epic.md
-?? specs/knoxx-agent-session-registry-provider-ports.md
-?? specs/knoxx-agent-stream-normalizer-reducer.md
-?? specs/knoxx-backend-data-shapes-review.md
-?? specs/knoxx-backend-law-shape-domain-epic.md
+ M specs/knoxx-agent-content-history-tooling-ports.md
+ M specs/knoxx-agent-recovery-policy-hydration-ports.md
+ M specs/knoxx-agent-run-event-sinks.md
+ M specs/knoxx-agent-service-facade.md
+ M specs/knoxx-agent-service-protocol-split-epic.md
+ M specs/knoxx-agent-session-registry-provider-ports.md
+ M specs/knoxx-agent-stream-normalizer-reducer.md
+ D svg_metaphysics_whisper.mp3
+ D vector_art.svg
+ D visual_viv_asset.svg
+ D voice/stt-npu/Dockerfile
+ D voice/stt-npu/README.md
+ D voice/stt-npu/requirements.txt
+ D voice/stt-npu/server.py
+ D voice_null_alphabet.mp3
+ D voice_pulse_heartbeat.mp3
+ D void_glyph_transmission.mp3
+ D void_transcription_whisper.mp3
+ D yap_void_asymmetry.mp3
+?? backend/config/
+?? backend/scripts/check-js-boundary.mjs
+?? backend/src/cljs/knoxx/backend/extern/discord.cljs
+?? backend/src/cljs/knoxx/backend/extern/fastify.cljs
+?? backend/src/cljs/knoxx/backend/extern/multipart.cljs
+?? backend/src/cljs/knoxx/backend/extern/node_fs.cljs
+?? backend/src/cljs/knoxx/backend/extern/row_extra.cljs
+?? backend/src/cljs/knoxx/backend/extern/tools.cljs
+?? backend/src/cljs/knoxx/backend/extern/websocket.cljs
+?? backend/src/cljs/knoxx/backend/infra/agent/content_codec.cljs
+?? backend/src/cljs/knoxx/backend/infra/agent/history.cljs
+?? backend/src/cljs/knoxx/backend/infra/agent/hydration_sources.cljs
+?? backend/src/cljs/knoxx/backend/infra/agent/provider/
+?? backend/src/cljs/knoxx/backend/infra/agent/recovery_coordinator.cljs
+?? backend/src/cljs/knoxx/backend/infra/agent/service.cljs
+?? backend/src/cljs/knoxx/backend/infra/agent/session_registry.cljs
+?? backend/src/cljs/knoxx/backend/infra/agent/stream/sinks.cljs
+?? backend/src/cljs/knoxx/backend/infra/agent/tool_catalog.cljs
+?? backend/src/cljs/knoxx/backend/law/control.cljs
+?? backend/test/cljs/knoxx/backend/agents/content_history_tooling_ports_test.cljs
+?? backend/test/cljs/knoxx/backend/agents/recovery_policy_hydration_ports_test.cljs
+?? backend/test/cljs/knoxx/backend/agents/service_test.cljs
+?? backend/test/cljs/knoxx/backend/agents/session_registry_provider_test.cljs
+?? backend/test/cljs/knoxx/backend/extern_discord_test.cljs
+?? backend/test/cljs/knoxx/backend/extern_fastify_media_test.cljs
+?? backend/test/cljs/knoxx/backend/extern_fetch_test.cljs
+?? backend/test/cljs/knoxx/backend/extern_tools_test.cljs
+?? backend/test/cljs/knoxx/backend/row_extra_codecs_test.cljs
+?? docs/notes/2026.05.21.14.26.30.md
+?? docs/notes/2026.05.21.14.30.11.md
+?? docs/notes/2026.05.21.14.30.35.md
+?? docs/notes/2026.05.21.14.44.34.md
+?? reports/js-boundary-inventory.md
+?? specs/knoxx-js-boundary-discord-adapter.md
+?? specs/knoxx-js-boundary-fastify-media-adapter.md
+?? specs/knoxx-js-boundary-inventory-law.md
+?? specs/knoxx-js-boundary-json-fetch-clients.md
+?? specs/knoxx-js-boundary-stores-memory-codecs.md
+?? specs/knoxx-js-boundary-tool-runtime-adapter.md
+?? specs/knoxx-js-cljs-boundary-hardening-epic.md
 ```

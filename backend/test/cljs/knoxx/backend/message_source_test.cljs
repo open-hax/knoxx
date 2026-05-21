@@ -6,7 +6,7 @@
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.infra.stores.session-store :as session-store]
-            [knoxx.backend.infra.http :as http]))
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]))
 
 ;; ─── In-memory IMessageSource for testing ───────────────────────────────────
 
@@ -89,33 +89,33 @@
 ;; ─── OpenPlannerMessageSource ────────────────────────────────────────────────
 
 (deftest ^:async openplanner-source-returns-empty-when-disabled
-  (with-redefs [http/openplanner-enabled? (fn [_] false)]
+  (with-redefs [openplanner-client/enabled? (fn [_] false)]
     (let [src    (->OpenPlannerMessageSource {})
           result (await (fetch-messages! src "conv-1"))]
       (testing "returns empty when OpenPlanner not configured"
         (is (= [] result))))))
 
 (deftest ^:async openplanner-source-returns-empty-for-blank-conversation
-  (with-redefs [http/openplanner-enabled? (fn [_] true)]
+  (with-redefs [openplanner-client/enabled? (fn [_] true)]
     (let [src    (->OpenPlannerMessageSource {})
           result (await (fetch-messages! src nil))]
       (testing "returns empty for nil conversation-id"
         (is (= [] result))))))
 
-(defn- stub-op-request [rows]
-  (fn
-    ([_ _ _]   (js/Promise.resolve {:rows rows}))
-    ([_ _ _ _] (js/Promise.resolve {:rows rows}))))
+(defn- stub-op-client [rows]
+  (reify openplanner-client/IOpenPlannerClient
+    (enabled? [_] true)
+    (session! [_ _conversation-id _opts]
+      (js/Promise.resolve {:rows rows}))))
 
 (deftest ^:async openplanner-source-maps-rows-to-messages
-  (with-redefs [http/openplanner-enabled? (fn [_] true)
-                http/openplanner-request!
-                (stub-op-request [{:role "user" :text "hello from op"}
+  (let [src    (->OpenPlannerMessageSource
+                {:openplanner-client
+                 (stub-op-client [{:role "user" :text "hello from op"}
                                   {:role "assistant" :text "reply from op"}
-                                  {:role "unknown" :text "filtered out"}])]
-    (let [src    (->OpenPlannerMessageSource {:openplanner-url "http://op"})
-          result (await (fetch-messages! src "conv-1"))]
-      (testing "rows are mapped to stored-message format"
-        (is (= [{:role "user" :content "hello from op"}
-                {:role "assistant" :content "reply from op"}]
-               result))))))
+                                  {:role "unknown" :text "filtered out"}])})
+        result (await (fetch-messages! src "conv-1"))]
+    (testing "rows are mapped to stored-message format"
+      (is (= [{:role "user" :content "hello from op"}
+              {:role "assistant" :content "reply from op"}]
+             result)))))

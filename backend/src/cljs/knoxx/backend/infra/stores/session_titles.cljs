@@ -1,9 +1,9 @@
 (ns knoxx.backend.infra.stores.session-titles
   (:require [clojure.string :as str]
-            [knoxx.backend.extern.json :as xjson]
             [knoxx.backend.extern.promise :as promise]
+            [knoxx.backend.extern.row-extra :as row-extra]
             [knoxx.backend.extern.proxx :as proxx]
-            [knoxx.backend.infra.http :as backend-http]
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.time :as time]
             [knoxx.backend.domain.text :as text]))
@@ -138,11 +138,11 @@
 
 (defn parse-json-object
   [value]
-  (xjson/parse-object value))
+  (row-extra/parse-session-title-extra value))
 
 (defn session-title-row-entry
   [row]
-  (let [extra (or (parse-json-object (:extra row)) {})
+  (let [extra (or (row-extra/parse-session-title-extra (:extra row)) {})
         kind (or (:kind row)
                  (:event_kind row)
                  (get extra :kind)
@@ -264,16 +264,14 @@
 
 (defn persist-session-title!
   [config session-id title title-model]
-  (if (or (str/blank? (str session-id))
-          (not (backend-http/openplanner-enabled? config)))
-    (js/Promise.resolve nil)
-    (-> (backend-http/openplanner-request! config
-                                           "POST"
-                                           "/v1/events"
-                                           {:events [(session-title-event config session-id title title-model)]})
-        (.catch (fn [err]
-                  (.warn js/console "Failed to persist session title into OpenPlanner" err)
-                  nil)))))
+  (let [client (openplanner-client/client config)]
+    (if (or (str/blank? (str session-id))
+            (not (openplanner-client/enabled? client)))
+      (js/Promise.resolve nil)
+      (-> (openplanner-client/events! client [(session-title-event config session-id title title-model)])
+          (.catch (fn [err]
+                    (.warn js/console "Failed to persist session title into OpenPlanner" err)
+                    nil))))))
 
 (defn cache-session-title!
   [_runtime _config session-id title title-model]
@@ -283,29 +281,25 @@
 
 (defn preload-session-title-entry!
   [config session-id]
-  (-> (backend-http/openplanner-request! config
-                                         "GET"
-                                         (str "/v1/sessions/"
-                                              (js/encodeURIComponent session-id)
-                                              "?project="
-                                              (js/encodeURIComponent (:session-project-name config))))
-      (.then (fn [body]
-               (when-let [entry (stored-session-title-entry session-id (:rows body))]
-                 (cache-session-title-entry! session-id
-                                             (:title entry)
-                                             (:title_model entry)
-                                             (:updated_at entry)))) )
-      (.catch (fn [_]
-                nil))))
+  (let [client (openplanner-client/client config)]
+    (-> (openplanner-client/session! client
+                                     session-id
+                                     {:project (:session-project-name config)})
+        (.then (fn [body]
+                 (when-let [entry (stored-session-title-entry session-id (:rows body))]
+                   (cache-session-title-entry! session-id
+                                               (:title entry)
+                                               (:title_model entry)
+                                               (:updated_at entry)))))
+        (.catch (fn [_]
+                  nil)))))
 
 (defn load-session-titles!
   [_runtime config]
-  (if-not (backend-http/openplanner-enabled? config)
-    (js/Promise.resolve @session-titles*)
-    (-> (backend-http/openplanner-request! config
-                                           "GET"
-                                           (str "/v1/sessions?project="
-                                                (js/encodeURIComponent (:session-project-name config))))
+  (let [client (openplanner-client/client config)]
+    (if-not (openplanner-client/enabled? client)
+      (js/Promise.resolve @session-titles*)
+      (-> (openplanner-client/sessions! client {:project (:session-project-name config)})
         (.then (fn [body]
                  (let [session-ids (->> (or (:rows body) [])
                                         (map :session)
@@ -319,9 +313,9 @@
                      (-> (promise/all-vec (mapv preload-session-title-entry! (repeat config) session-ids))
                          (.then (fn [_]
                                   @session-titles*)))))))
-        (.catch (fn [err]
-                  (.warn js/console "Failed to preload session titles from OpenPlanner" err)
-                  (js/Promise.resolve @session-titles*))))))
+          (.catch (fn [err]
+                    (.warn js/console "Failed to preload session titles from OpenPlanner" err)
+                    (js/Promise.resolve @session-titles*)))))))
 
 (defn resolve-session-title!
   [config seed-text]
@@ -436,10 +430,8 @@
   [runtime config {:keys [force limit]} fetch-session-rows!]
   (if (:active @session-title-backfill*)
     (js/Promise.resolve @session-title-backfill*)
-    (-> (backend-http/openplanner-request! config
-                                           "GET"
-                                           (str "/v1/sessions?project="
-                                                (js/encodeURIComponent (:session-project-name config))))
+    (let [client (openplanner-client/client config)]
+      (-> (openplanner-client/sessions! client {:project (:session-project-name config)})
         (.then
          (fn [body]
            (let [session-ids (cond->> (->> (or (:rows body) [])
@@ -502,9 +494,9 @@
                                       :last_error (str err))
                                nil)))
                  @session-title-backfill*)))))
-        (.catch (fn [err]
-                  (swap! session-title-backfill* assoc
-                         :active false
-                         :completed_at (time/now-iso)
-                         :last_error (str err))
-                  (js/Promise.resolve @session-title-backfill*))))))
+          (.catch (fn [err]
+                    (swap! session-title-backfill* assoc
+                           :active false
+                           :completed_at (time/now-iso)
+                           :last_error (str err))
+                    (js/Promise.resolve @session-title-backfill*)))))))

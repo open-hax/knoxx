@@ -1,40 +1,32 @@
 (ns knoxx.backend.infra.http
   (:require [clojure.string :as str]
+            [knoxx.backend.extern.fastify :as xfastify]
             [knoxx.backend.extern.fetch :as xfetch]
-            [knoxx.backend.extern.js :as xjs]
-            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [promesa.core :as p]))
 
 (defn reply-already-sent?
   [reply]
-  (let [raw (aget reply "raw")]
-    (boolean
-      (or (aget reply "sent")
-          (and raw (aget raw "writableEnded"))))))
+  (xfastify/reply-already-sent? reply))
 
 (defn json-response!
   [reply status body]
   ;; Fastify throws if we attempt to send twice. Under load, upstream promises
   ;; can race (e.g. a timeout path sends an error while a success path resolves).
   ;; Prefer a safe no-op when the reply is already closed.
-  (if (reply-already-sent? reply)
-    reply
-    (-> (.code reply status)
-        (.type "application/json")
-        (.send (clj->js body)))))
+  (xfastify/send-json! reply status body))
 
 (defn request-hostname
   [request]
-  (let [forwarded (some-> (aget request "headers" "x-forwarded-host") (str/split #",") first str/trim)
-        raw-host (or forwarded (aget request "headers" "host") "")]
+  (let [forwarded (some-> (xfastify/request-header request :x-forwarded-host) (str/split #",") first str/trim)
+        raw-host (or forwarded (xfastify/request-header request :host) "")]
     (if (str/blank? raw-host)
-      (or (aget request "hostname") "localhost")
+      (xfastify/request-hostname request)
       (-> raw-host
           (str/replace #":.*$" "")))))
 
 (defn request-scheme
   [request]
-  (let [forwarded (some-> (aget request "headers" "x-forwarded-proto") (str/split #",") first str/trim)]
+  (let [forwarded (some-> (xfastify/request-header request :x-forwarded-proto) (str/split #",") first str/trim)]
     (if (str/blank? forwarded) "http" forwarded)))
 
 (defn rewrite-localhost-url
@@ -76,7 +68,7 @@
 (defn require-openai-key!
   [config request reply]
   (let [expected (:model-lab-openai-api-key config)
-        auth-header (str (or (aget request "headers" "authorization") ""))]
+        auth-header (str (or (xfastify/request-header request :authorization) ""))]
     (cond
       (str/blank? expected)
       (do (openai-auth-error reply 503 "MODEL_LAB_OPENAI_API_KEY is not configured" "service_unavailable") false)
@@ -113,23 +105,6 @@
                                         :opts opts
                                         :timeout-ms timeout-ms})))
 
-(defn openplanner-enabled?
-  [config]
-  (openplanner-client/configured? config))
-
-(defn openplanner-url
-  [config suffix]
-  (openplanner-client/url-for (openplanner-client/client config) suffix))
-
-(defn openplanner-headers
-  [config]
-  (openplanner-client/headers-for config))
-
-(defn openplanner-request!
-  ([config method suffix] (openplanner-request! config method suffix nil))
-  ([config method suffix body]
-   (openplanner-client/request! (openplanner-client/client config) method suffix body)))
-
 (defn http-error
   [status code message]
   (doto (ex-info (str status " " message) {:status status :code code})
@@ -138,102 +113,59 @@
 
 (defn error-status
   [err default-status]
-  (or (aget err "statusCode")
-      (aget err "status")
-      default-status))
+  (xfastify/error-status err default-status))
 
 (defn error-message
   [err]
-  (or (aget err "message") (str err)))
+  (xfastify/error-message err))
 
 (defn error-response!
   ([reply err] (error-response! reply err 500))
   ([reply err default-status]
    (json-response! reply (error-status err default-status)
                    (cond-> {:detail (error-message err)}
-                     (aget err "code") (assoc :error_code (aget err "code"))))))
+                     (xfastify/error-code err) (assoc :error_code (xfastify/error-code err))))))
 
 (defn no-content?
   [x]
-  (or (nil? x) (= js/undefined x)))
+  (xfastify/no-content? x))
 
 (defn copy-response-headers!
   [reply headers]
-  (.forEach headers
-            (fn [value key]
-              (when-not (contains? #{"connection" "content-length" "content-encoding" "transfer-encoding"} (str/lower-case key))
-                (.header reply key value)))))
+  (xfastify/copy-response-headers! reply headers))
 
 (defn send-fetch-response!
   [reply resp]
   (copy-response-headers! reply (.-headers resp))
   (p/let [buf (.arrayBuffer resp)]
-    (-> (.code reply (.-status resp))
-        (.send (.from js/Buffer buf)))))
+    (xfastify/send-buffer-response! reply resp buf)))
 
 (defn request-body
-  "Return the parsed Fastify request body as a JS object, or an empty JS object."
+  "Return the parsed Fastify request body as a CLJS map."
   [request]
-  (or (aget request "body") (js/Object.)))
+  (xfastify/request-body request))
 
 (defn request-query-string
   [request]
-  (let [params (js/URLSearchParams.)
-        query (or (aget request "query") #js {})]
-    (doseq [key (xjs/js-array-seq (.keys js/Object query))]
-      (let [value (aget query key)]
-        (cond
-          (no-content? value) nil
-          (array? value) (doseq [item (array-seq value)]
-                           (.append params key (str item)))
-          :else (.append params key (str value)))))
-    (let [encoded (.toString params)]
-      (if (str/blank? encoded) "" (str "?" encoded)))))
+  (xfastify/query-string request))
 
 (defn request-forward-headers
   [request extra]
-  (let [headers (js/Headers.)
-        source (or (aget request "headers") #js {})]
-    (doseq [key (xjs/js-array-seq (.keys js/Object source))]
-      (let [lower (str/lower-case key)
-            value (aget source key)]
-        (when (and (not (contains? #{"host" "connection" "content-length" "transfer-encoding"} lower))
-                   (not (no-content? value)))
-          (.set headers key (str value)))))
-    (doseq [[key value] extra]
-      (if (nil? value)
-        (.delete headers key)
-        (.set headers key (str value))))
-    headers))
+  (xfastify/forward-headers request extra))
 
 (defn request-forward-body
   [request]
-  (let [method (str/upper-case (or (aget request "method") "GET"))
-        body (aget request "body")]
-    (cond
-      (contains? #{"GET" "HEAD"} method) nil
-      (or (string? body)
-          (instance? js/Uint8Array body)
-          (instance? js/ArrayBuffer body)
-          (instance? js/Buffer body)) body
-      (no-content? body) nil
-      :else (.stringify js/JSON body))))
+  (xfastify/forward-body request))
 (defn request-stream-body
   [request]
-  (let [method (str/upper-case (or (aget request "method") "GET"))
-        body (request-forward-body request)
-        content-type (str/lower-case (str (or (aget request "headers" "content-type") "")))]
-    (cond
-      (contains? #{"GET" "HEAD"} method) #js {}
-      (some? body) #js {:body body}
-      (str/includes? content-type "multipart/form-data") #js {:body (aget request "raw")
-                                                              :duplex "half"}
-      :else #js {})))
+  (xfastify/stream-body-options request))
 
 (defn forward-knoxx-request!
   [config request method path extra]
-  (let [target-url (str (:knoxx-base-url config) "/api/" path (request-query-string request))
-        base #js {:method method
-                  :headers (request-forward-headers request {"x-api-key" (when-not (str/blank? (:knoxx-api-key config)) (:knoxx-api-key config))})}
-        stream-opts (request-stream-body request)]
-    (fetch-with-timeout target-url (.assign js/Object base stream-opts (clj->js extra)))))
+  (let [target-url (str (:knoxx-base-url config) "/api/" path (request-query-string request))]
+    (fetch-with-timeout target-url
+                        (xfastify/forward-request-init
+                         request
+                         method
+                         {"x-api-key" (when-not (str/blank? (:knoxx-api-key config)) (:knoxx-api-key config))}
+                         extra))))

@@ -2,95 +2,52 @@
   "Shared utilities for agent tool factories.
    Sanitization, TypeBox helpers, and generic tool-update callbacks."
   (:require [clojure.string :as str]
-            [knoxx.backend.runtime.state :as runtime-state]
-            [knoxx.backend.extern.js :as xjs]
-            [malli.json-schema :as mjs]))
+            [knoxx.backend.extern.tools :as xtools]
+            [knoxx.backend.runtime.state :as runtime-state]))
 
 (defn ->params
   "Convert a Malli schema to a Pi tool :parameters JS object."
   [schema]
-  (clj->js (mjs/transform schema)))
+  (xtools/parameters schema))
 
-(defn create-tool-obj [ name label description prompt prompt-guidelines params  execute  runtime config]
+(defn create-tool-obj [name label description prompt prompt-guidelines params execute runtime config]
+  (xtools/tool-definition {:name name
+                           :label label
+                           :description description
+                           :prompt-snippet prompt
+                           :prompt-guidelines prompt-guidelines
+                           :parameters-schema params
+                           :execute execute
+                           :runtime runtime
+                           :config config}))
 
-  #js {:name name
-       :label label
-       :description description
-       :promptSnippet prompt
-       :promptGuidelines (clj->js prompt-guidelines)
-       :parameters (->params params)
-       :execute (partial execute runtime config)})
 (defn maybe-tool-update!
   "Call an on-update callback with a text status update."
   [f text]
-  (when (fn? f)
-    (f #js {:content #js [#js {:type "text" :text text}]})))
+  (xtools/send-update! f {:content [{:type "text" :text text}]}))
 
 (defn type-optional
-  [^js Type schema]
-  (.Optional Type schema))
-
-(defn- replace-tool-name
-  [text original-name sanitized-name]
-  (some-> (str text)
-          (str/replace original-name sanitized-name)))
-
-(defn- sanitize-tool-guidelines
-  [guidelines original-name sanitized-name]
-  (let [items (xjs/js-array-seq guidelines)]
-    (clj->js
-     (mapv (fn [guideline]
-             (str "Use " sanitized-name " (canonical " original-name ") when "
-                  (replace-tool-name guideline original-name sanitized-name)))
-           items))))
+  [Type schema]
+  (xtools/type-optional Type schema))
 
 (defn sanitize-custom-tool-name
   [tool]
-  (let [name (some-> (aget tool "name") str)
-        sanitized (some-> name
-                          (str/replace #"[^A-Za-z0-9_-]" "_")
-                          (str/replace #"_+" "_"))]
-    (when (and sanitized (not= sanitized name))
-      (aset tool "name" sanitized)
-      (aset tool "originalName" name)
-      (when-let [description (some-> (aget tool "description") str)]
-        (aset tool "description"
-              (str description " Call this tool as `" sanitized "`. Canonical tool id: `" name "`.")))
-      (when-let [snippet (some-> (aget tool "promptSnippet") str)]
-        (aset tool "promptSnippet"
-              (str "Call as `" sanitized "` (canonical `" name "`). "
-                   (replace-tool-name snippet name sanitized))))
-      (when-let [guidelines (aget tool "promptGuidelines")]
-        (aset tool "promptGuidelines"
-              (sanitize-tool-guidelines guidelines name sanitized))))
-    tool))
+  (xtools/sanitize-custom-tool-name tool))
 
 (defn sanitize-custom-tools
   [tools]
-  (let [items (xjs/js-array-seq tools)]
-    (into-array (map sanitize-custom-tool-name items))))
+  (xtools/sanitize-custom-tools tools))
 
 (defn filter-custom-tools-by-allow-set
   "Filter a collection of tool objects to only those whose name (or originalName)
    appears in allowed-tool-ids."
   [tools allowed-tool-ids]
-  (if (nil? allowed-tool-ids)
-    tools
-    (into-array
-     (filter (fn [tool]
-               (let [runtime-id (some-> tool (aget "name") str str/trim not-empty)
-                     original-id (some-> tool (aget "originalName") str str/trim not-empty)]
-                 (or (and runtime-id (contains? allowed-tool-ids runtime-id))
-                     (and original-id (contains? allowed-tool-ids original-id)))))
-             (xjs/js-array-seq tools)))))
+  (xtools/filter-custom-tools-by-allow-set tools allowed-tool-ids))
 
 (defn json-parse
   "Parse JSON string to Clojure data."
   [text]
-  (try
-    (js->clj (.parse js/JSON text) :keywordize-keys true)
-    (catch :default err
-      (throw (js/Error. (str "Invalid JSON: " (.-message err)))))))
+  (xtools/parse-json text))
 
 (defn live-config
   "Resolve live config, preferring the runtime atom."

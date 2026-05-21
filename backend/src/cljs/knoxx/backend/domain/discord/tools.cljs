@@ -4,7 +4,7 @@
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.domain.discord.rest-client :as discord-rest]
-            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.extern.discord :as xdiscord]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.label.quality :as quality-labels]
             [knoxx.backend.infra.svg-render :as svg-render]
@@ -20,11 +20,7 @@
 
 (defn- discord-gateway-started?
   []
-  (let [manager (discord-gateway-manager)]
-    (when (some? manager)
-      (let [status (.status manager)]
-        (boolean (or (aget status "ready")
-                     (aget status "started")))))))
+  (xdiscord/gateway-started? (discord-gateway-manager)))
 
 (defn- discord-token!
   [runtime]
@@ -156,7 +152,7 @@
     (if (or (empty? messages) (not (openplanner-client/enabled? client)))
       (js/Promise.resolve (good-first-then-not-bad messages))
       (let [ids (mapv discord-record-id messages)]
-        (-> (openplanner-client/request! client "POST" "/v1/labels/records/lookup" {:ids ids})
+        (-> (openplanner-client/record-labels! client ids)
             (.then (fn [response]
                      (let [labels (:labels response)]
                        (->> messages
@@ -377,21 +373,13 @@
     (and reply-to (nil? (:messageId state)))
     (assoc :message_reference {:message_id reply-to})))
 
-(defn- append-discord-files!
-  [form file-list]
-  (doseq [[idx file] (map-indexed vector file-list)]
-    (.append form (str "files[" idx "]")
-             (js/Blob. #js [(:buffer file)] #js {:type (:mimeType file)})
-             (:name file)))
-  form)
-
 (defn- post-discord-message-chunk!
   [client channel-id reply-to file-list chunk state]
-  (let [form (js/FormData.)
-        payload (discord-message-payload chunk reply-to state)]
-    (.append form "payload_json" (.stringify js/JSON (clj->js payload)))
-    (append-discord-files! form file-list)
-    (discord-rest/create-channel-message-form! client channel-id form)))
+  (discord-rest/create-channel-message-form!
+   client
+   channel-id
+   (xdiscord/message-form-data {:payload (discord-message-payload chunk reply-to state)
+                                :files file-list})))
 
 (defn- post-discord-message-chunks!
   [client channel-id reply-to file-list chunks]
@@ -421,24 +409,23 @@
       (throw (js/Error. "channel_id is required")))
     (when (and (str/blank? normalized) (empty? all-urls))
       (throw (js/Error. "text or attachment_urls is required")))
-    (-> (js/Promise.all
-         (clj->js (map-indexed (fn [idx url]
-                                 (-> (fetch-discord-upload-attachment! runtime config url idx)
-                                     (.then maybe-render-svg!)))
-                               all-urls)))
-        (.then (fn [files]
-                 (let [file-list (vec (array-seq files))]
-                   (-> (discord-client! runtime)
-                       (.then (fn [client]
-                                (let [chunks (discord-message-chunks normalized)]
-                                  (-> (post-discord-message-chunks! client channel-id reply-to file-list chunks)
-                                      (.then (fn [result]
-                                               {:channelId channel-id
-                                                :messageId (or (:id result) "")
-                                                :sent true
-                                                :timestamp (or (:timestamp result) "")
-                                                :chunkCount (count chunks)
-                                                :attachmentCount (count file-list)})))))))))))))
+    (-> (xdiscord/promise-all-vector
+         (map-indexed (fn [idx url]
+                        (-> (fetch-discord-upload-attachment! runtime config url idx)
+                            (.then maybe-render-svg!)))
+                      all-urls))
+        (.then (fn [file-list]
+                 (-> (discord-client! runtime)
+                     (.then (fn [client]
+                              (let [chunks (discord-message-chunks normalized)]
+                                (-> (post-discord-message-chunks! client channel-id reply-to file-list chunks)
+                                    (.then (fn [result]
+                                             {:channelId channel-id
+                                              :messageId (or (:id result) "")
+                                              :sent true
+                                              :timestamp (or (:timestamp result) "")
+                                              :chunkCount (count chunks)
+                                              :attachmentCount (count file-list)}))))))))))))
 
 
 (defn- discord-react!
@@ -518,12 +505,12 @@
   (if (str/blank? (str (or guild-id "")))
     (-> (discord-list-guilds! runtime)
         (.then (fn [result]
-                 (-> (js/Promise.all
-                      (clj->js (mapv (fn [server]
-                                       (discord-list-guild-channels! runtime (:id server)))
-                                     (:servers result))))
+                 (-> (xdiscord/promise-all-vector
+                      (mapv (fn [server]
+                              (discord-list-guild-channels! runtime (:id server)))
+                            (:servers result)))
                      (.then (fn [payloads]
-                              (let [channels (->> (xjs/js-array-seq payloads)
+                              (let [channels (->> payloads
                                                   (mapcat :channels)
                                                   vec)]
                                 {:channels channels
@@ -531,22 +518,28 @@
     (discord-list-guild-channels! runtime guild-id)))
 
 (defn- strip-path-delims [s]
-  (-> (str (or s ""))
-      (str/replace #"<\\|\"|\"[|>]" "")
-      str/trim))
+  (xdiscord/trim-path-delims s))
+
+(defn- tool-params
+  [params]
+  (xdiscord/normalize-tool-params params))
+
+(defn- pget
+  ([params k]
+   (get params k))
+  ([params k fallback-k]
+   (or (get params k) (get params fallback-k))))
 
 (defn discord-send-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        channel-id (or (aget params "channel_id") (aget params "channelId") "")
-        text (or (aget params "text") (aget params "content") "")
-        reply-to (or (aget params "reply_to") (aget params "replyTo"))
-        attachment-urls (->> (or (aget params "attachment_urls")
-                                 (aget params "attachmentUrls")
-                                 #js [])
-                             xjs/js-array-seq
+  (let [params (tool-params params)
+        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        channel-id (or (pget params :channel_id :channelId) "")
+        text (or (pget params :text :content) "")
+        reply-to (pget params :reply_to :replyTo)
+        attachment-urls (->> (or (pget params :attachment_urls :attachmentUrls) [])
                              (map strip-path-delims)
                              (remove str/blank?)
-                             clj->js)]
+                             vec)]
     (maybe-tool-update! on-update (str "Sending Discord message to " channel-id "…"))
     (-> (discord-send-message! runtime config channel-id text reply-to attachment-urls)
         (.then (fn [result]
@@ -562,11 +555,11 @@
     [:vector :string]]])
 (def discord-send-tool (partial create-tool-obj "discord.send" "Discord Send" "Send a message to a Discord channel, optionally as a reply to an existing message."
                           "Send a Discord message or reply to a specific message id."
-                          (clj->js ["Use discord.publish or discord.send to share results in a Discord channel."
+                          ["Use discord.publish or discord.send to share results in a Discord channel."
                                     "Provide channelId/channel_id and content/text."
                                     "Include attachmentUrls/attachment_urls to upload files, images, or generated assets."
                                     "Pass file paths as plain strings (e.g. Graphics/seal.svg or Voice/clip.mp3). Do NOT wrap them in <|\"| delimiters."
-                                    "To mention a user, use <@user_id> in the text. Do NOT use @username — it will not ping."])
+                                    "To mention a user, use <@user_id> in the text. Do NOT use @username — it will not ping."]
                           send-params
                           discord-send-execute))
 
@@ -584,13 +577,14 @@
    [:around {:optional true :description "Fetch messages around this message ID."} :string]])
 
 (defn channel-messages-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        channel-id (or (aget params "channel_id") (aget params "channelId") "")]
+  (let [params (tool-params params)
+        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        channel-id (or (pget params :channel_id :channelId) "")]
     (maybe-tool-update! on-update (str "Fetching Discord messages from channel " channel-id "…"))
-    (-> (discord-fetch-channel-messages! runtime config channel-id {:limit (aget params "limit")
-                                                            :before (aget params "before")
-                                                            :after (aget params "after")
-                                                            :around (aget params "around")})
+    (-> (discord-fetch-channel-messages! runtime config channel-id {:limit (pget params :limit)
+                                                            :before (pget params :before)
+                                                            :after (pget params :after)
+                                                            :around (pget params :around)})
         (.then (fn [result]
                  (-> (attach-openplanner-labels! config (:messages result))
                      (.then (fn [messages]
@@ -601,8 +595,8 @@
 (def channel-messages-tool (partial create-tool-obj "discord.channel.messages" "Discord Channel Messages"
                                     "Fetch messages from a Discord channel with before/after/around cursors."
                                     "Fetch channel messages from Discord with pagination cursors when you need exact transcript context."
-                                    (clj->js ["Use this when you know the channel id and need exact message history."
-                                              "Use before/after/around for precise pagination."])
+                                    ["Use this when you know the channel id and need exact message history."
+                                              "Use before/after/around for precise pagination."]
                                     channel-messages-params
                                     channel-messages-execute))
 
@@ -613,11 +607,12 @@
    [:limit {:optional true :description "Maximum number of older messages to fetch."} [:int {:min 1 :max 100}]]])
 
 (defn channel-scroll-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        channel-id (or (aget params "channel_id") (aget params "channelId") "")
-        oldest-seen-id (or (aget params "oldest_seen_id") (aget params "oldestSeenId") "")]
+  (let [params (tool-params params)
+        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        channel-id (or (pget params :channel_id :channelId) "")
+        oldest-seen-id (or (pget params :oldest_seen_id :oldestSeenId) "")]
     (maybe-tool-update! on-update (str "Scrolling older Discord messages in channel " channel-id "…"))
-    (-> (discord-scroll-channel-messages! runtime config channel-id oldest-seen-id (aget params "limit"))
+    (-> (discord-scroll-channel-messages! runtime config channel-id oldest-seen-id (pget params :limit))
         (.then (fn [result]
                  (-> (attach-openplanner-labels! config (:messages result))
                      (.then (fn [messages]
@@ -628,8 +623,8 @@
 (def channel-scroll-tool (partial create-tool-obj "discord.channel.scroll" "Discord Channel Scroll"
                                   "Scroll older channel messages by fetching messages before the oldest already-seen message id."
                                   "Scroll backwards in a Discord channel once you already know the oldest seen id."
-                                  (clj->js ["Use discord.channel.scroll as sugar over discord.channel.messages before=oldest_seen_id."
-                                            "Useful for paging backward through long histories."])
+                                  ["Use discord.channel.scroll as sugar over discord.channel.messages before=oldest_seen_id."
+                                            "Useful for paging backward through long histories."]
                                   channel-scroll-params
                                   channel-scroll-execute))
 
@@ -640,11 +635,12 @@
    [:before {:optional true :description "Fetch DM messages before this message ID."} :string]])
 
 (defn dm-messages-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        user-id (or (aget params "user_id") (aget params "userId") "")]
+  (let [params (tool-params params)
+        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        user-id (or (pget params :user_id :userId) "")]
     (maybe-tool-update! on-update (str "Fetching Discord DM messages for user " user-id "…"))
-    (-> (discord-fetch-dm-messages! runtime config user-id {:limit (aget params "limit")
-                                                    :before (aget params "before")})
+    (-> (discord-fetch-dm-messages! runtime config user-id {:limit (pget params :limit)
+                                                    :before (pget params :before)})
         (.then (fn [result]
                  (-> (attach-openplanner-labels! config (:messages result))
                      (.then (fn [messages]
@@ -655,8 +651,8 @@
 (def dm-messages-tool (partial create-tool-obj "discord.dm.messages" "Discord DM Messages"
                                "Fetch messages from the DM channel shared with a Discord user."
                                "Read DM history with a Discord user by user id."
-                               (clj->js ["Use this when the relevant conversation is in DMs rather than a guild channel."
-                                         "Provide the target user id."])
+                               ["Use this when the relevant conversation is in DMs rather than a guild channel."
+                                         "Provide the target user id."]
                                dm-messages-params
                                dm-messages-execute))
 
@@ -672,19 +668,20 @@
    [:since_hours {:optional true :description "Prefer matching messages within this many hours (default 168); pass a larger value to override the timeframe."} [:int {:min 1}]]])
 
 (defn search-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        scope (or (aget params "scope") "channel")
-        channel-id (or (aget params "channel_id") (aget params "channelId"))
-        user-id (or (aget params "user_id") (aget params "userId"))
-        query (or (aget params "query") "")]
+  (let [params (tool-params params)
+        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        scope (or (pget params :scope) "channel")
+        channel-id (pget params :channel_id :channelId)
+        user-id (pget params :user_id :userId)
+        query (or (pget params :query) "")]
     (maybe-tool-update! on-update (str "Searching Discord messages in scope " scope "…"))
     (-> (discord-search-messages! runtime config scope {:channel-id channel-id
                                                 :user-id user-id
                                                 :query query
-                                                :limit (aget params "limit")
-                                                :before (aget params "before")
-                                                :after (aget params "after")
-                                                :since-hours (or (aget params "since_hours") (aget params "sinceHours"))})
+                                                :limit (pget params :limit)
+                                                :before (pget params :before)
+                                                :after (pget params :after)
+                                                :since-hours (pget params :since_hours :sinceHours)})
         (.then (fn [result]
                  (tool-text-result (discord-messages-text (str "Found " (:count result) " matching Discord messages.") (:messages result))
                                    result))))))
@@ -692,11 +689,11 @@
 (def search-tool (partial create-tool-obj "discord.search" "Discord Search"
                           "Search channel or DM messages by content and/or author using client-side filtering."
                           "Search Discord messages by text and scope to find relevant discussion quickly."
-                          (clj->js ["Use scope=channel with channel_id for guild channels or scope=dm with user_id for DMs."
+                          ["Use scope=channel with channel_id for guild channels or scope=dm with user_id for DMs."
                                     "Messages marked bad in OpenPlanner labels are never shown."
                                     "Matching good-marked messages are returned first in chronological order, then unbad messages chronologically."
                                     "The default timeframe is 168 hours; pass since_hours to override when needed."
-                                    "This falls back to client-side filtering when native search is unavailable."])
+                                    "This falls back to client-side filtering when native search is unavailable."]
                           search-params
                           search-execute))
 
@@ -716,16 +713,16 @@
 (def list-servers-tool (partial create-tool-obj "discord.list.servers" "Discord List Servers"
                                 "List all Discord servers/guilds the bot can access."
                                 "List Discord servers before choosing channels or replying into a guild."
-                                (clj->js ["Use this before discord.list.channels when you need discovery."
-                                          "Do not guess guild ids."])
+                                ["Use this before discord.list.channels when you need discovery."
+                                          "Do not guess guild ids."]
                                 list-servers-params
                                 list-servers-execute))
 
 (def guilds-tool (partial create-tool-obj "discord.guilds" "Discord Guilds"
                           "List Discord guilds/servers the bot is in."
                           "List Discord guilds to discover available servers."
-                          (clj->js ["Alias for discord.list.servers."
-                                    "Use before listing channels or posting to a specific server."])
+                          ["Alias for discord.list.servers."
+                                    "Use before listing channels or posting to a specific server."]
                           list-servers-params
                           list-servers-execute))
 
@@ -734,8 +731,9 @@
    [:guild_id {:optional true :description "Optional guild/server ID. If omitted, returns channels across all visible guilds."} :string]])
 
 (defn list-channels-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        guild-id (or (aget params "guild_id") (aget params "guildId"))]
+  (let [params (tool-params params)
+        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        guild-id (pget params :guild_id :guildId)]
     (maybe-tool-update! on-update "Listing Discord channels…")
     (-> (discord-list-channels! runtime guild-id)
         (.then (fn [result]
@@ -747,8 +745,8 @@
 (def list-channels-tool (partial create-tool-obj "discord.list.channels" "Discord List Channels"
                                  "List channels in one Discord guild or across all visible guilds."
                                  "List Discord channels to discover readable/postable targets."
-                                 (clj->js ["If guild_id is omitted, returns channels across all visible guilds."
-                                           "Use returned channel ids with discord.channel.messages or discord.send."])
+                                 ["If guild_id is omitted, returns channels across all visible guilds."
+                                           "Use returned channel ids with discord.channel.messages or discord.send."]
                                  list-channels-params
                                  list-channels-execute))
 
@@ -757,15 +755,16 @@
    [:guild_id {:description "Discord guild ID to list channels for."} :string]])
 
 (defn channels-execute [runtime config tool-call-id params a b c]
-  (list-channels-execute runtime config tool-call-id
-                         #js {:guild_id (aget params "guildId")}
-                         a b c))
+  (let [params (tool-params params)]
+    (list-channels-execute runtime config tool-call-id
+                           {:guild_id (pget params :guildId :guild_id)}
+                           a b c)))
 
 (def channels-tool (partial create-tool-obj "discord.channels" "Discord Channels"
                             "List channels in a Discord guild."
                             "List channels in a Discord guild to find the right channel for reading or posting."
-                            (clj->js ["Alias for discord.list.channels."
-                                      "Use guildId/guild_id when you already know the server."])
+                            ["Alias for discord.list.channels."
+                                      "Use guildId/guild_id when you already know the server."]
                             channels-params
                             channels-execute))
 
@@ -776,10 +775,11 @@
    [:emoji {:description "Emoji to react with (e.g. 👍, 🎉, 💀)."} :string]])
 
 (defn react-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        channel-id (or (aget params "channel_id") (aget params "channelId") "")
-        message-id (or (aget params "message_id") (aget params "messageId") "")
-        emoji (or (aget params "emoji") "")]
+  (let [params (tool-params params)
+        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        channel-id (or (pget params :channel_id :channelId) "")
+        message-id (or (pget params :message_id :messageId) "")
+        emoji (or (pget params :emoji) "")]
     (maybe-tool-update! on-update (str "Reacting to message " message-id " with " emoji "…"))
     (-> (discord-react! runtime channel-id message-id emoji)
         (.then (fn [result]
@@ -788,8 +788,8 @@
 (def react-tool (partial create-tool-obj "discord.react" "Discord React"
                          "Add an emoji reaction to a Discord message."
                          "React to a Discord message with an emoji."
-                         (clj->js ["Use discord.react to add emoji reactions to messages."
-                                   "Provide channel_id, message_id, and an emoji (e.g. 👍, 🎉, 💀)."])
+                         ["Use discord.react to add emoji reactions to messages."
+                                   "Provide channel_id, message_id, and an emoji (e.g. 👍, 🎉, 💀)."]
                          react-params
                          react-execute))
 
@@ -801,11 +801,12 @@
    [:auto_archive_duration {:optional true :description "Auto-archive duration in minutes: 60, 1440 (default), 4320, or 10080."} :int]])
 
 (defn thread-create-execute [runtime config _tool-call-id params a b c]
-  (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
-        channel-id (or (aget params "channel_id") (aget params "channelId") "")
-        message-id (or (aget params "message_id") (aget params "messageId"))
-        name (or (aget params "name") "")
-        auto-archive (aget params "auto_archive_duration")]
+  (let [params (tool-params params)
+        on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
+        channel-id (or (pget params :channel_id :channelId) "")
+        message-id (pget params :message_id :messageId)
+        name (or (pget params :name) "")
+        auto-archive (pget params :auto_archive_duration :autoArchiveDuration)]
     (maybe-tool-update! on-update (str "Creating thread '" name "' in channel " channel-id "…"))
     (-> (discord-thread-create! runtime channel-id message-id name auto-archive)
         (.then (fn [result]
@@ -815,9 +816,9 @@
 (def thread-create-tool (partial create-tool-obj "discord.thread.create" "Discord Thread Create"
                                  "Create a Discord thread from a message or in a channel."
                                  "Create a thread to spin off a conversation."
-                                 (clj->js ["Use discord.thread.create to start a thread from a message or in a channel."
+                                 ["Use discord.thread.create to start a thread from a message or in a channel."
                                            "Provide channel_id and a name. Optionally pass message_id to create a thread from that message."
-                                           "After creating a thread, use the returned threadId as channel_id with discord.send to post in it."])
+                                           "After creating a thread, use the returned threadId as channel_id with discord.send to post in it."]
                                  thread-create-params
                                  thread-create-execute))
 
@@ -834,19 +835,20 @@
     [:vector :string]]])
 
 (defn publish-execute [runtime config tool-call-id params a b c]
-  (discord-send-execute runtime config tool-call-id
-                        #js {:channel_id (or (aget params "channel_id") (aget params "channelId") "")
-                             :text (or (aget params "content") (aget params "text") "")
-                             :attachment_urls (or (aget params "attachment_urls") (aget params "attachmentUrls") #js [])}
-                        a b c))
+  (let [params (tool-params params)]
+    (discord-send-execute runtime config tool-call-id
+                          {:channel_id (or (pget params :channel_id :channelId) "")
+                           :text (or (pget params :content :text) "")
+                           :attachment_urls (or (pget params :attachment_urls :attachmentUrls) [])}
+                          a b c)))
 
 (def publish-tool (partial create-tool-obj "discord.publish" "Discord Publish"
                            "Post a message to a Discord channel using the configured Knoxx Discord bot."
                            "Post updates, summaries, or notifications to Discord channels."
-                           (clj->js ["Use discord.publish or discord.send to share results in a Discord channel."
+                           ["Use discord.publish or discord.send to share results in a Discord channel."
                                      "Provide channelId/channel_id and content/text."
                                      "Include attachmentUrls/attachment_urls to upload files, images, or generated assets."
-                                     "To mention a user, use <@user_id> in the text. Do NOT use @username — it will not ping."])
+                                     "To mention a user, use <@user_id> in the text. Do NOT use @username — it will not ping."]
                            publish-params
                            publish-execute))
 
@@ -856,16 +858,17 @@
    [:limit {:optional true :description "Maximum number of messages to return."} [:int {:min 1 :max 100}]]])
 
 (defn read-execute [runtime config tool-call-id params a b c]
-  (channel-messages-execute runtime config tool-call-id
-                            #js {:channel_id (or (aget params "channel_id") (aget params "channelId") "")
-                                 :limit (aget params "limit")}
-                            a b c))
+  (let [params (tool-params params)]
+    (channel-messages-execute runtime config tool-call-id
+                              {:channel_id (or (pget params :channel_id :channelId) "")
+                               :limit (pget params :limit)}
+                              a b c)))
 
 (def read-tool (partial create-tool-obj "discord.read" "Discord Read"
                         "Read recent messages from a Discord channel."
                         "Read recent messages from a Discord channel to understand context."
-                        (clj->js ["Use discord.read as a simple alias for discord.channel.messages."
-                                  "For pagination or cursors, use discord.channel.messages or discord.channel.scroll directly."])
+                        ["Use discord.read as a simple alias for discord.channel.messages."
+                                  "For pagination or cursors, use discord.channel.messages or discord.channel.scroll directly."]
                         read-params
                         read-execute))
 
@@ -879,19 +882,18 @@
    (let [allowed? (fn [tool-id]
                     (or (nil? auth-context)
                         (ctx-tool-allowed? auth-context tool-id)))]
-     (clj->js
-      (vec
-       (remove nil?
-               [(when (allowed? "discord.publish") (publish-tool runtime config))
-                (when (allowed? "discord.send") (discord-send-tool runtime config))
-                (when (allowed? "discord.react") (react-tool runtime config))
-                (when (allowed? "discord.thread.create") (thread-create-tool runtime config))
-                (when (allowed? "discord.read") (read-tool runtime config))
-                (when (allowed? "discord.channel.messages") (channel-messages-tool runtime config))
-                (when (allowed? "discord.channel.scroll") (channel-scroll-tool runtime config))
-                (when (allowed? "discord.dm.messages") (dm-messages-tool runtime config))
-                (when (allowed? "discord.search") (search-tool runtime config))
-                (when (allowed? "discord.guilds") (guilds-tool runtime config))
-                (when (allowed? "discord.list.servers") (list-servers-tool runtime config))
-                (when (allowed? "discord.channels") (channels-tool runtime config))
-                (when (allowed? "discord.list.channels") (list-channels-tool runtime config))]))))))
+     (xdiscord/tool-array
+      (remove nil?
+              [(when (allowed? "discord.publish") (publish-tool runtime config))
+               (when (allowed? "discord.send") (discord-send-tool runtime config))
+               (when (allowed? "discord.react") (react-tool runtime config))
+               (when (allowed? "discord.thread.create") (thread-create-tool runtime config))
+               (when (allowed? "discord.read") (read-tool runtime config))
+               (when (allowed? "discord.channel.messages") (channel-messages-tool runtime config))
+               (when (allowed? "discord.channel.scroll") (channel-scroll-tool runtime config))
+               (when (allowed? "discord.dm.messages") (dm-messages-tool runtime config))
+               (when (allowed? "discord.search") (search-tool runtime config))
+               (when (allowed? "discord.guilds") (guilds-tool runtime config))
+               (when (allowed? "discord.list.servers") (list-servers-tool runtime config))
+               (when (allowed? "discord.channels") (channels-tool runtime config))
+               (when (allowed? "discord.list.channels") (list-channels-tool runtime config))])))))

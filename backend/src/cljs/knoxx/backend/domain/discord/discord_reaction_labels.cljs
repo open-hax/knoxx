@@ -81,12 +81,12 @@
         (js/Promise.resolve {:ok false :skipped true})
         (let [record-id (discord-record-id channel-id message-id)
               event (message->openplanner-event config message emoji user-id)]
-          (-> (openplanner-client/request! client "POST" "/v1/events" {:events [event]})
+          (-> (openplanner-client/events! client [event])
               (.then (fn [_]
-                       (openplanner-client/request! client "POST" (str "/v1/labels/records/" (js/encodeURIComponent record-id) "/reaction")
-                                                   {:emoji emoji
-                                                    :source "discord-gateway-reaction"
-                                                    :user_id user-id})))
+                       (openplanner-client/record-reaction! client record-id
+                                                            {:emoji emoji
+                                                             :source "discord-gateway-reaction"
+                                                             :user_id user-id})))
               (.catch (fn [err]
                         (.warn js/console "[discord-reaction-labels] failed to ingest reaction" err)
                         {:ok false :error (.-message err)}))))))))

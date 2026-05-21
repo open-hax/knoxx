@@ -6,14 +6,9 @@
             [knoxx.backend.domain.agent.tool-lifecycle :as tool-lifecycle]
             [knoxx.backend.domain.agent.turn-guards :as turn-guards]
             [knoxx.backend.infra.agent.stream.provider-events :as provider-events]
+            [knoxx.backend.infra.agent.stream.sinks :as sinks]
             [knoxx.backend.infra.agent.tools :refer [tool-call-preview-from-part assistant-tool-call-previews]]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
-            [knoxx.backend.domain.action.run-state :refer [update-run! append-run-event! update-run-tool-receipt!
-                                             backfill-run-tool-input-preview! append-limited
-                                             append-run-trace-text! apply-run-tool-trace-event!
-                                             tool-event-payload]]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.domain.action.run-state :refer [append-limited tool-event-payload]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
             [knoxx.backend.domain.time :refer [now-iso]]))
@@ -36,7 +31,8 @@
    :aborting? (atom false)
    :abort-reason* (atom nil)
    :tool-loop* (atom {:last nil :streak 0 :counts {}})
-   :seen-tool-lifecycle-events* (atom #{})})
+   :seen-tool-lifecycle-events* (atom #{})
+   :run-event-sink (sinks/live-run-event-sink)})
 
 (declare emit-streaming-delta!)
 
@@ -106,10 +102,9 @@
               ttft-event (tool-event-payload run-id conversation-id session-id "assistant_first_token"
                                              {:status "streaming"
                                               :ttft_ms ttft-ms})]
-          (update-run! run-id #(assoc % :ttft_ms ttft-ms))
-          (append-run-event! run-id ttft-event)
-          (broadcast-ws-session! session-id "events" ttft-event)
-          (session-store/mark-session-streaming! (redis/get-client) session-id true)))
+          (sinks/update-run-state! (sinks/sink-or-default state) run-id #(assoc % :ttft_ms ttft-ms))
+          (sinks/emit-run-event! (sinks/sink-or-default state) ttft-event)
+          (sinks/update-session-record! (sinks/sink-or-default state) session-id {:op :mark-streaming :active? true})))
 
       ;; IMPORTANT: last-* atoms are treated as *cumulative text so far*.
       ;; emit-progress-text! relies on this to diff cumulative provider payloads.
@@ -121,13 +116,13 @@
           (swap! reasoning-chunks conj delta)
           (swap! last-reasoning-text* str delta)))
 
-      (append-run-trace-text! run-id kind delta (now-iso))
-      (broadcast-ws-session! session-id "tokens"
-                             {:run_id run-id
-                              :conversation_id conversation-id
-                              :session_id session-id
-                              :kind (if (= kind :agent_message) "assistant_message" "reasoning")
-                              :token delta}))))
+      (sinks/append-trace-text! (sinks/sink-or-default state) run-id kind delta (now-iso))
+      (sinks/emit-token-event! (sinks/sink-or-default state)
+                               {:run_id run-id
+                                :conversation_id conversation-id
+                                :session_id session-id
+                                :kind (if (= kind :agent_message) "assistant_message" "reasoning")
+                                :token delta}))))
 (defn sync-assistant-message!
   [state assistant-message]
   (when (and assistant-message
@@ -136,7 +131,7 @@
           full-reasoning (assistant-message-reasoning-text assistant-message)
           tool-previews (assistant-tool-call-previews assistant-message)]
       (doseq [{:keys [tool_call_id tool_name input_preview]} tool-previews]
-        (backfill-run-tool-input-preview! (:run-id state) tool_call_id tool_name input_preview))
+        (sinks/backfill-tool-input-preview! (sinks/sink-or-default state) (:run-id state) tool_call_id tool_name input_preview))
       ;; Treat message sync as a cumulative "authoritative" snapshot: diff and reset.
       ;; This avoids duplicating the appended delta into :last-*-text* when the
       ;; terminal message arrives immediately after streaming deltas.
@@ -144,19 +139,19 @@
       (emit-progress-text! state :reasoning full-reasoning))))
 
 (defn request-abort!
-  [{:keys [run-id conversation-id session-id aborting? abort-reason*]} session reason]
+  [{:keys [run-id conversation-id session-id aborting? abort-reason*] :as state} session reason]
   (let [reason (str (or reason "aborted"))]
     (if @aborting?
       (js/Promise.resolve nil)
       (do
         (reset! aborting? true)
         (reset! abort-reason* reason)
-        (session-store/mark-session-streaming! (redis/get-client) session-id false)
-        (let [abort-event (tool-event-payload run-id conversation-id session-id "abort_requested"
-                                              {:status "aborting"
-                                               :reason reason})]
-          (append-run-event! run-id abort-event)
-          (broadcast-ws-session! session-id "events" abort-event))
+        (let [sink (sinks/sink-or-default state)]
+          (sinks/update-session-record! sink session-id {:op :mark-streaming :active? false})
+          (let [abort-event (tool-event-payload run-id conversation-id session-id "abort_requested"
+                                                {:status "aborting"
+                                                 :reason reason})]
+            (sinks/emit-run-event! sink abort-event)))
         (.abort session)))))
 
 (defn register-active-turn!
@@ -202,10 +197,11 @@
       (contains? #{"toolcall_end" "tool_call_end"} assistant-event-type)
       (do
         (when-let [preview (tool-call-preview-from-part (:tool-call event))]
-          (backfill-run-tool-input-preview! (:run-id state)
-                                            (:tool_call_id preview)
-                                            (:tool_name preview)
-                                            (:input_preview preview)))
+          (sinks/backfill-tool-input-preview! (sinks/sink-or-default state)
+                                              (:run-id state)
+                                              (:tool_call_id preview)
+                                              (:tool_name preview)
+                                              (:input_preview preview)))
         (sync-assistant-message! state (or (:partial-message event)
                                            (:message event))))
 
@@ -232,20 +228,18 @@
                                                                              (merge event
                                                                                     {:count (:count guard)
                                                                                      :streak (:streak guard)})))]
-        (append-run-event! (:run-id state) spiral-event)
-        (broadcast-ws-session! (:session-id state) "events" spiral-event)
+        (sinks/emit-run-event! (sinks/sink-or-default state) spiral-event)
         ((:abort! state) (:reason guard))))
     (let [at (now-iso)
           event (assoc event :at at)
           first-event? (first-lifecycle-event? state "tool_start" tool-call-id)
           tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_start"
                                          (tool-lifecycle/run-event-extra :start event))]
-      (update-run-tool-receipt! (:run-id state) tool-call-id {:tool_name tool-name}
-                                #(tool-lifecycle/start-receipt % event))
+      (sinks/update-tool-receipt! (sinks/sink-or-default state) (:run-id state) tool-call-id {:tool_name tool-name}
+                                  #(tool-lifecycle/start-receipt % event))
       (when first-event?
-        (apply-run-tool-trace-event! (:run-id state) (tool-lifecycle/trace-event :start event))
-        (append-run-event! (:run-id state) tool-event)
-        (broadcast-ws-session! (:session-id state) "events" tool-event)))))
+        (sinks/apply-tool-trace-event! (sinks/sink-or-default state) (:run-id state) (tool-lifecycle/trace-event :start event))
+        (sinks/emit-run-event! (sinks/sink-or-default state) tool-event)))))
 
 (defn- handle-tool-execution-update!
   [state event]
@@ -257,14 +251,13 @@
                      :tool-call-id tool-call-id
                      :at at
                      :append-preview #(append-limited %1 %2 8))]
-    (update-run-tool-receipt! (:run-id state) tool-call-id {:tool_name tool-name}
-                              #(tool-lifecycle/update-receipt % event))
-    (apply-run-tool-trace-event! (:run-id state) (tool-lifecycle/trace-event :update event))
+    (sinks/update-tool-receipt! (sinks/sink-or-default state) (:run-id state) tool-call-id {:tool_name tool-name}
+                                #(tool-lifecycle/update-receipt % event))
+    (sinks/apply-tool-trace-event! (sinks/sink-or-default state) (:run-id state) (tool-lifecycle/trace-event :update event))
     (when preview
       (let [tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_update"
                                            (tool-lifecycle/run-event-extra :update event))]
-        (append-run-event! (:run-id state) tool-event)
-        (broadcast-ws-session! (:session-id state) "events" tool-event)))))
+        (sinks/emit-run-event! (sinks/sink-or-default state) tool-event)))))
 
 (defn- handle-tool-execution-end!
   [state event]
@@ -277,24 +270,22 @@
         first-event? (first-lifecycle-event? state "tool_end" tool-call-id)
         tool-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "tool_end"
                                        (tool-lifecycle/run-event-extra :end event))]
-    (update-run-tool-receipt! (:run-id state) tool-call-id {:tool_name tool-name}
-                              #(tool-lifecycle/end-receipt % event))
+    (sinks/update-tool-receipt! (sinks/sink-or-default state) (:run-id state) tool-call-id {:tool_name tool-name}
+                                #(tool-lifecycle/end-receipt % event))
     (when first-event?
-      (apply-run-tool-trace-event! (:run-id state) (tool-lifecycle/trace-event :end event))
-      (append-run-event! (:run-id state) tool-event)
-      (broadcast-ws-session! (:session-id state) "events" tool-event))))
+      (sinks/apply-tool-trace-event! (sinks/sink-or-default state) (:run-id state) (tool-lifecycle/trace-event :end event))
+      (sinks/emit-run-event! (sinks/sink-or-default state) tool-event))))
 
 (defn- handle-turn-end!
   [state event]
   (let [turn-event (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "turn_end"
                                        {:status "completed"
                                         :tool_result_count (:tool-result-count event)})]
-    (append-run-event! (:run-id state) turn-event)
-    (broadcast-ws-session! (:session-id state) "events" turn-event)))
+    (sinks/emit-run-event! (sinks/sink-or-default state) turn-event)))
 
 (defn- handle-agent-end!
   [state _event]
-  (broadcast-ws-session! (:session-id state) "events"
+  (sinks/emit-run-event! (sinks/sink-or-default state)
                          (tool-event-payload (:run-id state) (:conversation-id state) (:session-id state) "agent_end"
                                              {:status "completed"})))
 

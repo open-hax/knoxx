@@ -9,7 +9,8 @@ created: "2026-05-20"
 Signal
 
  (己, p=0.9) The main cleanup move is: do not make one giant “agent session
- protocol.” Split the current implicit agent surface into:
+ protocol.”
+ Split the current implicit agent surface into:
 
  1. A tiny consumer-facing Agent Service
  2. Behavioral protocols for effectful ports

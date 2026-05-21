@@ -1,7 +1,7 @@
 # Knoxx Agent Content, History, and Tooling Ports
 
 Date: 2026-05-21
-Status: todo
+Status: done
 Parent epic: `knoxx-agent-service-protocol-split-epic.md`
 Source report: `docs/notes/architecture/agent-service-protocol-split.md`
 Story points: 5
@@ -81,8 +81,35 @@ Exact names may change, but history/content/tool concerns should be independentl
 3. Existing provider message payloads are preserved for representative text and multimodal fixtures.
 4. Existing allowed-tool behavior is preserved for representative auth contexts.
 
+## Implementation result
+
+Completed on 2026-05-21.
+
+Touched files:
+
+- `backend/src/cljs/knoxx/backend/infra/agent/history.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/content_codec.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/tool_catalog.cljs`
+- `backend/src/cljs/knoxx/backend/infra/agent/session.cljs`
+- `backend/test/cljs/knoxx/backend/agents/content_history_tooling_ports_test.cljs`
+
+Notes:
+
+- Added history/transcript ports: `IMessageHistory` and `ITranscriptCodec`, with message-source backed loading, context pruning, and session-manager rehydration.
+- Added content/media ports: `IContentCodec` and `IMediaMaterializer`, with compatibility-preserving media materialization for data URLs, raw base64, and remote URLs.
+- Added tool ports: `IToolCatalog` and `IToolPolicyResolver`, with allowed-tool resolution, tool-auth-context projection, visible session signatures, built-in tool resolution, and custom-tool lookup behind a focused namespace.
+- `session.cljs` now delegates context pruning, rehydration, media materialization, visible session signatures, allowed-tool resolution, and built-in/custom tool lookup to the new port/codecs while preserving the existing public helper names.
+- Added tests for pruning, history rehydration through `IMessageSource`, media materialization, and tool visibility/signature stability with fake resolvers.
+
 ## Verification
 
 ```bash
 pnpm -C backend exec shadow-cljs compile test
+pnpm -C backend exec shadow-cljs compile server
 ```
+
+Results:
+
+- `compile test`: exit 0; 336 tests, 859 assertions, 0 failures, 0 errors; 220 existing warnings.
+- `compile server`: exit 0; build completed; 301 existing warnings.
+- `git diff --check`: passed for touched tracked files plus no-index checks for new history/content/tool/test namespaces.

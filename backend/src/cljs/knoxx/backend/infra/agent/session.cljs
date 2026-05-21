@@ -1,17 +1,17 @@
 (ns knoxx.backend.infra.agent.session
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.models :refer [normalize-thinking-level effective-thinking-level models-config resolve-model-contract]]
+            [knoxx.backend.domain.models :refer [normalize-thinking-level effective-thinking-level resolve-model-contract]]
             [knoxx.backend.extern.eta-mu :as eta-mu-extern]
             [knoxx.backend.extern.js :as xjs]
-            [knoxx.backend.infra.agent.hydration :refer [create-agent-custom-tools]]
-            [knoxx.backend.infra.agent.message :as msg]
-            [knoxx.backend.infra.agent.provider :refer [fetch-proxx-model-ids!]]
-            [knoxx.backend.infra.http :as http :refer [no-content?]]
+            [knoxx.backend.infra.agent.content-codec :as content-codec]
+            [knoxx.backend.infra.agent.history :as history]
+            [knoxx.backend.infra.agent.provider.eta-mu :as eta-mu-provider]
+            [knoxx.backend.infra.agent.session-registry :as session-registry]
+            [knoxx.backend.infra.agent.tool-catalog :as tool-catalog]
+            [knoxx.backend.infra.http :refer [no-content?]]
             [knoxx.backend.infra.stores.composite-message-source :refer [->CompositeMessageSource]]
-            [knoxx.backend.infra.stores.message-source :refer [fetch-messages!]]
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
             [knoxx.backend.infra.stores.redis-message-source :refer [->RedisMessageSource]]
-            [knoxx.backend.infra.tooling :refer [allowed-tool-id-set create-runtime-tools]]
             [knoxx.backend.domain.extension-runtime :as ext-runtime]
             [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
@@ -19,27 +19,13 @@
 
 (defonce sessions* (atom {}))
 
-(def ^:private max-sessions 500)
-(def ^:private inactive-ttl-ms (* 4 60 60 1000))
+(def ^:private inactive-ttl-ms session-registry/default-inactive-ttl-ms)
 (def ^:private sweep-interval-ms 300000)
+(def ^:private active-session-registry
+  (session-registry/atom-registry sessions* {:inactive-ttl-ms inactive-ttl-ms}))
 
 ;; ─── Private helpers ────────────────────────────────────────────────────────
 
-(defn- positive-int-value [v] (when (integer? v) (max v 0)))
-
-(defn- message-text-size
-  [message]
-  (+ (count (str (or (:content message) (:summary message) "")))
-     (reduce + 0 (map #(count (str (or (:text %) (:filename %) (:url %) "")))
-                      (or (:content-parts message) (:contentParts message) [])))))
-
-(defn- enabled-tool-name-allowlist
-  [builtin-tools custom-tools]
-  (->> (concat (or builtin-tools [])
-               (eta-mu-extern/tool-seq custom-tools))
-       (keep eta-mu-extern/tool-runtime-name)
-       distinct
-       vec))
 
 (defn- restore-agent-context!
   [previous]
@@ -71,55 +57,9 @@
       (wrap-tool-execute-with-agent-context! tool context)))
   custom-tools)
 
-(defn- effective-tool-auth-context
-  [auth-context allowed-tool-ids]
-  (if-not auth-context
-    nil
-    (assoc auth-context
-           :toolPolicies (mapv (fn [tool-id]
-                                 {:toolId tool-id :effect "allow"})
-                               (sort (vec allowed-tool-ids))))))
-
-(defn- compaction-settings
-  [config]
-  {:enabled (not= false (:agent-compaction-enabled? config))
-   :reserveTokens (or (positive-int-value (:agent-compaction-reserve-tokens config)) 16384)
-   :keepRecentTokens (or (positive-int-value (:agent-compaction-keep-recent-tokens config)) 20000)})
-
-(defn- context-policy
-  [agent-spec]
-  (or (:context-policy agent-spec)
-      (:contextPolicy agent-spec)
-      (:context agent-spec)
-      (get-in agent-spec [:extras :context])
-      (get-in agent-spec [:extras :context-policy])))
-
 (defn prune-session-messages
   [agent-spec messages]
-  (let [items (vec (or messages []))
-        policy (context-policy agent-spec)]
-    (if-not policy
-      items
-      (let [max-messages (positive-int-value (or (:max-messages policy) (:maxMessages policy) (:max_messages policy)))
-            max-chars (positive-int-value (or (:max-chars policy) (:maxChars policy) (:max_chars policy)))
-            preserve-system? (not= false (or (:preserve-system policy) (:preserveSystem policy) (:preserve_system policy)))
-            system-messages (if preserve-system?
-                              (filterv #(= "system" (some-> (:role %) str str/lower-case)) items)
-                              [])
-            body-messages (if preserve-system?
-                            (remove #(= "system" (some-> (:role %) str str/lower-case)) items)
-                            items)
-            by-count (if max-messages (take-last max-messages (vec body-messages)) (vec body-messages))
-            by-chars (if max-chars
-                       (loop [remaining (reverse by-count) total 0 kept '()]
-                         (if-let [message (first remaining)]
-                           (let [size (message-text-size message)]
-                             (if (and (seq kept) (> (+ total size) max-chars))
-                               (vec kept)
-                               (recur (rest remaining) (+ total size) (conj kept message))))
-                           (vec kept)))
-                       (vec by-count))]
-        (vec (concat system-messages by-chars))))))
+  (history/prune-session-messages agent-spec messages))
 
 (defn- register-actor-live-route!
   [runtime conversation-id session-id agent-spec]
@@ -139,25 +79,17 @@
 
 (defn active-agent-session
   [conversation-id]
-  (:session (get @sessions* conversation-id)))
+  (session-registry/get-active-session active-session-registry conversation-id))
 
-(defn- evict-oldest!
-  []
-  (when (> (count @sessions*) max-sessions)
-    (let [oldest (apply min-key (comp :last-accessed val) @sessions*)]
-      (when oldest
-        (swap! sessions* dissoc (key oldest))))))
+(defn- active-session-entry
+  [conversation-id]
+  (session-registry/get-active-session-entry active-session-registry conversation-id))
 
 (defn- start-sweep!
   []
   (js/setInterval
    (fn []
-     (let [cutoff (- (js/Date.now) inactive-ttl-ms)
-           stale (for [[id entry] @sessions*
-                       :when (< (or (:last-accessed entry) 0) cutoff)]
-                   id)]
-       (when (seq stale)
-         (swap! sessions* #(apply dissoc % stale)))))
+     (session-registry/sweep-expired-sessions! active-session-registry (js/Date.now)))
    sweep-interval-ms))
 
 (start-sweep!)
@@ -166,95 +98,29 @@
 
 (defn fetch-b64!
   [url media-type]
-  (-> (js/fetch url)
-      (.then (fn [r]
-               (when-not (.-ok r)
-                 (throw (js/Error. (str media-type " fetch failed: " (.-status r)))))
-               (.-arrayBuffer r)))
-      (.then (fn [ab]
-               (let [buf (js/Buffer.from ab)]
-                 (str "data:" media-type ";base64," (.toString buf "base64")))))))
-
-(defn- audio-format [mime] (msg/mime->audio-format mime))
-
-(defn- media-map
-  [part-type data mime]
-  (cond-> {:type part-type
-           :data data
-           :mimeType mime}
-    (= "audio" part-type) (assoc :format (or (audio-format mime) "mp3"))))
+  (content-codec/fetch-b64! url media-type))
 
 (defn materialize!
   [part]
-  (let [part-type (some-> (:type part) str str/lower-case)
-        url       (some-> (:url part) str not-empty)
-        data      (some-> (:data part) str not-empty)
-        mime      (or (some-> (:mimeType part) str not-empty)
-                      (if (= "audio" part-type) "audio/mpeg" "image/png"))]
-    (cond
-      (and data (str/starts-with? data "data:"))
-      (js/Promise.resolve
-       (let [comma (.indexOf data ",")]
-         (media-map part-type (if (>= comma 0) (.slice data (inc comma)) data) mime)))
-
-      (and data (not (str/starts-with? data "http")))
-      (js/Promise.resolve (media-map part-type data mime))
-
-      url
-      (-> (fetch-b64! url mime)
-          (.then (fn [data-url]
-                   (let [comma (.indexOf data-url ",")]
-                     (media-map part-type (if (>= comma 0) (.slice data-url (inc comma)) data-url) mime)))))
-
-      :else (js/Promise.resolve nil))))
+  (content-codec/materialize! part))
 
 ;; ─── Session hydration ──────────────────────────────────────────────────────
 
 (defn ^:async rehydrate-session-manager!
   [message-source session-manager conversation-id agent-spec]
-  (let [messages (await (fetch-messages! message-source conversation-id))
-        merged-messages (-> (vec (or messages []))
-                            (msg/sync-system-message (:system-prompt agent-spec))
-                            (#(prune-session-messages agent-spec %)))]
-    (doseq [message merged-messages]
-      (when-let [agent-message (msg/stored-session-message->agent-message message)]
-        (eta-mu-extern/append-message! session-manager agent-message)))
-    {:session-manager session-manager
-     :restored (boolean (seq merged-messages))}))
+  (await (history/rehydrate-session-manager! message-source session-manager conversation-id agent-spec)))
 
 ;; ─── Runtime setup ───────────────────────────────────────────────────────────
 
 (defn ^:async ensure-eta-mu-runtime!
-  [_runtime config]
-  (eta-mu-extern/setup-runtime!
-   config
-   (models-config config (await (fetch-proxx-model-ids! config)))
-   (compaction-settings config)))
+  [runtime config]
+  (await (eta-mu-provider/ensure-runtime! (eta-mu-provider/eta-mu-provider runtime config))))
 
 ;; ─── Session creation ────────────────────────────────────────────────────────
 
 (defn- visible-session-signature
   [runtime config auth-context agent-spec]
-  (let [allowed-tool-ids (allowed-tool-id-set config
-                                              (:role agent-spec)
-                                              auth-context
-                                              (:contract-id agent-spec)
-                                              (:actor-id agent-spec))
-        tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
-        builtin-tools (or (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec)) [])
-        custom-tools (if-let [tools (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)]
-                       (eta-mu-extern/tool-seq tools)
-                       [])]
-    (pr-str {:tools (->> (concat builtin-tools custom-tools)
-                         (keep eta-mu-extern/tool-runtime-name)
-                         sort
-                         distinct
-                         vec)
-             :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
-             :actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)
-             :role (some-> (:role agent-spec) str str/trim not-empty)
-             :system-prompt (some-> (:system-prompt agent-spec) str str/trim not-empty)
-             :task-prompt (some-> (:task-prompt agent-spec) str str/trim not-empty)})))
+  (tool-catalog/visible-session-signature runtime config auth-context agent-spec))
 
 (defn ^:async create-session-manager!
   ([runtime config conversation-id model-id] (create-session-manager! runtime config conversation-id model-id nil (:agent-thinking-level config)))
@@ -271,23 +137,21 @@
                                                                       "off"))
          model-provider-id (or (some-> (resolve-model-contract config model-id) :provider)
                                "proxx")
-         model (eta-mu-extern/find-model model-registry
-                                         model-provider-id
-                                         model-id
-                                         (:proxx-default-model config))
-         allowed-tool-ids (allowed-tool-id-set config
-                                               (:role agent-spec)
-                                               auth-context
-                                               (:contract-id agent-spec)
-                                               (:actor-id agent-spec))
-         tool-auth-context (effective-tool-auth-context auth-context allowed-tool-ids)
-         builtin-tools (create-runtime-tools runtime config tool-auth-context (:role agent-spec) (:contract-id agent-spec) (:actor-id agent-spec))
+         provider (eta-mu-provider/eta-mu-provider runtime config)
+         model (eta-mu-provider/resolve-model provider
+                                              model-registry
+                                              model-provider-id
+                                              model-id
+                                              (:proxx-default-model config))
+         allowed-tool-ids (tool-catalog/allowed-tool-ids config auth-context agent-spec)
+         tool-auth-context (tool-catalog/effective-tool-auth-context auth-context allowed-tool-ids)
+         builtin-tools (tool-catalog/builtin-tools runtime config tool-auth-context agent-spec)
          custom-tools (wrap-custom-tools-with-agent-context!
-                       (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
+                       (tool-catalog/custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
                        {:session-id session-id
                         :conversation-id conversation-id
                         :agent-spec agent-spec})
-         tool-name-allowlist (enabled-tool-name-allowlist builtin-tools custom-tools)
+         tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)
          preferred-session-id (some-> session-id str str/trim not-empty)
          message-source (->CompositeMessageSource
                           (->OpenPlannerMessageSource config)
@@ -299,7 +163,8 @@
          (eta-mu-extern/append-thinking-level-change! session-manager thinking-level)
          (-> (rehydrate-session-manager! message-source session-manager conversation-id agent-spec)
              (.then (fn [{:keys [session-manager]}]
-                      (let [session (eta-mu-extern/create-session!
+                      (let [session (eta-mu-provider/create-session!
+                                     provider
                                      {:workspace-root (:workspace-root config)
                                       :runtime-dir runtime-dir
                                       :auth-storage auth-storage
@@ -327,13 +192,13 @@
                                 (xjs/object {:conversationId conversation-id
                                              :sessionId session-id})
                                 ctx)
-    (evict-oldest!)
-    (swap! sessions* assoc conversation-id {:session next-session
-                                            :model-id model-id
-                                            :tool-signature current-tool-signature
-                                            :session-id session-id
-                                            :actor-id (:actor-id agent-spec)
-                                            :last-accessed (js/Date.now)})
+    (session-registry/put-active-session! active-session-registry
+                                          conversation-id
+                                          {:session next-session
+                                           :model-id model-id
+                                           :tool-signature current-tool-signature
+                                           :session-id session-id
+                                           :actor-id (:actor-id agent-spec)})
     (register-actor-live-route! runtime conversation-id session-id agent-spec)
     next-session))
 
@@ -352,7 +217,7 @@
          current-tool-signature (visible-session-signature runtime config auth-context agent-spec)
          construct-this-session! (partial construct-session-and-ext-ctx! runtime config conversation-id model-id
                                           auth-context thinking-level session-id agent-spec current-tool-signature)]
-     (if-let [entry (get @sessions* conversation-id)]
+     (if-let [entry (active-session-entry conversation-id)]
        (let [session (:session entry)
              active-model (:model-id entry)
              active-tool-signature (:tool-signature entry)]
@@ -369,7 +234,7 @@
 (defn remove-agent-session!
   "Dispatch session_shutdown to extensions, then release the in-process session entry."
   [conversation-id]
-  (when-let [entry (get @sessions* conversation-id)]
+  (when-let [entry (active-session-entry conversation-id)]
     (let [ctx (ext-runtime/build-extension-ctx
                (xjs/empty-object) {}
                :conversation-id conversation-id
@@ -377,5 +242,5 @@
       (ext-runtime/dispatch-event "session_shutdown"
                                   (xjs/object {:conversationId conversation-id})
                                   ctx)))
-  (swap! sessions* dissoc conversation-id)
+  (session-registry/remove-active-session! active-session-registry conversation-id)
   nil)

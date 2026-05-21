@@ -16,12 +16,12 @@ Epic: `knoxx-agent-service-protocol-split-epic.md` (35 pts total)
 
 Child specs:
 - `knoxx-agent-runtime-shapes.md` (5 pts, done)
-- `knoxx-agent-service-facade.md` (5 pts)
-- `knoxx-agent-session-registry-provider-ports.md` (5 pts)
-- `knoxx-agent-content-history-tooling-ports.md` (5 pts)
-- `knoxx-agent-stream-normalizer-reducer.md` (5 pts)
-- `knoxx-agent-run-event-sinks.md` (5 pts)
-- `knoxx-agent-recovery-policy-hydration-ports.md` (5 pts)
+- `knoxx-agent-service-facade.md` (5 pts, done)
+- `knoxx-agent-session-registry-provider-ports.md` (5 pts, done)
+- `knoxx-agent-content-history-tooling-ports.md` (5 pts, done)
+- `knoxx-agent-stream-normalizer-reducer.md` (5 pts, done)
+- `knoxx-agent-run-event-sinks.md` (5 pts, done)
+- `knoxx-agent-recovery-policy-hydration-ports.md` (5 pts, done)
 
 ### Graph Memory (P1B)
 
