@@ -1,9 +1,12 @@
 {:contract/kind   :trigger
  :contract/id     "daily_synthesis"
+ :contract/version 3
  :trigger/kind    :cron
- :trigger/target  "synthesis_pipeline"
+ :trigger/actor   "system_admin"
+ :trigger/action  :actions/run-pipeline
+ :trigger/with    {:pipeline-id "synthesis_pipeline"}
  :trigger/schedule "0 9 * * *"
- :enabled         true
+ :enabled         false
  :data
  {:context {:timezone "America/Chicago"
             :report-window-hours 24}}}

@@ -1,6 +1,6 @@
 (ns knoxx.backend.runtime-models-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.runtime.models :as models]))
+            [knoxx.backend.domain.models :as models]))
 
 (def test-config
   (models/enrich-config {:contracts-dir "contracts"

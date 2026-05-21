@@ -1,7 +1,10 @@
 {:contract/kind   :trigger
  :contract/id     "deep_synthesis_trigger"
+ :contract/version 3
  :trigger/kind    :cron
- :trigger/target  "deep_synthesis_pipeline"
+ :trigger/actor   "system_admin"
+ :trigger/action  :actions/run-pipeline
+ :trigger/with    {:pipeline-id "deep_synthesis_pipeline"}
  :trigger/schedule "0 2 * * *"
  :enabled         true
  :data

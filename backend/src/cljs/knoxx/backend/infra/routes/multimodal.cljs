@@ -1,0 +1,239 @@
+(ns knoxx.backend.infra.routes.multimodal
+  "Routes for multimodal file uploads and content serving.
+   
+   Supports images, audio, video, and documents for multimodal AI interactions.
+   Files are stored temporarily and served back to the frontend for preview/playback."
+  (:require [clojure.string :as str]
+            [knoxx.backend.infra.auth.authz :refer [ensure-tool!]]
+            [knoxx.backend.extern.fastify :as xfastify]
+            [knoxx.backend.extern.multipart :as xmultipart]
+            [knoxx.backend.extern.node-fs :as xnode-fs]
+            [knoxx.backend.domain.time :refer [now-iso]]
+            ["node:fs/promises" :as fs]
+            ["node:path" :as path]))
+
+(declare fs-mkdir!)
+
+(def ^:private upload-dir "uploads/multimodal")
+(def ^:private max-file-size-bytes (* 100 1024 1024)) ;; 100MB
+
+(def ^:private supported-mime-types
+  #{"image/png" "image/jpeg" "image/gif" "image/webp" "image/svg+xml"
+    "audio/mpeg" "audio/mp3" "audio/wav" "audio/ogg" "audio/m4a" "audio/flac" "audio/aac"
+    "video/mp4" "video/webm" "video/quicktime" "video/x-msvideo"
+    "application/pdf"
+    "text/plain" "text/markdown" "text/csv" "application/json"})
+
+(defn- sanitize-filename
+  "Sanitize a filename to prevent directory traversal and other attacks."
+  [filename]
+  (let [safe-name (-> (or filename "upload.bin")
+                      (str/replace #"[^\w\-.]" "_")
+                      (str/replace #"_+" "_"))]
+    (if (str/blank? safe-name)
+      "upload.bin"
+      safe-name)))
+
+(defn- mime-type-supported?
+  "Check if the MIME type is supported for multimodal upload."
+  [mime-type]
+  (or (some #(str/starts-with? mime-type %) ["image/" "audio/" "video/"])
+      (contains? supported-mime-types mime-type)))
+
+(defn- content-type-from-mime
+  "Determine the content category from MIME type."
+  [mime-type]
+  (cond
+    (str/starts-with? mime-type "image/") "image"
+    (str/starts-with? mime-type "audio/") "audio"
+    (str/starts-with? mime-type "video/") "video"
+    :else "document"))
+
+(defn- generate-file-id
+  "Generate a unique file ID."
+  []
+  (str (js/Date.now) "-" (.. js/Math.random (toString 36) (slice 2 11))))
+
+(defn- ensure-upload-dir!
+  "Ensure the upload directory exists."
+  [_runtime]
+  (let [upload-path (.join path upload-dir)]
+    (.then
+     (fs-mkdir! fs upload-path {:recursive true})
+     (fn [] upload-path))))
+
+(defn- fs-readdir!
+  [^js node-fs path]
+  (xnode-fs/readdir-vector! node-fs path))
+
+(defn- fs-rm!
+  [^js node-fs path]
+  (xnode-fs/rm! node-fs path))
+
+(defn- fs-read-file!
+  [^js node-fs path]
+  (xnode-fs/read-file! node-fs path))
+
+(defn- fs-write-buffer!
+  [^js node-fs path content]
+  (xnode-fs/write-buffer! node-fs path content))
+
+(defn- reply-header!
+  [^js reply name value]
+  (xfastify/reply-header! reply name value))
+
+(defn- request-parts-promise
+  [request]
+  (xmultipart/parts! request)
+
+(defn- save-upload-file!
+  "Save an uploaded file and return its metadata."
+  [runtime _config file-part filename]
+  (.then
+   (ensure-upload-dir! runtime)
+   (fn [upload-path]
+     (let [file-id (generate-file-id)
+           safe-name (sanitize-filename filename)
+           ext (if (str/includes? safe-name ".")
+                 (let [dot-idx (str/last-index-of safe-name ".")]
+                   (subs safe-name dot-idx))
+                 "")
+           stored-name (str file-id ext)
+           abs-path (.join path upload-path stored-name)]
+       (.then
+        (xmultipart/part-array-buffer! file-part)
+        (fn [buf]
+          (.then
+           (fs-write-buffer! fs abs-path (.from js/Buffer buf))
+           (fn []
+             {:file_id file-id
+              :filename safe-name
+              :stored_name stored-name
+              :path abs-path
+              :url (str "/api/multimodal/files/" file-id)
+              :size (.-byteLength buf)}))))))))
+
+(defn register-multimodal-routes!
+  "Register routes for multimodal file handling."
+[app runtime config {:keys [route! json-response!
+                           with-request-context!]}]
+  
+  ;; Upload files for multimodal messages
+  (route! app "POST" "/api/multimodal/upload"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-tool! ctx "multimodal.upload"))
+                (-> (request-parts-promise request)
+                    (.then
+                     (fn [parts]
+                       (let [file-parts (xmultipart/file-parts parts)
+                             upload-promises
+                             (mapv
+                              (fn [part]
+                                (let [filename (xmultipart/part-filename part)
+                                      mime-type (xmultipart/part-mime-type part)]
+                                  (if-not (mime-type-supported? mime-type)
+                                    (js/Promise.resolve
+                                     {:error (str "Unsupported file type: " mime-type)
+                                      :filename filename})
+                                    (if (> (xmultipart/part-size part) max-file-size-bytes)
+                                      (js/Promise.resolve
+                                       {:error (str "File too large. Max: " (/ max-file-size-bytes 1024 1024) "MB")
+                                        :filename filename})
+                                      (.then
+                                       (save-upload-file! runtime config part filename)
+                                       (fn [result]
+                                         (assoc result
+                                                :mime_type mime-type
+                                                :content_type (content-type-from-mime mime-type)
+                                                :uploaded_at (now-iso))))))))
+                              file-parts)]
+                         (.then
+                          (xnode-fs/promise-all-vector upload-promises)
+                          (fn [uploads]
+                            (let [successful (filter #(not (:error %)) uploads)
+                                  failed (filter :error uploads)]
+                              (json-response! reply 200
+                                              {:ok true
+                                               :uploaded (vec successful)
+                                               :failed (vec failed)
+                                               :total (count uploads)}))))))
+                    (.catch
+                     (fn [err]
+                       (json-response! reply 500
+                                       {:detail (str "Upload failed: " err)})))))))))
+  
+  ;; Serve uploaded files
+  (route! app "GET" "/api/multimodal/files/:fileId"
+          (fn [request reply]
+            (let [file-id (xfastify/request-param request :fileId)]
+              (-> (fs-readdir! fs (.join path upload-dir))
+                  (.then
+                   (fn [files]
+                     (let [matching (first (filter #(str/starts-with? % file-id) files))]
+                       (if matching
+                         (let [abs-path (.join path upload-dir matching)]
+                           (-> (fs-read-file! fs abs-path)
+                               (.then
+                                (fn [buf]
+                                  (let [ext (if (str/includes? matching ".")
+                                              (subs matching (str/last-index-of matching "."))
+                                              "")
+                                        content-type (cond
+                                                      (contains? #{".png"} ext) "image/png"
+                                                      (contains? #{".jpg" ".jpeg"} ext) "image/jpeg"
+                                                      (contains? #{".gif"} ext) "image/gif"
+                                                      (contains? #{".webp"} ext) "image/webp"
+                                                      (contains? #{".svg"} ext) "image/svg+xml"
+                                                      (contains? #{".mp3"} ext) "audio/mpeg"
+                                                      (contains? #{".wav"} ext) "audio/wav"
+                                                      (contains? #{".ogg"} ext) "audio/ogg"
+                                                      (contains? #{".mp4"} ext) "video/mp4"
+                                                      (contains? #{".webm"} ext) "video/webm"
+                                                      (contains? #{".pdf"} ext) "application/pdf"
+                                                      :else "application/octet-stream")]
+                                    (reply-header! reply "Content-Type" content-type)
+                                    (reply-header! reply "Cache-Control" "public, max-age=31536000")
+                                    (.send reply buf))))))
+                         (json-response! reply 404 {:detail "File not found"})))))
+                  (.catch
+                   (fn [err]
+                     (json-response! reply 500
+                                     {:detail (str "Failed to read file: " err)})))))))
+  
+  ;; Delete uploaded files
+  (route! app "DELETE" "/api/multimodal/files/:fileId"
+          (fn [request reply]
+            (with-request-context! runtime request reply
+              (fn [ctx]
+                (when ctx (ensure-tool! ctx "multimodal.upload"))
+                (let [file-id (xfastify/request-param request :fileId)]
+                  (-> (fs-readdir! fs (.join path upload-dir))
+                      (.then
+                       (fn [files]
+                         (let [matching (first (filter #(str/starts-with? % file-id) files))]
+                           (if matching
+                             (let [abs-path (.join path upload-dir matching)]
+                               (-> (fs-rm! fs abs-path)
+                                   (.then
+                                    (fn []
+                                      (json-response! reply 200
+                                                      {:ok true :deleted file-id})))))
+                             (json-response! reply 404 {:detail "File not found"})))))
+                      (.catch
+                       (fn [err]
+                         (json-response! reply 500
+                                         {:detail (str "Delete failed: " err)})))))))))
+  
+  ;; Get upload metadata
+  (route! app "GET" "/api/multimodal/info"
+          (fn [_request reply]
+            (json-response! reply 200
+                           {:max_file_size_bytes max-file-size-bytes
+                            :max_file_size_mb (/ max-file-size-bytes 1024 1024)
+                            :supported_mime_types (vec supported-mime-types)}))))
+
+(defn register-multimodal-routes
+  ([app runtime config handlers]
+   (register-multimodal-routes! app runtime config handlers)))

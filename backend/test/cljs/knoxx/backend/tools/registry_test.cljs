@@ -1,6 +1,6 @@
 (ns knoxx.backend.tools.registry-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.tools.registry :as registry]))
+            [knoxx.backend.infra.registry.tools :as registry]))
 
 (deftest normalize-tool-id-accepts-sanitized-runtime-aliases
   (testing "dot tools can be called with underscore-sanitized ids"

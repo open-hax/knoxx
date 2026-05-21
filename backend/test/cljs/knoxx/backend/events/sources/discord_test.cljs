@@ -1,6 +1,6 @@
 (ns knoxx.backend.events.sources.discord-test
   (:require [cljs.test :refer-macros [async deftest is]]
-            [knoxx.backend.events.sources.discord :as discord-source]))
+            [knoxx.backend.domain.discord.source :as discord-source]))
 
 (deftest publish-channels-are-not-read-channel-fallbacks
   (async done

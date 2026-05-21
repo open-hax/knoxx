@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "pnpm --filter @open-hax/knoxx-frontend dev",
     "build": "pnpm --filter @open-hax/knoxx-frontend build",
-    "lint:size": "node scripts/lint-file-sizes.mjs"
+    "lint:size": "node scripts/lint-file-sizes.mjs",
+    "scan:duplication": "pnpm dlx jscpd@4.2.3 --config .jscpd.json"
   },
   "engines": {
     "node": ">=20.0.0"

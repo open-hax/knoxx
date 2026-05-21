@@ -1,6 +1,6 @@
 (ns knoxx.backend.realtime-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.realtime :as realtime]))
+            [knoxx.backend.domain.realtime :as realtime]))
 
 (deftest ws-client-matches-payload-by-conversation
   (testing "conversation id is authoritative when the client has one"

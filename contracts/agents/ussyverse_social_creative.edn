@@ -6,9 +6,6 @@
                               :mode :triggered
                               :k 6}},
  :sources [:source/openplanner-memory],
- ;; Keep this cron agent from becoming a permanent synthesis thundering herd.
- ;; Discord source context is already rendered into the task prompt; memory is
- ;; only needed for explicit continuity queries.
  :source-mode :source-mode/discord-synthesis,
  :hooks {:before {}, :after {}},
  :trigger-kind :cron,
@@ -17,7 +14,7 @@
  :cadence-min 30,
  :enabled true,
  :context {:max-messages 240
-           :max-chars 60000
+           :max-chars 600000
            :preserve-system true}
  :sub-agents [:audio_agent :research_assistant :notifier]
  :agent
@@ -33,7 +30,7 @@
      :role/fork-tales-composer
      ],
   :model "gemma4:31b",
-  :thinking :medium},
+  :thinking :high},
  :prompts
  {:system
   "

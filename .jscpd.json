@@ -1,0 +1,40 @@
+{
+  "minLines": 8,
+  "minTokens": 80,
+  "maxLines": 2000,
+  "maxSize": "300kb",
+  "threshold": 3,
+  "reporters": ["console", "json"],
+  "output": "reports/jscpd",
+  "gitignore": true,
+  "skipComments": true,
+  "noTips": true,
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/dist-dev/**",
+    "**/coverage/**",
+    "**/.shadow-cljs/**",
+    "**/.clj-kondo/.cache/**",
+    "**/.lsp/**",
+    "**/.cpcache/**",
+    "**/*.timestamp-*.mjs",
+    "**/*.d.ts"
+  ],
+  "path": [
+    "backend/src/cljs",
+    "backend/test/cljs",
+    "backend/test/js",
+    "backend/scripts",
+    "backend/test-mcp.mjs",
+    "frontend/src",
+    "frontend/e2e/knoxx_e2e_support.cjs",
+    "frontend/tailwind.config.ts",
+    "frontend/vite.config.ts",
+    "frontend/vite.bridge.config.ts",
+    "frontend/vite.app-bridge.config.ts",
+    "frontend/vitest.config.ts",
+    "scripts",
+    "discord-bot/src"
+  ]
+}

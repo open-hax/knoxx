@@ -28,3 +28,4 @@ venv/
 packages/uxx
 packages/webgl-graph-view
 backend/dist*
+uploads/

@@ -1,6 +1,6 @@
 (ns knoxx.backend.events.cron-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.events.cron :as cron]))
+            [knoxx.backend.domain.event.cron :as cron]))
 
 (deftest cadence-label-renders-human-readable-schedules
   (testing "minute and hourly labels"

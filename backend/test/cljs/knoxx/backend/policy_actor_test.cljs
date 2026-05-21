@@ -1,6 +1,6 @@
 (ns knoxx.backend.policy-actor-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.policy-db :as policy-db]))
+            [knoxx.backend.infra.db.policy :as policy-db]))
 
 (deftest default-membership-actor-id-follows-role-shape
   (testing "system admins map to the system_admin user actor"

@@ -1,44 +1,47 @@
 (ns knoxx.backend.agent-turns-test
-  (:require [knoxx.backend.authz :as authz]
-            [knoxx.backend.agents.turn :as turn]
+  (:require [knoxx.backend.infra.auth.authz :as authz]
             [cljs.test :refer [deftest is testing async]]
-            [knoxx.backend.agent-turns :as agent-turns]))
+            [knoxx.backend.domain.agent.content :as content]
+            [knoxx.backend.infra.agent.tools :as tools]
+            [knoxx.backend.infra.agent.transcript :as transcript]
+            [knoxx.backend.infra.agent.turn :as agent-turns]
+            [knoxx.backend.extern.agent-turn-node :as xturn-node]
+            [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]))
 
 (deftest ensure-session-id-preserves-provided-value
   (testing "existing session ids are kept intact"
-    (let [crypto #js {:randomUUID (fn [] "generated-session-id")}]
-      (is (= "existing-session-id"
-             (agent-turns/ensure-session-id crypto "existing-session-id"))))))
+    (is (= "existing-session-id"
+           (agent-turns/ensure-session-id "existing-session-id")))))
 
 (deftest ensure-session-id-generates-missing-value
   (testing "missing session ids are generated before provider requests"
-    (let [crypto #js {:randomUUID (fn [] "generated-session-id")}]
+    (with-redefs [xturn-node/random-uuid! (fn [] "generated-session-id")]
       (is (= "generated-session-id"
-             (agent-turns/ensure-session-id crypto nil))))))
+             (agent-turns/ensure-session-id nil))))))
 
 (deftest model-ready-content-parts-normalizes-js-object-image-parts
   (testing "image parts arriving as JS objects are normalized and do not crash"
-    (with-redefs [knoxx.backend.runtime.models/model-supports-input? (fn [_ _ part-type]
+    (with-redefs [knoxx.backend.domain.models/model-supports-input? (fn [_ _ part-type]
                                                                       (= part-type "image"))]
       (is (= [{:type "image"
                :url "file://clip.png"}]
-             (agent-turns/model-ready-content-parts
-              {}
-              "test-model"
-              [#js {:type "image"
-                    :url "file://clip.png"}]))))))
+             (content/model-ready-content-parts
+               {}
+               "test-model"
+               [#js {:type "image"
+                     :url "file://clip.png"}]))))))
 
 (deftest model-ready-content-parts-rewrites-unsupported-audio-inputs
   (testing "unsupported multimodal inputs degrade into explanatory text instead of crashing"
-    (with-redefs [knoxx.backend.runtime.models/model-supports-input? (fn [_ _ part-type]
+    (with-redefs [knoxx.backend.domain.models/model-supports-input? (fn [_ _ part-type]
                                                                       (not= part-type "audio"))]
       (is (= [{:type :text
                :text "Uploaded audio source 'clip.wav' is available, but model test-model does not declare audio input. Use audio.spectrogram if you need an image-friendly audio view."}]
-             (agent-turns/model-ready-content-parts
-              {}
-              "test-model"
-              [{:type :audio
-                :filename "clip.wav"}]))))))
+             (content/model-ready-content-parts
+               {}
+               "test-model"
+               [{:type :audio
+                 :filename "clip.wav"}]))))))
 
 (deftest assistant-tool-call-previews-extracts-string-arguments-from-assistant-message
   (testing "string tool call arguments from assistant messages can backfill missing tool receipt inputs"
@@ -47,7 +50,7 @@
                                                     :id "tool-123"
                                                     :name "custom_tool"
                                                     :arguments "path=docs/guide.md limit=20"}]}
-          previews (agent-turns/assistant-tool-call-previews assistant-message)]
+          previews (tools/assistant-tool-call-previews assistant-message)]
       (is (= [{:tool_call_id "tool-123"
                :tool_name "custom_tool"
                :input_preview "path=docs/guide.md limit=20"}]
@@ -62,7 +65,7 @@
                                                     :arguments #js {:path "docs/guide.md"
                                                                     :offset 10
                                                                     :limit 20}}]}
-          previews (agent-turns/assistant-tool-call-previews assistant-message)]
+          previews (tools/assistant-tool-call-previews assistant-message)]
       (is (= [{:tool_call_id "tool-456"
                :tool_name "read"
                :input_preview "```yaml\npath: docs/guide.md\noffset: 10\nlimit: 20\n```"}]
@@ -70,16 +73,17 @@
 
 (deftest session->stored-messages-preserves-prior-transcript
   (testing "live session snapshots keep existing user and assistant turns for restart recovery"
-    (let [session #js {:messages #js [#js {:role "system"
-                                           :content #js [#js {:type "text" :text "stay grounded"}]}
-                                      #js {:role "user"
-                                           :content #js [#js {:type "text" :text "first request"}]}
-                                      #js {:role "assistant"
-                                           :content #js [#js {:type "text" :text "first answer"}]}]}]
+    (let [session (wrap-eta-mu-session
+                   #js {:messages #js [#js {:role "system"
+                                            :content #js [#js {:type "text" :text "stay grounded"}]}
+                                       #js {:role "user"
+                                            :content #js [#js {:type "text" :text "first request"}]}
+                                       #js {:role "assistant"
+                                            :content #js [#js {:type "text" :text "first answer"}]}]})]
       (is (= [{:role "system" :content "stay grounded"}
               {:role "user" :content "first request"}
               {:role "assistant" :content "first answer"}]
-             (agent-turns/session->stored-messages session))))))
+             (transcript/session->stored-messages session))))))
 
 (deftest reply-attachment-content-parts-lifts-workspace-media-tool-receipts-into-final-replies
   (testing "workspace_media.attach receipts become assistant reply content parts"
@@ -87,7 +91,7 @@
              :data "data:audio/wav;base64,QUFBQQ=="
              :mimeType "audio/wav"
              :filename "reply.wav"}]
-           (agent-turns/reply-attachment-content-parts
+           (content/reply-attachment-content-parts
             [{:tool_name "workspace_media.attach"
               :content_parts [{:type "audio"
                                :data "data:audio/wav;base64,QUFBQQ=="
@@ -97,6 +101,26 @@
               :content_parts [{:type "document"
                                :url "file:///tmp/guide.md"
                                :filename "guide.md"}]}])))))
+
+(deftest media-part->eta-mu-attachment-strips-audio-data-url
+  (testing "audio data URLs are converted to eta-mu raw base64 attachments"
+    (is (= {:type "audio"
+            :data "UklGRg=="
+            :mimeType "audio/wav"}
+           (agent-turns/media-part->eta-mu-attachment
+            {:type "audio"
+             :data "data:audio/wav;base64,UklGRg=="
+             :mimeType "audio/wav"})))))
+
+(deftest ^:async materialize-content-parts-keeps-text-part
+  (testing "materialization accepts explicit context and preserves non-media parts"
+    (try
+      (let [parts (await (agent-turns/materialize-content-parts!
+                          nil {} "text-model" nil 32000000
+                          [{:type "text" :text "hello"}]))]
+        (is (= [{:type "text" :text "hello"}] parts)))
+      (catch :default err
+        (is false (str "materialize-content-parts! threw: " (.-message err)))))))
 
 (deftest merge-content-parts-dedupes-overlapping-attachments
   (testing "reply media already present in the assistant response is not duplicated"
@@ -108,7 +132,7 @@
              :data "data:audio/wav;base64,QUFBQQ=="
              :mimeType "audio/wav"
              :filename "reply.wav"}]
-           (agent-turns/merge-content-parts
+           (content/merge-content-parts
             [{:type "image"
               :url "/api/multimodal/files/image-1"
               :mimeType "image/png"

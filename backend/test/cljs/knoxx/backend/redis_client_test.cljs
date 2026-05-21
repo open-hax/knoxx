@@ -1,6 +1,6 @@
 (ns knoxx.backend.redis-client-test
   (:require [cljs.test :refer [async deftest is testing]]
-            [knoxx.backend.redis-client :as redis]))
+            [knoxx.backend.infra.redis-client :as redis]))
 
 (deftest redis-command-wrappers-coerce-non-string-values
   (async done

@@ -300,7 +300,7 @@
    [:enabled         {:optional true} :boolean]
    [:data            {:optional true} :map]])
 
-;; ── Trigger contract (knoxx heritage) ─────────────────────────────────────────
+;; ── Trigger contract (actor-first) ────────────────────────────────────────────
 
 (def TriggerContract
   [:map {:closed false}
@@ -308,12 +308,13 @@
    [:contract/id       ContractId]
    [:contract/version  {:optional true} int?]
    [:trigger/kind      [:enum :cron :event :webhook :manual]]
-   [:trigger/target    ContractId]
+   [:trigger/actor     ContractId]
+    [:trigger/action    {:optional true} ContractId]
+    [:trigger/agent     {:optional true} ContractId]
+    [:trigger/with      {:optional true} [:map {:closed false}]]
+   [:trigger/events    {:optional true} [:sequential [:or string? keyword?]]]
+   [:trigger/condition {:optional true} :any]
    [:trigger/schedule  {:optional true} :string]
-   [:trigger/source    {:optional true}
-    [:map {:closed false}
-     [:kind   [:enum :discord :github :http :manual]]
-     [:config {:optional true} :map]]]
    [:enabled           {:optional true} :boolean]
    [:data              {:optional true} :map]])
 

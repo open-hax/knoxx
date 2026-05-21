@@ -1,6 +1,6 @@
 (ns knoxx.backend.quality-labels-test
   (:require [cljs.test :refer-macros [deftest is testing]]
-            [knoxx.backend.quality-labels :as quality-labels]))
+            [knoxx.backend.domain.label.quality :as quality-labels]))
 
 (deftest crossed-records-are-hard-excluded
   (testing "bad quality labels are detected across legacy label shapes"

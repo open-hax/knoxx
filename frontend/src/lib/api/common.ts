@@ -303,7 +303,7 @@ export async function abortAdminActiveAgent(payload: {
   });
 }
 
-export async function listMemorySessions(params: { limit?: number; offset?: number; actorId?: string; excludeActorIds?: string[] } = {}): Promise<MemorySessionListResponse> {
+export async function listMemorySessions(params: { limit?: number; offset?: number; actorId?: string; excludeActorIds?: string[]; contractId?: string } = {}): Promise<MemorySessionListResponse> {
   const query = new URLSearchParams();
   query.set("limit", String(params.limit ?? 12));
   if (typeof params.offset === "number" && params.offset > 0) {
@@ -314,6 +314,9 @@ export async function listMemorySessions(params: { limit?: number; offset?: numb
   }
   if (params.excludeActorIds && params.excludeActorIds.length > 0) {
     query.set("excludeActorIds", params.excludeActorIds.join(","));
+  }
+  if (params.contractId) {
+    query.set("contractId", params.contractId);
   }
   return request<MemorySessionListResponse>(`/api/memory/sessions?${query.toString()}`);
 }

@@ -1,0 +1,143 @@
+---
+original_name: "2026.05.08.11.21.36.md"
+title: "Solid CLJS Landscape"
+summary: "Research notes on SolidJS and ClojureScript integration options."
+category: "research"
+created: "2026-05-08"
+---
+
+Short version: the Solid+CLJS surface area is still pretty small, but there *are* a handful of concrete projects, and they cluster into three families: direct bindings (`solid-cljs`), squint-based integrations (squint → JS → Solid), and a couple of “CLJS + Solid + Tailwind” starter stacks. [reddit](https://www.reddit.com/r/Clojure/comments/1ps72dq/solidcljs_v010_clojurescript_bindings_to_solid/)
+
+***
+
+## 1. Direct ClojureScript bindings: `solid-cljs`
+
+### `roman01la/solid-cljs`
+
+- Repo: [`roman01la/solid-cljs`](https://github.com/roman01la/solid-cljs).  
+- Purpose: “ClojureScript bindings to SolidJS”, explicitly described as *“Early alpha, unstable and highly experimental”*. [github](https://github.com/roman01la/solid-cljs)
+- Shape:
+  - Wraps the core Solid API (signals, effects, render) and exposes them as idiomatic CLJS macros/functions, with JSX-like sugar via `$` and `defui`. [github](https://github.com/roman01la/solid-cljs)
+  - Example from the README shows `defui` components, `s/signal` and `s/effect`, and a `$` macro to produce DOM; `s/render` mounts into a `#root` element, with a `shadow-cljs` watch task (`clojure -M -m shadow.cljs.devtools.cli watch app`) as the dev flow. [github](https://github.com/roman01la/solid-cljs)
+- Tooling:
+  - Uses `shadow-cljs` for the build, with npm-managed `solid-js` and Git deps for the bindings. [github](https://github.com/roman01la/solid-cljs)
+- Status:
+  - Originally archived, then unarchived and released as `solid-cljs v0.1.0`, per a 2025 r/Clojure announcement: “Due to popular request, I have restored the repository, upgraded the library, and published a new release on Clojars.” [reddit](https://www.reddit.com/r/Clojure/comments/1ps72dq/solidcljs_v010_clojurescript_bindings_to_solid/)
+
+### `dundalek/solid-cljs`
+
+- Repo: [`dundalek/solid-cljs`](https://github.com/dundalek/solid-cljs).  
+- Purpose: A fork/variant of the `solid-cljs` bindings, with multiple demo targets (`demo`, `browser-test`, `todomvc`) wired via `shadow-cljs`; the README shows commands like `clj -M:shadow:demo:watch-demo` and `:todomvc:watch-todomvc`. [reddit](https://www.reddit.com/r/reactjs/comments/138tx9f/what_is_the_difference_between_plain_react_vs/)
+- Ecosystem placement:
+  - This fork is referenced in community discussion as part of the Solid+CLJS experiment cluster, alongside squint examples and lilactown’s `flex`/`dom` libs. [reddit](https://www.reddit.com/r/Clojure/comments/10ywila/clojurescript_bindings_to_solidjs/)
+
+**Net:** these two are the closest thing to “Helix, but for Solid”: CLJS-first bindings mapping into Solid’s signals and render functions, running on a conventional `shadow-cljs` toolchain. Maturity: experimental, but real. [reddit](https://www.reddit.com/r/reactjs/comments/138tx9f/what_is_the_difference_between_plain_react_vs/)
+
+***
+
+## 2. Squint + Solid: CLJS syntax compiled straight to JS
+
+Squint is a “ClojureScript syntax to JavaScript compiler” that can emit tiny JS bundles and supports JSX.  That makes it a natural partner for Solid, which is designed around compiling JSX templates to fine-grained DOM updates. [github](https://github.com/solidjs/solid)
+
+### `squint-cljs/squint` Solid example
+
+- Repo: [`squint-cljs/squint`](https://github.com/squint-cljs/squint), with a Solid example at `examples/solid-js/src/App.cljs`. [clojureverse](https://clojureverse.org/t/squint-a-clojurescript-syntax-to-js-compiler/9246)
+- Example details:
+  - Uses normal CLJS-style `ns` plus JS interop requires:
+    - `["solid-js" :refer [createSignal]]`
+    - CSS and SVG via `./App.module.css$default`, `./logo.svg$default`. [github](https://github.com/squint-cljs/squint/blob/main/examples/solid-js/src/App.cljs)
+  - Defines `Counter` and `App` as CLJS `defn`s, but uses `#jsx` with a Hiccup-like vector syntax as the JSX surface:
+    ```clojure
+    (defn Counter [{:keys [init]}]
+      (let [[counter setCount] (createSignal init)]
+        #jsx [:div
+              "Count:" (str/join " " (range (counter)))
+              [:ul (vec (interpose " " ["Hello" "world"]))]
+              [:div
+               [:button {:onClick (fn [] (setCount (inc (counter))))}
+                "Click me"]]]))
+    ```  
+    - `App` wraps that in a header, image, etc., and is exported as `default` for a Vite/Solid-style entry. [github](https://github.com/squint-cljs/squint/blob/main/examples/solid-js/src/App.cljs)
+- Context:
+  - The squint announcement explicitly calls out Solid: “It has support for async/await and JSX” and links to this SolidJS demo as an example of producing ultra-small bundles with CLJS syntax. [clojureverse](https://clojureverse.org/t/squint-a-clojurescript-syntax-to-js-compiler/9246)
+
+### `rmrt1n/squint-solid-demo`
+
+- Repo: [`rmrt1n/squint-solid-demo`](https://github.com/rmrt1n/squint-solid-demo).  
+- Purpose: “Example app using Squint, Solid.js, Vite, and TailwindCSS” — a SPA todo app using CLJS syntax via squint, Solid for the UI, and Vite+Tailwind as the JS toolchain. [github](https://github.com/rmrt1n/squint-solid-demo)
+- Notes from README:
+  - The author: “I wanted to build a SPA using ClojureScript, but without bringing in React. Solid.js seems like a *solid* alternative.., so I’ll be experimenting with it more in the future. This repo also acts as a ‘template’ for my future projects using this stack.” [github](https://github.com/rmrt1n/squint-solid-demo)
+  - Dev flow is pure JS ecosystem: `pnpm i`, `pnpm dev` (Vite), with `vite-plugin-squint` generating virtual `.cljs.jsx` files. [github](https://github.com/rmrt1n/squint-solid-demo)
+  - There’s a known Tailwind live-recompile glitch because of that plugin virtual file structure. [github](https://github.com/rmrt1n/squint-solid-demo)
+
+### `@w3t-ab/sqeave` (Sqeave: Solid + squint fullstack framework)
+
+- Package/Repo: `@w3t-ab/sqeave` (npm) with a linked GitHub repo `w3t-ab/sqeave` referenced in the README. [npmjs](https://www.npmjs.com/package/@w3t-ab/sqeave?activeTab=readme)
+- Purpose:
+  - “A squint-cljs based solid-js framework for building SPAs borrowing ideas from Fulcro (and OM).” [npmjs](https://www.npmjs.com/package/@w3t-ab/sqeave?activeTab=readme)
+  - Explicitly positions itself as a “fullstack library with Components and state management a’la Fulcro/OM” on top of Solid signals and squint syntax. [npmjs](https://www.npmjs.com/package/@w3t-ab/sqeave?activeTab=readme)
+- Design choices:
+  - Uses squint instead of full CLJS to get “more native integration with npm-world and a more lightweight output packaging,” and to avoid heavy `clj->js` conversions because squint’s data structures are just JS objects/arrays. [npmjs](https://www.npmjs.com/package/@w3t-ab/sqeave?activeTab=readme)
+  - Uses Vite + `vite-plugin-solid` + a custom `vite-plugin-squint`. [npmjs](https://www.npmjs.com/package/@w3t-ab/sqeave?activeTab=readme)
+- Example from README:
+  - Entry `index.cljs` requires `"solid-js"` and `"solid-js/web"` alongside `@w3t-ab/sqeave`, defines a `Root` component via a `defc` macro, and uses `#jsx` vectors for JSX-like syntax, then renders into `#root`. [npmjs](https://www.npmjs.com/package/@w3t-ab/sqeave?activeTab=readme)
+- Status:
+  - Marked alpha: “⚠️This project is in alpha stage. Use at your own risk.” [npmjs](https://www.npmjs.com/package/@w3t-ab/sqeave?activeTab=readme)
+
+**Net:** the squint track is where most of the “CLJ-ish syntax + Solid” energy currently sits: tiny bundles, direct JS integration, JSX via `#jsx`, and enough ergonomics to feel like CLJS without a full CLJS compiler. [clojureverse](https://clojureverse.org/t/squint-a-clojurescript-syntax-to-js-compiler/9246)
+
+***
+
+## 3. “Plain” CLJS + Solid starters
+
+Outside of squint, there are at least a couple of repos that simply wire Solid into a CLJS environment.
+
+### `codewriter3000/cljs-solid-tailwind`
+
+- Repo: [`codewriter3000/cljs-solid-tailwind`](https://github.com/codewriter3000/cljs-solid-tailwind).  
+- Description (from GitHub search): “ClojureScript, Solid.JS, and TailwindCSS in 1 environment.” 
+- Role:
+  - Serves as a minimal “kitchen sink” starter combining:
+    - CLJS compiler/tooling
+    - `solid-js` from npm
+    - TailwindCSS for styling
+  - The description doesn’t spell out whether it uses JSX via a macro, Hiccup transformed to JSX, or raw interop; but it clearly positions itself as a unified dev environment, not just a JS Solid app. 
+
+### Misc: CLJS-fronted sites with Solid islands
+
+There are also a few repos where Solid gets used in part of a broader Clojure stack (e.g., JUXT’s website repo includes an Astro project with Solid+Tailwind support, but that’s TypeScript/JS-driven, not a CLJS integration per se).  I wouldn’t count these as Solid-in-CLJS so much as “Clojure shop experimenting with Solid on the JS side.” [github](https://github.com/jarohen/juxt-website)
+
+***
+
+## 4. Community mapping and secondary references
+
+Several community threads and meta-resources help triangulate the above:
+
+- r/Clojure “ClojureScript bindings to SolidJS”:
+  - Mentions `solid-cljs` directly, links to the squint Solid demo, and points to `dundalek/solid-cljs`, `lilactown/flex`, and `lilactown/dom` as part of a broader “reactive, Solid-adjacent” space. [reddit](https://www.reddit.com/r/Clojure/comments/10ywila/clojurescript_bindings_to_solidjs/)
+  - Confirms that Solid “actually works with CLJS” and that people are experimenting with it, but also notes that understanding how Solid’s reactivity interacts with CLJS semantics still needs more exploration. [reddit](https://www.reddit.com/r/Clojure/comments/10ywila/clojurescript_bindings_to_solidjs/)
+- LibHunt summary “ClojureScript bindings to SolidJS”:
+  - Enumerates the main players: `solid-cljs`, `squint`, `flex`, and `dom`, and repeats links to the squint Solid demo and the `dundalek/solid-cljs` fork. [libhunt](https://www.libhunt.com/posts/1092825-clojurescript-bindings-to-solidjs)
+- Squint announcement thread:
+  - Explicitly highlights the Solid demo and emphasizes that squint supports JSX and async/await, and that Solid is a good demo target to show off tiny bundles and direct JS integration. [clojureverse](https://clojureverse.org/t/squint-a-clojurescript-syntax-to-js-compiler/9246)
+
+`flex` and `dom` by lilactown are not Solid bindings, but they are notable because they explore signal-based and DOM-centric patterns in CLJS that rhyme with Solid’s mental model; they show the same gravitational pull towards fine-grained reactivity from the Clojure side. [libhunt](https://www.libhunt.com/posts/1092825-clojurescript-bindings-to-solidjs)
+
+***
+
+## 5. How I’d summarize the landscape
+
+Given what’s actually on GitHub and in community threads:
+
+- **Direct bindings (solid-cljs):**
+  - `roman01la/solid-cljs` + `dundalek/solid-cljs` are the only true “Solid but in ClojureScript” libraries right now, running on `shadow-cljs` and wrapping the Solid API. Status: real but explicitly experimental; you’d be signing up to own the edge cases. [reddit](https://www.reddit.com/r/Clojure/comments/1ps72dq/solidcljs_v010_clojurescript_bindings_to_solid/)
+
+- **Squint-based stacks:**
+  - `squint-cljs/squint` Solid example, `rmrt1n/squint-solid-demo`, and `@w3t-ab/sqeave` are the most active zone: Solid as the runtime, CLJ-like syntax via squint, modern JS tooling (Vite, vite-plugin-solid), sometimes with Fulcro-style state semantics. These are probably the current “center of gravity” if you want vdom-less Solid with Clojure syntax and can tolerate experimental tooling. [github](https://github.com/squint-cljs/squint/blob/main/examples/solid-js/src/App.cljs)
+
+- **Starter environments:**
+  - `codewriter3000/cljs-solid-tailwind` is the main straightforward “ClojureScript + Solid.js + Tailwind in one environment” starter I could locate. 
+
+Everything else (HN/Reddit threads, LibHunt, lilactown’s generic libs) is commentary or adjacent experimentation, not separate Solid+CLJS integration code. [libhunt](https://www.libhunt.com/posts/1092825-clojurescript-bindings-to-solidjs)
+
+If you want, next step I can do is **classify these by level of risk** (API stability, maintenance, toolchain complexity) and sketch what a boring-default “Solid + CLJS” stack would look like if you were willing to own some glue code yourself.

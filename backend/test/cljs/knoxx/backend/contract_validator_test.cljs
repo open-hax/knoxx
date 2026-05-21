@@ -1,8 +1,8 @@
 (ns knoxx.backend.contract-validator-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.runtime.actor-scope :as actor-scope]
-            [knoxx.backend.runtime.contract-loader :as loader]
-            [knoxx.backend.runtime.contract-validator :as validator]))
+            [knoxx.backend.domain.actor.scope :as actor-scope]
+            [knoxx.backend.domain.contracts.loader :as loader]
+            [knoxx.backend.law.contracts :as validator]))
 
 (deftest actor-contract-kind-is-agent-or-user
   (testing "user actors validate"

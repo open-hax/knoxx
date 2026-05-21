@@ -1,6 +1,10 @@
 {:contract/kind :trigger
  :contract/id "discord_voice_audio_event_trigger"
+ :contract/version 2
  :trigger/kind :event
- :trigger/target "discord_voice_audio_event_agent"
- :trigger/event-kinds ["discord.voice.audio.window"]
+ :trigger/actor "discord_automation"
+ :trigger/events ["discord.voice.audio.window"]
+ :trigger/action :actions/start-agent-session
+ :trigger/agent "discord_voice_audio_event_agent"
+ :enabled true
  :trigger/doc "Raw Discord voice audio events are emitted only by the contract-gated discord.voice.agent_event.* tools and handled by discord_voice_audio_event_agent. The target agent contract sets streamingBehavior=idle-only, so audio events are real events but only become runs when the sticky voice-agent session is idle."}

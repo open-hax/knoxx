@@ -1,0 +1,41 @@
+---
+original_name: "2026.05.19.13.16.37.md"
+title: "Agent Contract Trigger Field Removal"
+summary: "Note arguing agent contracts should not contain trigger, cadence, hook, source, or task fields."
+category: "contracts"
+created: "2026-05-19"
+---
+
+the agent contracts are no longer suposed to have those fields.
+
+they should not know about the mechanism that trigger them, they don't care about that.
+
+no source,  no trigger, no hooks, no cadance.
+
+Fields on an agent contrct should only be answer the questions:
+What can this agent do?
+What can this agent *not* do?
+What model can it run?
+What system prompts are used?
+
+
+so we need to remove any references to:
+:cadence-min
+:source-kind
+:trigger-kind
+:sources
+:source-mode
+:hooks
+:task
+
+
+The task prompt is an artifact of the depreciated `event-agent` concept.
+
+These agent contracts shouldn't care about the specific task.
+
+The agent contract establish a context under which an agent is invoked
+
+The task prompt is contruction from the context that invoked it, not from with in the agent
+contract
+
+

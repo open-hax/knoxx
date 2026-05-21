@@ -1,10 +1,10 @@
-;; Tests for knoxx.backend.node.fs
+;; Tests for knoxx.backend.domain.node.fs
 ;; Real Node fs, no mocks. Fixtures in /tmp/knoxx-node-fs-test.
 
 (ns knoxx.backend.node.fs-test
   (:require [cljs.test :refer [deftest is testing async]]
-            [knoxx.backend.node.fs :as sut]
-            [knoxx.backend.node.path :as p]))
+            [knoxx.backend.domain.node.fs :as sut]
+            [knoxx.backend.domain.node.path :as p]))
 
 (def ^:private root "/tmp/knoxx-node-fs-test")
 

@@ -1,6 +1,7 @@
 (ns knoxx.backend.agents.runner-test
   (:require [cljs.test :refer-macros [deftest is testing]]
-            [knoxx.backend.agents.runner :as runner]))
+            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.infra.agent.runner :as runner]))
 
 (deftest direct-start-payload->turn-params-normalizes-direct-start-shape
   (testing "snake_case direct-start payload becomes send-agent-turn! params"
@@ -22,6 +23,27 @@
              :model "gemma4:31b"
              :agent_spec {:role "knowledge_worker"
                           :system_prompt "sys"}})))))
+
+(deftest direct-start-payload->turn-params-supports-js-payloads
+  (testing "JS direct-start payloads normalize through the runner extern boundary"
+    (is (= {:conversation-id "conversation-js"
+            :session-id "session-js"
+            :run-id "run-js"
+            :message "hello from js"
+            :content-parts []
+            :model "model-js"
+            :mode "direct"
+            :agent-spec {:role "developer"
+                         :tool-policies [{:toolId "discord.read" :effect "allow"}]}}
+           (runner/direct-start-payload->turn-params
+            (xjs/object
+             {:conversation_id "conversation-js"
+              :session_id "session-js"
+              :run_id "run-js"
+              :message "hello from js"
+              :model "model-js"
+              :agent_spec {:role "developer"
+                           :tool_policies [{:toolId "discord.read" :effect "allow"}]}}))))))
 
 (deftest direct-start-payload->turn-params-supports-kebab-keys-too
   (testing "existing CLJ payloads also normalize"

@@ -1,0 +1,13 @@
+{
+  "description": "Temporary allow-list for existing non-extern imports of knoxx.backend.extern.js/json. New files should not be added casually; migrate through the referenced child spec instead.",
+  "allowedGenericExternImports": [
+    {
+      "file": "backend/src/cljs/knoxx/backend/infra/agent/session.cljs",
+      "childSpec": "specs/knoxx-agent-session-registry-provider-ports.md"
+    },
+    {
+      "file": "backend/src/cljs/knoxx/backend/infra/routes/app.cljs",
+      "childSpec": "docs/notes/architecture/js-cljs-boundary-report.md#track-a"
+    }
+  ]
+}

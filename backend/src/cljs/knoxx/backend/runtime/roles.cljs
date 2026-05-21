@@ -1,5 +1,5 @@
 (ns knoxx.backend.runtime.roles
-  (:require [knoxx.backend.contracts.roles :as impl]))
+  (:require [knoxx.backend.domain.contracts.roles :as impl]))
 
 ;; Backwards-compat shim: role/capability contract semantics now live under
 ;; knoxx.backend.contracts.*. Keep runtime.* as process/runtime-only.

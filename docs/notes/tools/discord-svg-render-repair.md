@@ -1,0 +1,84 @@
+---
+original_name: "2026.05.07.12.21.20.md"
+title: "Discord SVG Render Repair"
+summary: "Investigation and patch note for repairing malformed SVGs before Discord rendering."
+category: "tools"
+created: "2026-05-07"
+---
+
+ Signal
+
+ This does not look like the SVG renderer creating the <<svgsvg corruption.
+
+ It looks like agents/models are sometimes generating the duplicated-tag pattern directly, and the Discord outbound path
+ was letting those malformed SVGs through in at least one case.
+
+ I patched the Discord SVG render path so it now runs the existing SVG repair function before passing SVG text to
+ @resvg/resvg-js.
+
+ Evidence
+
+ I found existing broken SVGs in the repo with the exact pattern:
+
+ - Graphics/Symmetry_Verified_Pure_Seal.svg
+ - Graphics/Symmetry_Restored_BrainFart_Seal.svg
+ - Graphics/Cognitive_Collapse_Certificate.svg
+
+ The known-good SVG rendered fine with resvg; the broken one failed immediately:
+
+ - Graphics/Symmetry_Gap_Seal.svg rendered OK.
+ - Graphics/Symmetry_Verified_Pure_Seal.svg failed with invalid XML/tag parsing.
+ - After applying the existing sanitize-svg-content repair, the same broken SVG rendered OK.
+
+ The missing wire was here:
+
+ - backend/src/cljs/knoxx/backend/tools/discord.cljs
+
+ Before this patch, Discord rendering did:
+
+ ```clojure
+   svg-str (.toString svg-buffer "utf8")
+   renderer (new Resvg svg-str ...)
+ ```
+
+ Now it does:
+
+ ```clojure
+   svg-str (sanitize-svg-content (.toString svg-buffer "utf8"))
+   renderer (new Resvg svg-str ...)
+ ```
+
+ I also added a regression test for the <<tagtag repair in:
+
+ - backend/test/cljs/knoxx/backend/text_test.cljs
+
+ Validation:
+
+ - backend pnpm exec shadow-cljs compile server passed.
+ - Targeted clj-kondo still reports pre-existing size/style warnings/errors in these large files, but no new unresolved
+ symbol from the patch.
+
+ Frames
+
+ 1. The model/agent is producing malformed SVG, and the renderer was only failing to defend against it. This is the
+ strongest read.
+ 2. The current filters are mostly inbound/memory hygiene, not outbound Discord publish gates. The ❌ reaction path
+ labels messages as bad and discord.read hides labelled-bad messages, but that happens after a bad message already
+ exists.
+ 3. The “good one plus broken one” case probably came from mixed handling: one SVG was valid enough to render to PNG,
+ while another SVG hit the fallback path and got uploaded or displayed in its malformed original form.
+
+ Countermoves
+
+ I made the first defense-in-depth fix: sanitize SVG before outbound Discord rendering.
+
+ There is still one remaining policy question: maybe-render-svg! currently catches render failures and uploads the
+ original SVG. That fallback is useful for valid SVGs that resvg cannot handle, but unsafe if you want “never publish
+ malformed SVG/XML to Discord.”
+
+ So the next hardening step is to quarantine/drop SVG attachments when sanitization plus rendering still fails, rather
+ than uploading the original.
+
+ Next
+
+ Restart the Knoxx backend so the Discord SVG sanitizer patch is active for new agent posts.
