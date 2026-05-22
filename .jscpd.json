@@ -34,7 +34,6 @@
     "frontend/vite.bridge.config.ts",
     "frontend/vite.app-bridge.config.ts",
     "frontend/vitest.config.ts",
-    "scripts",
-    "discord-bot/src"
+    "scripts"
   ]
 }

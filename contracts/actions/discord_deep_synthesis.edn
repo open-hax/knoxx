@@ -1,8 +1,0 @@
-{:contract/kind   :action
- :contract/id     "discord_deep_synthesis"
- :action/handler  "discord.read"
- :action/params   {:limit 50}
- :data
- {:context  {:channelId "{{trigger.context.channelId}}"}
-  :output   {:key  "synthesis_data"
-             :ttl  "PT6H"}}}

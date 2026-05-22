@@ -164,11 +164,11 @@ Open the frontend at:
 http://127.0.0.1:5173
 ```
 
-The shadow dev HTTP proxy is currently configured as `http://knoxx-backend:8000`.
-For direct host development, make that hostname resolve to your local backend
-(for example `127.0.0.1`) or adjust `frontend/shadow-cljs.edn` for your setup.
-`VITE_KNOXX_BACKEND_URL` only affects Vite bridge/preview behavior, not the
-shadow-cljs dev HTTP proxy.
+The shadow dev HTTP proxy defaults to `http://127.0.0.1:8000`, matching the
+host PM2 backend. Override it with `KNOXX_BACKEND_URL` when running the frontend
+somewhere else, for example `KNOXX_BACKEND_URL=http://knoxx-backend:8000` inside
+a Docker network. `VITE_KNOXX_BACKEND_URL` is still honored for ad-hoc Vite dev
+or preview, but shadow-cljs dev HTTP reads `KNOXX_BACKEND_URL`.
 
 ## Quick start: PM2 host stack
 

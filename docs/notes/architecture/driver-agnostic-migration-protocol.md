@@ -6,10 +6,6 @@ original: 2026.04.27.13.35.15.md
 status: note
 ---
 
-Good — no `db/` yet, `stores/` exists and already uses the driver pattern . Here's the full migration protocol.
-
-***
-
 ## #μ Driver-Agnostic Migration Protocol
 
 The core model: a **migration** is a named, versioned, pure transformation over the contract data graph. It is not a SQL `ALTER TABLE`. It is not tied to any storage format. It describes **what changed in the domain** and provides a `up` fn that transforms the old shape to the new shape — the driver then projects that transformation into whatever store it manages.

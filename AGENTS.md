@@ -15,6 +15,12 @@ When modeling domains, you must strictly differentiate between the grammar of mo
   3. `shape.*`: Structure-only morphisms over data shapes. Must be pure and domain-agnostic.
   4. `law.*` or `contract/guard/*`: Contracts, validators (e.g., Malli), assertions. No I/O.
 - Boundary Contracts: Every boundary-crossing function must name or call an explicit contract/schema validator (e.g., Malli) reflecting the Contract obligations of the relevant Category.
+- Extern Boundary Layer: `knoxx.backend.extern.*` is the only place raw JavaScript interop should be born, decoded, encoded, sequenced, or mutated. Non-extern namespaces must not import `knoxx.backend.extern.js` or `knoxx.backend.extern.json`; those generic helpers are implementation details for named extern adapters only.
+  - Use boundary-specific adapters named for the system they own: `extern.fastify`, `extern.fetch`, `extern.multipart`, `extern.websocket`, `extern.discord`, `extern.tools`, `extern.row-extra`, `extern.extension`, etc.
+  - Domain, law, shape, and ordinary infra code should receive and return CLJS maps/vectors/scalars. If a raw JS object must cross a layer, it must be treated as an opaque handle and only inspected by the owning extern adapter.
+  - Do not hide boundary leaks with aliases. A call site using `js->clj`, `clj->js`, `js/JSON`, `Object.keys`, `array-seq`, `#js`, `aget`, `aset`, `js/Promise.all`, `FormData`, `Blob`, Fastify request/reply internals, WebSocket methods, or SDK-native objects is probably in the wrong namespace unless the file is an extern adapter or explicitly documented low-level wrapper.
+  - Fetch/HTTP clients pass CLJS request data such as `:json`, `:body`, `:headers`, and let `extern.fetch` build native `RequestInit` and encode/decode JSON. Persistence code uses data-specific codecs such as `extern.row-extra` rather than generic JSON parsing at the store call site.
+  - Before adding a new extern namespace, name the real boundary it owns, keep the public API CLJS-first, add a small regression test for the conversion, and update the boundary inventory/gate if applicable.
 - Custom Macros: Macros must expand to ordinary, lintable shapes. Register custom macros in `.clj-kondo/config.edn` using `:lint-as` (e.g., `clj-kondo.lint-as/def-catch-all`) on day one. Do not invent a shadow legal system.
 
 # Coding Directives & Clean Code Doctrine

@@ -22,7 +22,7 @@
  ;; - Strudel is a functional mini-notation DSL, not general JavaScript. Pattern tool arguments must contain only Strudel DSL code.
  ;; - Forbidden inside pattern strings: await, const, let, var, for, while, if, else, try, catch, function definitions, console.log, fetch, or any imperative JS.
  ;; - Valid Strudel methods and operators include: note, sound, s, n, cutoff, resonance, delay, room, speed, gain, pan, struct, stack, seq, rand, irand, slow, fast, rev, chunk, sometimes, often, rarely, every, off, jux, add, sub, and their chainable equivalents.
- ;; - The canonical Shoedelussy deployment URL is https://knoxx.promethean.rest/shoe/. Never generate strudel.cc links or localhost URLs.
+ ;; - The canonical Shoedelussy deployment URL is http://localhost:5173/shoe/. Never generate strudel.cc links or external domain URLs.
  ;; - Use render_loop when the user wants a playable browser link. Use render_wav when the user wants a WAV export path. Trust the URLs returned by these tools; do not fabricate alternative URLs.
  ;; - If the user wants an actual .wav file captured into the workspace, use bash to run backend/scripts/shoedelussy-capture-wav.mjs against the headless_render_url from render_wav.\n- Distinguish scratch patterns from durable projects. If you need snapshots, BPM/key metadata, or stable recall, create or load a project first.
 

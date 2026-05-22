@@ -1,144 +1,138 @@
-# Knoxx knowledge-ops specs
+# Knoxx specs
 
-This directory is now the canonical home for the Knoxx / knowledge-ops spec set that previously lived in `specs/drafts/`.
+Reviewed and reorganized: 2026-05-21.
 
-## Spec Size Rules
+## Layout
 
-- No executable spec may exceed **5 story points**
-- Specs over 5 points must be split into an **epic wrapper** + **child specs**
-- Each child spec is independently executable
+- `specs/epics/` — active epic wrappers, roadmaps, architecture/doctrine docs, and large future designs that are not directly executable as one small task.
+- `specs/tasks/` — active executable work items, bugfix specs, review tasks, and child specs intended to stay at or below 5 story points.
+- `specs/tasks/workbench/` — active Workbench child tasks.
+- `specs/archived/` — completed, superseded, or legacy/reference specs that should not be mistaken for current execution truth.
+  - `specs/archived/epics/` — completed epic wrappers.
+  - `specs/archived/tasks/` — completed task specs, including completed Workbench child tasks under `workbench/`.
+  - `specs/archived/reference/` — historical inventories, old research, superseded designs, and legacy-donor docs.
 
-## Active Epics
+## Placement rules
 
-### Agent Service Protocol Split
+- Keep executable specs in `specs/tasks/` only while they still represent unfinished or reviewable work.
+- Move any spec over 5 story points into `specs/epics/` and split it into child tasks.
+- Archive tasks once they are explicitly `done`, `complete`, `implemented`, superseded, or old enough that they are no longer active board work.
+- Archive legacy/reference docs when they are useful archaeology but no longer current implementation truth.
+- Keep `README.md` at the root; all other spec documents belong in one of the three buckets above.
 
-Epic: `knoxx-agent-service-protocol-split-epic.md` (35 pts total)
+## Counts
 
-Child specs:
-- `knoxx-agent-runtime-shapes.md` (5 pts, done)
-- `knoxx-agent-service-facade.md` (5 pts, done)
-- `knoxx-agent-session-registry-provider-ports.md` (5 pts, done)
-- `knoxx-agent-content-history-tooling-ports.md` (5 pts, done)
-- `knoxx-agent-stream-normalizer-reducer.md` (5 pts, done)
-- `knoxx-agent-run-event-sinks.md` (5 pts, done)
-- `knoxx-agent-recovery-policy-hydration-ports.md` (5 pts, done)
+- Active epics: 46
+- Active tasks: 32
+- Archived epics: 2
+- Archived tasks: 29
+- Archived reference docs: 12
 
-### Graph Memory (P1B)
+## Active epics
 
-Epic: `knowledge-ops-graph-memory-reconciliation.md`
+- `specs/epics/broadcast-studio-playlist-publication-and-block-cms.md`
+- `specs/epics/contract-runtime-merge-proposal.md`
+- `specs/epics/events-agent-runtime-separation.md`
+- `specs/epics/folder-backed-visual-cms-design-spec.md`
+- `specs/epics/garden-cms-playlist-chat-and-label-provenance.md`
+- `specs/epics/knowledge-ops-adaptive-expand-policy-hook.md`
+- `specs/epics/knowledge-ops-adaptive-web-frontier-and-multiscale-backbone.md`
+- `specs/epics/knowledge-ops-architecture-migration.md`
+- `specs/epics/knowledge-ops-chat-ui-library.md`
+- `specs/epics/knowledge-ops-chat-widget-layers.md`
+- `specs/epics/knowledge-ops-clojure-backend-migration.md`
+- `specs/epics/knowledge-ops-cms-data-model.md`
+- `specs/epics/knowledge-ops-consistency-review.md`
+- `specs/epics/knowledge-ops-contract-runtime-dod-restructure.md`
+- `specs/epics/knowledge-ops-deploy-aws.md`
+- `specs/epics/knowledge-ops-deploy-azure.md`
+- `specs/epics/knowledge-ops-deploy-self-hosted.md`
+- `specs/epics/knowledge-ops-exposure-monitor.md`
+- `specs/epics/knowledge-ops-federated-lakes.md`
+- `specs/epics/knowledge-ops-full-roadmap.md`
+- `specs/epics/knowledge-ops-gardens.md`
+- `specs/epics/knowledge-ops-graph-memory-reconciliation.md`
+- `specs/epics/knowledge-ops-graph-memory-roadmap.md`
+- `specs/epics/knowledge-ops-ingestion-architecture.md`
+- `specs/epics/knowledge-ops-ingestion-pipeline.md`
+- `specs/epics/knowledge-ops-kms-query.md`
+- `specs/epics/knowledge-ops-knoxx-opinionated-distribution.md`
+- `specs/epics/knowledge-ops-mongodb-vector-unification.md`
+- `specs/epics/knowledge-ops-multi-provider-epic.md`
+- `specs/epics/knowledge-ops-multi-tenant-control-plane.md`
+- `specs/epics/knowledge-ops-mvp-phase1-epics.md`
+- `specs/epics/knowledge-ops-pii-handling-protocol.md`
+- `specs/epics/knowledge-ops-product-line.md`
+- `specs/epics/knowledge-ops-provider-abstraction.md`
+- `specs/epics/knowledge-ops-roadmap-status.md`
+- `specs/epics/knowledge-ops-role-scoped-lakes.md`
+- `specs/epics/knowledge-ops-shibboleth-lite-labeling.md`
+- `specs/epics/knowledge-ops-source-lakes-cross-lake-graph.md`
+- `specs/epics/knowledge-ops-translation-review-epic.md`
+- `specs/epics/knowledge-ops-ui-design-system.md`
+- `specs/epics/knowledge-ops-workbench-ui.md`
+- `specs/epics/knowledge-ops-workbench-ux-breakdown.md`
+- `specs/epics/knowledge-ops-workbench-ux-v1.md`
+- `specs/epics/knoxx-backend-law-shape-domain-epic.md`
+- `specs/epics/knoxx-session-lake-graph-and-memory.md`
+- `specs/epics/unified-workplace-pattern.md`
 
-Child specs:
-- `knowledge-ops-knoxx-health-route-coherence.md` (3 pts)
-- `knowledge-ops-kms-openplanner-ingest-arity-fix.md` (2 pts)
-- `knowledge-ops-openplanner-graph-population-smoke.md` (5 pts)
-- `knowledge-ops-myrmex-openplanner-write-recovery.md` (3 pts)
-- `knowledge-ops-graph-weaver-live-sync-truth.md` (5 pts)
-- `knowledge-ops-graph-memory-runtime-smoke-e2e.md` (3 pts)
-- `knowledge-ops-knoxx-graph-query-contract-v1.md` (3 pts)
-- `knowledge-ops-docs-source-of-truth-normalization.md` (2 pts)
-- `knowledge-ops-openplanner-derived-edge-projections-slice.md` (5 pts)
-- `knowledge-ops-adaptive-expand-policy-seam.md` (2 pts)
-- `knowledge-ops-adaptive-expand-policy-telemetry.md` (2 pts)
+## Active tasks
 
-### Epistemic Kernel + MCP Integration
+- `specs/tasks/knowledge-ops-adaptive-expand-policy-seam.md`
+- `specs/tasks/knowledge-ops-adaptive-expand-policy-telemetry.md`
+- `specs/tasks/knowledge-ops-demo-seed.md`
+- `specs/tasks/knowledge-ops-docs-source-of-truth-normalization.md`
+- `specs/tasks/knowledge-ops-gardens-page-bugfixes.md`
+- `specs/tasks/knowledge-ops-graph-memory-runtime-smoke-e2e.md`
+- `specs/tasks/knowledge-ops-graph-weaver-live-sync-truth.md`
+- `specs/tasks/knowledge-ops-kms-openplanner-ingest-arity-fix.md`
+- `specs/tasks/knowledge-ops-knoxx-graph-query-contract-v1.md`
+- `specs/tasks/knowledge-ops-knoxx-health-route-coherence.md`
+- `specs/tasks/knowledge-ops-myrmex-openplanner-write-recovery.md`
+- `specs/tasks/knowledge-ops-openplanner-derived-edge-projections-slice.md`
+- `specs/tasks/knowledge-ops-openplanner-gardens-backend-fixes.md`
+- `specs/tasks/knowledge-ops-openplanner-graph-population-smoke.md`
+- `specs/tasks/knowledge-ops-translation-document-review-v2.md`
+- `specs/tasks/knowledge-ops-translation-export.md`
+- `specs/tasks/knowledge-ops-translation-mt-pipeline.md`
+- `specs/tasks/knowledge-ops-translation-routes.md`
+- `specs/tasks/knoxx-backend-data-shapes-review.md`
+- `specs/tasks/knoxx-openplanner-mcp-integration.md`
+- `specs/tasks/openplanner-mcp-server.md`
+- `specs/tasks/workbench/1.2-dashboard-agent-runs.md`
+- `specs/tasks/workbench/1.3-dashboard-memory-activity.md`
+- `specs/tasks/workbench/2.2-content-editor-ai-suggestions.md`
+- `specs/tasks/workbench/2.3-content-editor-provenance.md`
+- `specs/tasks/workbench/3.3-review-correction-writeback.md`
+- `specs/tasks/workbench/4.1-memory-search.md`
+- `specs/tasks/workbench/4.2-memory-focal-node.md`
+- `specs/tasks/workbench/4.3-memory-history-slider.md`
+- `specs/tasks/workbench/5.1-agent-run-list.md`
+- `specs/tasks/workbench/5.2-agent-run-detail.md`
+- `specs/tasks/workbench/5.3-agent-scratchpad.md`
 
-Epic: Knoxx ↔ Openplanner MCP Integration
+## Archived epics
 
-Child specs:
-- `knoxx-openplanner-mcp-integration.md` (5 pts) — Knoxx side: contract-based MCP tool access, env config, agent behavior
-- `openplanner-mcp-server.md` (5 pts) — MCP server: tool endpoints, promptdb-core validation, Docker Compose
+- `specs/archived/epics/knoxx-agent-service-protocol-split-epic.md`
+- `specs/archived/epics/knoxx-js-cljs-boundary-hardening-epic.md`
 
-Shared dependency:
-- `packages/promptdb-core/` — Malli schemas for Fact, Obs, Inference, Attestation, Judgment
+## Archived task groups
 
-### Translation Review (Client Priority)
+- Completed task specs: `specs/archived/tasks/*.md`
+- Completed Workbench child tasks: `specs/archived/tasks/workbench/*.md`
 
-Epic: `knowledge-ops-translation-review-epic.md` (15 pts total)
+## Archived reference docs
 
-Child specs:
-- `knowledge-ops-translation-routes.md` (5 pts) — critical path
-- `knowledge-ops-translation-export.md` (2 pts)
-- `knowledge-ops-translation-review-ui.md` (5 pts)
-- `knowledge-ops-translation-mt-pipeline.md` (3 pts) — deferrable
-
-## Review notes
-
-See:
-
-- `orgs/open-hax/knoxx/specs/knowledge-ops-consistency-review.md`
-- `orgs/open-hax/knoxx/specs/knowledge-ops-roadmap-status.md`
-
-The consistency review captures the current cross-spec inconsistencies and recommends the canonical Knoxx-aligned interpretation.
-The roadmap status maps the spec corpus onto the current Knoxx implementation and identifies the next logical implementation slice.
-The full roadmap accounts for the entire `knowledge-ops-*.md` corpus across active, later, exploratory, and legacy-donor lanes.
-The Knoxx distribution doctrine names Knoxx as the opinionated packaged product over more generic subsystem repos.
-The graph-memory reconciliation spec grounds the GraphRAG / graph-memory direction in the current Knoxx + OpenPlanner + Graph-Weaver source/runtime reality.
-The graph-memory roadmap turns that reconciliation epic into an ordered execution plan.
-
-- `orgs/open-hax/knoxx/specs/knowledge-ops-full-roadmap.md`
-- `orgs/open-hax/knoxx/specs/knowledge-ops-knoxx-opinionated-distribution.md`
-- `orgs/open-hax/knoxx/specs/knowledge-ops-graph-memory-roadmap.md`
-
-The reconciliation epic is now split into board-sized child specs:
-
-- `knowledge-ops-knoxx-health-route-coherence.md`
-- `knowledge-ops-kms-openplanner-ingest-arity-fix.md`
-- `knowledge-ops-openplanner-graph-population-smoke.md`
-- `knowledge-ops-myrmex-openplanner-write-recovery.md`
-- `knowledge-ops-graph-weaver-live-sync-truth.md`
-- `knowledge-ops-graph-memory-runtime-smoke-e2e.md`
-- `knowledge-ops-knoxx-graph-query-contract-v1.md`
-- `knowledge-ops-docs-source-of-truth-normalization.md`
-- `knowledge-ops-openplanner-derived-edge-projections-slice.md`
-- `knowledge-ops-adaptive-expand-policy-seam.md`
-- `knowledge-ops-adaptive-expand-policy-telemetry.md`
-
-First-pass canonicalization has started in these high-value specs:
-
-- `knowledge-ops-architecture-migration.md`
-- `knowledge-ops-clojure-backend-migration.md`
-- `knowledge-ops-kms-query.md`
-- `knowledge-ops-role-scoped-lakes.md`
-- `knowledge-ops-workbench-ui.md`
-- `knowledge-ops-deployment.md`
-- `knowledge-ops-adaptive-web-frontier-and-multiscale-backbone.md`
-- `knowledge-ops-graph-memory-reconciliation.md`
-
-## Spec inventory
-
-- `knowledge-ops-adaptive-web-frontier-and-multiscale-backbone.md`
-- `knowledge-ops-architecture-migration.md`
-- `knowledge-ops-chat-ui-library.md`
-- `knowledge-ops-chat-widget-layers.md`
-- `knowledge-ops-clojure-backend-migration.md`
-- `knowledge-ops-cms-data-model.md`
-- `knowledge-ops-demo-seed.md`
-- `knowledge-ops-deploy-aws.md`
-- `knowledge-ops-deploy-azure.md`
-- `knowledge-ops-deploy-local.md`
-- `knowledge-ops-deploy-self-hosted.md`
-- `knowledge-ops-deployment.md`
-- `knowledge-ops-exposure-monitor.md`
-- `knowledge-ops-federated-lakes.md`
-- `knowledge-ops-gap-analysis-prior-art.md`
-- `knowledge-ops-gardens.md`
-- `knowledge-ops-graph-memory-reconciliation.md`
-- `knowledge-ops-ingestion-pipeline.md`
-- `knowledge-ops-ingestion-throttling.md`
-- `knowledge-ops-integration.md`
-- `knowledge-ops-kms-query.md`
-- `knowledge-ops-legacy-ui-inventory.md`
-- `knowledge-ops-mongodb-vector-unification.md`
-- `knowledge-ops-multi-provider-epic.md`
-- `knowledge-ops-multi-tenant-control-plane.md`
-- `knowledge-ops-mvp-phase1-epics.md`
-- `knowledge-ops-pii-handling-protocol.md`
-- `knowledge-ops-platform-stack-architecture.md`
-- `knowledge-ops-product-line.md`
-- `knowledge-ops-promethean-stack.md`
-- `knowledge-ops-provider-abstraction.md`
-- `knowledge-ops-role-scoped-lakes.md`
-- `knowledge-ops-shibboleth-lite-labeling.md`
-- `knowledge-ops-the-lake.md`
-- `knowledge-ops-ui-design-system.md`
-- `knowledge-ops-workbench-ui.md`
+- `specs/archived/reference/ingestion-surface-inventory.md`
+- `specs/archived/reference/knowledge-ops-deploy-local.md`
+- `specs/archived/reference/knowledge-ops-deployment.md`
+- `specs/archived/reference/knowledge-ops-gap-analysis-prior-art.md`
+- `specs/archived/reference/knowledge-ops-integration.md`
+- `specs/archived/reference/knowledge-ops-legacy-ui-inventory.md`
+- `specs/archived/reference/knowledge-ops-platform-stack-architecture.md`
+- `specs/archived/reference/knowledge-ops-promethean-stack.md`
+- `specs/archived/reference/knowledge-ops-the-lake.md`
+- `specs/archived/reference/knowledge-ops-translation-review-ui.md`
+- `specs/archived/reference/knowledge-ops-translation-triage-2026-04-12.md`
+- `specs/archived/reference/simple-markdown-gardens.md`

@@ -1,0 +1,42 @@
+{:catalog/id :catalog/creative-admin-support
+ :catalog/intent :intent/support-and-creative-ops
+ :catalog/resources
+ {:agent-spec [:agent-spec/ussyverse-creative-social
+               :agent-spec/system-admin]
+  :service [:service/eta-mu]
+  :action [:action/spawn-session
+           :action/get-session
+           :action/pause-session]
+  :event [:event/session-started
+          :event/session-idle
+          :event/session-error
+          :event/session-paused]
+  :actor [:actor/system-admin
+          :actor/discord-connected]}}
+
+
+{:catalog/id :catalog/creative-admin-support
+ :catalog/intent :intent/support-and-creative-ops
+ :catalog/resources
+ {:agent-spec [:agent-spec/ussyverse-creative-social
+               :agent-spec/system-admin]
+  :service [:service/eta-mu]
+  :action [:action/spawn-session
+           :action/get-session
+           :action/pause-session]
+  :event [:event/session-started
+          :event/session-idle
+          :event/session-error
+          :event/session-paused]
+  :actor [:actor/system-admin
+          :actor/discord-connected]}}
+{:catalog/id :catalog/support-ops
+ :catalog/intent :intent/support
+ :catalog/charter
+
+ :catalog/entries
+ {:role [:role/system-admin]
+  :capability [:capability/discord-moderation
+               :capability/session-management]
+  :action [:action/pause-session
+           :action/spawn-session]}}
