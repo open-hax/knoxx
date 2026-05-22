@@ -17,8 +17,14 @@
 
 (defn- keywordize-rows
   [result]
-  {:rows      (mapv #(js->clj % :keywordize-keys true) (array-seq (.-rows result)))
-   :row-count (.-rowCount result)})
+  ;; pg returns Array<QueryResult> for multi-statement simple queries (e.g. DDL
+  ;; migrations). Take the last element; for single statements result is already
+  ;; a QueryResult.
+  (let [r (if (.isArray js/Array result)
+             (aget result (dec (.-length result)))
+             result)]
+    {:rows      (mapv #(js->clj % :keywordize-keys true) (array-seq (.-rows r)))
+     :row-count (.-rowCount r)}))
 
 (defn query!
   "Execute parameterized SQL against pool-or-client.

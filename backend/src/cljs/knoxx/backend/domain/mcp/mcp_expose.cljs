@@ -28,13 +28,7 @@
 
 (def ^:private sub-agent-aware-tool-names
   #{"agents.spawn"
-    "events.run_job"
-    "events.upsert_job"
-    "schedule_trigger"
-    ;; Legacy aliases
-    "event_agents.run_job"
-    "event_agents.upsert_job"
-    "schedule_event_agent"})
+    "triggers.fire"})
 
 (defn- display-value
   [value]
@@ -97,7 +91,7 @@
       (str base
            "\n\nKnoxx sub-agents advertised by this MCP server: "
            (str/join ", " ids)
-           ". Use these ids when constructing Knoxx sub-agent/event-agent payloads.")
+           ". Use these ids when constructing Knoxx sub-agent payloads.")
       base)))
 
 (defn- attach-sub-agent-metadata!

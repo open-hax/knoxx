@@ -41,8 +41,8 @@
                   :is_primary true
                   :status     "active"}])
       (h/on-conflict :slug)
-      (h/do-update-set {:name       [:excluded :name]
-                         :kind       [:excluded :kind]
+      (h/do-update-set {:name       [:raw "EXCLUDED.name"]
+                         :kind       [:raw "EXCLUDED.kind"]
                          :is_primary true
                          :updated_at [:now]})
       (h/returning :*)))

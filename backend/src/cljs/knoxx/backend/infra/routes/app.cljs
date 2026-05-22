@@ -12,14 +12,13 @@
             [knoxx.backend.shape.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
             [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
-            [knoxx.backend.infra.routes.contracts :as contracts-routes]
+            [knoxx.backend.infra.routes.resources :as resource-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.infra.routes.documents :as document-routes]
             [knoxx.backend.law.guards :as guards]
             [knoxx.backend.infra.clients.proxx :as proxx-client]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.extern.js :as xjs]
             [knoxx.backend.infra.http :refer [forward-knoxx-request! json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openai-auth-error send-fetch-response! request-query-string request-body http-error error-response!]]
             [knoxx.backend.infra.routes.memory :as memory-routes]
             [knoxx.backend.infra.routes.models :as model-routes]
@@ -229,11 +228,11 @@
       (-> (session-store/list-active-sessions redis-client)
           (.then
            (fn [ids]
-             (-> (.all js/Promise (clj->js (mapv #(session-store/get-session redis-client %) (vec ids))))
+             (-> (promise/all-vec (mapv #(session-store/get-session redis-client %) (vec ids)))
                  (.then
-                  (fn [sessions-js]
+                  (fn [sessions]
                     (let [run-session-ids (set (keep :session_id run-items))
-                          session-items (->> (vec (js->clj sessions-js :keywordize-keys true))
+                          session-items (->> sessions
                                              (filter some?)
                                              (filter #(or include-all?
                                                           (contains? #{"queued" "running" "waiting_input"} (:status %))))
@@ -378,17 +377,16 @@
                              :error (str err)}))
 
 (defn- data-health-ok [reply results]
-  (let [r (js->clj results :keywordize-keys true)]
-    (json-response! reply 200
-                    {:ok true
-                     :services {:openplanner (nth r 0)
-                                :proxx (nth r 1)
-                                :ingestion (nth r 2)
-                                :graph-weaver (nth r 3)
-                                :shuvcrawl (nth r 4)
-                                :vexx (nth r 5)
-                                :eros-eris-field-app (nth r 6)
-                                :myrmex (nth r 7)}})))
+  (json-response! reply 200
+                  {:ok true
+                   :services {:openplanner (nth results 0)
+                              :proxx (nth results 1)
+                              :ingestion (nth results 2)
+                              :graph-weaver (nth results 3)
+                              :shuvcrawl (nth results 4)
+                              :vexx (nth results 5)
+                              :eros-eris-field-app (nth results 6)
+                              :myrmex (nth results 7)}}))
 
 (defn- data-health-err [reply err]
   (json-response! reply 500 {:error (.-message err)}))
@@ -412,11 +410,10 @@
   (or (:body resp) (aget resp "body")))
 
 (defn- mongo-collections-ok [reply results]
-  (let [r (vec (js->clj results :keywordize-keys true))]
-    (json-response! reply 200
-                    {:ok true
-                     :documents (response-body (nth r 0))
-                     :graph (response-body (nth r 1))})))
+  (json-response! reply 200
+                  {:ok true
+                   :documents (response-body (nth results 0))
+                   :graph (response-body (nth results 1))}))
 
 (defn- undo-session-ok [reply session-id conversation-id removed-count rewound-messages]
   (json-response! reply 200 {:ok true
@@ -463,7 +460,7 @@
       (json-response! reply 200 {:ok true
                                  :session_id session-id
                                  :ui_url ui-url
-                                 :imported_item_count (count (xjs/js-array-seq (aget body "items")))}))))
+                                 :imported_item_count (count (or (:items body) []))}))))
 
 (defn- shibboleth-import-failed [reply resp]
   (json-response! reply 502 {:detail (str "Shibboleth import failed: "
@@ -1024,30 +1021,27 @@
                                              :url (str proxx-base "/health")
                                              :detail (:body resp)}))
                           (.catch (fn [err] {:ok false :error (.-message err) :url (str proxx-base "/health")}))))]
-    (-> (js/Promise.all
-         (into-array
-           [(openplanner-check)
-            (proxx-check)
-            (check (str ingestion-base "/health") nil)
-           (check "http://127.0.0.1:8796/api/status" nil)
-           (check "http://127.0.0.1:3777/health" nil)
-           (check "http://127.0.0.1:8787/v1/health" nil)
-           (check "http://127.0.0.1:8786/health" nil)
-           (check "http://127.0.0.1:8801/health" nil)]))
+    (-> (promise/all-vec
+         [(openplanner-check)
+          (proxx-check)
+          (check (str ingestion-base "/health") nil)
+          (check "http://127.0.0.1:8796/api/status" nil)
+          (check "http://127.0.0.1:3777/health" nil)
+          (check "http://127.0.0.1:8787/v1/health" nil)
+          (check "http://127.0.0.1:8786/health" nil)
+          (check "http://127.0.0.1:8801/health" nil)])
         (.then (partial data-health-ok reply))
         (.catch (partial data-health-err reply)))))
 
 (defroute api-data-mongo-collections! []
   "GET" "/api/data/mongo/collections"
   (let [client (openplanner-client/client config)]
-    (-> (js/Promise.all
-         (into-array
-          [(openplanner-client/documents-stats! client)
-           (openplanner-client/graph-monitoring! client)]))
-        (.then (fn [results]
-                 (let [[docs graph] (vec (js->clj results :keywordize-keys true))]
-                   (mongo-collections-ok reply [{:ok true :body docs}
-                                                {:ok true :body graph}]))))
+    (-> (promise/all-vec
+         [(openplanner-client/documents-stats! client)
+          (openplanner-client/graph-monitoring! client)])
+        (.then (fn [[docs graph]]
+                 (mongo-collections-ok reply [{:ok true :body docs}
+                                              {:ok true :body graph}])))
         (.catch (partial fetch-json-err reply)))))
 
 (defroute api-data-mongo-list! []
@@ -1392,16 +1386,15 @@
     (if (str/blank? (:shibboleth-base-url config))
       (json-response! reply 503 {:detail "SHIBBOLETH_BASE_URL is not configured"})
       (let [payload {:source_app "knoxx"
-                     :model (aget body "model")
-                     :system_prompt (aget body "system_prompt")
-                     :provider (aget body "provider")
-                     :conversation_id (aget body "conversation_id")
-                     :fake_tools_enabled (boolean (aget body "fake_tools_enabled"))
-                     :items (or (some-> (aget body "items") js->clj) [])}]
+                     :model (:model body)
+                     :system_prompt (:system_prompt body)
+                     :provider (:provider body)
+                     :conversation_id (:conversation_id body)
+                     :fake_tools_enabled (boolean (:fake_tools_enabled body))
+                     :items (or (:items body) [])}]
         (-> (fetch-json (str (:shibboleth-base-url config) "/api/chat/import")
                         {:method "POST"
-                         :headers {"Content-Type" "application/json"}
-                         :body (js/JSON.stringify (clj->js payload))})
+                         :json payload})
             (.then (fn [resp]
                      (if (:ok resp)
                        (shibboleth-ok reply request body (:body resp))
@@ -1486,7 +1479,7 @@
                                           :ensure-permission! ensure-permission!
                                           :session-guard session-guard}))
 
-  (contracts-routes/register-contracts-routes! app runtime config
+  (resource-routes/register-resource-routes! app runtime config
                                                {:route! route!
                                                 :json-response! json-response!
                                                 :error-response! error-response!

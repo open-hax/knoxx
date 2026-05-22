@@ -67,10 +67,10 @@
                   :external_subject external-subject
                   :status           status}])
       (h/on-conflict :email)
-      (h/do-update-set {:display_name     [:excluded :display_name]
-                         :auth_provider    [:excluded :auth_provider]
-                         :external_subject [:excluded :external_subject]
-                         :status           [:excluded :status]
+      (h/do-update-set {:display_name     [:raw "EXCLUDED.display_name"]
+                         :auth_provider    [:raw "EXCLUDED.auth_provider"]
+                         :external_subject [:raw "EXCLUDED.external_subject"]
+                         :status           [:raw "EXCLUDED.status"]
                          :updated_at       [:now]})
       (h/returning :*)))
 

@@ -47,10 +47,10 @@
                     (:payload event)
                     {})
         types (event-types event)
-        source-kind (or (get-in event [:event/source :kind])
-                        (:sourceKind event)
-                        (:source-kind event)
-                        (:source event))]
+        generator-kind (or (get-in event [:event/generator :kind])
+                           (:generatorKind event)
+                           (:generator-kind event)
+                           (:generator event))]
     {:event/id (or (nonblank (:event/id event))
                    (nonblank (:id event))
                    (str "evt_" (.now js/Date)))
@@ -59,8 +59,8 @@
      :event/actor (or (nonblank (:event/actor event))
                       (nonblank (:actorId event))
                       (nonblank (:actor-id event)))
-     :event/source (cond-> (or (:event/source event) {})
-                     source-kind (assoc :kind source-kind))
+     :event/generator (cond-> (or (:event/generator event) {})
+                        generator-kind (assoc :kind generator-kind))
      :event/payload payload
      :event/timestamp (or (nonblank (:event/timestamp event))
                           (nonblank (:timestamp event))

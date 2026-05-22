@@ -536,7 +536,7 @@
          [(:actor contract)])
         (js/Promise.resolve nil)))))
 
-(defn- sync-contract-role-projections! [pool]
+(defn sync-contract-role-projections! [pool]
   (-> (contracts-loader/load-all-contracts! (contracts-config))
       (.then
        (fn [records]
@@ -578,8 +578,8 @@
                                  (-> (set-role-permissions! pool (:id role) perms)
                                      (.then (fn [_]
                                               (set-role-tool-policies! pool (:id role)
-                                                                       tool-policies))))))))))))))
-       (.then (fn [_] nil)))))
+                                                                       tool-policies)))))))))))))))
+       (.then (fn [_] nil))))
 
 (defn- ensure-primary-org! [pool {:keys [primary-org-slug primary-org-name primary-org-kind]
                                    :or {primary-org-slug "open-hax"
@@ -685,6 +685,13 @@
                  {:context ctx
                   :tool-id tool-id
                   :allowed (boolean (and match (= (:effect match) "allow")))})))))
+
+(defn list-actor-credentials!
+  "Return active actor credential rows for provider as {:credentials [...]}.
+   Matches the shape callers expect (cf. old policy-db JS facade)."
+  [pool provider]
+  (-> (policy/list-actor-credentials (sql-policy-store pool nil) provider)
+      (.then (fn [creds] {:credentials creds}))))
 
 (defn list-permissions!
   [_pool]

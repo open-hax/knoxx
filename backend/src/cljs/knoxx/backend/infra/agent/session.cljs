@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.models :refer [normalize-thinking-level effective-thinking-level resolve-model-contract]]
             [knoxx.backend.extern.eta-mu :as eta-mu-extern]
-            [knoxx.backend.extern.js :as xjs]
+            [knoxx.backend.extern.extension :as extension-extern]
             [knoxx.backend.infra.agent.content-codec :as content-codec]
             [knoxx.backend.infra.agent.history :as history]
             [knoxx.backend.infra.agent.provider.eta-mu :as eta-mu-provider]
@@ -189,8 +189,8 @@
                                              :model-id model-id
                                              :auth-context auth-context)]
     (ext-runtime/dispatch-event life-cycle-event-name
-                                (xjs/object {:conversationId conversation-id
-                                             :sessionId session-id})
+                                (extension-extern/event-payload {:conversationId conversation-id
+                                                                 :sessionId session-id})
                                 ctx)
     (session-registry/put-active-session! active-session-registry
                                           conversation-id
@@ -236,11 +236,11 @@
   [conversation-id]
   (when-let [entry (active-session-entry conversation-id)]
     (let [ctx (ext-runtime/build-extension-ctx
-               (xjs/empty-object) {}
+               (extension-extern/empty-event-payload) {}
                :conversation-id conversation-id
                :session-id (:session-id entry))]
       (ext-runtime/dispatch-event "session_shutdown"
-                                  (xjs/object {:conversationId conversation-id})
+                                  (extension-extern/event-payload {:conversationId conversation-id})
                                   ctx)))
   (session-registry/remove-active-session! active-session-registry conversation-id)
   nil)

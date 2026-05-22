@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.auth.session
   (:refer-clojure :exclude [set])
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.clients.github :as github-client]
             ["node:crypto" :as crypto]
             ["nodemailer" :default nodemailer]
             ["redis" :as redis]))
@@ -200,46 +201,27 @@
       (.then (fn [_] nil))))
 
 
+(defn- github-auth-client
+  [client-id client-secret]
+  (github-client/client {:client-id client-id
+                         :client-secret client-secret}))
+
 (defn- exchange-github-code
   [client-id client-secret code]
-  (-> (js/fetch "https://github.com/login/oauth/access_token"
-                (clj->js {:method "POST"
-                          :headers {:Content-Type "application/json"
-                                    :Accept "application/json"}
-                          :body (js/JSON.stringify
-                                  (clj->js {:client_id client-id
-                                            :client_secret client-secret
-                                            :code code}))}))
-      (.then
-       (fn [resp]
-         (if (not (.-ok resp))
-           (throw (js/Error. (str "GitHub token exchange failed: " (.-status resp))))
-           (.json resp))))
-      (.then
-       (fn [data]
-         (if (aget data "error")
-           (throw (js/Error. (str "GitHub OAuth error: "
-                                  (or (aget data "error_description") (aget data "error")))))
-           (aget data "access_token"))))))
+  (github-client/oauth-access-token! (github-auth-client client-id client-secret) code nil))
 
-(defn- gh-json
-  [url access-token]
-  (-> (js/fetch url (clj->js {:headers {:Authorization (str "Bearer " access-token)
-                                         :Accept "application/json"}}))
-      (.then
-       (fn [resp]
-         (if (not (.-ok resp))
-           (throw (js/Error. (str "GitHub API " url " returned " (.-status resp))))
-           (.json resp))))))
+(defn- get-github-user
+  [access-token]
+  (github-client/authenticated-user! (github-client/client {}) access-token))
 
 (defn- get-github-user-emails
   [access-token]
-  (-> (gh-json "https://api.github.com/user/emails" access-token)
+  (-> (github-client/authenticated-emails! (github-client/client {}) access-token)
       (.then
        (fn [emails]
-         (let [primary (some (fn [e] (when (aget e "primary") e)) emails)]
-           (or (some-> primary (aget "email"))
-               (some-> (first emails) (aget "email"))))))
+         (let [primary (some (fn [e] (when (:primary e) e)) emails)]
+           (or (:email primary)
+               (:email (first emails))))))
       (.catch (fn [_] nil))))
 
 
@@ -393,6 +375,12 @@
           (.then (fn [_]
                    (.resolveRequestContext policyDb headers-like)))))))
 
+(defn- gh-value
+  [gh-user k]
+  (if (map? gh-user)
+    (get gh-user k)
+    (aget gh-user (name k))))
+
 (defn ensure-user-membership!
   "Resolve the canonical Knoxx user context by GitHub email.
 
@@ -401,12 +389,12 @@
    OAuth callback environment."
   [policyDb gh-user email]
   (ensure-email-membership! policyDb {:email email
-                                      :display-name (or (aget gh-user "name")
-                                                        (aget gh-user "login")
+                                      :display-name (or (gh-value gh-user :name)
+                                                        (gh-value gh-user :login)
                                                         email)
                                       :auth-provider "github"
-                                      :external-subject (when (aget gh-user "id")
-                                                          (str "github:" (aget gh-user "id")))}))
+                                      :external-subject (when (gh-value gh-user :id)
+                                                          (str "github:" (gh-value gh-user :id)))}))
 
 (defn- configured-api-key
   []
@@ -479,9 +467,9 @@
                                   :email email
                                   :orgSlug (some-> fresh-ctx (aget "org") (aget "slug"))
                                   :orgId (some-> fresh-ctx (aget "org") (aget "id"))
-                                  :displayName (or (aget gh-user "name") (aget gh-user "login") email)
-                                  :githubLogin (aget gh-user "login")
-                                  :githubId (aget gh-user "id")
+                                  :displayName (or (gh-value gh-user :name) (gh-value gh-user :login) email)
+                                  :githubLogin (gh-value gh-user :login)
+                                  :githubId (gh-value gh-user :id)
                                   :authProvider "github"
                                   :_rawToken raw-token
                                   :createdAt (.toISOString (js/Date.))}]
@@ -537,7 +525,7 @@
            (let [invite-url (js/URL. "/login" public-base-url)]
              (.set (.-searchParams invite-url) "error" "not_whitelisted")
              (.set (.-searchParams invite-url) "email" email)
-             (.set (.-searchParams invite-url) "github_login" (or (aget gh-user "login") ""))
+             (.set (.-searchParams invite-url) "github_login" (or (gh-value gh-user :login) ""))
              (.redirect reply (.toString invite-url)))
            ;; Whitelisted — upsert and create session
            (create-session-and-redirect!
@@ -550,10 +538,10 @@
   (-> (exchange-github-code client-id client-secret code)
       (.then
         (fn [access-token]
-          (-> (gh-json "https://api.github.com/user" access-token)
+          (-> (get-github-user access-token)
               (.then
                 (fn [gh-user]
-                  (if-not (aget gh-user "id")
+                  (if-not (gh-value gh-user :id)
                     (throw (js/Error. "GitHub user lookup failed"))
                     (-> (get-github-user-emails access-token)
                         (.then

@@ -164,18 +164,18 @@
 (defn- row->credential
   [row]
   (when row
-    {:id (aget row "id")
-     :actorId (aget row "actor_id")
-     :userId (aget row "user_id")
-     :orgId (aget row "org_id")
-     :orgSlug (aget row "org_slug")
-     :provider (aget row "provider")
-     :kind (aget row "kind")
-     :accountIdentifier (aget row "account_identifier")
-     :status (aget row "status")
-     :secretJson (js->clj (or (aget row "secret_json") {}) :keywordize-keys true)
-     :createdAt (aget row "created_at")
-     :updatedAt (aget row "updated_at")}))
+    {:id                 (:id row)
+     :actorId            (:actor_id row)
+     :userId             (:user_id row)
+     :orgId              (:org_id row)
+     :orgSlug            (:org_slug row)
+     :provider           (:provider row)
+     :kind               (:kind row)
+     :accountIdentifier  (:account_identifier row)
+     :status             (:status row)
+     :secretJson         (js->clj (or (:secret_json row) {}) :keywordize-keys true)
+     :createdAt          (:created_at row)
+     :updatedAt          (:updated_at row)}))
 
 (defn- actor-role-slugs
   [actor]
@@ -216,16 +216,16 @@
                     (let [target-org (or org (:primary-org store))]
                       (when-not target-org
                         (throw (js/Error. "primary org is required for actor projection sync")))
-                      (execute-one! store (actor-membership-upsert-query {:user-id (aget user "id")
-                                                                          :org-id (aget target-org "id")
+                      (execute-one! store (actor-membership-upsert-query {:user-id (:id user)
+                                                                          :org-id (:id target-org)
                                                                           :actor-id actor-id
                                                                           :status "active"
                                                                           :is-default true})))))
                  (.then
                   (fn [membership]
                     (if-let [set-roles! (:set-membership-roles! store)]
-                      (-> (set-roles! (aget membership "id")
-                                      {:org-id (aget membership "org_id")
+                      (-> (set-roles! (:id membership)
+                                      {:org-id (:org_id membership)
                                        :role-slugs role-slugs
                                        :role-ids #js []
                                        :replace true
@@ -268,7 +268,7 @@
         (let [[sql-str & params] (format-sql (actor-credentials-select-query provider))]
           (-> ((:query! store) sql-str params)
               (.then (fn [result]
-                       (->> (array-seq (aget result "rows"))
+                       (->> (:rows result)
                             (map row->credential)
                             (remove #(str/blank? (str (:actorId %))))
                             vec))))))))

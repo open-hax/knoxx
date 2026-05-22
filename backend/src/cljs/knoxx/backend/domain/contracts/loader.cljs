@@ -12,7 +12,7 @@
 
 (def contract-class-order
   ["agents" "actors" "roles" "capabilities" "policies"
-   "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents" "cms"])
+   "generators" "schedules" "source_modes" "sources" "model_families" "models" "runtime_features" "ingest_sources" "actions" "pipelines" "triggers" "sub_agents" "cms"])
 
 ;; ── Predicates ─────────────────────────────────────────────────────────────
 
@@ -81,6 +81,8 @@
       ("role" "roles") "roles"
       ("cap" "caps" "capability" "capabilities") "capabilities"
       ("policy" "policies") "policies"
+      ("generator" "generators") "generators"
+      ("schedule" "schedules") "schedules"
       ("source-mode" "source-modes" "source_mode" "source_modes") "source_modes"
       ("source" "sources" "runtime-source" "runtime-sources" "runtime_source" "runtime_sources") "sources"
       ("runtime-feature" "runtime-features" "runtime_feature" "runtime_features" "runtime") "runtime_features"
@@ -150,6 +152,10 @@
                           (when (:role/id raw) "roles")
                           (when (:cap/id raw) "capabilities")
                           (when (:model/id raw) "models")
+                          (when (:generator/id raw) "generators")
+                          (when (:schedule/id raw) "schedules")
+                          (when (= :generator (:contract/kind raw)) "generators")
+                          (when (= :schedule (:contract/kind raw)) "schedules")
                           (when (:source-mode/id raw) "source_modes")
                           (when (= :source-mode (:contract/kind raw)) "source_modes")
                           (when (= :source (:contract/kind raw)) "sources")
@@ -162,6 +168,7 @@
         id   (some-> (or (:contract/id raw) (:id raw)
                           (:actor/id raw) (:role/id raw) (:cap/id raw)
                           (:model/id raw) (:model-family/id raw)
+                          (:generator/id raw) (:schedule/id raw)
                           (:source-mode/id raw)
                           (:source/id raw)
                           (:runtime-feature/id raw))

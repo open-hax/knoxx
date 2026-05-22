@@ -24,13 +24,9 @@
    "discord.list.servers" {:id "discord.list.servers" :label "Discord List Servers" :description "List all Discord servers the bot can access" :risk-level "medium"}
    "discord.list.channels" {:id "discord.list.channels" :label "Discord List Channels" :description "List channels across one or all Discord servers" :risk-level "medium"}
 
-   "event_agents.status" {:id "event_agents.status" :label "Event Agent Status" :description "Inspect scheduled event-agent runtime state and configuration" :risk-level "low"}
-   "event_agents.dispatch" {:id "event_agents.dispatch" :label "Event Agent Dispatch" :description "Dispatch a structured event into the event-agent runtime" :risk-level "low"}
-   "event_agents.run_job" {:id "event_agents.run_job" :label "Event Agent Run Job" :description "Trigger a configured event-agent job immediately" :risk-level "low"}
-   "event_agents.upsert_job" {:id "event_agents.upsert_job" :label "Event Agent Upsert Job" :description "Create or update a scheduled event-agent job" :risk-level "high"}
-   "schedule_event_agent" {:id "schedule_event_agent" :label "Schedule Event Agent" :description "Create or update a scheduled event-agent job with prompts, tools, triggers, and source config" :risk-level "high"}
-   "events.status" {:id "events.status" :label "Events Status" :description "Inspect generic events runtime state and trigger configuration" :risk-level "low"}
-   "events.dispatch" {:id "events.dispatch" :label "Events Dispatch" :description "Dispatch a normalized event into the generic events runtime" :risk-level "low"}
+   "events.status" {:id "events.status" :label "Events Status" :description "Inspect events runtime state and the trigger/action/schedule/generator catalog" :risk-level "low"}
+   "events.dispatch" {:id "events.dispatch" :label "Events Dispatch" :description "Dispatch a normalized event into the events runtime" :risk-level "low"}
+   "triggers.fire" {:id "triggers.fire" :label "Triggers Fire" :description "Fire a trigger contract immediately through the trigger/action runtime" :risk-level "medium"}
    "agents.spawn" {:id "agents.spawn" :label "Agents Spawn" :description "Launch a one-off normal Knoxx agent run through the shared agent runtime" :risk-level "medium"}
    "actors.send-message" {:id "actors.send-message" :label "Actors Send Message" :description "Send an actor-to-actor message as steer, follow-up, or event with lineage metadata" :risk-level "medium"}
 

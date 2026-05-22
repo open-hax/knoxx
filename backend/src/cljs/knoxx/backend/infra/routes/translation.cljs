@@ -121,7 +121,7 @@
                   (.then (fn [text]
                            (reply-header! reply "Content-Type" "application/x-ndjson")
                            (.send reply text)))
-                  (.catch (fn [err] (error-response! reply err)))))))))))
+                  (.catch (fn [err] (error-response! reply err))))))))))
 
   (route! app "POST" "/api/translations/segments/batch"
     (fn [request reply]
@@ -254,4 +254,4 @@
                   body (aget request "body")]
               (-> (openplanner-client/update-translation-batch-status! (op-client config) batch-id body)
                   (.then (fn [resp] (json-response! reply 200 resp)))
-                  (.catch (fn [err] (error-response! reply err))))))))))
+                  (.catch (fn [err] (error-response! reply err)))))))))))

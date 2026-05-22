@@ -7,43 +7,36 @@
   [value]
   (some-> value str str/trim not-empty))
 
-(defn- source-kind
-  [trigger]
-  (or (get-in trigger [:trigger/source :kind])
-      (:source-kind trigger)
-      (:sourceKind trigger)))
-
-
 (defn trigger-event-types
   [trigger]
   (->> (or (:trigger/events trigger)
            (:trigger/event-types trigger)
            (:trigger/event-kinds trigger)
-           (get-in trigger [:trigger/source :events])
            (get-in trigger [:trigger :eventKinds])
            [])
        (keep event-normalize/event-type)
        distinct
        vec))
 
+(defn- trigger-participants
+  [trigger]
+  (let [explicit-actor (nonblank (:trigger/actor trigger))
+        contract-actors (when (sequential? (:contract/actors trigger))
+                          (first (:contract/actors trigger)))]
+    {:actor explicit-actor
+     :emitter (or (nonblank (:trigger/emitter trigger)) explicit-actor)
+     :listener (or (nonblank (:trigger/listener trigger)) explicit-actor contract-actors)}))
+
 (defn normalize-trigger
   [trigger]
-  (let [kind (or (:trigger/kind trigger) :event)
-        src-kind (source-kind trigger)
-        target (nonblank (:trigger/target trigger))
-        explicit-actor (nonblank (:trigger/actor trigger))
-        explicit-emitter (nonblank (:trigger/emitter trigger))
-        explicit-listener (nonblank (:trigger/listener trigger))
-        contract-actors (when (sequential? (:contract/actors trigger))
-                          (first (:contract/actors trigger)))
-        emitter (or explicit-emitter explicit-actor )
-        listener (or explicit-listener explicit-actor contract-actors )]
+  (let [target (nonblank (:trigger/target trigger))
+        {:keys [actor emitter listener]} (trigger-participants trigger)]
     {:trigger/id (or (nonblank (:contract/id trigger))
                      (nonblank (:trigger/id trigger)))
-     :trigger/kind kind
+     :trigger/kind :event
      :trigger/enabled? (not (false? (:enabled trigger)))
      :trigger/events (trigger-event-types trigger)
-     :trigger/actor explicit-actor
+     :trigger/actor actor
      :trigger/emitter emitter
      :trigger/listener listener
      :trigger/predicate (or (:trigger/predicate trigger)
@@ -57,5 +50,4 @@
                         target)
      :trigger/with (:trigger/with trigger)
      :trigger/context (or (get-in trigger [:data :context]) {})
-     :trigger/source-kind src-kind
      :trigger/raw trigger}))

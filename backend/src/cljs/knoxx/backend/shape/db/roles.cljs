@@ -114,7 +114,7 @@
                   :permission_code code
                   :effect          "allow"}])
       (h/on-conflict :role_id :permission_code)
-      (h/do-update-set {:effect [:excluded :effect]})))
+      (h/do-update-set {:effect [:raw "EXCLUDED.effect"]})))
 
 ;; ---------------------------------------------------------------------------
 ;; Tool policies
@@ -140,8 +140,8 @@
                   :effect           effect
                   :constraints_json [:raw constraints-json]}])
       (h/on-conflict :role_id :tool_id)
-      (h/do-update-set {:effect           [:excluded :effect]
-                         :constraints_json [:excluded :constraints_json]})))
+      (h/do-update-set {:effect           [:raw "EXCLUDED.effect"]
+                         :constraints_json [:raw "EXCLUDED.constraints_json"]})))
 
 ;; ---------------------------------------------------------------------------
 ;; Membership-role linking

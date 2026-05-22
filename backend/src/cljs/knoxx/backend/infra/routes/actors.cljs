@@ -5,6 +5,7 @@
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.macros :refer-macros [defroute]]))
 
+;; TODO remove  this non sense. This makes  the api so messy, and  the code noisy. just accept on schema and validate against it everywhere
 (defn- query-param
   [request & names]
   (some (fn [name]
@@ -114,30 +115,26 @@
   (try
     (ensure-permission! ctx "org.events.control")
     (let [body (body-map request)
-          dispatch-events? (not= false (:dispatch_events body))]
-      (-> (actor-mailbox/retry-eligible!
-           runtime
-           {:mailbox-id (or (:mailbox_id body) (:mailboxId body))
-            :statuses (statuses-from-body body)
-            :max-attempts (or (:max_attempts body) (:maxAttempts body))
-            :limit (:limit body)
-            :delay-seconds (or (:delay_seconds body) (:delaySeconds body))})
-          (.then (fn [result]
-                   (let [entries (:entries result)]
-                     (if (and dispatch-events? (seq entries))
-                       (-> (retry-dispatches! entries)
-                           (.then (fn [dispatch-results]
-                                    (json-response! reply 202
-                                                    (assoc (api-result result)
-                                                           :ok true
-                                                           :retry_event_count (count entries)
-                                                           :dispatches (js->clj dispatch-results :keywordize-keys true))))))
-                       (json-response! reply 202
-                                       (assoc (api-result result)
-                                              :ok true
-                                              :retry_event_count 0))))))
-          (.catch (fn [err]
-                    (error-response! reply err)))))
+          dispatch-events? (not= false (:dispatch_events body))
+          result (await (actor-mailbox/retry-eligible!
+                         runtime
+                         {:mailbox-id (or (:mailbox_id body) (:mailboxId body))
+                          :statuses (statuses-from-body body)
+                          :max-attempts (or (:max_attempts body) (:maxAttempts body))
+                          :limit (:limit body)
+                          :delay-seconds (or (:delay_seconds body) (:delaySeconds body))}))
+          entries (:entries result)]
+      (if (and dispatch-events? (seq entries))
+        (json-response! reply 202
+                        (assoc (api-result result)
+                               :ok true
+                               :retry_event_count (count entries)
+                               :dispatches (js->clj (await (retry-dispatches! entries))
+                                                    :keywordize-keys true)))
+        (json-response! reply 202
+                        (assoc (api-result result)
+                               :ok true
+                               :retry_event_count 0))))
     (catch :default err
       (error-response! reply err))))
 

@@ -52,9 +52,7 @@
   (and (string? url)
        (or (str/starts-with? url "http://127.0.0.1:8000/")
            (str/starts-with? url "http://localhost:8000/")
-           (str/starts-with? url "http://0.0.0.0:8000/")
-           (str/starts-with? url "http://knoxx.promethean.rest/")
-           (str/starts-with? url "https://knoxx.promethean.rest/"))))
+           (str/starts-with? url "http://0.0.0.0:8000/"))))
 
 (defn auth-header-map
   [auth-context url]

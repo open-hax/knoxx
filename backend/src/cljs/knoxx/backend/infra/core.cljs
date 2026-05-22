@@ -2,8 +2,8 @@
   (:require [knoxx.backend.infra.agent.hydration :refer [ensure-settings!]]
             [knoxx.backend.infra.agent.turn :as agent-turns :refer [lounge-messages*]]
             [knoxx.backend.infra.routes.app :as app-routes]
-            [knoxx.backend.infra.routes.contracts :as contracts-routes]
-            [knoxx.backend.infra.trigger-runner :as trigger-runtime]
+            [knoxx.backend.infra.routes.resources :as resource-routes]
+            [knoxx.backend.infra.event-runtime :as event-runtime]
             [knoxx.backend.domain.mcp.mcp-bridge :as mcp]
             [knoxx.backend.domain.realtime :as realtime]
             [knoxx.backend.infra.redis-client :as redis]
@@ -17,6 +17,7 @@
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.domain.condition.builtin :as condition-builtins]
             [knoxx.backend.infra.lifecycle :as lifecycle]
+            [knoxx.backend.infra.agent.session :as agent-session]
             ["fastify" :default Fastify]
             ["@fastify/cors" :default fastifyCors]
             ["@fastify/websocket" :default fastifyWebsocket]
@@ -82,17 +83,15 @@
   [app resolved-config]
   (condition-builtins/register-builtins!)
   ;; Session recovery is awaited separately only until recovered turns are
-  ;; kicked off again. Event agents and MCP discovery remain background work.
+  ;; kicked off again. The event runtime and MCP discovery remain background work.
   ;;
-  ;; IMPORTANT: trigger-runtime/start! expects redis/get-client to be ready so it
-  ;; can load persisted control config (disable/enable jobs) *before* scheduling.
-  ;; If we start event agents before redis/init-redis!, every restart will run
-  ;; the default job set, even if the admin panel disabled a crashing job.
+  ;; IMPORTANT: event-runtime/start! expects redis/get-client to be ready so it
+  ;; can load resource state before schedule rules are armed.
   (-> (redis/init-redis! (:redis-url resolved-config))
       (.then (fn [_]
-               (trigger-runtime/start! resolved-config)))
+               (event-runtime/start! resolved-config)))
       (.then (fn [_]
-               (contracts-routes/start-contract-watcher! resolved-config)))
+               (resource-routes/start-resource-watcher! resolved-config)))
       (.then (fn [_]
                (let [policyDb (:policyDb (lifecycle/context))]
                  (when policyDb
@@ -101,20 +100,25 @@
                       :on-message! (fn [msg]
                                      (event-dispatch/dispatch!
                                       resolved-config
-                                      {:sourceKind "discord"
-                                       :eventKind "discord.message"
+                                      {:generatorKind "discord"
+                                       :eventType "discord.message"
                                        :actorId (:gatewayActorId msg)
                                        :payload msg}))
                      :on-voice-state! (fn [state]
                                         (event-dispatch/dispatch!
                                          resolved-config
-                                         {:sourceKind "discord"
-                                          :eventKind "discord.voice.state_update"
+                                         {:generatorKind "discord"
+                                          :eventType "discord.voice.state_update"
                                           :payload state}))})))))
       (.then (fn [_]
                (initialize-mcp-gateway! app resolved-config)))
       (.catch (fn [err]
                 (app-log-error! app "Background startup services failed" err)))))
+
+(defn prewarm-sdk-runtime!
+  [runtime app resolved-config]
+  (-> (agent-session/ensure-eta-mu-runtime! runtime resolved-config)
+      (.then (fn [_] (app-log-info! app "Knoxx SDK runtime prewarmed")))))
 
 (defn register-app-routes!
   [runtime app config lounge-messages*]
@@ -160,21 +164,20 @@
                                 (done)))))
           (.then (fn []
                    (app-routes/register-routes! runtime app config lounge-messages*)
-                   ;; Bring Redis up before any event-agent scheduling so we can
-                   ;; honor persisted control config (and avoid crash loops).
+                   ;; Bring Redis up before arming schedule resources.
                    (-> (redis/init-redis! (:redis-url config))
                        (.then (fn [redis-client]
                                 (when redis-client
                                   (app-log-info! app "Redis client initialized")
-                                  (contracts-routes/sync-contract-index! config))
+                                  (resource-routes/sync-resource-index! config))
                                 nil))
                        (.catch (fn [err]
                                  (app-log-error! app "Failed to initialize Redis" err)
                                  nil))
                        (.then (fn [_]
-                                ;; Start contract trigger runtime.
-                                (trigger-runtime/start! config)
-                                (contracts-routes/start-contract-watcher! config)
+                                ;; Start the event runtime composition shell.
+                                (event-runtime/start! config)
+                                (resource-routes/start-resource-watcher! config)
                                 (app-listen! app (:host config) (:port config)))))))
           (.then (fn [_]
                    (reset! server* app)

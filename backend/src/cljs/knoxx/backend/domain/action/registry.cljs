@@ -1,13 +1,13 @@
 (ns knoxx.backend.domain.action.registry
-  "Action registry: dispatch trigger actions by keyword.
+  "Action dispatch table.
 
-   Actions are pure functions registered via defmethod on run-action!.
-   Trigger contracts reference them with :trigger/action <keyword>.
-   Parameters for the action live in :trigger/with or :trigger/agent.
+   The generic resource registry protocol lives in
+   knoxx.backend.domain.registry.resource. This namespace is only the action
+   interpreter table: it maps an action key to executable behavior.
 
    Built-in actions:
      :actions/start-agent-session — spawn an agent session
-     :actions/run-pipeline        — execute a pipeline contract
+     :actions/run-pipeline        — execute a pipeline resource
      :actions/noop                — no-op, succeeds immediately")
 
 (defmulti run-action!

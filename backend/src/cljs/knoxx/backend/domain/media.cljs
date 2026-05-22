@@ -5,6 +5,7 @@
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.actor.credentials :as actor-credentials]
+            [knoxx.backend.domain.media.remote-client :as remote-client]
             ["node:child_process" :refer [execFile]]
             ["node:crypto" :as crypto]
             ["node:fs/promises" :as fs]
@@ -276,23 +277,6 @@
                       dir
                       (str (.randomUUID crypto) (or ext "")))))))
 
-(defn- decode-data-url-source
-  [raw-source]
-  (let [match (.match (str raw-source) #"^data:([^;,]+)?(;base64)?,(.*)$")]
-    (when-not match
-      (throw (js/Error. "Invalid data URL source")))
-    (let [mime-type (sanitize-mime-type (aget match 1) "application/octet-stream")
-          base64? (= ";base64" (or (aget match 2) ""))
-          payload (or (aget match 3) "")
-          buffer (if base64?
-                   (.from js/Buffer payload "base64")
-                   (.from js/Buffer (js/decodeURIComponent payload) "utf8"))]
-      {:buffer buffer
-       :mime-type mime-type
-       :filename (str "upload" (mime-type->extension mime-type))
-       :size (.-length buffer)
-       :source-kind "data_url"})))
-
 (defn infer-upload-filename
   [url idx]
   (let [pathname (try (.-pathname (js/URL. (str url))) (catch :default _ ""))
@@ -308,9 +292,8 @@
 
       (source-data-url? source)
       (js/Promise.resolve
-       (let [decoded (decode-data-url-source source)]
-         (ensure-source-size! (:size decoded) max-bytes "Source media")
-         decoded))
+       (remote-client/decode-data-url! source {:max-bytes max-bytes
+                                               :label "Source media"}))
 
       (source-http-url? source)
       (let [token-promise (if (source-discord-cdn-url? source)
@@ -318,28 +301,14 @@
                             (js/Promise.resolve nil))]
         (-> token-promise
             (.then (fn [token]
-                     (let [headers #js {"User-Agent" "Knoxx-Agent/1.0"}]
-                       (when token
-                         (aset headers "Authorization" (str "Bot " token)))
-                       (js/fetch source #js {:headers headers}))))
-            (.then (fn [resp]
-                     (if-not (.-ok resp)
-                       (-> (.text resp)
-                           (.then (fn [text]
-                                    (throw (js/Error. (str "Failed to fetch source " source " (" (.-status resp) "): " text))))))
-                       (let [mime-type (sanitize-mime-type (.get (.-headers resp) "content-type")
-                                                           (workspace-media-mime-type source))
-                             filename (infer-upload-filename source 0)]
-                         (-> (.arrayBuffer resp)
-                             (.then (fn [buf]
-                                      (let [buffer (.from js/Buffer buf)
-                                            size (.-length buffer)]
-                                        (ensure-source-size! size max-bytes "Source media")
-                                        {:buffer buffer
-                                         :mime-type mime-type
-                                         :filename filename
-                                         :size size
-                                         :source-kind "url"}))))))))))
+                     (remote-client/fetch-bytes!
+                      (remote-client/client)
+                      source
+                      (cond-> {:max-bytes max-bytes
+                               :label "Source media"
+                               :fallback-mime-type (workspace-media-mime-type source)
+                               :filename (infer-upload-filename source 0)}
+                        token (assoc :authorization (str "Bot " token))))))))
 
       :else
       (let [{:keys [absolute relative]} (resolve-workspace-media-path runtime config source)

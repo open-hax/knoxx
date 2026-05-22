@@ -110,8 +110,8 @@
                   :status   status
                   :is_default is-default}])
       (h/on-conflict :user_id :org_id)
-      (h/do-update-set {:status     [:excluded :status]
-                         :is_default [:excluded :is_default]
+      (h/do-update-set {:status     [:raw "EXCLUDED.status"]
+                         :is_default [:raw "EXCLUDED.is_default"]
                          :updated_at [:now]})
       (h/returning :*)))
 
@@ -159,8 +159,8 @@
                   :effect         effect
                   :constraints_json [:raw constraints-json]}])
       (h/on-conflict :membership_id :tool_id)
-      (h/do-update-set {:effect           [:excluded :effect]
-                         :constraints_json [:excluded :constraints_json]})))
+      (h/do-update-set {:effect           [:raw "EXCLUDED.effect"]
+                         :constraints_json [:raw "EXCLUDED.constraints_json"]})))
 
 ;; ---------------------------------------------------------------------------
 ;; Backfill

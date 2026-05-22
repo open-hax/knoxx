@@ -8,7 +8,8 @@
             [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.domain.discord.rest-client :as discord-rest]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.domain.label.quality :as quality-labels]))
+            [knoxx.backend.domain.label.quality :as quality-labels]
+            [knoxx.backend.infra.db.policy :as policy-db]))
 
 (defonce ^:private gateway-unsubscribe* (atom nil))
 
@@ -271,9 +272,9 @@
     (unsubscribe)
     (reset! gateway-unsubscribe* nil))
   (if policy-db
-    (-> (.listActorCredentials policy-db "discord_bot")
+    (-> (policy-db/list-actor-credentials! policy-db "discord_bot")
         (.then (fn [result]
-                 (dg/start-actor-gateways! (or (aget result "credentials") #js []))))
+                 (dg/start-actor-gateways! (or (:credentials result) []))))
         (.then
          (fn [_started]
            (let [unsubscribes

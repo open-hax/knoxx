@@ -196,6 +196,34 @@
                                 [:task {:optional true} any?]]]
    [:data {:optional true} [:map {:closed false}]]])
 
+(def GeneratorContract
+  "Generator contracts declare event-producing actors, adapters, or processes.
+   Schedules are generators for synthetic future events."
+  [:map {:closed false}
+   [:contract/kind [:= :generator]]
+   [:contract/id ContractId]
+   [:generator/id {:optional true} [:or string? keyword?]]
+   [:generator/kind {:optional true} [:or string? keyword?]]
+   [:generator/driver {:optional true} [:or string? keyword?]]
+   [:generator/actor {:optional true} [:or string? keyword?]]
+   [:generator/emits {:optional true} [:sequential keyword?]]
+   [:generator/policy {:optional true} [:map {:closed false}]]
+   [:data {:optional true} [:map {:closed false}]]])
+
+(def ScheduleContract
+  "Schedule contracts map a temporal rule to a synthetic event emission."
+  [:map {:closed false}
+   [:contract/kind [:= :schedule]]
+   [:contract/id ContractId]
+   [:schedule/id {:optional true} [:or string? keyword?]]
+   [:schedule/rule {:optional true} [:or string? keyword?]]
+   [:schedule/cron {:optional true} string?]
+   [:schedule/at {:optional true} string?]
+   [:schedule/generator {:optional true} ContractId]
+   [:schedule/event {:optional true} [:map {:closed false}]]
+   [:schedule/policy {:optional true} [:map {:closed false}]]
+   [:data {:optional true} [:map {:closed false}]]])
+
 (def RuntimeSourceContract
   "Runtime source contracts declare context providers hydrated before an agent
    turn. They are intentionally separate from :ingest_source contracts, which
@@ -311,12 +339,11 @@
    [:contract/id ContractId]
    [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
-   [:trigger/kind [:enum :cron :event :webhook :manual]]
+   [:trigger/kind [:enum :event]]
+   [:trigger/events [:vector [:or string? keyword?]]]
    [:trigger/action {:optional true} ContractId]
    [:trigger/agent {:optional true} ContractId]
    [:trigger/with {:optional true} [:map {:closed false}]]
-   [:trigger/schedule {:optional true} string?]
-   [:trigger/source {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 
 (def CmsContract
@@ -331,33 +358,45 @@
    [:blocks {:optional true} [:map {:closed false}]]
    [:templates {:optional true} [:map {:closed false}]]])
 
-(defn- infer-contract-class
+(defn- contract-kind-class
+  [value]
+  (case (:contract/kind value)
+    :policy "policies"
+    :sub-agent "sub_agents"
+    :action "actions"
+    :pipeline "pipelines"
+    :trigger "triggers"
+    :generator "generators"
+    :schedule "schedules"
+    :source-mode "source_modes"
+    :source "sources"
+    :runtime-feature "runtime_features"
+    :ingest_source "ingest_sources"
+    nil))
+
+(defn- structural-contract-class
   [value]
   (cond
-    (and (contains? value :contract/id)
-         (= :policy (:contract/kind value))) "policies"
-    (and (contains? value :contract/id)
-         (= :sub-agent (:contract/kind value))) "sub_agents"
-    (= :action (:contract/kind value)) "actions"
-    (= :pipeline (:contract/kind value)) "pipelines"
-    (= :trigger (:contract/kind value)) "triggers"
-    (= :sub-agent (:contract/kind value)) "sub_agents"
-    (and (contains? value :contract/id)
-         (contains? #{:cms-block-registry :cms-templates :cms-template-registry}
-                    (:contract/kind value))) "cms"
-    (or (contains? value :source-mode/id)
-        (= :source-mode (:contract/kind value))) "source_modes"
-    (= :source (:contract/kind value)) "sources"
-    (contains? value :contract/id) "agents"
     (contains? value :actor/id) "actors"
     (contains? value :role/id) "roles"
     (contains? value :cap/id) "capabilities"
-    (contains? value :model-family/id) "model_families"
     (contains? value :model/id) "models"
-    (or (contains? value :runtime-feature/id)
-        (= :runtime-feature (:contract/kind value))) "runtime_features"
-    (= :ingest_source (:contract/kind value)) "ingest_sources"
-    :else "agents"))
+    (contains? value :model-family/id) "model_families"
+    (contains? value :generator/id) "generators"
+    (contains? value :schedule/id) "schedules"
+    (contains? value :source-mode/id) "source_modes"
+    (contains? value :runtime-feature/id) "runtime_features"
+    :else nil))
+
+(defn- infer-contract-class
+  [value]
+  (or (structural-contract-class value)
+      (when (contains? #{:cms-block-registry :cms-templates :cms-template-registry}
+                       (:contract/kind value))
+        "cms")
+      (contract-kind-class value)
+      (when (contains? value :contract/id) "agents")
+      "agents"))
 
 (defn- schema-for
   [contract-class value]
@@ -367,6 +406,8 @@
     "roles" RoleContract
     "capabilities" CapabilityContract
     "policies" PolicyContract
+    "generators" GeneratorContract
+    "schedules" ScheduleContract
     "source_modes" SourceModeContract
     "sources" RuntimeSourceContract
     "model_families" ModelFamilyContract

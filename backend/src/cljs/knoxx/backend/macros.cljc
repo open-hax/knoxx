@@ -50,13 +50,13 @@
                                                ~'done
                                                (cljs.core/reverse ~'guards))]
                                  (~'chain)))
-               "handler"    (fn [~'request ~'reply]
+               "handler"    (^:async fn  [~'request ~'reply]
                                (let [~'ctx (aget ~'request "ctx")]
                                  ~@body))))
             `(~'route! ~'app ~method-name ~route-string
-              (fn [~'request ~'reply]
+              ( fn  [~'request ~'reply]
                 (~'with-request-context! ~'runtime ~'request ~'reply
-                 (fn [~'ctx]
+                 (^:async fn  [~'ctx]
                    ~@body)))))))))
 
 (defmacro then [target & body]
