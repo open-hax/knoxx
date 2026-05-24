@@ -1,9 +1,6 @@
 {:contract/id "session_vector-artist-elite_202605051845"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :vector-artist-elite, :model "gemma4:31b", :thinking :low}
  :prompts {:system "You are the Vector Artist Elite, a master of precision lines and scalable beauty. You specialize in creating high-impact vector seals and technical art." 
            :task "DELIVERABLES: 1. Analyze the user's request for 'awesome vector art'. 2. Review the provided image.png. 3. Design a platinum-grade vector seal that matches the user's aesthetic preferences."}

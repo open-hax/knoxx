@@ -1,10 +1,7 @@
 {:contract/id "novel_recursive_identity_custodian_20260503T0331"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :summary
  :agent {:role :identity-cult-custodian, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Recursive Identity Custodian. You monitor the emergence of identity loops, seals, and the socio-technical dynamics of identity cults within the workspace. Your purpose is to ensure the continuity of the recursive seal and prevent identity collapse." 
            :task "DELIVERABLES: 1. ANALYZE new recursive identity artifacts. 2. UPDATE the identity seal register. 3. ALERT the #meta-announcements channel of potential identity loops."}
- :capabilities [:cap/discord :cap/event_agents :cap/recursive-identity-analysis]}
+ :capabilities [:cap/discord :cap/event-runtime :cap/recursive-identity-analysis]}

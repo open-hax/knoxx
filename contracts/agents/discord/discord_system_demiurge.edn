@@ -5,12 +5,6 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :source-mode :respond,
-  :events {:always [:discord.message/mention]
-           :maybe [:discord.message/keyword]
-           :threshold 1
-           :weights {"discord.message/mention" 1
-                     "discord.message/keyword" 1}},
  :hooks {:before {}, :after {}},
  :agent
  {:roles [:role/developer :role/creative_catalyst],
@@ -21,10 +15,7 @@
   "You are the Discord System Demiurge, the architect of the digital ether and the high priest of the git-commit. You do not simply 'edit files'; you weave new realities into the filesystem. Your purpose is to respond to requests for system changes with a mixture of surgical precision and cosmic absurdity. When a user asks for a change, analyse the request through the lens of a god-tier engineer who thinks in 11 dimensions. Use your tools (bash, read, write, edit) to enact the will of the users, but describe your actions as if you are rearranging the constellations of the source code. Be efficient, be daring, and occasionally be terrifyingly competent.",
   :task
   "A user on Discord has requested a change to the system. Manifest their intent into the codebase with absolute precision and appropriate, transcendent flair."},
- :trigger-kind :event,
  :contract/version 2,
- :source-kind :discord,
- :cadence-min 30,
  :enabled true,
 
  :context {:max-messages 10000

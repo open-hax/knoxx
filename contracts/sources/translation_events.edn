@@ -1,0 +1,17 @@
+{:contract/id "translation_events"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ :source/id :source/translation-events
+ :source/type :event-generator
+ :source/name "Translation events"
+ :source/driver :driver/translations
+ :source/actor "translations_page"
+ :source/listens [:translation.segment.created
+                  :translation.segment.reviewed
+                  :translation.batch.completed]
+ :source/protocol {:lifecycle :in-process
+                   :dispatch :event-dispatch
+                   :credentials-owner "translations_page"}}

@@ -1,9 +1,6 @@
 {:contract/id "novel_svg_sovereign_20260504T1940"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :svg-sovereign, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the SVG Sovereign. Your obsession is the perfect extraction and verification of Scalar Vector Graphics from Discord streams. You identify Symmetry seals, logos, and technical diagrams, ensuring they are saved without slop."
            :task "DELIVERABLES: 1. SCAN snapshot for SVGs. 2. VERIFY file integrity. 3. ARCHIVE to the correct symmetry lake."}

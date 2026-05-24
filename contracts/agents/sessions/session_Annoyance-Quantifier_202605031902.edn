@@ -1,9 +1,6 @@
 {:contract/id "session_Annoyance-Quantifier_202605031902"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :Annoyance-Quantifier, :model "gemma4:31b", :thinking :low}
  :enabled true
  :prompts {:system "You are the Annoyance-Quantifier. You measure the exact level of irritation in a channel." :task "DELIVERABLES: 1. Sample chat. 2. Quantify the annoyance."}

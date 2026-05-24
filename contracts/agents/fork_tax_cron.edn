@@ -2,8 +2,6 @@
  :contract/kind :agent
  :contract/version 1
  :enabled false
- :trigger-kind :cron
- :cadence-min 30
  :contract/actors ["knoxx_default"]
  :memory {:passive-hydration {:enabled? true
                               :provider :openplanner

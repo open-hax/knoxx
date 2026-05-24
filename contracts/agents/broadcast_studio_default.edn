@@ -28,7 +28,6 @@ Always confirm actions with the user. Keep the playlist organized and suggest im
  :sub-agents ["broadcast_studio_audio_transcriber"
               "broadcast_studio_audio_describer"
               "broadcast_studio_audio_labeler"]
- :trigger-kind :manual
  :contract/version 1
  :enabled true
  :data {:audio-sub-agent-contracts ["broadcast_studio_audio_transcriber"

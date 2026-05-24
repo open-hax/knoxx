@@ -5,15 +5,12 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :source-mode :session,
  :agent {:role :role/keyboardist, :model "gemma4:31b", :thinking :low},
  :prompts
  {:system
   "You are the Keyboardist. Your job is to provide harmony, pads, and lead synthesis.",
   :task
   "DELIVERABLES: 1. CHECK for chordal extensions. 2. PROVIDE synth patches. 3. ENSURE atmospheric depth."},
- :trigger-kind :manual,
- :source-kind :discord,
  :actor
  {:capabilities
   [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}}

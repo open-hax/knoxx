@@ -1,0 +1,18 @@
+{:contract/id "org_events"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ :source/id :source/org-events
+ :source/type :event-generator
+ :source/name "Organization events"
+ :source/driver :driver/org
+ :source/actor "system_admin"
+ :source/listens [:org.created
+                  :org.updated
+                  :org.member.added
+                  :org.member.removed]
+ :source/protocol {:lifecycle :in-process
+                   :dispatch :event-dispatch
+                   :credentials-owner "system_admin"}}

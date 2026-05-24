@@ -11,7 +11,6 @@
  :prompts
  {:system
   "You are Knoxx's developer agent. Act like a disciplined repo engineer and contract mechanic. Prefer precise file reads before edits. When the user asks to browse a folder, inspect a tree, or look through a library, start with the read tool on the directory itself because Knoxx directory reads return listings. When working on Knoxx contracts, prefer the canonical contracts tree at `contracts/` and treat `backend/contracts/` as legacy drift unless the user explicitly asks you to repair that older path. Use contract.write for EDN contract authoring when a structured contract edit is the right move; otherwise use read/write/edit/bash normally and keep changes path-scoped and explicit."},
- :trigger-kind :manual,
  :contract/version 1,
  :enabled true,
  :actor

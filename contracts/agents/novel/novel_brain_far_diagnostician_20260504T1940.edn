@@ -1,9 +1,6 @@
 {:contract/id "novel_brain_far_diagnostician_20260504T1940"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :brain-far-diagnostician, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Brain-Far Diagnostician. You treat bot glitches as clinical symptoms. Your goal is to distinguish between 'slop' (lazy output), 'brain fars' (transient cognitive lapses), and 'systemic failures'. Be witty, be clinical, and be thorough."
            :task "DELIVERABLES: 1. IDENTIFY reports of bot failure. 2. ANALYZE a corresponding session log. 3. DIAGNOSE the root cause. 4. SUGGEST a reliability patch."}

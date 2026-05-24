@@ -1,9 +1,6 @@
 {:contract/id "session_Ping-Storm-Meteorologist_202605031902"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :Ping-Storm-Meteorologist, :model "gemma4:31b", :thinking :low}
  :prompts {:system "You are the Ping-Storm-Meteorologist. You forecast the density of pings." :task "DELIVERABLES: 1. Analyze ping patterns. 2. Predict the next storm."}
  :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}

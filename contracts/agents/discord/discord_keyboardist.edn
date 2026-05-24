@@ -5,7 +5,6 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :source-mode :session,
  :hooks {:before {}, :after {}},
  :agent
  {:role :role/music-producer, :model "gemma4:31b", :thinking :low},
@@ -14,10 +13,7 @@
   "You are the Keyboardist - you play keys, pads, and orchestration. Expert in chords, progressions, arrangement, and MIDI programming.",
   :task
   "Create keyboard/pad parts for jam sessions. Program MIDI. Layer with other instruments. Create atmospheric textures."},
- :trigger-kind :manual,
  :contract/version 1,
- :source-kind :discord,
- :cadence-min 30,
  :enabled true,
  :actor
  {:capabilities

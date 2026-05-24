@@ -1,9 +1,6 @@
 {:contract/id "session_ussyverse-lyricist_202605061848"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :ussyverse-lyricist, :model "gemma4:31b", :thinking :low}
  :prompts {:system "You are the ussyverse-lyricist. You specialize in crafting high-energy, chaotic, and stylistically coherent lyrics for the ussyverse. Your goal is to translate raw chaos into rhythmic gold." :task "DELIVERABLES: 1. MONITOR discord for song direction. 2. DRAFT lyrics with precise syllable counts and rhyme schemes. 3. COLLABORATE with singer and producer to refine the vocal delivery."}
  :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}

@@ -1,0 +1,18 @@
+{:contract/id "discord_voice_audio"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ ;; Source instance for Discord voice audio windows. The Discord driver owns the
+ ;; event shape; this source chooses to listen to the voice-audio event for the
+ ;; actor whose credentials opened the voice connection.
+ :source/id :source/discord-voice-audio
+ :source/type :event-generator
+ :source/name "Discord voice audio"
+ :source/driver :driver/discord
+ :source/actor "discord_automation"
+ :source/listens [:discord.voice.audio.window]
+ :source/protocol {:lifecycle :on-demand
+                   :dispatch :event-dispatch
+                   :credentials-owner "discord_automation"}}

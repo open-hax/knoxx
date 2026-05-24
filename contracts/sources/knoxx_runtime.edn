@@ -1,0 +1,17 @@
+{:contract/id "knoxx_runtime"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ :source/id :source/knoxx-runtime
+ :source/type :event-generator
+ :source/name "Knoxx runtime"
+ :source/driver :driver/knoxx
+ :source/actor "system_admin"
+ :source/listens [:knoxx.runtime.started
+                  :knoxx.runtime.stopping
+                  :knoxx.resource.changed]
+ :source/protocol {:lifecycle :in-process
+                   :dispatch :event-dispatch
+                   :credentials-owner "system_admin"}}

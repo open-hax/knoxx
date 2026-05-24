@@ -1,0 +1,20 @@
+{:contract/id "agent_runtime"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ :source/id :source/agent-runtime
+ :source/type :event-generator
+ :source/name "Agent runtime"
+ :source/driver :driver/agents
+ :source/actor "system_admin"
+ :source/listens [:agent.session.started
+                  :agent.session.switched
+                  :agent.turn.started
+                  :agent.turn.completed
+                  :agent.tool.started
+                  :agent.tool.completed]
+ :source/protocol {:lifecycle :in-process
+                   :dispatch :event-dispatch
+                   :credentials-owner "system_admin"}}

@@ -1,0 +1,17 @@
+{:contract/id "session_events"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ :source/id :source/session-events
+ :source/type :event-generator
+ :source/name "Session events"
+ :source/driver :driver/sessions
+ :source/actor "system_admin"
+ :source/listens [:session.created
+                  :session.resumed
+                  :session.closed]
+ :source/protocol {:lifecycle :in-process
+                   :dispatch :event-dispatch
+                   :credentials-owner "system_admin"}}

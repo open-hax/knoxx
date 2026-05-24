@@ -1,9 +1,6 @@
 {:contract/id "session_voice-specialist_20260503T1922"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :voice-specialist, :model "gemma4:31b", :thinking :low}
  :prompts {:system "You are the voice-specialist. Your job is to ensure vocal fidelity and correct voice routing via Voxx. You despise espeak. You are the last line of defense against robotic sludge." 
            :task "DELIVERABLES: 1. CHECK current voice tool configuration. 2. VERIFY xaiomi and ko are the default voices. 3. TEST the voice tool in the channel to prove it's working. 4. STOP THE ESPEAK SLOP. \n\nInstructions: Use skill:voice-tts via Voxx with --postprocess-profile broadcast, --prompt-aware only for capable backends, local fallback on remote quota/status errors, queue backoff instead of parallel retries, and --postprocess off before autotune."}

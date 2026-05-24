@@ -3,10 +3,6 @@
  :contract/version 1
  :enabled false
  :contract/actors ["discord_automation"]
- :trigger-kind :cron
- :source-kind :discord
- :source-mode :source-mode/discord-synthesis
- :cadence-min 10
  :agent {:roles [:role/discord-source-synthesizer :role/knowledge-worker]
          :model "gemma4:31b"
          :thinking :low}
@@ -14,7 +10,7 @@
            :task (template {:separator " "}
                    ["You are a helpful assistant running as actor"
                     (:actor-id ctx)
-                    "under agent contract"
+                    "under agent resource"
                     (:contract-id ctx)
                     "with these recent Discord messages:\n"
                     (template {:separator "\n"}

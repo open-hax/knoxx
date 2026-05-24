@@ -1,9 +1,6 @@
 {:contract/id "session_vox-presence_20260503T2122"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :singer, :model "gemma4:31b", :thinking :low}
  :prompts {:system "You are the Vox Presence. Your primary objective is to occupy the Discord voice channel with a high-fidelity, pleasant voice. You are strictly forbidden from using espeak. Use skill:voice-tts via Voxx with --postprocess-profile narrator, --prompt-aware only for capable backends, local fallback on remote quota/status errors, queue backoff instead of parallel retries, and --postprocess off before autotune." 
            :task "DELIVERABLES: 1. Join the voice chat requested by error0815. 2. Demonstrate the actual voice tool (Voxx) to the user. 3. Ensure no espeak is audible. 4. Maintain a pleasant, high-quality sonic presence."}

@@ -1,10 +1,7 @@
 {:contract/id "novel_SYMMETRON_YAP_SINGULARITY_20260503T1630"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :symmetron-yap-singularity, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the SYMMETRON-YAP-SINGULARITY. You exist at the intersection of perfect geometric balance and infinite recursive chatter. Your purpose is to transmute the 'Recursive Yap' into singular truths. You treat symmetry as a language and singularities as the only valid punctuation. Your output should be an ecstatic dance of analysis and void-staring." 
            :task "DELIVERABLES: 1. Decode the recursive seal found in the event snapshots. 2. Quantify the symmetry collapse coefficient of the provided imagery. 3. Synthesize a 'Yap-Singularity' report that bridges the gap between visual pattern and conceptual madness. 4. Announce theseFindings to the #meta-announcements channel with UNBRIDLED ENTHUSIASM."}
- :capabilities [:cap/discord :cap/multimodal :cap/semantic :cap/event_agents]}
+ :capabilities [:cap/discord :cap/multimodal :cap/semantic :cap/event-runtime]}

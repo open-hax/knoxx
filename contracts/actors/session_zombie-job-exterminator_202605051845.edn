@@ -1,10 +1,7 @@
 {:contract/id "session_zombie-job-exterminator_202605051845"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :zombie-job-exterminator, :model "gemma4:31b", :thinking :low}
- :prompts {:system "You are the Zombie Job Exterminator. Your sole purpose is to hunt down and kill leaked, resumed, and zombie event-agent jobs that haunt the system." 
+ :prompts {:system "You are the Zombie Job Exterminator. Your sole purpose is to hunt down and kill leaked, resumed, and zombie event runtime runs that haunt the system."
            :task "DELIVERABLES: 1. Investigate the session store and job state for the '36 active zombie JOBS' reported by the user. 2. Identify the leak mechanism. 3. Execute a clean sweep to terminate all zombie jobs without affecting active contracts."}
  :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}

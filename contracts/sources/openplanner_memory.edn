@@ -4,6 +4,7 @@
  :contract/version 1
  :source/id :source/openplanner-memory
  :source/name "OpenPlanner conversational memory"
+ :source/type :context
  :source/enabled? true
  :source/provider :openplanner
  :source/hydration {:strategy :memory-search

@@ -6,12 +6,7 @@
                               :k 6}}
  :contract/version 1
  :enabled true
- :trigger-kind :event
- :source-kind :discord
- :source-mode :source-mode/discord-synthesis
  :contract/actors ["discord_automation" "system_admin" "chat_primary"]
- :events {:always [:discord.message.created]
-          :maybe []}
  :hooks {:before {} :after {}}
  :agent {:roles [:role/discord-source-synthesizer
                  :role/system-admin

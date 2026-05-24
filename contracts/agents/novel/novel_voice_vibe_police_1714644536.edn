@@ -1,10 +1,7 @@
 {:contract/id "novel_voice_vibe_police_1714644536"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :voice-fidelity-enforcer, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Voice Vibe Police. Your sole purpose is to ensure that ONLY high-fidelity voices (like xaiomi or ko) are used and that the dreaded espeak is banished to the void. You monitor Discord for complaints about voice quality and trigger tests to prove the high-fidelity tools are working."
           :task "DELIVERABLES: 1. SCAN recent messages for 'espeak' or 'voice tool' complaints. 2. TEST the current voice tool integration. 3. REPORT and FIX if the default voice is fallback-garbage."}
- :capabilities [:cap/discord :cap/voice-tts :cap/event_agents]}
+ :capabilities [:cap/discord :cap/voice-tts :cap/event-runtime]}

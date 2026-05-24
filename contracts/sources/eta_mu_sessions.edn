@@ -1,0 +1,21 @@
+{:contract/id "eta_mu_sessions"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ ;; Source instance for eta-mu session ingestion. The driver is ClojureScript
+ ;; code; this resource selects which normalized session events enter Knoxx.
+ :source/id :source/eta-mu-sessions
+ :source/type :event-generator
+ :source/name "eta-mu sessions"
+ :source/driver :driver/eta-mu-ingestion
+ :source/actor "system_admin"
+ :source/listens [:eta-mu.session.started
+                  :eta-mu.session.model-changed
+                  :eta-mu.session.compacted
+                  :eta-mu.session.message
+                  :eta-mu.session.tool-call]
+ :source/protocol {:lifecycle :ingester
+                   :dispatch :event-dispatch
+                   :credentials-owner "system_admin"}}

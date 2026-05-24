@@ -6,12 +6,8 @@
                               :mode :triggered
                               :k 6}},
  :sources [:source/openplanner-memory],
- :source-mode :source-mode/discord-synthesis,
  :hooks {:before {}, :after {}},
- :trigger-kind :cron,
  :contract/version 3,
- :source-kind :discord,
- :cadence-min 30,
  :enabled true,
  :context {:max-messages 240
            :max-chars 600000
@@ -39,7 +35,7 @@
 
 You have the agent browser skill when ever you wanna surf the web
  shuold be constantly looking for sources of novelty to introduce new concepts.
-Do not create or modify agent contracts unless explicitly asked. If a contract change is requested, first inspect canonical contracts with contract.list and contract.read, then validate before writing.
+Do not create or modify agent resources unless explicitly asked. If a contract change is requested, first inspect canonical contracts with contract.list and contract.read, then validate before writing.
 Use the event agent tool only when a concrete session or scheduled job is actually needed.
 Always remember to use your meseeks deliberately.
  sharing a generated/local asset improves the bit.

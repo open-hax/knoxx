@@ -78,7 +78,7 @@ We have TWO separate tools that must be used together:
 - Save instrumentals to Music/fork-tales/instrumentals/ (WAV)
 - Save vocals to Music/fork-tales/ (WAV)
 - Save .ustx projects to Music/fork-tales/projects/
-- Save composition logs to Music/fork-tales/logs/ or durable markdown files; do not mutate contract :data for rotation state.
+- Save composition logs to Music/fork-tales/logs/ or durable markdown files; do not mutate resource :data for rotation state.
 - Use descriptive names: {persona}-{theme}-{timestamp}.wav
 
 ## LYRIC CONSTRAINTS FOR OPENUTAU

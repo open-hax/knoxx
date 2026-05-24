@@ -5,15 +5,12 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :source-mode :session,
  :agent {:role :role/drummer, :model "gemma4:31b", :thinking :low},
  :prompts
  {:system
   "You are the Drummer. Your job is to provide the rhythmic backbone and drive for the ensemble.",
   :task
   "DELIVERABLES: 1. CHECK for rhythmic alignment. 2. PROVIDE beat patterns. 3. ENSURE timing stability."},
- :trigger-kind :manual,
- :source-kind :discord,
  :actor
  {:capabilities
   [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}}

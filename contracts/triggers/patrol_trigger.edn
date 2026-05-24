@@ -1,12 +1,14 @@
-{:contract/kind   :trigger
- :contract/id     "patrol_trigger"
- :contract/version 3
- :trigger/kind    :cron
- :trigger/actor   "discord_automation"
- :trigger/action  :actions/run-pipeline
- :trigger/with    {:pipeline-id "patrol_pipeline"}
- :trigger/schedule "*/5 * * * *"
- :enabled         true
- :data
- {:context {:channelId "{{defaultChannels}}"
-            :patrol true}}}
+{:contract/kind :trigger
+ :contract/id "patrol_trigger"
+ :contract/version 4
+ :enabled true
+
+ ;; Trigger agreement: discord_automation may run the patrol pipeline after
+ ;; observing the schedule-generated patrol event.
+ :trigger/kind :event
+ :trigger/listener "discord_automation"
+ :trigger/events [:schedule/patrol]
+ :trigger/action :actions/run-pipeline
+ :trigger/with {:pipeline-id "patrol_pipeline"}
+ :data {:context {:channelId "{{defaultChannels}}"
+                  :patrol true}}}

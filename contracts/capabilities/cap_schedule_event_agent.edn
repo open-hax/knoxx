@@ -1,7 +1,0 @@
-{:cap/id :cap/schedule-event-agent
- :cap/tools [:schedule_event_agent]
- :cap/user-surfaces [{:surface/id :workspace/event-agent-builder
-                      :surface/label "Event agent builder"
-                      :surface/kind :editor
-                      :surface/routes ["/event-agents"]
-                      :surface/description "Humans compose prompts, schedules, and tool sets in the event-agent builder; agents use schedule_event_agent."}]}

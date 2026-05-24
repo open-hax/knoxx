@@ -9,7 +9,6 @@
            :task "Transcribe the attached audio. File: {ctx.media.filename}. Existing labels: {ctx.media.labels}. Return only the transcript when intelligible speech is present. If there is no intelligible speech, say 'No intelligible speech' and give a brief sound-type summary."}
  :tools/allowed []
  :context {:max-messages 1 :max-chars 1000 :preserve-system true}
- :trigger-kind :manual
  :contract/version 1
  :enabled true
  :data {}}

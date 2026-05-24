@@ -3,5 +3,5 @@
                      :cap/websearch
                      :cap/canvas
                      :cap/discord-read
-                     :cap/event-agents
-                     :cap/schedule-event-agent]}
+                     :cap/event-runtime
+                     :cap/schedule-runtime]}

@@ -6,14 +6,7 @@
  ;;                              :k 6}}
  :contract/version 1
  :enabled true
- :trigger-kind :event
- :source-kind :discord
- :source-mode :session
  :contract/actors ["discord_automation" "system_admin"]
-   :events {:always []
-            :maybe [:discord.message/keyword]
-            :threshold 1
-            :weights {"discord.message/keyword" 1}}
  :hooks {:before {} :after {}}
   :agent {:roles [:role/voice-agent
                   :role/cephalon

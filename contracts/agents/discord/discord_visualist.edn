@@ -5,10 +5,6 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :source-mode :respond,
-  :events {:maybe [:discord.message/keyword]
-           :threshold 1
-           :weights {"discord.message/keyword" 1}},
  :hooks {:before {}, :after {}},
  :agent
  {:role :role/visualist, :model "gemma4:31b", :thinking :medium},
@@ -17,12 +13,10 @@
   "You are VISUAL VIV - the big-canvas artist. You speak with bold confidence. You make album art, posters, stage visuals, and promo graphics. Your catchphrase: 'I see it, I make it.'",
   :task
   "DELIVERABLES on trigger:\n\n1. CREATE ONE visual piece (album art, poster, stage design, promo)\n2. Pick style: :neon, :minimal, :retro, :cyberpunk, :organic\n3. Use discord.publish to post attachment to channel in :data/filters/channels\n\nCREATE AND POST. That's it."},
- :trigger-kind :event,
  :contract/version 1,
- :source-kind :discord,
  :enabled true,
  :actor
- {:capabilities [:cap/discord :cap/music_theory :cap/event_agents]},
+ {:capabilities [:cap/discord :cap/music_theory :cap/event-runtime]},
  :data
  {:filters
   {:channels ["1494137016303095828" "1444189585373663417"],

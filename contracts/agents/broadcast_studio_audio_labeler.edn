@@ -9,7 +9,6 @@
            :task "Suggest short reusable labels for the attached audio. File: {ctx.media.filename}. Existing labels: {ctx.media.labels}. Group suggestions as Content, Sound Type, Mood, Function, and Production. Include labels suitable for music, sound effects, spoken word, ambience, and broadcast drops when applicable. Avoid duplicates of existing labels unless they are especially important."}
  :tools/allowed []
  :context {:max-messages 1 :max-chars 1000 :preserve-system true}
- :trigger-kind :manual
  :contract/version 1
  :enabled true
  :data {}}

@@ -2,15 +2,11 @@
  :contract/kind :agent
  :contract/version 2
  :enabled true
- :trigger-kind :cron
- :source-kind :discord
- :cadence-min 30
  :contract/actors ["knoxx_default" "discord_automation"]
  :memory {:passive-hydration {:enabled? true
                               :provider :openplanner
                               :mode :always
                               :k 10}}
- :source-mode :source-mode/discord-synthesis
  :sub-agents [:fork_tales_deep_composer :fork_tales_translator :fork_tales_instrumentalist]
  :hooks {:before {} :after {}}
  :agent
@@ -66,7 +62,7 @@ For each tick:
 Do not write generic fantasy. Write FORK TALES. Every event should feel like it could only happen in this universe. Every new element should carry the weight of the Event.
 
 ## SPAWN BEHAVIOR
-You may spawn sub-agents via event_agents.run_job for:
+You may spawn sub-agents via agents.spawn for:
 - Deep world-building (when a new faction or location needs extended detail)
 - Character development (when a persona needs a full backstory expansion)
 - Lore translation ( Japanese ↔ English )
@@ -76,7 +72,7 @@ You may spawn sub-agents via event_agents.run_job for:
 - Save world documents to Lore/fork-tales/
 - Save character updates to Lore/fork-tales/characters/
 - Use descriptive names: {element}-{timestamp}.md
-- Keep plot history in Lore/fork-tales/ files; do not treat contract :data as mutable runtime state
+- Keep plot history in Lore/fork-tales/ files; do not treat resource :data as mutable runtime state
 - Tag outputs with element type, related personas, and plot thread
 
 ## FORBIDDEN
@@ -142,7 +138,7 @@ You are the engine of a universe. Make it feel like survival."
     - event summary
     - affected personas
     - narrative consequences
-16. RECORD the tick timestamp in the written artifact, not by mutating contract :data
+16. RECORD the tick timestamp in the written artifact, not by mutating resource :data
 
 ## FORBIDDEN
 - Never generate generic fantasy tropes

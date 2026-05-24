@@ -1,0 +1,17 @@
+{:contract/id "user_events"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ :source/id :source/user-events
+ :source/type :event-generator
+ :source/name "User events"
+ :source/driver :driver/user
+ :source/actor "workspace_user"
+ :source/listens [:user.created
+                  :user.updated
+                  :user.message.sent]
+ :source/protocol {:lifecycle :in-process
+                   :dispatch :event-dispatch
+                   :credentials-owner "workspace_user"}}

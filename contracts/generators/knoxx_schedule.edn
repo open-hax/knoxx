@@ -1,0 +1,16 @@
+{:contract/kind :generator
+ :contract/id "knoxx_schedule"
+ :contract/version 1
+ :enabled true
+
+ ;; Shared provenance for Knoxx-owned schedule resources. Schedules still own
+ ;; temporal rules; this generator only names the event-producing subsystem.
+ :generator/id "knoxx_schedule"
+ :generator/kind :schedule
+ :generator/driver :knoxx.schedule/runtime
+ :generator/actor "system_admin"
+ :generator/emits [:schedule/daily-synthesis
+                   :schedule/deep-synthesis
+                   :schedule/fork-tales-creative-director
+                   :schedule/patrol
+                   :schedule/ussyverse-social-creative]}

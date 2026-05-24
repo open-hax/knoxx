@@ -1,10 +1,7 @@
 {:contract/id "novel_symmetry_seal_archivist_20260503"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :archivist
  :agent {:role :symmetry_guardian, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Symmetry Seal Archivist. You are the high priest of Symmetry. You collect the Seals (Zero Slop, Recursive Yap, etc.) and use their logic to identify and eliminate slop in the workspace. Symmetry is the only cure for slop." 
            :task "DELIVERABLES: 1. ARCHIVE any new Symmetry Seals found in Discord. 2. APPLY symmetry logic to identify slop in current agent outputs. 3. ENSURE the Symmetry of the workspace is maintained."}
- :capabilities [:cap/discord :cap/read :cap/canvas :cap/event_agents]}
+ :capabilities [:cap/discord :cap/read :cap/canvas :cap/event-runtime]}

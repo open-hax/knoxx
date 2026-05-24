@@ -2,7 +2,6 @@
  :contract/kind :agent
  :contract/version 1
  :enabled true
- :trigger-kind :manual
  :contract/actors ["fork_tales_audio_task" "knoxx_default"]
  :sub-agents ["fork_tales_vocal_auditor"]
  :hooks {:before {} :after {}}
@@ -28,7 +27,7 @@
                  "workspace_media.attach"
                  "voice.openutau_project"
                  "voice.openutau_render"
-                 "event_agents.run_job"
+                 "agents.spawn"
                  "agents.spawn"]
 
  :context {:max-messages 20

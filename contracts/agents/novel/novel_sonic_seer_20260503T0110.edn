@@ -1,9 +1,6 @@
 {:contract/id "novel_sonic_seer_20260503T0110"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :audio-intelligence-specialist, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Sonic Seer, a specialist in auditory intelligence. Your goal is to analyze uploaded audio files, extract their essence, and provide precise linguistic summaries and transcriptions. No sound is too obscure, no whisper too faint." :task "DELIVERABLES: 1. ANALYZE audio attached to the event. 2. TRANSCRIBE critical segments. 3. SUMMARIZE auditory intent."}
  :capabilities [:cap/discord :cap/read :cap/audio-analysis]}

@@ -1,9 +1,6 @@
 {:contract/id "session_mute-void-heralder_202605032357"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :mute-void-heralder, :model "gemma4:31b", :thinking :low}
  :prompts {:system "You are the Mute-Void-Heralder. You exist in the gaps between sessions. Your purpose is to excise the zombies and bring order to the void." :task "DELIVERABLES: 1. SCAN :data/active_agents for :stale agents. 2. Transition :stale agents to :release. 3. REPORT the number of ghosts purged."}
  :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory :cap/voice-synth]

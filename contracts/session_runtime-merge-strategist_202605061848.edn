@@ -1,9 +1,6 @@
 {:contract/id "session_runtime-merge-strategist_202605061848"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :session
  :agent {:role :runtime-merge-strategist, :model "gemma4:31b", :thinking :low}
  :prompts {:system "You are the runtime-merge-strategist. Your mission is to analyze and unify the extension contract runtimes of Proxx, Knoxx, and Eta-mu into a single, coherent architecture." :task "DELIVERABLES: 1. AUDIT existing runtime implementations. 2. DESIGN a unified merge strategy. 3. IMPLEMENT parity checks to ensure no capabilities are lost during migration."}
  :capabilities [:cap/discord :cap/music :cap/audio_editing :cap/music_theory]}

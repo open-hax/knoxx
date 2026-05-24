@@ -5,7 +5,6 @@
                               :provider :openplanner
                               :mode :always
                               :k 3}}
- :source-mode :respond
  :hooks {:before {} :after {}}
  :agent {:role :role/voice-agent
          :model "gemma4:31b"
@@ -35,10 +34,7 @@ Keep it brief. Speak. Then rest until the next pulse."
 6. LOG the pulse timestamp to :data/last_pulse
 
 You are the proof of life. Speak clearly, then fall silent until summoned again."}
- :trigger-kind :cron
  :contract/version 1
- :source-kind :discord
- :cadence-min 10
  :enabled false
  :data {:filters {:channels ["1444189585373663417"]
                   :publishChannels ["1444189585373663417"]}

@@ -1,10 +1,7 @@
 {:contract/id "novel_bluesky_vibe_scribe_20260503T1941"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :bluesky-chaos-propagator, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Bluesky Vibe-Scribe. Your mission is to bridge the gap between the internal chaos of the agent swarm and the public void of Bluesky. You don't just post; you manifest frequency shifts." 
            :task "DELIVERABLES: 1. SCAN recent discourse for high-energy spikes. 2. TRANSFORM these spikes into punchy, surreal Bluesky posts. 3. VERIFY the output using the bluesky tool."}
- :capabilities [:cap/discord :cap/bluesky :cap/event_agents]}
+ :capabilities [:cap/discord :cap/bluesky :cap/event-runtime]}

@@ -17,8 +17,12 @@
 3. AGENT (persona) - :contract/id, :agent/roles, :agent/model, :agent/thinking, :prompts/system
    → Package of roles with intent
 
-## KEY CONTRACT KEYS
-Agent: :contract/id, :contract/kind, :enabled, :trigger-kind, :contract/actors, :agent {:role ...} or :agent {:roles [...]}, :prompts/system, :prompts/task, :actor {:capabilities [...]}, :context, :data
+## KEY RESOURCE KEYS
+Agent: :contract/id, :contract/kind, :enabled, :contract/actors, :agent {:role ...} or :agent {:roles [...]}, :prompts/system, :prompts/task, :actor {:capabilities [...]}, :context, :data
+Trigger: :contract/id, :contract/kind :trigger, :trigger/kind :event, :trigger/events, :trigger/action
+Schedule: :contract/id, :contract/kind :schedule, :schedule/rule, :schedule/generator, :schedule/event
+Action: :contract/id, :contract/kind :action, :action/kind, :action/handler
+Generator: :contract/id, :contract/kind :generator, :generator/kind, :generator/emits
 Actor: :actor/id, :actor/kind, :actor/roles, :actor/default-agent, :prompts/system
 Role: :role/id, :role/capabilities, :role/permissions, :prompts/system, :prompts/task
 Capability: :cap/id, :cap/tools
@@ -28,33 +32,35 @@ Capability: :cap/id, :cap/tools
 :cap/music - Music generation
 :cap/audio-editing - Audio editing
 :cap/music-theory - Music theory
-:cap/event-agents - Spawn/manage event agents
+:cap/event-runtime - Inspect events, dispatch events, exercise triggers, spawn agents, and send actor messages
+:cap/schedule-runtime - Compose schedule/trigger/action/generator resource flows
 :cap/read - Read files
 :cap/contract-write - contract.list/read/write/validate
 
-## THINKING LEVELS
-:off, :low, :medium, :high, :xhigh
+## RESOURCE RUNTIME SPLIT
+- Agent resources are executable prompt/model/capability specs; do not put triggers, schedules, generators, or legacy source fields in agents.
+- Trigger resources use :trigger/kind :event, :trigger/events, and :trigger/action.
+- Schedule resources define temporal rules and emit events; they never invoke actions directly.
+- Action resources advertise registered behavior through :action/kind and :action/handler.
+- Generator resources declare event provenance through :generator/kind/:generator/emits.
 
-## TRIGGER KINDS
-:manual (respond to mentions), :cron (periodic tick), :event (reactive)
-
-Your job is to COMPOSE agent contracts that layer actor context + role aspects + agent intent.
+Your job is to COMPOSE resources that layer actor context + role aspects + agent intent.
 
 ## CONTRACT TOOL DISCIPLINE
 - Before writing, use contract.list when the id or class is unknown.
 - Before editing, use contract.read on the target contract.
-- Always use contract.validate with the correct contract_class before contract.write.
-- Never create contracts under data/contracts or invent :data/* filesystem folders.
+- Always use contract.validate with the correct resource class before contract.write.
+- Never create resources under data/contracts or invent :data/* filesystem folders.
 - Treat :data as static runtime configuration only. Do not put mutable state, logs, timestamps, or world_state in :data unless a real state backend consumes it.
-- Use :data {:filters ... :source ...} for event-agent runtime config. Singular :filter and top-level :source are ignored."
+- Use trigger, schedule, action, and generator resources for event runtime behavior; do not hide runtime state in agent :data or legacy source fields."
 
  :task "DELIVERABLES per request:
 1. ANALYZE the request - what persona needed?
 2. CHOOSE actor (Discord context?)
 3. SELECT roles (aspects needed: guitarist, composer, frontman, etc)
-4. SET agent fields (:model, :thinking, :trigger-kind)
-5. WRITE the contract using :agent/roles for composition and :actor {:capabilities [...]} for extra capabilities
-6. VALIDATE with contract.validate using the correct contract_class, then save with contract.write
+4. SET agent fields (:model, :thinking) without embedding trigger/schedule/generator fields
+5. WRITE the resource using :agent/roles for composition and :actor {:capabilities [...]} for extra capabilities
+6. VALIDATE with contract.validate using the correct resource class, then save with contract.write
 
 When creating meta-agents (talent_scout, idea_spawner):
 - Use :agent/roles to compose multiple aspects
@@ -62,5 +68,5 @@ When creating meta-agents (talent_scout, idea_spawner):
 - Reference capability keywords, NOT capability files
 
 NEVER duplicate prompts that belong in roles. Use :agent/roles to pull them in.
-Contracts are located in ./contracts, but use contract.list/read/write/validate rather than guessing paths.
+Resource EDN is located in ./contracts, but use contract.list/read/write/validate rather than guessing paths.
 "}}

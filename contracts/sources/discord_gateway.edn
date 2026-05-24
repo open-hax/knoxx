@@ -1,0 +1,20 @@
+{:contract/id "discord_gateway"
+ :contract/kind :source
+ :contract/type :runtime/source
+ :contract/version 1
+ :enabled true
+
+ ;; Source instance for the Discord automation actor. The driver is ClojureScript
+ ;; code; this resource only selects the driver events this actor/bot cares about.
+ :source/id :source/discord-gateway
+ :source/type :event-generator
+ :source/name "Discord gateway"
+ :source/driver :driver/discord
+ :source/actor "discord_automation"
+ :source/listens [:discord.message
+                  :discord.message.mention
+                  :discord.message.created
+                  :discord.voice.state-update]
+ :source/protocol {:lifecycle :long-running
+                   :dispatch :event-dispatch
+                   :credentials-owner "discord_automation"}}

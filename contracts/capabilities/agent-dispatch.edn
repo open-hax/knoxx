@@ -3,5 +3,5 @@
  :cap/user-surfaces [{:surface/id :workspace/agent-dispatcher
                       :surface/label "Agent dispatcher"
                       :surface/kind :dispatcher
-                      :surface/routes ["/agents" "/ops/event-agents"]
+                      :surface/routes ["/agents" "/events"]
                       :surface/description "Capability to launch one-off specialized agent runs across the ensemble."}]}

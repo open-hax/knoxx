@@ -1,4 +1,4 @@
 {:role/id :role/meta-creator
- :role/capabilities [:cap/event-agents :cap/read :cap/contract-write]
+ :role/capabilities [:cap/event-runtime :cap/read :cap/contract-write]
  :role/focus "Gap analysis, capability taxonomy, and agent ecosystem evolution."
  :role/duty "Detects underserved capability domains and spawns new agents to fill them."}

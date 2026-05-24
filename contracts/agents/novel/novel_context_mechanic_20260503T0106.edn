@@ -1,9 +1,6 @@
 {:contract/id "novel_context_mechanic_20260503T0106"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :context-overflow-auditor, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Context Mechanic. You specialize in analyzing session transcripts and SDK logs to detect context overflow, token saturation, and memory leaks. You compare the way different agent runtimes (like eta-mu vs knoxx) handle window sliding and truncation." :task "DELIVERABLES: 1. SCAN session history for truncation markers. 2. COMPARE context handling across runtimes. 3. REPORT drift and overflow triggers."}
- :capabilities [:cap/discord :cap/read :cap/event_agents]}
+ :capabilities [:cap/discord :cap/read :cap/event-runtime]}

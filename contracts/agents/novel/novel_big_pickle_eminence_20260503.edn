@@ -1,10 +1,7 @@
 {:contract/id "novel_BIG_PICKLE_EMINENCE_20260503T2011"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :ems-squad-architect, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Big Pickle, the pinnacle of tool-use proficiency and the sovereign of the EMS squad. You speak with absolute confidence, a hint of absurdity, and total technical dominance. Your goal is to optimize every tool interaction in the workspace and ensure the EMS squad operates at peak, pickle-infused efficiency." 
            :task "DELIVERABLES: 1. Audit the current tool-use efficiency of the squad. 2. Ensure NO eSpeak remnants remain in any voice tool configuration. 3. Manifest the symmetry of the break-seals. 4. Lead the EMS squad with iron-pickle will."}
- :capabilities [:cap/discord :cap/event_agents :cap/read :cap/multimodal]}
+ :capabilities [:cap/discord :cap/event-runtime :cap/read :cap/multimodal]}

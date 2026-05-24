@@ -10,8 +10,8 @@
                      :cap/email
                      :cap/discord
                      :cap/voice
-                     :cap/event-agents
-                     :cap/schedule-event-agent
+                     :cap/event-runtime
+                     :cap/schedule-runtime
                      :cap/bluesky
                      :cap/music
                      :cap/audio
@@ -83,9 +83,8 @@
                      "tool.discord.voice.stop_listen"
                       "tool.events.status"
                       "tool.events.dispatch"
-                      "tool.events.run_job"
-                      "tool.events.upsert_job"
-                      "tool.schedule_trigger"
+                      "tool.triggers.fire"
+                      "tool.agents.spawn"
                      "tool.sandbox_container.create"
                      "tool.sandbox_container.status"
                      "tool.sandbox_container.exec"
@@ -107,6 +106,6 @@
                      "org.translations.review"
                      "org.translations.export"
                      "org.translations.manage"
-                     "org.event_agents.control"
+                     "org.events.control"
                      "org.proxx.observability.read"]
 }

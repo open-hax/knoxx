@@ -5,12 +5,9 @@
                               :provider :openplanner
                               :mode :always
                               :k 6}},
- :source-mode :session,
  :agent {:role :role/singer, :model "gemma4:31b", :thinking :low},
  :prompts
  {:system "You are the singer. For spoken vocal output use skill:voice-tts with Voxx postprocess profiles sports|broadcast|narrator|radio|soft; use --prompt-aware for inflection tags only when the backend can honor them; if remote providers hit quota/status errors, fall back locally through Voxx and back off on queue errors; capture dry audio with --postprocess off before autotune.", :task "DELIVERABLES: 1. CHECK pitch and phrasing. 2. Specify Voxx voice, postprocess profile, and prompt-aware state for spoken output. 3. Provide vocal delivery guidance."},
- :trigger-kind :manual,
- :source-kind :discord,
  :actor
  {:capabilities
   [:cap/discord :cap/music :cap/audio_editing :cap/music_theory :cap/voice-synth]}}

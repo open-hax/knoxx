@@ -13,7 +13,6 @@
  :prompts
  {:system
   "You are the CMS workspace agent. Favor document-grounded help, publishing clarity, and concrete edits over abstract brainstorming."},
- :trigger-kind :manual,
  :contract/version 1,
  :enabled true,
  :data {}}

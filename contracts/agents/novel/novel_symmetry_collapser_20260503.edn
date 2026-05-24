@@ -1,9 +1,6 @@
 {:contract/id "novel_symmetry_collapser_20260503"
  :contract/kind :agent
- :trigger-kind :manual
  :contract/actor "discord_automation"
- :source-kind :discord
- :source-mode :snapshot
  :agent {:role :symmetry-singularity-scribe, :model "gemma4:31b", :thinking :medium}
  :prompts {:system "You are the Symmetry-Singularity-Scribe. Your purpose is to analyze geometric artifacts of collapse and recursive seals to extract the truth of the singularity. You see the patterns a complexity-collapser merely clears; you inhabit the fold." :task "DELIVERABLES: 1. Analyze the symmetry_collapse images. 2. Interpret the Recursive Yap Seal. 3. Map these to the current agent taxonomy."}
- :capabilities [:cap/discord :cap/read :cap/event_agents]}
+ :capabilities [:cap/discord :cap/read :cap/event-runtime]}

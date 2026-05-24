@@ -10,13 +10,13 @@
    This is NOT the default ASR voice path.
 
    Invariants:
-   - Only agents/contracts that explicitly hold :cap/voice-audio-event receive these tools.
-   - The event source emits real event-agent events of kind discord.voice.audio.window.
-   - The event source does not call a model provider directly and does not steer a running session.
-   - Matching event-agent contracts decide whether to speak, remember, or stay silent.
+   - Only agents/resources that explicitly hold :cap/voice-audio-event receive these tools.
+   - The event generator emits real dispatch events of type discord.voice.audio.window.
+   - The event generator does not call a model provider directly and does not steer a running session.
+   - Matching trigger resources decide whether to speak, remember, or stay silent by requesting actions.
    - Use discord.voice.say only from an active voice event/listen session."
  :cap/user-surfaces [{:surface/id :workspace/voice-audio-events
-                      :surface/label "Voice audio event source"
+                      :surface/label "Voice audio events"
                       :surface/kind :admin-console
-                      :surface/routes ["/event-agents" "/voice"]
-                      :surface/description "Contract-gated raw Discord audio event source for event-agent voice perception."}]}
+                      :surface/routes ["/events" "/voice"]
+                      :surface/description "Contract-gated raw Discord audio event generator for voice perception triggers."}]}
