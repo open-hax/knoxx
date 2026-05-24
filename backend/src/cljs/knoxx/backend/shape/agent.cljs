@@ -84,6 +84,10 @@
     "A seq of the session's message history as JS objects.
      Individual message structure is eta-mu's internal format;
      use infra.agent.transcript functions to convert.")
+  (subscribe! [s handler]
+    "Subscribe to provider stream events. Returns an unsubscribe function.")
+  (send-user-message! [s content]
+    "Send a user prompt/content payload to the provider session. Returns a Promise.")
   (follow-up! [s message]
     "Queue a follow-up message into the running turn. Returns a Promise.")
   (steer! [s message]

@@ -209,6 +209,8 @@
   (current-turn        [_]   (aget raw "currentTurn"))
   (messages            [_]   (let [msgs (aget raw "messages")]
                                (when (array? msgs) (array-seq msgs))))
+  (subscribe!          [_ h] (.subscribe raw h))
+  (send-user-message!  [_ c] (.sendUserMessage raw c))
   (follow-up!          [_ m] (.followUp raw m))
   (steer!              [_ m] (.steer raw m))
   (set-thinking-level! [_ l] (.setThinkingLevel raw l)))
@@ -225,23 +227,24 @@
    (->EtaMuSession raw-session)))
 
 (defn create-session!
-  "Create and wrap an eta-mu agent session from CLJS options."
+  "Create and wrap an eta-mu agent session from CLJS options. Returns a Promise
+   because the eta-mu SDK creates sessions asynchronously."
   [opts]
   (let [create-agent-session (create-agent-session-fn)
         runtime-dir-value    (or (:runtime-dir opts) (runtime-dir))
-        raw                  (-> (create-agent-session
-                                  #js {:cwd (:workspace-root opts)
-                                       :agentDir runtime-dir-value
-                                       :authStorage (:auth-storage opts)
-                                       :modelRegistry (:model-registry opts)
-                                       :resourceLoader (:loader opts)
-                                       :settingsManager (:settings-manager opts)
-                                       :sessionManager (:session-manager opts)
-                                       :model (:model opts)
-                                       :thinkingLevel (:thinking-level opts)
-                                       :tools (clj->js (or (:tool-name-allowlist opts) []))
-                                       :customTools (:custom-tools opts)})
-                                 (aget "session"))
         hook                 (when-let [materialize! (:materialize! opts)]
                                (media-materialize-hook materialize!))]
-    (wrap-eta-mu-session raw hook)))
+    (-> (create-agent-session
+         #js {:cwd (:workspace-root opts)
+              :agentDir runtime-dir-value
+              :authStorage (:auth-storage opts)
+              :modelRegistry (:model-registry opts)
+              :resourceLoader (:loader opts)
+              :settingsManager (:settings-manager opts)
+              :sessionManager (:session-manager opts)
+              :model (:model opts)
+              :thinkingLevel (:thinking-level opts)
+              :tools (clj->js (or (:tool-name-allowlist opts) []))
+              :customTools (:custom-tools opts)})
+        (.then (fn [created]
+                 (wrap-eta-mu-session (aget created "session") hook))))))

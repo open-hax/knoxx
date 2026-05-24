@@ -2,7 +2,7 @@
   "Generic cron/ticker helpers for the events runtime.
 
    These helpers are parameterized over state atoms and callback functions so
-   the legacy event-agents namespace can delegate to them while internals are
+   the legacy event runtimes namespace can delegate to them while internals are
    extracted incrementally.")
 
 (defn- env-positive-int

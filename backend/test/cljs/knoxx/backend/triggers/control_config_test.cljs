@@ -78,10 +78,23 @@
     :generator/kind "cron"
     :generator/emits [:schedule.tick]}))
 
+(def source-resource
+  (resource-record
+   "sources"
+   "discord_gateway"
+   {:contract/id "discord_gateway"
+    :contract/kind :source
+    :enabled true
+    :source/id :source/discord-gateway
+    :source/type :event-generator
+    :source/driver :driver/discord
+    :source/actor "discord_automation"
+    :source/listens [:discord.message]}))
+
 (deftest event-control-config-keeps-runtime-resources-separate
   (with-redefs [resource-loader/load-all-resources-sync
                 (fn [_]
-                  [plain-agent-resource trigger-resource action-resource schedule-resource generator-resource])]
+                  [plain-agent-resource trigger-resource action-resource schedule-resource generator-resource source-resource])]
     (let [control (control-config/event-control-config {})]
       (testing "runtime concepts are flat resource tables, not synthesized jobs"
         (is (nil? (:jobs control)))
@@ -90,12 +103,14 @@
         (is (= ["start_agent_session"] (mapv :id (get-in control [:resources :action]))))
         (is (= ["half_hour_tick"] (mapv :id (get-in control [:resources :schedule]))))
         (is (= ["cron_generator"] (mapv :id (get-in control [:resources :generator]))))
+        (is (= ["discord_gateway"] (mapv :id (get-in control [:resources :source]))))
         (is (= {:agent ["plain_agent"]
                 :actor []
                 :action ["start_agent_session"]
                 :trigger ["message_reply_trigger"]
                 :schedule ["half_hour_tick"]
-                :generator ["cron_generator"]}
+                :generator ["cron_generator"]
+                :source ["discord_gateway"]}
                (get-in control [:catalog :catalog/resources]))))
       (testing "separate resource tables are admissible when they keep their responsibilities"
         (is (true? (get-in control [:admissibility :ok?])))
@@ -133,6 +148,6 @@
                  (into #{} (map :violation/kind) violations))))))))
 
 (deftest event-control-options-use-generator-vocabulary
-  (with-redefs [resource-loader/load-all-resources-sync (fn [_] [generator-resource])]
-    (is (= ["cron"] (control-config/event-generator-kind-options {})))
+  (with-redefs [resource-loader/load-all-resources-sync (fn [_] [generator-resource source-resource])]
+    (is (= ["cron" "event-generator"] (control-config/event-generator-kind-options {})))
     (is (= ["event"] (control-config/event-trigger-kind-options)))))

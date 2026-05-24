@@ -4,7 +4,7 @@
    Contracts are filesystem/editor-authored and may contain EDN list forms such as
    (template {:separator \" \"} [...]).  This namespace evaluates a small,
    deterministic ClojureScript-like data DSL against a runtime context and keeps
-   the old event-agent job helper surface only as compatibility plumbing."
+   the old legacy runtime job helper surface only as compatibility plumbing."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.config :as runtime-config]
             [knoxx.backend.infra.defaults :as defaults]))
@@ -552,8 +552,8 @@
    {:toolId "graph_query" :effect "allow"}])
 
 (defn instantiate-job
-  "Create a concrete event-agent job from a legacy template. Prefer agent
-   contracts with :trigger-kind/:source-kind instead."
+  "Create a concrete legacy runtime job from a legacy template. Prefer explicit
+   agent, trigger, schedule, action, and generator resources instead."
   [template-id job-id trigger source filters & [overrides]]
   (let [agent-spec (resolve-template-spec template-id overrides)]
     {:id job-id

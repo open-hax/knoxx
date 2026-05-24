@@ -4,8 +4,9 @@
    All queries are HoneySQL maps built in shape.db.*; this namespace
    executes them via extern.pg and exposes a CLJS-typed public surface.
 
-   create-policy-db returns a Promise<pg-pool | nil>. Callers hold the pool
-   and call the public functions in this namespace directly."
+   create-policy-db returns a Promise<CLJS policy context | nil>. The context
+   is plain CLJS data whose :pool value is an opaque pg Pool handle owned by
+   extern.pg. Public functions take that pool/context and return CLJS maps."
   (:require [clojure.string :as str]
             [honey.sql :as sql]
             [honey.sql.helpers :as h]
@@ -206,7 +207,7 @@
                   risk_level = EXCLUDED.risk_level"
              [tid (or label tid) (or description "") (or risk-level "low")])))))))
 
-(defn- set-role-tool-policies! [pool role-id tool-policies]
+(defn set-role-tool-policies! [pool role-id tool-policies]
   (pg/with-transaction!
    pool
    (fn [client]
@@ -288,7 +289,7 @@
                                 (q-memberships/insert-role membership-id role-id))))))
                   (.then (fn [_] resolved-ids))))))))))
 
-(defn- set-membership-tool-policies! [pool membership-id tool-policies]
+(defn set-membership-tool-policies! [pool membership-id tool-policies]
   (pg/with-transaction!
    pool
    (fn [client]
@@ -581,22 +582,26 @@
                                                                        tool-policies)))))))))))))))
        (.then (fn [_] nil))))
 
-(defn- ensure-primary-org! [pool {:keys [primary-org-slug primary-org-name primary-org-kind]
-                                   :or {primary-org-slug "open-hax"
-                                        primary-org-name "Open Hax"
-                                        primary-org-kind "platform_owner"}}]
+(defn- ensure-primary-org! [pool opts]
+  (let [primary-org-slug (or (:primaryOrgSlug opts) (:primary-org-slug opts) "open-hax")
+        primary-org-name (or (:primaryOrgName opts) (:primary-org-name opts) "Open Hax")
+        primary-org-kind (or (:primaryOrgKind opts) (:primary-org-kind opts) "platform_owner")]
   (let [slug (slugify primary-org-slug "open-hax")
         name (str primary-org-name)
         kind (str primary-org-kind)]
     (-> (honey-query-one! pool (q-orgs/upsert-primary {:slug slug :name name :kind kind}))
         (.then (fn [org]
                  (.then (honey-query! pool (q-orgs/clear-primary-except slug))
-                        (fn [_] org)))))))
+                        (fn [_] org))))))))
 
 (defn- ensure-bootstrap-user! [pool primary-org opts]
   (let [email (str/lower-case
-               (str (or (:bootstrap-system-admin-email opts) "system-admin@open-hax.local")))
-        dn    (str (or (:bootstrap-system-admin-name opts) "Knoxx System Admin"))]
+               (str (or (:bootstrapSystemAdminEmail opts)
+                        (:bootstrap-system-admin-email opts)
+                        "system-admin@open-hax.local")))
+        dn    (str (or (:bootstrapSystemAdminName opts)
+                       (:bootstrap-system-admin-name opts)
+                       "Knoxx System Admin"))]
     (-> (honey-query-one! pool (q-users/upsert {:email email :display-name dn
                                                  :auth-provider "bootstrap"
                                                  :external-subject nil :status "active"}))
@@ -687,8 +692,7 @@
                   :allowed (boolean (and match (= (:effect match) "allow")))})))))
 
 (defn list-actor-credentials!
-  "Return active actor credential rows for provider as {:credentials [...]}.
-   Matches the shape callers expect (cf. old policy-db JS facade)."
+  "Return active actor credential rows for provider as {:credentials [...]}."
   [pool provider]
   (-> (policy/list-actor-credentials (sql-policy-store pool nil) provider)
       (.then (fn [creds] {:credentials creds}))))
@@ -1130,15 +1134,209 @@
   [pool primary-org opts]
   (sync-user-from-actor-contract!* pool primary-org opts))
 
+(defn recover-session-secret!
+  "Load the session secret from knoxx_config, generating and persisting one if absent.
+   Returns Promise<string>."
+  [pool]
+  (-> (pg/query! pool "SELECT value FROM knoxx_config WHERE key = 'session_secret'" nil)
+      (.then (fn [{:keys [rows]}]
+               (if-let [stored (:value (first rows))]
+                 (do (.log js/console "[knoxx-session] Recovered session secret from database")
+                     stored)
+                 (let [new-secret (.toString (.randomBytes crypto 32) "hex")]
+                   (-> (pg/query! pool
+                         "INSERT INTO knoxx_config (key, value) VALUES ('session_secret', $1)
+                          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+                         [new-secret])
+                       (.then (fn [_]
+                                (.log js/console "[knoxx-session] Generated and persisted session secret")
+                                new-secret)))))))))
+
+(defn update-user-actor!
+  "Update a membership's actor-id and optionally its roles."
+  [pool uid mid user-id {:keys [org-id actor-id role-slugs]}]
+  (-> (honey-query-one! pool (q-memberships/by-user-and-org user-id org-id))
+      (.then (fn [ms]
+               (if-not ms
+                 (js/Promise.reject (js/Error. "membership not found"))
+                 (let [membership-id (:id ms)
+                       resolved-actor (or (normalize-actor-id actor-id)
+                                          (normalize-actor-id (:actor_id ms))
+                                          (default-membership-actor-id (or role-slugs [])))]
+                   (-> (if (seq role-slugs)
+                         (set-membership-roles! pool membership-id
+                                                {:org-id org-id :role-slugs role-slugs :replace true})
+                         (js/Promise.resolve nil))
+                       (.then (fn [_] (set-membership-actor-id! pool membership-id resolved-actor)))
+                       (.then (fn [_]
+                                (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                                     :org-id org-id :action "user.update_actor"
+                                                     :resource-kind "user" :resource-id user-id})))
+                       (.then (fn [_] {:ok true})))))))))
+
+(defn upsert-actor-credential!
+  "Upsert an actor credential by user-id + org-id + provider."
+  [pool _uid _mid user-id {:keys [org-id provider kind account-identifier secret-json status]}]
+  (-> (honey-query-one! pool (q-memberships/by-user-and-org user-id org-id))
+      (.then (fn [ms]
+               (if-not ms
+                 (js/Promise.reject (js/Error. "actor membership not found"))
+                 (pg/query-one! pool
+                   "INSERT INTO actor_credentials
+                      (user_id, org_id, provider, kind, account_identifier, secret_json, status)
+                    VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7)
+                    ON CONFLICT (user_id, org_id, provider, kind) DO UPDATE SET
+                      account_identifier = COALESCE(EXCLUDED.account_identifier,
+                                                    actor_credentials.account_identifier),
+                      secret_json        = actor_credentials.secret_json || EXCLUDED.secret_json,
+                      status             = EXCLUDED.status,
+                      updated_at         = NOW()
+                    RETURNING *"
+                   [user-id org-id provider (or kind "credential") account-identifier
+                    (js/JSON.stringify (clj->js (or secret-json {})))
+                    (or status "active")]))))
+      (.then (fn [row]
+               {:credential (when row
+                               {:id                 (:id row)
+                                :user-id            (:user_id row)
+                                :org-id             (:org_id row)
+                                :provider           (:provider row)
+                                :kind               (:kind row)
+                                :account-identifier (:account_identifier row)
+                                :status             (:status row)})}))))
+
+;; ---------------------------------------------------------------------------
+;; Policy context helpers
+;; ---------------------------------------------------------------------------
+
+(defn context-pool [policy-context] (:pool policy-context))
+(defn configured? [policy-context] (boolean (or (:pool policy-context) (:query! policy-context))))
+(defn context-primary-org [policy-context] (:primary-org policy-context))
+(defn context-bootstrap [policy-context] (:bootstrap policy-context))
+(defn context-actor-user-id [policy-context] (:bootstrap-user-id policy-context))
+(defn context-actor-membership-id [policy-context] (:bootstrap-membership-id policy-context))
+
+(defn close!
+  [policy-context]
+  (when-let [pool (context-pool policy-context)]
+    (pg/end-pool! pool)))
+
+(defn query!
+  "Transitional raw-query entrypoint for legacy routes. Prefer named policy DB
+   functions backed by shape.db query builders."
+  [policy-context sql-str params]
+  (cond
+    (:query! policy-context)
+    ((:query! policy-context) sql-str params)
+
+    (context-pool policy-context)
+    (pg/query! (context-pool policy-context) sql-str params)
+
+    :else
+    (js/Promise.resolve nil)))
+
+(defn bootstrap-context!
+  [policy-context]
+  (if-let [f (:bootstrap-context! policy-context)]
+    (f)
+    (get-bootstrap-context! (context-pool policy-context)
+                            (context-primary-org policy-context)
+                            (context-bootstrap policy-context))))
+
+(defn resolve-context!
+  [policy-context headers-like]
+  (if-let [f (:resolve-context! policy-context)]
+    (f headers-like)
+    (resolve-request-context! (context-pool policy-context) headers-like)))
+
+(defn sync-actor-contracts-for-context!
+  [policy-context]
+  (if-let [f (:sync-actor-contracts! policy-context)]
+    (f)
+    (sync-actor-contracts! (context-pool policy-context)
+                           (context-primary-org policy-context))))
+
+(defn sync-user-from-actor-contract-for-context!
+  [policy-context opts]
+  (if-let [f (:sync-user-from-actor-contract! policy-context)]
+    (f opts)
+    (sync-user-from-actor-contract! (context-pool policy-context)
+                                    (context-primary-org policy-context)
+                                    opts)))
+
+(defn create-user-for-context!
+  [policy-context payload]
+  (create-user! (context-pool policy-context)
+                (context-actor-user-id policy-context)
+                (context-actor-membership-id policy-context)
+                payload))
+
+(defn create-invite-for-context!
+  [policy-context payload]
+  (create-invite! (context-pool policy-context)
+                  (context-actor-user-id policy-context)
+                  (context-actor-membership-id policy-context)
+                  payload))
+
+(defn create-org-for-context!
+  [policy-context payload]
+  (create-org! (context-pool policy-context)
+               (context-actor-user-id policy-context)
+               (context-actor-membership-id policy-context)
+               payload))
+
+(defn create-role-for-context!
+  [policy-context payload]
+  (create-role! (context-pool policy-context)
+                (context-actor-user-id policy-context)
+                (context-actor-membership-id policy-context)
+                payload))
+
+(defn create-data-lake-for-context!
+  [policy-context payload]
+  (create-data-lake! (context-pool policy-context)
+                     (context-actor-user-id policy-context)
+                     (context-actor-membership-id policy-context)
+                     payload))
+
+(defn set-membership-roles-for-context!
+  [policy-context membership-id payload]
+  (set-membership-roles-public! (context-pool policy-context)
+                                (context-actor-user-id policy-context)
+                                (context-actor-membership-id policy-context)
+                                membership-id
+                                payload))
+
+(defn update-user-actor-for-context!
+  [policy-context user-id payload]
+  (update-user-actor! (context-pool policy-context)
+                      (context-actor-user-id policy-context)
+                      (context-actor-membership-id policy-context)
+                      user-id
+                      payload))
+
+(defn upsert-actor-credential-for-context!
+  [policy-context user-id payload]
+  (upsert-actor-credential! (context-pool policy-context)
+                            (context-actor-user-id policy-context)
+                            (context-actor-membership-id policy-context)
+                            user-id
+                            payload))
+
+(defn get-actor-credential!
+  [policy-context actor-id provider]
+  (-> (policy/get-actor-credential (sql-policy-store (context-pool policy-context)
+                                                     (context-primary-org policy-context))
+                                   actor-id
+                                   provider)
+      (.then (fn [credential] {:credential credential}))))
+
 ;; ---------------------------------------------------------------------------
 ;; Initialisation
 ;; ---------------------------------------------------------------------------
 
 (defn create-policy-db
-  "Initialise the policy DB. Returns Promise<pg-pool | nil>.
-
-   On success the returned pool is stored by callers (e.g. lifecycle.cljs)
-   and passed to every public function in this namespace."
+  "Initialise the policy DB. Returns Promise<CLJS policy context | nil>."
   [options]
   (let [opts       (if (map? options)
                      options
@@ -1166,7 +1364,7 @@
                   (-> (sync-contract-role-projections! pool)
                       (.then (fn [_] (ensure-bootstrap-user! pool primary-org opts)))
                       (.then (fn [bootstrap]
-                               (-> (if (seq (:bootstrap-allowlist-emails opts))
+                               (-> (if (seq (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts)))
                                      (ensure-bootstrap-allowlist-users! pool primary-org opts)
                                      (js/Promise.resolve nil))
                                    (.catch (fn [err]
@@ -1186,15 +1384,19 @@
                                    (.then (fn [_] bootstrap)))))
                       (.then (fn [bootstrap]
                                (.catch (cleanup-expired-sessions! pool) (fn [_] nil))
-                               (resolve pool)
+                               (resolve {:pool pool
+                                         :primary-org primary-org
+                                         :bootstrap bootstrap
+                                         :bootstrap-user-id (get-in bootstrap [:user :id])
+                                         :bootstrap-membership-id (get-in bootstrap [:membership :id])})
                                bootstrap)))))
                (.catch reject))))))))
 
 (defn- ensure-bootstrap-allowlist-users! [pool primary-org opts]
-  (let [raw-emails (or (:bootstrap-allowlist-emails opts) "")
+  (let [raw-emails (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts) "")
         emails     (->> (str/split (str raw-emails) #"[\s,]+")
                         (map str/trim) (remove str/blank?) (map str/lower-case) distinct vec)
-        raw-roles  (or (:bootstrap-allowlist-role-slugs opts) "")
+        raw-roles  (or (:bootstrapAllowlistRoleSlugs opts) (:bootstrap-allowlist-role-slugs opts) "")
         role-slugs (->> (str/split (str raw-roles) #"[\s,]+")
                         (map str/trim) (remove str/blank?) distinct vec)
         role-slugs (if (seq role-slugs) role-slugs ["knowledge_worker"])

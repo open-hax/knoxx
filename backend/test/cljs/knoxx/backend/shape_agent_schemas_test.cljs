@@ -35,6 +35,28 @@
       (is (m/validate agent/AgentRequestSpec (:agent-spec body)))
       (is (= :image (get-in body [:content-parts 0 :type]))))))
 
+(deftest normalized-chat-body-accepts-cljs-request-maps
+  (testing "Fastify request-body normalizes JS bodies into CLJS maps before app-shape parsing"
+    (let [body (app-shapes/normalize-chat-body
+                {:message "hello from cljs map"
+                 :conversation-id "conv-map"
+                 :session-id "sess-map"
+                 :run-id "run-map"
+                 :thinking-level "low"
+                 :content-parts [{:type "text" :text "attached text"}]
+                 :template-context {:topic "maps"}
+                 :auth-context {:user-id "user-map"}
+                 :agent-spec {:actor-id "actor-map"}})]
+      (is (= "hello from cljs map" (:message body)))
+      (is (= "conv-map" (:conversation-id body)))
+      (is (= "sess-map" (:session-id body)))
+      (is (= "run-map" (:run-id body)))
+      (is (= "low" (:thinking-level body)))
+      (is (= "attached text" (get-in body [:content-parts 0 :text])))
+      (is (= {:topic "maps"} (:template-context body)))
+      (is (= {:user-id "user-map"} (:auth-context body)))
+      (is (= "actor-map" (get-in body [:agent-spec :actor-id]))))))
+
 (deftest normalized-control-body-validates
   (testing "normalize-control-body output has an explicit control shape"
     (let [body (app-shapes/normalize-control-body

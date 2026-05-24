@@ -74,16 +74,15 @@
 
 (deftest resolve-actor-session-reads-latest-active-route
   (async done
-    (let [runtime #js {"policyDb"
-                       #js {"query"
-                            (fn [_sql _params]
+    (let [runtime {:policy-context
+                   {:query! (fn [_sql _params]
                               (js/Promise.resolve
-                               #js {"rows" #js [#js {"actor_id" "worker"
-                                                       "conversation_id" "conv-1"
-                                                       "session_id" "sess-1"
-                                                       "run_id" "run-1"
-                                                       "contract_id" "contract-1"
-                                                       "status" "active"}]}))}}]
+                               {:rows [{:actor_id "worker"
+                                        :conversation_id "conv-1"
+                                        :session_id "sess-1"
+                                        :run_id "run-1"
+                                        :contract_id "contract-1"
+                                        :status "active"}]}))}}]
       (-> (mailbox/resolve-actor-session! runtime "worker")
           (.then (fn [route]
                    (is (= {:actor-id "worker"

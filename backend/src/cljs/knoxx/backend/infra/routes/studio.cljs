@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.label.audio :as labels]
+            [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.routes.studio.discord-scan :as studio-discord-scan]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
@@ -79,10 +80,10 @@
             org-id (or (:org-id ctx) (some-> ctx :org :id))
             kind (or (aget request "query" "kind") "player")]
         (if (and user-id org-id)
-          (-> (.query db "SELECT state_json FROM studio_state WHERE user_id = $1 AND org_id = $2 AND kind = $3" (clj->js [user-id org-id kind]))
-              (.then (fn [res]
-                       (let [row (some-> res .-rows (aget 0))]
-                         (json-response! reply 200 {:ok true :state (if row (js->clj (.-state_json row) :keywordize-keys true) {})}))))
+          (-> (db-policy/query! db "SELECT state_json FROM studio_state WHERE user_id = $1 AND org_id = $2 AND kind = $3" [user-id org-id kind])
+              (.then (fn [{:keys [rows]}]
+                       (let [row (first rows)]
+                         (json-response! reply 200 {:ok true :state (or (:state_json row) {})}))))
               (.catch (fn [err] (json-response! reply 500 {:detail (str "Load failed: " err)}))))
           (json-response! reply 200 {:ok true :state {}})))
       (json-response! reply 200 {:ok true :state {}}))))
@@ -98,7 +99,7 @@
             kind (or (aget body "kind") "player")
             state (js->clj (or (aget body "state") (js/Object.)) :keywordize-keys true)]
         (if (and user-id org-id)
-          (-> (.query db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW() RETURNING *" (clj->js [user-id org-id kind (.stringify js/JSON (clj->js state))]))
+          (-> (db-policy/query! db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW() RETURNING *" [user-id org-id kind (.stringify js/JSON (clj->js state))])
               (.then (fn [_] (json-response! reply 200 {:ok true :saved true})))
               (.catch (fn [err] (json-response! reply 500 {:detail (str "Save failed: " err)}))))
           (json-response! reply 400 {:detail "User context required"})))
@@ -112,10 +113,10 @@
       (let [user-id (or (:user-id ctx) (some-> ctx :user :id))
             org-id (or (:org-id ctx) (some-> ctx :org :id))]
         (if (and user-id org-id)
-          (-> (.query db "SELECT state_json FROM studio_state WHERE user_id=$1 AND org_id=$2 AND kind='playlist'" (clj->js [user-id org-id]))
-              (.then (fn [res]
-                       (let [row (some-> res .-rows (aget 0))
-                             state (if row (js->clj (.-state_json row) :keywordize-keys true) {})]
+          (-> (db-policy/query! db "SELECT state_json FROM studio_state WHERE user_id=$1 AND org_id=$2 AND kind='playlist'" [user-id org-id])
+              (.then (fn [{:keys [rows]}]
+                       (let [row (first rows)
+                             state (or (:state_json row) {})]
                          (json-response! reply 200 {:ok true :playlist (or (:items state) [])}))))
               (.catch (fn [err] (json-response! reply 500 {:detail (str "Load failed: " err)}))))
           (json-response! reply 200 {:ok true :playlist []})))
@@ -131,7 +132,7 @@
             body (or (aget request "body") (js/Object.))
             items (js->clj (or (aget body "items") (js/Array.)) :keywordize-keys true)]
         (if (and user-id org-id)
-          (-> (.query db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,'playlist',$3::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW()" (clj->js [user-id org-id (.stringify js/JSON (clj->js {:items items}))]))
+          (-> (db-policy/query! db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,'playlist',$3::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW()" [user-id org-id (.stringify js/JSON (clj->js {:items items}))])
               (.then (fn [_] (json-response! reply 200 {:ok true :saved true :count (count items)})))
               (.catch (fn [err] (json-response! reply 500 {:detail (str "Save failed: " err)}))))
           (json-response! reply 400 {:detail "User context required"})))
@@ -333,16 +334,13 @@
         audio-path (aget request "query" "path")
         asset-type (aget request "query" "type")]
     (if (and audio-path asset-type)
-      (-> (.query db "SELECT image_data, mime_type, width, height FROM studio_audio_assets WHERE audio_path = $1 AND asset_type = $2" (clj->js [audio-path asset-type]))
-          (.then (fn [res]
-                   (if (.-rows res)
-                     (let [row (first (js->clj (.-rows res)))]
-                       (if row
-                         (do
-                           (.header reply "Content-Type" (get row "mime_type" "image/png"))
-                           (.header reply "Cache-Control" "public, max-age=86400")
-                           (.send reply (aget row "image_data")))
-                         (json-response! reply 404 {:detail "Asset not found"})))
+      (-> (db-policy/query! db "SELECT image_data, mime_type, width, height FROM studio_audio_assets WHERE audio_path = $1 AND asset_type = $2" [audio-path asset-type])
+          (.then (fn [{:keys [rows]}]
+                   (if-let [row (first rows)]
+                     (do
+                       (.header reply "Content-Type" (or (:mime_type row) "image/png"))
+                       (.header reply "Cache-Control" "public, max-age=86400")
+                       (.send reply (:image_data row)))
                      (json-response! reply 404 {:detail "Asset not found"}))))
           (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)}))))
       (json-response! reply 400 {:detail "Missing path or type"}))))
@@ -360,8 +358,8 @@
         height (aget body "height")]
     (if (and audio-path asset-type image-data)
       (let [buffer (js/Buffer.from image-data "base64")]
-        (-> (.query db "INSERT INTO studio_audio_assets (audio_path, asset_type, image_data, mime_type, width, height) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (audio_path, asset_type) DO UPDATE SET image_data = $3, mime_type = $4, width = $5, height = $6, created_at = NOW()"
-                    (clj->js [audio-path asset-type buffer mime-type width height]))
+        (-> (db-policy/query! db "INSERT INTO studio_audio_assets (audio_path, asset_type, image_data, mime_type, width, height) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (audio_path, asset_type) DO UPDATE SET image_data = $3, mime_type = $4, width = $5, height = $6, created_at = NOW()"
+                              [audio-path asset-type buffer mime-type width height])
             (.then (fn [_] (json-response! reply 200 {:ok true :path audio-path :type asset-type})))
             (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)})))))
       (json-response! reply 400 {:detail "Missing path, type, or imageData"}))))

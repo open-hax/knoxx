@@ -163,22 +163,23 @@
          (eta-mu-extern/append-thinking-level-change! session-manager thinking-level)
          (-> (rehydrate-session-manager! message-source session-manager conversation-id agent-spec)
              (.then (fn [{:keys [session-manager]}]
-                      (let [session (eta-mu-provider/create-session!
-                                     provider
-                                     {:workspace-root (:workspace-root config)
-                                      :runtime-dir runtime-dir
-                                      :auth-storage auth-storage
-                                      :model-registry model-registry
-                                      :loader loader
-                                      :settings-manager settings-manager
-                                      :session-manager session-manager
-                                      :model model
-                                      :thinking-level thinking-level
-                                      :tool-name-allowlist tool-name-allowlist
-                                      :custom-tools custom-tools
-                                      :materialize! materialize!})]
-                        (set-thinking-level! session thinking-level)
-                        session)))))))))
+                      (-> (eta-mu-provider/create-session!
+                          provider
+                          {:workspace-root (:workspace-root config)
+                           :runtime-dir runtime-dir
+                           :auth-storage auth-storage
+                           :model-registry model-registry
+                           :loader loader
+                           :settings-manager settings-manager
+                           :session-manager session-manager
+                           :model model
+                           :thinking-level thinking-level
+                           :tool-name-allowlist tool-name-allowlist
+                           :custom-tools custom-tools
+                           :materialize! materialize!})
+                         (.then (fn [session]
+                                  (set-thinking-level! session thinking-level)
+                                  session)))))))))))
 
 (defn ^:async construct-session-and-ext-ctx!
   [runtime config conversation-id model-id auth-context thinking-level session-id agent-spec current-tool-signature life-cycle-event-name]

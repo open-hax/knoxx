@@ -8,6 +8,7 @@
    :actions/agent-send-steer-message
    :actions/agent-queue-follow-up-message
    :actions/stop-session
+   :actions/hello-world
    :invoke/agent
    :invoke/sub-agent
    :invoke/http

@@ -1,5 +1,5 @@
 (ns knoxx.backend.domain.discord.source
-  "Discord source adapter for event-agent runtime.
+  "Discord source adapter for event runtime.
 
    This namespace owns Discord gateway lifecycle and Discord REST reads. It emits
    normalized message/voice callbacks to the generic event runtime instead of
@@ -107,7 +107,7 @@
                        (assoc message :openplannerLabels (label-for-record-id labels (record-id message)))))
                quality-labels/good-first-then-not-bad))
         (catch :default error
-          (.error js/console "[event-agents.discord] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad Discord context" error)
+          (.error js/console "[event runtimes.discord] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad Discord context" error)
           [])))))
 
 (defn- fetch-channel-from-gateway-entries!
@@ -214,7 +214,7 @@
                                 :fetched (count messages)
                                 :fresh (count fresh)})))
                     (.catch (fn [err]
-                              (println "[event-agents.discord] patrol failed for" channel-id ":" (.-message err))
+                              (println "[event runtimes.discord] patrol failed for" channel-id ":" (.-message err))
                               {:channelId channel-id
                                :error true}))))
               channel-ids)))
@@ -272,7 +272,7 @@
     (unsubscribe)
     (reset! gateway-unsubscribe* nil))
   (if policy-db
-    (-> (policy-db/list-actor-credentials! policy-db "discord_bot")
+    (-> (policy-db/list-actor-credentials! (policy-db/context-pool policy-db) "discord_bot")
         (.then (fn [result]
                  (dg/start-actor-gateways! (or (:credentials result) []))))
         (.then
@@ -297,15 +297,15 @@
                                                                            :gatewayBotUserId bot-user-id))))]
                            [msg-unsub voice-unsub])))
                       vec)]
-             (println "[event-agents] bound" (/ (count unsubscribes) 2) "Discord actor gateway(s)")
+             (println "[event runtimes] bound" (/ (count unsubscribes) 2) "Discord actor gateway(s)")
              (reset! gateway-unsubscribe*
                      (fn []
                        (doseq [unsubscribe unsubscribes]
                          (try (unsubscribe) (catch js/Error _))))))))
         (.catch (fn [err]
-                  (println "[event-agents] discord actor gateway bind failed:" (.-message err))
+                  (println "[event runtimes] discord actor gateway bind failed:" (.-message err))
                   nil)))
-    (println "[event-agents] policy DB unavailable; Discord actor gateways not bound")))
+    (println "[event runtimes] policy DB unavailable; Discord actor gateways not bound")))
 
 (defn stop!
   []

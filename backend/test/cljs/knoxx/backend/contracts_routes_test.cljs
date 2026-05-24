@@ -1,7 +1,8 @@
 (ns knoxx.backend.contracts-routes-test
   (:require [clojure.string :as str]
             [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.infra.routes.contracts :as sut]
+            [knoxx.backend.infra.routes.contracts :as contract-routes]
+            [knoxx.backend.infra.routes.resources :as resource-routes]
             [knoxx.backend.infra.redis-client :as redis]))
 
 (def fixture-config
@@ -21,7 +22,7 @@
 (deftest ^:async sync-returns-promise-when-redis-absent
   (testing "sync-resource-index! always returns a Promise even with no Redis client"
     (with-redefs [redis/get-client (fn [] nil)]
-      (let [p (sut/sync-resource-index! {})]
+      (let [p (resource-routes/sync-resource-index! {})]
         (is (instance? js/Promise p) "must be a Promise")
         (let [result (await p)]
           (is (false? (:ok result)))
@@ -31,7 +32,7 @@
   (testing "sync-contract-index! compatibility alias resolves instead of rejecting"
     (with-redefs [redis/get-client (fn [] nil)]
       (try
-        (let [result (await (sut/sync-contract-index! {}))]
+        (let [result (await (contract-routes/sync-contract-index! {}))]
           (is (map? result) "resolves to a plain map"))
         (catch :default err
           (is false (str "must not reject when Redis absent: " (.-message err))))))))
@@ -39,7 +40,7 @@
 (deftest sync-no-redis-error-key-is-informative
   (testing "the no-Redis sentinel message names the root cause unambiguously"
     (with-redefs [redis/get-client (fn [] nil)]
-      (let [p (sut/sync-contract-index! {})]
+      (let [p (contract-routes/sync-contract-index! {})]
         (is (instance? js/Promise p))))))
 
 ;; ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@
 
 (deftest ^:async list-resources-handler-returns-resource-shape
   (let [{:keys [captured send!]} (capture-json)]
-    (await (sut/handle-list-resources send! fixture-config "agents"))
+    (await (resource-routes/handle-list-resources send! fixture-config "agents"))
     (is (seq (:resources @captured)) "expected resources")
     (is (every? #(= "agents" (:resourceClass %)) (:resources @captured))
         "all returned resources must be agents")))
@@ -57,19 +58,19 @@
 (deftest list-contracts-handler-returns-promise
   (testing "/api/admin/contracts handler produces a Promise"
     (let [{:keys [send!]} (capture-json)
-          p (sut/handle-list-contracts send! fixture-config nil)]
+          p (contract-routes/handle-list-contracts send! fixture-config nil)]
       (is (instance? js/Promise p)))))
 
 (deftest ^:async list-contracts-handler-returns-non-empty
   (testing "/api/admin/contracts body has at least one contract"
     (let [{:keys [captured send!]} (capture-json)]
-      (await (sut/handle-list-contracts send! fixture-config nil))
+      (await (contract-routes/handle-list-contracts send! fixture-config nil))
       (is (seq (:contracts @captured))
           (str "expected contracts, got: " (pr-str @captured))))))
 
 (deftest ^:async list-contracts-handler-all-have-id-and-class
   (let [{:keys [captured send!]} (capture-json)]
-    (await (sut/handle-list-contracts send! fixture-config nil))
+    (await (contract-routes/handle-list-contracts send! fixture-config nil))
     (doseq [c (:contracts @captured)]
       (is (string? (:id c)) (str "missing :id " (pr-str c)))
       (is (string? (:contractClass c))
@@ -77,13 +78,13 @@
 
 (deftest ^:async list-contracts-handler-class-filter
   (let [{:keys [captured send!]} (capture-json)]
-    (await (sut/handle-list-contracts send! fixture-config "agents"))
+    (await (contract-routes/handle-list-contracts send! fixture-config "agents"))
     (is (seq (:contracts @captured)) "expected agents")
     (is (every? #(= "agents" (:contractClass %)) (:contracts @captured))
         "all returned contracts must be class agents")))
 
 (deftest validate-contract-edn-surfaces-agent-shape-warnings
-  (let [result (#'sut/validate-contract-edn
+  (let [result (contract-routes/validate-contract-edn
                 "agents"
                 "{:contract/id \"warny\"
                   :contract/kind :agent

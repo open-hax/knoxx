@@ -102,37 +102,64 @@
   (when-not (configured? config)
     (throw (js/Error. "OpenPlanner is not configured"))))
 
+(defn- error-message
+  [err]
+  (or (aget err "message") (str err)))
+
+(defn- log-openplanner-down!
+  [label err]
+  (when-not (aget err "__knoxxOpenPlannerDownLogged")
+    (aset err "__knoxxOpenPlannerDownLogged" true)
+    (.error js/console "openplanner is down" (str label ": " (error-message err)))))
+
+(defn- openplanner-down-error
+  [label message]
+  (let [err (js/Error. message)]
+    (log-openplanner-down! label err)
+    err))
+
 (defn- checked-body!
   [resp label]
   (if (:ok resp)
     (:body resp)
-    (throw (js/Error. (str label " failed (" (:status resp) "): " (pr-str (:body resp)))))))
+    (throw (openplanner-down-error
+            label
+            (str label " failed (" (:status resp) "): " (pr-str (:body resp)))))))
 
 (defn- checked-text!
   [resp label]
   (if (:ok resp)
     (:body resp)
-    (throw (js/Error. (str label " failed (" (:status resp) "): " (:body resp))))))
+    (throw (openplanner-down-error
+            label
+            (str label " failed (" (:status resp) "): " (:body resp))))))
 
 (defn- request-json!
   [http-client config timeout-ms method suffix body]
   (ensure-configured! config)
-  (p/let [resp (xfetch/json! (or http-client xfetch/default-client)
-                             {:url (str (trim-trailing-slashes (:openplanner-base-url config)) suffix)
-                              :opts (body-opts method (headers-for config) body)
-                              :timeout-ms (or timeout-ms 60000)})]
-    (checked-body! resp "OpenPlanner request")))
+  (-> (p/let [resp (xfetch/json! (or http-client xfetch/default-client)
+                                 {:url (str (trim-trailing-slashes (:openplanner-base-url config)) suffix)
+                                  :opts (body-opts method (headers-for config) body)
+                                  :timeout-ms (or timeout-ms 60000)})]
+        (checked-body! resp "OpenPlanner request"))
+      (.catch (fn [err]
+                (log-openplanner-down! (str method " " suffix) err)
+                (throw err)))))
 
 (defn- request-response!
   [http-client config timeout-ms {:keys [method path query-string body headers]}]
   (ensure-configured! config)
-  (let [suffix (str "/" (str/replace (str (or path "")) #"^/+" "") (or query-string ""))]
-    (xfetch/response! (or http-client xfetch/default-client)
-                      {:url (str (trim-trailing-slashes (:openplanner-base-url config)) suffix)
-                       :opts (cond-> {:method (or method "GET")
-                                      :headers (merge (headers-for config) (or headers {}))}
-                               (some? body) (assoc :body body))
-                       :timeout-ms (or timeout-ms 60000)})))
+  (let [method (or method "GET")
+        suffix (str "/" (str/replace (str (or path "")) #"^/+" "") (or query-string ""))]
+    (-> (xfetch/response! (or http-client xfetch/default-client)
+                          {:url (str (trim-trailing-slashes (:openplanner-base-url config)) suffix)
+                           :opts (cond-> {:method method
+                                          :headers (merge (headers-for config) (or headers {}))}
+                                   (some? body) (assoc :body body))
+                           :timeout-ms (or timeout-ms 60000)})
+        (.catch (fn [err]
+                  (log-openplanner-down! (str method " " suffix) err)
+                  (throw err))))))
 
 (defrecord FetchOpenPlannerClient [config http-client timeout-ms]
   IOpenPlannerClient
@@ -188,14 +215,17 @@
     (request-json! http-client config timeout-ms "GET" (str "/v1/translations/export/manifest" (query-string {:project project})) nil))
   (translation-export-sft! [client opts]
     (ensure-enabled! client)
-    (p/let [resp (xfetch/text! (or http-client xfetch/default-client)
-                               {:url (str (trim-trailing-slashes (:openplanner-base-url config))
-                                          "/v1/translations/export/sft"
-                                          (query-string opts))
-                                :opts {:method "GET"
-                                       :headers (headers-for config)}
-                                :timeout-ms (or timeout-ms 60000)})]
-      (checked-text! resp "OpenPlanner translation SFT export")))
+    (-> (p/let [resp (xfetch/text! (or http-client xfetch/default-client)
+                                   {:url (str (trim-trailing-slashes (:openplanner-base-url config))
+                                              "/v1/translations/export/sft"
+                                              (query-string opts))
+                                    :opts {:method "GET"
+                                           :headers (headers-for config)}
+                                    :timeout-ms (or timeout-ms 60000)})]
+          (checked-text! resp "OpenPlanner translation SFT export"))
+        (.catch (fn [err]
+                  (log-openplanner-down! "GET /v1/translations/export/sft" err)
+                  (throw err)))))
   (create-translation-segments-batch! [_ payload]
     (request-json! http-client config timeout-ms "POST" "/v1/translations/segments/batch" payload))
   (translation-documents! [_ opts]

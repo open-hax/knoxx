@@ -91,7 +91,7 @@
 
 (defn- session-hot?
   "A session is 'hot' if it was updated very recently. Recovery skips hot
-   sessions so that in-flight runs (e.g. those orphaned by event-agents/reload!)
+   sessions so that in-flight runs (e.g. those orphaned by event runtimes/reload!)
    have time to finish naturally instead of being duplicated."
   [session]
   (let [last-ms (session-last-updated-ms session)]

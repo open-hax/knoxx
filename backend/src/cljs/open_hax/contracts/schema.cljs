@@ -1,13 +1,14 @@
 (ns open-hax.contracts.schema
-  "Unified contract schema registry.
+  "Unified resource boundary schema registry.
 
-   Merges contract schemas from:
+   Merges schemas from:
    - proxx.schema (provider/policy/strategy)
-   - knoxx.backend.contracts.validator (agent/actor/role/capability/action/pipeline/trigger)
+   - knoxx.backend resource definitions (agent/actor/role/capability/action/pipeline/trigger/schedule/generator)
    - eta-mu.contract-runtime-v2.core (policy-gate/fulfillment match maps)
 
-   All contracts are EDN maps. The :contract/kind key discriminates the kind.
-   Maps use {:closed false} to tolerate dialect-specific extension fields."
+   EDN files describe resources. Contracts are the schema/policy boundaries
+   those resources must satisfy. The :contract/kind key remains the migration
+   discriminator. Maps use {:closed false} to tolerate dialect-specific fields."
   (:require [malli.core :as m]
             [malli.error :as me]
             [malli.transform :as mt]))
@@ -273,7 +274,12 @@
    [:contract/kind   [:= :action]]
    [:contract/id     ContractId]
    [:contract/version {:optional true} int?]
+   [:action/id       {:optional true} ContractId]
+   [:action/kind     {:optional true} keyword?]
    [:action/handler  :string]
+   [:action/responds-to {:optional true} [:sequential keyword?]]
+   [:action/result   {:optional true} keyword?]
+   [:action/scope    {:optional true} :map]
    [:action/params   {:optional true} :map]
    [:enabled         {:optional true} :boolean]
    [:data            {:optional true}
@@ -307,30 +313,85 @@
    [:contract/kind     [:= :trigger]]
    [:contract/id       ContractId]
    [:contract/version  {:optional true} int?]
-   [:trigger/kind      [:enum :cron :event :webhook :manual]]
-   [:trigger/actor     ContractId]
-    [:trigger/action    {:optional true} ContractId]
-    [:trigger/agent     {:optional true} ContractId]
-    [:trigger/with      {:optional true} [:map {:closed false}]]
-   [:trigger/events    {:optional true} [:sequential [:or string? keyword?]]]
+   [:trigger/kind      [:enum :event]]
+   [:trigger/events    [:sequential [:or string? keyword?]]]
+   [:trigger/action    {:optional true} ContractId]
+   [:trigger/agent     {:optional true} ContractId]
+   [:trigger/actor     {:optional true} ContractId]
+   [:trigger/emitter   {:optional true} ContractId]
+   [:trigger/listener  {:optional true} ContractId]
+   [:trigger/domain    {:optional true} :map]
    [:trigger/condition {:optional true} :any]
-   [:trigger/schedule  {:optional true} :string]
+   [:trigger/predicate {:optional true} :map]
+   [:trigger/with      {:optional true} [:map {:closed false}]]
+   [:enabled           {:optional true} :boolean]
+   [:data              {:optional true} :map]])
+
+(def GeneratorContract
+  [:map {:closed false}
+   [:contract/kind     [:= :generator]]
+   [:contract/id       ContractId]
+   [:contract/version  {:optional true} int?]
+   [:generator/id      {:optional true} ContractId]
+   [:generator/kind    {:optional true} [:or string? keyword?]]
+   [:generator/driver  {:optional true} [:or string? keyword?]]
+   [:generator/actor   {:optional true} ContractId]
+   [:generator/emits   {:optional true} [:sequential keyword?]]
+   [:generator/policy  {:optional true} :map]
+   [:enabled           {:optional true} :boolean]
+   [:data              {:optional true} :map]])
+
+(def ScheduleContract
+  [:map {:closed false}
+   [:contract/kind     [:= :schedule]]
+   [:contract/id       ContractId]
+   [:contract/version  {:optional true} int?]
+   [:schedule/id       {:optional true} ContractId]
+   [:schedule/rule     {:optional true} [:or string? keyword?]]
+   [:schedule/cron     {:optional true} string?]
+   [:schedule/at       {:optional true} string?]
+   [:schedule/generator {:optional true} ContractId]
+   [:schedule/event    {:optional true} [:map {:closed false}]]
+   [:schedule/policy   {:optional true} :map]
    [:enabled           {:optional true} :boolean]
    [:data              {:optional true} :map]])
 
 ;; ── Runtime source contract (knoxx) ──────────────────────────────────────────
 
+(def SourceEmission
+  [:or keyword?
+   [:map {:closed false}
+    [:event/type keyword?]
+    [:event/shape {:optional true} [:map {:closed false}]]
+    [:event/payload-schema {:optional true} :any]
+    [:description {:optional true} string?]]])
+
+(def SourceListener
+  [:or keyword?
+   [:map {:closed false}
+    [:event/type keyword?]
+    [:description {:optional true} string?]]])
+
 (def RuntimeSourceContract
-  "Runtime context source provider. This is distinct from :ingest_source: source
-   contracts hydrate context before a turn; ingest_source contracts index data."
+  "Source resource provider. Event sources are driver-backed listeners: they
+   name the source driver implemented in code, the actor identity that owns
+   credentials, and driver events they listen to. Context sources may still
+   hydrate context before a turn. This is distinct from :ingest_source, which
+   indexes data."
   [:map {:closed false}
    [:contract/kind    [:= :source]]
    [:contract/id      ContractId]
    [:contract/type    {:optional true} [:or string? keyword?]]
    [:contract/version {:optional true} int?]
    [:source/id        [:or string? keyword?]]
+   [:source/type      {:optional true} [:or string? keyword?]]
    [:source/name      {:optional true} string?]
    [:source/enabled?  {:optional true} :boolean]
+   [:source/driver    {:optional true} [:or string? keyword?]]
+   [:source/actor     {:optional true} [:or string? keyword?]]
+   [:source/listens   {:optional true} [:sequential SourceListener]]
+   [:source/emits     {:optional true} [:sequential SourceEmission]]
+   [:source/protocol  {:optional true} [:map {:closed false}]]
    [:source/provider  {:optional true} [:or string? keyword?]]
    [:source/hydration {:optional true} [:map {:closed false}]]
    [:source/render    {:optional true} [:map {:closed false}]]
@@ -423,6 +484,8 @@
    :action       ActionContract
    :pipeline     PipelineContract
    :trigger      TriggerContract
+   :generator    GeneratorContract
+   :schedule     ScheduleContract
    :source       RuntimeSourceContract
 
    ;; Model catalog (merged)
@@ -450,6 +513,8 @@
     (contains? value :cap/id)                 :capability
     (contains? value :model/id)               :model
     (contains? value :model-family/id)        :model-family
+    (contains? value :generator/id)           :generator
+    (contains? value :schedule/id)            :schedule
     (contains? value :parent-agent)           :sub-agent
     (contains? value :contract/id)            :agent
     :else                                     :agent))

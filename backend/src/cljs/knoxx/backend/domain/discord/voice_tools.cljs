@@ -533,22 +533,22 @@
 
 (def voice-agent-event-connect-tool
   (partial create-tool-obj
-           "discord.voice.agent_event.connect" "Voice Agent Event Connect"
-           "Join voice and emit raw Discord audio as real Knoxx event-agent events."
-           "Contract-only voice event source for agents that perceive raw audio through event-agent runs; no ASR and no direct provider loop."
+           "discord.voice.agent_event.connect" "Voice Event Connect"
+           "Join voice and emit raw Discord audio as real Knoxx dispatch events."
+           "Contract-only voice event generator for agents that perceive raw audio through event-triggered runs; no ASR and no direct provider loop."
            (clj->js ["This is for contracts that explicitly grant :cap/voice-audio-event."
-                     "It emits discord.voice.audio.window events; matching event-agent contracts decide what to do."
+                     "It emits discord.voice.audio.window events; matching trigger resources decide what to do."
                      "Do not use this as a general replacement for discord.voice.connect."])
            voice-agent-event-connect-params
            voice-agent-event-connect-execute))
 
 (def voice-agent-event-listen-tool
   (partial create-tool-obj
-           "discord.voice.agent_event.listen" "Voice Agent Event Listen"
-           "Emit raw Discord audio as real Knoxx event-agent events for an existing voice connection."
-           "Contract-only voice event source; no ASR and no direct provider loop."
+           "discord.voice.agent_event.listen" "Voice Event Listen"
+           "Emit raw Discord audio as real Knoxx dispatch events for an existing voice connection."
+           "Contract-only voice event generator; no ASR and no direct provider loop."
            (clj->js ["Use only after joining voice."
-                     "Emits discord.voice.audio.window events for matching event-agent contracts."])
+                     "Emits discord.voice.audio.window events for matching trigger resources."])
            voice-agent-event-listen-params
            voice-agent-event-listen-execute))
 

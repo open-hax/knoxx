@@ -10,15 +10,15 @@
   (atom {:app nil
          :runtime nil
          :config nil
-         :policyDb nil
+         :policy-context nil
          :cookie-hook? false}))
 
 (defn remember-context!
-  [runtime config policyDb cookie-hook?]
+  [runtime config policy-context cookie-hook?]
   (swap! http-state* assoc
          :runtime runtime
          :config config
-         :policyDb policyDb
+         :policy-context policy-context
          :cookie-hook? cookie-hook?)
   true)
 
@@ -29,7 +29,7 @@
 
 (defn context
   []
-  (select-keys @http-state* [:runtime :config :policyDb :cookie-hook?]))
+  (select-keys @http-state* [:runtime :config :policy-context :cookie-hook?]))
 
 (defn current-app
   []

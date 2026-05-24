@@ -167,8 +167,8 @@
 (deftest conversation-access-throws-on-principal-mismatch
   (testing "ensure-conversation-access! throws 403 when principals differ"
     (let [store (atom {})
-          ctx-a #js {:userId "alice" :membershipId "m-alice"}
-          ctx-b #js {:userId "bob"   :membershipId "m-bob"}
+          ctx-a {:user-id "alice" :membership-id "m-alice"}
+          ctx-b {:user-id "bob" :membership-id "m-bob"}
           ;; Seed the store as alice
           _ (authz/remember-conversation-access! store ctx-a "conv-x")]
       ;; Bob accessing alice's conversation should throw
@@ -179,7 +179,7 @@
 (deftest conversation-access-permits-same-principal
   (testing "ensure-conversation-access! returns ctx when principals match"
     (let [store (atom {})
-          ctx   #js {:userId "alice" :membershipId "m-alice"}
+          ctx   {:user-id "alice" :membership-id "m-alice"}
           _     (authz/remember-conversation-access! store ctx "conv-y")]
       (is (= ctx (authz/ensure-conversation-access! store ctx "conv-y"))
           "returns ctx on match"))))
@@ -200,8 +200,8 @@
   (async done
     (testing "a sync throw wrapped in Promise constructor becomes a rejection"
       (let [store (atom {})
-            ctx-a #js {:userId "alice" :membershipId "m-alice"}
-            ctx-b #js {:userId "bob"   :membershipId "m-bob"}
+            ctx-a {:user-id "alice" :membership-id "m-alice"}
+            ctx-b {:user-id "bob" :membership-id "m-bob"}
             _     (authz/remember-conversation-access! store ctx-a "conv-p")
             ;; mirror exactly what the fixed send-agent-turn! does
             p     (js/Promise.

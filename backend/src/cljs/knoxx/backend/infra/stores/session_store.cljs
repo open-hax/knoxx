@@ -281,7 +281,7 @@
                           :messages messages})
         (.then (fn [session]
                  ;; Default behavior: keep in Redis briefly for resume, then cleanup.
-                 ;; Sticky event-agent sessions are long-lived across scheduled runs, so keep them
+                 ;; Sticky event-triggered sessions are long-lived across scheduled runs, so keep them
                  ;; in Redis+cache (and in the active set so they recover after restart).
                   ;; Always evict from cache after a brief delay; sticky sessions
                   ;; just get a longer delay. The cache sweep will catch any leaks.

@@ -125,6 +125,23 @@ to effect changes in the state of the world
 A registered behavior
 an input/output schema
 
+Action resource definitions are not subscriptions. They advertise behavior that
+the action interpreter table can execute. A trigger may request an action; a
+schedule may cause an event that a trigger hears; the action resource itself does
+not watch time or events.
+
+Example:
+
+```edn
+{:contract/kind :action
+ :contract/id "hello-world"
+ :action/id :actions/hello-world
+ :action/kind :actions/hello-world
+ :action/handler "knoxx.backend.domain.action.registry/run-action!"
+ :action/responds-to [:message/greeting]
+ :action/result :message/send.expectation}
+```
+
 ## Event
 
 An immutable declaration that a state transition has occurred
@@ -156,6 +173,9 @@ Has a sender, and recipient
 
 Abstractly an entity with a policy that produces events
 
+Generators are provenance resources. They identify event-producing adapters,
+processes, actors, or fixtures. They do not contain action execution policy.
+
 ## Schedule
 
 A resource mapping a temporal rule to the generation of a synthetic event. A schedule does not implement a trigger path and does not call actions. It emits an event, and any number of triggers may respond.
@@ -165,6 +185,17 @@ A resource mapping a temporal rule to the generation of a synthetic event. A sch
 ## Trigger
 
 An agreement to take an action by an actor in response to an event that meets a condition. Triggers always respond to events; they do not contain schedules.
+
+Example:
+
+```edn
+{:contract/kind :trigger
+ :contract/id "hello_world_inbox"
+ :trigger/kind :event
+ :trigger/listener "system_admin"
+ :trigger/events [:message/greeting]
+ :trigger/action :actions/hello-world}
+```
 ## User
 
 An actor identity representing a human user

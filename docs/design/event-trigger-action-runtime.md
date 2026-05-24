@@ -6,6 +6,7 @@ Delete the legacy blended event/agent concept by replacing it with a resource-na
 
 - Events are immutable declarations emitted by actors/generators while doing work.
 - Generators produce events.
+- Source resources are actor-owned instances of code drivers for systems whose event logic lives in code, such as Discord and eta-mu.
 - Schedules are separate temporal agreements that emit synthetic events.
 - Triggers subscribe to event types and decide whether an action should run.
 - Actions are registered functions invoked against an actor context and optional event.
@@ -15,7 +16,8 @@ Delete the legacy blended event/agent concept by replacing it with a resource-na
 ## Resource Separation Constraints
 
 - Do not normalize legacy mixed shapes into new runtime truth.
-- Do not use a generic runtime `source` concept; use generator contracts for event producers and event provenance on emitted events.
+- Do not put source/source-mode fields on agents or triggers.
+- Use source resources for driver-backed event generators whose logic lives in code; source resources declare actor, driver, and `:source/listens`, while driver code owns emitted event specs.
 - Agent resources do not define triggers, actions, schedules, generators, event filters, or source/source-mode fields.
 - Trigger resources are agreements by actors to take an action after observing an event that meets a condition.
 - Action resources define registered behavior and schemas.
@@ -42,7 +44,7 @@ Required shape:
 Rules:
 
 - `:event/type` replaces legacy `:eventKind` and `:eventKinds`.
-- `:event/generator` is event provenance; do not reintroduce a runtime `source` concept.
+- `:event/generator` is event provenance and may point at a source resource when an external driver emitted the event.
 - Event fan-out is handled by the dispatcher matching multiple trigger contracts, not by mutating a single event with multiple kinds.
 - Event dedup lives in the event dispatcher, keyed by `:event/id`.
 
@@ -82,6 +84,7 @@ Rules:
 - `:trigger/schedule`, `:trigger/kind :cron`, and `:trigger/kind :manual` are invalid for new runtime truth.
 - `:data {:filters ...}` becomes `:trigger/predicate`.
 - Triggers always respond to events. Schedules emit events; one scheduled event may fan out to many triggers.
+- A trigger is not an action. It is an actor/listener agreement to request an action after observing a matching event.
 
 ### Action
 
@@ -105,9 +108,10 @@ Required built-ins:
 
 Rules:
 
-- Agent session lifecycle is represented as actions, not as event-agent runtime methods.
+- Agent session lifecycle is represented as actions, not as event runtime methods.
 - `:actions/start-agent-session` accepts an actor context plus optional agent contract overlay.
 - Legacy `:invoke/agent` maps to `:actions/start-agent-session` during migration, then disappears.
+- An action resource advertises registered behavior and schemas. The action interpreter table is executable code; the EDN resource is discoverable data.
 
 ### Action Registry
 
@@ -148,6 +152,117 @@ Rules:
 - Trigger listener actor must be allowed to receive the event and take the action.
 - Trigger emitter actor must be allowed to emit the event.
 
+### Generator
+
+A generator resource declares event provenance: a process, adapter, actor, or demo fixture that can emit events.
+
+Example shape:
+
+```clojure
+{:contract/kind :generator
+ :contract/id "hello_world_demo"
+ :generator/kind :demo
+ :generator/actor "system_admin"
+ :generator/emits [:message/greeting]}
+```
+
+Rules:
+
+- Generators produce events; they do not subscribe to events.
+- Generators do not invoke actions.
+- `:event/generator` on emitted events should identify the generator/provenance.
+
+### Driver
+
+A driver is ClojureScript code, not an EDN resource. It knows how to normalize one system's native signals into Knoxx events and how to bind one source instance.
+
+Driver protocol shape:
+
+```clojure
+(driver-id driver)              ;; => :driver/discord
+(driver-kind driver)            ;; => :discord
+(driver-event-specs driver)     ;; code-owned event names and shapes
+(start-source! driver context)  ;; context includes :source and :dispatch!
+```
+
+Rules:
+
+- Drivers own emitted event names and shapes.
+- Drivers are registered by code (`knoxx.backend.domain.driver.builtin` for built-ins), not loaded from `contracts/`.
+- A driver does not decide which actor/account is active; a source resource does.
+- A driver emits an event by calling the source runtime dispatch function, which attaches source actor/provenance and sends the event to the generic dispatcher.
+
+### Source
+
+A source resource is an actor-owned instance of a code driver. It exists because a system can have many credentialed actors/accounts, e.g. many Discord bots using the same Discord driver.
+
+Example shape:
+
+```clojure
+{:contract/kind :source
+ :contract/id "discord_gateway"
+ :source/id :source/discord-gateway
+ :source/type :event-generator
+ :source/driver :driver/discord
+ :source/actor "discord_automation"
+ :source/listens [:discord.message
+                  :discord.message.mention]}
+```
+
+Event path:
+
+```clojure
+;; Driver callback for the discord_automation actor:
+(dispatch-driver-event! config
+                        :driver/discord
+                        "discord_automation"
+                        {:event/type :discord.message
+                         :event/payload {...}})
+
+;; Source runtime checks that an enabled source exists:
+{:source/driver :driver/discord
+ :source/actor "discord_automation"
+ :source/listens [:discord.message]}
+
+;; Then it dispatches:
+{:event/type :discord.message
+ :event/actor "discord_automation"
+ :event/generator {:kind :discord
+                   :driver :driver/discord
+                   :source :source/discord-gateway}
+ :event/payload {...}}
+```
+
+Rules:
+
+- Sources are resources; drivers are code.
+- Source resources declare `:source/driver`, `:source/actor`, and `:source/listens`.
+- Source resources do not declare `:source/emits` or event shapes; the driver implementation owns those.
+- `:source/listens` is the admission filter: the source only dispatches driver events it selected.
+- Triggers do not bind to source implementations. Triggers observe event types and predicates.
+- Context-only sources may exist, but event-generating sources use `:source/type :event-generator` and `:source/listens`.
+
+### Schedule
+
+A schedule resource declares a temporal rule for producing a synthetic event.
+
+Example shape:
+
+```clojure
+{:contract/kind :schedule
+ :contract/id "hello_world_morning_tick"
+ :schedule/rule "*/30 * * * *"
+ :schedule/generator "hello_world_demo"
+ :schedule/event {:event/type :message/greeting
+                  :event/payload {:name "world"}}}
+```
+
+Rules:
+
+- Schedules emit events through the event dispatcher.
+- Schedules do not contain `:trigger/action`, `:trigger/agent`, or trigger predicates.
+- A scheduled event may match zero, one, or many triggers.
+
 ### Agent
 
 An agent is a prompt object plus an actor context constraint.
@@ -168,6 +283,23 @@ Rules:
 
 ## Migration Plan
 
+### Concrete Resource Set: hello-world
+
+The hello-world demo is intentionally split across four resources:
+
+- `contracts/actions/hello-world.edn` — advertises the executable behavior `:actions/hello-world` and its `:message/greeting` input event.
+- `contracts/generators/hello_world_demo.edn` — declares demo/manual/schedule provenance for `:message/greeting` events.
+- `contracts/triggers/hello_world_inbox.edn` — lets `system_admin` request `:actions/hello-world` after observing `:message/greeting`.
+- `contracts/schedules/hello_world_morning_tick.edn` — disabled-by-default temporal resource that emits a synthetic `:message/greeting` event.
+
+This is the reference split:
+
+```text
+generator/schedule -> event -> trigger -> action
+```
+
+Do not put trigger maps, schedule maps, or generator maps inside the action file. Do not put action execution inside the schedule file.
+
 ### Phase 1: Define New Runtime Surface
 
 - Add event normalization namespace.
@@ -181,7 +313,7 @@ Verification:
 - Unit tests for event normalization, trigger normalization, predicate matching, and action key resolution.
 - `pnpm -C backend exec shadow-cljs compile test` once the missing JS test stub is restored.
 
-### Phase 2: Move Dispatch Out Of `event_agents.cljs`
+### Phase 2: Move Dispatch Out Of `legacy blended runtime namespace`
 
 - Move event matching into `knoxx.backend.domain.event.dispatch`.
 - Move job/run state into `knoxx.backend.domain.trigger.state` if still needed.
@@ -197,7 +329,7 @@ Verification:
 - Stop synthesizing `:jobs` as the runtime truth in `triggers/control_config.cljs`.
 - Load trigger resources directly as trigger records.
 - Convert admin Events UI responses from job-centric snapshots to resource-centric snapshots.
-- Preserve endpoints only if they expose the new runtime vocabulary; no thin `event-agent` modules.
+- Preserve endpoints only if they expose the new runtime vocabulary; no thin `event runtime` modules.
 
 Verification:
 
@@ -206,13 +338,13 @@ Verification:
 
 ### Phase 4: Delete Legacy File
 
-- Remove all requires of `knoxx.backend.event-agents`.
-- Delete `backend/src/cljs/knoxx/backend/event_agents.cljs`.
-- Remove legacy event-agent tool ids or mark them as explicit compatibility commands that call action/trigger APIs.
-- Update `contracts/AGENTS.md` so new contracts do not mention event-agent authoring.
+- Remove all requires of `knoxx.backend.event runtimes`.
+- Delete `backend/src/cljs/knoxx/backend/legacy blended runtime namespace`.
+- Remove legacy event runtime tool ids or mark them as explicit compatibility commands that call action/trigger APIs.
+- Update `contracts/AGENTS.md` so new contracts do not mention event runtime authoring.
 
 Verification:
 
 - `pnpm -C backend build`.
 - `pnpm -C backend exec shadow-cljs compile test`.
-- Search confirms no `knoxx.backend.event-agents` namespace and no runtime dependency on `event-agent-control`.
+- Search confirms no `knoxx.backend.event runtimes` namespace and no runtime dependency on `event runtime-control`.

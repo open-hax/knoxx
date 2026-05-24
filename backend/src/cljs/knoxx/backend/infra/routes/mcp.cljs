@@ -5,6 +5,7 @@
             [malli.error :as me]
             [knoxx.backend.shape.app-shapes :refer [route!]]
             [knoxx.backend.infra.auth.session :as auth-session]
+            [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
@@ -401,13 +402,15 @@
         (.then (fn [raw] (when raw (try (js/JSON.parse raw) (catch :default _ nil)))))
         (.catch (fn [_] nil)))))
 
-(defn- resolve-token-context! [policy-db token-record]
-  (let [headers-like (js/Object.)
-        resolver     (aget policy-db "resolveRequestContext")]
-    (when-let [mid (aget token-record "membershipId")]  (aset headers-like "x-knoxx-membership-id" mid))
-    (when-let [ue  (aget token-record "userEmail")]      (aset headers-like "x-knoxx-user-email" ue))
-    (when-let [os  (aget token-record "orgSlug")]        (aset headers-like "x-knoxx-org-slug" os))
-    (.call resolver policy-db headers-like)))
+(defn- resolve-token-context! [policy-context token-record]
+  (let [headers-like (cond-> {}
+                       (aget token-record "membershipId")
+                       (assoc "x-knoxx-membership-id" (aget token-record "membershipId"))
+                       (aget token-record "userEmail")
+                       (assoc "x-knoxx-user-email" (aget token-record "userEmail"))
+                       (aget token-record "orgSlug")
+                       (assoc "x-knoxx-org-slug" (aget token-record "orgSlug")))]
+    (db-policy/resolve-context! policy-context headers-like)))
 
 (defn- apply-zod-description [^js schema-node ^js schema-json]
   (let [description (some-> (aget schema-json "description") str str/trim not-empty)]

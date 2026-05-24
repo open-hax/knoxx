@@ -18,13 +18,31 @@
 ;; Classic mode (backward compat):
 ;;   No guard vector; with-request-context! is called inline.
 
+(defn- contains-await?
+  [form]
+  (cond
+    (= 'await form) true
+    (seq? form) (boolean (some contains-await? form))
+    (coll? form) (boolean (some contains-await? form))
+    :else false))
+
+(defn- handler-fn-form
+  [args body]
+  (if (contains-await? body)
+    `(^:async fn ~args ~@body)
+    `(fn ~args ~@body)))
+
 (defmacro defroute
   [fn-name extra-deps method-name route-string & rest]
   {:clj-kondo/lint-as 'clojure.core/defn
    :clj-kondo/ignore [:unresolved-symbol :unused-binding]}
   (let [pre-handler-mode? (and (seq rest) (vector? (first rest)))
         pre-handlers      (when pre-handler-mode? (first rest))
-        body              (if pre-handler-mode? (next rest) rest)]
+        body              (if pre-handler-mode? (next rest) rest)
+        request-handler   (handler-fn-form ['request 'reply]
+                                           `((let [~'ctx (aget ~'request "ctx")]
+                                               ~@body)))
+        context-handler   (handler-fn-form ['ctx] body)]
     `(defn ~fn-name [~'app ~'runtime ~'config ~'deps]
        (let [{:keys [~'route!
                      ~'json-response!
@@ -50,14 +68,11 @@
                                                ~'done
                                                (cljs.core/reverse ~'guards))]
                                  (~'chain)))
-               "handler"    (^:async fn  [~'request ~'reply]
-                               (let [~'ctx (aget ~'request "ctx")]
-                                 ~@body))))
+               "handler"    ~request-handler))
             `(~'route! ~'app ~method-name ~route-string
-              ( fn  [~'request ~'reply]
+              (fn [~'request ~'reply]
                 (~'with-request-context! ~'runtime ~'request ~'reply
-                 (^:async fn  [~'ctx]
-                   ~@body)))))))))
+                 ~context-handler))))))))
 
 (defmacro then [target & body]
   `(.then ~target (fn [rseult] ~@body)))

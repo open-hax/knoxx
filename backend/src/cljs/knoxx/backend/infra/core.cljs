@@ -14,7 +14,8 @@
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.infra.stores.session-titles :refer [load-session-titles!]]
             [knoxx.backend.domain.discord.source :as discord-source]
-            [knoxx.backend.domain.event.dispatch :as event-dispatch]
+            [knoxx.backend.domain.driver.builtin :as driver-builtin]
+            [knoxx.backend.domain.source.runtime :as source-runtime]
             [knoxx.backend.domain.condition.builtin :as condition-builtins]
             [knoxx.backend.infra.lifecycle :as lifecycle]
             [knoxx.backend.infra.agent.session :as agent-session]
@@ -81,6 +82,7 @@
 
 (defn- start-background-services!
   [app resolved-config]
+  (driver-builtin/register-built-in-drivers!)
   (condition-builtins/register-builtins!)
   ;; Session recovery is awaited separately only until recovered turns are
   ;; kicked off again. The event runtime and MCP discovery remain background work.
@@ -93,23 +95,24 @@
       (.then (fn [_]
                (resource-routes/start-resource-watcher! resolved-config)))
       (.then (fn [_]
-               (let [policyDb (:policyDb (lifecycle/context))]
-                 (when policyDb
+               (let [policy-context (:policy-context (lifecycle/context))]
+                 (when policy-context
                    (discord-source/bind-gateways!
-                    {:policy-db policyDb
+                    {:policy-db policy-context
                       :on-message! (fn [msg]
-                                     (event-dispatch/dispatch!
+                                     (source-runtime/dispatch-driver-event!
                                       resolved-config
-                                      {:generatorKind "discord"
-                                       :eventType "discord.message"
-                                       :actorId (:gatewayActorId msg)
-                                       :payload msg}))
+                                      :driver/discord
+                                      (:gatewayActorId msg)
+                                      {:event/type :discord.message
+                                       :event/payload msg}))
                      :on-voice-state! (fn [state]
-                                        (event-dispatch/dispatch!
+                                        (source-runtime/dispatch-driver-event!
                                          resolved-config
-                                         {:generatorKind "discord"
-                                          :eventType "discord.voice.state_update"
-                                          :payload state}))})))))
+                                         :driver/discord
+                                         (:gatewayActorId state)
+                                         {:event/type :discord.voice.state-update
+                                          :event/payload state}))})))))
       (.then (fn [_]
                (initialize-mcp-gateway! app resolved-config)))
       (.catch (fn [err]
@@ -151,6 +154,7 @@
           app (Fastify #js {:logger #js {:stream (.-stderr js/process)}})]
       (reset! runtime-state/config* config)
       (reset! runtime-state/runtime* runtime)
+      (driver-builtin/register-built-in-drivers!)
       (ensure-settings! config)
       (-> (js/Promise.resolve nil)
           (.then (fn [] (load-session-titles! runtime config)))

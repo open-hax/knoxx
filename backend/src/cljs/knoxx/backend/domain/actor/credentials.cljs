@@ -5,7 +5,8 @@
    env vars here; missing credentials should be fixed in Admin → Actors."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
-            [knoxx.backend.infra.auth.authz :as authz]))
+            [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.infra.db.policy :as policy-db]))
 
 (defn current-actor-id
   []
@@ -23,9 +24,7 @@
 
 (defn- normalize-credential
   [payload]
-  (let [credential (aget payload "credential")]
-    (when credential
-      (js->clj credential :keywordize-keys true))))
+  (:credential payload))
 
 (defn get-credential!
   [runtime provider]
@@ -41,7 +40,7 @@
        (js/Error. "Actor credentials require the Knoxx policy database."))
 
       :else
-      (-> (.getActorCredential db actor-id provider)
+      (-> (policy-db/get-actor-credential! db actor-id provider)
           (.then (fn [result]
                    (if-let [credential (normalize-credential result)]
                      credential

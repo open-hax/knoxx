@@ -6,6 +6,7 @@
    actors can address live or later-resolved targets without creating a second
    message transcript."
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.runtime.state :as runtime-state]
             ["node:crypto" :as crypto]))
 
@@ -102,20 +103,17 @@
 
 (defn- policy-db
   [runtime]
-  (or (when runtime (aget runtime "policyDb"))
+  (or (:policy-context runtime)
       (runtime-state/current-policy-db)))
 
 (defn database-enabled?
   [runtime]
-  (boolean (and (policy-db runtime)
-                (fn? (aget (policy-db runtime) "query")))))
+  (db-policy/configured? (policy-db runtime)))
 
 (defn- query!
   [runtime sql params]
   (if-let [db (policy-db runtime)]
-    (if-let [query-fn (aget db "query")]
-      (query-fn sql (clj->js params))
-      (js/Promise.resolve nil))
+    (db-policy/query! db sql params)
     (js/Promise.resolve nil)))
 
 (defn- json-param
@@ -124,21 +122,18 @@
 
 (defn- rows
   [result]
-  (let [rows* (when result (aget result "rows"))]
-    (if (array? rows*)
-      (array-seq rows*)
-      [])))
+  (or (:rows result) []))
 
 (defn- row->route
   [row]
   (when row
-    {:actor-id (aget row "actor_id")
-     :conversation-id (aget row "conversation_id")
-     :session-id (aget row "session_id")
-     :run-id (aget row "run_id")
-     :contract-id (aget row "contract_id")
-     :status (aget row "status")
-     :last-seen-at (aget row "last_seen_at")}))
+    {:actor-id (:actor_id row)
+     :conversation-id (:conversation_id row)
+     :session-id (:session_id row)
+     :run-id (:run_id row)
+     :contract-id (:contract_id row)
+     :status (:status row)
+     :last-seen-at (:last_seen_at row)}))
 
 (defn register-live-session!
   [runtime {:keys [actor-id conversation-id session-id run-id contract-id source expires-at]}]
@@ -265,6 +260,8 @@
   [value]
   (cond
     (nil? value) {}
+    (map? value) value
+    (vector? value) value
     (string? value) (try (js->clj (.parse js/JSON value) :keywordize-keys true)
                          (catch :default _ {}))
     (array? value) (js->clj value :keywordize-keys true)
@@ -273,28 +270,28 @@
 (defn row->entry
   [row]
   (when row
-    (let [source (json-value (aget row "source_json"))
-          target (json-value (aget row "target_json"))
-          delivery {:mode (aget row "delivery_mode")
-                    :attempts (aget row "attempts")
-                    :next-at (aget row "next_at")}
-          content-ref (json-value (aget row "content_ref_json"))
-          metadata (json-value (aget row "metadata_json"))]
-      (cond-> {:mailbox/id (aget row "id")
-               :mailbox/kind (aget row "kind")
-               :mailbox/status (aget row "status")
+    (let [source (json-value (:source_json row))
+          target (json-value (:target_json row))
+          delivery {:mode (:delivery_mode row)
+                    :attempts (:attempts row)
+                    :next-at (:next_at row)}
+          content-ref (json-value (:content_ref_json row))
+          metadata (json-value (:metadata_json row))]
+      (cond-> {:mailbox/id (:id row)
+               :mailbox/kind (:kind row)
+               :mailbox/status (:status row)
                :mailbox/source source
                :mailbox/target target
                :mailbox/delivery delivery
                :mailbox/content-ref content-ref
                :mailbox/metadata metadata
-               :mailbox/created-at (aget row "created_at")
-               :mailbox/updated-at (aget row "updated_at")}
-        (nonblank (aget row "preview")) (assoc :mailbox/preview (aget row "preview"))
-        (nonblank (aget row "last_error")) (assoc :mailbox/last-error (aget row "last_error"))
-        (nonblank (aget row "delivered_at")) (assoc :mailbox/delivered-at (aget row "delivered_at"))
-        (nonblank (aget row "acknowledged_at")) (assoc :mailbox/acknowledged-at (aget row "acknowledged_at"))
-        (nonblank (aget row "expires_at")) (assoc :mailbox/expires-at (aget row "expires_at"))))))
+               :mailbox/created-at (:created_at row)
+               :mailbox/updated-at (:updated_at row)}
+        (nonblank (:preview row)) (assoc :mailbox/preview (:preview row))
+        (nonblank (:last_error row)) (assoc :mailbox/last-error (:last_error row))
+        (nonblank (:delivered_at row)) (assoc :mailbox/delivered-at (:delivered_at row))
+        (nonblank (:acknowledged_at row)) (assoc :mailbox/acknowledged-at (:acknowledged_at row))
+        (nonblank (:expires_at row)) (assoc :mailbox/expires-at (:expires_at row))))))
 
 (defn- add-filter
   [{:keys [clauses params]} [clause-fn value]]

@@ -7,15 +7,15 @@
 
 (defonce config* (atom nil))
 (defonce runtime* (atom nil))
-(defonce policy-db* (atom nil))
+(defonce policy-context* (atom nil))
 
 (defn remember-context!
-  [runtime config policy-db]
+  [runtime config policy-context]
   (reset! runtime* runtime)
   (reset! config* config)
-  (reset! policy-db* policy-db)
+  (reset! policy-context* policy-context)
   true)
 
 (defn current-policy-db
   []
-  @policy-db*)
+  @policy-context*)

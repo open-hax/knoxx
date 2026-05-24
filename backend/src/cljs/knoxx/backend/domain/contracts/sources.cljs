@@ -1,10 +1,10 @@
 (ns knoxx.backend.domain.contracts.sources
-  "Runtime context source contract resolution.
+  "Runtime source contract resolution.
 
    A runtime source is not an ingestion source. Ingestion sources decide what is
-   indexed. Runtime sources decide what context a turn hydrates before model
-   execution. Source refs compose from actor -> role -> agent -> run overrides
-   and dedupe by :source/id."
+   indexed. Runtime source resources either hydrate turn context or select
+   driver events with :source/listens. Source refs compose from actor -> role ->
+   agent -> run overrides and dedupe by :source/id."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.contracts.loader :as loader]))
 
@@ -104,7 +104,12 @@
                             :contract/type
                             :contract/version
                             :source/name
+                            :source/type
                             :source/enabled?
+                            :source/driver
+                            :source/actor
+                            :source/listens
+                            :source/protocol
                             :source/provider
                             :source/hydration
                             :source/render

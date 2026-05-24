@@ -31,6 +31,24 @@
         (is (true? (:restored result)))
         (is (= ["system" "user"] (mapv :role @appended*)))))))
 
+(deftest ^:async history-rehydrate-rejects-when-message-source-is-down
+  (testing "history restore is a hard dependency for transcript correctness"
+    (let [appended* (atom [])
+          message-source (reify IMessageSource
+                           (fetch-messages! [_ _conversation-id]
+                             (js/Promise.reject (js/Error. "OpenPlanner request failed"))))
+          session-manager #js {:appendMessage (fn [message]
+                                                (swap! appended* conj (js->clj message :keywordize-keys true)))}]
+      (try
+        (await (history/rehydrate-session-manager! message-source
+                                                   session-manager
+                                                   "conv-fail-closed"
+                                                   {:system-prompt "system"}))
+        (is false "expected history restore to reject")
+        (catch :default err
+          (is (re-find #"OpenPlanner request failed" (.-message err)))
+          (is (= [] @appended*)))))))
+
 (deftest ^:async content-codec-materializes-existing-media-shapes
   (testing "data URLs and raw base64 preserve eta-mu media shape"
     (let [materializer content-codec/default-media-materializer

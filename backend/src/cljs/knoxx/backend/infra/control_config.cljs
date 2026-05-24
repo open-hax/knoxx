@@ -6,6 +6,7 @@
    agent jobs, does not read adapter-specific defaults, and does not translate
    legacy producer/trigger fields into runnable agent shapes."
   (:require [knoxx.backend.domain.control.catalog :as control-catalog]
+            [knoxx.backend.domain.driver.builtin :as driver-builtin]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.roles :as roles]))
@@ -14,6 +15,7 @@
 
 (defn- resource-records
   [config]
+  (driver-builtin/register-built-in-drivers!)
   (resources/load-all-resources-sync config))
 
 (defn event-control-config

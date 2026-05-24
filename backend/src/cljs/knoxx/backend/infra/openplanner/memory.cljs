@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.shape.session-persistence :refer [complete-run!]]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.label.quality :as quality-labels]
@@ -308,14 +309,16 @@
         k (max 1 (min 20 (or k 10)))]
     (if (str/blank? query)
       (js/Promise.resolve {:query "" :hits [] :mode :none})
-      {:query query
-       :mode :vector
-       :hits (vector-result-hits (:result (openplanner-client/vector-search!
-                                           (openplanner-client/client config)
-                                           (cond-> {:q query :k k :project (or project (:project-name config) "devel")}
-                                             source (assoc :source source)
-                                             kind (assoc :kind kind)
-                                             visibility (assoc :visibility visibility)))))})))
+      (-> (openplanner-client/vector-search!
+           (openplanner-client/client config)
+           (cond-> {:q query :k k :project (or project (:project-name config) "devel")}
+             source (assoc :source source)
+             kind (assoc :kind kind)
+             visibility (assoc :visibility visibility)))
+          (.then (fn [body]
+                   {:query query
+                    :mode :vector
+                    :hits (vector-result-hits (:result body))}))))))
 
 (defn openplanner-graph-export!
   [config request]
@@ -523,19 +526,27 @@
                                                                     scope-extra)}))]
     (into [node-event] (concat devel-edges web-edges))))
 
+(defn- fail-open-indexing!
+  [indexing-promise]
+  (-> indexing-promise
+      (.catch (fn [err]
+                (.warn js/console "[openplanner-memory] run indexing failed; continuing without OpenPlanner persistence" err)
+                nil))))
+
 (defn index-run-memory!
   [config run extract-mentioned-devel-paths extract-mentioned-urls]
   (if-not (openplanner-configured? config)
     (js/Promise.resolve nil)
-    (if-let [store @store-registry/session-store*]
-      (.complete-run! store (:run_id run)
-                     {:status        (:status run)
-                      :answer        (:answer run)
-                      :error         (:error run)
-                      :messages      (:request_messages run)
-                      :trace_blocks  (:trace_blocks run)
-                      :content_parts (:content_parts run)})
-      (index-run-memory-legacy! config run extract-mentioned-devel-paths extract-mentioned-urls))))
+    (fail-open-indexing!
+     (if-let [store @store-registry/session-store*]
+       (complete-run! store (:run_id run)
+                      {:status        (:status run)
+                       :answer        (:answer run)
+                       :error         (:error run)
+                       :messages      (:request_messages run)
+                       :trace_blocks  (:trace_blocks run)
+                       :content_parts (:content_parts run)})
+       (index-run-memory-legacy! config run extract-mentioned-devel-paths extract-mentioned-urls)))))
 
 (defn- index-run-memory-legacy!
   [config run extract-mentioned-devel-paths extract-mentioned-urls]

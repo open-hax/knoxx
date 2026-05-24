@@ -80,8 +80,8 @@
 
 (defn start-http!
   "Create a fresh Fastify app and bind HTTP routes around durable runtime state."
-  [runtime cfg policyDb cookie-hook?]
-  (runtime-state/remember-context! runtime cfg policyDb)
+  [runtime cfg policy-context cookie-hook?]
+  (runtime-state/remember-context! runtime cfg policy-context)
   (let [app (http-server/create-app!)]
     (http-server/ensure-json-empty-body-parser! app)
     ;; Debug hook: log large requests before they hit 413.
@@ -106,11 +106,11 @@
         ;; Optional legacy session hook.
         (.then (fn []
                  (when cookie-hook?
-                   (http-server/add-hook! app "onRequest" (auth-session/create-session-hook policyDb)))))
+                   (http-server/add-hook! app "onRequest" (auth-session/create-session-hook policy-context)))))
         ;; GitHub OAuth + cookie session auth routes.
         (.then (fn []
-                 (auth-routes/register-auth-routes app #js {:policyDb policyDb
-                                                            :runtime runtime})))
+                 (auth-routes/register-auth-routes app {:policy-context policy-context
+                                                         :runtime runtime})))
         ;; Core CLJS routes (/api/*, etc.).
         (.then (fn []
                  (core/register-app-routes! runtime app cfg lounge-messages*)))
@@ -159,10 +159,10 @@
     (discord-reaction-labels/bind! cfg)
 
     (-> (policy-db/create-policy-db (policy-options))
-        (.then (fn [policyDb]
+        (.then (fn [policy-context]
                  (let [runtime #js {}]
-                   (lifecycle/remember-context! runtime cfg policyDb cookie-hook?)
-                   (start-http! runtime cfg policyDb cookie-hook?))))
+                   (lifecycle/remember-context! runtime cfg policy-context cookie-hook?)
+                   (start-http! runtime cfg policy-context cookie-hook?))))
         (.catch (fn [err]
                   (.error js/console "Knoxx policy DB failed to initialize" err)
                   (js/process.exit 1))))))
@@ -186,9 +186,9 @@
   (.log js/console "[knoxx-hot-reload] after-load: starting HTTP server"
         #js {:pid (.-pid js/process)
              :uptimeMs (process-uptime-ms)})
-  (let [{:keys [runtime config policyDb cookie-hook?]} (lifecycle/context)]
-    (if (and runtime config policyDb)
-      (-> (start-http! runtime config policyDb cookie-hook?)
+  (let [{:keys [runtime config policy-context cookie-hook?]} (lifecycle/context)]
+    (if (and runtime config policy-context)
+      (-> (start-http! runtime config policy-context cookie-hook?)
           (.then (fn [_]
                    (.log js/console "[knoxx-hot-reload] after-load: HTTP server started"
                          #js {:pid (.-pid js/process)

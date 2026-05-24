@@ -11,6 +11,7 @@
             [knoxx.backend.infra.event-runtime :as event-runtime]
             [knoxx.backend.domain.realtime :as realtime]
             [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.infra.db.policy :as policy-db]
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.infra.svg-render :as svg-render]
             [knoxx.backend.domain.voice.turn-control :as turn-control]))
@@ -82,9 +83,8 @@
                                [(svg-render/shutdown!)
                                 (when-let [client (redis/get-client)]
                                   (redis/quit client))
-                                (when-let [policy-db (runtime-state/current-policy-db)]
-                                  (when-let [close-fn (aget policy-db "close")]
-                                    (close-fn)))]))))
+                                (when-let [policy-context (runtime-state/current-policy-db)]
+                                  (policy-db/close! policy-context))]))))
                (.then (fn [_]
                         (log-info! app "[shutdown] graceful shutdown complete")
                         (js/process.exit 0)))

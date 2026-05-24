@@ -1,263 +1,126 @@
-# Events / Agents Runtime Separation
+# Events, Triggers, Actions, Schedules, and Agents Runtime Separation
 
 Date: 2026-05-06
-Status: draft
+Status: in-progress
 Repo: `packages/agents/knoxx`
 
 ## Goal
 
-Separate the generic event system from the agent runtime so Knoxx has:
+Separate event reaction from agent execution so Knoxx has:
 
 1. one agent runtime,
-2. one generic event bus / scheduler / trigger layer,
-3. no special "event agent" execution path.
+2. one event dispatch path,
+3. explicit trigger/action/schedule/generator resources,
+4. no blended runtime class that pretends scheduling, subscription, action, and agent execution are one thing.
 
 ## Problem
 
-Today `backend/src/cljs/knoxx/backend/event_agents.cljs` mixes at least five concerns:
+The legacy blended runtime mixed at least five concerns:
 
 1. event bus behavior,
 2. cron/ticker behavior,
-3. source adapters (Discord etc),
-4. trigger matching / schedule state,
+3. adapter reads such as Discord,
+4. trigger matching and schedule state,
 5. agent dispatch.
 
-That creates an architectural split-brain:
-
-1. chat/runtime agents go through `send-agent-turn!` and the Knoxx chat runtime,
-2. so-called "event agents" go through a second orchestration surface.
-
-As long as those stay entangled, Knoxx effectively has two agent runtimes.
+That created an architectural split-brain: normal chat agents used the Knoxx agent runtime, while scheduled/reactive work used a second orchestration surface.
 
 ## Target Model
 
-### 1. Events are generic infrastructure
+### Events are generic infrastructure
 
-Create an `events` subsystem that owns:
+The event subsystem owns:
 
-1. normalized event envelope,
+1. normalized event envelopes,
 2. append/dispatch semantics,
-3. source adapters,
-4. subscriptions,
-5. cron/ticker scheduling,
-6. persisted event/timer state.
+3. generator provenance,
+4. subscriptions through trigger matching,
+5. schedule emission state.
 
-### 2. Agents are just agents
+### Agents are just agents
 
-Agents do not "understand events" via a separate runtime.
+Agents do not carry triggers, schedules, generators, or adapter/source fields.
 
 Instead:
 
-1. events produce a normalized event envelope,
-2. trigger rules decide what should happen,
-3. matched actions dispatch a normal agent run through the same Knoxx runtime used by chat.
+1. generators and schedules emit normalized events,
+2. trigger resources decide whether an action should happen,
+3. action resources dispatch behavior,
+4. agent-session actions launch normal agent runs through the shared Knoxx runtime.
 
-### 3. Triggering is separate from execution
+### Triggering is separate from execution
 
-Introduce a trigger layer whose only job is:
+A trigger resource only:
 
-1. subscribe to events,
-2. match rules / schedules,
-3. invoke actions.
+1. observes event types,
+2. checks a condition/predicate,
+3. requests an action as an actor/listener agreement.
 
-It should not contain agent orchestration logic.
+It does not own agent orchestration or schedule timing.
 
-## Namespace / Surface Split
+## Current Resource Split
 
-### Old → New
+Required runtime resources:
 
-1. `knoxx.backend.event-agents`
-   - split into:
-     - `knoxx.backend.events.bus`
-     - `knoxx.backend.events.state`
-     - `knoxx.backend.events.cron`
-     - `knoxx.backend.events.sources.discord`
-     - `knoxx.backend.events.triggers`
+1. `:generator` — event provenance / producer declaration,
+2. `:schedule` — temporal rule that emits a synthetic event,
+3. `:trigger` — actor agreement to act after observing a matching event,
+4. `:action` — registered executable behavior,
+5. `:agent` — executable prompt/model/capability spec.
 
-2. `knoxx.backend.discord-cron`
-   - becomes compatibility shim over `knoxx.backend.events.cron`
-   - eventual name target: `knoxx.backend.events.cron`
+Reference path:
 
-3. `knoxx.backend.triggers.trigger-runner`
-   - fold or align into `knoxx.backend.events.triggers`
-   - one trigger engine only
+```text
+generator/schedule -> event -> trigger -> action -> optional agent run
+```
 
-4. `event agent` jobs
-   - become trigger definitions plus dispatched actions
-   - not a separate agent runtime class
+## Tool Surface
 
-## Contract Model
-
-### Current unwanted concept
-
-`event-agent job`
-
-This concept currently mixes:
-
-1. trigger definition,
-2. source subscription,
-3. dispatch action,
-4. agent template.
-
-### Target contract split
-
-1. `:event-source`
-   - source adapter config
-   - e.g. Discord gateway, webhook input, cron ticker
-
-2. `:trigger`
-   - matching logic
-   - binds source/event kinds to actions
-
-3. `:action` or `:dispatch`
-   - what happens when triggered
-   - examples:
-     - dispatch normal agent run
-     - emit follow-up event
-     - execute pipeline
-
-4. existing `:agent`
-   - unchanged conceptually
-   - remains a normal Knoxx agent contract
-
-## Tool Surface Rewrite
-
-### Remove event-agent-centric tools
-
-Deprecate these semantics:
-
-1. `event_agents.run_job`
-2. `event_agents.upsert_job`
-3. `schedule_event_agent`
-
-### Replace with two primitives
-
-1. `events.dispatch`
-   - publish a normalized event onto the event bus
-   - agents or admin surfaces use this to stimulate triggers
-
-2. `agents.spawn`
-   - launch a one-off normal agent run directly
-   - no scheduler/job abstraction required
-
-Optional supporting read/admin tools:
+Use current primitives:
 
 1. `events.status`
-2. `events.subscriptions`
-3. `events.replay`
-4. `events.reset`
+2. `events.dispatch`
+3. `triggers.fire`
+4. `agents.spawn`
+5. `actors.send-message`
 
-## Routing / UI Rename
+Do not add job-centric trigger tools. Creating or changing behavior should mean editing resources or dispatching events.
 
-### Backend routes
+## Routing / UI
 
-Current `/api/admin/config/event-agents/*` should evolve toward `/api/admin/config/events/*`.
+Target admin surfaces:
 
-Suggested mapping:
+1. `/api/admin/resources` for EDN resource CRUD,
+2. `/api/admin/config/events` for runtime status/control,
+3. `/api/admin/config/events/dispatch` for manual event dispatch,
+4. `/api/admin/config/events/triggers/:triggerId/fire` for trigger exercise.
 
-1. `/api/admin/config/events`
-2. `/api/admin/config/events/runtime/start`
-3. `/api/admin/config/events/runtime/stop`
-4. `/api/admin/config/events/runtime/reset`
-5. `/api/admin/config/events/dispatch`
-6. `/api/admin/config/events/triggers`
+Frontend split:
 
-### Frontend
+1. `Agents` — agent catalog, audit logs, one-off spawn/inspect,
+2. `Events` — event runtime status, generator/schedule/trigger review, event replay/dispatch.
 
-Agents page should stop owning scheduler semantics.
+## Migration Status
 
-Target UI split:
+Completed slices:
 
-1. `Agents`
-   - agent catalog
-   - audit logs
-   - one-off spawn / inspect
+1. `hello-world` split into action, trigger, schedule, and generator resources.
+2. Cron trigger resources split into schedules that emit events plus triggers that react.
+3. Runtime capabilities moved to `:cap/event-runtime` and `:cap/schedule-runtime`.
+4. Old job-centric tool ids removed from public capability grants.
+5. Resource docs and schemas now treat EDN files as resources guarded by contracts, not contract objects.
 
-2. `Events`
-   - event bus status
-   - sources
-   - trigger review
-   - cron schedule review
-   - event replay / reset / dispatch
+Remaining slices:
 
-## Dispatch Boundary
+1. Migrate frontend/admin clients from legacy route names to resources/events routes.
+2. Remove compatibility route aliases after clients migrate.
+3. Continue deleting legacy source/source-mode fields from agent resources as dedicated generator resources take over provenance.
+4. Replace generated prompt instructions that mention job payloads with `agents.spawn` and resource-edit instructions.
 
-Normal agent invocation from events must route through one boundary only.
+## Invariants
 
-Target boundary:
-
-1. `events.*` decides *that* an action should happen,
-2. `actions.dispatch` decides *what kind* of action it is,
-3. `agents.runner` performs normal Knoxx agent invocation.
-
-That means no event subsystem code should build bespoke agent runtime payloads except through the shared runner.
-
-## Migration Phases
-
-### Phase 1 — Name the seam, no behavior change
-
-1. create `agents.runner` and move shared normal agent invocation there,
-2. make event-triggered agent runs call `agents.runner`,
-3. keep old routes/tools as compatibility shims.
-
-Definition of done:
-
-1. event-triggered agent launches and chat launches both flow through the same runner,
-2. `event_agents.cljs` no longer owns the canonical agent invocation path.
-
-### Phase 2 — Extract generic events runtime
-
-1. move event envelope + state into `events.bus` / `events.state`,
-2. move cron ticker into `events.cron`,
-3. move Discord event adaptation into `events.sources.discord`,
-4. move matching into `events.triggers`.
-
-Definition of done:
-
-1. no agent-specific code remains in the generic event bus/ticker layer.
-
-### Phase 3 — Reframe tools and routes
-
-1. introduce `events.dispatch` and `agents.spawn`,
-2. keep old `event_agents.*` tools as deprecated aliases initially,
-3. add `/events` admin surface and move schedule review there.
-
-Definition of done:
-
-1. human/admin vocabulary is "events" and "agents", not "event agents".
-
-### Phase 4 — Contract cleanup
-
-1. migrate trigger-bearing pseudo-agent jobs into explicit trigger/action composition,
-2. reduce `:trigger-kind` on regular agents to descriptive metadata, not scheduler ownership,
-3. convert cron/event orchestration to event/trigger contracts.
-
-Definition of done:
-
-1. regular agents are regular agents,
-2. scheduling and subscriptions are owned by events/triggers only.
-
-## Compatibility Plan
-
-Short-term compatibility shims are acceptable:
-
-1. `knoxx.backend.discord-cron` → delegates to `events.cron`
-2. `event_agents.dispatch` → delegates to `events.dispatch`
-3. `event_agents.run_job` → delegates to either `events.dispatch` or `agents.spawn` depending on payload
-4. `/event-agents` UI route → redirects to `/events`
-
-## Risks
-
-1. contract migration could break existing cron/event-driven Discord behaviors if done all at once,
-2. circular dependencies can reappear if `events.*` imports `agents.*` directly instead of going through dispatch/runner boundaries,
-3. admin surfaces may temporarily need dual labels while compatibility shims exist.
-
-## Immediate Next Slice
-
-Implement Phase 1 first:
-
-1. introduce `agents.runner` as the only normal agent launch path,
-2. make current event-triggered runs delegate to it,
-3. leave the rest of the event scheduler intact for one pass.
-
-This is the minimum slice that collapses the "two runtimes" problem before the broader events refactor.
+1. Schedules emit events; they never call actions directly.
+2. Triggers hear events; they never contain schedule rules.
+3. Actions execute behavior; they do not subscribe or schedule themselves.
+4. Generators provide provenance; they do not decide reactions.
+5. Agents are executable prompt/model/capability specs only.

@@ -3,9 +3,10 @@
 
    This namespace does not normalize legacy agent jobs. It projects loaded
    resource records into flat tables and reports boundary-contract violations so
-   callers can stop treating agents, triggers, schedules, actions, and
+   callers can stop treating agents, triggers, schedules, actions, sources, and
    generators as one blended runtime shape."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.driver.registry :as driver-registry]))
 
 (def class->kind
   {"actions" :action
@@ -13,6 +14,7 @@
    "agents" :agent
    "capabilities" :capability
    "generators" :generator
+   "sources" :source
    "pipelines" :pipeline
    "roles" :role
    "schedules" :schedule
@@ -21,7 +23,7 @@
    "workflows" :workflow})
 
 (def catalog-resource-kinds
-  [:agent :actor :action :trigger :schedule :generator])
+  [:agent :actor :action :trigger :schedule :generator :source])
 
 (def agent-runtime-keys
   #{:trigger-kind
@@ -115,7 +117,7 @@
       [(violation record
                   :agent/contains-runtime-agreement
                   :block
-                  "Agent resources must not define triggers, schedules, generators, or runtime sources. Agents define prompting, roles, capabilities, ownership, and policy only."
+                  "Agent resources must not define triggers, schedules, generators, or source declarations. Agents define prompting, roles, capabilities, ownership, and policy only."
                   {:keys forbidden})])))
 
 (defn- missing-trigger-field-violations
@@ -153,7 +155,7 @@
       (conj (violation record
                        :trigger/contains-source
                        :block
-                       "The source concept is retired at this boundary. Use generator resources for event producers and event provenance for emitted events."
+                       "Source declarations belong in source resources. Triggers observe event types and do not bind directly to source implementations."
                        {:keys source-keys})))))
 
 (defn- trigger-violations
@@ -204,27 +206,99 @@
                   "Generator resources must declare how they produce events."
                   {})])))
 
-(defn- legacy-source-violations
-  [records class-name]
+(defn- event-source?
+  [resource]
+  (or (= :event-generator (:source/type resource))
+      (= "event-generator" (:source/type resource))
+      (seq (:source/listens resource))
+      (seq (:source/emits resource))))
+
+(defn- missing-source-declaration-violations
+  [record resource source-listens driver]
+  (cond-> []
+    (and (event-source? resource) (not driver))
+    (conj (violation record
+                     :source/missing-driver
+                     :block
+                     "Event source resources must declare the ClojureScript driver implementation they use."
+                     {}))
+
+    (and (event-source? resource) (not (:source/actor resource)))
+    (conj (violation record
+                     :source/missing-actor
+                     :block
+                     "Event source resources must declare the actor identity that owns credentials and dispatches selected events."
+                     {}))
+
+    (and (event-source? resource) (empty? source-listens))
+    (conj (violation record
+                     :source/missing-listens
+                     :block
+                     "Event source resources must declare :source/listens, the driver event types this source cares about."
+                     {}))
+
+    (seq (:source/emits resource))
+    (conj (violation record
+                     :source/declares-emits
+                     :block
+                     "Source resources must not define emitted event shapes. Driver code owns event specs; sources select events with :source/listens."
+                     {:declared (:source/emits resource)}))))
+
+(defn- source-driver-violations
+  [record resource source-listens driver]
+  (cond-> []
+    (and (event-source? resource)
+         driver
+         (not (driver-registry/registered-driver? driver)))
+    (conj (violation record
+                     :source/unknown-driver
+                     :block
+                     "Source resources must reference a registered ClojureScript driver implementation."
+                     {:driver driver
+                      :registered (driver-registry/registered-driver-ids)}))
+
+    (and (event-source? resource)
+         driver
+         (driver-registry/registered-driver? driver)
+         (not (driver-registry/listened-by-driver? resource)))
+    (conj (violation record
+                     :source/listens-unemitted-event
+                     :block
+                     "Source resources may only listen to event types emitted by their selected driver implementation."
+                     {:driver driver
+                      :listens source-listens
+                      :driver-emits (driver-registry/emitted-event-types driver)}))))
+
+(defn- source-violations
+  [record]
+  (let [resource (resource-definition record)
+        source-listens (driver-registry/source-listens resource)
+        driver (:source/driver resource)]
+    (vec (concat (missing-source-declaration-violations record resource source-listens driver)
+                 (source-driver-violations record resource source-listens driver)))))
+
+(defn- legacy-source-mode-violations
+  [records]
   (mapv (fn [record]
           (violation record
-                     :legacy/source-resource
-                     :block
-                     "Runtime source/source-mode resources are legacy at the event runtime boundary; use generator resources instead."
-                     {:class class-name}))
-        (filter #(= class-name (resource-class %)) records)))
+                     :legacy/source-mode-resource
+                     :warn
+                     "Source-mode resources are legacy prompt-context adapters. Event producers should be declared as source resources that select registered driver events."
+                     {:class "source_modes"}))
+        (filter #(= "source_modes" (resource-class %)) records)))
 
 (defn violations
   [records]
-  (vec
-   (concat
-    (mapcat agent-violations (filter #(= :agent (resource-kind %)) records))
-    (mapcat trigger-violations (filter #(= :trigger (resource-kind %)) records))
-    (mapcat action-violations (filter #(= :action (resource-kind %)) records))
-    (mapcat schedule-violations (filter #(= :schedule (resource-kind %)) records))
-    (mapcat generator-violations (filter #(= :generator (resource-kind %)) records))
-    (legacy-source-violations records "sources")
-    (legacy-source-violations records "source_modes"))))
+  (let [rows (vec (or records []))]
+    (vec
+     (concat
+      (mapcat agent-violations (filter #(= :agent (resource-kind %)) rows))
+      (mapcat trigger-violations (filter #(= :trigger (resource-kind %)) rows))
+      (mapcat action-violations (filter #(= :action (resource-kind %)) rows))
+      (mapcat schedule-violations (filter #(= :schedule (resource-kind %)) rows))
+      (mapcat generator-violations (filter #(= :generator (resource-kind %)) rows))
+      (mapcat source-violations (filter #(= :source (resource-kind %)) rows))
+      (legacy-source-mode-violations rows)))))
 
 (defn catalog
   [records]
@@ -241,16 +315,31 @@
                     (into {}))}
      :runtime {:agents-are-executables true
                :triggers-are-event-action-agreements true
-               :schedules-emit-synthetic-events true}
+               :schedules-emit-synthetic-events true
+               :drivers-are-code true
+               :sources-listen-to-driver-events true}
      :admissibility {:ok? (empty? current-violations)
                      :violations current-violations}}))
 
+(defn- option-name
+  [value]
+  (if (keyword? value)
+    (nonblank (name value))
+    (nonblank value)))
+
+(defn- generator-option
+  [resource]
+  (option-name (or (:generator/kind resource)
+                   (:generator/driver resource)
+                   (:source/type resource)
+                   (:source/driver resource))))
+
 (defn generator-kind-options
   [records]
-  (->> (resources-of-kind (vec (or records [])) :generator)
+  (->> [:generator :source]
+       (mapcat #(resources-of-kind (vec (or records [])) %))
        (keep (fn [{:keys [resource]}]
-               (nonblank (or (:generator/kind resource)
-                             (:generator/driver resource)))))
+               (generator-option resource)))
        distinct
        sort
        vec))

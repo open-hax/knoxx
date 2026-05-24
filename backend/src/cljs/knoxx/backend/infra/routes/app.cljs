@@ -19,6 +19,7 @@
             [knoxx.backend.law.guards :as guards]
             [knoxx.backend.infra.clients.proxx :as proxx-client]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.http :refer [forward-knoxx-request! json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openai-auth-error send-fetch-response! request-query-string request-body http-error error-response!]]
             [knoxx.backend.infra.routes.memory :as memory-routes]
             [knoxx.backend.infra.routes.models :as model-routes]
@@ -328,11 +329,11 @@
   (json-response! reply 502 {:detail (str prefix err)}))
 
 (defn- pg-query-ok [reply result]
-  (let [rows (js->clj (aget result "rows") :keywordize-keys true)]
+  (let [rows (:rows result)]
     (json-response! reply 200 {:ok true :rows rows :count (count rows)})))
 
 (defn- pg-query-table-ok [reply table result]
-  (let [rows (js->clj (aget result "rows") :keywordize-keys true)]
+  (let [rows (:rows result)]
     (json-response! reply 200 {:ok true :table table :rows rows :count (count rows)})))
 
 (defn- pg-query-err [reply err]
@@ -1081,8 +1082,7 @@
         raw-sql (or (aget body "sql") "")
         table (or (aget body "table") "")
         limit (or (aget body "limit") 50)
-        db (policy-db runtime)
-        query-fn (when db (aget db "query"))]
+        db (policy-db runtime)]
     (cond
       (nil? db)
       (json-response! reply 503 {:error "Policy database not configured"})
@@ -1098,7 +1098,7 @@
                 final-sql (if has-limit
                             trimmed
                             (str trimmed " LIMIT " enforced-limit))]
-            (-> (query-fn final-sql (clj->js []))
+            (-> (db-policy/query! db final-sql [])
                 (.then (partial pg-query-ok reply))
                 (.catch (partial pg-query-err reply))))))
 
@@ -1110,7 +1110,7 @@
       :else
       (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
             sql-str (str "SELECT * FROM " table " LIMIT " enforced-limit)]
-        (-> (query-fn sql-str (clj->js []))
+        (-> (db-policy/query! db sql-str [])
             (.then (partial pg-query-table-ok reply table))
             (.catch (partial pg-query-err reply)))))))
 

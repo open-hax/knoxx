@@ -51,7 +51,10 @@
                                                                :top-k top-k
                                                                :max-snippet-chars 240} auth-context)
            (.then (fn [result]
-                    (assoc result :elapsedMs (- (.now js/Date) started-ms))))))
+                    (assoc result :elapsedMs (- (.now js/Date) started-ms))))
+           (.catch (fn [err]
+                     (.warn js/console "[agent-hydration] passive semantic hydration failed; continuing without corpus context" err)
+                     nil))))
      (js/Promise.resolve nil))))
 
 (defn- openplanner-memory-source-options

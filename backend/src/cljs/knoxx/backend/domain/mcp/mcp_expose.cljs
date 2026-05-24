@@ -4,9 +4,9 @@
    These helpers exist so server.mjs can build an MCP tool catalog that matches
    the Knoxx agent runtime's tool objects (name/description/execute).
 
-   Important: this takes a *JS* request context (as returned by policyDb's
-   resolveRequestContext) and converts it into a CLJS map before delegating to
-   the agent hydration tool factories."  
+   Important: internal callers should pass a CLJS request context. JS callers
+   may still pass a native object at this explicit JS-facing boundary, where it
+   is decoded before delegating to the agent hydration tool factories."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.agent.hydration :as hydration]
             [knoxx.backend.domain.contracts.loader :as contracts]
@@ -121,7 +121,7 @@
    Parameters:
    - runtime: JS runtime bundle passed from server.mjs
    - config: Knoxx config map
-   - ctx-js: a JS request context object from policyDb.resolveRequestContext
+   - ctx-js: a CLJS request context map, or a JS object at this JS-facing boundary
 
    Returns: a JS array of tool objects.
    Each tool has at least:
@@ -130,10 +130,14 @@
    - parameters (TypeBox schema)
    - execute (fn)
 
-  NOTE: We intentionally accept JS contexts here because the JS bootstrap owns
-   the policyDb instance. CLJS code expects keyword keys, so we keywordize."  
+  NOTE: This is a JS-facing compatibility entrypoint. Internal CLJS code should
+   pass context maps directly; native objects are decoded here only for external
+   callers."
   [runtime config ctx-js]
-  (let [ctx (when ctx-js (js->clj ctx-js :keywordize-keys true))
+  (let [ctx (cond
+              (map? ctx-js) ctx-js
+              ctx-js (js->clj ctx-js :keywordize-keys true)
+              :else nil)
         cfg (resolve-config config)
         tools (hydration/create-knoxx-custom-tools runtime cfg ctx)]
     (attach-sub-agent-metadata-to-tools! tools cfg)))

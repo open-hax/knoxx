@@ -6,7 +6,7 @@
    In-flight runs are owned by Redis."
   (:require [shadow.cljs.modern :refer [js-await]]
             [clojure.string :as str]
-            [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run!]]
+            [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run! get-run patch-run! put-run!]]
             [knoxx.backend.infra.openplanner.memory :as op-mem]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.time :as time]))
@@ -97,20 +97,20 @@
         (some-> hit :metadata :run_payload))))
 
   (patch-run! [store run-id patch]
-    (js-await [current (.get-run store run-id)]
+    (js-await [current (get-run store run-id)]
       (let [updated (merge (or current {:run_id run-id}) patch
                            {:updated_at (time/now-iso)})]
-        (.put-run! store updated))))
+        (put-run! store updated))))
 
   (list-active-runs [_ _session-id]
     (js/Promise.resolve []))
 
   (complete-run! [store run-id opts]
-    (.patch-run! store run-id
-                 (merge {:status "completed"
-                         :has_active_stream false}
-                        (select-keys opts [:status :answer :error
-                                           :trace_blocks :messages]))))
+    (patch-run! store run-id
+                (merge {:status "completed"
+                        :has_active_stream false}
+                       (select-keys opts [:status :answer :error
+                                          :trace_blocks :messages]))))
 
   (delete-run! [_ _run-id]
     (js/Promise.resolve true)))

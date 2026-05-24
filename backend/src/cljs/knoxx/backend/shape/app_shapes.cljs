@@ -3,6 +3,28 @@
 
 (def ^:private media-extension-pattern #".*\.(?:png|jpg|jpeg|gif|webp|mp4|webm|mp3|wav|ogg|m4a|flac|pdf)(?:\?.*)?$")
 
+(defn- body-value
+  [body & names]
+  (some (fn [field-name]
+          (if (map? body)
+            (or (get body (keyword field-name))
+                (get body field-name))
+            (aget body field-name)))
+        names))
+
+(defn- maybe-cljs
+  [value]
+  (cond
+    (nil? value) nil
+    (map? value) value
+    (vector? value) value
+    :else (js->clj value :keywordize-keys true)))
+
+(defn- maybe-cljs-map
+  [value]
+  (when-let [value (maybe-cljs value)]
+    (when (map? value) value)))
+
 (defn- extract-media-urls
   "Extract media URLs from text content."
   [text]
@@ -77,7 +99,7 @@
 
 (defn- normalize-agent-spec
   [value]
-  (let [spec (some-> value (js->clj :keywordize-keys true))
+  (let [spec (maybe-cljs-map value)
         contract-id (some-> (or (:contract_id spec)
                                 (:contract-id spec)
                                 (:contractId spec)
@@ -198,7 +220,7 @@
 
 (defn- normalize-content-parts
   [value]
-  (let [parts (some-> value (js->clj :keywordize-keys true))]
+  (let [parts (maybe-cljs value)]
     (cond
       (sequential? parts) (vec (keep normalize-content-part parts))
       (map? parts) (vec (keep normalize-content-part [parts]))
@@ -206,54 +228,62 @@
 
 (defn normalize-chat-body
   [body]
-  (let [message (or (aget body "message") "")
-        raw-content-parts (normalize-content-parts (or (aget body "contentParts")
-                                                      (aget body "content_parts")
-                                                      (aget body "content-parts")))
+  (let [message (or (body-value body "message") "")
+        raw-content-parts (normalize-content-parts (body-value body "contentParts"
+                                                               "content_parts"
+                                                               "content-parts"))
         content-parts raw-content-parts]
     {:message message
-     :conversation-id (or (aget body "conversationId")
-                         (aget body "conversation_id"))
-     :session-id (or (aget body "sessionId")
-                     (aget body "session_id"))
-     :run-id (or (aget body "runId")
-                 (aget body "run_id"))
-     :model (or (aget body "model") nil)
-     :thinking-level (or (aget body "thinkingLevel")
-                         (aget body "thinking_level")
-                         (aget body "reasoningEffort")
-                         (aget body "reasoning_effort"))
+     :conversation-id (body-value body "conversationId"
+                                  "conversation_id"
+                                  "conversation-id")
+     :session-id (body-value body "sessionId"
+                             "session_id"
+                             "session-id")
+     :run-id (body-value body "runId"
+                         "run_id"
+                         "run-id")
+     :model (body-value body "model")
+     :thinking-level (body-value body "thinkingLevel"
+                                 "thinking_level"
+                                 "thinking-level"
+                                 "reasoningEffort"
+                                 "reasoning_effort"
+                                 "reasoning-effort")
      :content-parts content-parts
-     :template-context (some-> (or (aget body "templateContext")
-                                   (aget body "template_context")
-                                   (aget body "template-context"))
-                               (js->clj :keywordize-keys true))
-     :mode (or (aget body "mode") "direct")
-     :agent-spec (normalize-agent-spec (or (aget body "agentSpec")
-                                           (aget body "agent_spec")))
-     :auth-context (some-> (or (aget body "authContext")
-                               (aget body "auth_context"))
-                           (js->clj :keywordize-keys true))}))
+     :template-context (maybe-cljs-map (body-value body "templateContext"
+                                                   "template_context"
+                                                   "template-context"))
+     :mode (or (body-value body "mode") "direct")
+     :agent-spec (normalize-agent-spec (body-value body "agentSpec"
+                                                   "agent_spec"
+                                                   "agent-spec"))
+     :auth-context (maybe-cljs-map (body-value body "authContext"
+                                               "auth_context"
+                                               "auth-context"))}))
 
 (defn normalize-control-body
   [body]
-  (let [metadata (or (aget body "metadata")
-                     (aget body "lineage")
-                     #js {})]
-    {:message (or (aget body "message") "")
-     :conversation-id (or (aget body "conversationId")
-                          (aget body "conversation_id"))
-     :session-id (or (aget body "sessionId")
-                     (aget body "session_id"))
-     :run-id (or (aget body "runId")
-                 (aget body "run_id"))
-     :actor-id (some-> (or (aget body "actorId")
-                           (aget body "actor_id")
-                           (aget body "actor-id"))
-                         str
-                         str/trim
-                         not-empty)
-     :metadata (js->clj metadata :keywordize-keys true)}))
+  (let [metadata (or (body-value body "metadata")
+                     (body-value body "lineage")
+                     {})]
+    {:message (or (body-value body "message") "")
+     :conversation-id (body-value body "conversationId"
+                                  "conversation_id"
+                                  "conversation-id")
+     :session-id (body-value body "sessionId"
+                             "session_id"
+                             "session-id")
+     :run-id (body-value body "runId"
+                         "run_id"
+                         "run-id")
+     :actor-id (some-> (body-value body "actorId"
+                                   "actor_id"
+                                   "actor-id")
+                       str
+                       str/trim
+                       not-empty)
+     :metadata (or (maybe-cljs-map metadata) {})}))
 
 (defn route!
   "Register a Fastify route. handler-or-opts may be either:

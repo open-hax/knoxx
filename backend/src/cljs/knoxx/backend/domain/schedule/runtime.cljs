@@ -20,6 +20,9 @@
              (let [n (-> (re-find #"/(\d+)" rule-text) second js/parseInt)]
                (* 60 1000 (max (or n 5) 1)))
 
+             (re-find #"^\d+\s+\d+\s+\*\s+\*\s+\*$" rule-text)
+             (* 24 60 60 1000)
+
              (re-find #"^(\d+)\s+\*" rule-text)
              (let [n (-> (re-find #"^(\d+)\s+\*" rule-text) second js/parseInt)]
                (* 60 1000 (max n 1)))

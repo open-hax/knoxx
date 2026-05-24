@@ -108,6 +108,12 @@
     (session! [_ _conversation-id _opts]
       (js/Promise.resolve {:rows rows}))))
 
+(defn- failing-op-client []
+  (reify openplanner-client/IOpenPlannerClient
+    (enabled? [_] true)
+    (session! [_ _conversation-id _opts]
+      (js/Promise.reject (js/Error. "OpenPlanner request failed")))))
+
 (deftest ^:async openplanner-source-maps-rows-to-messages
   (let [src    (->OpenPlannerMessageSource
                 {:openplanner-client
@@ -119,3 +125,12 @@
       (is (= [{:role "user" :content "hello from op"}
               {:role "assistant" :content "reply from op"}]
              result)))))
+
+(deftest ^:async openplanner-source-rejects-when-history-restore-fails
+  (let [src (->OpenPlannerMessageSource {:openplanner-client (failing-op-client)})]
+    (testing "OpenPlanner restore failure is explicit and blocks transcript construction"
+      (try
+        (await (fetch-messages! src "conv-1"))
+        (is false "expected OpenPlanner history restore to reject")
+        (catch :default err
+          (is (re-find #"OpenPlanner request failed" (.-message err))))))))

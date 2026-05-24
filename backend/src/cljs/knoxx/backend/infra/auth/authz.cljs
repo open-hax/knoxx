@@ -1,6 +1,7 @@
 (ns knoxx.backend.infra.auth.authz
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.session :as auth-session]
+            [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.http :as http]
             [knoxx.backend.runtime.state :as runtime-state]))
 
@@ -40,7 +41,7 @@
      (http/json-response! reply 503 {:detail "Knoxx policy database is not configured"}))
     (-> promise
         (.then (fn [result]
-                 (http/json-response! reply status (js->clj result :keywordize-keys true))
+                 (http/json-response! reply status result)
                  js/undefined))
         (.catch (fn [err]
                   (http/error-response! reply err)
@@ -55,16 +56,16 @@
       (let [headers (or (aget request "headers") #js {})
             header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
             header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
+            policy-context (policy-db runtime)
             ctx-promise (if (or (not (str/blank? header-email))
                                 (not (str/blank? header-mid)))
-                          (.resolveRequestContext (policy-db runtime) headers)
+                          (db-policy/resolve-context! policy-context headers)
                           ;; Fall back to cookie-backed auth context resolution.
-                          (auth-session/resolve-auth-context request (policy-db runtime)))]
+                          (auth-session/resolve-auth-context request policy-context))]
         (-> ctx-promise
             (.then (fn [ctx]
-                     (let [clj-ctx (js->clj ctx :keywordize-keys true)]
-                       (aset request "__knoxxRequestContext" clj-ctx)
-                       clj-ctx))))))))
+                     (aset request "__knoxxRequestContext" ctx)
+                     ctx)))))))
 
 (defn with-request-context!
   [runtime request reply f]
@@ -77,22 +78,24 @@
                   (http/error-response! reply err)
                   js/undefined)))))
 
-(defn ctx-org-id [ctx] (or (:orgId ctx) (get-in ctx [:org :id]) (when ctx (aget ctx "orgId"))))
-(defn ctx-org-slug [ctx] (or (:orgSlug ctx) (get-in ctx [:org :slug]) (when ctx (aget ctx "orgSlug"))))
-(defn ctx-user-id [ctx] (or (:userId ctx) (get-in ctx [:user :id]) (when ctx (aget ctx "userId"))))
-(defn ctx-user-email [ctx] (or (:userEmail ctx) (get-in ctx [:user :email]) (when ctx (aget ctx "userEmail"))))
-(defn ctx-membership-id [ctx] (or (:membershipId ctx) (get-in ctx [:membership :id]) (when ctx (aget ctx "membershipId"))))
-(defn ctx-actor-id [ctx] (or (:actorId ctx) (:actor_id ctx) (:actor-id ctx) (get-in ctx [:actor :id]) (when ctx (aget ctx "actorId"))))
+(defn ctx-org-id [ctx] (or (:org-id ctx) (:orgId ctx) (get-in ctx [:org :id])))
+(defn ctx-org-slug [ctx] (or (:org-slug ctx) (:orgSlug ctx) (get-in ctx [:org :slug])))
+(defn ctx-user-id [ctx] (or (:user-id ctx) (:userId ctx) (get-in ctx [:user :id])))
+(defn ctx-user-email [ctx] (or (:user-email ctx) (:userEmail ctx) (get-in ctx [:user :email])))
+(defn ctx-membership-id [ctx] (or (:membership-id ctx) (:membershipId ctx) (get-in ctx [:membership :id])))
+(defn ctx-actor-id [ctx] (or (:actor-id ctx) (:actorId ctx) (get-in ctx [:membership :actor-id]) (get-in ctx [:actor :id])))
 
 (defn ctx-role-slugs
   [ctx]
   (into #{}
-        (or (:roleSlugs ctx)
+        (or (:role-slugs ctx)
+            (:roleSlugs ctx)
             (keep :slug (:roles ctx)))))
 
 (defn primary-context-role
   [ctx]
-  (or (first (:roleSlugs ctx))
+  (or (first (:role-slugs ctx))
+      (first (:roleSlugs ctx))
       (some->> (:roles ctx) (map :slug) first)
       "knowledge_worker"))
 
@@ -115,16 +118,16 @@
 (defn ctx-tool-effect
   [ctx tool-id]
   (some (fn [policy]
-          (when (= (str (:toolId policy)) (str tool-id))
+          (when (= (str (or (:tool-id policy) (:toolId policy))) (str tool-id))
             (:effect policy)))
-        (:toolPolicies ctx)))
+        (or (:tool-policies ctx) (:toolPolicies ctx))))
 
 (defn ctx-tool-policy
   [ctx tool-id]
   (some (fn [policy]
-          (when (= (str (:toolId policy)) (str tool-id))
+          (when (= (str (or (:tool-id policy) (:toolId policy))) (str tool-id))
             policy))
-        (:toolPolicies ctx)))
+        (or (:tool-policies ctx) (:toolPolicies ctx))))
 
 (defn ctx-tool-constraints
   [ctx tool-id]
@@ -171,11 +174,11 @@
     (throw (http/http-error 403 "org_scope_denied" "Requested org is outside the current Knoxx scope")))
   ctx)
 
-(defn record-org-id [record] (or (:org_id record) (:orgId record)))
-(defn record-user-id [record] (or (:user_id record) (:userId record)))
-(defn record-user-email [record] (or (:user_email record) (:userEmail record)))
-(defn record-membership-id [record] (or (:membership_id record) (:membershipId record)))
-(defn record-actor-id [record] (or (:actor_id record) (:actorId record) (:actor-id record)))
+(defn record-org-id [record] (or (:org-id record) (:orgId record) (:org_id record)))
+(defn record-user-id [record] (or (:user-id record) (:userId record) (:user_id record)))
+(defn record-user-email [record] (or (:user-email record) (:userEmail record) (:user_email record)))
+(defn record-membership-id [record] (or (:membership-id record) (:membershipId record) (:membership_id record)))
+(defn record-actor-id [record] (or (:actor-id record) (:actorId record) (:actor_id record)))
 
 (defn principal-match?
   [ctx record]
@@ -217,11 +220,11 @@
    :user_email (ctx-user-email ctx)
    :membership_id (ctx-membership-id ctx)
    :actor_id (ctx-actor-id ctx)
-   :role_slugs (vec (or (:roleSlugs ctx) []))
+   :role_slugs (vec (ctx-role-slugs ctx))
    :permissions (vec (or (:permissions ctx) []))
-   :tool_policies (vec (or (:toolPolicies ctx) []))
-   :membership_tool_policies (vec (or (:membershipToolPolicies ctx) []))
-   :is_system_admin (boolean (:isSystemAdmin ctx))})
+   :tool_policies (vec (or (:tool-policies ctx) (:toolPolicies ctx) []))
+   :membership_tool_policies (vec (or (:membership-tool-policies ctx) (:membershipToolPolicies ctx) []))
+   :is_system_admin (boolean (or (:is-system-admin ctx) (:isSystemAdmin ctx)))})
 
 (defn auth-snapshot-has-principal?
   [snapshot]

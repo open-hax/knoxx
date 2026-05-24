@@ -183,7 +183,7 @@
     [:model/input {:optional true} [:sequential keyword?]]])
 
 (def SourceModeContract
-  "Source-mode contracts document how event-agent source modes transform upstream
+  "Source-mode contracts document how event runtime source modes transform upstream
    source records into template context and runtime dispatch behavior."
   [:map {:closed false}
    [:contract/kind [:= :source-mode]]
@@ -224,18 +224,41 @@
    [:schedule/policy {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 
+(def SourceEmission
+  [:or keyword?
+   [:map {:closed false}
+    [:event/type keyword?]
+    [:event/shape {:optional true} [:map {:closed false}]]
+    [:event/payload-schema {:optional true} any?]
+    [:description {:optional true} string?]]])
+
+(def SourceListener
+  [:or keyword?
+   [:map {:closed false}
+    [:event/type keyword?]
+    [:description {:optional true} string?]]])
+
 (def RuntimeSourceContract
-  "Runtime source contracts declare context providers hydrated before an agent
-   turn. They are intentionally separate from :ingest_source contracts, which
-   describe indexing/discovery jobs."
+  "Source resources declare driver-backed event listeners or context providers.
+   Event sources name the driver implemented in code, the actor identity that
+   owns credentials, and the driver events this source cares about. Event shapes
+   belong to driver implementation code, not source consumers. They are intentionally
+   separate from :ingest_source contracts, which describe indexing and discovery
+   jobs."
   [:map {:closed false}
    [:contract/kind [:= :source]]
    [:contract/id ContractId]
    [:contract/type {:optional true} [:or string? keyword?]]
    [:contract/version {:optional true} int?]
    [:source/id [:or string? keyword?]]
+   [:source/type {:optional true} [:or string? keyword?]]
    [:source/name {:optional true} string?]
    [:source/enabled? {:optional true} boolean?]
+   [:source/driver {:optional true} [:or string? keyword?]]
+   [:source/actor {:optional true} [:or string? keyword?]]
+   [:source/listens {:optional true} [:sequential SourceListener]]
+   [:source/emits {:optional true} [:sequential SourceEmission]]
+   [:source/protocol {:optional true} [:map {:closed false}]]
    [:source/provider {:optional true} [:or string? keyword?]]
    [:source/hydration {:optional true} [:map {:closed false}]]
    [:source/render {:optional true} [:map {:closed false}]]
@@ -312,7 +335,12 @@
    [:contract/id ContractId]
    [:contract/version {:optional true} int?]
    [:enabled {:optional true} boolean?]
+   [:action/id {:optional true} ContractId]
+   [:action/kind {:optional true} keyword?]
    [:action/handler string?]
+   [:action/responds-to {:optional true} [:sequential keyword?]]
+   [:action/result {:optional true} keyword?]
+   [:action/scope {:optional true} [:map {:closed false}]]
    [:action/params {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 
@@ -343,6 +371,12 @@
    [:trigger/events [:vector [:or string? keyword?]]]
    [:trigger/action {:optional true} ContractId]
    [:trigger/agent {:optional true} ContractId]
+   [:trigger/actor {:optional true} ContractId]
+   [:trigger/emitter {:optional true} ContractId]
+   [:trigger/listener {:optional true} ContractId]
+   [:trigger/domain {:optional true} [:map {:closed false}]]
+   [:trigger/condition {:optional true} any?]
+   [:trigger/predicate {:optional true} [:map {:closed false}]]
    [:trigger/with {:optional true} [:map {:closed false}]]
    [:data {:optional true} [:map {:closed false}]]])
 

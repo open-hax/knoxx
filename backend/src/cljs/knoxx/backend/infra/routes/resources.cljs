@@ -41,9 +41,9 @@
           (str/replace #"[^A-Za-z0-9._-]+" "_")
           (str/replace #"_+" "_")))
 
-(defn- parsed-record-id
-  [contract-class value]
-  (case (normalize-contract-class contract-class)
+(defn- parsed-resource-id
+  [resource-class value]
+  (case (normalize-resource-class resource-class)
     "agents" (some-> (:contract/id value) str)
     "policies" (some-> (:contract/id value) str)
     "sources" (some-> (:contract/id value) str)
@@ -186,27 +186,27 @@
       :else [])))
 
 (defn- prompt-state-path-warnings
-  [contract]
-  (let [prompts [(get-in contract [:prompts :system])
-                 (get-in contract [:prompts :task])]
+  [resource]
+  (let [prompts [(get-in resource [:prompts :system])
+                 (get-in resource [:prompts :task])]
         stale-ref? (some (fn [prompt]
                            (and (string? prompt)
                                 (re-find #"(:data/|/world_state|/plot_log|:data/world_state|:data/plot_log)" prompt)))
                          prompts)]
     (if stale-ref?
-      [(validation-warning ["prompts"] "Prompt references mutable :data paths (for example :data/world_state or :data/plot_log). Agent contract :data is static config; use a real state store or durable files instead.")]
+      [(validation-warning ["prompts"] "Prompt references mutable :data paths (for example :data/world_state or :data/plot_log). Agent resource :data is static config; use a real state store or durable files instead.")]
       [])))
 
-(defn- agent-contract-warnings
-  [contract]
-  (let [data (:data contract)
-        source-config (get-in contract [:data :source])
+(defn- agent-resource-warnings
+  [resource]
+  (let [data (:data resource)
+        source-config (get-in resource [:data :source])
         max-messages (positive-int (or (:max-messages source-config)
                                        (:maxMessages source-config)))
-        role (get-in contract [:agent :role])
-        roles (get-in contract [:agent :roles])
-        source-mode (:source-mode contract)
-        filters (get-in contract [:data :filters])
+        role (get-in resource [:agent :role])
+        roles (get-in resource [:agent :roles])
+        source-mode (:source-mode resource)
+        filters (get-in resource [:data :filters])
         channels (or (:channels filters) [])
         publish-channels (or (:publishChannels filters) (:publish_channels filters) [])]
     (vec
@@ -215,11 +215,11 @@
         (contains? data :filter)
         (conj (validation-warning ["data" "filter"] "Runtime ignores :data/:filter. Use :data/:filters."))
 
-        (contains? contract :source)
+        (contains? resource :source)
         (conj (validation-warning ["source"] "Event-agent runtime ignores top-level :source. Use :data {:source ...}."))
 
-        (contains? contract :capabilities)
-        (conj (validation-warning ["capabilities"] "Top-level :capabilities is legacy/inert in contract resolution. Put capability refs under :actor {:capabilities [...]}, or grant them through roles."))
+        (contains? resource :capabilities)
+        (conj (validation-warning ["capabilities"] "Top-level :capabilities is legacy/inert in resource resolution. Put capability refs under :actor {:capabilities [...]}, or grant them through roles."))
 
         (and max-messages (> max-messages 100))
         (conj (validation-warning ["data" "source" "max-messages"] "Event-agent source max-messages is clamped to 100 at runtime."))
@@ -235,23 +235,23 @@
         (conj (validation-warning ["data" "filters" "publishChannels"] ":publishChannels are output sinks only. Add explicit :channels or :guildIds for Discord source reads.")))
       (mapcat (fn [k]
                 (when (contains? data k)
-                  [(validation-warning ["data" (name k)] "This looks like mutable runtime state inside a static contract. Prefer Redis/OpenPlanner/durable files, not contract :data mutation.")]))
+                  [(validation-warning ["data" (name k)] "This looks like mutable runtime state inside a static resource. Prefer Redis/OpenPlanner/durable files, not resource :data mutation.")]))
               mutable-agent-data-keys)
       (role-ref-warnings ["agent" "role"] role)
       (mapcat (fn [[idx value]]
                 (role-ref-warnings ["agent" "roles" (str idx)] value))
               (map-indexed vector (or roles [])))
-      (prompt-state-path-warnings contract)))))
+      (prompt-state-path-warnings resource)))))
 
-(defn- contract-warnings
-  [contract-class contract]
-  (if (and (= (normalize-contract-class contract-class) "agents")
-           (map? contract))
-    (agent-contract-warnings contract)
+(defn- resource-warnings
+  [resource-class resource]
+  (if (and (= (normalize-resource-class resource-class) "agents")
+           (map? resource))
+    (agent-resource-warnings resource)
     []))
 
-(defn validate-contract-edn
-  [contract-class edn-text]
+(defn validate-resource-edn
+  [resource-class edn-text]
   (let [trimmed (str/trim (str edn-text))]
     (if (str/blank? trimmed)
       {:ok false
@@ -259,20 +259,25 @@
        :errors [{:path [] :message "EDN text is empty"}]
        :warnings []}
       (try
-        (let [raw-contract (reader/read-string trimmed)
-              contract (if (= (normalize-contract-class contract-class) "agents")
-                         (actor-scope/normalize-agent-contract raw-contract)
-                         raw-contract)
-              base (validator/validate contract-class contract)]
+        (let [raw-resource (reader/read-string trimmed)
+              resource (if (= (normalize-resource-class resource-class) "agents")
+                         (actor-scope/normalize-agent-contract raw-resource)
+                         raw-resource)
+              base (validator/validate resource-class resource)]
           {:ok (:ok base)
-           :contract contract
+           :contract resource
            :errors (:errors base)
-           :warnings (contract-warnings contract-class contract)})
+           :warnings (resource-warnings resource-class resource)})
         (catch :default err
           {:ok false
            :contract nil
            :errors [{:path [] :message (str "EDN parse error: " (.-message err))}]
            :warnings []})))))
+
+(defn validate-contract-edn
+  "Compatibility alias for old contract route clients."
+  [contract-class edn-text]
+  (validate-resource-edn contract-class edn-text))
 
 (defn- safe-resource-id
   [raw-id]
@@ -302,9 +307,9 @@
   [raw-class]
   (safe-resource-class raw-class))
 
-(defn- update-id-in-edn-text
-  [contract-class edn-text new-id]
-  (case (normalize-contract-class contract-class)
+(defn- update-resource-id-in-edn-text
+  [resource-class edn-text new-id]
+  (case (normalize-resource-class resource-class)
     "agents"
     (if (str/includes? edn-text ":contract/id")
       (str/replace edn-text #":contract/id\s+\"[^\"]+\"" (str ":contract/id \"" new-id "\""))
@@ -517,7 +522,7 @@
   (-> (.readFile fs (resources/resource-file-path config resource-kind resource-id) "utf8")
       (.then (fn [edn-text]
                (let [resource-class (normalize-resource-class resource-kind)
-                     validation (validate-contract-edn resource-class (or edn-text ""))]
+                     validation (validate-resource-edn resource-class (or edn-text ""))]
                  (do-json 200 {:resourceClass resource-class
                                :resource/id resource-id
                                :ednText (or edn-text "")
@@ -545,10 +550,10 @@
 (defn- handle-save-resource
   [do-json config resource-kind resource-id edn-text]
   (let [resource-class (normalize-resource-class resource-kind)
-        validation (validate-contract-edn resource-class edn-text)
+        validation (validate-resource-edn resource-class edn-text)
         validation-out (dissoc validation :contract)
         parsed (:contract validation)
-        parsed-id (parsed-record-id resource-class parsed)
+        parsed-id (parsed-resource-id resource-class parsed)
         route-id (str resource-id)]
     (cond
       (not (:ok validation))
@@ -584,7 +589,7 @@
         validation (validate-contract-edn klass edn-text)
         validation-out (dissoc validation :contract)
         parsed (:contract validation)
-        parsed-id (parsed-record-id klass parsed)
+        parsed-id (parsed-resource-id klass parsed)
         route-id (str contract-id)]
     (cond
       (not (:ok validation))
@@ -618,7 +623,7 @@
   (-> (.readFile fs (resources/resource-file-path config resource-kind source-id) "utf8")
       (.then (fn [source-edn]
                (let [text (or source-edn "")
-                     cloned (update-id-in-edn-text resource-kind text new-id)]
+                     cloned (update-resource-id-in-edn-text resource-kind text new-id)]
                  (handle-save-resource do-json config resource-kind new-id cloned))))
       (.catch (fn [err]
                 (do-json 500 {:detail (str "Failed to copy resource: " (.-message err))})))) )
@@ -628,7 +633,7 @@
   (-> (.readFile fs (resources/resource-file-path config contract-class source-id) "utf8")
       (.then (fn [source-edn]
                (let [text (or source-edn "")
-                     cloned (update-id-in-edn-text contract-class text new-id)]
+                     cloned (update-resource-id-in-edn-text contract-class text new-id)]
                  (handle-save-contract do-json config contract-class new-id cloned))))
       (.catch (fn [err]
                 (do-json 500 {:detail (str "Failed to copy contract: " (.-message err))})))) )
@@ -636,7 +641,7 @@
 (defn- handle-validate-resource
   [do-json resource-kind edn-text]
   (let [resource-class (normalize-resource-class resource-kind)]
-    (do-json 200 (assoc (wire-validation (validate-contract-edn resource-class edn-text))
+    (do-json 200 (assoc (wire-validation (validate-resource-edn resource-class edn-text))
                         :resourceClass resource-class))))
 
 (defn- handle-validate-contract
@@ -676,7 +681,7 @@
                             :errors (:errors validation)
                             :warnings (:warnings validation)}))
       (let [parsed (:contract validation)
-            parsed-id (parsed-record-id klass parsed)
+            parsed-id (parsed-resource-id klass parsed)
             route-id (str contract-id)]
         (if (not= route-id parsed-id)
           (do-text 400 (pr-str {:ok false

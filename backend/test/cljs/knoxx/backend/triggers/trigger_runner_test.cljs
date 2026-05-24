@@ -20,8 +20,8 @@
 (deftest schedule-rule-default
   (testing "unrecognized falls back to 5 minutes"
     (is (= (* 5 60 1000) (schedule-runtime/rule->ms "junk"))))
-  (testing "0 2 * * * (starts with 0 but not N * * * *) falls back to 5 minutes"
-    (is (= (* 5 60 1000) (schedule-runtime/rule->ms "0 2 * * *"))))
+  (testing "daily minute/hour cron forms tick at most daily in the naive scheduler"
+    (is (= (* 24 60 60 1000) (schedule-runtime/rule->ms "0 2 * * *"))))
   (testing "never returns < 1 minute"
     (is (= (* 1 60 1000) (schedule-runtime/rule->ms "0 * * * *")))))
 

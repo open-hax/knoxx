@@ -1,7 +1,7 @@
 (ns knoxx.backend.infra.stores.redis-session-store
   (:require [shadow.cljs.modern :refer [js-await]]
             [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run!]]
+            [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run! get-run patch-run! put-run!]]
             [knoxx.backend.domain.time :as time]))
 
 (def ^:private RUN_PREFIX "knoxx:run:")
@@ -24,17 +24,17 @@
     (redis/get-json client (run-key run-id)))
 
   (patch-run! [store run-id patch]
-    (js-await [current (.get-run store run-id)]
+    (js-await [current (get-run store run-id)]
       (when-let [base (or current
                            (throw (ex-info "patch-run! on unknown run"
                                            {:run-id run-id :patch-keys (keys patch)})))]
         (let [updated (merge base patch {:updated_at (time/now-iso)})]
-          (.put-run! store updated)))))
+          (put-run! store updated)))))
 
   (list-active-runs [store session-id]
     (js-await [run-ids (redis/smembers client (sess-key session-id))]
       (js-await [runs (js/Promise.all
-                        (clj->js (mapv #(.get-run store %) run-ids)))]
+                        (clj->js (mapv #(get-run store %) run-ids)))]
         (->> (js->clj runs :keywordize-keys true)
              (remove nil?)
              (filter #(contains? #{"running" "queued" "waiting_input"}
@@ -42,12 +42,12 @@
              vec))))
 
   (complete-run! [store run-id opts]
-    (.patch-run! store run-id
-                 (merge {:status "completed"
-                         :has_active_stream false
-                         :updated_at (time/now-iso)}
-                        (select-keys opts [:status :answer :error
-                                           :trace_blocks :messages]))))
+    (patch-run! store run-id
+                (merge {:status "completed"
+                        :has_active_stream false
+                        :updated_at (time/now-iso)}
+                       (select-keys opts [:status :answer :error
+                                          :trace_blocks :messages]))))
 
   (delete-run! [_ run-id]
     (js-await [_ (redis/del client (run-key run-id))]

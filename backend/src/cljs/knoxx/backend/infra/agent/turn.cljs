@@ -29,6 +29,7 @@
                                                            record-retrieval-sample! latest-assistant-message
                                                            set-event-stream-sink! clear-event-stream-sink!]]
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
+            [knoxx.backend.shape.agent :refer [send-user-message! subscribe!]]
             [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
@@ -377,7 +378,7 @@
   (let [state (stream/make-stream-state run-id conversation-id session-id (now-iso) started-ms xturn-node/random-uuid!)
         abort! (fn [reason] (stream/request-abort! state session reason))
         _registered (stream/register-active-turn! state abort! agent-spec)
-        unsubscribe (.subscribe session (stream/build-subscribe-handler state session))
+        unsubscribe (subscribe! session (stream/build-subscribe-handler state session))
         parts (or prompt-content-parts [])
         media-parts (->> parts (keep media-part->eta-mu-attachment) vec)
         omitted-count (max 0 (- (count parts) (count media-parts)))
@@ -405,7 +406,7 @@
                              :conversation-id conversation-id
                              :run-id run-id
                              :agent-spec agent-spec})
-    (-> (xturn-prompt/send-user-message! session content)
+    (-> (send-user-message! session content)
         (.then (fn [_]
                  (agent-ctx/clear-context!)
                  (unsubscribe)
