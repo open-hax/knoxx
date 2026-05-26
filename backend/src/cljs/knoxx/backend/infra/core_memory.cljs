@@ -17,8 +17,12 @@
   [row]
   (or (row-extra/parse-core-memory-extra (:extra row)) {}))
 
-(def devel-path-pattern
+(def workspace-path-pattern
   #"((?:orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.ημ)/[A-Za-z0-9._~:/+-]+)")
+
+(def devel-path-pattern
+  "Backward-compatible alias for callers/tests using the old devel-lake name."
+  workspace-path-pattern)
 
 (def url-pattern
   #"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
@@ -61,40 +65,50 @@
   [path]
   (some-> (str path) (str/split #"/") last))
 
-(defn- normalize-devel-path
+(defn- normalize-workspace-path
   [path]
   (normalize-relative-path path))
 
-(defn- likely-file-path?
-  "Heuristic: treat devel mentions as file nodes when the token looks like a file.
+(defn- workspace-project-name
+  []
+  (or (:project-name (cfg)) "workspace"))
 
-  Everything else is treated as a directory structural node (devel:dir:*)."
+(defn- likely-file-path?
+  "Heuristic: treat workspace mentions as file nodes when the token looks like a file.
+
+  Everything else is treated as a directory structural node (<project>:dir:*)."
   [path]
   (let [b (basename path)]
     (or (contains? known-extensionless-files b)
         (str/starts-with? b ".")
         (re-find #"\\." b))))
 
-(defn- devel-target-node
+(defn- workspace-target-node
   [path]
-  (let [path (normalize-devel-path path)]
+  (let [path (normalize-workspace-path path)
+        project-name (workspace-project-name)]
     (when-not (str/blank? path)
       (if (likely-file-path? path)
         {:path path
          :target_kind "file"
-         :target_node_id (str "devel:file:" path)}
+         :target_node_id (str project-name ":file:" path)}
         {:path path
          :target_kind "dir"
-         :target_node_id (str "devel:dir:" path)}))))
+         :target_node_id (str project-name ":dir:" path)}))))
 
-(defn extract-mentioned-devel-paths
+(defn extract-mentioned-workspace-paths
   [text]
-  (->> (re-seq devel-path-pattern (or text ""))
+  (->> (re-seq workspace-path-pattern (or text ""))
        (map second)
-       (map devel-target-node)
+       (map workspace-target-node)
        (remove nil?)
        distinct
        vec))
+
+(defn extract-mentioned-devel-paths
+  "Backward-compatible alias for the workspace path extractor."
+  [text]
+  (extract-mentioned-workspace-paths text))
 
 (defn session-visible?
   [ctx rows]

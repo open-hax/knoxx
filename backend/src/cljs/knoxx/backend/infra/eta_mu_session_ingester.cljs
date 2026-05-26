@@ -3,14 +3,20 @@
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             ["node:fs/promises" :as fs]
+            ["node:os" :as os]
             ["node:path" :as path]))
 
 
+(def ^:private HOME-DIR
+  (.homedir os))
+
 (def ^:private ETA-MU-SESSIONS-ROOT
-  (or (aget (.-env js/process) "ETA_MU_SESSIONS_ROOT") "/home/err/.ημ/agent/sessions"))
+  (or (aget (.-env js/process) "ETA_MU_SESSIONS_ROOT")
+      (.join path HOME-DIR ".ημ" "agent" "sessions")))
 
 (def ^:private INGEST-STATE-DIR
-  (or (aget (.-env js/process) "INGEST_STATE_DIR") "/home/err/.knoxx/eta-mu-ingest-state"))
+  (or (aget (.-env js/process) "INGEST_STATE_DIR")
+      (.join path HOME-DIR ".knoxx" "eta-mu-ingest-state")))
 
 (def ^:private INGEST-STATE-FILE
   (.join path INGEST-STATE-DIR "ingested-sessions.json"))
@@ -119,14 +125,32 @@
          (clojure.string/join "\n"))))
 
 
+(defn- env-workspace-roots
+  []
+  (->> ["WORKSPACE_ROOT" "WORKSPACE_PATH" "KNOXX_WORKSPACE_ROOT"]
+       (map #(aget (.-env js/process) %))
+       (remove #(str/blank? (or % "")))
+       distinct))
+
+(defn- strip-path-prefix
+  [prefix value]
+  (let [clean-prefix (some-> prefix str (str/replace #"/+$" ""))]
+    (cond
+      (str/blank? (or clean-prefix "")) nil
+      (= value clean-prefix) ""
+      (str/starts-with? value (str clean-prefix "/")) (subs value (inc (count clean-prefix)))
+      :else nil)))
+
 (defn- cwd-to-project
   [cwd]
   (if (not cwd)
     "eta-mu"
-    (let [normalized (-> cwd
-                         (.replace #"^/home/[^/]+/devel/" "")
-                         (.replace #"^/home/[^/]+/" "")
-                         (.replace #"^/" ""))]
+    (let [normalized-cwd (-> (str cwd)
+                             (str/replace #"\\\\" "/")
+                             (str/replace #"/+" "/"))
+          normalized (or (some #(strip-path-prefix % normalized-cwd) (env-workspace-roots))
+                         (strip-path-prefix HOME-DIR normalized-cwd)
+                         (str/replace normalized-cwd #"^/" ""))]
       (if (str/blank? normalized) "eta-mu" normalized))))
 
 

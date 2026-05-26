@@ -507,6 +507,7 @@
 (defn session-text-graph-events
   [config extract-mentioned-devel-paths extract-mentioned-urls {:keys [run-id conversation-id session-id ts node-id node-type text label model scope-extra]}]
   (let [safe-text (or text "")
+        workspace-project (or (:project-name config) "workspace")
         node-event (session-graph-node-event config {:event-id (str node-id ":node")
                                                      :node-id node-id
                                                      :ts ts
@@ -521,22 +522,22 @@
                                                                     :session_id session-id}
                                                                    scope-extra
                                                                    (output-quality-extra safe-text))})
-        devel-edges (for [{:keys [path target_node_id target_kind]} (extract-mentioned-devel-paths safe-text)]
-                      (session-graph-edge-event config {:event-id (str node-id ":mentions_devel:" target_node_id)
-                                                        :ts ts
-                                                        :session conversation-id
-                                                        :message node-id
-                                                        :edge-type "mentions_devel_path"
-                                                        :source-node-id node-id
-                                                        :target-node-id target_node_id
-                                                        :source-lake (:session-project-name config)
-                                                        :target-lake "devel"
-                                                        :extra (merge {:run_id run-id
-                                                                       :conversation_id conversation-id
-                                                                       :session_id session-id
-                                                                       :path path
-                                                                       :target_kind target_kind}
-                                                                      scope-extra)}))
+        workspace-edges (for [{:keys [path target_node_id target_kind]} (extract-mentioned-devel-paths safe-text)]
+                          (session-graph-edge-event config {:event-id (str node-id ":mentions_workspace:" target_node_id)
+                                                            :ts ts
+                                                            :session conversation-id
+                                                            :message node-id
+                                                            :edge-type "mentions_workspace_path"
+                                                            :source-node-id node-id
+                                                            :target-node-id target_node_id
+                                                            :source-lake (:session-project-name config)
+                                                            :target-lake workspace-project
+                                                            :extra (merge {:run_id run-id
+                                                                           :conversation_id conversation-id
+                                                                           :session_id session-id
+                                                                           :path path
+                                                                           :target_kind target_kind}
+                                                                          scope-extra)}))
         web-edges (for [url (extract-mentioned-urls safe-text)]
                     (session-graph-edge-event config {:event-id (str node-id ":mentions_web:" url)
                                                       :ts ts
@@ -552,7 +553,7 @@
                                                                      :session_id session-id
                                                                      :url url}
                                                                     scope-extra)}))]
-    (into [node-event] (concat devel-edges web-edges))))
+    (into [node-event] (concat workspace-edges web-edges))))
 
 (defn- fail-open-indexing!
   [run indexing-promise]

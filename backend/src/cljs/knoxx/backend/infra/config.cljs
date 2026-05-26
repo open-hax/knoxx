@@ -16,6 +16,15 @@
   [k default]
   (or (aget js/process.env k) default))
 
+(defn- env-first
+  [keys default]
+  (or (some (fn [k]
+              (let [value (aget js/process.env k)]
+                (when-not (str/blank? (or value ""))
+                  value)))
+            keys)
+      default))
+
 (defn- env-int
   [k default]
   (let [raw (aget js/process.env k)
@@ -49,14 +58,14 @@
    :host (env "HOST" "0.0.0.0")
    :port (js/parseInt (env "PORT" "8000") 10)
 
-   :workspace-root (env "WORKSPACE_ROOT" "/app/workspace/devel")
+   :workspace-root (env-first ["WORKSPACE_ROOT" "WORKSPACE_PATH" "KNOXX_WORKSPACE_ROOT"] "/app/workspace")
    :extra-workspace-roots (env-path-list "KNOXX_EXTRA_WORKSPACE_ROOTS")
    :music-library-root (let [value (some-> (aget js/process.env "KNOXX_MUSIC_LIBRARY_ROOT") str str/trim)]
                          (when-not (str/blank? (or value ""))
                            value))
-   :project-name (env "WORKSPACE_PROJECT_NAME" "devel")
+   :project-name (env-first ["WORKSPACE_PROJECT_NAME" "KNOXX_WORKSPACE_PROJECT"] "workspace")
    :session-project-name (env "KNOXX_SESSION_PROJECT_NAME" "knoxx-session")
-   :collection-name (env "KNOXX_COLLECTION_NAME" "devel_docs")
+   :collection-name (env "KNOXX_COLLECTION_NAME" "workspace_docs")
 
    :contracts-dir (env "CONTRACTS_DIR" "contracts")
 
@@ -148,7 +157,7 @@
    ;; OpenPlanner MCP server config
    :openplanner-mcp-base-url (env "OPENPLANNER_MCP_BASE_URL" "http://openplanner-mcp:8010")
    :openplanner-mcp-tool-name (env "OPENPLANNER_MCP_TOOL_NAME" "openplanner")
-   :openplanner-mcp-project (env "KNOXX_OPENPLANNER_PROJECT" "devel")
+   :openplanner-mcp-project (env-first ["KNOXX_OPENPLANNER_PROJECT" "WORKSPACE_PROJECT_NAME" "KNOXX_WORKSPACE_PROJECT"] "workspace")
    :openplanner-mcp-source (env "KNOXX_OPENPLANNER_SOURCE" "knoxx")
 
    ;; Shoedelussy MCP server config
@@ -160,7 +169,7 @@
    :agent-system-prompt (env
                          "KNOXX_AGENT_SYSTEM_PROMPT"
                          (str
-                          "You are Knoxx, the grounded workspace assistant for the devel corpus. "
+                          "You are Knoxx, the grounded workspace assistant for the active workspace corpus. "
                           "Preserve multi-turn context within the active conversation, use workspace tools when needed, "
                           "cite file paths when they matter, and prefer grounded synthesis over shallow enumeration. "
                           "Treat passive semantic hydration as helpful but incomplete; when corpus grounding matters, "

@@ -3,7 +3,9 @@
             [knoxx.backend.domain.openutau.openutau :as openutau]
             [shadow.cljs.modern :refer [js-await]]))
 
-(def render-script-path "/home/err/devel/services/utau-renderer/render-ustx.sh")
+(def render-script-path
+  (or (aget js/process.env "KNOXX_OPENUTAU_RENDER_SCRIPT")
+      "render-ustx.sh"))
 
 (def default-ustx-version openutau/default-ustx-version)
 (def default-ticks-per-quarter openutau/default-ticks-per-quarter)

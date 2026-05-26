@@ -380,7 +380,7 @@ export function createChatWorkspaceActions({
             driver_type: "local",
             name: "workspace",
             config: {
-              root_path: workspaceRoot || "/app/workspace/devel",
+              root_path: workspaceRoot || "/app/workspace",
               sync_interval_minutes: defaultSyncIntervalMinutes,
               workspace_source: true,
             },
