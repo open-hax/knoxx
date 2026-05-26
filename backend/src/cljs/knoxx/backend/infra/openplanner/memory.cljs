@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.shape.session-persistence :refer [complete-run!]]
+            [knoxx.backend.shape.session-persistence :refer [put-run!]]
             [knoxx.backend.extern.fastify :as fastify]
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.label.quality :as quality-labels]
@@ -420,7 +420,29 @@
                               str str/trim not-empty)
         spawn-kind (some-> (or (:spawnKind agent-spec)
                                (:spawn-kind agent-spec))
-                           str str/trim not-empty)]
+                           str str/trim not-empty)
+        trigger-id (some-> (or (:triggerId agent-spec)
+                               (:trigger-id agent-spec))
+                           str str/trim not-empty)
+        event-type (some-> (or (:eventType agent-spec)
+                               (:event-type agent-spec))
+                           str str/trim not-empty)
+        event-types (->> (or (:eventTypes agent-spec)
+                             (:event-types agent-spec)
+                             [])
+                         (map str)
+                         (remove str/blank?)
+                         distinct
+                         vec)
+        event-id (some-> (or (:eventId agent-spec)
+                             (:event-id agent-spec))
+                         str str/trim not-empty)
+        event-scope-id (some-> (or (:eventScopeId agent-spec)
+                                   (:event-scope-id agent-spec))
+                               str str/trim not-empty)
+        schedule-id (some-> (or (:scheduleId agent-spec)
+                                (:schedule-id agent-spec))
+                            str str/trim not-empty)]
     (cond-> base
       contract-id (assoc :contract_id contract-id)
       actor-id (assoc :actor_id actor-id)
@@ -428,7 +450,13 @@
       sub-agent-id (assoc :sub_agent_id sub-agent-id)
       parent-agent-id (assoc :parent_agent_id parent-agent-id)
       parent-run-id (assoc :parent_run_id parent-run-id)
-      spawn-kind (assoc :spawn_kind spawn-kind))))
+      spawn-kind (assoc :spawn_kind spawn-kind)
+      trigger-id (assoc :trigger_id trigger-id)
+      event-type (assoc :event_type event-type)
+      (seq event-types) (assoc :event_types event-types)
+      event-id (assoc :event_id event-id)
+      event-scope-id (assoc :event_scope_id event-scope-id)
+      schedule-id (assoc :schedule_id schedule-id))))
 
 (defn session-node-kind
   [node-type]
@@ -527,10 +555,18 @@
     (into [node-event] (concat devel-edges web-edges))))
 
 (defn- fail-open-indexing!
-  [indexing-promise]
+  [run indexing-promise]
   (-> indexing-promise
       (.catch (fn [err]
-                (.warn js/console "[openplanner-memory] run indexing failed; continuing without OpenPlanner persistence" err)
+                (.warn js/console "[openplanner-memory] run indexing failed"
+                       (clj->js {:phase          "index-run-memory"
+                                 :run-id         (:run_id run)
+                                 :session-id     (:session_id run)
+                                 :conversation-id (:conversation_id run)
+                                 :run-status     (:status run)
+                                 :error-message  (ex-message err)
+                                 :error-data     (clj->js (or (ex-data err) {}))
+                                 :fail-open      true}))
                 nil))))
 
 (defn index-run-memory!
@@ -538,14 +574,9 @@
   (if-not (openplanner-configured? config)
     (js/Promise.resolve nil)
     (fail-open-indexing!
+     run
      (if-let [store @store-registry/session-store*]
-       (complete-run! store (:run_id run)
-                      {:status        (:status run)
-                       :answer        (:answer run)
-                       :error         (:error run)
-                       :messages      (:request_messages run)
-                       :trace_blocks  (:trace_blocks run)
-                       :content_parts (:content_parts run)})
+       (put-run! store run)
        (index-run-memory-legacy! config run extract-mentioned-devel-paths extract-mentioned-urls)))))
 
 (defn- index-run-memory-legacy!

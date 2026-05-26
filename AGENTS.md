@@ -6,7 +6,8 @@ When modeling domains, you must strictly differentiate between the grammar of mo
 - Contracts: Decide whether a particular runtime entity, event, or transition is admissible under current obligations. They dictate "whether you are allowed to count it as a valid move right now" by defining guards, admissibility checks, evidence requirements, delivery expectations, and side-effect constraints.
 
 # House Rules: The Constitution (`eta-mu-sol` style)
-- Zero Warnings: Zero warnings in CI for `clj-kondo`, type checking, and tests. Warnings are failed contracts, not noise. 
+- Zero Warnings: Zero warnings in CI for `clj-kondo`, type checking, and tests. Warnings are failed contracts, not noise.
+- Warning Ratchet: Do not allow warnings to accumulate. For every backend CLJS change, run `pnpm -C backend typecheck`; fix any warning introduced or touched by the change before moving on. If an unrelated historical warning blocks verification, record it explicitly with the owning file and do not add to the baseline.
 - Linter Enforcement: Turn on optional `clj-kondo` linters for `:missing-docstring`, `:unused-value`, `:shadowed-var`, `:used-underscored-binding`, `:warn-on-reflection`, `:unsorted-required-namespaces`, and `:refer`. Ban broad `:refer :all`.
 - No Junk Drawers: Do not use `utils` namespaces.
 - Architecture Split: Honor a strict four-category namespace architecture:

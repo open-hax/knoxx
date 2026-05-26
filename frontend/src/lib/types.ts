@@ -215,6 +215,12 @@ export interface MemorySessionSummary {
   parent_agent_id?: string;
   parent_run_id?: string;
   spawn_kind?: string;
+  trigger_id?: string;
+  event_type?: string;
+  event_types?: string[];
+  event_id?: string;
+  event_scope_id?: string;
+  schedule_id?: string;
 
   is_active?: boolean;
   active_status?: "running" | "waiting_input" | "completed" | "failed" | "inactive" | "unknown" | string;

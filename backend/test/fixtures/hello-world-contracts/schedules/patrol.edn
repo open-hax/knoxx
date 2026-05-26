@@ -1,0 +1,14 @@
+{:contract/kind :schedule
+ :contract/id "patrol"
+ :contract/version 1
+ :enabled true
+
+ ;; Temporal resource split from patrol_trigger. It emits an event; the matching
+ ;; trigger requests the patrol pipeline through normal event dispatch.
+ :schedule/id "patrol"
+ :schedule/rule "*/5 * * * *"
+ :schedule/generator "knoxx_schedule"
+ :schedule/event {:event/type :schedule/patrol
+                  :event/payload {:channelId "{{defaultChannels}}"
+                                  :patrol true
+                                  :reason "schedule event: patrol"}}}

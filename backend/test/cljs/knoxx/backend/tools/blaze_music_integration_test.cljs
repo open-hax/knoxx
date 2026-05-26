@@ -44,7 +44,7 @@
           (let [promise
                 (p/let [runtime #js {}
                         config (models/enrich-config
-                                {:contracts-dir "contracts"
+                                {:contracts-dir "test/fixtures/empty-contracts"
                                  :workspace-root workspace-root
                                  :proxx-base-url base-url
                                  :proxx-auth-token token})

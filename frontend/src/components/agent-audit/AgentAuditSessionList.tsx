@@ -24,8 +24,8 @@ export type AgentAuditSessionListProps = {
   className?: string;
 };
 
-const DEFAULT_PAGE_SIZE = 40;
-const SCOPED_PAGE_SIZE = DEFAULT_PAGE_SIZE;
+const AUDIT_SESSION_PAGE_SIZE = 20;
+const ACTIVE_RUN_LIMIT = 25;
 
 function normalizeSearch(value: string): string {
   return value.trim().toLowerCase();
@@ -61,6 +61,37 @@ function activeRunRole(run: ActiveAgentSummary): string | null {
 
 function activeRunContractId(run: ActiveAgentSummary): string | null {
   return specString(run.agent_spec ?? {}, ["contractId", "contract_id", "contract-id"]);
+}
+
+function activeRunActorId(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["actorId", "actor_id", "actor-id"]);
+}
+
+function activeRunTriggerId(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["triggerId", "trigger_id", "trigger-id"]);
+}
+
+function activeRunEventType(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["eventType", "event_type", "event-type", "triggerEventType", "trigger_event_type", "trigger-event-type"]);
+}
+
+function activeRunEventId(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["eventId", "event_id", "event-id"]);
+}
+
+function activeRunEventScopeId(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["eventScopeId", "event_scope_id", "event-scope-id"]);
+}
+
+function activeRunScheduleId(run: ActiveAgentSummary): string | null {
+  return specString(run.agent_spec ?? {}, ["scheduleId", "schedule_id", "schedule-id"]);
+}
+
+function activeRunEventTypes(run: ActiveAgentSummary): string[] | undefined {
+  const values = run.agent_spec?.eventTypes ?? run.agent_spec?.event_types ?? run.agent_spec?.["event-types"];
+  if (!Array.isArray(values)) return undefined;
+  const normalized = values.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function activeRunTitle(run: ActiveAgentSummary): string {
@@ -109,6 +140,7 @@ export function activeRunToAuditSession(run: ActiveAgentSummary): AuditSessionSu
   const contractId = activeRunContractId(run);
   const subAgentId = activeRunSubAgentId(run);
   const parentAgentId = activeRunParentAgentId(run);
+  const actorId = activeRunActorId(run);
   return {
     auditSource: "active",
     project: "knoxx-session",
@@ -116,7 +148,7 @@ export function activeRunToAuditSession(run: ActiveAgentSummary): AuditSessionSu
     title: activeRunTitle(run),
     last_ts: run.updated_at ?? run.created_at,
     event_count: 0,
-    actor_id: subAgentId ?? parentAgentId ?? activeRunRole(run) ?? undefined,
+    actor_id: actorId ?? subAgentId ?? parentAgentId ?? activeRunRole(run) ?? undefined,
     contract_id: contractId ?? subAgentId ?? undefined,
     sub_agent_id: subAgentId ?? undefined,
     parent_agent_id: parentAgentId ?? undefined,
@@ -127,6 +159,12 @@ export function activeRunToAuditSession(run: ActiveAgentSummary): AuditSessionSu
     run_id: run.run_id,
     model: run.model,
     latest_user_message: run.latest_user_message,
+    trigger_id: activeRunTriggerId(run) ?? undefined,
+    event_type: activeRunEventType(run) ?? undefined,
+    event_types: activeRunEventTypes(run),
+    event_id: activeRunEventId(run) ?? undefined,
+    event_scope_id: activeRunEventScopeId(run) ?? undefined,
+    schedule_id: activeRunScheduleId(run) ?? undefined,
   };
 }
 
@@ -149,6 +187,12 @@ function mergeAuditSession(left: AuditSessionSummary, right: AuditSessionSummary
     is_active: Boolean(left.is_active || right.is_active),
     has_active_stream: Boolean(left.has_active_stream || right.has_active_stream),
     active_session_id: live.active_session_id ?? history.active_session_id ?? null,
+    trigger_id: live.trigger_id ?? history.trigger_id,
+    event_type: live.event_type ?? history.event_type,
+    event_types: live.event_types ?? history.event_types,
+    event_id: live.event_id ?? history.event_id,
+    event_scope_id: live.event_scope_id ?? history.event_scope_id,
+    schedule_id: live.schedule_id ?? history.schedule_id,
   };
 }
 
@@ -197,43 +241,81 @@ function auditSessionSearchText(session: AuditSessionSummary): string {
     session.parent_agent_id ?? "",
     session.model ?? "",
     session.latest_user_message ?? "",
+    session.trigger_id ?? "",
+    session.event_type ?? "",
+    session.event_id ?? "",
+    session.event_scope_id ?? "",
+    session.schedule_id ?? "",
+    (session.event_types ?? []).join(" "),
     (session.contract_actors ?? []).join(" "),
   ].join(" ").toLowerCase();
 }
 
 async function listOperatorActiveAgents(): Promise<ActiveAgentSummary[]> {
   try {
-    return await listAdminActiveAgents(250);
+    return await listAdminActiveAgents(ACTIVE_RUN_LIMIT);
   } catch {
-    return await listActiveAgents(250);
+    return await listActiveAgents(ACTIVE_RUN_LIMIT);
   }
+}
+
+function mergeAuditSessionPages(current: AuditSessionSummary[], next: AuditSessionSummary[]): AuditSessionSummary[] {
+  const byId = new Map<string, AuditSessionSummary>();
+
+  for (const session of current) {
+    byId.set(session.session, session);
+  }
+
+  for (const session of next) {
+    const existing = byId.get(session.session);
+    byId.set(session.session, existing ? mergeAuditSession(existing, session) : session);
+  }
+
+  return [...byId.values()].sort((left, right) => {
+    const leftScore = auditSessionActivityScore(left);
+    const rightScore = auditSessionActivityScore(right);
+    if (rightScore !== leftScore) return rightScore - leftScore;
+    const timeDiff = auditSessionTimestamp(right) - auditSessionTimestamp(left);
+    if (timeDiff !== 0) return timeDiff;
+    return (left.title ?? left.session).localeCompare(right.title ?? right.session);
+  });
 }
 
 export function AgentAuditSessionList({ controller, builtInContractId, className }: AgentAuditSessionListProps) {
   const [sessions, setSessions] = useState<AuditSessionSummary[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const loadSeqRef = useRef(0);
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (offset = 0) => {
+    const isMore = offset > 0;
     const loadSeq = loadSeqRef.current + 1;
     loadSeqRef.current = loadSeq;
     const contractId = builtInContractId;
-    setLoading(true);
+    if (isMore) setLoadingMore(true);
+    else setLoading(true);
     try {
       const trimmedContractId = contractId?.trim();
       const scopedContractId = trimmedContractId && trimmedContractId !== "new-agent" ? trimmedContractId : undefined;
       const [memoryPage, activeRuns] = await Promise.all([
         listMemorySessions({
-          limit: scopedContractId ? SCOPED_PAGE_SIZE : DEFAULT_PAGE_SIZE,
+          limit: AUDIT_SESSION_PAGE_SIZE,
+          offset,
           contractId: scopedContractId,
         }),
         listOperatorActiveAgents(),
       ]);
       if (loadSeqRef.current !== loadSeq) return;
-      setSessions(mergeAuditSessions(memoryPage.rows ?? [], activeRuns, contractId));
+      const nextRows = memoryPage.rows ?? [];
+      const nextSessions = mergeAuditSessions(nextRows, activeRuns, contractId);
+      setSessions((current) => (isMore ? mergeAuditSessionPages(current, nextSessions) : nextSessions));
+      setNextOffset(offset + nextRows.length);
+      setHasMore(Boolean(memoryPage.has_more));
       setHasLoaded(true);
       setError(null);
     } catch (err) {
@@ -241,14 +323,20 @@ export function AgentAuditSessionList({ controller, builtInContractId, className
       setError(err instanceof Error ? err.message : String(err));
       setHasLoaded(true);
     } finally {
-      if (loadSeqRef.current === loadSeq) setLoading(false);
+      if (loadSeqRef.current === loadSeq) {
+        if (isMore) setLoadingMore(false);
+        else setLoading(false);
+      }
     }
   }, [builtInContractId]);
 
   useEffect(() => {
+    setSessions([]);
+    setNextOffset(0);
+    setHasMore(false);
     setHasLoaded(false);
-    void loadSessions();
-    const timer = window.setInterval(() => void loadSessions(), 60000);
+    void loadSessions(0);
+    const timer = window.setInterval(() => void loadSessions(0), 60000);
     return () => window.clearInterval(timer);
   }, [loadSessions]);
 
@@ -261,10 +349,8 @@ export function AgentAuditSessionList({ controller, builtInContractId, className
   const handleScroll = (event: UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
     const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
-    if (remaining < 120 && !loading) {
-      // The audit list intentionally fetches a scoped large page instead of
-      // paging on scroll; use the near-bottom gesture as a cheap freshness pull.
-      void loadSessions();
+    if (remaining < 120 && hasMore && !loading && !loadingMore) {
+      void loadSessions(nextOffset);
     }
   };
 
@@ -278,7 +364,7 @@ export function AgentAuditSessionList({ controller, builtInContractId, className
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <Badge size="sm" variant="default">{filteredSessions.length}</Badge>
-            <Button variant="ghost" size="sm" loading={loading} onClick={() => void loadSessions()}>↻</Button>
+            <Button variant="ghost" size="sm" loading={loading} onClick={() => void loadSessions(0)}>↻</Button>
           </div>
         </div>
         <input
@@ -291,7 +377,7 @@ export function AgentAuditSessionList({ controller, builtInContractId, className
         {error ? <div className="mt-2 rounded border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200">{error}</div> : null}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" onScroll={handleScroll}>
+      <div aria-label="Audit sessions list" className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" onScroll={handleScroll}>
         {loading && !hasLoaded ? <div className="p-2 text-xs text-slate-500">Loading sessions…</div> : null}
         {hasLoaded && filteredSessions.length === 0 ? <div className="p-2 text-xs text-slate-500">No sessions match this agent.</div> : null}
         {filteredSessions.map((session) => {
@@ -329,12 +415,16 @@ export function AgentAuditSessionList({ controller, builtInContractId, className
                 {session.model ? <span className="font-mono text-violet-300">{session.model}</span> : null}
                 {session.contract_id ? <span className="font-mono text-slate-400">{session.contract_id}</span> : null}
                 {session.actor_id ? <span className="font-mono text-slate-400">{session.actor_id}</span> : null}
+                {session.trigger_id ? <span className="font-mono text-amber-300">trigger {session.trigger_id}</span> : null}
+                {session.event_type ? <span className="font-mono text-cyan-300">event {session.event_type}</span> : null}
+                {session.schedule_id ? <span className="font-mono text-slate-400">schedule {session.schedule_id}</span> : null}
                 {session.last_ts ? <span>{formatMaybeDate(session.last_ts)}</span> : null}
               </div>
               {session.latest_user_message ? <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-400">{session.latest_user_message}</div> : null}
             </button>
           );
         })}
+        {loadingMore ? <div className="p-2 text-xs text-slate-500">Loading more sessions…</div> : null}
       </div>
     </div>
   );

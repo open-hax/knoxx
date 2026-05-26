@@ -101,10 +101,12 @@
 
 (defn- trigger-summary
   [record]
-  (let [resource (record-definition record)]
-    {:kind (keywordish-name (:trigger/kind resource))
-     :target (:trigger/target resource)
-     :events (wire-value (:trigger/events resource))
+  (let [resource (record-definition record)
+        events (wire-value (:trigger/events resource))]
+    {:kind   (keywordish-name (:trigger/kind resource))
+     :target (or (:trigger/target resource) (:trigger/agent resource))
+     :events events
+     :source {:events events}
      :filters (wire-value (get-in resource [:data :filters]))
      :context (wire-value (get-in resource [:data :context]))}))
 

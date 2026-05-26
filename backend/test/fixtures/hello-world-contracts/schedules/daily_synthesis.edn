@@ -1,0 +1,14 @@
+{:contract/kind :schedule
+ :contract/id "daily_synthesis"
+ :contract/version 1
+ :enabled false
+
+ ;; Temporal resource split from the daily_synthesis trigger. It emits an event;
+ ;; it does not directly run the synthesis pipeline.
+ :schedule/id "daily_synthesis"
+ :schedule/rule "0 9 * * *"
+ :schedule/generator "knoxx_schedule"
+ :schedule/event {:event/type :schedule/daily-synthesis
+                  :event/payload {:timezone "America/Chicago"
+                                  :report-window-hours 24
+                                  :reason "schedule event: daily synthesis"}}}

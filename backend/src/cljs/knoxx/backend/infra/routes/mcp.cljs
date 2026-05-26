@@ -637,11 +637,13 @@
                     (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
 (defroute mcp-handle-post! [base config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z] "POST" "/mcp" []
-  (.hijack reply)
-  (let [raw-req (aget request "raw")
-        raw-res (aget reply "raw")
-        redis   (redis/get-client)
-        bearer  (bearer-token request)]
+  (let [^js request request
+        ^js reply reply]
+    (.hijack reply)
+    (let [^js raw-req (aget request "raw")
+          ^js raw-res (aget reply "raw")
+          redis   (redis/get-client)
+          bearer  (bearer-token request)]
     (if (str/blank? bearer)
       (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
                                              "Content-Type" "text/plain"}))
@@ -688,7 +690,7 @@
                     (when-not (.-headersSent raw-res)
                       (.writeHead raw-res 500 (clj->js {"Content-Type" "application/json"}))
                       (.end raw-res (js/JSON.stringify (clj->js {:error "mcp_post_failed"
-                                                                  :detail (or (.-message err) (str err))}))))))))))
+                                                                  :detail (or (.-message err) (str err))})))))))))))
 
 (defn register-mcp-http-routes!
   [app runtime config]

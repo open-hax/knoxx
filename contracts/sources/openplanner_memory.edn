@@ -4,7 +4,17 @@
  :contract/version 1
  :source/id :source/openplanner-memory
  :source/name "OpenPlanner conversational memory"
- :source/type :context
+ :source/type :context ;; this is conflating a few concepts here.
+ ;; source and context are different  things.
+ ;; this is a completely different kind of resource from a source
+ ;; this  was one of those overloaded words.
+ ;; it was being used to mean "this is  a place where messages come from" and "this is a place where events come from"
+ ;; which were overlapping but distinct concerns.
+ ;; discord was a source of events an actor could respond tool
+ ;; and it was a source of passive context
+ ;; we are not doing "passive context" any more because we are making the prompt handed to an agent the responsibility of the caller
+ ;; so calling openplanner becomes an action invoked at somepoint before the agent is called.
+ ;; you have a trigger which invokes a pipeline
  :source/enabled? true
  :source/provider :openplanner
  :source/hydration {:strategy :memory-search

@@ -4,7 +4,8 @@
    Event-triggered and chat-triggered work should converge on the same Knoxx
    turn runtime. This namespace provides a queue-style direct-start helper so
    non-HTTP callers can use the same semantics as /api/knoxx/direct/start."
-  (:require [knoxx.backend.infra.agent.session :refer [active-agent-session]]
+  (:require [clojure.string :as str]
+            [knoxx.backend.infra.agent.session :refer [active-agent-session]]
             [knoxx.backend.shape.agent :refer [streaming?]]
             [knoxx.backend.infra.agent.policy :as agent-policy]
             [knoxx.backend.infra.agent.turn :as agent-turns]
@@ -106,7 +107,44 @@
                                (:spawn-kind spec)
                                (:spawnKind spec))
                            str
-                           not-empty)]
+                           not-empty)
+        trigger-id (some-> (or (:trigger_id spec)
+                               (:trigger-id spec)
+                               (:triggerId spec))
+                           str
+                           not-empty)
+        event-type (some-> (or (:event_type spec)
+                               (:event-type spec)
+                               (:eventType spec)
+                               (:trigger_event_type spec)
+                               (:trigger-event-type spec)
+                               (:triggerEventType spec))
+                           str
+                           not-empty)
+        event-types (->> (or (:event_types spec)
+                             (:event-types spec)
+                             (:eventTypes spec)
+                             (when event-type [event-type])
+                             [])
+                         (map str)
+                         (remove str/blank?)
+                         distinct
+                         vec)
+        event-id (some-> (or (:event_id spec)
+                             (:event-id spec)
+                             (:eventId spec))
+                         str
+                         not-empty)
+        event-scope-id (some-> (or (:event_scope_id spec)
+                                   (:event-scope-id spec)
+                                   (:eventScopeId spec))
+                               str
+                               not-empty)
+        schedule-id (some-> (or (:schedule_id spec)
+                                (:schedule-id spec)
+                                (:scheduleId spec))
+                            str
+                            not-empty)]
     (cond-> {}
       contract-id (assoc :contract-id contract-id)
       actor-id (assoc :actor-id actor-id)
@@ -123,7 +161,13 @@
       sub-agent-id (assoc :sub-agent-id sub-agent-id)
       parent-agent-id (assoc :parent-agent-id parent-agent-id)
       parent-run-id (assoc :parent-run-id parent-run-id)
-      spawn-kind (assoc :spawn-kind spawn-kind))))
+      spawn-kind (assoc :spawn-kind spawn-kind)
+      trigger-id (assoc :trigger-id trigger-id)
+      event-type (assoc :event-type event-type)
+      (seq event-types) (assoc :event-types event-types)
+      event-id (assoc :event-id event-id)
+      event-scope-id (assoc :event-scope-id event-scope-id)
+      schedule-id (assoc :schedule-id schedule-id))))
 
 (defn direct-start-payload->turn-params
   [payload]

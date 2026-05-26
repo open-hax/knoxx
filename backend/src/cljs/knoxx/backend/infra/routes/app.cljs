@@ -10,7 +10,7 @@
             [knoxx.backend.infra.agent.policy :refer [validate-chat-policy!]]
             [knoxx.backend.infra.agent.turn :refer [ensure-conversation-access! ensure-session-id]]
             [knoxx.backend.shape.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
-            [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
+            [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-role-slugs ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.infra.routes.resources :as resource-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
@@ -447,7 +447,7 @@
 (defn- run-events-err [reply err]
   (json-response! reply 500 {:error (str err)}))
 
-(defn- shibboleth-ok [reply request body data]
+(defn- shibboleth-ok [config reply request body data]
   (let [session (or (:session data) {})
         session-id (str (or (:id session) ""))
         ui-url (if (and (not (str/blank? session-id))
@@ -507,7 +507,7 @@
                          (get-in parsed [:agent-spec :model])
                          (:llmModel @settings-state*))
         provided-session-id (:session-id parsed)
-        session-id (ensure-session-id node-crypto provided-session-id)
+        session-id (ensure-session-id provided-session-id)
         conversation-id (or (:conversation-id parsed)
                             (.randomUUID node-crypto))
         run-id (or (:run-id parsed)
@@ -564,7 +564,7 @@
                          (get-in parsed [:agent-spec :model])
                          (:llmModel @settings-state*))
         provided-session-id (:session-id parsed)
-        session-id (ensure-session-id node-crypto provided-session-id)
+        session-id (ensure-session-id provided-session-id)
         conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
         run-id (or (:run-id parsed) (.randomUUID node-crypto))
         body (assoc parsed :session-id session-id :conversation-id conversation-id :run-id run-id :mode "direct" :auth-context agent-ctx)
@@ -827,11 +827,11 @@
                                :org (:org ctx)
                                :membership (:membership ctx)
                                :roles (vec (or (:roles ctx) []))
-                               :roleSlugs (vec (or (:roleSlugs ctx) []))
+                               :roleSlugs (vec (ctx-role-slugs ctx))
                                :permissions (vec (or (:permissions ctx) []))
-                               :toolPolicies (vec (or (:toolPolicies ctx) []))
-                               :membershipToolPolicies (vec (or (:membershipToolPolicies ctx) []))
-                               :isSystemAdmin (boolean (:isSystemAdmin ctx))
+                               :toolPolicies (vec (or (:tool-policies ctx) (:toolPolicies ctx) []))
+                               :membershipToolPolicies (vec (or (:membership-tool-policies ctx) (:membershipToolPolicies ctx) []))
+                               :isSystemAdmin (system-admin? ctx)
                                :primaryRole (primary-context-role ctx)})))
 
 (defroute api-knoxx-proxy-get! []
@@ -1397,7 +1397,7 @@
                          :json payload})
             (.then (fn [resp]
                      (if (:ok resp)
-                       (shibboleth-ok reply request body (:body resp))
+                       (shibboleth-ok config reply request body (:body resp))
                        (shibboleth-import-failed reply resp))))
             (.catch (partial shibboleth-unreachable reply)))))))
 

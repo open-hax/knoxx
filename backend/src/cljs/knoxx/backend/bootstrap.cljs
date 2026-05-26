@@ -21,6 +21,7 @@
             [knoxx.backend.infra.stores.openplanner-session-store :refer [->OpenPlannerSessionStore]]
             [knoxx.backend.infra.stores.redis-session-store :refer [->RedisSessionStore]]
             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+            [knoxx.backend.infra.stores.session-flush :as session-flush]
             [knoxx.backend.infra.routes.auth :as auth-routes]
             [knoxx.backend.infra.routes.mcp :as mcp-http]
             [knoxx.backend.infra.routes.tools.proxy :as proxy-routes]
@@ -142,7 +143,8 @@
                                   ;; Guarded so shadow-cljs hot reload does not spawn
                                   ;; recovery jobs as if the Node process had restarted.
                                   (agent-resume/resume-on-process-startup! runtime app cfg)
-                                  (agent-resume/start-periodic-recovery! runtime app cfg))))
+                                  (agent-resume/start-periodic-recovery! runtime app cfg)
+                                  (session-flush/start-periodic-flush! client))))
                        (.catch (fn [err]
                                  (.warn log "Redis initialization failed" err))))
                    app))))))
@@ -172,6 +174,7 @@
   (.log js/console "[knoxx-hot-reload] before-load: closing HTTP server"
         #js {:pid (.-pid js/process)
              :uptimeMs (process-uptime-ms)})
+  (session-flush/stop-periodic-flush!)
   (-> (lifecycle/close-current-http!)
       (.then (fn [_]
                (.log js/console "[knoxx-hot-reload] before-load: HTTP server closed"

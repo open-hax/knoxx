@@ -1,0 +1,13 @@
+{:contract/kind :trigger
+ :contract/id "ussyverse_social_creative_cron"
+ :contract/version 4
+ :enabled true
+
+ ;; Trigger agreement: discord_automation may start the creative social agent
+ ;; after observing the schedule-generated creative event.
+ :trigger/kind :event
+ :trigger/listener "discord_automation"
+ :trigger/events [:schedule/ussyverse-social-creative]
+ :trigger/action :actions/start-agent-session
+ :trigger/agent "ussyverse_social_creative"
+ :data {:context {:reason "schedule event: ussyverse social creative"}}}

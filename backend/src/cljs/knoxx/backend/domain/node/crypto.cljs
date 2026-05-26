@@ -4,6 +4,7 @@
 ;; node:crypto lives HERE AND NOWHERE ELSE.
 
 (ns knoxx.backend.domain.node.crypto
+  (:refer-clojure :exclude [random-uuid])
   (:require ["node:crypto" :as node-crypto]))
 
 (defn random-hex

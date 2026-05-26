@@ -98,7 +98,7 @@
             output-path (str "Music/blaze/mock-" (.randomUUID crypto) ".mp3")
             server* (atom nil)
             config (models/enrich-config
-                    {:contracts-dir "contracts"
+                    {:contracts-dir "test/fixtures/empty-contracts"
                      :workspace-root workspace-root
                      :proxx-base-url "http://127.0.0.1:0" ;; overwritten after server start
                      :proxx-auth-token "test-token"})]
@@ -138,7 +138,7 @@
             output-path (str "Music/blaze/mock-" (.randomUUID crypto) ".mp3")
             server* (atom nil)
             config (models/enrich-config
-                    {:contracts-dir "contracts"
+                    {:contracts-dir "test/fixtures/empty-contracts"
                      :workspace-root workspace-root
                      :proxx-base-url "http://127.0.0.1:0" ;; overwritten after server start
                      :proxx-auth-token "test-token"})]
@@ -196,7 +196,7 @@
                       ;; No media payload needed; this test asserts request construction.
                       :data {}}
             config (models/enrich-config
-                    {:contracts-dir "contracts"
+                    {:contracts-dir "test/fixtures/empty-contracts"
                      :workspace-root workspace-root
                      :proxx-base-url "http://127.0.0.1:0"
                      :proxx-auth-token "test-token"})]
@@ -248,7 +248,7 @@
                       :choices [{:message {:content "ok"}}]
                       :data {}}
             config (models/enrich-config
-                    {:contracts-dir "contracts"
+                    {:contracts-dir "test/fixtures/empty-contracts"
                      :workspace-root workspace-root
                      :proxx-base-url "http://127.0.0.1:0"
                      :proxx-auth-token "test-token"})]
@@ -296,7 +296,7 @@
                       :choices [{:message {:content "ok"}}]
                       :data {}}
             config (models/enrich-config
-                    {:contracts-dir "contracts"
+                    {:contracts-dir "test/fixtures/empty-contracts"
                      :workspace-root workspace-root
                      :proxx-base-url "http://127.0.0.1:0"
                      :proxx-auth-token "test-token"})]

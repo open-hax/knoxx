@@ -31,6 +31,8 @@
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.shape.agent :refer [send-user-message! subscribe!]]
             [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+            [knoxx.backend.shape.session-persistence :refer [put-run!]]
             [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
             [knoxx.backend.domain.text :refer [assistant-message-text assistant-message-reasoning-text]]
             [knoxx.backend.domain.voice.turn-control :as turn-control]
@@ -88,7 +90,13 @@
       (:sub-agent-id agent-spec) (assoc :subAgentId (:sub-agent-id agent-spec))
       (:parent-agent-id agent-spec) (assoc :parentAgentId (:parent-agent-id agent-spec))
       (:parent-run-id agent-spec) (assoc :parentRunId (:parent-run-id agent-spec))
-      (:spawn-kind agent-spec) (assoc :spawnKind (:spawn-kind agent-spec)))))
+      (:spawn-kind agent-spec) (assoc :spawnKind (:spawn-kind agent-spec))
+      (:trigger-id agent-spec) (assoc :triggerId (:trigger-id agent-spec))
+      (:event-type agent-spec) (assoc :eventType (:event-type agent-spec))
+      (seq (:event-types agent-spec)) (assoc :eventTypes (vec (:event-types agent-spec)))
+      (:event-id agent-spec) (assoc :eventId (:event-id agent-spec))
+      (:event-scope-id agent-spec) (assoc :eventScopeId (:event-scope-id agent-spec))
+      (:schedule-id agent-spec) (assoc :scheduleId (:schedule-id agent-spec)))))
 
 (defn- create-initial-run!
   [run-id session-id conversation-id started-at model-id mode thinking-level
@@ -123,6 +131,13 @@
                                       (get agent-spec :resource-policies) (assoc :agentResourcePolicies (get agent-spec :resource-policies)))}
                         auth-extra)]
     (store-run! run-id base-run)
+    (when-let [store @store-registry/session-store*]
+      (-> (put-run! store base-run)
+          (.catch (fn [err]
+                    (.warn js/console "[turn] failed to persist initial run"
+                           (clj->js {:run-id run-id
+                                     :error (ex-message err)
+                                     :error-data (clj->js (or (ex-data err) {}))}))))))
     (set-event-stream-sink!
      (fn [event]
        (let [client (openplanner-client/client config)]

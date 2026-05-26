@@ -436,8 +436,8 @@
                                 :org-slug   org-slug})))))
 
 (defn- rolePriority [slug]
-  (case slug "system_admin" 100 "org_admin" 90 "developer" 80
-    "data_analyst" 70 "knowledge_worker" 60 0))
+  (case slug "system_admin" 100 "system-admin" 100 "org_admin" 90 "org-admin" 90
+    "developer" 80 "data_analyst" 70 "data-analyst" 70 "knowledge_worker" 60 "knowledge-worker" 60 0))
 
 (defn- merge-tool-policies [role-policies membership-policies]
   (let [merged (atom {})]
@@ -511,7 +511,7 @@
                        :permissions   permissions
                        :tool-policies tool-policies
                        :membership-tool-policies (:tool-policies membership)
-                       :is-system-admin (contains? (set role-slugs) "system_admin")}))))))))))
+                       :is-system-admin (boolean (some #{"system_admin" "system-admin"} role-slugs))}))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Bootstrap & contract sync
@@ -702,7 +702,13 @@
   (let [codes (->> (contracts-roles/list-role-slugs (contracts-config))
                    (mapcat #(contracts-roles/role-permissions (contracts-config) %))
                    distinct sort vec)]
-    (js/Promise.resolve {:permissions (mapv (fn [c] {:code c}) codes)})))
+    (js/Promise.resolve
+     {:permissions (mapv (fn [c]
+                           {:id           c
+                            :code         c
+                            :resourceKind (first (str/split c #"\."))
+                            :description  ""})
+                         codes)})))
 
 (defn list-tools!
   [pool]
@@ -718,16 +724,16 @@
 (defn get-bootstrap-context!
   [pool primary-org bootstrap]
   (js/Promise.resolve
-   {:primary-org   {:id         (:id primary-org)
-                    :slug       (:slug primary-org)
-                    :name       (:name primary-org)
-                    :kind       (:kind primary-org)
-                    :is-primary (:is_primary primary-org)
-                    :status     (:status primary-org)}
-    :bootstrap-user {:id            (get-in bootstrap [:user :id])
-                     :email         (get-in bootstrap [:user :email])
-                     :display-name  (get-in bootstrap [:user :display_name])
-                     :membership-id (get-in bootstrap [:membership :id])}}))
+   {"primaryOrg"    {"id"        (:id primary-org)
+                     "slug"      (:slug primary-org)
+                     "name"      (:name primary-org)
+                     "kind"      (:kind primary-org)
+                     "isPrimary" (:is_primary primary-org)
+                     "status"    (:status primary-org)}
+    "bootstrapUser" {"id"           (get-in bootstrap [:user :id])
+                     "email"        (get-in bootstrap [:user :email])
+                     "displayName"  (get-in bootstrap [:user :display_name])
+                     "membershipId" (get-in bootstrap [:membership :id])}}))
 
 (defn list-orgs!
   [pool]
@@ -1334,6 +1340,8 @@
 ;; ---------------------------------------------------------------------------
 ;; Initialisation
 ;; ---------------------------------------------------------------------------
+
+(declare ensure-bootstrap-allowlist-users!)
 
 (defn create-policy-db
   "Initialise the policy DB. Returns Promise<CLJS policy context | nil>."

@@ -1,5 +1,6 @@
 (ns knoxx.backend.mcp-http-test
   (:require [cljs.test :refer [async deftest is testing]]
+            [clojure.string :as str]
             [knoxx.backend.infra.redis-client :as redis]))
 
 ;; Regression: require-redis! captured nil at route-registration time.

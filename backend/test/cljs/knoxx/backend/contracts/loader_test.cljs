@@ -3,6 +3,9 @@
             [cljs.test :refer [deftest is testing async]]
             [knoxx.backend.domain.contracts.loader :as sut]))
 
+(def fixture-config
+  {:contracts-dir "test/fixtures/contracts"})
+
 ;; ---------------------------------------------------------------------------
 ;; normalize-contract-class
 ;; ---------------------------------------------------------------------------
@@ -150,32 +153,29 @@
     (is (str/includes? (#'sut/entry->file-path fake) "my_agent.edn"))))
 
 ;; ---------------------------------------------------------------------------
-;; load-all-contracts! — integration against real contracts dir
+;; load-all-contracts! — integration against the test contract fixture
 ;; ---------------------------------------------------------------------------
 
 (deftest load-all-contracts-returns-promise
-  (let [config {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"}
-        p      (sut/load-all-contracts! config)]
+  (let [p (sut/load-all-contracts! fixture-config)]
     (is (instance? js/Promise p))))
 
 (deftest load-all-contracts-resolves-non-empty
   (async done
     ;; fixtures: 2 valid agents + 1 role + 1 capability + 1 actor + 1 sub-agent = 6 valid records
     ;; broken.edn and no_identity.edn are silently dropped
-    (let [config {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"}]
-      (-> (sut/load-all-contracts! config)
+    (-> (sut/load-all-contracts! fixture-config)
           (.then (fn [contracts]
                    (is (= 6 (count contracts))
                        (str "expected 6 valid contracts, got " (count contracts) ": " (pr-str (mapv :id contracts))))
                    (done)))
           (.catch (fn [err]
                     (is false (str "rejected: " (.-message err)))
-                    (done)))))))
+                    (done))))))
 
 (deftest load-all-contracts-records-have-required-keys
   (async done
-    (let [config {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"}]
-      (-> (sut/load-all-contracts! config)
+    (-> (sut/load-all-contracts! fixture-config)
           (.then (fn [contracts]
                    (doseq [c contracts]
                      (is (string? (:id c))           (str "missing :id in "          (pr-str c)))
@@ -184,12 +184,11 @@
                    (done)))
           (.catch (fn [err]
                     (is false (str "rejected: " (.-message err)))
-                    (done)))))))
+                    (done))))))
 
 (deftest load-all-contracts-agents-only-filter
   (async done
-    (let [config {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"}]
-      (-> (sut/load-all-contracts! config)
+    (-> (sut/load-all-contracts! fixture-config)
           (.then (fn [all]
                    (let [agents (filter #(= "agents" (:contractClass %)) all)]
                      (is (seq agents) "expected at least one agent contract")
@@ -197,7 +196,7 @@
                    (done)))
           (.catch (fn [err]
                     (is false (str "rejected: " (.-message err)))
-                    (done)))))))
+                    (done))))))
 
 (deftest load-all-contracts-bad-root-resolves-empty
   (async done
@@ -211,14 +210,12 @@
 
 (deftest contract-file-path-prefers-body-identity-record
   (testing "capability ids come from :cap/id, while legacy filenames may still carry cap_ prefixes"
-    (let [config {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"}
-          file-path (sut/contract-file-path config "capabilities" "test-cap")]
+    (let [file-path (sut/contract-file-path fixture-config "capabilities" "test-cap")]
       (is (str/includes? file-path "capabilities/test_cap.edn")))))
 
 (deftest dedup-contracts-preserves-all-classes
   (async done
-    (let [config {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"}]
-      (-> (sut/load-all-contracts! config)
+    (-> (sut/load-all-contracts! fixture-config)
           (.then (fn [all]
                    (let [classes (set (map :contractClass all))]
                      (is (contains? classes "agents"))
@@ -227,4 +224,4 @@
                    (done)))
           (.catch (fn [err]
                     (is false (str "rejected: " (.-message err)))
-                    (done)))))))
+                    (done))))))

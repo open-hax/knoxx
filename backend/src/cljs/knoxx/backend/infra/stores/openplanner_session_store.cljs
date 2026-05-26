@@ -20,10 +20,11 @@
                 created_at updated_at
                 org_id user_id]} run
         session-project (:session-project-name config)
-        scope {:run_id run_id :session_id session_id
-               :conversation_id conversation_id
-               :status status
-               :org_id org_id :user_id user_id}
+        scope (merge (op-mem/run-scope-extra run)
+                     {:run_id run_id :session_id session_id
+                      :conversation_id conversation_id
+                      :status status
+                      :org_id org_id :user_id user_id})
         mk (fn [id kind role text extra]
              (op-mem/openplanner-event config
                {:id id
@@ -37,8 +38,7 @@
                 :text text
                 :extra (merge scope extra)}))
         request-text (or (some-> messages first :content) "")
-        user-extra (cond-> {:run_id run_id :session_id session_id
-                            :conversation_id conversation_id}
+        user-extra (cond-> scope
                      (seq content_parts)
                      (assoc :content_parts
                             (mapv (fn [p]

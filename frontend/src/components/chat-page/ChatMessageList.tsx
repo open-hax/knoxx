@@ -35,7 +35,7 @@ const EMPTY_TOOL_RECEIPTS: ToolReceipt[] = [];
 const EMPTY_TOOL_EVENTS: RunEvent[] = [];
 const REACTION_EMOJIS = ["✅", "❌", "⭐", "👀", "😂"] as const;
 
-export function deriveAssistantPresentation(message: ChatMessage): {
+export function deriveAssistantPresentation(message: ChatMessage, options: { hasSeparateToolReceipts?: boolean } = {}): {
   effectiveStatus: ChatMessage["status"];
   visibleTraceBlocks: NonNullable<ChatMessage["traceBlocks"]>;
   showAssistantFinalCard: boolean;
@@ -53,10 +53,12 @@ export function deriveAssistantPresentation(message: ChatMessage): {
     && effectiveStatus === "done"
     && rawTraceBlocks.length > 0
     && Boolean(message.content?.trim());
+  const hasToolTraceBlocks = rawTraceBlocks.some((block) => block.kind === "tool_call");
+  const shouldKeepTraceBlocks = hasToolTraceBlocks && !options.hasSeparateToolReceipts;
 
   return {
     effectiveStatus,
-    visibleTraceBlocks: showAssistantFinalCard ? [] : rawTraceBlocks,
+    visibleTraceBlocks: showAssistantFinalCard && !shouldKeepTraceBlocks ? [] : rawTraceBlocks,
     showAssistantFinalCard,
   };
 }
@@ -154,9 +156,14 @@ const ChatMessageCard = memo(function ChatMessageCard({
     </div>
   );
 
+  const hasSeparateToolReceipts = message.role === "assistant"
+    && Boolean(message.runId)
+    && latestRun?.run_id === message.runId
+    && latestToolReceipts.length > 0;
+
   const { effectiveStatus, visibleTraceBlocks, showAssistantFinalCard } = useMemo(
-    () => deriveAssistantPresentation(message),
-    [message],
+    () => deriveAssistantPresentation(message, { hasSeparateToolReceipts }),
+    [hasSeparateToolReceipts, message],
   );
 
   const { embeddedMarkdown, mergedContentParts } = useMemo(() => {

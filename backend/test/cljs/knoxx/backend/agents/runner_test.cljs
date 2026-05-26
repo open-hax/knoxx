@@ -77,3 +77,25 @@
                            :role "knowledge_worker"
                            :thinking_level "medium"
                            :tool_policies [{:toolId "discord.read" :effect "allow"}]}}))))))
+
+(deftest direct-start-payload->turn-params-normalizes-trigger-audit-metadata
+  (testing "triggered agent runs preserve audit metadata through the runner boundary"
+    (is (= {:contract-id "ussyverse_social_creative"
+            :actor-id "discord_automation"
+            :trigger-id "ussyverse_social_creative_cron"
+            :event-type "schedule/ussyverse-social-creative"
+            :event-types ["schedule/ussyverse-social-creative"]
+            :event-id "evt-1"
+            :event-scope-id "ussyverse_social_creative"
+            :schedule-id "ussyverse_social_creative"}
+           (:agent-spec
+            (runner/direct-start-payload->turn-params
+             {:message "hi"
+              :agent_spec {:contract_id "ussyverse_social_creative"
+                           :actor_id "discord_automation"
+                           :trigger_id "ussyverse_social_creative_cron"
+                           :event_type "schedule/ussyverse-social-creative"
+                           :event_types ["schedule/ussyverse-social-creative"]
+                           :event_id "evt-1"
+                           :event_scope_id "ussyverse_social_creative"
+                           :schedule_id "ussyverse_social_creative"}}))))))

@@ -1,0 +1,14 @@
+{:contract/kind :schedule
+ :contract/id "deep_synthesis"
+ :contract/version 1
+ :enabled true
+
+ ;; Temporal resource split from deep_synthesis_trigger. It emits an event; the
+ ;; matching trigger requests the pipeline action through normal event dispatch.
+ :schedule/id "deep_synthesis"
+ :schedule/rule "0 2 * * *"
+ :schedule/generator "knoxx_schedule"
+ :schedule/event {:event/type :schedule/deep-synthesis
+                  :event/payload {:timezone "America/Chicago"
+                                  :report-window-hours 24
+                                  :reason "schedule event: deep synthesis"}}}

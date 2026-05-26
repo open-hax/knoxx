@@ -5,27 +5,51 @@
             [knoxx.backend.infra.tooling :as tooling]))
 
 (def test-config
-  (models/enrich-config {:contracts-dir "contracts"
+  (models/enrich-config {:contracts-dir "test/fixtures/empty-contracts"
                          :workspace-root "/tmp/knoxx-test-workspace"
                          :proxx-base-url "http://127.0.0.1:8787"
                          :proxx-default-model "glm-5"}))
 
+(def contract-librarian-spec
+  {:id "contract_librarian"
+   :role "contract_librarian"
+   :tool-ids ["read" "contract.write" "memory_search"]})
+
+(def creative-music-studio-spec
+  {:id "creative_music_studio"
+   :role "knowledge_worker"
+   :tool-ids ["read"
+              "write"
+              "edit"
+              "bash"
+              "audio.spectrogram"
+              "audio.waveform"
+              "workspace_media.attach"
+              "music.identify_file"
+              "music.generate_song"]})
+
 (deftest allowed-tool-id-set-follows-agent-contract-instead-of-full-runtime
   (testing "contract librarian is limited to its contract tools and loses general write/bash access"
-    (let [tool-ids (tooling/allowed-tool-id-set test-config "contract_librarian" nil "contract_librarian" "contract_librarian")]
-      (is (contains? tool-ids "read"))
-      (is (contains? tool-ids "contract.write"))
-      (is (contains? tool-ids "memory_search"))
-      (is (not (contains? tool-ids "write")))
-      (is (not (contains? tool-ids "edit")))
-      (is (not (contains? tool-ids "bash")))
-      (is (not (contains? tool-ids "discord.publish"))))))
+    (with-redefs [tooling/effective-agent-contract (fn
+                                                     ([_ _] contract-librarian-spec)
+                                                     ([_ _ _] contract-librarian-spec))]
+      (let [tool-ids (tooling/allowed-tool-id-set test-config "contract_librarian" nil "contract_librarian" "contract_librarian")]
+        (is (contains? tool-ids "read"))
+        (is (contains? tool-ids "contract.write"))
+        (is (contains? tool-ids "memory_search"))
+        (is (not (contains? tool-ids "write")))
+        (is (not (contains? tool-ids "edit")))
+        (is (not (contains? tool-ids "bash")))
+        (is (not (contains? tool-ids "discord.publish")))))))
 
 (deftest create-runtime-tools-only-installs-builtins-allowed-by-contract
   (testing "manual chat agents no longer receive unrestricted write/edit/bash builtins by default"
-    (let [runtime #js {}
-          tool-names (set (tooling/create-runtime-tools runtime test-config nil "contract_librarian" "contract_librarian" "contract_librarian"))]
-      (is (= #{"read"} tool-names)))))
+    (with-redefs [tooling/effective-agent-contract (fn
+                                                     ([_ _] contract-librarian-spec)
+                                                     ([_ _ _] contract-librarian-spec))]
+      (let [runtime #js {}
+            tool-names (set (tooling/create-runtime-tools runtime test-config nil "contract_librarian" "contract_librarian" "contract_librarian"))]
+        (is (= #{"read"} tool-names))))))
 
 (deftest allowed-tool-id-set-prefers-selected-agent-contract-tools
   (testing "selected manual agent contracts expose their declared tool set even when the caller's base tool policy is narrower"
@@ -64,20 +88,23 @@
                    "chat_primary")))))))
 
 (deftest creative-music-studio-overlay-adds-library-and-editing-tools
-  (testing "the canonical root creative_music_studio contract augments the legacy role surface with library browsing and DAW-style editing tools"
-    (let [tool-ids (set (tooling/allowed-tool-id-set
-                         test-config
-                         "knowledge_worker"
-                         nil
-                         "creative_music_studio"
-                         "chat_primary"))]
-      (is (contains? tool-ids "read"))
-      (is (contains? tool-ids "write"))
-      (is (contains? tool-ids "edit"))
-      (is (contains? tool-ids "bash"))
-      (is (contains? tool-ids "audio.spectrogram"))
-      (is (contains? tool-ids "audio.waveform"))
-      (is (contains? tool-ids "workspace_media.attach"))
-      (is (contains? tool-ids "music.identify_file"))
-      (is (contains? tool-ids "music.generate_song"))
-      (is (not (contains? tool-ids "blaze.generate"))))))
+  (testing "the selected creative_music_studio contract augments the legacy role surface with library browsing and DAW-style editing tools"
+    (with-redefs [tooling/effective-agent-contract (fn
+                                                     ([_ _] creative-music-studio-spec)
+                                                     ([_ _ _] creative-music-studio-spec))]
+      (let [tool-ids (set (tooling/allowed-tool-id-set
+                           test-config
+                           "knowledge_worker"
+                           nil
+                           "creative_music_studio"
+                           "chat_primary"))]
+        (is (contains? tool-ids "read"))
+        (is (contains? tool-ids "write"))
+        (is (contains? tool-ids "edit"))
+        (is (contains? tool-ids "bash"))
+        (is (contains? tool-ids "audio.spectrogram"))
+        (is (contains? tool-ids "audio.waveform"))
+        (is (contains? tool-ids "workspace_media.attach"))
+        (is (contains? tool-ids "music.identify_file"))
+        (is (contains? tool-ids "music.generate_song"))
+        (is (not (contains? tool-ids "blaze.generate")))))))

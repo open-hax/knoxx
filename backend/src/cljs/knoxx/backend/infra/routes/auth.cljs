@@ -13,7 +13,7 @@
 
 
 (defn register-auth-routes
-  [app opts]
+  [^js app opts]
   (let [public-base-url (or (aget (.-env js/process) "KNOXX_PUBLIC_BASE_URL") "http://localhost")
         policy-context (:policy-context opts)
         runtime (:runtime opts)
@@ -27,13 +27,13 @@
       (auth-session/set-db-session-store! policy-context))
 
     (.get app "/api/auth/config"
-          (fn [_req reply]
+          (fn [_req ^js reply]
             (.send reply (clj->js {:githubEnabled github-enabled
                                    :publicBaseUrl public-base-url
                                    :loginUrl (when github-enabled "/api/auth/login")}))))
 
     (.post app "/api/auth/signup"
-           (fn [req reply]
+           (fn [^js req ^js reply]
              (if-not policy-context
                (.send (.code reply 503) (clj->js {:error "Knoxx policy database is not configured"}))
                (let [body (body-map req)
@@ -71,10 +71,10 @@
                                 (.send reply (clj->js result))))
                        (.catch (fn [err]
                                  (.send (.code reply (or (.-statusCode err) (.-status err) 500))
-                                        (clj->js {:error (or (.-message err) "Signup failed")})))))))))))
+                                        (clj->js {:error (or (.-message err) "Signup failed")}))))))))))
 
     (.get app "/api/auth/login"
-          (fn [req reply]
+          (fn [^js req ^js reply]
             (if-not github-enabled
               (.send (.code reply 503) (clj->js {:error "GitHub OAuth not configured"}))
               (let [redirect (str (or (some-> req (aget "query") (aget "redirect")) "/"))
@@ -88,7 +88,7 @@
                 (.redirect reply (.toString authorize-url))))))
 
     (.get app "/api/auth/callback/github"
-          (fn [req reply]
+          (fn [^js req ^js reply]
             (if-not github-enabled
               (.send (.code reply 503) (clj->js {:error "GitHub OAuth not configured"}))
               (let [code (str (or (some-> req (aget "query") (aget "code")) ""))
@@ -100,7 +100,7 @@
                     (.send (.code reply 400) (clj->js {:error "Invalid or expired state parameter"}))))))))
 
     (.post app "/api/auth/logout"
-           (fn [req reply]
+           (fn [^js req ^js reply]
              (let [cookie-token (some-> req (aget "cookies") (aget auth-session/COOKIE-NAME))]
                (when cookie-token
                  (let [payload (auth-session/verify-token cookie-token)]
@@ -110,7 +110,7 @@
                (.send reply (clj->js {:ok true})))))
 
     (.post app "/api/auth/invite/redeem"
-           (fn [req reply]
+           (fn [^js req ^js reply]
              (let [body (body-map req)
                    code (str/trim (str (or (:code body) "")))]
                (if (str/blank? code)
@@ -128,7 +128,7 @@
                                           (clj->js {:error (or (.-message err) "Invite redemption failed")})))))))))))
 
     (.post app "/api/auth/invite"
-           (fn [req reply]
+           (fn [^js req ^js reply]
              (let [body (body-map req)]
                (-> (auth-session/resolve-auth-context req policy-context)
                    (.then (fn [ctx]
@@ -160,7 +160,7 @@
                                     (clj->js {:error (or (.-message err) "Unauthorized")}))))))))
 
     (.get app "/api/auth/invites"
-          (fn [req reply]
+          (fn [^js req ^js reply]
             (-> (auth-session/resolve-auth-context req policy-context)
                 (.then (fn [ctx]
                          (let [org-id (or (some-> req (aget "query") (aget "orgId"))
@@ -177,4 +177,4 @@
                                                 (clj->js {:error (.-message err)}))))))))
                 (.catch (fn [err]
                           (.send (.code reply (or (.-status err) 401))
-                                 (clj->js {:error (or (.-message err) "Unauthorized")})))))))))
+                                 (clj->js {:error (or (.-message err) "Unauthorized")}))))))))))

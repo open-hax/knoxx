@@ -1,0 +1,13 @@
+{:contract/kind :generator
+ :contract/id "hello_world_demo"
+ :contract/version 1
+ :enabled true
+
+ ;; A generator is event provenance: it declares a process, adapter, actor, or
+ ;; demo fixture that can emit events. It does not subscribe and does not act.
+ :generator/id "hello_world_demo"
+ :generator/kind :demo
+ :generator/driver :manual-or-schedule
+ :generator/actor "system_admin"
+ :generator/emits [:message/greeting]
+ :generator/policy {:demo? true}}

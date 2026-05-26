@@ -22,9 +22,9 @@
 (defn list-with-counts
   []
   (-> (h/select :o.*
-                [[:count-distinct :m.id] :member_count]
-                [[:raw "COUNT(DISTINCT r.id) FILTER (WHERE r.org_id = o.id)"] :role_count]
-                [[:count-distinct :d.id] :data_lake_count])
+                [[:raw "COUNT(DISTINCT m.id)"] :member_count]
+                [[:raw "COUNT(DISTINCT r.id)"] :role_count]
+                [[:raw "COUNT(DISTINCT d.id)"] :data_lake_count])
       (h/from [:orgs :o])
       (h/left-join [:memberships :m] [:= :m.org_id :o.id])
       (h/left-join [:roles :r] [:= :r.org_id :o.id])

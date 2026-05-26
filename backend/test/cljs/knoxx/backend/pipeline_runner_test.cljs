@@ -26,16 +26,16 @@
 
 (deftest interpolate-value-with-placeholder
   (testing "{{memory.temp:key}} is replaced"
-    (p/let [_ (temp/set! "mykey" "world" {:ttl 60})
-            result (pr/interpolate-value "hello {{memory.temp:mykey}}!" {:mykey "world"})]
+    (p/let [_ (temp/mem-set! "mykey" "world" {:ttl 60})
+            result (pr/interpolate-value "hello {{memory.temp:mykey}}!" {"mykey" "world"})]
       (is (= "hello world!" result)))))
 
 (deftest interpolate-map-nested
   (testing "nested map interpolation"
-    (p/let [_ (temp/set! "name" "Knoxx" {:ttl 60})
+    (p/let [_ (temp/mem-set! "name" "Knoxx" {:ttl 60})
             result (pr/interpolate-map
                     {:greeting "Hello {{memory.temp:name}}"
                      :nested {:msg "Hi {{memory.temp:name}}"}}
-                    {:name "Knoxx"})]
+                    {"name" "Knoxx"})]
       (is (= "Hello Knoxx" (:greeting result)))
       (is (= "Hi Knoxx" (get-in result [:nested :msg]))))))

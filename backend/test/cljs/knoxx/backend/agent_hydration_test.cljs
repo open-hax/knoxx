@@ -1,7 +1,8 @@
 (ns knoxx.backend.agent-hydration-test
   (:require [cljs.test :refer [async deftest is testing]]
             [knoxx.backend.infra.agent.hydration :as agent-hydration]
-            [knoxx.backend.infra.clients.openplanner :as openplanner-client]))
+            [knoxx.backend.infra.clients.openplanner :as openplanner-client]
+            [knoxx.backend.infra.openplanner.memory :as openplanner-memory]))
 
 (deftest agent-custom-tool-suite-selects-contract-librarian-runtime
   (testing "contract librarian sessions use the dedicated contract-oriented tool suite"
@@ -18,8 +19,8 @@
   (testing "OpenPlanner outage must not abort an agent turn before tools can run"
     (async done
       (with-redefs [openplanner-client/enabled? (fn [_] true)
-                    agent-hydration/openplanner-memory-search! (fn [_ _]
-                                                                 (js/Promise.reject (js/Error. "OpenPlanner 502")))]
+                    openplanner-memory/openplanner-memory-search! (fn [_ _]
+                                                                    (js/Promise.reject (js/Error. "OpenPlanner 502")))]
         (-> (agent-hydration/passive-memory-hydration!
              {:openplanner-base-url "http://openplanner.local"
               :openplanner-api-key "test"}

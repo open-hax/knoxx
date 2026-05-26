@@ -1,3 +1,12 @@
+;; this is not how I wanted these to work.
+;;  but it's how they apparently work right now?
+;; this model does not allow us to define new meaningful behavior.
+;; this seems to think it is some kind of text templating system?
+;; data has to go man.
+
+;; the :data field has to go it's just a noise attractor
+;; whenever one of you looks at something  I am trying to describe and  can't understand it
+;; you throw some  shit into dataa and make it secretly meaningful.
 {:contract/kind :action
  :contract/id "hello-world"
  :contract/version 1

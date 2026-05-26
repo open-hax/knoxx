@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.http :refer [json-response! error-response! http-error]]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows!
+            [knoxx.backend.infra.core-memory :as core-memory :refer [fetch-openplanner-session-rows!
                                                session-visible?
                                                session-matches-page-actor-filter?
                                                session-matches-contract-filter?
@@ -215,6 +215,12 @@
          distinct
          vec)))
 
+(defn- fetch-session-filter-rows!
+  [fetch-openplanner-session-rows! config session-id]
+  (if (identical? fetch-openplanner-session-rows! core-memory/fetch-openplanner-session-rows!)
+    (core-memory/fetch-openplanner-session-visibility-rows! config session-id)
+    (fetch-openplanner-session-rows! config session-id)))
+
 (defn- filter-page-actor-rows!
   [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids contract-id page-rows]
   (if (and (str/blank? (str (or actor-id "")))
@@ -224,7 +230,7 @@
     (-> (.all js/Promise
               (clj->js
                (mapv (fn [row]
-                       (-> (fetch-openplanner-session-rows! config (:session row))
+                       (-> (fetch-session-filter-rows! fetch-openplanner-session-rows! config (:session row))
                            (.then (fn [rows]
                                     {:row (merge row (session-summary-scope-from-rows rows))
                                      :visible (and (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)
@@ -238,6 +244,76 @@
                       (filter :visible)
                       (map :row)
                       vec))))))
+
+(defn- grouped-session-rows
+  [rows]
+  (reduce (fn [state row]
+            (let [session-id (str (:session row))]
+              (if (or (str/blank? session-id)
+                      (not (interactive-session-id? session-id)))
+                state
+                (-> state
+                    (update :groups update session-id (fnil conj []) row)
+                    (update :order (fn [order]
+                                     (if (contains? (:seen state) session-id)
+                                       order
+                                       (conj order session-id))))
+                    (update :seen conj session-id)))))
+          {:groups {} :order [] :seen #{}}
+          rows))
+
+(defn- session-summary-title
+  [session-id scope]
+  (let [event-type (:event_type scope)
+        trigger-id (:trigger_id scope)]
+    (cond
+      (and event-type trigger-id) (str "event: " event-type " trigger: " trigger-id)
+      trigger-id (str "trigger: " trigger-id)
+      event-type (str "event: " event-type)
+      :else session-id)))
+
+(defn- mongo-session-summary
+  [session-id rows]
+  (let [latest (first rows)
+        scope (session-summary-scope-from-rows rows)]
+    (merge {:session session-id
+            :project (:project latest)
+            :last_ts (:ts latest)
+            :event_count (count rows)
+            :title (session-summary-title session-id scope)}
+           scope)))
+
+(defn fetch-contract-session-pages-from-mongo!
+  [config contract-id needed-count]
+  (let [target (some-> contract-id str str/trim not-empty)
+        query-limit 500]
+    (if-not target
+      (js/Promise.resolve nil)
+      (-> (openplanner-client/mongo-query! (or (:openplanner-client config)
+                                               (openplanner-client/client config))
+                                           {:collection "events"
+                                            :filter {"project" (:session-project-name config)
+                                                     "session" {"$type" "string" "$ne" ""}
+                                                     "extra.contract_id" target}
+                                            :projection {"_id" 0
+                                                         "project" 1
+                                                         "session" 1
+                                                         "ts" 1
+                                                         "extra" 1}
+                                            :sort {"ts" -1}
+                                            :limit query-limit})
+          (.then (fn [body]
+                   (let [rows (vec (or (:rows body) []))
+                         {:keys [groups order]} (grouped-session-rows rows)
+                         summaries (mapv #(mongo-session-summary % (get groups %)) order)
+                         wanted-count (max 1 (or needed-count 1))
+                         selected (vec (take wanted-count summaries))
+                         total-events (or (:total body) 0)
+                         fetched-events (count rows)
+                         more-events? (> total-events fetched-events)
+                         more-sessions? (> (count summaries) wanted-count)]
+                     {:rows selected
+                      :has_more (or more-sessions? more-events?)})))))))
 
 (defn fetch-authorized-session-pages!
   [config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
@@ -300,7 +376,7 @@
         (-> (.all js/Promise
                   (clj->js
                    (mapv (fn [session-id]
-                           (-> (fetch-openplanner-session-rows! config session-id)
+                           (-> (fetch-session-filter-rows! fetch-openplanner-session-rows! config session-id)
                                (.then (fn [rows]
                                         {:session session-id
                                          :visible (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)}))
@@ -417,7 +493,21 @@
         sub-agent-id (agent-spec-value agent-spec [:sub_agent_id :sub-agent-id :subAgentId])
         parent-agent-id (agent-spec-value agent-spec [:parent_agent_id :parent-agent-id :parentAgentId])
         parent-run-id (agent-spec-value agent-spec [:parent_run_id :parent-run-id :parentRunId])
-        spawn-kind (agent-spec-value agent-spec [:spawn_kind :spawn-kind :spawnKind])]
+        spawn-kind (agent-spec-value agent-spec [:spawn_kind :spawn-kind :spawnKind])
+        trigger-id (agent-spec-value agent-spec [:trigger_id :trigger-id :triggerId])
+        event-type (agent-spec-value agent-spec [:event_type :event-type :eventType])
+        event-types (let [values (or (:event_types agent-spec)
+                                     (:event-types agent-spec)
+                                     (:eventTypes agent-spec))]
+                      (when (sequential? values)
+                        (->> values
+                             (map str)
+                             (remove str/blank?)
+                             distinct
+                             vec)))
+        event-id (agent-spec-value agent-spec [:event_id :event-id :eventId])
+        event-scope-id (agent-spec-value agent-spec [:event_scope_id :event-scope-id :eventScopeId])
+        schedule-id (agent-spec-value agent-spec [:schedule_id :schedule-id :scheduleId])]
     (cond-> {:session (:conversation_id session)
              :is_active true
              :active_status (:status session)
@@ -430,7 +520,13 @@
       sub-agent-id (assoc :sub_agent_id sub-agent-id)
       parent-agent-id (assoc :parent_agent_id parent-agent-id)
       parent-run-id (assoc :parent_run_id parent-run-id)
-      spawn-kind (assoc :spawn_kind spawn-kind))))
+      spawn-kind (assoc :spawn_kind spawn-kind)
+      trigger-id (assoc :trigger_id trigger-id)
+      event-type (assoc :event_type event-type)
+      (seq event-types) (assoc :event_types event-types)
+      event-id (assoc :event_id event-id)
+      event-scope-id (assoc :event_scope_id event-scope-id)
+      schedule-id (assoc :schedule_id schedule-id))))
 
 (defn- enrich-row  [redis-client row ]
   (let [session-id (str (:session row))
@@ -494,7 +590,12 @@
            redis-client
            cache-key
            (fn []
-             (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)))
+             (if (and contract-id
+                      (str/blank? (str (or actor-id "")))
+                      (empty? exclude-actor-ids)
+                      (system-admin? ctx))
+               (fetch-contract-session-pages-from-mongo! config contract-id needed-count)
+               (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count))))
           (.then
            (fn [{:keys [value cache]}]
              (let [{:keys [rows has_more]} value
@@ -561,7 +662,8 @@
                                                                      :cache cache}
                                                               (not page-has-more) (assoc :total visible-total)))
                                             nil))
-                                   (.catch (fn [err] (error-response! reply err 502) nil))))))))))))))
+                                   (.catch (fn [err] (error-response! reply err 502) nil))))))))))
+          (.catch (fn [err] (error-response! reply err 502) nil))))))
 
 (defroute memory-session-titles-status-route! []
   "GET" "/api/memory/session-titles/status"
@@ -667,11 +769,11 @@
           (.catch (fn [err]
                     (error-response! reply err 502)))))))
 
-(defroute lounge-messages-list-route! []
+(defroute lounge-messages-list-route! [lounge-messages*]
   "GET" "/api/lounge/messages"
   (json-response! reply 200 {:messages @lounge-messages*}))
 
-(defroute lounge-messages-create-route! []
+(defroute lounge-messages-create-route! [lounge-messages*]
   "POST" "/api/lounge/messages"
   (let [body (or (aget request "body") (js/Object.))
         session-id (str (or (aget body "session_id") ""))

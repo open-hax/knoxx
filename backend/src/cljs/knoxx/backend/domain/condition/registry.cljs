@@ -26,9 +26,7 @@
 
 (def ^:private safe-fns
   "Map of whitelisted symbols to their function values for condition evaluation."
-  {'and and
-   'or or
-   'not not
+  {'not not
    '= =
    'not= not=
    '< <

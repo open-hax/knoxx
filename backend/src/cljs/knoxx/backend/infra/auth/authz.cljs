@@ -99,9 +99,11 @@
       (some->> (:roles ctx) (map :slug) first)
       "knowledge_worker"))
 
+(def ^:private system-admin-slugs #{"system_admin" "system-admin"})
+
 (defn system-admin?
   [ctx]
-  (contains? (ctx-role-slugs ctx) "system_admin"))
+  (boolean (some system-admin-slugs (ctx-role-slugs ctx))))
 
 (defn ctx-permissions
   [ctx]

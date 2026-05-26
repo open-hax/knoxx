@@ -27,3 +27,22 @@
             :sub_agent_id "fork_writer"}
            (core-memory/session-summary-scope-from-rows rows)))
     (is (false? (core-memory/session-matches-contract-filter? {} rows "other_agent")))))
+
+(deftest session-summary-scope-includes-trigger-and-event-metadata
+  (let [rows [{:extra {:contract_id "ussyverse_social_creative"
+                       :actor_id "discord_automation"
+                       :trigger_id "ussyverse_social_creative_cron"
+                       :event_type "schedule/ussyverse-social-creative"
+                       :event_types ["schedule/ussyverse-social-creative"]
+                       :event_id "evt_1"
+                       :event_scope_id "ussyverse_social_creative"
+                       :schedule_id "ussyverse_social_creative"}}]]
+    (is (= {:contract_id "ussyverse_social_creative"
+            :actor_id "discord_automation"
+            :trigger_id "ussyverse_social_creative_cron"
+            :event_type "schedule/ussyverse-social-creative"
+            :event_types ["schedule/ussyverse-social-creative"]
+            :event_id "evt_1"
+            :event_scope_id "ussyverse_social_creative"
+            :schedule_id "ussyverse_social_creative"}
+           (core-memory/session-summary-scope-from-rows rows)))))

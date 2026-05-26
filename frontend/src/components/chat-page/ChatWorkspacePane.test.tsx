@@ -97,6 +97,8 @@ describe("ChatWorkspacePane layout", () => {
     );
 
     const wrapper = screen.getByTestId("chat-main-pane").parentElement as HTMLDivElement;
+    expect(wrapper.style.width).toBe("100%");
+    expect(wrapper.style.height).toBe("100%");
     expect(wrapper.style.minHeight).toBe("0");
     expect(wrapper.style.overflow).toBe("hidden");
   });

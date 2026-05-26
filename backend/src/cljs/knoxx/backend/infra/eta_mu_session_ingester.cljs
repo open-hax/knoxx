@@ -365,19 +365,20 @@
           (load-ingest-state))
         (.then
          (fn [state]
+           (let [^js state state]
            (-> (discover-session-files 0)
                (.then
                 (fn [all-files]
                   (let [files (if session-dirs
                                 (.filter all-files
-                                         (fn [f]
+                                         (fn [^js f]
                                            (some (fn [d] (.includes (.-dir f) d)) session-dirs)))
                                 all-files)
                         new-files (if force
                                     files
                                     (.filter files
-                                             (fn [f]
-                                               (let [existing (aget (.-sessions state) (.-sessionId f))]
+                                             (fn [^js f]
+                                               (let [^js existing (aget (.-sessions state) (.-sessionId f))]
                                                  (or (not existing)
                                                      (< (or (.-mtime existing) 0) (.-mtime f)))))))
                         to-ingest (.slice new-files 0 limit)]
@@ -390,13 +391,13 @@
                            :skipped (- (.-length files) (.-length to-ingest))}
                       (let [results-atom (atom #js [])]
                         (-> (reduce
-                             (fn [promise-chain file]
+                             (fn [promise-chain ^js file]
                                (-> promise-chain
                                    (.then
                                     (fn [_]
                                       (-> (ingest-session-file (.-path file) file client)
                                           (.then
-                                           (fn [result]
+                                           (fn [^js result]
                                              (aset (.-sessions state) (.-sessionId file)
                                                    #js {:mtime (.-mtime file)
                                                         :eventCount (.-eventsIngested result)
@@ -423,11 +424,11 @@
                                     (fn [_]
                                       (let [results @results-atom
                                             total-events (reduce
-                                                          (fn [sum r] (+ sum (or (.-eventsIngested r) 0)))
+                                                          (fn [sum ^js r] (+ sum (or (.-eventsIngested r) 0)))
                                                           0
                                                           (js/Array.from results))
                                             errors (reduce
-                                                    (fn [cnt r] (if (.-error r) (inc cnt) cnt))
+                                                    (fn [cnt ^js r] (if (.-error r) (inc cnt) cnt))
                                                     0
                                                     (js/Array.from results))]
                                         #js {:ok true
@@ -436,11 +437,11 @@
                                              :ingested (- (.-length to-ingest) errors)
                                              :totalEvents total-events
                                              :errors errors
-                                             :details results})))))))))))))))))
+                                             :details results}))))))))))))))))
 
         (.catch
          (fn [err]
-           #js {:ok false :error (.-message err)}))))
+           #js {:ok false :error (.-message err)}))))))
 
 
 
@@ -449,12 +450,13 @@
   (-> (promise/all-vec [(load-ingest-state) (discover-session-files 0)])
       (.then
        (fn [[state all-files]]
-         (let [ingested-ids (js/Set. (js/Object.keys (.-sessions state)))
+         (let [^js state state
+               ingested-ids (js/Set. (js/Object.keys (.-sessions state)))
                pending (.filter all-files
-                                (fn [f] (not (.has ingested-ids (.-sessionId f)))))
+                                (fn [^js f] (not (.has ingested-ids (.-sessionId f)))))
                stale (.filter all-files
-                              (fn [f]
-                                (let [existing (aget (.-sessions state) (.-sessionId f))]
+                              (fn [^js f]
+                                (let [^js existing (aget (.-sessions state) (.-sessionId f))]
                                   (and existing (< (or (.-mtime existing) 0) (.-mtime f))))))
                total-ingested (reduce
                                (fn [sum s] (+ sum (or (aget s "eventCount") 0)))
@@ -492,14 +494,14 @@
       (.then
        (fn [all-files]
          (let [filtered (if workspace
-                          (.filter all-files (fn [f] (.includes (.-dir f) workspace)))
+                          (.filter all-files (fn [^js f] (.includes (.-dir f) workspace)))
                           all-files)
-               sorted (.sort filtered (fn [a b] (- (.-mtime b) (.-mtime a))))
+               sorted (.sort filtered (fn [^js a ^js b] (- (.-mtime b) (.-mtime a))))
                total (.-length sorted)
                page (.slice sorted offset (+ offset limit))]
            (-> (js/Promise.all
                 (map
-                 (fn [f]
+                 (fn [^js f]
                    (-> (.readFile fs (.-path f) "utf-8")
                        (.then
                         (fn [raw]

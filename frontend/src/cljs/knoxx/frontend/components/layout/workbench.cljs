@@ -47,7 +47,10 @@
   [{:keys [children class-name]}]
   (d/div {:class-name (or class-name "")
           :style #js {:display "flex"
+                      :flex "1 1 0%"
+                      :width "100%"
                       :height "100%"
+                      :minWidth 0
                       :minHeight 0
                       :overflow "hidden"
                       :gap 0}}
