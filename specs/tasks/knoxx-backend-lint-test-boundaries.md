@@ -1,6 +1,6 @@
 # Knoxx Backend Lint — Test Boundaries and Async Cleanup
 
-Date: 2026-05-21
+Date: 2026-05-27
 Status: todo
 Parent epic: `specs/epics/knoxx-backend-cljs-lint-remediation.md`
 Story points: 5
@@ -22,7 +22,7 @@ The lint run reports test-specific blockers and warnings:
 ## Goals
 
 1. Replace private-var assertions with public behavior-level assertions or intentional public seams.
-2. Convert test Promise chains to `^:async` tests with `await`, or `p/let` where clearer.
+2. Convert test Promise chains to `deftest ^:async` with `await`, using named helpers when setup is complex.
 3. Complete protocol mock implementations or narrow tests to smaller protocols.
 4. Fix missing requires and unused test requires/refers.
 5. Split test helpers that exceed the function-length error threshold.
@@ -54,7 +54,7 @@ Warning-heavy tests include:
 
 ## Implementation notes
 
-- Prefer `deftest ^:async` and `await` for modern CLJS tests.
+- Prefer `deftest ^:async` and `await` for modern CLJS tests; do not introduce Promesa just to silence a chain warning.
 - Keep assertions linear; avoid reintroducing nested Promise chains under helper fns.
 - If a private helper encodes a stable domain rule, move the rule to `domain.*`, `shape.*`, or `law.*` as appropriate and test it there.
 - If a private helper is implementation detail, test through the public behavior that depends on it.

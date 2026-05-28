@@ -330,8 +330,8 @@
 (defn- has-system-admin-role?
   [ctx]
   (boolean
-   (some #(= (str %) "system_admin")
-         (or (:role-slugs ctx) []))))
+   (some #{"system_admin" "system-admin"}
+         (map str (or (:role-slugs ctx) [])))))
 
 (defn- ensure-bootstrap-admin-role!
   "Repair an existing bootstrap admin account that was created before the

@@ -46,7 +46,7 @@
         doc-kind (or kind (guess-document-kind rel-path))
         doc-title (or title (some-> rel-path (str/split #"/") last) doc-id)
         doc-content (str (or content ""))
-        doc-project (or project (:project-name config) "devel")
+        doc-project (or project (:project-name config) "workspace")
         payload {:document {:id doc-id
                             :title doc-title
                             :content doc-content
@@ -311,7 +311,7 @@
       (js/Promise.resolve {:query "" :hits [] :mode :none})
       (-> (openplanner-client/vector-search!
            (openplanner-client/client config)
-           (cond-> {:q query :k k :project (or project (:project-name config) "devel")}
+           (cond-> {:q query :k k :project (or project (:project-name config) "workspace")}
              source (assoc :source source)
              kind (assoc :kind kind)
              visibility (assoc :visibility visibility)))
@@ -391,58 +391,35 @@
        (when-let [error (:error run)]
          (str "\nError:\n" error))))
 
+(defn- spec-value
+  "Extract a normalized string value from a spec map given keyword alternatives."
+  [spec & keys]
+  (some-> (some (fn [k] (get spec k)) keys)
+          str
+          str/trim
+          not-empty))
+
 (defn run-scope-extra
   [run]
   (let [base (select-keys run [:org_id :org_slug :user_id :user_email :membership_id])
         agent-spec (or (get-in run [:settings :agentSpec])
                        (:agent_spec run))
-        contract-id (some-> (or (:contractId agent-spec)
-                                (:contract-id agent-spec))
-                            str
-                            str/trim
-                            not-empty)
-        actor-id (some-> (or (:actorId agent-spec)
-                             (:actor-id agent-spec))
-                         str
-                         str/trim
-                         not-empty)
+        contract-id (spec-value agent-spec :contractId :contract-id)
+        actor-id (spec-value agent-spec :actorId :actor-id)
         contract-actors (actor-scope/actor-claims->wire
                          (or (:contractActors agent-spec)
                              (:contract-actors agent-spec)))
-        sub-agent-id (some-> (or (:subAgentId agent-spec)
-                                 (:sub-agent-id agent-spec))
-                             str str/trim not-empty)
-        parent-agent-id (some-> (or (:parentAgentId agent-spec)
-                                    (:parent-agent-id agent-spec))
-                                str str/trim not-empty)
-        parent-run-id (some-> (or (:parentRunId agent-spec)
-                                  (:parent-run-id agent-spec))
-                              str str/trim not-empty)
-        spawn-kind (some-> (or (:spawnKind agent-spec)
-                               (:spawn-kind agent-spec))
-                           str str/trim not-empty)
-        trigger-id (some-> (or (:triggerId agent-spec)
-                               (:trigger-id agent-spec))
-                           str str/trim not-empty)
-        event-type (some-> (or (:eventType agent-spec)
-                               (:event-type agent-spec))
-                           str str/trim not-empty)
-        event-types (->> (or (:eventTypes agent-spec)
-                             (:event-types agent-spec)
-                             [])
-                         (map str)
-                         (remove str/blank?)
-                         distinct
-                         vec)
-        event-id (some-> (or (:eventId agent-spec)
-                             (:event-id agent-spec))
-                         str str/trim not-empty)
-        event-scope-id (some-> (or (:eventScopeId agent-spec)
-                                   (:event-scope-id agent-spec))
-                               str str/trim not-empty)
-        schedule-id (some-> (or (:scheduleId agent-spec)
-                                (:schedule-id agent-spec))
-                            str str/trim not-empty)]
+        sub-agent-id (spec-value agent-spec :subAgentId :sub-agent-id)
+        parent-agent-id (spec-value agent-spec :parentAgentId :parent-agent-id)
+        parent-run-id (spec-value agent-spec :parentRunId :parent-run-id)
+        spawn-kind (spec-value agent-spec :spawnKind :spawn-kind)
+        trigger-id (spec-value agent-spec :triggerId :trigger-id)
+        event-type (spec-value agent-spec :eventType :event-type)
+        event-types (->> (or (:eventTypes agent-spec) (:event-types agent-spec) [])
+                         (map str) (remove str/blank?) distinct vec)
+        event-id (spec-value agent-spec :eventId :event-id)
+        event-scope-id (spec-value agent-spec :eventScopeId :event-scope-id)
+        schedule-id (spec-value agent-spec :scheduleId :schedule-id)]
     (cond-> base
       contract-id (assoc :contract_id contract-id)
       actor-id (assoc :actor_id actor-id)

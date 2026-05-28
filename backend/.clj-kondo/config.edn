@@ -9,13 +9,13 @@
              js/String js/Uint8Array js/ArrayBuffer js/TextDecoder
              js/TextEncoder js/structuredClone js/URL js/URLSearchParams
              js/require js/module js/exports js/__dirname js/__filename]}
-  :promise-chain/prefer-js-await {:level :warning}
-  :fn-length/long                {:level :warning}
-  :fn-length/too-long            {:level :error}
-  :file-length/long              {:level :warning}
-  :file-length/too-long          {:level :error}
-  :complexity/high               {:level :warning}
-  :complexity/too-complex        {:level :error}}
+  :promise-chain/prefer-async-workflow {:level :warning}
+  :fn-length/long                     {:level :warning}
+  :fn-length/too-long                 {:level :error}
+  :file-length/long                   {:level :warning}
+  :file-length/too-long               {:level :error}
+  :complexity/high                    {:level :warning}
+  :complexity/too-complex             {:level :error}}
  :hooks
  {:analyze-call
   {knoxx.backend.macros/defroute hooks.defroute/defroute

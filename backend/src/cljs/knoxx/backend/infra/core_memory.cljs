@@ -81,7 +81,7 @@
   (let [b (basename path)]
     (or (contains? known-extensionless-files b)
         (str/starts-with? b ".")
-        (re-find #"\\." b))))
+        (re-find #"\." b))))
 
 (defn- workspace-target-node
   [path]

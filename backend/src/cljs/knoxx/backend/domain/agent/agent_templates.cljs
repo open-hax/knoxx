@@ -252,6 +252,24 @@
                  acc))]
     (eval-body body env*)))
 
+(defn- eval-and-call
+  [args env]
+  (loop [remaining args
+         result true]
+    (if (seq remaining)
+      (let [next-result (eval-template-form (first remaining) env)]
+        (if (truthy? next-result)
+          (recur (rest remaining) next-result)
+          next-result))
+      result)))
+
+(defn- eval-or-call
+  [args env]
+  (some (fn [arg]
+          (let [result (eval-template-form arg env)]
+            (when (truthy? result) result)))
+        args))
+
 (defn- eval-list-call
   [form env]
   (let [op (first form)
@@ -299,18 +317,8 @@
       (= "join" op-name) (str/join (eval-template-form (first args) env)
                                     (eval-template-form (second args) env))
       (= "not" op-name) (not (truthy? (eval-template-form (first args) env)))
-      (= "and" op-name) (loop [remaining args
-                                result true]
-                           (if (seq remaining)
-                             (let [next-result (eval-template-form (first remaining) env)]
-                               (if (truthy? next-result)
-                                 (recur (rest remaining) next-result)
-                                 next-result))
-                             result))
-      (= "or" op-name) (some (fn [arg]
-                                (let [result (eval-template-form arg env)]
-                                  (when (truthy? result) result)))
-                              args)
+      (= "and" op-name) (eval-and-call args env)
+      (= "or" op-name) (eval-or-call args env)
       (= "=" op-name) (apply = (map #(eval-template-form % env) args))
       :else (throw (js/Error. (str "Unsupported contract template form: " op-name))))))
 

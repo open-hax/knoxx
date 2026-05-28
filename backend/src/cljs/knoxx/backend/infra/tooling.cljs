@@ -1,6 +1,8 @@
 (ns knoxx.backend.infra.tooling
-  (:require [clojure.string :as str]
+  (:require [clojure.set :as set]
+            [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :as authz]
+            [knoxx.backend.domain.agent.agent-templates :as templates]
             [knoxx.backend.domain.contracts.resolve :as contract-resolve]
             [knoxx.backend.domain.contracts.roles :as roles]
             [knoxx.backend.infra.http :as backend-http]
@@ -36,12 +38,42 @@
   [config]
   (not (str/blank? (:discord-bot-token config))))
 
+(defn- auth-tool-policies
+  [auth-context]
+  (vec (or (:toolPolicies auth-context)
+           (:tool-policies auth-context)
+           [])))
+
+(defn- policy-effect
+  [policy]
+  (some-> (:effect policy) str str/lower-case))
+
+(defn- policy-tool-id
+  [policy]
+  (some-> (or (:toolId policy) (:tool-id policy)) str str/trim not-empty))
+
 (defn auth-tool-ids
   [auth-context]
   (into #{}
-        (comp (filter #(= "allow" (:effect %)))
-              (map :toolId))
-        (:toolPolicies auth-context)))
+        (comp (filter #(= "allow" (policy-effect %)))
+              (keep policy-tool-id))
+        (auth-tool-policies auth-context)))
+
+(defn- default-contract-tool-policy-clamp?
+  [contract-spec auth-context]
+  (and auth-context
+       (not (authz/system-admin? auth-context))
+       (= "knoxx_default" (:id contract-spec))))
+
+(defn- allowed-tool-ids-for
+  [contract-spec contract-tool-ids role-tool-ids auth-context]
+  (cond
+    (and contract-tool-ids (default-contract-tool-policy-clamp? contract-spec auth-context))
+    (set/intersection contract-tool-ids (auth-tool-ids auth-context))
+
+    contract-tool-ids contract-tool-ids
+    auth-context (auth-tool-ids auth-context)
+    :else role-tool-ids))
 
 ;; ---------------------------------------------------------------------------
 ;; Contract resolution (delegated)
@@ -100,10 +132,7 @@
          normalized (roles/normalize-role config (or (:role contract-spec) role))
          contract-tool-ids (some-> contract-spec :tool-ids set)
          role-tool-ids (set (roles/role-tool-ids config normalized))
-         allowed (cond
-                   contract-tool-ids contract-tool-ids
-                   auth-context (auth-tool-ids auth-context)
-                   :else role-tool-ids)]
+         allowed (allowed-tool-ids-for contract-spec contract-tool-ids role-tool-ids auth-context)]
      (when-not (contains? allowed tool-id)
        (if auth-context
          (throw (backend-http/http-error 403 "tool_denied" (str "Current Knoxx policy does not allow tool '" tool-id "'")))
@@ -125,10 +154,8 @@
                                              :tool-ids-from-contract (vec (:tool-ids contract-spec))
                                              :role-slugs-from-contract (normalize-slugs (:role-slugs contract-spec))
                                              :actor-role-slugs (normalize-slugs (:role-slugs actor-spec))}))
-        allowed-tool-ids (cond
-                           contract-spec (set (:tool-ids contract-spec))
-                           auth-context (auth-tool-ids auth-context)
-                           :else role-tool-ids)]
+        contract-tool-ids (some-> contract-spec :tool-ids set)
+        allowed-tool-ids (allowed-tool-ids-for contract-spec contract-tool-ids role-tool-ids auth-context)]
     {:contract-spec contract-spec
      :actor-spec actor-spec
      :normalized-role normalized
@@ -143,6 +170,24 @@
    (allowed-tool-id-set config role auth-context agent-contract-id nil))
   ([config role auth-context agent-contract-id actor-id]
    (:allowed-tool-ids (resolve-tool-context config role auth-context agent-contract-id actor-id))))
+
+(defn- catalog-prompt
+  [contract-spec auth-context prompt-key]
+  (templates/prompt-value
+   (templates/render-prompt (get contract-spec prompt-key) contract-spec auth-context nil)))
+
+(defn- auth-capability-ids
+  [config auth-context]
+  (->> (authz/ctx-role-slugs auth-context)
+       (mapcat #(roles/role-capability-ids config %))
+       distinct
+       vec))
+
+(defn- catalog-capability-ids
+  [config auth-context contract-spec]
+  (if (and auth-context (not (authz/system-admin? auth-context)))
+    (auth-capability-ids config auth-context)
+    (vec (or (:capability-ids contract-spec) []))))
 
 (defn tool-catalog
   ([config role]
@@ -175,7 +220,7 @@
                  (contains? allowed-tool-ids "semantic_query")
                  (conj {:id "graph_query"
                         :label "Graph Query"
-                        :description "Query the canonical knowledge graph across devel/web/bluesky/knoxx-session lakes"
+                        :description "Query the canonical knowledge graph across workspace/web/bluesky/knoxx-session lakes"
                         :enabled true}))]
      {:role (if auth-context
               (or (:role contract-spec) (authz/primary-context-role auth-context))
@@ -185,19 +230,11 @@
       :agent_label (:id contract-spec)
       :agent_trigger_kind (:trigger-kind contract-spec)
       :role_slugs (normalize-slugs (:role-slugs contract-spec))
-      :capability_ids (vec (or (:capability-ids contract-spec) []))
-      :system_prompt (when (or (nil? auth-context)
-                               (authz/system-admin? auth-context))
-                       (:system-prompt contract-spec))
-      :actor_system_prompt (when (or (nil? auth-context)
-                                     (authz/system-admin? auth-context))
-                             (:actor-system-prompt contract-spec))
-      :agent_system_prompt (when (or (nil? auth-context)
-                                     (authz/system-admin? auth-context))
-                             (:agent-system-prompt contract-spec))
-      :task_prompt (when (or (nil? auth-context)
-                             (authz/system-admin? auth-context))
-                     (:task-prompt contract-spec))
+      :capability_ids (catalog-capability-ids config auth-context contract-spec)
+      :system_prompt (catalog-prompt contract-spec auth-context :system-prompt)
+      :actor_system_prompt (catalog-prompt contract-spec auth-context :actor-system-prompt)
+      :agent_system_prompt (catalog-prompt contract-spec auth-context :agent-system-prompt)
+      :task_prompt (catalog-prompt contract-spec auth-context :task-prompt)
       :email_enabled email?
       :tools tools})))
 

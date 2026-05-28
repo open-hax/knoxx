@@ -1,21 +1,23 @@
 (ns knoxx.backend.memory-routes-test
   (:require [cljs.test :refer [async deftest is]]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.routes.memory :as memory-routes]))
+            [knoxx.backend.infra.routes.memory :as memory-routes]
+            [knoxx.backend.shape.memory-sessions :as memory-shape]))
 
 
 (deftest session-list-limit-is-bounded
-  (is (= 12 (memory-routes/session-list-limit nil)))
-  (is (= 20 (memory-routes/session-list-limit "20")))
-  (is (= memory-routes/max-session-list-page-size
-         (memory-routes/session-list-limit "500"))))
+  (is (= 12 (memory-shape/session-list-limit nil)))
+  (is (= 20 (memory-shape/session-list-limit "20")))
+  (is (= memory-shape/max-session-list-page-size
+         (memory-shape/session-list-limit "500"))))
 
 (deftest session-list-upstream-page-size-is-bounded
-  (is (= 21 (memory-routes/session-list-upstream-page-size 20 0)))
-  (is (= memory-routes/max-session-list-upstream-page-size
-         (memory-routes/session-list-upstream-page-size 80 0)))
-  (is (= memory-routes/max-session-list-upstream-page-size
-         (memory-routes/session-list-upstream-page-size 40 80))))
+  (is (= 21 (memory-shape/session-list-upstream-page-size 20 0)))
+  (is (= memory-shape/max-session-list-upstream-page-size
+         (memory-shape/session-list-upstream-page-size 80 0)))
+  (is (= memory-shape/max-session-list-upstream-page-size
+         (memory-shape/session-list-upstream-page-size 40 80))))
+
 
 (deftest memory-sessions-cache-key-is-param-and-auth-scoped
   (let [base {:config {:session-project-name "knoxx"}

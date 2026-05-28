@@ -1,5 +1,6 @@
 (ns knoxx.backend.infra.routes.auth
   (:require [clojure.string :as str]
+            [knoxx.backend.infra.auth.authz :as authz]
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as policy-db]))
 
@@ -42,31 +43,31 @@
                                                      email)))]
                  (if (str/blank? email)
                    (.send (.code reply 400) (clj->js {:error "email is required"}))
-                   (-> (policy-db/bootstrap-context! policy-context)
-                       (.then (fn [bootstrap]
-                                (let [org-id (get-in bootstrap [:primary-org :id])
-                                      org-slug (get-in bootstrap [:primary-org :slug])]
-                                  (-> (policy-db/create-user-for-context!
-                                       policy-context
-                                       {:email email
-                                        :display-name (or display-name email)
-                                        :org-id org-id
-                                        :role-slugs ["basic_user"]
-                                        :auth-provider "signup"
-                                        :status "active"
-                                        :membership-status "active"
-                                        :is-default true})
-                                      (.then (fn [_]
-                                               (policy-db/resolve-context!
-                                                policy-context
-                                                {"x-knoxx-user-email" email
-                                                 "x-knoxx-org-slug" org-slug})))
-                                      (.then (fn [ctx]
-                                               (auth-session/create-session-from-context!
-                                                reply public-base-url ctx
-                                                {:email email
-                                                 :display-name (or display-name email)
-                                                 :auth-provider "signup"})))))))
+                   (-> (policy-db/ensure-self-org! (policy-db/context-pool policy-context)
+                                                   email
+                                                   (or display-name email))
+                       (.then (fn [org]
+                                (-> (policy-db/create-user-for-context!
+                                     policy-context
+                                     {:email email
+                                      :display-name (or display-name email)
+                                      :org-id (:id org)
+                                      :role-slugs ["basic-user"]
+                                      :auth-provider "signup"
+                                      :status "active"
+                                      :membership-status "active"
+                                      :is-default true})
+                                    (.then (fn [_]
+                                             (policy-db/resolve-context!
+                                              policy-context
+                                              {"x-knoxx-user-email" email
+                                               "x-knoxx-org-slug" (:slug org)})))
+                                    (.then (fn [ctx]
+                                             (auth-session/create-session-from-context!
+                                              reply public-base-url ctx
+                                              {:email email
+                                               :display-name (or display-name email)
+                                               :auth-provider "signup"}))))))
                        (.then (fn [result]
                                 (.send reply (clj->js result))))
                        (.catch (fn [err]
@@ -112,20 +113,35 @@
     (.post app "/api/auth/invite/redeem"
            (fn [^js req ^js reply]
              (let [body (body-map req)
-                   code (str/trim (str (or (:code body) "")))]
+                   code (str/trim (str (or (:code body) "")))
+                   email (str/lower-case
+                          (str/trim (str (or (:email body)
+                                             (aget (.-headers req) "x-knoxx-user-email")
+                                             ""))))]
                (if (str/blank? code)
                  (.send (.code reply 400) (clj->js {:error "Invite code is required"}))
-                 (let [email (str/trim (or (aget (.-headers req) "x-knoxx-user-email") ""))]
-                   (if (str/blank? email)
-                     (.send (.code reply 401) (clj->js {:error "Not authenticated"}))
-                     (-> (policy-db/redeem-invite! (policy-db/context-pool policy-context) code email)
-                         (.then (fn [result]
-                                  (.send reply (clj->js {:ok true
-                                                         :invite (:invite result)
-                                                         :user (:user result)}))))
-                         (.catch (fn [err]
-                                   (.send (.code reply (or (.-status err) 500))
-                                          (clj->js {:error (or (.-message err) "Invite redemption failed")})))))))))))
+                 (if (str/blank? email)
+                   (.send (.code reply 400) (clj->js {:error "email is required"}))
+                   (-> (policy-db/redeem-invite! (policy-db/context-pool policy-context) code email)
+                       (.then (fn [result]
+                                (let [invite (:invite result)]
+                                  (-> (policy-db/resolve-context!
+                                       policy-context
+                                       {"x-knoxx-user-email" (:email invite)
+                                        "x-knoxx-org-id" (:org-id invite)})
+                                      (.then (fn [ctx]
+                                               (auth-session/create-session-from-context!
+                                                reply public-base-url ctx
+                                                {:email (:email invite)
+                                                 :display-name (:email invite)
+                                                 :auth-provider "invite"})))
+                                      (.then (fn [session]
+                                               (.send reply (clj->js (assoc session
+                                                                            :ok true
+                                                                            :invite invite))))))))
+                       (.catch (fn [err]
+                                 (.send (.code reply (or (.-status err) 500))
+                                        (clj->js {:error (or (.-message err) "Invite redemption failed")}))))))))))
 
     (.post app "/api/auth/invite"
            (fn [^js req ^js reply]
@@ -136,10 +152,12 @@
                                              (get-in ctx [:org :id]))
                                   email (:email body)
                                   role-slugs (vec (or (map-value body :role-slugs :roleSlugs :role_slugs)
-                                                      ["knowledge_worker"]))]
+                                                      ["basic-user"]))]
                               (if (str/blank? email)
                                 (.send (.code reply 400) (clj->js {:error "email is required"}))
-                                (-> (policy-db/create-invite-for-context!
+                                (do
+                                  (authz/ensure-org-scope! ctx org-id "org.users.invite")
+                                  (-> (policy-db/create-invite-for-context!
                                      policy-context
                                      {:org-id org-id
                                       :email email
@@ -154,7 +172,7 @@
                                                                     :invite (:invite result)}))))
                                     (.catch (fn [err]
                                               (.send (.code reply (or (.-status err) 500))
-                                                     (clj->js {:error (or (.-message err) "Invite creation failed")}))))))))
+                                                     (clj->js {:error (or (.-message err) "Invite creation failed")})))))))))
                    (.catch (fn [err]
                              (.send (.code reply (or (.-status err) 401))
                                     (clj->js {:error (or (.-message err) "Unauthorized")}))))))))
@@ -166,6 +184,7 @@
                          (let [org-id (or (some-> req (aget "query") (aget "orgId"))
                                           (get-in ctx [:org :id]))
                                status (some-> req (aget "query") (aget "status"))]
+                           (authz/ensure-org-scope! ctx org-id "org.users.invite")
                            (-> (policy-db/list-invites!
                                 (policy-db/context-pool policy-context)
                                 (cond-> {:org-id org-id}
@@ -178,3 +197,4 @@
                 (.catch (fn [err]
                           (.send (.code reply (or (.-status err) 401))
                                  (clj->js {:error (or (.-message err) "Unauthorized")}))))))))))
+)

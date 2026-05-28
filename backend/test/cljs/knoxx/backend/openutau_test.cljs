@@ -1,7 +1,38 @@
 (ns knoxx.backend.openutau-test
   (:require [cljs.test :refer [deftest is testing]]
             [clojure.string :as str]
-            [knoxx.backend.domain.openutau.openutau :as openutau]))
+            [knoxx.backend.domain.openutau.openutau :as openutau]
+            [knoxx.backend.domain.openutau.tools :as tools]))
+
+(def ^:private missing-env-value (js-obj))
+
+(defn- with-env!
+  [bindings f]
+  (let [env (.-env js/process)
+        previous (into {}
+                       (map (fn [[k _]]
+                              [k (let [value (aget env k)]
+                                   (if (some? value) value missing-env-value))]))
+                       bindings)]
+    (doseq [[k v] bindings]
+      (if (nil? v)
+        (js-delete env k)
+        (aset env k v)))
+    (try
+      (f)
+      (finally
+        (doseq [[k old-value] previous]
+          (if (identical? old-value missing-env-value)
+            (js-delete env k)
+            (aset env k old-value)))))))
+
+(deftest render-script-path-is-runtime-configurable
+  (with-env! {"KNOXX_OPENUTAU_RENDER_SCRIPT" nil}
+    (fn []
+      (is (= "render-ustx.sh" (tools/render-script-path)))))
+  (with-env! {"KNOXX_OPENUTAU_RENDER_SCRIPT" "/opt/openutau/render-ustx.sh"}
+    (fn []
+      (is (= "/opt/openutau/render-ustx.sh" (tools/render-script-path))))))
 
 (deftest normalize-notes-assigns-sequential-positions-and-respects-explicit-gaps
   (testing "notes without explicit positions are sequenced after the previous note end"

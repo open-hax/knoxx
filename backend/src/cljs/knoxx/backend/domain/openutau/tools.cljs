@@ -3,9 +3,12 @@
             [knoxx.backend.domain.openutau.openutau :as openutau]
             [shadow.cljs.modern :refer [js-await]]))
 
-(def render-script-path
+(def default-render-script-path "render-ustx.sh")
+
+(defn render-script-path
+  []
   (or (aget js/process.env "KNOXX_OPENUTAU_RENDER_SCRIPT")
-      "render-ustx.sh"))
+      default-render-script-path))
 
 (def default-ustx-version openutau/default-ustx-version)
 (def default-ticks-per-quarter openutau/default-ticks-per-quarter)
@@ -33,7 +36,7 @@
   (let [child-process (js/require "node:child_process")
         util (js/require "node:util")
         exec-file (.promisify util (.-execFile child-process))
-        script render-script-path]
+        script (render-script-path)]
     (js-await [result (exec-file script #js [ustx-path output-wav-path]
                                  #js {:timeout 600000 :maxBuffer 4194304})]
       (let [stdout (.-stdout result)]

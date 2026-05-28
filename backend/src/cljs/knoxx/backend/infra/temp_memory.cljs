@@ -7,7 +7,7 @@
 
 (def ^:private default-ttl-ms (* 60 60 1000)) ;; 1 hour
 
-(defn- parse-ttl-ms
+(defn parse-ttl-ms
   "Accept ISO-8601 duration string or integer seconds."
   [ttl]
   (cond

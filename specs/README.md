@@ -22,8 +22,8 @@ Reviewed and reorganized: 2026-05-21.
 
 ## Counts
 
-- Active epics: 46
-- Active tasks: 32
+- Active epics: 47
+- Active tasks: 40
 - Archived epics: 2
 - Archived tasks: 29
 - Archived reference docs: 12
@@ -73,6 +73,7 @@ Reviewed and reorganized: 2026-05-21.
 - `specs/epics/knowledge-ops-workbench-ui.md`
 - `specs/epics/knowledge-ops-workbench-ux-breakdown.md`
 - `specs/epics/knowledge-ops-workbench-ux-v1.md`
+- `specs/epics/knoxx-backend-cljs-lint-remediation.md`
 - `specs/epics/knoxx-backend-law-shape-domain-epic.md`
 - `specs/epics/knoxx-session-lake-graph-and-memory.md`
 - `specs/epics/unified-workplace-pattern.md`
@@ -98,6 +99,14 @@ Reviewed and reorganized: 2026-05-21.
 - `specs/tasks/knowledge-ops-translation-mt-pipeline.md`
 - `specs/tasks/knowledge-ops-translation-routes.md`
 - `specs/tasks/knoxx-backend-data-shapes-review.md`
+- `specs/tasks/knoxx-backend-lint-async-workflows-src.md`
+- `specs/tasks/knoxx-backend-lint-coverage-characterization.md`
+- `specs/tasks/knoxx-backend-lint-function-length-extractions.md`
+- `specs/tasks/knoxx-backend-lint-hard-error-first-pass.md`
+- `specs/tasks/knoxx-backend-lint-route-helper-symbols.md`
+- `specs/tasks/knoxx-backend-lint-test-boundaries.md`
+- `specs/tasks/knoxx-backend-lint-unused-and-final-warnings.md`
+- `specs/tasks/knoxx-backend-lint-zero-warning-gate.md`
 - `specs/tasks/knoxx-openplanner-mcp-integration.md`
 - `specs/tasks/openplanner-mcp-server.md`
 - `specs/tasks/workbench/1.2-dashboard-agent-runs.md`

@@ -1,8 +1,7 @@
 (ns knoxx.backend.tools.temp-memory-test
-  (:require [knoxx.backend.infra.temp-memory :as temp]
-            [promesa.core :as p]
-            [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]))
+  (:require [clojure.test :refer [deftest is testing]]
+            [knoxx.backend.infra.temp-memory :as temp]
+            [promesa.core :as p]))
 
 ;; ── parse-ttl-ms ─────────────────────────────
 

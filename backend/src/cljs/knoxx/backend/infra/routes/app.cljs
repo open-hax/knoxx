@@ -92,10 +92,26 @@
   [policy]
   (= "allow" (some-> (:effect policy) str str/lower-case)))
 
+(defn- tool-policy-id
+  [policy]
+  (some-> (or (:toolId policy) (:tool-id policy)) str str/trim not-empty))
+
+(defn- ctx-tool-policies
+  [ctx]
+  (vec (or (:toolPolicies ctx)
+           (:tool-policies ctx)
+           [])))
+
+(defn- parsed-auth-tool-policies
+  [parsed]
+  (vec (or (get-in parsed [:auth-context :toolPolicies])
+           (get-in parsed [:auth-context :tool-policies])
+           [])))
+
 (defn- requested-tool-policies
   [parsed]
   (let [from-spec (vec (or (get-in parsed [:agent-spec :tool-policies]) []))
-        from-auth (vec (or (get-in parsed [:auth-context :toolPolicies]) []))]
+        from-auth (parsed-auth-tool-policies parsed)]
     (cond
       (seq from-spec) from-spec
       (seq from-auth) from-auth
@@ -103,18 +119,19 @@
 
 (defn- effective-tool-policies
   [ctx parsed]
-  (let [requested (requested-tool-policies parsed)]
+  (let [requested (requested-tool-policies parsed)
+        context-policies (ctx-tool-policies ctx)]
     (cond
       (and (nil? ctx) (seq requested)) requested
-      (and (nil? ctx) (:auth-context parsed)) (vec (or (get-in parsed [:auth-context :toolPolicies]) []))
-      (empty? requested) (vec (or (:toolPolicies ctx) []))
+      (and (nil? ctx) (:auth-context parsed)) (parsed-auth-tool-policies parsed)
+      (empty? requested) context-policies
       (system-admin? ctx) requested
-      :else (let [allowed (->> (:toolPolicies ctx)
+      :else (let [allowed (->> context-policies
                                (filter allow-policy?)
-                               (map :toolId)
+                               (keep tool-policy-id)
                                set)]
               (->> requested
-                   (filter #(contains? allowed (:toolId %)))
+                   (filter #(contains? allowed (tool-policy-id %)))
                    vec)))))
 
 (defn- effective-auth-context
@@ -668,6 +685,23 @@
         (.catch (fn [err]
                   (error-response! reply err 409))))))
 
+(defn- session-status-running-response
+  [session-id session runtime-active? can-send stalled? latest-event]
+  {:session_id session-id
+   :conversation_id (:conversation_id session)
+   :run_id (:run_id session)
+   :status (:status session)
+   :has_active_stream (boolean (or (:has_active_stream session) runtime-active?))
+   :can_send (if stalled? false (:can-send can-send))
+   :reason (cond
+             stalled? "Session looked stalled after restart; recovery requested."
+             runtime-active? "Session is already processing. Use steer, follow-up, abort, or wait."
+             :else (:reason can-send))
+   :model (:model session)
+   :updated_at (:updated_at session)
+   :latest_event_at (:at latest-event)
+   :recovery_requested stalled?})
+
 (defn- handle-session-status [runtime config reply request]
   (let [session-id (or (aget request "query" "session_id")
                        (aget request "query" "sessionId")
@@ -698,21 +732,8 @@
                                             (.catch (fn [err]
                                                       (js/console.error "On-demand session recovery failed" err)))))
                                       (json-response! reply 200
-                                                      {:session_id session-id
-                                                       :conversation_id (:conversation_id session)
-                                                       :run_id (:run_id session)
-                                                       :status (:status session)
-                                                       :has_active_stream (boolean (or (:has_active_stream session)
-                                                                                       runtime-active?))
-                                                       :can_send (if stalled? false (:can-send can-send))
-                                                       :reason (cond
-                                                                 stalled? "Session looked stalled after restart; recovery requested."
-                                                                 runtime-active? "Session is already processing. Use steer, follow-up, abort, or wait."
-                                                                 :else (:reason can-send))
-                                                       :model (:model session)
-                                                       :updated_at (:updated_at session)
-                                                       :latest_event_at (:at latest-event)
-                                                       :recovery_requested stalled?}))))))
+                                                      (session-status-running-response
+                                                       session-id session runtime-active? can-send stalled? latest-event)))))))
                      ;; No session in Redis - trust in-memory runtime if it still has a live turn.
                      (if (runtime-processing-session? conversation-id)
                        (json-response! reply 200

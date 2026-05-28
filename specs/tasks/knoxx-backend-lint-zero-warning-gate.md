@@ -1,6 +1,6 @@
 # Knoxx Backend Lint — Zero Warning Gate
 
-Date: 2026-05-21
+Date: 2026-05-27
 Status: todo
 Parent epic: `specs/epics/knoxx-backend-cljs-lint-remediation.md`
 Story points: 3

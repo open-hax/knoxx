@@ -97,45 +97,31 @@
       (:contextPolicy spec)
       (:context spec)))
 
+(defn- spec-value
+  "Extract a normalized string value from a spec map given keyword alternatives."
+  [spec & keys]
+  (some-> (some (fn [k] (get spec k)) keys)
+          str
+          str/trim
+          not-empty))
+
+(defn- spec-value-raw
+  "Extract a normalized string value without trimming, for prompt fields."
+  [spec & keys]
+  (some-> (some (fn [k] (get spec k)) keys)
+          str
+          not-empty))
+
 (defn- normalize-agent-spec
   [value]
   (let [spec (maybe-cljs-map value)
-        contract-id (some-> (or (:contract_id spec)
-                                (:contract-id spec)
-                                (:contractId spec)
-                                (:agent_id spec)
-                                (:agent-id spec)
-                                (:agentId spec))
-                            str
-                            str/trim
-                            not-empty)
-        actor-id (some-> (or (:actor_id spec)
-                             (:actor-id spec)
-                             (:actorId spec))
-                         str
-                         str/trim
-                         not-empty)
-        role (some-> (or (:role spec) (:role_slug spec) (:role-slug spec)) str str/trim not-empty)
-        system-prompt (some-> (or (:system_prompt spec)
-                                  (:system-prompt spec)
-                                  (:systemPrompt spec))
-                              str
-                              not-empty)
-        task-prompt (some-> (or (:task_prompt spec)
-                                (:task-prompt spec)
-                                (:taskPrompt spec))
-                            str
-                            not-empty)
-        model (some-> (:model spec) str str/trim not-empty)
-        thinking-level (some-> (or (:thinking_level spec)
-                                   (:thinking-level spec)
-                                   (:thinkingLevel spec)
-                                   (:reasoning_effort spec)
-                                   (:reasoning-effort spec)
-                                   (:reasoningEffort spec))
-                               str
-                               str/trim
-                               not-empty)
+        contract-id (spec-value spec :contract_id :contract-id :contractId :agent_id :agent-id :agentId)
+        actor-id (spec-value spec :actor_id :actor-id :actorId)
+        role (spec-value spec :role :role_slug :role-slug)
+        system-prompt (spec-value-raw spec :system_prompt :system-prompt :systemPrompt)
+        task-prompt (spec-value-raw spec :task_prompt :task-prompt :taskPrompt)
+        model (spec-value spec :model)
+        thinking-level (spec-value spec :thinking_level :thinking-level :thinkingLevel :reasoning_effort :reasoning-effort :reasoningEffort)
         tool-policies (normalize-tool-policies (or (:tool_policies spec)
                                                    (:tool-policies spec)
                                                    (:toolPolicies spec)))

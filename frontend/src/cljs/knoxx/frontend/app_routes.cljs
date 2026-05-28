@@ -25,7 +25,7 @@
 (def events-route "/events")
 (def legacy-event-agents-route "/event-agents")
 (def event-agents-route events-route)
-(def basic-user-role "basic_user")
+(def basic-user-roles #{"basic_user" "basic-user"})
 
 (defn- trim-slashes [value]
   (-> (or value "")
@@ -54,7 +54,7 @@
    :admin (join-path ops-base-path "admin")})
 
 (defn basic-user-role? [role-slugs]
-  (boolean (some #{basic-user-role} (or role-slugs []))))
+  (boolean (some basic-user-roles (or role-slugs []))))
 
 (defn can-access-path? [pathname role-slugs]
   (if-not (basic-user-role? role-slugs)

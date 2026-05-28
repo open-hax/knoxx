@@ -1,6 +1,6 @@
 # Knoxx Backend Lint — Route Helper and Macro Symbol Repair
 
-Date: 2026-05-21
+Date: 2026-05-27
 Status: todo
 Parent epic: `specs/epics/knoxx-backend-cljs-lint-remediation.md`
 Story points: 5
@@ -11,14 +11,14 @@ Stop route namespaces from generating unresolved-symbol cascades around `defrout
 
 ## Problem
 
-Several route namespaces report repeated unresolved symbols such as `with-request-context!`, `fetch-json`, `route!`, `ctx`, `request`, `reply`, `request-query-string`, `ensure-permission!`, `json-response!`, `send-fetch-response!`, `error-response!`, `bearer-headers`, and `clip-text`.
+The latest lint run no longer shows the earlier broad route unresolved-symbol cascade, but route namespaces still carry route-specific hard errors, function-length errors, and many Promise-chain warnings. The `defroute` hook and route helper model still need explicit verification before route refactors, especially because route bodies may use `await` and must be analyzed under an actual `^:async` function context.
 
-This pattern suggests one or more of:
+Current route risks suggest one or more of:
 
-1. the `defroute` macro/hook no longer matches current call-site shape;
-2. route helpers moved without updating requires;
-3. route-local lexical bindings escaped their intended scope;
-4. large route-registration functions contain syntax or binding drift.
+1. the `defroute` macro/hook may still not model current async call-site shape;
+2. some route helpers moved without updating requires;
+3. route-local lexical bindings may escape their intended scope;
+4. large route-registration functions hide real binding drift behind length and Promise-chain noise.
 
 ## Goals
 
@@ -37,7 +37,7 @@ This pattern suggests one or more of:
 
 ## Affected namespaces
 
-Initial hotspots from the lint output:
+Route namespaces to keep in scope while validating the hook and helper model:
 
 - `src/cljs/knoxx/backend/infra/routes/actors.cljs`
 - `src/cljs/knoxx/backend/infra/routes/documents.cljs`
@@ -58,7 +58,7 @@ Initial hotspots from the lint output:
 5. Fix real missing requires or leaked lexical names at route call sites.
 6. Rerun clj-kondo on one representative namespace before sweeping the full route set.
 
-## Discovery — async `defroute` handler shape
+## Async `defroute` handler shape
 
 User investigation against the upstream ClojureScript async/await test suite found the canonical anonymous async function shape:
 

@@ -376,6 +376,35 @@
                                  :batches @batches}))))))))))
 
 
+(defn- aggregate-ingest-results
+  "Aggregate ingest results into a summary JS object."
+  [results-atom files to-ingest state]
+  (-> (save-ingest-state state)
+      (.then (fn [_]
+               (let [results @results-atom
+                     total-events (reduce (fn [sum ^js r] (+ sum (or (.-eventsIngested r) 0))) 0 (js/Array.from results))
+                     errors (reduce (fn [cnt ^js r] (if (.-error r) (inc cnt) cnt)) 0 (js/Array.from results))]
+                 #js {:ok true
+                      :scanned (.-length files)
+                      :newSessions (.-length to-ingest)
+                      :ingested (- (.-length to-ingest) errors)
+                      :totalEvents total-events
+                      :errors errors
+                      :details results})))))
+
+(defn- ingest-single-session!
+  "Ingest a single session file and update state."
+  [file state results-atom client]
+  (-> (ingest-session-file (.-path file) file client)
+      (.then (fn [^js result]
+               (aset (.-sessions state) (.-sessionId file)
+                     #js {:mtime (.-mtime file) :eventCount (.-eventsIngested result)
+                          :ingestedAt (.toISOString (js/Date.)) :dir (.-dir file) :size (.-size file)})
+               (.push @results-atom result)))
+      (.catch (fn [err]
+                (.error js/console (str "[eta-mu-ingester] Failed: " (.-sessionId file) ":") (.-message err))
+                (.push @results-atom #js {:sessionId (.-sessionId file) :error (.-message err) :eventsIngested 0 :batches 0})))))
+
 (defn run-eta-mu-session-ingest
   [{:keys [openplanner-client config force limit session-dirs]
     :or {force false limit 50}}]
@@ -417,51 +446,9 @@
                         (-> (reduce
                              (fn [promise-chain ^js file]
                                (-> promise-chain
-                                   (.then
-                                    (fn [_]
-                                      (-> (ingest-session-file (.-path file) file client)
-                                          (.then
-                                           (fn [^js result]
-                                             (aset (.-sessions state) (.-sessionId file)
-                                                   #js {:mtime (.-mtime file)
-                                                        :eventCount (.-eventsIngested result)
-                                                        :ingestedAt (.toISOString (js/Date.))
-                                                        :dir (.-dir file)
-                                                        :size (.-size file)})
-                                             (.push @results-atom result)))
-                                          (.catch
-                                           (fn [err]
-                                             (.error js/console
-                                                     (str "[eta-mu-ingester] Failed: " (.-sessionId file) ":")
-                                                     (.-message err))
-                                             (.push @results-atom
-                                                    #js {:sessionId (.-sessionId file)
-                                                         :error (.-message err)
-                                                         :eventsIngested 0
-                                                         :batches 0}))))))))
-                             (js/Promise.resolve nil)
+                                   (.then (fn [_] (ingest-single-session! file state results-atom client)))))                    (js/Promise.resolve nil)
                              (js/Array.from to-ingest))
-                            (.then
-                             (fn [_]
-                               (-> (save-ingest-state state)
-                                   (.then
-                                    (fn [_]
-                                      (let [results @results-atom
-                                            total-events (reduce
-                                                          (fn [sum ^js r] (+ sum (or (.-eventsIngested r) 0)))
-                                                          0
-                                                          (js/Array.from results))
-                                            errors (reduce
-                                                    (fn [cnt ^js r] (if (.-error r) (inc cnt) cnt))
-                                                    0
-                                                    (js/Array.from results))]
-                                        #js {:ok true
-                                             :scanned (.-length files)
-                                             :newSessions (.-length to-ingest)
-                                             :ingested (- (.-length to-ingest) errors)
-                                             :totalEvents total-events
-                                             :errors errors
-                                             :details results}))))))))))))))))
+                            (.then (fn [_] (aggregate-ingest-results results-atom files to-ingest state)))))))))))))
 
         (.catch
          (fn [err]

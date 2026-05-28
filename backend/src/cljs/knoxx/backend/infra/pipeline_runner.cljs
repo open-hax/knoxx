@@ -4,12 +4,9 @@
   (:require [promesa.core :as p]
             [clojure.string :as str]
             [knoxx.backend.infra.temp-memory :as temp]
+            [knoxx.backend.shape.pipeline :as pipeline-shape]
             [knoxx.backend.domain.contracts.loader :as loader]
-            [knoxx.backend.domain.discord.discord-io :as discord-io]
-            [knoxx.backend.infra.config :as runtime-config]
-            [knoxx.backend.domain.models :as models]))
-
-(defn- cfg [] (models/enrich-config (runtime-config/cfg)))
+            [knoxx.backend.domain.discord.discord-io :as discord-io]))
 
 (defn- load-contract-sync
   [config contract-class contract-id]
@@ -40,27 +37,9 @@
                       (p/all))]
       (p/then resolved (fn [pairs] (into {} pairs))))))
 
-(defn- interpolate-value
-  "Replace {{memory.temp:k}} placeholders in string value."
-  [value k->v]
-  (if (and (string? value) (str/includes? value "{{memory.temp:"))
-    (reduce (fn [s k]
-              (if-let [v (get k->v k)]
-                (str/replace s (str "{{memory.temp:" k "}}") (str v))
-                s))
-            value
-            (keys k->v))
-    value))
-
 (defn- interpolate-map
-  "Interpolate all {{memory.temp:}} in map m. k->v is {key value}."
   [m k->v]
-  (->> m
-       (mapv (fn [[k v]]
-               [k (if (map? v)
-                    (interpolate-map v k->v)
-                    (interpolate-value v k->v))]))
-       (into {})))
+  (pipeline-shape/interpolate-map m k->v))
 
 ;; ── step execution ─────────────────────────────
 
@@ -108,11 +87,8 @@
 ;; ── dependency ordering ─────────────────────
 
 (defn- dependency-order
-  "Naive topological sort: steps with fewer deps first."
   [steps]
-  (->> steps
-       (sort-by #(count (or (:step/depends-on %) [])))
-       vec))
+  (pipeline-shape/dependency-order steps))
 
 ;; ── public API ─────────────────────────────
 

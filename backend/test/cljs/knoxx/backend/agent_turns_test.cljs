@@ -71,6 +71,14 @@
                :input_preview "```yaml\npath: docs/guide.md\noffset: 10\nlimit: 20\n```"}]
              previews)))))
 
+(deftest tool-call-input-preview-renders-bash-commands-as-markdown
+  (testing "bash tool calls render command fences and timeout metadata"
+    (is (= "```bash\nprintf 'hi'\n```\n\n- timeout: 12"
+           (tools/tool-call-input-preview
+            "tools/bash"
+            #js {:command "printf 'hi'"
+                 :timeout 12})))))
+
 (deftest session->stored-messages-preserves-prior-transcript
   (testing "live session snapshots keep existing user and assistant turns for restart recovery"
     (let [session (wrap-eta-mu-session

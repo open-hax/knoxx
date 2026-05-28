@@ -79,75 +79,90 @@
        :bootstrapAllowlistEmails (env "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS" "")
        :bootstrapAllowlistRoleSlugs (env "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS" "")})
 
+(defn- log-hmr-probe!
+  [req reply]
+  (when (= (.-url req) "/api/dev/hmr")
+    (.header ^js reply "x-knoxx-hmr-probe" hmr-probe-token)
+    (js/console.log "[knoxx-hot-reload-probe]" hmr-probe-token
+                    #js {:pid (.-pid js/process)
+                         :uptimeMs (process-uptime-ms)})))
+
+(defn- log-large-request!
+  [req]
+  (when-let [len (aget (.-headers req) "content-length")]
+    (when (> (js/parseInt len 10) (* 900 1024))
+      (js/console.warn "[knoxx] large request" (.-url req) len "bytes"))))
+
+(defn- add-request-debug-hook!
+  [app]
+  (http-server/add-hook! app "onRequest"
+    (fn [req reply done]
+      (log-hmr-probe! req reply)
+      (log-large-request! req)
+      (done))))
+
+(defn- register-ws-routes-plugin!
+  [runtime app]
+  (.register app
+             (fn [instance _opts done]
+               (core/register-ws-routes! runtime instance)
+               (done))))
+
+(defn- add-session-hook!
+  [app policy-context cookie-hook?]
+  (when cookie-hook?
+    (http-server/add-hook! app "onRequest" (auth-session/create-session-hook policy-context))))
+
+(defn- register-http-routes!
+  [runtime app cfg policy-context]
+  (auth-routes/register-auth-routes app {:policy-context policy-context
+                                         :runtime runtime})
+  (core/register-app-routes! runtime app cfg lounge-messages*)
+  (proxy-routes/register-proxy-routes! app cfg)
+  (mcp-http/register-mcp-http-routes! app runtime cfg))
+
+(defn- start-session-persistence!
+  [runtime app cfg log]
+  (-> (redis/init-redis! (:redis-url cfg))
+      (.then (fn [client]
+               (when client
+                 (.info log "Redis connected for session persistence")
+                 (reset! store-registry/session-store*
+                         (->CompositeSessionStore
+                          (->RedisSessionStore client)
+                          (->OpenPlannerSessionStore cfg)))
+                 ;; Fire-and-forget: must not block startup.
+                 ;; Guarded so shadow-cljs hot reload does not spawn
+                 ;; recovery jobs as if the Node process had restarted.
+                 (agent-resume/resume-on-process-startup! runtime app cfg)
+                 (agent-resume/start-periodic-recovery! runtime app cfg)
+                 (session-flush/start-periodic-flush! client))))
+      (.catch (fn [err]
+                (.warn log "Redis initialization failed" err)))))
+
+(defn- handle-app-listening!
+  [runtime app cfg]
+  (lifecycle/remember-app! app)
+  (graceful-shutdown/install! app cfg)
+  (notify-ready!)
+  (let [^js log (.-log app)]
+    (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
+    (start-session-persistence! runtime app cfg log)
+    app))
+
 (defn start-http!
   "Create a fresh Fastify app and bind HTTP routes around durable runtime state."
   [runtime cfg policy-context cookie-hook?]
   (runtime-state/remember-context! runtime cfg policy-context)
   (let [app (http-server/create-app!)]
     (http-server/ensure-json-empty-body-parser! app)
-    ;; Debug hook: log large requests before they hit 413.
-    (http-server/add-hook! app "onRequest"
-      (fn [req reply done]
-        (when (= (.-url req) "/api/dev/hmr")
-          (.header ^js reply "x-knoxx-hmr-probe" hmr-probe-token)
-          (js/console.log "[knoxx-hot-reload-probe]" hmr-probe-token
-                          #js {:pid (.-pid js/process)
-                               :uptimeMs (process-uptime-ms)}))
-        (when-let [len (aget (.-headers req) "content-length")]
-          (when (> (js/parseInt len 10) (* 900 1024))
-            (js/console.warn "[knoxx] large request" (.-url req) len "bytes")))
-        (done)))
+    (add-request-debug-hook! app)
     (-> (http-server/register-default-plugins! app)
-        ;; WS routes plugin.
-        (.then (fn []
-                 (.register app
-                            (fn [instance _opts done]
-                              (core/register-ws-routes! runtime instance)
-                              (done)))))
-        ;; Optional legacy session hook.
-        (.then (fn []
-                 (when cookie-hook?
-                   (http-server/add-hook! app "onRequest" (auth-session/create-session-hook policy-context)))))
-        ;; GitHub OAuth + cookie session auth routes.
-        (.then (fn []
-                 (auth-routes/register-auth-routes app {:policy-context policy-context
-                                                         :runtime runtime})))
-        ;; Core CLJS routes (/api/*, etc.).
-        (.then (fn []
-                 (core/register-app-routes! runtime app cfg lounge-messages*)))
-        ;; Extra host-level routes previously implemented in server.mjs.
-        (.then (fn []
-                 (proxy-routes/register-proxy-routes! app cfg)))
-        ;; MCP (server side) + OAuth consent UI.
-        (.then (fn []
-                 (mcp-http/register-mcp-http-routes! app runtime cfg)))
-        ;; Start listening.
-        (.then (fn []
-                 (http-server/listen! app (:host cfg) (:port cfg))))
-        (.then (fn [_]
-                 (lifecycle/remember-app! app)
-                 (graceful-shutdown/install! app cfg)
-                 (notify-ready!)
-                 (let [^js log (.-log app)]
-                   (.info log (str "Knoxx backend CLJS listening on " (:host cfg) ":" (:port cfg)))
-                   ;; Redis + session resume (non-blocking).
-                   (-> (redis/init-redis! (:redis-url cfg))
-                       (.then (fn [client]
-                                (when client
-                                  (.info log "Redis connected for session persistence")
-                                  (reset! store-registry/session-store*
-                                          (->CompositeSessionStore
-                                           (->RedisSessionStore client)
-                                           (->OpenPlannerSessionStore cfg)))
-                                  ;; Fire-and-forget: must not block startup.
-                                  ;; Guarded so shadow-cljs hot reload does not spawn
-                                  ;; recovery jobs as if the Node process had restarted.
-                                  (agent-resume/resume-on-process-startup! runtime app cfg)
-                                  (agent-resume/start-periodic-recovery! runtime app cfg)
-                                  (session-flush/start-periodic-flush! client))))
-                       (.catch (fn [err]
-                                 (.warn log "Redis initialization failed" err))))
-                   app))))))
+        (.then #(register-ws-routes-plugin! runtime app))
+        (.then #(add-session-hook! app policy-context cookie-hook?))
+        (.then #(register-http-routes! runtime app cfg policy-context))
+        (.then #(http-server/listen! app (:host cfg) (:port cfg)))
+        (.then #(handle-app-listening! runtime app cfg)))))
 
 (defn bootstrap!
   "Main entrypoint called by shadow-cljs."

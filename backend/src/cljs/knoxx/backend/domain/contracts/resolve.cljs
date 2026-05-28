@@ -269,15 +269,25 @@
      :role-system-prompts role-system-prompts
      :role-task-prompts role-task-prompts}))
 
+(defn- role-capability-claims
+  [config role-slugs]
+  (->> (or role-slugs [])
+       (mapcat #(roles/role-capability-ids config %))
+       (map keywordish->capability-ref)
+       (remove nil?)
+       distinct
+       vec))
+
 (defn- capability-context
-  [actor-spec contract]
+  [config actor-spec role-slugs contract]
   (let [actor-capability-ids (vec (or (:capability-ids actor-spec) []))
+        role-capability-ids (role-capability-claims config role-slugs)
         contract-capability-ids (->> (contract-actor-capability-claims contract)
                                      (map keywordish->capability-ref)
                                      (remove nil?)
                                      distinct
                                      vec)]
-    {:capability-ids (vec (distinct (concat actor-capability-ids contract-capability-ids)))}))
+    {:capability-ids (vec (distinct (concat actor-capability-ids role-capability-ids contract-capability-ids)))}))
 
 (defn- tool-context
   [config role-slugs capability-ids contract]
@@ -389,7 +399,7 @@
                                   (when-let [default-id (default-actor-id config)]
                                     (resolve-actor config default-id)))
                    role-ctx (role-context config actor-spec contract)
-                   capability-ctx (capability-context actor-spec contract)
+                   capability-ctx (capability-context config actor-spec (:role-slugs role-ctx) contract)
                    tool-ctx (tool-context config (:role-slugs role-ctx) (:capability-ids capability-ctx) contract)
                    prompt-ctx (prompt-context actor-spec contract
                                               (:role-system-prompts role-ctx)
@@ -400,7 +410,9 @@
 
 (defn- manual-agent-contract?
   [entry]
-  (= "manual" (some-> (:trigger-kind entry) str str/trim str/lower-case)))
+  (let [trigger-kind (some-> (:trigger-kind entry) str str/trim str/lower-case)]
+    (or (str/blank? trigger-kind)
+        (= "manual" trigger-kind))))
 
 (defn agent-contract-catalog
   ([config]

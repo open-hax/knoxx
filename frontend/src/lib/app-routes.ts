@@ -6,7 +6,8 @@ export const EVENTS_ROUTE = '/events';
 export const LEGACY_EVENT_AGENTS_ROUTE = '/event-agents';
 // Back-compat name: this was previously the event-agent control surface.
 export const EVENT_AGENTS_ROUTE = EVENTS_ROUTE;
-export const BASIC_USER_ROLE = 'basic_user';
+export const BASIC_USER_ROLES = ['basic_user', 'basic-user'] as const;
+export const BASIC_USER_ROLE = BASIC_USER_ROLES[0];
 
 function trimSlashes(value: string): string {
   return value.replace(/^\/+|\/+$/g, '');
@@ -35,7 +36,7 @@ export const opsRoutes = {
 } as const;
 
 export function isBasicUserRole(roleSlugs: string[] = []): boolean {
-  return roleSlugs.includes(BASIC_USER_ROLE);
+  return roleSlugs.some((role) => (BASIC_USER_ROLES as readonly string[]).includes(role));
 }
 
 export function canAccessPath(pathname: string, roleSlugs: string[] = []): boolean {

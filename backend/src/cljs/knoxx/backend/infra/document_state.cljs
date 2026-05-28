@@ -242,7 +242,7 @@
   [runtime config profile {:keys [full selected-files]}]
   (let [db-id (:id profile)
         docs-path (:docsPath profile)
-        project (or (:project-name config) "devel")]
+        project (or (:project-name config) "workspace")]
     (-> (list-files-recursive! runtime docs-path)
         (.then
          (fn [all-abs]
@@ -415,94 +415,86 @@
                     ".css" ".scss" ".less" ".graphql" ".gql" ".proto" ".tf" ".hcl"}
                   (.slice lower idx)))))
 
+(defn- read-workspace-file!
+  "Read a single workspace file and return a result map."
+  [workspace-root rel-path]
+  (let [abs-path (.resolve path workspace-root rel-path)]
+    (-> (.stat fs abs-path)
+        (.then (fn [stat]
+                 (if (and (.isFile stat) (text-like-path? abs-path))
+                   (-> (.readFile fs abs-path "utf8")
+                       (.then (fn [content]
+                                {:rel rel-path :abs abs-path :content content
+                                 :size (or (.-size stat) 0) :error false}))
+                       (.catch (fn [err]
+                                 {:rel rel-path :abs abs-path :content nil
+                                  :size 0 :error true :detail (str err)})))
+                   {:rel rel-path :abs abs-path :content nil
+                    :size (or (.-size stat) 0) :error true :detail "binary or unsupported file type"})))
+        (.catch (fn [err]
+                  {:rel rel-path :abs abs-path :content nil
+                   :size 0 :error true :detail (str err)})))))
+
+(defn- classify-document-kind
+  "Classify a file extension into a document kind."
+  [rel-path]
+  (let [ext (some-> (str/lower-case rel-path) (str/split #"\.") last)]
+    (cond
+      (contains? #{"ts" "tsx" "js" "jsx" "mjs" "cjs" "py" "clj" "cljs" "cljc" "rs" "go" "java" "rb" "php"} ext) "code"
+      (contains? #{"md" "mdx" "txt" "rst" "adoc" ".org"} ext) "docs"
+      (contains? #{"json" "yaml" "yml" "toml" "ini" "env" "conf"} ext) "config"
+      :else "docs")))
+
+(defn- build-priority-documents
+  "Build document maps from successful file reads."
+  [valid-items project source]
+  (mapv (fn [item]
+          {:id (str "knoxx-priority:" (:rel item))
+           :rel-path (:rel item)
+           :content (:content item)
+           :project project
+           :kind (classify-document-kind (:rel item))
+           :visibility "internal"
+           :source source
+           :source-path (:rel item)
+           :extra {:priority-ingest true :size (:size item)}})
+        valid-items))
+
+(defn- priority-ingest-summary
+  "Build the summary response for priority ingestion."
+  [indexed-count failed-reads failed-index-count total-paths indexed-files source]
+  {:ok true
+   :indexed indexed-count
+   :failed (+ (count failed-reads) failed-index-count)
+   :total total-paths
+   :files (concat indexed-files
+                  (map (fn [f] (str (:rel f) " (read error: " (:detail f) ")")) failed-reads)
+                  (map (fn [f] (str (:rel-path f) " (index error)")) (when (pos? failed-index-count) [])))
+   :source source})
+
 (defn priority-ingest-workspace-files!
   "Immediately ingest specific workspace files into OpenPlanner, bypassing queues.
    Takes workspace-relative paths, reads them from disk, and sends to /v1/documents.
   Returns {:ok true, :indexed N, :failed M, :files [...]} summary."
   [_runtime config {:keys [paths project source]}]
   (let [workspace-root (:workspace-root config)
-        project (or project (:project-name config) "devel")
+        project (or project (:project-name config) "workspace")
         source (or source "knoxx-priority-ingest")]
     (-> (js/Promise.all
          (clj->js
-          (map (fn [rel-path]
-                 (let [abs-path (.resolve path workspace-root rel-path)]
-                   (-> (.stat fs abs-path)
-                       (.then (fn [stat]
-                                (if (and (.isFile stat) (text-like-path? abs-path))
-                                  (-> (.readFile fs abs-path "utf8")
-                                      (.then (fn [content]
-                                               {:rel rel-path
-                                                :abs abs-path
-                                                :content content
-                                                :size (or (.-size stat) 0)
-                                                :error false}))
-                                      (.catch (fn [err]
-                                                {:rel rel-path
-                                                 :abs abs-path
-                                                 :content nil
-                                                 :size 0
-                                                 :error true
-                                                 :detail (str err)})))
-                                  {:rel rel-path
-                                   :abs abs-path
-                                   :content nil
-                                   :size (or (.-size stat) 0)
-                                   :error true
-                                   :detail "binary or unsupported file type"})))
-                       (.catch (fn [err]
-                                 {:rel rel-path
-                                  :abs abs-path
-                                  :content nil
-                                  :size 0
-                                  :error true
-                                  :detail (str err)})))))
+          (map (fn [rel-path] (read-workspace-file! workspace-root rel-path))
                paths)))
         (.then (fn [read-results]
                  (let [items (vec (js-array-seq read-results))
                        valid (vec (remove :error items))
                        failed-reads (vec (filter :error items))
-                       docs (mapv (fn [item]
-                                    (let [ext (some-> (str/lower-case (:rel item))
-                                                       (str/split #"\.")
-                                                       last)
-                                          kind (cond
-                                                 (contains? #{"ts" "tsx" "js" "jsx" "mjs" "cjs" "py" "clj" "cljs" "cljc" "rs" "go" "java" "rb" "php"} ext) "code"
-                                                 (contains? #{"md" "mdx" "txt" "rst" "adoc" ".org"} ext) "docs"
-                                                 (contains? #{"json" "yaml" "yml" "toml" "ini" "env" "conf"} ext) "config"
-                                                 :else "docs")]
-                                      {:id (str "knoxx-priority:" (:rel item))
-                                       :rel-path (:rel item)
-                                       :content (:content item)
-                                       :project project
-                                       :kind kind
-                                       :visibility "internal"
-                                       :source source
-                                       :source-path (:rel item)
-                                       :extra {:priority-ingest true
-                                               :size (:size item)}}))
-                                  valid)]
+                       docs (build-priority-documents valid project source)]
                    (if (seq docs)
                      (-> (op-memory/batch-upsert-openplanner-documents!
-                          config docs {:concurrency 5
-                                      :project project
-                                      :visibility "internal"
-                                      :extra {:source source}})
+                          config docs {:concurrency 5 :project project :visibility "internal" :extra {:source source}})
                          (.then (fn [index-result]
-                                  {:ok true
-                                   :indexed (count (:indexed index-result))
-                                   :failed (+ (count failed-reads) (:failed-count index-result 0))
-                                   :total (count paths)
-                                   :files (concat (map :rel (:indexed index-result))
-                                                   (map (fn [f] (str (:rel f) " (read error: " (:detail f) ")")) failed-reads)
-                                                   (map (fn [f] (str (:rel-path f) " (index error)")) (:failed index-result)))
-                                   :source source})))
+                                  (priority-ingest-summary (count (:indexed index-result)) failed-reads (:failed-count index-result 0) (count paths) (map :rel (:indexed index-result)) source))))
                      (js/Promise.resolve
-                      {:ok true
-                       :indexed 0
-                       :failed (count failed-reads)
-                       :total (count paths)
-                       :files (map (fn [f] (str (:rel f) " (" (:detail f) ")")) failed-reads)
-                       :source source}))))))))
+                      (priority-ingest-summary 0 failed-reads 0 (count paths) [] source)))))))))
 
 ;; Route registration

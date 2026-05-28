@@ -426,6 +426,41 @@
         (swap! session-title-promises* assoc session-id title-promise)
         title-promise))))
 
+(defn- session-ids-from-response
+  [body limit]
+  (cond->> (->> (or (:rows body) [])
+                (map :session) (map str) (remove str/blank?) distinct)
+    limit (take limit)))
+
+(defn- init-backfill-state!
+  [session-ids force]
+  (reset! session-title-backfill* {:active true, :processed 0, :total (count session-ids),
+                                   :failed 0, :force (boolean force),
+                                   :started_at (time/now-iso), :completed_at nil, :last_error nil}))
+
+(defn- complete-backfill!
+  []
+  (swap! session-title-backfill* assoc :active false :completed_at (time/now-iso))
+  @session-title-backfill*)
+
+(defn- record-backfill-error!
+  [err]
+  (swap! session-title-backfill*
+         (fn [state] (-> state (update :processed (fnil inc 0)) (update :failed (fnil inc 0)) (assoc :last_error (str err))))))
+
+(defn- backfill-one-session!
+  [runtime config fetch-session-rows! force session-id]
+  (when force (clear-session-title-entry! session-id))
+  (-> (fetch-session-rows! config session-id)
+      (.then (fn [title-rows]
+               (-> (resolve-session-title-from-rows! config session-id title-rows)
+                   (.then (fn [entry]
+                            (if (:stored entry)
+                              (cache-session-title-entry! session-id (:title entry) (:title_model entry) (:updated_at entry))
+                              (cache-session-title! runtime config session-id (:title entry) (:title_model entry))))))))
+      (.catch (fn [_] (cache-session-title! runtime config session-id "Untitled session" nil)))
+      (.then (fn [_] (swap! session-title-backfill* update :processed (fnil inc 0))))))
+
 (defn start-session-title-backfill!
   [runtime config {:keys [force limit]} fetch-session-rows!]
   (if (:active @session-title-backfill*)
@@ -434,69 +469,23 @@
       (-> (openplanner-client/sessions! client {:project (:session-project-name config)})
         (.then
          (fn [body]
-           (let [session-ids (cond->> (->> (or (:rows body) [])
-                                           (map :session)
-                                           (map str)
-                                           (remove str/blank?)
-                                           distinct)
-                               limit (take limit))
-                 session-ids (vec session-ids)]
-             (reset! session-title-backfill* {:active true
-                                              :processed 0
-                                              :total (count session-ids)
-                                              :failed 0
-                                              :force (boolean force)
-                                              :started_at (time/now-iso)
-                                              :completed_at nil
-                                              :last_error nil})
+           (let [session-ids (vec (session-ids-from-response body limit))]
+             (init-backfill-state! session-ids force)
              (if (empty? session-ids)
-               (do
-                 (swap! session-title-backfill* assoc
-                        :active false
-                        :completed_at (time/now-iso))
-                 @session-title-backfill*)
+               (complete-backfill!)
                (letfn [(step [remaining]
                          (if-let [session-id (first remaining)]
-                           (do
-                             (when force
-                               (clear-session-title-entry! session-id))
-                             (-> (fetch-session-rows! config session-id)
-                                 (.then (fn [title-rows]
-                                          (-> (resolve-session-title-from-rows! config session-id title-rows)
-                                              (.then (fn [entry]
-                                                       (if (:stored entry)
-                                                         (cache-session-title-entry! session-id (:title entry) (:title_model entry) (:updated_at entry))
-                                                         (cache-session-title! runtime config session-id (:title entry) (:title_model entry))))))))
-                                 (.catch (fn [_]
-                                           (cache-session-title! runtime config session-id "Untitled session" nil)))
-                                 (.then (fn [_]
-                                          (swap! session-title-backfill* update :processed (fnil inc 0))))
-                                 (.catch (fn [err]
-                                           (swap! session-title-backfill*
-                                                  (fn [state]
-                                                    (-> state
-                                                        (update :processed (fnil inc 0))
-                                                        (update :failed (fnil inc 0))
-                                                        (assoc :last_error (str err)))))
-                                           nil))
-                                 (.then (fn [_]
-                                          (step (rest remaining))))))
-                           (do
-                             (swap! session-title-backfill* assoc
-                                    :active false
-                                    :completed_at (time/now-iso))
-                             (js/Promise.resolve @session-title-backfill*))))]
+                           (-> (backfill-one-session! runtime config fetch-session-rows! force session-id)
+                               (.catch (fn [err] (record-backfill-error! err) nil))
+                               (.then (fn [_] (step (rest remaining)))))
+                           (complete-backfill!)))]
                  (-> (step session-ids)
                      (.catch (fn [err]
                                (swap! session-title-backfill* assoc
-                                      :active false
-                                      :completed_at (time/now-iso)
-                                      :last_error (str err))
+                                      :active false :completed_at (time/now-iso) :last_error (str err))
                                nil)))
                  @session-title-backfill*)))))
           (.catch (fn [err]
                     (swap! session-title-backfill* assoc
-                           :active false
-                           :completed_at (time/now-iso)
-                           :last_error (str err))
+                           :active false :completed_at (time/now-iso) :last_error (str err))
                     (js/Promise.resolve @session-title-backfill*)))))))

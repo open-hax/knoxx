@@ -16,7 +16,7 @@
       (.then (fn [r]
                (when-not (.-ok r)
                  (throw (js/Error. (str media-type " fetch failed: " (.-status r)))))
-               (.-arrayBuffer r)))
+               (.arrayBuffer r)))
       (.then (fn [ab]
                (let [buf (js/Buffer.from ab)]
                  (str "data:" media-type ";base64," (.toString buf "base64")))))))

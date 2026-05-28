@@ -829,6 +829,59 @@
 ;; Factory
 ;; ---------------------------------------------------------------------------
 
+(defn- build-gateway-manager-methods
+  [client-state ready-promise current-token listeners reaction-listeners voice-state-listeners
+   log this-stop build-client ensure-client voice-connections this-fn]
+  #js {:start (fn [token] (gw-start client-state ready-promise current-token listeners log this-stop build-client token))
+       :stop (fn []
+               (.forEach voice-connections (fn [conn _key] (try (.destroy conn) (catch js/Error _))))
+               (.clear voice-connections)
+               (this-stop))
+       :restart (fn [token] (.then (this-stop) (fn [_] (.start (this-fn) token))))
+       :onMessage (fn [listener] (.add @listeners listener) (fn [] (.delete @listeners listener)))
+       :onReaction (fn [listener] (.add @reaction-listeners listener) (fn [] (.delete @reaction-listeners listener)))
+       :onVoiceStateUpdate (fn [listener] (.add @voice-state-listeners listener) (fn [] (.delete @voice-state-listeners listener)))
+       :status (fn [] (gw-status client-state))
+       :listServers (fn [] (gw-list-servers ensure-client))
+       :listChannels (fn [guild-id] (gw-list-channels ensure-client log guild-id))
+       :fetchChannelMessages (fn [channel-id opts] (gw-fetch-channel-messages ensure-client channel-id opts))
+       :fetchDmMessages (fn [user-id opts] (gw-fetch-dm-messages ensure-client user-id opts))
+       :searchMessages (fn [scope opts] (gw-search-messages (this-fn) scope opts))
+       :sendMessage (fn [channel-id text reply-to attachments] (gw-send-message ensure-client channel-id text reply-to attachments))
+       :joinVoice (fn [channel-id]
+                    (.then (gw-join-voice ensure-client channel-id)
+                           (fn [conn]
+                             (let [guild-id (or (.-__guildId conn) (.-guildId conn))]
+                               (.set voice-connections guild-id conn)
+                               #js {:guildId guild-id :channelId channel-id :joined true}))))
+       :leaveVoice (fn [guild-id]
+                     (gw-leave-voice voice-connections guild-id)
+                     #js {:guildId guild-id :left true})
+       :playAudio (fn [guild-id audio-buffer]
+                    (gw-play-audio voice-connections guild-id audio-buffer))
+       :subscribeVoice (fn [guild-id user-id callback]
+                         (gw-subscribe-voice voice-connections guild-id user-id callback))
+       :startVoiceListener (fn [guild-id on-start on-audio]
+                             (gw-start-voice-listener voice-connections guild-id on-start on-audio))
+       :getVoiceConnection (fn [guild-id]
+                             (if guild-id
+                               (.get voice-connections guild-id)
+                               (when (> (.-size voice-connections) 0)
+                                 (let [entries (.entries voice-connections)]
+                                   (.-value (.next entries))))))
+       :listVoiceMembers (fn [guild-id channel-id]
+                           (gw-list-voice-members ensure-client guild-id channel-id))})
+
+(defn- parse-gateway-manager-opts
+  "Parse gateway manager options from a CLJS map or JS object."
+  [opts]
+  {:log (or (when (map? opts) (:log opts))
+            (when (object? opts) (aget opts "log"))
+            js/console)
+   :set-default? (not= false (or (when (map? opts) (:set-default? opts))
+                                 (when (object? opts) (aget opts "setDefault"))
+                                 true))})
+
 (defn createDiscordGatewayManager
   "Create a Discord gateway manager. Returns a JS object with async methods.
 
@@ -841,78 +894,29 @@
             listChannels, fetchChannelMessages, fetchDmMessages,
             searchMessages, sendMessage"
   [opts]
-  (let [log (or (when (map? opts) (:log opts))
-                (when (object? opts) (aget opts "log"))
-                js/console)
-        set-default? (not= false (or (when (map? opts) (:set-default? opts))
-                                     (when (object? opts) (aget opts "setDefault"))
-                                     true))
+  (let [{:keys [log set-default?]} (parse-gateway-manager-opts opts)
         client-state (atom nil)
         ready-promise (atom nil)
         current-token (atom nil)
         listeners (atom (js/Set.))
         reaction-listeners (atom (js/Set.))
-        voice-state-listeners (atom (js/Set.))]
-
-    (let [notify-message (partial notify-message! listeners log)
-          notify-reaction (partial notify-reaction! reaction-listeners log)
-          notify-voice-state (partial notify-voice-state! voice-state-listeners log)
-          build-client (partial build-discord-client log notify-message notify-reaction notify-voice-state)
-          ensure-client (partial ensure-client! client-state ready-promise)]
-
-      (let [this-stop (fn [] (gw-stop client-state ready-promise current-token))
-            voice-connections (js/Map.)
-            this-obj (atom nil)]
-
-        (letfn [(this-fn [] @this-obj)]
-
-          (reset! this-obj
-                  #js {:start (fn [token] (gw-start client-state ready-promise current-token listeners log this-stop build-client token))
-                       :stop (fn []
-                               ;; Destroy all voice connections on stop
-                               (.forEach voice-connections
-                                         (fn [conn _key] (try (.destroy conn) (catch js/Error _))))
-                               (.clear voice-connections)
-                               (this-stop))
-                       :restart (fn [token] (.then (this-stop) (fn [_] (.start (this-fn) token))))
-                       :onMessage (fn [listener] (.add @listeners listener) (fn [] (.delete @listeners listener)))
-                       :onReaction (fn [listener] (.add @reaction-listeners listener) (fn [] (.delete @reaction-listeners listener)))
-                       :onVoiceStateUpdate (fn [listener] (.add @voice-state-listeners listener) (fn [] (.delete @voice-state-listeners listener)))
-                       :status (fn [] (gw-status client-state))
-                       :listServers (fn [] (gw-list-servers ensure-client))
-                       :listChannels (fn [guild-id] (gw-list-channels ensure-client log guild-id))
-                       :fetchChannelMessages (fn [channel-id opts] (gw-fetch-channel-messages ensure-client channel-id opts))
-                       :fetchDmMessages (fn [user-id opts] (gw-fetch-dm-messages ensure-client user-id opts))
-                       :searchMessages (fn [scope opts] (gw-search-messages (this-fn) scope opts))
-                       :sendMessage (fn [channel-id text reply-to attachments] (gw-send-message ensure-client channel-id text reply-to attachments))
-                       ;; Voice methods
-                        :joinVoice (fn [channel-id]
-                                     (.then (gw-join-voice ensure-client channel-id)
-                                            (fn [conn]
-                                              (let [guild-id (or (.-__guildId conn) (.-guildId conn))]
-                                                (.set voice-connections guild-id conn)
-                                                #js {:guildId guild-id :channelId channel-id :joined true}))))
-                       :leaveVoice (fn [guild-id]
-                                     (gw-leave-voice voice-connections guild-id)
-                                     #js {:guildId guild-id :left true})
-                       :playAudio (fn [guild-id audio-buffer]
-                                    (gw-play-audio voice-connections guild-id audio-buffer))
-                       :subscribeVoice (fn [guild-id user-id callback]
-                                         (gw-subscribe-voice voice-connections guild-id user-id callback))
-                       :startVoiceListener (fn [guild-id on-start on-audio]
-                                             (gw-start-voice-listener voice-connections guild-id on-start on-audio))
-                        :getVoiceConnection (fn [guild-id]
-                                              (if guild-id
-                                                (.get voice-connections guild-id)
-                                                (when (> (.-size voice-connections) 0)
-                                                  (let [entries (.entries voice-connections)]
-                                                    (.-value (.next entries))))))
-                       :listVoiceMembers (fn [guild-id channel-id]
-                                           (gw-list-voice-members ensure-client guild-id channel-id))})
-
-          (when set-default?
-            (set-manager! @this-obj))
-          @this-obj)))))
+        voice-state-listeners (atom (js/Set.))
+        notify-message (partial notify-message! listeners log)
+        notify-reaction (partial notify-reaction! reaction-listeners log)
+        notify-voice-state (partial notify-voice-state! voice-state-listeners log)
+        build-client (partial build-discord-client log notify-message notify-reaction notify-voice-state)
+        ensure-client (partial ensure-client! client-state ready-promise)
+        this-stop (fn [] (gw-stop client-state ready-promise current-token))
+        voice-connections (js/Map.)
+        this-obj (atom nil)]
+    (letfn [(this-fn [] @this-obj)]
+      (reset! this-obj
+              (build-gateway-manager-methods
+               client-state ready-promise current-token listeners reaction-listeners voice-state-listeners
+               log this-stop build-client ensure-client voice-connections this-fn))
+      (when set-default?
+        (set-manager! @this-obj))
+      @this-obj)))
 
 ;; ---------------------------------------------------------------------------
 ;; Convenience CLJS API
