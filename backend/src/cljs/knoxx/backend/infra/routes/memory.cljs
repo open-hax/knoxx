@@ -34,7 +34,6 @@
             [knoxx.backend.shape.memory-sessions :as memory-shape]
             [knoxx.backend.shape.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.domain.time :refer [now-iso]]
-            [shadow.cljs.modern :refer [js-await]]
             ["node:crypto" :as crypto]))
 
 (defn interactive-session-id?

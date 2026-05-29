@@ -356,7 +356,7 @@
                      (build-sub-agent-payload config job event id shared-config sub-agent-contract))))))))
 
 (defmethod run-action! :invoke/sub-agent
-  [{:keys [config] :as ctx} action]
+  [{:keys [_config] :as ctx} action]
   (let [action-with (:action/with action {})
         sub-agent-ids (or (:sub-agents action-with)
                           (:sub-agent-ids action-with)

@@ -18,7 +18,7 @@
 ;; libsodium-wrappers is needed for @discordjs/voice crypto support.
 ;; We *must* load it via CommonJS `require` because libsodium-wrappers@0.7.16
 ;; publishes an ESM export that imports a missing ./libsodium.mjs.
-(defonce ^:private libsodium-wrappers-loaded?
+(defonce libsodium-wrappers-loaded?
   (let [req (createRequire (str (.cwd js/process) "/"))]
     (req "libsodium-wrappers")
     true))
@@ -347,7 +347,7 @@
 
 (defn- gw-start
   "Start the gateway client with a bot token."
-  [client-state ready-promise current-token listeners log this-stop build-client token]
+  [client-state ready-promise current-token _listeners log this-stop build-client token]
   (let [next-token (.trim (str (or token "")))]
     (if (= next-token "")
       (.then (this-stop) (fn [_] nil))
@@ -652,6 +652,115 @@
                                                      :isDeaf (boolean (.-deaf member))
                                                      :isSpeaking false})))))))))))))))
 
+(defn- voice-listener-create-decoder
+  []
+  (let [OpusDecoder (some-> prism (aget "opus") (aget "Decoder"))]
+    (when-not (fn? OpusDecoder)
+      (throw (js/Error. "prism-media Opus decoder unavailable")))
+    (new OpusDecoder #js {:rate 48000 :channels 2 :frameSize 960})))
+
+(defn- voice-listener-flush-audio!
+  [pcm-buffers silence-timers on-audio uid]
+  (when-let [buf (get @pcm-buffers uid)]
+    (let [pcm (js/Buffer.concat (js/Array.from buf))
+          duration-s (/ (.-length pcm)
+                        voice-listener-sample-rate
+                        voice-listener-bytes-per-sample
+                        voice-listener-channels)
+          wav (pcm16le->wav-buffer pcm voice-listener-sample-rate voice-listener-channels)]
+      (swap! pcm-buffers dissoc uid)
+      (swap! silence-timers dissoc uid)
+      (if (< duration-s voice-listener-min-duration-s)
+        (js/console.log "[voice:listener] skipping very short audio for" uid "duration:" duration-s "s")
+        (do
+          (js/console.log "[voice:listener] calling on-audio for" uid "wav bytes:" (.-length wav) "duration:" duration-s "s")
+          (on-audio uid wav))))))
+
+(defn- voice-listener-chunk-and-flush!
+  [pcm-buffers on-audio uid]
+  (when-let [buf (get @pcm-buffers uid)]
+    (let [total-pcm (js/Buffer.concat (js/Array.from buf))
+          total-len (.-length total-pcm)]
+      (when (> total-len voice-listener-chunk-overlap-bytes)
+        (let [flush-len (- total-len voice-listener-chunk-overlap-bytes)
+              flush-pcm (.slice total-pcm 0 flush-len)
+              keep-pcm (.slice total-pcm flush-len)
+              duration-s (/ flush-len voice-listener-sample-rate voice-listener-bytes-per-sample voice-listener-channels)
+              overlap-s (/ voice-listener-chunk-overlap-bytes voice-listener-sample-rate voice-listener-bytes-per-sample voice-listener-channels)
+              wav (pcm16le->wav-buffer flush-pcm voice-listener-sample-rate voice-listener-channels)]
+          (swap! pcm-buffers assoc uid #js [keep-pcm])
+          (js/console.log "[voice:listener] chunk-flush for" uid
+                          "flushed:" duration-s "s"
+                          "overlap-kept:" overlap-s "s")
+          (on-audio uid wav))))))
+
+(defn- voice-listener-destroy-user-streams!
+  [streams decoders uid]
+  (when-let [audio-stream (get @streams uid)]
+    (try (.destroy audio-stream) (catch js/Error _))
+    (swap! streams dissoc uid))
+  (when-let [decoder (get @decoders uid)]
+    (try (.destroy decoder) (catch js/Error _))
+    (swap! decoders dissoc uid)))
+
+(defn- voice-listener-on-start-speaking
+  [receiver pcm-buffers streams decoders active-users silence-timers on-start on-audio]
+  (fn [user-id]
+    (let [uid (str user-id)]
+      (when-let [t (get @silence-timers uid)]
+        (js/clearTimeout t)
+        (swap! silence-timers dissoc uid))
+      (when-not (contains? @active-users uid)
+        (js/console.log "[voice:listener] >>> SPEAKING START:" uid)
+        (swap! active-users conj uid)
+        (when on-start (on-start uid))
+        (when-not (get @pcm-buffers uid)
+          (swap! pcm-buffers assoc uid #js []))
+        (let [audio-stream (.subscribe receiver uid)
+              decoder (voice-listener-create-decoder)]
+          (.pipe audio-stream decoder)
+          (.on decoder "data"
+               (fn [pcm-chunk]
+                 (when-let [buf (get @pcm-buffers uid)]
+                   (.push buf pcm-chunk)
+                   (let [current-size (reduce (fn [acc b] (+ acc (.-length b))) 0 buf)]
+                     (when (> current-size voice-listener-chunk-threshold-bytes)
+                       (voice-listener-chunk-and-flush! pcm-buffers on-audio uid))))))
+          (.on decoder "error" #(js/console.error "[voice:listener] decoder error for" uid ":" (.-message %)))
+          (.on audio-stream "error" #(js/console.error "[voice:listener] audio stream error for" uid ":" (.-message %)))
+          (.on audio-stream "end" #(js/console.log "[voice:listener] audio stream ended for" uid))
+          (swap! streams assoc uid audio-stream)
+          (swap! decoders assoc uid decoder))))))
+
+(defn- voice-listener-on-end-speaking
+  [streams decoders active-users silence-timers flush-audio!]
+  (fn [user-id]
+    (let [uid (str user-id)]
+      (js/console.log "[voice:listener] >>> SPEAKING END:" uid)
+      (swap! active-users disj uid)
+      (voice-listener-destroy-user-streams! streams decoders uid)
+      (let [t (js/setTimeout #(flush-audio! uid) voice-listener-silence-debounce-ms)]
+        (swap! silence-timers assoc uid t)))))
+
+(defn- voice-listener-stop!
+  [guild-id speaking-map on-start-speaking on-end-speaking pcm-buffers streams decoders active-users silence-timers flush-audio!]
+  (fn []
+    (js/console.log "[voice:listener] stopping for guild:" guild-id)
+    (.removeListener speaking-map "start" on-start-speaking)
+    (.removeListener speaking-map "end" on-end-speaking)
+    (doseq [[_ s] @streams]
+      (try (.destroy s) (catch js/Error _)))
+    (doseq [[_ d] @decoders]
+      (try (.destroy d) (catch js/Error _)))
+    (doseq [[uid t] @silence-timers]
+      (js/clearTimeout t)
+      (flush-audio! uid))
+    (reset! pcm-buffers {})
+    (reset! streams {})
+    (reset! decoders {})
+    (reset! active-users #{})
+    (reset! silence-timers {})))
+
 (defn- gw-start-voice-listener
   "Start listening for all speaking users in a voice channel.
    Calls (on-start user-id) when a user starts speaking.
@@ -675,155 +784,16 @@
             decoders (atom {})
             active-users (atom #{})
             silence-timers (atom {})
-
-            create-decoder
-            (fn []
-              (let [OpusDecoder (some-> prism (aget "opus") (aget "Decoder"))]
-                (when-not (fn? OpusDecoder)
-                  (throw (js/Error. "prism-media Opus decoder unavailable")))
-                (new OpusDecoder #js {:rate 48000 :channels 2 :frameSize 960})))
-
-            ;; Debounce duration in ms — if a user pauses briefly we don’t
-            ;; immediately flush; we wait to see if they resume. This needs to
-            ;; be long enough for natural speech pauses; otherwise Whisper sees
-            ;; tiny fragments and loses context.
-            silence-debounce-ms voice-listener-silence-debounce-ms
-
-            flush-audio!
-            (fn [uid]
-              (when-let [buf (get @pcm-buffers uid)]
-                (let [chunks (js/Array.from buf)
-                      pcm (js/Buffer.concat chunks)
-                      duration-s (/ (.-length pcm)
-                                    voice-listener-sample-rate
-                                    voice-listener-bytes-per-sample
-                                    voice-listener-channels)
-                      wav (pcm16le->wav-buffer pcm voice-listener-sample-rate voice-listener-channels)]
-                  (swap! pcm-buffers dissoc uid)
-                  (swap! silence-timers dissoc uid)
-                  (if (< duration-s voice-listener-min-duration-s)
-                    (js/console.log "[voice:listener] skipping very short audio for" uid "duration:" duration-s "s")
-                    (do
-                      (js/console.log "[voice:listener] calling on-audio for" uid "wav bytes:" (.-length wav) "duration:" duration-s "s")
-                      (on-audio uid wav))))))
-
-            ;; Eagerly chunk long utterances so the NPU STT never receives > 25 s.
-            ;; We keep the last 5 s as overlap so words at the boundary are not cut.
-            chunk-and-flush!
-            (fn [uid]
-              (when-let [buf (get @pcm-buffers uid)]
-                (let [total-pcm (js/Buffer.concat (js/Array.from buf))
-                      total-len (.-length total-pcm)]
-                  (when (> total-len voice-listener-chunk-overlap-bytes)
-                    (let [flush-len (- total-len voice-listener-chunk-overlap-bytes)
-                          flush-pcm (.slice total-pcm 0 flush-len)
-                          keep-pcm (.slice total-pcm flush-len)
-                          duration-s (/ flush-len
-                                        voice-listener-sample-rate
-                                        voice-listener-bytes-per-sample
-                                        voice-listener-channels)
-                          overlap-s (/ voice-listener-chunk-overlap-bytes
-                                       voice-listener-sample-rate
-                                       voice-listener-bytes-per-sample
-                                       voice-listener-channels)
-                          wav (pcm16le->wav-buffer flush-pcm
-                                                   voice-listener-sample-rate
-                                                   voice-listener-channels)]
-                      ;; Retain overlap as the head of the next chunk.
-                      (swap! pcm-buffers assoc uid #js [keep-pcm])
-                      (js/console.log "[voice:listener] chunk-flush for" uid
-                                      "flushed:" duration-s "s"
-                                      "overlap-kept:" overlap-s "s")
-                      (on-audio uid wav))))))
-
-            on-start-speaking
-            (fn [user-id]
-              (let [uid (str user-id)]
-                ;; Cancel any pending silence debounce for this user
-                (when-let [t (get @silence-timers uid)]
-                  (js/clearTimeout t)
-                  (swap! silence-timers dissoc uid))
-
-                (when-not (contains? @active-users uid)
-                  (js/console.log "[voice:listener] >>> SPEAKING START:" uid)
-                  (swap! active-users conj uid)
-                  (when on-start (on-start uid))
-                  ;; If the user resumed within the silence debounce window,
-                  ;; keep the previous PCM chunks so one sentence with short
-                  ;; pauses becomes one Whisper request instead of many lossy
-                  ;; fragments.
-                  (when-not (get @pcm-buffers uid)
-                    (swap! pcm-buffers assoc uid #js []))
-
-                  (let [audio-stream (.subscribe receiver uid)
-                        decoder (create-decoder)]
-                    ;; audio-stream emits Opus packets; decoder emits PCM16LE.
-                    (.pipe audio-stream decoder)
-                     (.on decoder "data"
-                          (fn [pcm-chunk]
-                            (when-let [buf (get @pcm-buffers uid)]
-                              (.push buf pcm-chunk)
-                              ;; Eagerly chunk when we approach the NPU limit
-                              ;; so we never drop live audio.
-                              (let [current-size (reduce (fn [acc b] (+ acc (.-length b))) 0 buf)]
-                                (when (> current-size voice-listener-chunk-threshold-bytes)
-                                  (chunk-and-flush! uid))))))
-                    (.on decoder "error"
-                         (fn [err]
-                           (js/console.error "[voice:listener] decoder error for" uid ":" (.-message err))))
-                    (.on audio-stream "error"
-                         (fn [err]
-                           (js/console.error "[voice:listener] audio stream error for" uid ":" (.-message err))))
-                    (.on audio-stream "end"
-                         (fn []
-                           (js/console.log "[voice:listener] audio stream ended for" uid)))
-
-                    (swap! streams assoc uid audio-stream)
-                    (swap! decoders assoc uid decoder)))))
-
-            on-end-speaking
-            (fn [user-id]
-              (let [uid (str user-id)]
-                (js/console.log "[voice:listener] >>> SPEAKING END:" uid)
-                (swap! active-users disj uid)
-
-                (when-let [audio-stream (get @streams uid)]
-                  (try (.destroy audio-stream) (catch js/Error _))
-                  (swap! streams dissoc uid))
-
-                (when-let [decoder (get @decoders uid)]
-                  (try (.destroy decoder) (catch js/Error _))
-                  (swap! decoders dissoc uid))
-
-                ;; Debounce: wait a bit before flushing in case the user resumes
-                (let [t (js/setTimeout #(flush-audio! uid) silence-debounce-ms)]
-                  (swap! silence-timers assoc uid t))))
-            ]
-
+            flush-audio! #(voice-listener-flush-audio! pcm-buffers silence-timers on-audio %)
+            on-start-speaking (voice-listener-on-start-speaking receiver pcm-buffers streams decoders active-users silence-timers on-start on-audio)
+            on-end-speaking (voice-listener-on-end-speaking streams decoders active-users silence-timers flush-audio!)]
         (js/console.log "[voice:listener] attaching listeners")
         (.on speaking-map "start" on-start-speaking)
         (.on speaking-map "end" on-end-speaking)
-
         (js/Promise.resolve
-         (fn []
-           (js/console.log "[voice:listener] stopping for guild:" guild-id)
-            (.removeListener speaking-map "start" on-start-speaking)
-            (.removeListener speaking-map "end" on-end-speaking)
+         (voice-listener-stop! guild-id speaking-map on-start-speaking on-end-speaking
+                               pcm-buffers streams decoders active-users silence-timers flush-audio!))))))
 
-           (doseq [[_ s] @streams]
-             (try (.destroy s) (catch js/Error _)))
-           (doseq [[_ d] @decoders]
-             (try (.destroy d) (catch js/Error _)))
-           (doseq [[uid t] @silence-timers]
-             (js/clearTimeout t)
-             ;; Flush any pending audio immediately on stop
-             (flush-audio! uid))
-
-           (reset! pcm-buffers {})
-           (reset! streams {})
-           (reset! decoders {})
-           (reset! active-users #{})
-           (reset! silence-timers {})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Factory

@@ -67,16 +67,18 @@
                      (aset request "__knoxxRequestContext" ctx)
                      ctx)))))))
 
-(defn with-request-context!
+(defn ^:async with-request-context!
+  "Resolve auth context and call (f ctx). Returns a promise.
+   When f is an ^:async fn, await works inside it."
   [runtime request reply f]
   (if-not (policy-db-enabled? runtime)
     (fastify-handler-result (f nil))
-    (-> (resolve-request-context! runtime request)
-        (.then (fn [ctx]
-                 (fastify-handler-result (f ctx))))
-        (.catch (fn [err]
-                  (http/error-response! reply err)
-                  js/undefined)))))
+    (try
+      (let [ctx (await (resolve-request-context! runtime request))]
+        (fastify-handler-result (f ctx)))
+      (catch :default err
+        (http/error-response! reply err)
+        js/undefined))))
 
 (defn ctx-org-id [ctx] (or (:org-id ctx) (:orgId ctx) (get-in ctx [:org :id])))
 (defn ctx-org-slug [ctx] (or (:org-slug ctx) (:orgSlug ctx) (get-in ctx [:org :slug])))

@@ -43,22 +43,16 @@
       (is (contains? canonical-ids "sandbox_container.destroy"))
       (is (not (contains? canonical-ids "sandbox_container.commit"))))))
 
-(deftest passive-memory-hydration-failure-is-non-fatal
+(deftest ^:async passive-memory-hydration-failure-is-non-fatal
   (testing "OpenPlanner outage must not abort an agent turn before tools can run"
-    (async done
-      (with-redefs [openplanner-client/enabled? (fn [_] true)
-                    openplanner-memory/openplanner-memory-search! (fn [_ _]
-                                                                    (js/Promise.reject (js/Error. "OpenPlanner 502")))]
-        (-> (agent-hydration/passive-memory-hydration!
-             {:openplanner-base-url "http://openplanner.local"
-              :openplanner-api-key "test"}
-             "conversation-a"
-             "remember prior context"
-             nil
-             {:memory-hydration {:enabled? true :mode :always :k 4}})
-            (.then (fn [result]
-                     (is (nil? result))
-                     (done)))
-            (.catch (fn [err]
-                      (is false (str "memory hydration should not reject: " (.-message err)))
-                      (done))))))))
+    (with-redefs [openplanner-client/enabled? (fn [_] true)
+                  openplanner-memory/openplanner-memory-search! (fn [_ _]
+                                                                  (js/Promise.reject (js/Error. "OpenPlanner 502")))]
+      (let [result (await (agent-hydration/passive-memory-hydration!
+                           {:openplanner-base-url "http://openplanner.local"
+                            :openplanner-api-key "test"}
+                           "conversation-a"
+                           "remember prior context"
+                           nil
+                           {:memory-hydration {:enabled? true :mode :always :k 4}}))]
+        (is (nil? result))))))

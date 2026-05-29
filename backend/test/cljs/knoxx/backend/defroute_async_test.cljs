@@ -23,7 +23,7 @@
   {:route! (fn [_app _method _path handler]
              (reset! captured-handler handler)
              nil)
-   :with-request-context! (fn [_runtime request reply f]
+   :with-request-context! (fn [_runtime request _reply f]
                             (f (aget request "ctx")))
    :fetch-json (fn [_url _opts]
                  (js/Promise.resolve {:body {:ok true}}))

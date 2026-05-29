@@ -105,7 +105,7 @@
 
 (defn triggered-audit-metadata
   "Return audit metadata that should follow an event-triggered run into Redis and OpenPlanner."
-  [trigger event ids]
+  [_trigger event ids]
   (let [event-types (->> (:event/types event)
                          (keep qualified-name)
                          distinct

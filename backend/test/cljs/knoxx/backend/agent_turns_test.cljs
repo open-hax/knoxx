@@ -6,7 +6,8 @@
             [knoxx.backend.infra.agent.transcript :as transcript]
             [knoxx.backend.infra.agent.turn :as agent-turns]
             [knoxx.backend.extern.agent-turn-node :as xturn-node]
-            [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]))
+            [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]
+            [knoxx.backend.domain.models :as models]))
 
 (deftest ensure-session-id-preserves-provided-value
   (testing "existing session ids are kept intact"
@@ -204,22 +205,18 @@
 ;; in a minimal atom and wrapping the call ourselves the same way
 ;; the source now does, verifying the throw becomes a rejection.
 
-(deftest sync-throw-becomes-rejected-promise
-  (async done
-    (testing "a sync throw wrapped in Promise constructor becomes a rejection"
-      (let [store (atom {})
-            ctx-a {:user-id "alice" :membership-id "m-alice"}
-            ctx-b {:user-id "bob" :membership-id "m-bob"}
-            _     (authz/remember-conversation-access! store ctx-a "conv-p")
-            ;; mirror exactly what the fixed send-agent-turn! does
-            p     (js/Promise.
-                   (fn [resolve reject]
-                     (try
-                       (resolve (authz/ensure-conversation-access! store ctx-b "conv-p"))
-                       (catch :default e (reject e)))))]
-        (is (instance? js/Promise p) "wrapped call is a Promise")
-        (-> p
-            (.then (fn [_] (is false "should have rejected") (done)))
-            (.catch (fn [err]
-                      (is (= 403 (some-> err ex-data :status)) "rejection carries 403")
-                      (done))))))))
+(deftest ^:async sync-throw-becomes-rejected-promise
+  (testing "a sync throw wrapped in Promise constructor becomes a rejection"
+    (let [store (atom {})
+          ctx-a {:user-id "alice" :membership-id "m-alice"}
+          ctx-b {:user-id "bob" :membership-id "m-bob"}
+          _     (authz/remember-conversation-access! store ctx-a "conv-p")]
+      (try
+        (await (js/Promise.
+                (fn [resolve reject]
+                  (try
+                    (resolve (authz/ensure-conversation-access! store ctx-b "conv-p"))
+                    (catch :default e (reject e))))))
+        (is false "should have rejected")
+        (catch :default err
+          (is (= 403 (some-> err ex-data :status)) "rejection carries 403"))))))

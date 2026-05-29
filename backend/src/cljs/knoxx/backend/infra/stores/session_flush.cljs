@@ -6,8 +6,7 @@
    'running' in Redis until their TTL expires and are then lost.  This
    job detects them early and archives them as 'failed' before that
    happens."
-  (:require [shadow.cljs.modern :refer [js-await]]
-            [knoxx.backend.infra.stores.session-store-registry :as store-registry]
+  (:require [knoxx.backend.infra.stores.session-store-registry :as store-registry]
             [knoxx.backend.infra.stores.session-store :as session-store]
             [knoxx.backend.shape.session-persistence :refer [put-run! list-active-runs]]
             [knoxx.backend.infra.redis-client :as redis]

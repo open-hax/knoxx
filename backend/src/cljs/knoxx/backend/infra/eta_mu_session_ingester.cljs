@@ -338,7 +338,7 @@
 
 
 (defn- ingest-session-file
-  [file-path session-file-meta client]
+  [file-path _session-file-meta client]
   (-> (parse-session-file file-path)
       (.then
        (fn [{:keys [events session-meta]}]

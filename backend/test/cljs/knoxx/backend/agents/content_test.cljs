@@ -1,7 +1,7 @@
 (ns knoxx.backend.agents.content-test
   (:require [cljs.test :refer [deftest is testing]]
-            [knoxx.backend.domain.agent.content :as content]
-            [knoxx.backend.domain.agent.content :refer [diff-appended-text]]))
+            [knoxx.backend.domain.agent.content :as content
+             :refer [diff-appended-text]]))
 
 (deftest diff-appended-text-test
   (testing "returns only novel suffix for cumulative and overlapping streams"

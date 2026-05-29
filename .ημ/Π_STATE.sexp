@@ -1,33 +1,41 @@
 (fork-tax-state
-  (timestamp "2026-05-28T16:30:34Z")
+  (timestamp "2026-05-29T01:34:27Z")
   (repo "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx")
   (branch "pi/fork-tax/20260526T204054Z-knoxx-host-services")
   (remote "origin" "git@github.com:open-hax/knoxx.git")
-  (snapshot-base-head "c066cf0b206961ef70d46bd869b7db006b314d6f")
-  (dirty-entries-before-artifact-refresh 95)
-  (scope "full working-tree snapshot requested by user via fork tax; includes backend CLJS lint remediation, async test repairs, Docker/runtime metadata, contracts, specs, docs, and receipts")
-  (concurrent-dirt "none separated; all visible repo-relevant dirt intentionally absorbed into requested snapshot after path review and secret heuristic scan")
+  (snapshot-base-head "50eda01262c049b05b5e25043e7379db4e9a54f4")
+  (scope "specs/ retirement + kanban board first commit + 2026-05-28 board triage + full working-tree snapshot")
+  (changes
+    (specs-retired
+      "git rm -rf specs/ : 131 tracked spec files removed; kanban/ is now the source of truth for work items"
+      "one local-modified spec (specs/tasks/knoxx-backend-lint-function-length-extractions.md) force-removed as intended; content survives in git history + prior fork-tax tags")
+    (importer-removed
+      "scripts/import-kanban-specs.mjs deleted (was untracked) : obsolete specs->kanban generator")
+    (kanban-committed
+      "kanban/ added to git for the first time (was entirely untracked, '?? kanban/')")
+    (kanban-triage-2026-05-28
+      "lint-hard-error-first-pass : review -> done (lint now 0 errors, was 52)"
+      "lint-function-length-extractions : in_progress -> review (0 fn-length errors; ~7 fn-length warnings remain)"
+      "workbench 5.3-agent-scratchpad : accepted -> review (ChatScratchpadPanel.tsx implemented)"
+      "gardens-page-bugfixes : todo -> review (frontend GardensPage.tsx built; create/schema wired)"
+      "openplanner-gardens-backend-fixes : todo -> review (gardens/cms/renderer/public all built)"
+      "kms-openplanner-ingest-arity-fix : accepted -> review (ingest-via-openplanner! arity now consistent: 7 def / 7 call)"
+      "knoxx-health-route-coherence : stays incoming; evidence note added (/api/knoxx/health is still a hardcoded 200 stub)")
+    (docs-readme
+      "README.md + kanban/README.md updated to drop specs/ references and document kanban as source of truth")
+    (backend-lint-in-flight
+      "70 modified backend CLJS source/test files absorbed : in-flight lint-remediation workstream, same convention as prior snapshot"))
+  (concurrent-dirt
+    "none separated; full working-tree snapshot per established repo fork-tax convention (cf. prior Pi_STATE 2026-05-28T16:30:34Z which absorbed the same lint-remediation dirt)")
   (blocked-paths ())
   (verification
-    (secret-heuristic-scan "passed: dirty text scan found only code/test references to token/secret/password/api-key labels; no literal secret material printed or staged intentionally")
-    (targeted-mcp-http-kondo "passed: pnpm -C backend exec clj-kondo --lint test/cljs/knoxx/backend/mcp_http_test.cljs; 0 errors; 0 warnings")
-    (git-diff-check "passed")
-    (backend-test "passed: pnpm -C backend exec shadow-cljs compile test; 449 tests; 1320 assertions; 0 failures; 0 errors; 0 warnings")
-    (backend-server-compile "passed: pnpm -C backend exec shadow-cljs compile server; 0 warnings")
-    (backend-lint "blocked: pnpm -C backend run lint exits 3 with 11 function-length errors and 1749 warnings; see /tmp/knoxx-lint.log"))
-  (residual-errors
-    "gw-start-voice-listener (171)"
-    "ensure-schema! (294)"
-    "start-document-ingestion! (163)"
-    "index-run-memory-legacy! (181)"
-    "register-routes! (188)"
-    "register-auth-routes (184)"
-    "register-model-routes! (193)"
-    "register-proxy-routes! (263)"
-    "register-translation-routes! (229)"
-    "register-user-admin-routes! (214)"
-    "register-voice-routes! (190)")
-  (logs
-    "/tmp/knoxx-lint.log")
+    (secret-heuristic-scan "passed: no literal private keys / tokens / api-keys in staged additions")
+    (backend-server-compile "passed: pnpm -C backend typecheck (shadow-cljs compile server) => 305 files, 0 warnings, 8.62s")
+    (backend-lint "passed: pnpm -C backend run lint => 0 errors, 1461 warnings (improved from prior snapshot's 11 errors / 1749 warnings)")
+    (backend-lint-residual-warnings
+      "1226 raw Promise-chain (.then/.catch) warnings -> async-workflows-src task"
+      "~24 unused-var / redundant-let / unused-require warnings -> unused-and-final-warnings task"
+      "~7 function-length (>=30) warnings -> function-length-extractions task"
+      "23 test-file warnings (unused refers, mock protocol gaps) -> test-boundaries task"))
   (destructive-cleanup false)
-  (tag "pi/fork-tax/20260528T163034Z/knoxx-lint-remediation"))
+  (tag "pi/fork-tax/20260529T013427Z/knoxx-specs-retirement"))

@@ -271,7 +271,7 @@
 (defn complete-session!
   "Mark session as completed and remove from active set.
    Optionally archive to OpenPlanner for long-term memory."
-  [redis-client session-id conversation-id opts]
+  [redis-client session-id _conversation-id opts]
   (let [{:keys [status answer error messages]} opts]
     (-> (update-session! redis-client session-id
                          {:status (or status "completed")

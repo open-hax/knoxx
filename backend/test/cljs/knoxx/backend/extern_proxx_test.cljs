@@ -22,20 +22,20 @@
                        :status 200
                        :body {:model "title-model"
                               :choices [{:message {:content "Boundary Cleanup"
-                                                   :reasoning_content "I will go with \"Boundary Cleanup\""}}]}}))]
-    (let [result (await (proxx/chat-completion-with-fetch!
-                         fetch-json
-                         {:proxx-base-url "http://proxx.local"
-                          :proxx-auth-token "token"}
-                         {:model "auto:cheapest"
-                          :messages [{:role "user" :content "hello"}]
-                          :temperature 0.1
-                          :max_tokens 24
-                          :stream false}))]
-      (is (= "http://proxx.local/v1/chat/completions" (:url @seen*)))
-      (is (= {:ok? true
-              :status 200
-              :model "title-model"
-              :content "Boundary Cleanup"
-              :reasoning-content "I will go with \"Boundary Cleanup\""}
-             (select-keys result [:ok? :status :model :content :reasoning-content]))))))
+                                                   :reasoning_content "I will go with \"Boundary Cleanup\""}}]}}))
+        result (await (proxx/chat-completion-with-fetch!
+                       fetch-json
+                       {:proxx-base-url "http://proxx.local"
+                        :proxx-auth-token "token"}
+                       {:model "auto:cheapest"
+                        :messages [{:role "user" :content "hello"}]
+                        :temperature 0.1
+                        :max_tokens 24
+                        :stream false}))]
+    (is (= "http://proxx.local/v1/chat/completions" (:url @seen*)))
+    (is (= {:ok? true
+            :status 200
+            :model "title-model"
+            :content "Boundary Cleanup"
+            :reasoning-content "I will go with \"Boundary Cleanup\""}
+           (select-keys result [:ok? :status :model :content :reasoning-content])))))

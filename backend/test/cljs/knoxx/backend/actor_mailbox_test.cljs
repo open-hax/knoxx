@@ -1,5 +1,5 @@
 (ns knoxx.backend.actor-mailbox-test
-  (:require [cljs.test :refer [async deftest is testing]]
+  (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.actor.mailbox :as mailbox]))
 
 (deftest mailbox-normalizers-keep-delivery-vocabulary-small
@@ -35,29 +35,17 @@
     (is (= 241 (count (:mailbox/preview entry))))
     (is (nil? (:mailbox/content entry)))))
 
-(deftest create-entry-degrades-when-database-is-absent
-  (async done
-    (-> (mailbox/create-entry! nil {:id "22222222-2222-2222-2222-222222222222"
-                                    :target {:actor-id "target"}
-                                    :preview "hello"})
-        (.then (fn [entry]
-                 (is (= "22222222-2222-2222-2222-222222222222" (:mailbox/id entry)))
-                 (is (false? (:mailbox/durable? entry)))
-                 (done)))
-        (.catch (fn [err]
-                  (is false (str err))
-                  (done))))))
+(deftest ^:async create-entry-degrades-when-database-is-absent
+  (let [entry (await (mailbox/create-entry! nil {:id "22222222-2222-2222-2222-222222222222"
+                                                  :target {:actor-id "target"}
+                                                  :preview "hello"}))]
+    (is (= "22222222-2222-2222-2222-222222222222" (:mailbox/id entry)))
+    (is (false? (:mailbox/durable? entry)))))
 
-(deftest acknowledge-entry-degrades-when-database-is-absent
-  (async done
-    (-> (mailbox/acknowledge-entry! nil "33333333-3333-3333-3333-333333333333")
-        (.then (fn [entry]
-                 (is (= "acknowledged" (:mailbox/status entry)))
-                 (is (false? (:mailbox/durable? entry)))
-                 (done)))
-        (.catch (fn [err]
-                  (is false (str err))
-                  (done))))))
+(deftest ^:async acknowledge-entry-degrades-when-database-is-absent
+  (let [entry (await (mailbox/acknowledge-entry! nil "33333333-3333-3333-3333-333333333333"))]
+    (is (= "acknowledged" (:mailbox/status entry)))
+    (is (false? (:mailbox/durable? entry)))))
 
 (deftest retry-request-event-points-at-content-ref-not-content
   (let [event (mailbox/retry-request-event {:mailbox/id "44444444-4444-4444-4444-444444444444"
@@ -72,28 +60,22 @@
     (is (= "evt-1" (get-in event [:payload :contentRef :event-id])))
     (is (nil? (get-in event [:payload :content])))))
 
-(deftest resolve-actor-session-reads-latest-active-route
-  (async done
-    (let [runtime {:policy-context
-                   {:query! (fn [_sql _params]
-                              (js/Promise.resolve
-                               {:rows [{:actor_id "worker"
-                                        :conversation_id "conv-1"
-                                        :session_id "sess-1"
-                                        :run_id "run-1"
-                                        :contract_id "contract-1"
-                                        :status "active"}]}))}}]
-      (-> (mailbox/resolve-actor-session! runtime "worker")
-          (.then (fn [route]
-                   (is (= {:actor-id "worker"
-                           :conversation-id "conv-1"
-                           :session-id "sess-1"
-                           :run-id "run-1"
-                           :contract-id "contract-1"
-                           :status "active"
-                           :last-seen-at nil}
-                          route))
-                   (done)))
-          (.catch (fn [err]
-                    (is false (str err))
-                    (done)))))))
+(deftest ^:async resolve-actor-session-reads-latest-active-route
+  (let [runtime {:policy-context
+                 {:query! (fn [_sql _params]
+                            (js/Promise.resolve
+                             {:rows [{:actor_id "worker"
+                                      :conversation_id "conv-1"
+                                      :session_id "sess-1"
+                                      :run_id "run-1"
+                                      :contract_id "contract-1"
+                                      :status "active"}]}))}}
+        route (await (mailbox/resolve-actor-session! runtime "worker"))]
+    (is (= {:actor-id "worker"
+            :conversation-id "conv-1"
+            :session-id "sess-1"
+            :run-id "run-1"
+            :contract-id "contract-1"
+            :status "active"
+            :last-seen-at nil}
+           route))))

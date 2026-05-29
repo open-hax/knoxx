@@ -170,21 +170,6 @@
                        (or error "invalid_request")
                        (or detail (validation-detail schema value) "Invalid request")))))
 
-(defn- handle-route-error! [reply err]
-  (when-not (aget reply "sent")
-    (let [data   (ex-data err)
-          status (or (:status data) 500)
-          error  (or (:error data) "internal_error")
-          detail (or (:detail data) (some-> err .-message) (str err) "Unexpected error")]
-      (when (>= status 500) (.error js/console "[knoxx-mcp] route failed" err))
-      (json-send! reply status {:error error :detail detail}))))
-
-(defn- as-promise [value]
-  (cond
-    (instance? js/Promise value) (.then value (fn [r] (if (nil? r) js/undefined r)))
-    (nil? value)                 (js/Promise.resolve js/undefined)
-    :else                        (js/Promise.resolve value)))
-
 (defn- require-redis!
   "Returns a Fastify preHandler hook that attaches redis client to request.redis.
    Derefs the global redis-client atom at request time, not at route-registration time,

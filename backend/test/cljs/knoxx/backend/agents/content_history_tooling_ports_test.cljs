@@ -23,13 +23,13 @@
                              (is (= "conv-ports" conversation-id))
                              (js/Promise.resolve [{:role "user" :content "hello"}])))
           session-manager #js {:appendMessage (fn [message]
-                                                (swap! appended* conj (js->clj message :keywordize-keys true)))}]
-      (let [result (await (history/rehydrate-session-manager! message-source
-                                                               session-manager
-                                                               "conv-ports"
-                                                               {:system-prompt "system"}))]
-        (is (true? (:restored result)))
-        (is (= ["system" "user"] (mapv :role @appended*)))))))
+                                                (swap! appended* conj (js->clj message :keywordize-keys true)))}
+        result (await (history/rehydrate-session-manager! message-source
+                                                          session-manager
+                                                          "conv-ports"
+                                                          {:system-prompt "system"}))]
+      (is (true? (:restored result)))
+      (is (= ["system" "user"] (mapv :role @appended*))))))
 
 (deftest ^:async history-rehydrate-rejects-when-message-source-is-down
   (testing "history restore is a hard dependency for transcript correctness"

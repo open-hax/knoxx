@@ -44,21 +44,6 @@
                               :else "image")}))))
          vec)))
 
-(defn- auto-detect-content-parts
-  "Auto-detect media URLs in message text and add them as content parts."
-  [message content-parts]
-  (let [extracted (when (string? message) (extract-media-urls message))
-        existing-urls (->> (or content-parts [])
-                          (map :url)
-                          (remove nil?)
-                          set)
-        new-parts (->> extracted
-                       (remove #(existing-urls (:url %)))
-                       vec)]
-    (if (seq new-parts)
-      (vec (concat content-parts new-parts))
-      content-parts)))
-
 (defn- normalize-tool-policy
   [policy]
   (let [tool-id (some-> (or (:toolId policy)

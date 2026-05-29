@@ -557,185 +557,222 @@
        (put-run! store run)
        (index-run-memory-legacy! config run extract-mentioned-devel-paths extract-mentioned-urls)))))
 
-(defn- index-run-memory-legacy!
-  [config run extract-mentioned-devel-paths extract-mentioned-urls]
+(defn- legacy-run-context
+  [config run]
   (let [conversation-id (:conversation_id run)
         session-id (:session_id run)
-        scope-extra (run-scope-extra run)
-        session-project (:session-project-name config)
-        request-text (or (some-> (:request_messages run) first :content) "")
-          answer (:answer run)
-          reasoning-text (or (:reasoning run) "")
-          trace-blocks (vec (or (:trace_blocks run) []))
-          run-id (:run_id run)
-          common-extra (merge {:run_id run-id
-                               :conversation_id conversation-id
-                               :session_id session-id
-                               :mode (get-in run [:settings :mode])}
-                              scope-extra)
-          content-parts (->> (or (some-> (:request_messages run)
-                                         first
-                                         :content-parts)
-                                [])
-                              (mapv (fn [p]
-                                    (if (and (= "image" (:type p))
-                                             (str/blank? (:url p))
-                                             (not (str/blank? (:data p))))
-                                      {:type "image" :mimeType (:mimeType p)
-                                       :data (subs (:data p) 0 (min 2048 (count (:data p))))
-                                       :truncated true}
-                                      (select-keys p [:type :url :mimeType :filename :text])))))
-          base-events (cond-> [(openplanner-event config {:id (str run-id ":user")
-                                                          :ts (:created_at run)
-                                                          :kind "knoxx.message"
-                                                          :project session-project
-                                                          :session conversation-id
-                                                          :message (str run-id ":user")
-                                                          :role "user"
-                                                          :model (:model run)
-                                                          :text request-text
-                                                          :extra (merge common-extra
-                                                                        {:content_parts content-parts})})
-                               (openplanner-event config {:id (str run-id ":summary")
-                                                          :ts (:updated_at run)
-                                                          :kind "knoxx.run"
-                                                          :project session-project
-                                                          :session conversation-id
-                                                          :message (str run-id ":summary")
-                                                          :role "system"
-                                                          :model (:model run)
-                                                          :text (run-summary-text run)
-                                                          :extra (merge common-extra
-                                                                        {:status (:status run)
-                                                                         :ttft_ms (:ttft_ms run)
-                                                                         :total_time_ms (:total_time_ms run)}
-                                                                        (output-quality-extra (run-summary-text run)))})]
-                        (not (str/blank? (or answer "")))
-                        (conj (openplanner-event config {:id (str run-id ":assistant")
-                                                         :ts (:updated_at run)
-                                                         :kind "knoxx.message"
-                                                         :project session-project
-                                                         :session conversation-id
-                                                         :message (str run-id ":assistant")
-                                                         :role "assistant"
-                                                         :model (:model run)
-                                                         :text answer
-                                                         :extra (merge common-extra
-                                                                       {:status (:status run)
-                                                                        :trace_blocks trace-blocks}
-                                                                       (output-quality-extra answer))}))
-                        (not (str/blank? reasoning-text))
-                        (conj (openplanner-event config {:id (str run-id ":reasoning")
-                                                         :ts (:updated_at run)
-                                                         :kind "knoxx.reasoning"
-                                                         :project session-project
-                                                         :session conversation-id
-                                                         :message (str run-id ":reasoning")
-                                                         :role "system"
-                                                         :model (:model run)
-                                                         :text reasoning-text
-                                                         :extra (merge common-extra {:status (:status run)})})))
-          tool-events (mapcat (fn [receipt]
-                                (let [tool-id (or (:id receipt) "tool")
-                                      tool-ts (or (:ended_at receipt) (:started_at receipt) (:updated_at run))
-                                      summary-text (tool-receipt-summary-text receipt)
-                                      call-text (or (:input_preview receipt) summary-text)
-                                      result-text (or (:result_preview receipt) summary-text)]
-                                  (cond-> [(openplanner-event config {:id (str run-id ":tool:" tool-id)
-                                                                      :ts tool-ts
-                                                                      :kind "knoxx.tool_receipt"
-                                                                      :project session-project
-                                                                      :session conversation-id
-                                                                      :message (str run-id ":tool:" tool-id)
-                                                                      :role "system"
-                                                                      :model (:model run)
-                                                                      :text summary-text
-                                                                      :extra (merge common-extra {:receipt (sanitize-tool-receipt-for-indexing receipt)})})]
-                                    true (into (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
-                                                                          {:run-id run-id
-                                                                           :conversation-id conversation-id
-                                                                           :session-id session-id
-                                                                           :ts tool-ts
-                                                                           :node-id (str session-project ":run:" run-id ":tool-call:" tool-id)
-                                                                           :node-type "tool_call"
-                                                                           :text call-text
-                                                                           :label (str "Tool call · " (or (:tool_name receipt) tool-id))
-                                                                           :model (:model run)
-                                                                           :scope-extra scope-extra}))
-                                    true (into (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
-                                                                          {:run-id run-id
-                                                                           :conversation-id conversation-id
-                                                                           :session-id session-id
-                                                                           :ts tool-ts
-                                                                           :node-id (str session-project ":run:" run-id ":tool-result:" tool-id)
-                                                                           :node-type "tool_result"
-                                                                           :text result-text
-                                                                           :label (str "Tool result · " (or (:tool_name receipt) tool-id))
-                                                                           :model (:model run)
-                                                                           :scope-extra scope-extra})))))
-                              (:tool_receipts run))
-          graph-events (concat
-                        (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
-                                                   {:run-id run-id
-                                                    :conversation-id conversation-id
-                                                    :session-id session-id
-                                                    :ts (:created_at run)
-                                                    :node-id (str session-project ":run:" run-id ":user")
-                                                    :node-type "user_message"
-                                                    :text request-text
-                                                    :label "User message"
-                                                    :model (:model run)
-                                                    :scope-extra scope-extra})
-                        (when-not (str/blank? (or answer ""))
-                          (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
-                                                     {:run-id run-id
-                                                      :conversation-id conversation-id
-                                                      :session-id session-id
-                                                      :ts (:updated_at run)
-                                                      :node-id (str session-project ":run:" run-id ":assistant")
-                                                      :node-type "assistant_message"
-                                                      :text answer
-                                                      :label "Assistant message"
-                                                      :model (:model run)
-                                                      :scope-extra scope-extra}))
-                        (when-not (str/blank? reasoning-text)
-                          (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
-                                                     {:run-id run-id
-                                                      :conversation-id conversation-id
-                                                      :session-id session-id
-                                                      :ts (:updated_at run)
-                                                      :node-id (str session-project ":run:" run-id ":reasoning")
-                                                      :node-type "reasoning"
-                                                      :text reasoning-text
-                                                      :label "Reasoning"
-                                                      :model (:model run)
-                                                      :scope-extra scope-extra})))
-          content-parts (vec (or (:content_parts run) []))
-          media-events  (when (seq content-parts)
-                          [(openplanner-event config
-                             {:id      (str run-id ":media")
-                              :ts      (:created_at run)
-                              :kind    "knoxx.run.media"
-                              :project session-project
-                              :session conversation-id
-                              :message (str run-id ":media")
-                              :role    "system"
-                              :model   (:model run)
-                              :text    (str "Media context: "
-                                            (count content-parts) " part(s)"
-                                            " \u2014 "
-                                            (str/join ", "
-                                              (mapv (fn [p]
-                                                      (str (or (:type p) "?")
-                                                           "/" (or (:mimeType p) "?")
-                                                           " " (or (:filename p) (:url p) "(inline)")))
-                                                    content-parts)))
-                              :extra   (merge common-extra
-                                             {:content_parts_count   (count content-parts)
-                                              :content_parts_summary (mapv #(select-keys % [:type :mimeType :filename :url])
-                                                                           content-parts)})})])
-          all-events (vec (concat base-events graph-events tool-events media-events))]
-      (-> (openplanner-client/events! (openplanner-client/client config) all-events)
-          (.catch (fn [err]
-                    (.warn js/console "[knoxx] failed to index run memory into OpenPlanner" err)
-                    nil)))))
+        run-id (:run_id run)
+        scope-extra (run-scope-extra run)]
+    {:conversation-id conversation-id
+     :session-id session-id
+     :run-id run-id
+     :scope-extra scope-extra
+     :session-project (:session-project-name config)
+     :request-text (or (some-> (:request_messages run) first :content) "")
+     :answer (:answer run)
+     :reasoning-text (or (:reasoning run) "")
+     :trace-blocks (vec (or (:trace_blocks run) []))
+     :common-extra (merge {:run_id run-id
+                           :conversation_id conversation-id
+                           :session_id session-id
+                           :mode (get-in run [:settings :mode])}
+                          scope-extra)}))
+
+(defn- sanitized-request-content-parts
+  [run]
+  (->> (or (some-> (:request_messages run) first :content-parts) [])
+       (mapv (fn [p]
+               (if (and (= "image" (:type p))
+                        (str/blank? (:url p))
+                        (not (str/blank? (:data p))))
+                 {:type "image"
+                  :mimeType (:mimeType p)
+                  :data (subs (:data p) 0 (min 2048 (count (:data p))))
+                  :truncated true}
+                 (select-keys p [:type :url :mimeType :filename :text]))))))
+
+(defn- legacy-base-events
+  [config run ctx]
+  (let [{:keys [run-id conversation-id session-project request-text answer reasoning-text trace-blocks common-extra]} ctx
+        summary-text (run-summary-text run)]
+    (cond-> [(openplanner-event config {:id (str run-id ":user")
+                                        :ts (:created_at run)
+                                        :kind "knoxx.message"
+                                        :project session-project
+                                        :session conversation-id
+                                        :message (str run-id ":user")
+                                        :role "user"
+                                        :model (:model run)
+                                        :text request-text
+                                        :extra (merge common-extra {:content_parts (sanitized-request-content-parts run)})})
+             (openplanner-event config {:id (str run-id ":summary")
+                                        :ts (:updated_at run)
+                                        :kind "knoxx.run"
+                                        :project session-project
+                                        :session conversation-id
+                                        :message (str run-id ":summary")
+                                        :role "system"
+                                        :model (:model run)
+                                        :text summary-text
+                                        :extra (merge common-extra
+                                                      {:status (:status run)
+                                                       :ttft_ms (:ttft_ms run)
+                                                       :total_time_ms (:total_time_ms run)}
+                                                      (output-quality-extra summary-text))})]
+      (not (str/blank? (or answer "")))
+      (conj (openplanner-event config {:id (str run-id ":assistant")
+                                       :ts (:updated_at run)
+                                       :kind "knoxx.message"
+                                       :project session-project
+                                       :session conversation-id
+                                       :message (str run-id ":assistant")
+                                       :role "assistant"
+                                       :model (:model run)
+                                       :text answer
+                                       :extra (merge common-extra
+                                                     {:status (:status run)
+                                                      :trace_blocks trace-blocks}
+                                                     (output-quality-extra answer))}))
+      (not (str/blank? reasoning-text))
+      (conj (openplanner-event config {:id (str run-id ":reasoning")
+                                       :ts (:updated_at run)
+                                       :kind "knoxx.reasoning"
+                                       :project session-project
+                                       :session conversation-id
+                                       :message (str run-id ":reasoning")
+                                       :role "system"
+                                       :model (:model run)
+                                       :text reasoning-text
+                                       :extra (merge common-extra {:status (:status run)})})))))
+
+(defn- tool-graph-events
+  [config extract-mentioned-devel-paths extract-mentioned-urls ctx receipt tool-id tool-ts call-text result-text]
+  (let [{:keys [run-id conversation-id session-id session-project scope-extra]} ctx]
+    (concat
+     (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
+                                {:run-id run-id
+                                 :conversation-id conversation-id
+                                 :session-id session-id
+                                 :ts tool-ts
+                                 :node-id (str session-project ":run:" run-id ":tool-call:" tool-id)
+                                 :node-type "tool_call"
+                                 :text call-text
+                                 :label (str "Tool call · " (or (:tool_name receipt) tool-id))
+                                 :model (:model (:run ctx))
+                                 :scope-extra scope-extra})
+     (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
+                                {:run-id run-id
+                                 :conversation-id conversation-id
+                                 :session-id session-id
+                                 :ts tool-ts
+                                 :node-id (str session-project ":run:" run-id ":tool-result:" tool-id)
+                                 :node-type "tool_result"
+                                 :text result-text
+                                 :label (str "Tool result · " (or (:tool_name receipt) tool-id))
+                                 :model (:model (:run ctx))
+                                 :scope-extra scope-extra}))))
+
+(defn- legacy-tool-events
+  [config run extract-mentioned-devel-paths extract-mentioned-urls ctx]
+  (mapcat (fn [receipt]
+            (let [tool-id (or (:id receipt) "tool")
+                  tool-ts (or (:ended_at receipt) (:started_at receipt) (:updated_at run))
+                  summary-text (tool-receipt-summary-text receipt)
+                  call-text (or (:input_preview receipt) summary-text)
+                  result-text (or (:result_preview receipt) summary-text)
+                  ctx* (assoc ctx :run run)]
+              (into [(openplanner-event config {:id (str (:run-id ctx) ":tool:" tool-id)
+                                                :ts tool-ts
+                                                :kind "knoxx.tool_receipt"
+                                                :project (:session-project ctx)
+                                                :session (:conversation-id ctx)
+                                                :message (str (:run-id ctx) ":tool:" tool-id)
+                                                :role "system"
+                                                :model (:model run)
+                                                :text summary-text
+                                                :extra (merge (:common-extra ctx) {:receipt (sanitize-tool-receipt-for-indexing receipt)})})]
+                    (tool-graph-events config extract-mentioned-devel-paths extract-mentioned-urls ctx* receipt tool-id tool-ts call-text result-text))))
+          (:tool_receipts run)))
+
+(defn- legacy-message-graph-events
+  [config run extract-mentioned-devel-paths extract-mentioned-urls ctx]
+  (let [{:keys [run-id conversation-id session-id session-project request-text answer reasoning-text scope-extra]} ctx]
+    (concat
+     (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
+                                {:run-id run-id
+                                 :conversation-id conversation-id
+                                 :session-id session-id
+                                 :ts (:created_at run)
+                                 :node-id (str session-project ":run:" run-id ":user")
+                                 :node-type "user_message"
+                                 :text request-text
+                                 :label "User message"
+                                 :model (:model run)
+                                 :scope-extra scope-extra})
+     (when-not (str/blank? (or answer ""))
+       (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
+                                  {:run-id run-id
+                                   :conversation-id conversation-id
+                                   :session-id session-id
+                                   :ts (:updated_at run)
+                                   :node-id (str session-project ":run:" run-id ":assistant")
+                                   :node-type "assistant_message"
+                                   :text answer
+                                   :label "Assistant message"
+                                   :model (:model run)
+                                   :scope-extra scope-extra}))
+     (when-not (str/blank? reasoning-text)
+       (session-text-graph-events config extract-mentioned-devel-paths extract-mentioned-urls
+                                  {:run-id run-id
+                                   :conversation-id conversation-id
+                                   :session-id session-id
+                                   :ts (:updated_at run)
+                                   :node-id (str session-project ":run:" run-id ":reasoning")
+                                   :node-type "reasoning"
+                                   :text reasoning-text
+                                   :label "Reasoning"
+                                   :model (:model run)
+                                   :scope-extra scope-extra})))))
+
+(defn- legacy-media-events
+  [config run ctx]
+  (let [content-parts (vec (or (:content_parts run) []))]
+    (when (seq content-parts)
+      [(openplanner-event config
+                          {:id (str (:run-id ctx) ":media")
+                           :ts (:created_at run)
+                           :kind "knoxx.run.media"
+                           :project (:session-project ctx)
+                           :session (:conversation-id ctx)
+                           :message (str (:run-id ctx) ":media")
+                           :role "system"
+                           :model (:model run)
+                           :text (str "Media context: "
+                                      (count content-parts) " part(s)"
+                                      " — "
+                                      (str/join ", "
+                                                (mapv (fn [p]
+                                                        (str (or (:type p) "?")
+                                                             "/" (or (:mimeType p) "?")
+                                                             " " (or (:filename p) (:url p) "(inline)")))
+                                                      content-parts)))
+                           :extra (merge (:common-extra ctx)
+                                         {:content_parts_count (count content-parts)
+                                          :content_parts_summary (mapv #(select-keys % [:type :mimeType :filename :url])
+                                                                       content-parts)})})])))
+
+(defn- legacy-run-events
+  [config run extract-mentioned-devel-paths extract-mentioned-urls]
+  (let [ctx (legacy-run-context config run)]
+    (vec (concat (legacy-base-events config run ctx)
+                 (legacy-message-graph-events config run extract-mentioned-devel-paths extract-mentioned-urls ctx)
+                 (legacy-tool-events config run extract-mentioned-devel-paths extract-mentioned-urls ctx)
+                 (legacy-media-events config run ctx)))))
+
+(defn- index-run-memory-legacy!
+  [config run extract-mentioned-devel-paths extract-mentioned-urls]
+  (let [all-events (legacy-run-events config run extract-mentioned-devel-paths extract-mentioned-urls)]
+    (-> (openplanner-client/events! (openplanner-client/client config) all-events)
+        (.catch (fn [err]
+                  (.warn js/console "[knoxx] failed to index run memory into OpenPlanner" err)
+                  nil)))))

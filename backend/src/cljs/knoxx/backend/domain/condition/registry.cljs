@@ -67,23 +67,6 @@
   [sym]
   (contains? safe-fns sym))
 
-(defn- resolve-ref
-  "Resolve a function reference (symbol or keyword) to a callable."
-  [ref]
-  (cond
-    (keyword? ref) (condition-fn ref)
-    (symbol? ref) (or (condition-fn (keyword ref))
-                      (get safe-fns ref))
-    :else nil))
-
-(defn- normalize-ref
-  "Normalize a function reference to a keyword for registry lookup."
-  [ref]
-  (cond
-    (keyword? ref) ref
-    (symbol? ref) (keyword ref)
-    :else nil))
-
 (declare safe-eval)
 
 (defn- eval-list
