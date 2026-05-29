@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { AGENTS_ROUTE, EVENTS_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
+import { AGENTS_ROUTE, EVENTS_ROUTE, INGESTION_ROUTE, LEGACY_EVENT_AGENTS_ROUTE, canAccessPath, isBasicUserRole, opsRoutes, remapLegacyOpsPath } from "./lib/app-routes";
 import AuthBoundary from "./pages/AuthContext";
 import { useAuth } from "./pages/useAuth";
 import ChatPage from "./pages/ChatPage";
@@ -9,6 +9,7 @@ import CmsPage from "./pages/CmsPage";
 import { VisualCmsEditorPage } from "./pages/VisualCmsEditorPage";
 import ContractsPage from "./pages/ContractsPage";
 import DataPage from "./pages/DataPage";
+import IngestionPage from "./pages/IngestionPage";
 import GardensPage from "./pages/GardensPage";
 import AgentsPage from "./pages/AgentsPage";
 import EventsPage from "./pages/EventsPage";
@@ -63,6 +64,9 @@ function AppShell() {
                 <NavLink to="/data" className={navLinkClass}>
                   Data
                 </NavLink>
+                <NavLink to={INGESTION_ROUTE} className={navLinkClass}>
+                  Ingestion
+                </NavLink>
                 <NavLink to="/gardens" className={navLinkClass}>
                   Gardens
                 </NavLink>
@@ -98,6 +102,7 @@ function AppShell() {
           <Route path="/contracts" element={<ProtectedSurface><ContractsPage /></ProtectedSurface>} />
           <Route path="/data" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />
           <Route path="/data/:tab" element={<ProtectedSurface><DataPage /></ProtectedSurface>} />
+          <Route path={INGESTION_ROUTE} element={<ProtectedSurface><IngestionPage /></ProtectedSurface>} />
           <Route path="/gardens" element={<ProtectedSurface><GardensPage /></ProtectedSurface>} />
           <Route path="/translations" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />
           <Route path="/translations/:documentId/:targetLang" element={<ProtectedSurface><TranslationReviewPage /></ProtectedSurface>} />

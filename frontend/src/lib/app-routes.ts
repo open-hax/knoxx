@@ -2,6 +2,7 @@ export const OPS_BASE_PATH = '/ops';
 export const LEGACY_OPS_BASE_PATH = '/next';
 export const AGENTS_ROUTE = '/agents';
 export const EVENTS_ROUTE = '/events';
+export const INGESTION_ROUTE = '/ingestion';
 /** Legacy route kept for redirects. */
 export const LEGACY_EVENT_AGENTS_ROUTE = '/event-agents';
 // Back-compat name: this was previously the event-agent control surface.

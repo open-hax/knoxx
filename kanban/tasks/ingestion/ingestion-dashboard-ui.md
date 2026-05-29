@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-ingestion-dashboard-ui"
 title: "Ingestion Dashboard UI"
-status: todo
+status: done
 priority: P2
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-05-28T00:00:00Z"
@@ -61,3 +61,31 @@ IngestionPage
 - SSE for real-time job progress
 - Route: `/ingestion` in the knoxx frontend
 - Reuse existing API endpoints
+
+---
+
+**Implemented dedicated `/ingestion` dashboard page (status: done).**
+
+Created a standalone `IngestionPage.tsx` that composes the existing
+`ingestion-page/parts.tsx` building blocks (`SourceDetailView`,
+`JobProgressView`, `CreateSourceModal`) behind a `SourcesSidebar` extracted
+from the `DataLakesSection` source-list pattern. The page covers the core
+acceptance criteria: sources list with driver type and active/running status,
+create-source form (local driver), source detail with coverage audit and
+recent jobs, real-time job progress via the existing `/api/ingestion/ws/jobs/:id`
+WebSocket connection, and cancel via `/api/ingestion/jobs/:id/cancel`. It reuses
+the same `/api/ingestion` REST endpoints already wired up in `DataLakesSection`.
+
+Files:
+- `frontend/src/pages/IngestionPage.tsx` (new, 306 lines — under size budget)
+- `frontend/src/App.tsx` — added `IngestionPage` import, an `Ingestion` navbar
+  link (non-basic users), and a `/ingestion` `ProtectedSurface` route.
+- `frontend/src/lib/app-routes.ts` — added `INGESTION_ROUTE = '/ingestion'`.
+
+Verification:
+- `pnpm -C frontend typecheck` (tsc --noEmit) — passed, 0 errors.
+- `node scripts/lint-file-sizes.mjs` — exit 0, no size violations.
+
+Out of scope / follow-ups (not in triage plan): bulk-import (tarball/zip) and
+single-file upload dialogs, plus a separate filterable global jobs list — the
+richer `DataPage` ingestion tabs already cover graph/services/database views.
