@@ -5,6 +5,7 @@
    [clojure.string :as str]
    [kms-ingestion.api.bulk-import :as bulk-import]
    [kms-ingestion.api.common :as common]
+   [kms-ingestion.api.file-upload :as file-upload]
    [kms-ingestion.api.query-support :as query]
    [kms-ingestion.api.workspace-support :as workspace]
    [kms-ingestion.config :as config]
@@ -495,6 +496,9 @@
 
     ["/bulk"
      {:post bulk-import/bulk-import-handler}]
+
+    ["/upload"
+     {:post file-upload/file-upload-handler}]
 
     ["/jobs"
      {:get list-jobs-handler
