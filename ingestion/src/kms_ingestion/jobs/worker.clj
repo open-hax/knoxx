@@ -2,6 +2,7 @@
   "Job processing worker for ingestion."
   (:require
    [babashka.fs :as fs]
+   [kms-ingestion.api.event-bus :as event-bus]
    [kms-ingestion.config :as config]
    [kms-ingestion.contracts.loader :as contracts]
    [kms-ingestion.contracts.resolve :as cr]
@@ -33,6 +34,34 @@
 
 (def ^:private event-session-drivers
   #{"eta-mu-sessions" "opencode-sessions"})
+
+(defn- percent-complete
+  "Progress as a 0.0–100.0 percentage of processed over total files."
+  [processed total]
+  (if (and total (pos? total))
+    (double (/ (* 100 (or processed 0)) total))
+    0.0))
+
+(defn- emit-progress!
+  "Broadcast a progress event for `job-id` to any connected SSE clients.
+   `type` is one of job_start / file_complete / file_error / job_complete /
+   job_error. Always stamps a timestamp and a derived percent_complete and is
+   best-effort — never throws into the worker loop."
+  [job-id event-type {:keys [total-files processed-files failed-files chunks-created]
+                      :as fields}]
+  (try
+    (event-bus/broadcast-event!
+     job-id
+     (merge {:type event-type
+             :job_id job-id
+             :timestamp (str (Instant/now))
+             :total_files total-files
+             :processed_files processed-files
+             :failed_files failed-files
+             :chunks_created chunks-created
+             :percent_complete (percent-complete processed-files total-files)}
+            (dissoc fields :total-files :processed-files :failed-files :chunks-created)))
+    (catch Exception _ nil)))
 
 (defn queue-job!
   "Queue a job for execution."
@@ -193,6 +222,10 @@
                              (:changed-files discovery) " changed, "
                              (:unchanged-files discovery) " unchanged")))
         (db/update-job! job-id {:total_files total-files})
+        (emit-progress! job-id "job_start" {:total-files total-files
+                                            :processed-files 0
+                                            :failed-files 0
+                                            :chunks-created 0})
         (when (and (seq existing-state)
                    (contains? filesystem-backed-drivers driver-type))
           (let [orphaned-ids (atom [])]
@@ -285,6 +318,13 @@
                                           :failed_files failed
                                           :chunks_created chunks-total
                                           :completed_at (Timestamp/from (Instant/now))})
+                  (emit-progress! job-id "job_complete"
+                                  {:total-files (+ discovered (count deleted-paths))
+                                   :processed-files (+ processed (count deleted-paths))
+                                   :failed-files failed
+                                   :chunks-created chunks-total
+                                   :status "completed"
+                                   :elapsed_seconds elapsed})
                   (db/mark-source-scanned! source-id)
                   (cleanup-temp-source! job-id source))
 
@@ -309,6 +349,24 @@
                                           :processed_files (+ processed batch-processed (count deleted-paths))
                                           :failed_files (+ failed batch-failed)
                                           :chunks_created (+ chunks-total batch-chunks)})
+                  (let [running-total total-files
+                        running-processed (+ processed batch-processed (count deleted-paths))
+                        running-failed (+ failed batch-failed)
+                        running-chunks (+ chunks-total batch-chunks)]
+                    (doseq [result results]
+                      (let [file (:file result)
+                            success? (= :success (:status result))]
+                        (emit-progress!
+                         job-id
+                         (if success? "file_complete" "file_error")
+                         (cond-> {:total-files running-total
+                                  :processed-files running-processed
+                                  :failed-files running-failed
+                                  :chunks-created running-chunks
+                                  :file_id (str (:id file))
+                                  :file_path (:path file)
+                                  :file_status (if success? "ingested" "failed")}
+                           (not success?) (assoc :file_error (:error result)))))))
                   (let [delay-ms (cr/batch-delay-ms contract)]
                     (when (and delay-ms (pos? delay-ms))
                       (Thread/sleep (long delay-ms))))
@@ -325,4 +383,6 @@
       (control/log! (str "[JOB " job-id "] FAILED: " (.getMessage e)))
       (.printStackTrace e)
       (db/update-job! job-id {:status "failed"
-                              :error_message (.getMessage e)}))))
+                              :error_message (.getMessage e)})
+      (emit-progress! job-id "job_error" {:status "failed"
+                                          :error_message (.getMessage e)}))))

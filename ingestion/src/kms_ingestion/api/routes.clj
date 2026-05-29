@@ -5,6 +5,7 @@
    [clojure.string :as str]
    [kms-ingestion.api.bulk-import :as bulk-import]
    [kms-ingestion.api.common :as common]
+   [kms-ingestion.api.event-bus :as event-bus]
    [kms-ingestion.api.file-upload :as file-upload]
    [kms-ingestion.api.query-support :as query]
    [kms-ingestion.api.workspace-support :as workspace]
@@ -17,7 +18,11 @@
    [kms-ingestion.drivers.registry :as registry]
    [kms-ingestion.jobs.worker :as worker]
    [muuntaja.core :as m]
-   [reitit.ring.middleware.muuntaja :as muuntaja]))
+   [reitit.ring.middleware.muuntaja :as muuntaja]
+   [ring.core.protocols :as ring-protocols])
+  (:import
+   [java.io OutputStream OutputStreamWriter Writer]
+   [java.nio.charset StandardCharsets]))
 
 (def json->clj common/json->clj)
 (def uuid-str common/uuid-str)
@@ -345,6 +350,121 @@
        :body {:error "Job cannot be cancelled"}})))
 
 ;; ============================================================
+;; Job progress streaming (SSE)
+;; ============================================================
+
+(def ^:private sse-heartbeat-ms
+  "Idle interval after which a comment heartbeat is sent to keep the
+   connection alive (also used as the queue poll timeout)."
+  30000)
+
+(defn- terminal-status?
+  "True once a job has reached a state where no further events will arrive."
+  [status]
+  (contains? #{"completed" "failed" "cancelled"} status))
+
+(defn- write-sse-event!
+  "Serialize `event` as a Server-Sent Event frame and flush it. The event
+   `:type` becomes the SSE `event:` field; the whole map is the JSON `data:`."
+  [^Writer writer event]
+  (let [event-type (some-> (:type event) name)]
+    (when event-type
+      (.write writer (str "event: " event-type "\n")))
+    (.write writer (str "data: " (common/clj->json event) "\n\n"))
+    (.flush writer)))
+
+(defn- write-sse-heartbeat!
+  "Write an SSE comment line. Comments are ignored by clients but keep the
+   connection (and any intermediary proxies) from idling out."
+  [^Writer writer]
+  (.write writer ": heartbeat\n\n")
+  (.flush writer))
+
+(defn- snapshot-event
+  "Build a `job_snapshot` event from a current job row so a freshly-connected
+   client immediately sees the latest progress instead of waiting for the next
+   worker tick."
+  [job]
+  (let [total (or (:total_files job) 0)
+        processed (or (:processed_files job) 0)]
+    {:type "job_snapshot"
+     :job_id (uuid-str (:job_id job))
+     :timestamp (ts-str (java.time.Instant/now))
+     :status (:status job)
+     :total_files total
+     :processed_files processed
+     :failed_files (or (:failed_files job) 0)
+     :chunks_created (or (:chunks_created job) 0)
+     :percent_complete (if (pos? total)
+                         (double (/ (* 100 processed) total))
+                         0.0)}))
+
+(defn- stream-job-events
+  "Body of the SSE response. Drains the subscription `queue`, writing each
+   event to the client. Sends a heartbeat whenever the queue is idle for
+   `sse-heartbeat-ms`, and exits once the job reaches a terminal state or the
+   client disconnects (a write failure)."
+  [job-id tenant-id ^Writer writer queue]
+  (try
+    ;; Prime the stream with the current job state so reconnecting clients
+    ;; are immediately up to date.
+    (when-let [job (db/get-job job-id tenant-id)]
+      (write-sse-event! writer (snapshot-event job))
+      (when (terminal-status? (:status job))
+        (throw (ex-info "job already terminal" {::done true}))))
+    (loop []
+      (let [event (event-bus/poll-event! queue sse-heartbeat-ms)]
+        (if event
+          (do
+            (write-sse-event! writer event)
+            (when-not (contains? #{"job_complete" "job_error"}
+                                 (some-> (:type event) name))
+              (recur)))
+          ;; Idle: heartbeat, then re-check job status in case the worker
+          ;; finished without us catching the terminal event.
+          (do
+            (write-sse-heartbeat! writer)
+            (if (terminal-status? (:status (db/get-job job-id tenant-id)))
+              nil
+              (recur))))))
+    (catch clojure.lang.ExceptionInfo e
+      (when-not (::done (ex-data e))
+        (throw e)))
+    (catch java.io.IOException _
+      ;; Client disconnected — fall through to cleanup.
+      nil)
+    (finally
+      (event-bus/unsubscribe-from-job! job-id queue))))
+
+(defn stream-job-progress-handler
+  "SSE endpoint: GET /api/ingestion/jobs/:job_id/stream.
+
+   Returns a `text/event-stream` response that emits the worker's progress
+   events for the job (`job_start`, `file_complete`, `file_error`,
+   `job_complete`, `job_error`) plus an initial `job_snapshot` and periodic
+   heartbeats. Subscribes before checking job existence so no event emitted
+   between the check and subscription is lost."
+  [request]
+  (let [tenant-id (get-tenant-id request)
+        job-id (-> request :path-params :job_id)
+        queue (event-bus/subscribe-to-job! job-id)
+        job (db/get-job job-id tenant-id)]
+    (if-not job
+      (do
+        (event-bus/unsubscribe-from-job! job-id queue)
+        {:status 404
+         :body {:error "Job not found"}})
+      {:status 200
+       :headers {"Content-Type" "text/event-stream; charset=utf-8"
+                 "Cache-Control" "no-cache, no-transform"
+                 "Connection" "keep-alive"
+                 "X-Accel-Buffering" "no"}
+       :body (reify ring-protocols/StreamableResponseBody
+               (write-body-to-stream [_ _response output-stream]
+                 (let [writer (OutputStreamWriter. ^OutputStream output-stream StandardCharsets/UTF_8)]
+                   (stream-job-events job-id tenant-id writer queue))))})))
+
+;; ============================================================
 ;; Health
 ;; ============================================================
 
@@ -506,6 +626,9 @@
 
     ["/jobs/:job_id"
      {:get get-job-handler}]
+
+    ["/jobs/:job_id/stream"
+     {:get stream-job-progress-handler}]
 
     ["/jobs/:job_id/cancel"
      {:post cancel-job-handler}]]
