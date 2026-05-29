@@ -3,6 +3,7 @@
   (:require
    [clj-http.client :as http]
    [clojure.string :as str]
+   [kms-ingestion.api.bulk-import :as bulk-import]
    [kms-ingestion.api.common :as common]
    [kms-ingestion.api.query-support :as query]
    [kms-ingestion.api.workspace-support :as workspace]
@@ -491,6 +492,9 @@
     ["/sources/:source_id"
      {:get get-source-handler
       :delete delete-source-handler}]
+
+    ["/bulk"
+     {:post bulk-import/bulk-import-handler}]
 
     ["/jobs"
      {:get list-jobs-handler

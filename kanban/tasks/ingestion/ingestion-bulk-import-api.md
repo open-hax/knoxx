@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-ingestion-bulk-import-api"
 title: "Ingestion Bulk Import API"
-status: todo
+status: done
 priority: P2
 labels: ["tasks", "3sp", "has-parent"]
 created_at: "2026-05-28T00:00:00Z"
@@ -46,3 +46,27 @@ The existing `create-job-handler` creates a job for a configured source. There's
 - `babashka.fs` for temp directory management
 - Reuse existing local driver for processing
 - Archive extraction via `commons-compress` or shell out to `tar`/`unzip`
+
+---
+
+**Status: done** — Bulk import endpoint implemented end-to-end.
+
+What was built:
+
+- Added `org.apache.commons/commons-compress {:mvn/version "1.26.0"}` to `ingestion/deps.edn` for archive extraction.
+- New namespace `kms_ingestion/api/bulk_import.clj`:
+  - `archive-format` detects `.tar.gz` / `.tgz` / `.tar` / `.zip` by filename, returns nil for unsupported types.
+  - `extract-archive!` unpacks tar/tar.gz/zip via commons-compress with a zip-slip guard (`normalized-target` rejects any entry that escapes the destination root).
+  - `max-upload-bytes` defaults to 100MB, overridable via `KNOXX_BULK_IMPORT_MAX_BYTES`.
+  - `bulk-import-handler` reads the multipart `file` field, validates format + size (returns 400 for missing/unsupported file, 413 for oversize), creates a temp dir, extracts the archive, registers a temporary `local` source (config carries a `:bulk_import true` marker + `:temp_path`), creates and queues a job, and returns `{job_id, source_id, tenant_id, temp_path, file_count, status: "queued"}`. On extraction failure the temp dir is reaped and 400 is returned.
+- `jobs/worker.clj`: added `cleanup-temp-source!` (best-effort, marker-driven via `:bulk_import` config flag) and invoke it at job completion; added `babashka.fs` require.
+- `api/routes.clj`: required `bulk-import` ns and added `["/bulk" {:post bulk-import/bulk-import-handler}]` under `/api/ingestion`.
+- New test ns `test/kms_ingestion/api/bulk_import_test.clj` covering format detection, real tar.gz extraction, zip-slip rejection, missing-file/unsupported/oversize handler paths, the full extract+queue happy path (DB + worker redefed), and temp cleanup (marked vs unmarked).
+
+Verification (all clean):
+
+- `clj-kondo` on changed files: errors 0, warnings 0.
+- `clojure -M:test`: Ran 54 tests, 217 assertions, 0 failures, 0 errors.
+- `clojure -M:uberjar`: packaged `target/kms-ingestion.jar` (23.8MB); commons-compress classes confirmed bundled.
+
+Note: `api/routes.clj` is 534 lines (over the 500-line repo budget) but was already 530 before this card; the new handler logic was deliberately placed in `bulk_import.clj` (161 lines) to avoid growing routes.clj further. Reducing routes.clj below budget is out of scope for this card.

@@ -1,6 +1,7 @@
 (ns kms-ingestion.jobs.worker
   "Job processing worker for ingestion."
   (:require
+   [babashka.fs :as fs]
    [kms-ingestion.config :as config]
    [kms-ingestion.contracts.loader :as contracts]
    [kms-ingestion.contracts.resolve :as cr]
@@ -39,6 +40,21 @@
   (when-not (control/executor-ready?)
     (init-executor!))
   (submit-task! (fn [] (process-job! job-id source))))
+
+(defn cleanup-temp-source!
+  "Reap the temp directory of a bulk-import source once its job is finished.
+   Triggered by the `:bulk_import` marker written into the source config by
+   the bulk-import handler. Best-effort: never throws into the worker loop."
+  [job-id source]
+  (try
+    (let [config (or (support/parse-jsonish (:config source)) {})]
+      (when (or (:bulk_import config) (:bulk-import config))
+        (when-let [temp-path (or (:temp_path config) (:temp-path config)
+                                 (:root_path config) (:root-path config))]
+          (control/log! (str "[JOB " job-id "] Cleaning up bulk-import temp dir " temp-path))
+          (fs/delete-tree temp-path))))
+    (catch Exception e
+      (control/log! (str "[JOB " job-id "] Temp cleanup failed: " (.getMessage e))))))
 
 (defn- persist-result!
   [source source-id collections result]
@@ -269,7 +285,8 @@
                                           :failed_files failed
                                           :chunks_created chunks-total
                                           :completed_at (Timestamp/from (Instant/now))})
-                  (db/mark-source-scanned! source-id))
+                  (db/mark-source-scanned! source-id)
+                  (cleanup-temp-source! job-id source))
 
                 :else
                 (let [batch (vec (take batch-size remaining))
