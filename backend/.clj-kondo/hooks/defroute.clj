@@ -19,7 +19,13 @@
 ;;
 ;;   (defn fn-name [_app _runtime _config _deps]
 ;;     (let [<only symbols referenced in body+guards> (fn [& _] nil) ...]
-;;       [guards-if-any] body...))
+;;       (^:async fn [ctx]            ; or [_ctx] when ctx is unused
+;;         [guards-if-any] body...)))
+;;
+;; The body is wrapped in an ^:async fn that mirrors the handler the
+;; runtime macro emits.  Modeling the async fn boundary means await and
+;; raw Promise chains inside route bodies are analyzed in the same
+;; structural context they actually run in.
 ;;
 ;; Using (fn [& _] nil) as the binding value avoids both
 ;; "Unresolved symbol" errors (which occur when the right side
@@ -32,9 +38,10 @@
 ;; clj-kondo does not emit spurious unused-binding warnings for the
 ;; many standard deps that a given route does not reference.
 ;;
-;; request, reply, ctx, and await model the ^:async fn handler context
-;; that the macro emits at runtime.  await is included so clj-kondo
-;; does not flag it as unresolved inside route bodies.
+;; request, reply, and await are injected via the let pool as variadic
+;; fns so clj-kondo does not flag them as unresolved inside route bodies.
+;; ctx is modeled as the wrapping ^:async fn parameter (the macro binds
+;; it from (aget request "ctx")), not via the let pool.
 ;;
 ;; In pre-handler mode children[5] is a vector of guard fn symbols;
 ;; it is detected and skipped so it is not treated as a body form.
@@ -48,14 +55,31 @@
     bearer-headers fetch-json request-query-string
     session-guard optional-session-guard])
 
+;; request, reply, and await live in the let pool (bound as variadic fns).
+;; ctx is modeled as the parameter of the ^:async handler fn that wraps the
+;; body — see new-node below — because the runtime macro binds it from
+;; (aget request "ctx") inside the emitted handler, not from deps.
 (def ^:private handler-syms
-  '[request reply ctx await])
+  '[request reply await])
 
 (defn- any-fn-node []
   (api/list-node
    [(api/token-node 'fn)
     (api/vector-node [(api/token-node '&) (api/token-node '_)])
     (api/token-node nil)]))
+
+(defn- async-handler-node
+  "Wrap the route body forms in the ^:async handler fn that the runtime macro
+   emits.  When the body references ctx, it becomes the fn parameter (the macro
+   binds it from (aget request \"ctx\")); otherwise an ignored _ctx parameter is
+   used so clj-kondo does not flag an unused binding."
+  [ctx-used? body-forms]
+  (let [param (if ctx-used? 'ctx '_ctx)]
+    (api/list-node
+     (concat
+      [(api/token-node (with-meta 'fn {:async true}))
+       (api/vector-node [(api/token-node param)])]
+      body-forms))))
 
 (defn- atom-node []
   (api/list-node
@@ -99,6 +123,7 @@
                             (cons maybe-guards body)
                             body)
         body-syms         (collect-body-syms effective-body)
+        ctx-used?         (contains? body-syms 'ctx)
         ;; Only inject let bindings for symbols actually referenced in body+guards.
         needed-std-syms   (filter (fn [s] (contains? body-syms s))
                                   (concat deps-syms handler-syms))
@@ -119,8 +144,11 @@
                             (api/vector-node
                              (map api/token-node '[_app _runtime _config _deps]))
                             (api/list-node
-                             (concat
-                              [(api/token-node 'let)
-                               binding-vec]
-                              effective-body))])]
+                             [(api/token-node 'let)
+                              binding-vec
+                              ;; Model the actual ^:async handler context the
+                              ;; runtime macro emits, so await and Promise
+                              ;; chains in the body are analyzed inside an
+                              ;; async function rather than at let-body scope.
+                              (async-handler-node ctx-used? effective-body)])])]
     {:node new-node}))
