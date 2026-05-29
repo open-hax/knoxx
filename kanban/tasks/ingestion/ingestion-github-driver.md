@@ -1,7 +1,7 @@
 ---
 uuid: "knoxx-ingestion-github-driver"
 title: "Ingestion GitHub Driver"
-status: todo
+status: done
 priority: P2
 labels: ["tasks", "5sp", "has-parent"]
 created_at: "2026-05-28T00:00:00Z"
@@ -61,3 +61,24 @@ The driver registry (`drivers/registry.clj`) has a placeholder comment: `;; "git
 - Content API: `GET /repos/{owner}/{repo}/contents/{path}`
 - Issues API: `GET /repos/{owner}/{repo}/issues`
 - PRs API: `GET /repos/{owner}/{repo}/pulls`
+
+---
+
+**Implemented (2026-05-29).** Status: done.
+
+Built the GitHub driver end-to-end:
+
+- `ingestion/src/kms_ingestion/drivers/github.clj` — `GitHubDriver` `deftype` implementing the full `Driver` protocol (`discover`, `extract`, `extract-batch`, `get-state`, `set-state`, `close`). Includes:
+  - HTTP helpers (`auth-headers`, `api-get`) using `clj-http.client` with bounded rate-limit backoff (`rate-limited?`, `retry-after-ms`) honoring `Retry-After` and `X-RateLimit-Reset`, with exponential fallback. Detects 429 and 403+remaining=0.
+  - URL builders for org repos, repo, recursive git trees, contents, issues, pulls.
+  - Namespaced file-ids (`blob:owner/repo@sha:path`, `issue:owner/repo#n`, `pr:owner/repo#n`) with `parse-file-id` for extraction routing.
+  - Discovery: `list-repos` (explicit `:repos` or all org repos), `discover-files` (walks recursive git tree, filters by `:file-types`, uses git blob sha as content hash), `discover-issues` (excludes PRs, supports `since`), `discover-prs`. `classify` for new/changed/unchanged.
+  - Extraction: `extract-blob` (base64-decode contents API), `extract-issue`, `extract-pr` (body + metadata).
+  - State: per-repo `:last-scan` timestamp persisted in the state atom for incremental discovery.
+  - Config validation (`validate-config`) requiring `:org` and `:token`.
+- `ingestion/test/kms_ingestion/drivers/github_test.clj` — 14 deftests covering URL building, file-id roundtrip/parse (incl. colon-in-path edge case), auth headers, rate-limit detection, retry-after computation, config validation, file-type matching, classify, driver creation/protocol satisfaction, invalid-config discover, state round-trip, unparseable-extract error handling, and registry registration.
+- `ingestion/src/kms_ingestion/drivers/registry.clj` — required `github` ns and registered `"github" github/create-driver`.
+
+Verification:
+- `clojure -M:test` => Ran 72 tests, 299 assertions, 0 failures, 0 errors.
+- `clj-kondo --lint github.clj github_test.clj registry.clj` => errors: 0, warnings: 0.
