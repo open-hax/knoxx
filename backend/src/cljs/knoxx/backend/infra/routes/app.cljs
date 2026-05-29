@@ -379,6 +379,43 @@
                              :service "knoxx-backend-cljs"
                              :error (str err)}))
 
+(defn- knoxx-health-ok [reply config proxx-configured openplanner-configured [proxx-res openplanner-res]]
+  (let [proxx-ok       (and proxx-configured (:ok proxx-res))
+        openplanner-ok (and openplanner-configured (:ok openplanner-res))
+        ;; Healthy only when every configured dependency is reachable.
+        healthy        (and (or (not proxx-configured) proxx-ok)
+                            (or (not openplanner-configured) openplanner-ok)
+                            (or proxx-configured openplanner-configured))]
+    (json-response!
+     reply
+     (if healthy 200 503)
+     {:reachable healthy
+      :configured (boolean (or proxx-configured openplanner-configured))
+      :base_url (:knoxx-base-url config)
+      :status_code (if healthy 200 503)
+      :status (if healthy "ok" "unhealthy")
+      :details {:mode "shadow-cljs-eta-mu-sdk"
+                :status (if healthy "ok" "unhealthy")
+                :project (:project-name config)
+                :collection {:name (:collection-name config)
+                             :pointsCount nil}
+                :dependencies {:proxx {:configured proxx-configured
+                                       :reachable (boolean proxx-ok)
+                                       :status_code (:status proxx-res)
+                                       :detail (:body proxx-res)}
+                               :openplanner {:configured openplanner-configured
+                                             :reachable (boolean openplanner-ok)
+                                             :status_code (:status openplanner-res)
+                                             :detail (:body openplanner-res)}}}})))
+
+(defn- knoxx-health-err [reply config err]
+  (json-response! reply 503 {:reachable false
+                             :configured true
+                             :base_url (:knoxx-base-url config)
+                             :status_code 503
+                             :status "unhealthy"
+                             :error (str err)}))
+
 (defn- data-health-ok [reply results]
   (json-response! reply 200
                   {:ok true
@@ -1149,15 +1186,23 @@
 
 (defroute api-knoxx-health! []
   "GET" "/api/knoxx/health"
-  (json-response! reply 200 {:reachable true
-                             :configured true
-                             :base_url (:knoxx-base-url config)
-                             :status_code 200
-                             :details {:mode "shadow-cljs-eta-mu-sdk"
-                                       :status "ok"
-                                       :project (:project-name config)
-                                       :collection {:name (:collection-name config)
-                                                    :pointsCount nil}}}))
+  (let [proxx-configured (and (not (str/blank? (:proxx-base-url config)))
+                              (not (str/blank? (:proxx-auth-token config))))
+        openplanner-client (openplanner-client/client config)
+        openplanner-configured (openplanner-client/enabled? openplanner-client)
+        proxx-promise (if proxx-configured
+                        (proxx-client/health! (proxx-client/client config))
+                        (js/Promise.resolve {:ok false
+                                             :status 503
+                                             :body {:detail "Proxx is not configured"}}))
+        openplanner-promise (if openplanner-configured
+                              (openplanner-client/health! openplanner-client)
+                              (js/Promise.resolve {:ok false
+                                                   :status 503
+                                                   :body {:detail "OpenPlanner is not configured"}}))]
+    (-> (promise/all-vec [proxx-promise openplanner-promise])
+        (.then (partial knoxx-health-ok reply config proxx-configured openplanner-configured))
+        (.catch (partial knoxx-health-err reply config)))))
 
 (defn- chat-turn-ok [reply resp]
   (json-response! reply 200 resp))
