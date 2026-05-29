@@ -12,6 +12,7 @@
             [knoxx.backend.infra.core :as core]
             [knoxx.backend.domain.discord.gateway :as discord-gateway]
             [knoxx.backend.domain.discord.discord-reaction-labels :as discord-reaction-labels]
+            [knoxx.backend.domain.graph.policy-registry :as graph-policy-registry]
             [knoxx.backend.infra.graceful-shutdown :as graceful-shutdown]
             [knoxx.backend.infra.http-server :as http-server]
             [knoxx.backend.infra.lifecycle :as lifecycle]
@@ -174,6 +175,7 @@
     ;; these durable services.
     (discord-gateway/createDiscordGatewayManager #js {:log js/console})
     (discord-reaction-labels/bind! cfg)
+    (graph-policy-registry/init!)
 
     (-> (policy-db/create-policy-db (policy-options))
         (.then (fn [policy-context]

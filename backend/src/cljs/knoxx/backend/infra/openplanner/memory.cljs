@@ -7,6 +7,8 @@
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.domain.label.quality :as quality-labels]
             [knoxx.backend.domain.actor.scope :as actor-scope]
+            [knoxx.backend.domain.graph.expansion-policy :as expansion-policy]
+            [knoxx.backend.domain.graph.policy-registry :as policy-registry]
             [knoxx.backend.domain.time :as time]))
 
 (defn- openplanner-configured?
@@ -273,8 +275,9 @@
   "Search OpenPlanner's indexed document corpus via vector similarity.
    Returns {:query, :mode, :hits} where each hit has :id, :document, :metadata, :distance. "
   (let [query (str/trim (or query ""))
-        k (max 1 (min 12 (or k 7)))
-        fetch-k (max k (min 36 (* k 3)))]
+        {:keys [k fetch-k]} (expansion-policy/bounded-search-params
+                             (policy-registry/get-policy)
+                             {:k k})]
     (if (str/blank? query)
       (throw (js/Error "Must provide query string for memory search"))
       {:query query
@@ -289,7 +292,9 @@
 
 (defn openplanner-graph-query!
   [config {:keys [query lake node-type limit edge-limit]}]
-  (let [k (max 1 (min 60 (or limit 15)))
+  (let [{:keys [limit max-cost]} (expansion-policy/bounded-expand-params
+                                  (policy-registry/get-policy)
+                                  {:limit limit :edge-limit edge-limit})
         node-types (when-not (str/blank? (or node-type ""))
                      (vec (str/split node-type #",")))
         lakes (when-not (str/blank? (or lake ""))
@@ -297,11 +302,11 @@
     (openplanner-client/graph-memory!
      (openplanner-client/client config)
      (cond-> {:q (or query "")
-              :k k
+              :k limit
               :includeText true}
        node-types (assoc :nodeTypes node-types)
        lakes (assoc :lakes lakes)
-       edge-limit (assoc :maxCost (/ 1.0 (max 0.01 (or edge-limit 16))))))))
+       max-cost (assoc :maxCost max-cost)))))
 
 (defn openplanner-semantic-search!
   [config {:keys [query k project source kind visibility]}]

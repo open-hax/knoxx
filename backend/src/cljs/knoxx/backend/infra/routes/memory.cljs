@@ -11,6 +11,8 @@
                                                filter-authorized-memory-hits!
                                                authorized-session-ids!]]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search!]]
+            [knoxx.backend.domain.graph.expansion-policy :as expansion-policy]
+            [knoxx.backend.domain.graph.policy-registry :as policy-registry]
             [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.infra.redis-client :as redis]
@@ -704,7 +706,12 @@
   "GET" "/api/memory/sessions/:sessionId"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-    (let [session-id (or (aget request "params" "sessionId") "")]
+    (let [session-id (or (aget request "params" "sessionId") "")
+          requested-limit (parse-positive-int (aget request "query" "limit"))
+          preview-limit (when requested-limit
+                          (:limit (expansion-policy/bounded-preview-params
+                                   (policy-registry/get-policy)
+                                   {:limit requested-limit})))]
       (if (str/blank? session-id)
         (json-response! reply 400 {:detail "sessionId is required"})
         (-> (fetch-openplanner-session-rows! config session-id)
@@ -712,7 +719,9 @@
                      (if (session-visible? ctx rows)
                        (json-response! reply 200 {:ok true
                                                   :session session-id
-                                                  :rows rows})
+                                                  :rows (if preview-limit
+                                                          (vec (take preview-limit rows))
+                                                          rows)})
                        (error-response! reply (http-error 403 "memory_scope_denied" "Session is outside the current Knoxx scope")))))
             (.catch (fn [err]
                       (error-response! reply err 502))))))))
@@ -733,14 +742,17 @@
                                  (aget body "exclude_actor_ids")
                                  (aget body "excludeActorId")
                                  (aget body "exclude_actor_id")))
-          session-id (or (aget body "sessionId") (aget body "session_id") "")]
+          session-id (or (aget body "sessionId") (aget body "session_id") "")
+          {bounded-k :k} (expansion-policy/bounded-search-params
+                          (policy-registry/get-policy)
+                          {:k k})]
       (ensure-permission! ctx "agent.memory.read")
       (when (and (str/blank? (str session-id))
                  (not (ctx-permitted? ctx "agent.memory.cross_session"))
                  (not (system-admin? ctx)))
         (throw (http-error 403 "memory_scope_denied" "Cross-session memory search is outside the current Knoxx scope")))
       (-> (openplanner-memory-search! config {:query query
-                                              :k k
+                                              :k bounded-k
                                               :session-id session-id})
           (.then (fn [result]
                    (-> (filter-authorized-memory-hits! config ctx (:hits result))
