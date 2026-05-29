@@ -11,72 +11,79 @@
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.time :as time]))
 
+(defn- normalize-content-part-for-event
+  [p]
+  (if (and (= "image" (:type p))
+           (str/blank? (:url p))
+           (not (str/blank? (:data p))))
+    {:type "image" :mimeType (:mimeType p)
+     :data (subs (str (:data p)) 0 (min 2048 (count (str (:data p)))))
+     :truncated true}
+    (select-keys p [:type :url :mimeType :filename :text])))
+
+(defn- user-event-extra
+  [scope content_parts]
+  (cond-> scope
+    (seq content_parts)
+    (assoc :content_parts (mapv normalize-content-part-for-event content_parts))))
+
+(defn- run-event-list
+  [run scope mk-fn]
+  (let [{:keys [run_id answer reasoning error messages
+                tool_receipts trace_blocks]} run
+        request-text (or (some-> messages first :content) "")]
+    (cond-> []
+      (not (str/blank? request-text))
+      (conj (mk-fn "knoxx.message" "user"
+                   request-text (user-event-extra scope (:content_parts run))))
+      true
+      (conj (mk-fn "knoxx.run" "system"
+                   (str "Run " run_id " · " (:status run))
+                   {:trace_blocks trace_blocks
+                    :message_count (count messages)}))
+      (not (str/blank? answer))
+      (conj (mk-fn "knoxx.message" "assistant"
+                   answer (merge {:status (:status run)}
+                                 (op-mem/output-quality-extra answer))))
+      (not (str/blank? reasoning))
+      (conj (mk-fn "knoxx.reasoning" "system"
+                   reasoning {:status (:status run)}))
+      (not (str/blank? error))
+      (conj (mk-fn "knoxx.error" "system"
+                   error (merge {:status (:status run)}
+                                (op-mem/output-quality-extra error))))
+      (seq tool_receipts)
+      (into (mapv (fn [r]
+                    (mk-fn "knoxx.tool_receipt" "system"
+                           (op-mem/tool-receipt-summary-text r)
+                           {:receipt r}))
+                  tool_receipts)))))
+
 (defn- run->events
   "Translate a KnoxxRun into the openplanner.event.v1 wire format."
   [config run]
   (let [{:keys [run_id session_id conversation_id status model
-                answer reasoning error messages
-                tool_receipts trace_blocks content_parts
                 created_at updated_at
                 org_id user_id]} run
         session-project (:session-project-name config)
-        scope {:run_id run_id :session_id session_id
-               :conversation_id conversation_id
-               :status status
-               :org_id org_id :user_id user_id}
-        mk (fn [id kind role text extra]
+        scope (merge (op-mem/run-scope-extra run)
+                     {:run_id run_id :session_id session_id
+                      :conversation_id conversation_id
+                      :status status
+                      :org_id org_id :user_id user_id})
+        mk (fn [kind role text extra]
              (op-mem/openplanner-event config
-               {:id id
+               {:id (str run_id ":" kind ":" role)
                 :ts (or updated_at created_at (time/now-iso))
                 :kind kind
                 :project session-project
                 :session conversation_id
-                :message id
+                :message (str run_id ":" kind ":" role)
                 :role role
                 :model model
                 :text text
-                :extra (merge scope extra)}))
-        request-text (or (some-> messages first :content) "")
-        user-extra (cond-> {:run_id run_id :session_id session_id
-                            :conversation_id conversation_id}
-                     (seq content_parts)
-                     (assoc :content_parts
-                            (mapv (fn [p]
-                                    (if (and (= "image" (:type p))
-                                             (str/blank? (:url p))
-                                             (not (str/blank? (:data p))))
-                                      {:type "image" :mimeType (:mimeType p)
-                                       :data (subs (str (:data p)) 0 (min 2048 (count (str (:data p)))))
-                                       :truncated true}
-                                      (select-keys p [:type :url :mimeType :filename :text])))
-                                  content_parts)))]
-    (cond-> []
-      (not (str/blank? request-text))
-      (conj (mk (str run_id ":user") "knoxx.message" "user"
-                request-text user-extra))
-      true
-      (conj (mk (str run_id ":run") "knoxx.run" "system"
-                 (str "Run " run_id " · " status)
-                 {:trace_blocks trace_blocks
-                  :message_count (count messages)}))
-      (not (str/blank? answer))
-      (conj (mk (str run_id ":assistant") "knoxx.message" "assistant"
-                 answer (merge {:status status}
-                               (op-mem/output-quality-extra answer))))
-      (not (str/blank? reasoning))
-      (conj (mk (str run_id ":reasoning") "knoxx.reasoning" "system"
-                 reasoning {:status status}))
-      (not (str/blank? error))
-      (conj (mk (str run_id ":error") "knoxx.error" "system"
-                 error (merge {:status status}
-                              (op-mem/output-quality-extra error))))
-      (seq tool_receipts)
-      (into (mapv (fn [r]
-                    (mk (str run_id ":tool:" (:id r))
-                        "knoxx.tool_receipt" "system"
-                        (op-mem/tool-receipt-summary-text r)
-                        {:receipt r}))
-                  tool_receipts)))))
+                :extra (merge scope extra)}))]
+    (run-event-list run scope mk)))
 
 (defrecord OpenPlannerSessionStore [config]
   ISessionStore

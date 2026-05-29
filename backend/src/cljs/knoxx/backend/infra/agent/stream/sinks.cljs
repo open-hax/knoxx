@@ -44,8 +44,8 @@
   (finalize-run! [_ result]
     result)
 
-  (record-run-error! [_ error-event]
-    (emit-run-event! (->LiveRunEventSink) error-event))
+  (record-run-error! [this error-event]
+    (emit-run-event! this error-event))
 
   (append-trace-text! [_ run-id kind delta at]
     (run-state/append-run-trace-text! run-id kind delta at))

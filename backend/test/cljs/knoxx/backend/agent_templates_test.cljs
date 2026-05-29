@@ -32,6 +32,17 @@
             {:source {:messages [{:trusted? true :text "hello"}
                                   {:trusted? false :text "world"}]}})))))
 
+(deftest render-prompt-evaluates-logical-template-forms
+  (testing "and/or/not compose inside JSON-round-tripped template forms"
+    (is (= "yes fallback"
+           (templates/render-prompt
+            ["template" {:separator " "}
+             [["if" ["and" true ["not" false]] "yes" "no"]
+              ["or" false nil "fallback"]]]
+            {}
+            nil
+            nil)))))
+
 (deftest render-prompt-preserves-ordinary-vector-as-data-string
   (testing "non-template vectors are not treated as executable forms"
     (is (= "[\"not-template\" \"x\"]"

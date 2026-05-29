@@ -3,7 +3,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.infra.http :refer [json-response! error-response! http-error]]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows!
+            [knoxx.backend.infra.core-memory :as core-memory :refer [fetch-openplanner-session-rows!
                                                session-visible?
                                                session-matches-page-actor-filter?
                                                session-matches-contract-filter?
@@ -31,27 +31,15 @@
                                          ctx-user-id
                                          system-admin?
                                          ensure-permission!]]
+            [knoxx.backend.shape.memory-sessions :as memory-shape]
             [knoxx.backend.shape.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.domain.time :refer [now-iso]]
-            [shadow.cljs.modern :refer [js-await]]
             ["node:crypto" :as crypto]))
 
 (defn interactive-session-id?
   [session-id]
   (not (str/starts-with? (str session-id) "translation-")))
 
-(def max-session-list-page-size 80)
-(def max-session-list-upstream-page-size 50)
-
-(defn session-list-limit
-  [value]
-  (min max-session-list-page-size
-       (max 1 (or (parse-positive-int value) 12))))
-
-(defn session-list-upstream-page-size
-  [limit offset]
-  (min max-session-list-upstream-page-size
-       (max 10 (+ (max 0 offset) (max 1 limit) 1))))
 
 (defn- openplanner-ready?
   [config]
@@ -198,22 +186,12 @@
                  (swap! memory-sessions-cache-promises* assoc cache-key promise)
                  promise))))))))
 
-(defn- normalized-actor-id
-  [value]
-  (some-> value str str/trim not-empty))
 
-(defn- normalized-actor-ids
-  [value]
-  (let [items (cond
-                (nil? value) []
-                (string? value) (str/split value #",")
-                (array? value) (js->clj value)
-                (sequential? value) value
-                :else [value])]
-    (->> items
-         (keep normalized-actor-id)
-         distinct
-         vec)))
+(defn- fetch-session-filter-rows!
+  [fetch-openplanner-session-rows! config session-id]
+  (if (identical? fetch-openplanner-session-rows! core-memory/fetch-openplanner-session-rows!)
+    (core-memory/fetch-openplanner-session-visibility-rows! config session-id)
+    (fetch-openplanner-session-rows! config session-id)))
 
 (defn- filter-page-actor-rows!
   [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids contract-id page-rows]
@@ -224,7 +202,7 @@
     (-> (.all js/Promise
               (clj->js
                (mapv (fn [row]
-                       (-> (fetch-openplanner-session-rows! config (:session row))
+                       (-> (fetch-session-filter-rows! fetch-openplanner-session-rows! config (:session row))
                            (.then (fn [rows]
                                     {:row (merge row (session-summary-scope-from-rows rows))
                                      :visible (and (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)
@@ -238,6 +216,76 @@
                       (filter :visible)
                       (map :row)
                       vec))))))
+
+(defn- grouped-session-rows
+  [rows]
+  (reduce (fn [state row]
+            (let [session-id (str (:session row))]
+              (if (or (str/blank? session-id)
+                      (not (interactive-session-id? session-id)))
+                state
+                (-> state
+                    (update :groups update session-id (fnil conj []) row)
+                    (update :order (fn [order]
+                                     (if (contains? (:seen state) session-id)
+                                       order
+                                       (conj order session-id))))
+                    (update :seen conj session-id)))))
+          {:groups {} :order [] :seen #{}}
+          rows))
+
+(defn- session-summary-title
+  [session-id scope]
+  (let [event-type (:event_type scope)
+        trigger-id (:trigger_id scope)]
+    (cond
+      (and event-type trigger-id) (str "event: " event-type " trigger: " trigger-id)
+      trigger-id (str "trigger: " trigger-id)
+      event-type (str "event: " event-type)
+      :else session-id)))
+
+(defn- mongo-session-summary
+  [session-id rows]
+  (let [latest (first rows)
+        scope (session-summary-scope-from-rows rows)]
+    (merge {:session session-id
+            :project (:project latest)
+            :last_ts (:ts latest)
+            :event_count (count rows)
+            :title (session-summary-title session-id scope)}
+           scope)))
+
+(defn fetch-contract-session-pages-from-mongo!
+  [config contract-id needed-count]
+  (let [target (some-> contract-id str str/trim not-empty)
+        query-limit 500]
+    (if-not target
+      (js/Promise.resolve nil)
+      (-> (openplanner-client/mongo-query! (or (:openplanner-client config)
+                                               (openplanner-client/client config))
+                                           {:collection "events"
+                                            :filter {"project" (:session-project-name config)
+                                                     "session" {"$type" "string" "$ne" ""}
+                                                     "extra.contract_id" target}
+                                            :projection {"_id" 0
+                                                         "project" 1
+                                                         "session" 1
+                                                         "ts" 1
+                                                         "extra" 1}
+                                            :sort {"ts" -1}
+                                            :limit query-limit})
+          (.then (fn [body]
+                   (let [rows (vec (or (:rows body) []))
+                         {:keys [groups order]} (grouped-session-rows rows)
+                         summaries (mapv #(mongo-session-summary % (get groups %)) order)
+                         wanted-count (max 1 (or needed-count 1))
+                         selected (vec (take wanted-count summaries))
+                         total-events (or (:total body) 0)
+                         fetched-events (count rows)
+                         more-events? (> total-events fetched-events)
+                         more-sessions? (> (count summaries) wanted-count)]
+                     {:rows selected
+                      :has_more (or more-sessions? more-events?)})))))))
 
 (defn fetch-authorized-session-pages!
   [config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size upstream-offset acc needed-count]
@@ -285,8 +333,8 @@
 
 (defn- filter-search-hits-by-actor!
   [config fetch-openplanner-session-rows! session-matches-page-actor-filter? actor-id exclude-actor-ids hits]
-  (let [actor-id (normalized-actor-id actor-id)
-        exclude-actor-ids (normalized-actor-ids exclude-actor-ids)
+  (let [actor-id (memory-shape/normalized-actor-id actor-id)
+        exclude-actor-ids (memory-shape/normalized-actor-ids exclude-actor-ids)
         hits (vec hits)]
     (if (and (str/blank? (str (or actor-id "")))
              (empty? exclude-actor-ids))
@@ -300,7 +348,7 @@
         (-> (.all js/Promise
                   (clj->js
                    (mapv (fn [session-id]
-                           (-> (fetch-openplanner-session-rows! config session-id)
+                           (-> (fetch-session-filter-rows! fetch-openplanner-session-rows! config session-id)
                                (.then (fn [rows]
                                         {:session session-id
                                          :visible (session-matches-page-actor-filter? config rows actor-id exclude-actor-ids)}))
@@ -417,7 +465,21 @@
         sub-agent-id (agent-spec-value agent-spec [:sub_agent_id :sub-agent-id :subAgentId])
         parent-agent-id (agent-spec-value agent-spec [:parent_agent_id :parent-agent-id :parentAgentId])
         parent-run-id (agent-spec-value agent-spec [:parent_run_id :parent-run-id :parentRunId])
-        spawn-kind (agent-spec-value agent-spec [:spawn_kind :spawn-kind :spawnKind])]
+        spawn-kind (agent-spec-value agent-spec [:spawn_kind :spawn-kind :spawnKind])
+        trigger-id (agent-spec-value agent-spec [:trigger_id :trigger-id :triggerId])
+        event-type (agent-spec-value agent-spec [:event_type :event-type :eventType])
+        event-types (let [values (or (:event_types agent-spec)
+                                     (:event-types agent-spec)
+                                     (:eventTypes agent-spec))]
+                      (when (sequential? values)
+                        (->> values
+                             (map str)
+                             (remove str/blank?)
+                             distinct
+                             vec)))
+        event-id (agent-spec-value agent-spec [:event_id :event-id :eventId])
+        event-scope-id (agent-spec-value agent-spec [:event_scope_id :event-scope-id :eventScopeId])
+        schedule-id (agent-spec-value agent-spec [:schedule_id :schedule-id :scheduleId])]
     (cond-> {:session (:conversation_id session)
              :is_active true
              :active_status (:status session)
@@ -430,7 +492,13 @@
       sub-agent-id (assoc :sub_agent_id sub-agent-id)
       parent-agent-id (assoc :parent_agent_id parent-agent-id)
       parent-run-id (assoc :parent_run_id parent-run-id)
-      spawn-kind (assoc :spawn_kind spawn-kind))))
+      spawn-kind (assoc :spawn_kind spawn-kind)
+      trigger-id (assoc :trigger_id trigger-id)
+      event-type (assoc :event_type event-type)
+      (seq event-types) (assoc :event_types event-types)
+      event-id (assoc :event_id event-id)
+      event-scope-id (assoc :event_scope_id event-scope-id)
+      schedule-id (assoc :schedule_id schedule-id))))
 
 (defn- enrich-row  [redis-client row ]
   (let [session-id (str (:session row))
@@ -458,110 +526,126 @@
                                    (inactive-row titled-row)))))))
           (.catch (fn [_]
                     (inactive-row titled-row)))))))
+
+(defn memory-sessions-request-options
+  [config ctx request]
+  (let [{:keys [limit offset actor-id exclude-actor-ids contract-id] :as opts}
+        (memory-shape/query-options (aget request "query"))]
+    (assoc opts
+           :redis-client (redis/get-client)
+           :cache-key (memory-sessions-cache-key {:config config
+                                                  :ctx ctx
+                                                  :limit limit
+                                                  :offset offset
+                                                  :actor-id actor-id
+                                                  :exclude-actor-ids exclude-actor-ids
+                                                  :contract-id contract-id}))))
+
+(defn- contract-only-admin-fetch?
+  [ctx {:keys [actor-id exclude-actor-ids contract-id]}]
+  (and contract-id
+       (str/blank? (str (or actor-id "")))
+       (empty? exclude-actor-ids)
+       (system-admin? ctx)))
+
+(defn- fetch-memory-sessions-source!
+  [config ctx opts authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter?]
+  (cached-memory-sessions-source!
+   (:redis-client opts)
+   (:cache-key opts)
+   (fn []
+     (if (contract-only-admin-fetch? ctx opts)
+       (fetch-contract-session-pages-from-mongo! config (:contract-id opts) (:needed-count opts))
+       (fetch-authorized-session-pages! config ctx (:actor-id opts) (:exclude-actor-ids opts)
+                                        (:contract-id opts) authorized-session-ids!
+                                        fetch-openplanner-session-rows!
+                                        session-matches-page-actor-filter?
+                                        (:upstream-page-size opts) 0 [] (:needed-count opts))))))
+
+
+
+(defn- warm-memory-session-title-rows!
+  [rows config runtime]
+  (doseq [row rows]
+    (warm-title-cache! (str (:session row)) config runtime)))
+
+(defn- send-enriched-memory-sessions!
+  [{:keys [reply json-response!]} page-state enriched-rows]
+  (json-response! reply 200
+                  (memory-shape/response-payload
+                   (assoc page-state
+                          :rows (vec (js->clj enriched-rows :keywordize-keys true)))))
+  nil)
+
+(defn- send-memory-session-rows!
+  [{:keys [redis-client config runtime error-response! reply] :as env} page-state rows]
+  (warm-memory-session-title-rows! rows config runtime)
+  (-> (.all js/Promise (clj->js (mapv (partial enrich-row redis-client) rows)))
+      (.then (fn [enriched-rows]
+               (send-enriched-memory-sessions! env page-state enriched-rows)))
+      (.catch (fn [err]
+                (error-response! reply err 502)
+                nil))))
+
+(defn- synthetic-active-session-rows
+  [live page-rows actor-id exclude-actor-ids contract-id]
+  (let [op-ids (set (map #(str (:session %)) page-rows))]
+    (->> live
+         (filter #(and (:conversation_id %)
+                       (not (op-ids (str (:conversation_id %))))
+                       (contains? #{"running" "waiting_input"} (:status %))
+                       (active-session-matches-actor-filter? % actor-id exclude-actor-ids)
+                       (active-session-matches-contract? % contract-id)))
+         (map active-session-synthetic-row)
+         vec)))
+
+(defn- send-memory-sessions-live-ids!
+  [{:keys [redis-client error-response! reply] :as env}
+   {:keys [page-rows actor-id exclude-actor-ids contract-id] :as page-state}
+   live-ids]
+  (-> (.all js/Promise (clj->js (mapv #(session-store/get-session redis-client %) (vec live-ids))))
+      (.then (fn [live-js]
+               (let [live (vec (js->clj live-js :keywordize-keys true))
+                     synthetic (synthetic-active-session-rows live page-rows actor-id exclude-actor-ids contract-id)]
+                 (send-memory-session-rows! env page-state (vec (concat synthetic page-rows))))))
+      (.catch (fn [err]
+                (error-response! reply err 502)
+                nil))))
+
+(defn- send-memory-sessions-result!
+  [{:keys [redis-client] :as env} {:keys [page-rows] :as page-state}]
+  (if-not redis-client
+    (send-memory-session-rows! env page-state page-rows)
+    (-> (session-store/list-active-sessions redis-client)
+        (.then (fn [live-ids]
+                 (send-memory-sessions-live-ids! env page-state live-ids)))
+        (.catch (fn [_]
+                  (send-memory-session-rows! env page-state page-rows))))))
+
 (defroute memory-sessions-route! [authorized-session-ids!
                                   fetch-openplanner-session-rows!
                                   session-matches-page-actor-filter?]
   "GET" "/api/memory/sessions"
   (if-not (openplanner-ready? config)
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
-    (let [limit-raw (aget request "query" "limit")
-          limit (session-list-limit limit-raw)
-          actor-id (some-> (or (aget request "query" "actorId")
-                               (aget request "query" "actor"))
-                           normalized-actor-id)
-          exclude-actor-ids (normalized-actor-ids
-                             (or (aget request "query" "excludeActorIds")
-                                 (aget request "query" "excludeActorId")
-                                 (aget request "query" "excludeActors")))
-          contract-id (some-> (or (aget request "query" "contractId")
-                                  (aget request "query" "contract_id")
-                                  (aget request "query" "contract"))
-                             normalized-actor-id)
-          offset-raw (aget request "query" "offset")
-          offset-parsed (js/parseInt (str (or offset-raw "0")) 10)
-          offset (if (and (js/Number.isFinite offset-parsed) (>= offset-parsed 0)) offset-parsed 0)
-          upstream-page-size (session-list-upstream-page-size limit offset)
-          needed-count (+ offset (max 1 limit) 1)
-          redis-client (redis/get-client)
-          cache-key (memory-sessions-cache-key {:config config
-                                                :ctx ctx
-                                                :limit limit
-                                                :offset offset
-                                                :actor-id actor-id
-                                                :exclude-actor-ids exclude-actor-ids
-                                                :contract-id contract-id})]
-      (-> (cached-memory-sessions-source!
-           redis-client
-           cache-key
-           (fn []
-             (fetch-authorized-session-pages! config ctx actor-id exclude-actor-ids contract-id authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter? upstream-page-size 0 [] needed-count)))
-          (.then
-           (fn [{:keys [value cache]}]
-             (let [{:keys [rows has_more]} value
-                   all-rows (vec rows)
-                   visible-total (count all-rows)
-                   page-rows (->> all-rows (drop offset) (take (max 1 limit)) vec)
-                   page-has-more (or has_more
-                                     (> visible-total (+ offset (count page-rows))))
-                   enrich-promises (mapv (partial enrich-row redis-client) page-rows)]
-               (if-not redis-client
-                 (do (doseq [row page-rows] (warm-title-cache! (str (:session row)) config runtime))
-                     (-> (.all js/Promise (clj->js enrich-promises))
-                         (.then (fn [enriched-rows]
-                                  (json-response! reply 200
-                                                  (cond-> {:ok true
-                                                           :rows (vec (js->clj enriched-rows :keywordize-keys true))
-                                                           :offset offset
-                                                           :limit limit
-                                                           :has_more page-has-more
-                                                           :cache cache}
-                                                    (not page-has-more) (assoc :total visible-total)))
-                                  nil))
-                         (.catch (fn [err] (error-response! reply err 502) nil))))
-                 (-> (session-store/list-active-sessions redis-client)
-                     (.then
-                      (fn [live-ids]
-                        (-> (.all js/Promise (clj->js (mapv #(session-store/get-session redis-client %) (vec live-ids))))
-                            (.then
-                             (fn [live-js]
-                               (let [live (vec (js->clj live-js :keywordize-keys true))
-                                     op-ids (set (map #(str (:session %)) page-rows))
-                                     synthetic (->> live
-                                                    (filter #(and (:conversation_id %)
-                                                                  (not (op-ids (str (:conversation_id %))))
-                                                                  (contains? #{"running" "waiting_input"} (:status %))
-                                                                  (active-session-matches-actor-filter? % actor-id exclude-actor-ids)
-                                                                  (active-session-matches-contract? % contract-id)))
-                                                    (map active-session-synthetic-row))
-                                     all-rows (vec (concat synthetic page-rows))]
-                                 (doseq [row all-rows] (warm-title-cache! (str (:session row)) config runtime))
-                                 (-> (.all js/Promise (clj->js (mapv (partial enrich-row redis-client) all-rows)))
-                                     (.then (fn [enriched-rows]
-                                              (json-response! reply 200
-                                                              (cond-> {:ok true
-                                                                       :rows (vec (js->clj enriched-rows :keywordize-keys true))
-                                                                       :offset offset
-                                                                       :limit limit
-                                                                       :has_more page-has-more
-                                                                       :cache cache}
-                                                                (not page-has-more) (assoc :total visible-total)))
-                                              nil))
-                                     (.catch (fn [err] (error-response! reply err 502) nil))))))
-                            (.catch (fn [err] (error-response! reply err 502) nil)))))
-                     (.catch (fn [_]
-                               (doseq [row page-rows] (warm-title-cache! (str (:session row)) config runtime))
-                               (-> (.all js/Promise (clj->js enrich-promises))
-                                   (.then (fn [enriched-rows]
-                                            (json-response! reply 200
-                                                            (cond-> {:ok true
-                                                                     :rows (vec (js->clj enriched-rows :keywordize-keys true))
-                                                                     :offset offset
-                                                                     :limit limit
-                                                                     :has_more page-has-more
-                                                                     :cache cache}
-                                                              (not page-has-more) (assoc :total visible-total)))
-                                            nil))
-                                   (.catch (fn [err] (error-response! reply err 502) nil))))))))))))))
+    (let [opts (memory-sessions-request-options config ctx request)
+          env {:redis-client (:redis-client opts)
+               :config config
+               :runtime runtime
+               :reply reply
+               :json-response! json-response!
+               :error-response! error-response!}]
+      (-> (fetch-memory-sessions-source! config ctx opts
+                                        authorized-session-ids!
+                                        fetch-openplanner-session-rows!
+                                        session-matches-page-actor-filter?)
+          (.then (fn [{:keys [value cache]}]
+                   (send-memory-sessions-result!
+                    env
+                    (memory-shape/page-state value opts cache))))
+          (.catch (fn [err]
+                    (error-response! reply err 502)
+                    nil))))))
 
 (defroute memory-session-titles-status-route! []
   "GET" "/api/memory/session-titles/status"
@@ -641,10 +725,10 @@
     (let [body (or (aget request "body") (js/Object.))
           query (or (aget body "query") "")
           k (aget body "k")
-          actor-id (normalized-actor-id (or (aget body "actorId")
-                                            (aget body "actor_id")
-                                            (aget body "actor")))
-          exclude-actor-ids (normalized-actor-ids
+          actor-id (memory-shape/normalized-actor-id (or (aget body "actorId")
+                                                         (aget body "actor_id")
+                                                         (aget body "actor")))
+          exclude-actor-ids (memory-shape/normalized-actor-ids
                              (or (aget body "excludeActorIds")
                                  (aget body "exclude_actor_ids")
                                  (aget body "excludeActorId")
@@ -667,11 +751,11 @@
           (.catch (fn [err]
                     (error-response! reply err 502)))))))
 
-(defroute lounge-messages-list-route! []
+(defroute lounge-messages-list-route! [lounge-messages*]
   "GET" "/api/lounge/messages"
   (json-response! reply 200 {:messages @lounge-messages*}))
 
-(defroute lounge-messages-create-route! []
+(defroute lounge-messages-create-route! [lounge-messages*]
   "POST" "/api/lounge/messages"
   (let [body (or (aget request "body") (js/Object.))
         session-id (str (or (aget body "session_id") ""))

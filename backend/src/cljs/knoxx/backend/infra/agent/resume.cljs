@@ -106,86 +106,72 @@
 
 ;; ─── Actions ──────────────────────────────────────────────────────────
 
-(defn- abort-stale-session!
+(defn ^:async abort-stale-session!
   [session]
   (let [session-id (str (or (:session_id session) ""))
         conversation-id (str (or (:conversation_id session) ""))
         client (redis/get-client)]
     (if (or (str/blank? session-id) (nil? client))
-      (js/Promise.resolve {:session_id session-id
-                           :action "abort_skipped"
-                           :reason "missing session_id or redis"})
-      (-> (session-store/complete-session!
-           client session-id conversation-id
-           {:status "failed"
-            :error "Session aborted automatically: stale (> 10 min)"
-            :messages (:messages session)})
-          (.then (fn [_]
-                   {:session_id session-id
-                    :conversation_id conversation-id
-                    :action "aborted"
-                    :reason "stale"}))
-          (.catch (fn [err]
-                    {:session_id session-id
-                     :action "abort_failed"
-                     :error (str err)}))))))
+      {:session_id session-id :action "abort_skipped" :reason "missing session_id or redis"}
+      (try
+        (await (session-store/complete-session!
+                client session-id conversation-id
+                {:status "failed"
+                 :error "Session aborted automatically: stale (> 10 min)"
+                 :messages (:messages session)}))
+        {:session_id session-id :conversation_id conversation-id :action "aborted" :reason "stale"}
+        (catch :default err
+          {:session_id session-id :action "abort_failed" :error (str err)})))))
 
-(defn- resume-session!
+(defn ^:async resume-session!
   [runtime config session]
   (let [session-id (str (or (:session_id session) ""))
         conversation-id (str (or (:conversation_id session) ""))]
-    (if (session-resumable? session)
-      (-> (agent-recovery/resume-recovered-session!
-           runtime config session {:wait-for :kickoff})
-          (.then (fn [result]
-                   (when-not (:resumed result)
-                     (js/console.warn "[agent-resume] session did not resume"
-                                      #js {:sessionId session-id
-                                           :conversationId conversation-id
-                                           :reason (:reason result)}))
-                   result))
-          (.catch (fn [err]
-                    (js/console.error "[agent-resume] resume failed"
-                                      #js {:sessionId session-id
-                                           :conversationId conversation-id
-                                           :error (str err)})
-                    {:session_id session-id
-                     :conversation_id conversation-id
-                     :resumed false
-                     :error (str err)})))
-      (js/Promise.resolve
-       {:session_id session-id
-        :conversation_id conversation-id
-        :resumed false
-        :reason "already_processing"}))))
+    (if-not (session-resumable? session)
+      {:session_id session-id :conversation_id conversation-id :resumed false :reason "already_processing"}
+      (try
+        (let [result (await (agent-recovery/resume-recovered-session!
+                             runtime config session {:wait-for :kickoff}))]
+          (when-not (:resumed result)
+            (js/console.warn "[agent-resume] session did not resume"
+                             #js {:sessionId session-id
+                                  :conversationId conversation-id
+                                  :reason (:reason result)}))
+          result)
+        (catch :default err
+          (js/console.error "[agent-resume] resume failed"
+                           #js {:sessionId session-id
+                                :conversationId conversation-id
+                                :error (str err)})
+          {:session_id session-id :conversation_id conversation-id :resumed false :error (str err)})))))
 
-(defn- run-limited!
+(defn ^:async run-limited!
   "Run promise-returning item-fn over items with bounded concurrency.
    This keeps startup recovery active without launching hundreds of agent turns at once."
   [items limit item-fn]
   (let [queue (atom (vec items))
         results (array)
-        worker (fn worker []
-                 (if-let [item (first @queue)]
-                   (do
-                     (swap! queue subvec 1)
-                     (-> (item-fn item)
-                         (.then (fn [result]
-                                  (.push results result)
-                                  (worker)))
-                         (.catch (fn [err]
-                                   (.push results {:error (str err)})
-                                   (worker)))))
-                   (js/Promise.resolve results)))
+        worker (fn ^:async worker []
+                 (loop []
+                   (if-let [item (first @queue)]
+                     (do
+                       (swap! queue subvec 1)
+                       (try
+                         (.push results (await (item-fn item)))
+                         (catch :default err
+                           (.push results {:error (str err)})))
+                       (recur))
+                     results)))
         worker-count (min (max 1 limit) (count items))]
     (if (zero? worker-count)
-      (js/Promise.resolve results)
-      (-> (.all js/Promise (clj->js (repeatedly worker-count worker)))
-          (.then (fn [_] results))))))
+      results
+      (do
+        (await (.all js/Promise (clj->js (repeatedly worker-count worker))))
+        results))))
 
 ;; ─── Batch processing ─────────────────────────────────────────────────
 
-(defn- process-sessions!
+(defn ^:async process-sessions!
   [runtime app config sessions]
   (let [{stale true recent false} (group-by session-stale? sessions)
         resumable-recent (if (auto-resume-enabled? config)
@@ -198,19 +184,17 @@
                           " recent running session(s) untouched")))
     (when (seq resumable-recent)
       (log-info! app (str "[agent-resume] resuming " (count resumable-recent) " recent session(s)")))
-    (-> (.all js/Promise
-              #js [(-> (.all js/Promise (clj->js (mapv abort-stale-session! stale)))
-                       (.catch (fn [err]
-                                 (log-info! app "[agent-resume] abort batch error" err)
-                                 nil)))
-                   (-> (run-limited! resumable-recent STARTUP_RESUME_CONCURRENCY #(resume-session! runtime config %))
-                       (.catch (fn [err]
-                                 (log-info! app "[agent-resume] resume batch error" err)
-                                 nil)))])
-        (.then (fn [_]
-                 {:stale (count stale)
-                  :resumed (count resumable-recent)
-                  :skipped (- (count recent) (count resumable-recent))})))))
+    (try
+      (await (.all js/Promise (clj->js (mapv abort-stale-session! stale))))
+      (catch :default err
+        (log-info! app "[agent-resume] abort batch error" err)))
+    (try
+      (await (run-limited! resumable-recent STARTUP_RESUME_CONCURRENCY #(resume-session! runtime config %)))
+      (catch :default err
+        (log-info! app "[agent-resume] resume batch error" err)))
+    {:stale (count stale)
+     :resumed (count resumable-recent)
+     :skipped (- (count recent) (count resumable-recent))}))
 
 ;; ─── Public API: startup ──────────────────────────────────────────────
 
@@ -218,27 +202,26 @@
   []
   (js/Math.round (* 1000 (.uptime js/process))))
 
-(defn resume-on-startup!
+(defn ^:async resume-on-startup!
   "Fire-and-forget scan of Redis active sessions on startup.
    Returns a promise for testability, but callers should not await it
    on the critical startup path."
   [runtime app config]
   (if-let [client (redis/get-client)]
-    (-> (session-store/recover-sessions! client)
-        (.then (fn [sessions]
-                 (let [running (vec (filter #(= "running" (:status %)) sessions))]
-                   (if (seq running)
-                     (process-sessions! runtime app config running)
-                     {:stale 0 :resumed 0 :skipped 0}))))
-        (.then (fn [result]
-                 (log-info! app (str "[agent-resume] startup scan complete: " (pr-str result)))
-                 result))
-        (.catch (fn [err]
-                  (log-info! app "[agent-resume] startup scan failed" err)
-                  {:error (str err)})))
+    (try
+      (let [sessions (await (session-store/recover-sessions! client))
+            running (vec (filter #(= "running" (:status %)) sessions))
+            result (if (seq running)
+                     (await (process-sessions! runtime app config running))
+                     {:stale 0 :resumed 0 :skipped 0})]
+        (log-info! app (str "[agent-resume] startup scan complete: " (pr-str result)))
+        result)
+      (catch :default err
+        (log-info! app "[agent-resume] startup scan failed" err)
+        {:error (str err)}))
     (do
       (log-warn! app "[agent-resume] Redis unavailable; skipping startup scan")
-      (js/Promise.resolve {:skipped true :reason "redis_not_connected"}))))
+      {:skipped true :reason "redis_not_connected"})))
 
 (defn resume-on-process-startup!
   "Run startup recovery once per Node process, not once per shadow-cljs reload.
@@ -277,43 +260,41 @@
 
 ;; ─── Public API: periodic recovery ────────────────────────────────────
 
-(defn- attempt-recovery!
+(defn ^:async attempt-recovery!
   [runtime app config]
   (if-let [client (redis/get-client)]
-    (-> (session-store/recover-sessions! client)
-        (.then (fn [sessions]
-                 (let [running (vec (filter #(= "running" (:status %)) sessions))
-                       {stale true recent false} (group-by session-stale? running)
-                       resumable (if (auto-resume-enabled? config)
-                                   (filter session-resumable? recent)
-                                   [])]
-                   (when (seq stale)
-                     (log-warn! app (str "[agent-resume] aborting " (count stale) " stale session(s)")))
-                   (when (and (seq recent) (not (auto-resume-enabled? config)))
-                     (log-warn! app (str "[agent-resume] auto resume disabled; periodic recovery leaving "
-                                         (count recent) " recent running session(s) untouched")))
-                   (when (seq resumable)
-                     (log-info! app (str "[agent-resume] resuming " (count resumable) " recent session(s)")))
-                   (-> (.all js/Promise
-                             #js [(-> (.all js/Promise (clj->js (mapv abort-stale-session! stale)))
-                                      (.catch (fn [err]
-                                                (log-info! app "[agent-resume] abort batch error" err)
-                                                nil)))
-                                  (-> (.all js/Promise (clj->js (mapv #(agent-recovery/resume-recovered-session!
-                                                                       runtime config % {:wait-for :kickoff})
-                                                                      resumable)))
-                                      (.catch (fn [err]
-                                                (log-info! app "[agent-resume] resume batch error" err)
-                                                nil)))])
-                       (.then (fn [_]
-                                {:stale (count stale)
-                                 :resumed (count resumable)
-                                 :skipped (- (count recent) (count resumable))}))))))
-        (.catch (fn [err]
-                  (log-info! app "[agent-resume] recovery tick error" err)
-                  (log-info! app "[agent-resume] redis:" (nil? (redis/get-client)))
-                  {:error (str err)})))
-    (js/Promise.resolve {:skipped true :reason "redis_not_connected"})))
+    (try
+      (let [sessions (await (session-store/recover-sessions! client))
+            running (vec (filter #(= "running" (:status %)) sessions))
+            {stale true recent false} (group-by session-stale? running)
+            resumable (if (auto-resume-enabled? config)
+                        (filter session-resumable? recent)
+                        [])]
+        (when (seq stale)
+          (log-warn! app (str "[agent-resume] aborting " (count stale) " stale session(s)")))
+        (when (and (seq recent) (not (auto-resume-enabled? config)))
+          (log-warn! app (str "[agent-resume] auto resume disabled; periodic recovery leaving "
+                              (count recent) " recent running session(s) untouched")))
+        (when (seq resumable)
+          (log-info! app (str "[agent-resume] resuming " (count resumable) " recent session(s)")))
+        (try
+          (await (.all js/Promise (clj->js (mapv abort-stale-session! stale))))
+          (catch :default err
+            (log-info! app "[agent-resume] abort batch error" err)))
+        (try
+          (await (.all js/Promise (clj->js (mapv #(agent-recovery/resume-recovered-session!
+                                                   runtime config % {:wait-for :kickoff})
+                                                  resumable))))
+          (catch :default err
+            (log-info! app "[agent-resume] resume batch error" err)))
+        {:stale (count stale)
+         :resumed (count resumable)
+         :skipped (- (count recent) (count resumable))})
+      (catch :default err
+        (log-info! app "[agent-resume] recovery tick error" err)
+        (log-info! app "[agent-resume] redis:" (nil? (redis/get-client)))
+        {:error (str err)}))
+    {:skipped true :reason "redis_not_connected"}))
 
 (defn start-periodic-recovery!
   [runtime app config]
@@ -324,9 +305,6 @@
     (reset! interval-handle*
             (js/setInterval
              (fn []
-               (when (nil? (redis/get-client))
-                 (-> (redis/init-redis! (:redis-url config))
-                     (.catch (fn [_] nil))))
                (-> (attempt-recovery! runtime app config)
                    (.catch (fn [_] nil))))
              RECOVERY_INTERVAL_MS))))
@@ -339,26 +317,24 @@
 
 ;; ─── Public API: shutdown helpers ─────────────────────────────────────
 
-(defn mark-sessions-resumable!
+(defn ^:async mark-sessions-resumable!
   "Called by graceful-shutdown when active turns time out."
   [client active-turns signal]
   (let [stamp (now-iso)]
-    (if (empty? active-turns)
-      (js/Promise.resolve 0)
-      (-> (.all js/Promise
-                (clj->js
-                 (mapv (fn [{:keys [session_id conversation_id run_id]}]
-                         (if (str/blank? (str (or session_id "")))
-                           (js/Promise.resolve nil)
-                           (session-store/update-session! client session_id
-                                                          {:status "running"
-                                                           :conversation_id conversation_id
-                                                           :run_id run_id
-                                                           :has_active_stream false
-                                                           :shutdown_requested_at stamp
-                                                           :shutdown_signal signal})))
-                       active-turns)))
-          (.then (fn [_] (count active-turns)))))))
+    (when (seq active-turns)
+      (await (.all js/Promise
+                   (clj->js
+                    (mapv (fn [{:keys [session_id conversation_id run_id]}]
+                            (when-not (str/blank? (str (or session_id "")))
+                              (session-store/update-session! client session_id
+                                                             {:status "running"
+                                                              :conversation_id conversation_id
+                                                              :run_id run_id
+                                                              :has_active_stream false
+                                                              :shutdown_requested_at stamp
+                                                              :shutdown_signal signal})))
+                          active-turns)))))
+    (count active-turns)))
 
 (defn wait-for-turns-and-flush!
   "Wait for turn-control to drain, then give Redis a grace window to persist.

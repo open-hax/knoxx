@@ -1,0 +1,43 @@
+;; the original definition for the hello world action contract this is suposed to represent
+{:action/id :example/hello-wrld
+
+ ;; a  catalog resources made available with  in the scope  of  the action
+ ;; If the receiving actor doesn't  have permission to use them, an error is emitted
+;; these are requirements.
+;; a catalog of resources that must be available to the calling context
+ :action/scope {:conditions [:time/is-morning? :time/is-night?]
+                }
+;; this is how we actually described how the action operated
+
+ :action/handler
+ (fn [event scope]
+   (let [conditions (:conditions scope)
+         is-morning? (:time/is-morning? conditions)
+         time-of-day (if (is-morning?) "morning" (is-night?) "night" "day")
+         sender (:sender event)
+         name (:name  event)
+         message-text (+ "Hello" name "!"
+                         "I hope you are  having a good" time-of-day
+                         "My name is" (actor/get-state :name))]
+     (actor/send {:messge-text sender})))
+;; an expectation describes to the caller of an asyncronous action
+;; explaining what to expect from this action
+;; valid expectations might be like:
+;; - expect a single reply
+;; - expect a stream of responses
+;; -
+ :action/result :message/send.expectation}
+{:trigger/id :example/inbox
+ ;; a catalog describing  valid event source owners
+ ;; an actor is an atomic identity that does not care about what kind of identity  that is.
+ ;; users, orgs, and bots, all have actor identities
+ ;; So the system is able to trigger actions in response to events owned by any of these
+ ;; and actions taken by  the system can be attributed  to any of these.
+ :trigger/domain [:actor/some-org.user.bob :actor/some-org.bot.jane
+                  :user/a-different-org.john :user/big-tacos.jim
+                  :bot/a-different-org.boop :bot/big-tacos.beep
+                  :org/bigcompany :org/small-company]
+ :trigger/events [:message/greeting]
+ :trigger/action :example/hello-world
+
+ :triigger/conditions []}

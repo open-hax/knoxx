@@ -4,17 +4,37 @@
             [knoxx.backend.infra.core-memory :refer [trim-mention-token]]
             [knoxx.backend.infra.document-state :refer [normalize-relative-path]]))
 
-(defn normalize-devel-path
+(defn- strip-root-prefix
+  [root value]
+  (let [normalized-root (some-> root str (str/replace #"/+$" ""))]
+    (cond
+      (str/blank? (or normalized-root ""))
+      nil
+
+      (= value normalized-root)
+      ""
+
+      (str/starts-with? value (str normalized-root "/"))
+      (subs value (inc (count normalized-root)))
+
+      :else
+      nil)))
+
+(defn normalize-workspace-path
   [value]
   (let [trimmed (trim-mention-token value)
-        no-prefix (cond
-                    (str/starts-with? trimmed "/app/workspace/devel/") (subs trimmed (count "/app/workspace/devel/"))
-                    (str/starts-with? trimmed (:workspace-root (cfg))) (subs trimmed (inc (count (:workspace-root (cfg)))))
-                    :else trimmed)
+        config (cfg)
+        roots (cons (:workspace-root config) (:extra-workspace-roots config))
+        no-prefix (or (some #(strip-root-prefix % trimmed) roots) trimmed)
         normalized (normalize-relative-path no-prefix)]
     (when (and (not (str/blank? normalized))
                (re-find #"^(orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.ημ)/" normalized))
       normalized)))
+
+(defn normalize-devel-path
+  "Backward-compatible alias for callers still using the old devel-lake name."
+  [value]
+  (normalize-workspace-path value))
 (defn basename
   [path]
   (let [s (-> (str path)

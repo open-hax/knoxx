@@ -65,11 +65,12 @@
                          {:keys [absolute]} (media/resolve-workspace-media-path runtime config normalized)]
                      absolute))
         base-relative (if is-root "" subpath)]
-    (-> (walk-audio-files! fs path absolute base-relative 0 max-depth)
-        (.then (fn [files]
-                 (let [sorted (vec (sort-by :modified > files))]
-                   (json-response! reply 200 {:ok true :root subpath :count (count sorted) :files sorted}))))
-        (.catch (fn [err] (json-response! reply 500 {:detail (str "Scan failed: " err)}))))))
+    (try
+      (let [files (await (walk-audio-files! fs path absolute base-relative 0 max-depth))
+            sorted (vec (sort-by :modified > files))]
+        (json-response! reply 200 {:ok true :root subpath :count (count sorted) :files sorted}))
+      (catch :default err
+        (json-response! reply 500 {:detail (str "Scan failed: " err)})))))
 
 (defroute studio-state-get! [policy-db]
   "GET" "/api/studio/state"
@@ -80,11 +81,12 @@
             org-id (or (:org-id ctx) (some-> ctx :org :id))
             kind (or (aget request "query" "kind") "player")]
         (if (and user-id org-id)
-          (-> (db-policy/query! db "SELECT state_json FROM studio_state WHERE user_id = $1 AND org_id = $2 AND kind = $3" [user-id org-id kind])
-              (.then (fn [{:keys [rows]}]
-                       (let [row (first rows)]
-                         (json-response! reply 200 {:ok true :state (or (:state_json row) {})}))))
-              (.catch (fn [err] (json-response! reply 500 {:detail (str "Load failed: " err)}))))
+          (try
+            (let [{:keys [rows]} (await (db-policy/query! db "SELECT state_json FROM studio_state WHERE user_id = $1 AND org_id = $2 AND kind = $3" [user-id org-id kind]))
+                  row (first rows)]
+              (json-response! reply 200 {:ok true :state (or (:state_json row) {})}))
+            (catch :default err
+              (json-response! reply 500 {:detail (str "Load failed: " err)})))
           (json-response! reply 200 {:ok true :state {}})))
       (json-response! reply 200 {:ok true :state {}}))))
 
@@ -99,9 +101,11 @@
             kind (or (aget body "kind") "player")
             state (js->clj (or (aget body "state") (js/Object.)) :keywordize-keys true)]
         (if (and user-id org-id)
-          (-> (db-policy/query! db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW() RETURNING *" [user-id org-id kind (.stringify js/JSON (clj->js state))])
-              (.then (fn [_] (json-response! reply 200 {:ok true :saved true})))
-              (.catch (fn [err] (json-response! reply 500 {:detail (str "Save failed: " err)}))))
+          (try
+            (await (db-policy/query! db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,$3,$4::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW() RETURNING *" [user-id org-id kind (.stringify js/JSON (clj->js state))]))
+            (json-response! reply 200 {:ok true :saved true})
+            (catch :default err
+              (json-response! reply 500 {:detail (str "Save failed: " err)})))
           (json-response! reply 400 {:detail "User context required"})))
       (json-response! reply 503 {:detail "Database not configured"}))))
 
@@ -113,12 +117,13 @@
       (let [user-id (or (:user-id ctx) (some-> ctx :user :id))
             org-id (or (:org-id ctx) (some-> ctx :org :id))]
         (if (and user-id org-id)
-          (-> (db-policy/query! db "SELECT state_json FROM studio_state WHERE user_id=$1 AND org_id=$2 AND kind='playlist'" [user-id org-id])
-              (.then (fn [{:keys [rows]}]
-                       (let [row (first rows)
-                             state (or (:state_json row) {})]
-                         (json-response! reply 200 {:ok true :playlist (or (:items state) [])}))))
-              (.catch (fn [err] (json-response! reply 500 {:detail (str "Load failed: " err)}))))
+          (try
+            (let [{:keys [rows]} (await (db-policy/query! db "SELECT state_json FROM studio_state WHERE user_id=$1 AND org_id=$2 AND kind='playlist'" [user-id org-id]))
+                  row (first rows)
+                  state (or (:state_json row) {})]
+              (json-response! reply 200 {:ok true :playlist (or (:items state) [])}))
+            (catch :default err
+              (json-response! reply 500 {:detail (str "Load failed: " err)})))
           (json-response! reply 200 {:ok true :playlist []})))
       (json-response! reply 200 {:ok true :playlist []}))))
 
@@ -132,9 +137,11 @@
             body (or (aget request "body") (js/Object.))
             items (js->clj (or (aget body "items") (js/Array.)) :keywordize-keys true)]
         (if (and user-id org-id)
-          (-> (db-policy/query! db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,'playlist',$3::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW()" [user-id org-id (.stringify js/JSON (clj->js {:items items}))])
-              (.then (fn [_] (json-response! reply 200 {:ok true :saved true :count (count items)})))
-              (.catch (fn [err] (json-response! reply 500 {:detail (str "Save failed: " err)}))))
+          (try
+            (await (db-policy/query! db "INSERT INTO studio_state (user_id,org_id,kind,state_json) VALUES ($1,$2,'playlist',$3::jsonb) ON CONFLICT (user_id,org_id,kind) DO UPDATE SET state_json=EXCLUDED.state_json, updated_at=NOW()" [user-id org-id (.stringify js/JSON (clj->js {:items items}))]))
+            (json-response! reply 200 {:ok true :saved true :count (count items)})
+            (catch :default err
+              (json-response! reply 500 {:detail (str "Save failed: " err)})))
           (json-response! reply 400 {:detail "User context required"})))
       (json-response! reply 503 {:detail "Database not configured"}))))
 
@@ -145,20 +152,21 @@
         normalized (media/normalize-tool-path-arg raw-path)
         {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)
         mime-type (or (media/workspace-media-mime-type relative) "audio/mpeg")]
-    (-> (media/fs-stat! fs absolute)
-        (.then (fn [stat]
-                 (when-not (.isFile stat) (throw (js/Error. (str relative " is not a file"))))
-                 (let [total-size (.-size stat)
-                       filename (media/path-basename path absolute)
-                       safe? (every? (fn [c] (let [n (.charCodeAt c 0)] (and (>= n 32) (<= n 126)))) (str filename))
-                       disp (if safe? (str "inline; filename=\"" filename "\"") (str "inline; filename*=UTF-8''" (js/encodeURIComponent filename)))]
-                   (.header reply "Content-Type" mime-type)
-                   (.header reply "Accept-Ranges" "bytes")
-                   (.header reply "Cache-Control" "private, max-age=0")
-                   (.header reply "Content-Disposition" disp)
-                   (.header reply "Content-Length" (str total-size))
-                   (.send reply (.createReadStream node-fs absolute)))))
-        (.catch (fn [err] (json-response! reply 404 {:detail (str err)}))))))
+    (try
+      (let [stat (await (media/fs-stat! fs absolute))]
+        (when-not (.isFile stat) (throw (js/Error. (str relative " is not a file"))))
+        (let [total-size (.-size stat)
+              filename (media/path-basename path absolute)
+              safe? (every? (fn [c] (let [n (.charCodeAt c 0)] (and (>= n 32) (<= n 126)))) (str filename))
+              disp (if safe? (str "inline; filename=\"" filename "\"") (str "inline; filename*=UTF-8''" (js/encodeURIComponent filename)))]
+          (.header reply "Content-Type" mime-type)
+          (.header reply "Accept-Ranges" "bytes")
+          (.header reply "Cache-Control" "private, max-age=0")
+          (.header reply "Content-Disposition" disp)
+          (.header reply "Content-Length" (str total-size))
+          (.send reply (.createReadStream node-fs absolute))))
+      (catch :default err
+        (json-response! reply 404 {:detail (str err)})))))
 
 (defroute studio-save-m3u! []
   "POST" "/api/studio/save-m3u"
@@ -179,10 +187,12 @@
         {:keys [absolute]} (media/resolve-workspace-media-path runtime config normalized)
         safe-name (str/replace name #"[^a-zA-Z0-9_-]" "_")
         file-path (.join path absolute (str safe-name ".m3u"))]
-    (-> (.mkdir fs absolute (clj->js {:recursive true}))
-        (.then (fn [_] (.writeFile fs file-path m3u-content "utf8")))
-        (.then (fn [_] (json-response! reply 200 {:ok true :path (str "Music/playlists/" safe-name ".m3u") :count (count items)})))
-        (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to save playlist: " err)}))))))
+    (try
+      (await (.mkdir fs absolute (clj->js {:recursive true})))
+      (await (.writeFile fs file-path m3u-content "utf8"))
+      (json-response! reply 200 {:ok true :path (str "Music/playlists/" safe-name ".m3u") :count (count items)})
+      (catch :default err
+        (json-response! reply 500 {:detail (str "Failed to save playlist: " err)})))))
 
 (defroute studio-save-m3u-download! []
   "POST" "/api/studio/download-m3u"
@@ -209,56 +219,56 @@
   (let [file-path (aget request "query" "path")]
     (if-not file-path
       (json-response! reply 400 {:detail "Missing path parameter"})
-      (-> (.readFile fs file-path "utf8")
-          (.then (fn [content]
-                   (let [lines (str/split-lines content)
-                         ;; Parse M3U format
-                         items (loop [remaining lines
-                                      result []
-                                      current-name nil]
-                                 (if (empty? remaining)
-                                   result
-                                   (let [line (str/trim (first remaining))
-                                         rest-lines (rest remaining)]
-                                     (cond
-                                       ;; Skip empty lines and comments
-                                       (or (str/blank? line)
-                                           (str/starts-with? line "#EXTM3U"))
-                                       (recur rest-lines result current-name)
-                                       ;; Parse EXTINF
-                                       (str/starts-with? line "#EXTINF:")
-                                       (let [name-part (second (str/split line #"," 2))]
-                                         (recur rest-lines result (or name-part "Unknown")))
-                                       ;; This is a file path
-                                       :else
-                                       (recur rest-lines
-                                              (conj result {:path line
-                                                            :name (or current-name
-                                                                      (.basename path line))})
-                                              nil)))))
-                         playlist-name (.basename path file-path)
-                         clean-name (str/replace playlist-name #"\.m3u$" "")]
-                     (json-response! reply 200 {:ok true :name clean-name :items (vec items)}))))
-          (.catch (fn [err]
-                    (json-response! reply 500 {:detail (str "Failed to load M3U: " err)})))))))
+      (try
+        (let [content (await (.readFile fs file-path "utf8"))
+              lines (str/split-lines content)
+              ;; Parse M3U format
+              items (loop [remaining lines
+                           result []
+                           current-name nil]
+                      (if (empty? remaining)
+                        result
+                        (let [line (str/trim (first remaining))
+                              rest-lines (rest remaining)]
+                          (cond
+                            ;; Skip empty lines and comments
+                            (or (str/blank? line)
+                                (str/starts-with? line "#EXTM3U"))
+                            (recur rest-lines result current-name)
+                            ;; Parse EXTINF
+                            (str/starts-with? line "#EXTINF:")
+                            (let [name-part (second (str/split line #"," 2))]
+                              (recur rest-lines result (or name-part "Unknown")))
+                            ;; This is a file path
+                            :else
+                            (recur rest-lines
+                                   (conj result {:path line
+                                                 :name (or current-name
+                                                           (.basename path line))})
+                                   nil)))))
+              playlist-name (.basename path file-path)
+              clean-name (str/replace playlist-name #"\.m3u$" "")]
+          (json-response! reply 200 {:ok true :name clean-name :items (vec items)}))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Failed to load M3U: " err)})))))
 
 (defroute studio-list-playlists! []
   "GET" "/api/studio/playlists"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
   (let [workspace-root (:workspace-root config)
         playlists-dir (.join path workspace-root "Music" "playlists")]
-    (-> (.readdir fs playlists-dir)
-        (.then (fn [files]
-                 (let [m3u-files (->> (js->clj files)
-                                      (filter #(str/ends-with? % ".m3u"))
-                                      (map (fn [filename]
-                                             {:name (str/replace filename #"\.m3u$" "")
-                                              :path (.join path playlists-dir filename)
-                                              :filename filename})))]
-                   (json-response! reply 200 {:ok true :playlists (vec m3u-files)}))))
-        (.catch (fn [_err]
-                  ;; Directory doesn't exist or other error - return empty list
-                  (json-response! reply 200 {:ok true :playlists []}))))))
+    (try
+      (let [files (await (.readdir fs playlists-dir))
+            m3u-files (->> (js->clj files)
+                           (filter #(str/ends-with? % ".m3u"))
+                           (map (fn [filename]
+                                  {:name (str/replace filename #"\.m3u$" "")
+                                   :path (.join path playlists-dir filename)
+                                   :filename filename})))]
+        (json-response! reply 200 {:ok true :playlists (vec m3u-files)}))
+      (catch :default _err
+        ;; Directory doesn't exist or other error - return empty list
+        (json-response! reply 200 {:ok true :playlists []}))))))
 
 ;; -- Label routes --
 
@@ -270,13 +280,17 @@
         all? (aget request "query" "all")]
     (cond
       all?
-      (-> (labels/get-all-labels fs workspace-root)
-          (.then (fn [all-labels] (json-response! reply 200 {:ok true :labels all-labels})))
-          (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)}))))
+      (try
+        (let [all-labels (await (labels/get-all-labels fs workspace-root))]
+          (json-response! reply 200 {:ok true :labels all-labels}))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Failed: " err)})))
       file-path
-      (-> (labels/get-labels fs workspace-root file-path)
-          (.then (fn [file-labels] (json-response! reply 200 {:ok true :path file-path :labels file-labels})))
-          (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)}))))
+      (try
+        (let [file-labels (await (labels/get-labels fs workspace-root file-path))]
+          (json-response! reply 200 {:ok true :path file-path :labels file-labels}))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Failed: " err)})))
       :else
       (json-response! reply 400 {:detail "Missing path or all parameter"}))))
 
@@ -288,9 +302,11 @@
         file-path (aget body "path")
         label (aget body "label")]
     (if (and file-path label)
-      (-> (labels/add-label! fs workspace-root file-path label)
-          (.then (fn [updated] (json-response! reply 200 {:ok true :path file-path :labels updated})))
-          (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)}))))
+      (try
+        (let [updated (await (labels/add-label! fs workspace-root file-path label))]
+          (json-response! reply 200 {:ok true :path file-path :labels updated}))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Failed: " err)})))
       (json-response! reply 400 {:detail "Missing path or label"}))))
 
 (defroute studio-labels-remove! []
@@ -301,9 +317,11 @@
         file-path (aget body "path")
         label (aget body "label")]
     (if (and file-path label)
-      (-> (labels/remove-label! fs workspace-root file-path label)
-          (.then (fn [updated] (json-response! reply 200 {:ok true :path file-path :labels updated})))
-          (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)}))))
+      (try
+        (let [updated (await (labels/remove-label! fs workspace-root file-path label))]
+          (json-response! reply 200 {:ok true :path file-path :labels updated}))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Failed: " err)})))
       (json-response! reply 400 {:detail "Missing path or label"}))))
 
 (defroute studio-labels-by-label! []
@@ -312,18 +330,22 @@
   (let [workspace-root (:workspace-root config)
         label (aget request "query" "label")]
     (if label
-      (-> (labels/get-files-by-label fs workspace-root label)
-          (.then (fn [files] (json-response! reply 200 {:ok true :label label :files files})))
-          (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)}))))
+      (try
+        (let [files (await (labels/get-files-by-label fs workspace-root label))]
+          (json-response! reply 200 {:ok true :label label :files files}))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Failed: " err)})))
       (json-response! reply 400 {:detail "Missing label parameter"}))))
 
 (defroute studio-sync-symlinks! []
   "POST" "/api/studio/sync-symlinks"
   (when ctx (ensure-permission! ctx "agent.chat.use"))
   (let [workspace-root (:workspace-root config)]
-    (-> (labels/sync-symlinks! fs path workspace-root)
-        (.then (fn [count] (json-response! reply 200 {:ok true :symlinks count})))
-        (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to sync symlinks: " err)}))))))
+    (try
+      (let [count (await (labels/sync-symlinks! fs path workspace-root))]
+        (json-response! reply 200 {:ok true :symlinks count}))
+      (catch :default err
+        (json-response! reply 500 {:detail (str "Failed to sync symlinks: " err)})))))
 
 ;; -- Audio asset routes (waveform/spectrogram) --
 
@@ -334,15 +356,17 @@
         audio-path (aget request "query" "path")
         asset-type (aget request "query" "type")]
     (if (and audio-path asset-type)
-      (-> (db-policy/query! db "SELECT image_data, mime_type, width, height FROM studio_audio_assets WHERE audio_path = $1 AND asset_type = $2" [audio-path asset-type])
-          (.then (fn [{:keys [rows]}]
-                   (if-let [row (first rows)]
-                     (do
-                       (.header reply "Content-Type" (or (:mime_type row) "image/png"))
-                       (.header reply "Cache-Control" "public, max-age=86400")
-                       (.send reply (:image_data row)))
-                     (json-response! reply 404 {:detail "Asset not found"}))))
-          (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)}))))
+      (try
+        (let [{:keys [rows]} (await (db-policy/query! db "SELECT image_data, mime_type, width, height FROM studio_audio_assets WHERE audio_path = $1 AND asset_type = $2" [audio-path asset-type]))
+              row (first rows)]
+          (if row
+            (do
+              (.header reply "Content-Type" (or (:mime_type row) "image/png"))
+              (.header reply "Cache-Control" "public, max-age=86400")
+              (.send reply (:image_data row)))
+            (json-response! reply 404 {:detail "Asset not found"})))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Failed: " err)})))
       (json-response! reply 400 {:detail "Missing path or type"}))))
 
 (defroute studio-audio-asset-save! [policy-db]
@@ -358,10 +382,12 @@
         height (aget body "height")]
     (if (and audio-path asset-type image-data)
       (let [buffer (js/Buffer.from image-data "base64")]
-        (-> (db-policy/query! db "INSERT INTO studio_audio_assets (audio_path, asset_type, image_data, mime_type, width, height) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (audio_path, asset_type) DO UPDATE SET image_data = $3, mime_type = $4, width = $5, height = $6, created_at = NOW()"
-                              [audio-path asset-type buffer mime-type width height])
-            (.then (fn [_] (json-response! reply 200 {:ok true :path audio-path :type asset-type})))
-            (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed: " err)})))))
+        (try
+          (await (db-policy/query! db "INSERT INTO studio_audio_assets (audio_path, asset_type, image_data, mime_type, width, height) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (audio_path, asset_type) DO UPDATE SET image_data = $3, mime_type = $4, width = $5, height = $6, created_at = NOW()"
+                                   [audio-path asset-type buffer mime-type width height]))
+          (json-response! reply 200 {:ok true :path audio-path :type asset-type})
+          (catch :default err
+            (json-response! reply 500 {:detail (str "Failed: " err)}))))
       (json-response! reply 400 {:detail "Missing path, type, or imageData"}))))
 
 

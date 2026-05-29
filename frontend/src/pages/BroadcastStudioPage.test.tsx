@@ -198,7 +198,7 @@ function installBroadcastStudioFetchMock() {
     }
     if (url === "/api/openplanner/v1/graph/edges/query" && method === "POST") {
       const body = JSON.parse(String(init?.body)) as { nodeIds?: string[] };
-      const source = body.nodeIds?.[0] ?? "devel:file:intro.wav";
+      const source = body.nodeIds?.[0] ?? "workspace:file:intro.wav";
       return jsonResponse({
         edges: Array.from(appliedLabelIds).map((labelId) => ({ source, target: labelId, edgeKind: "has_label" })),
       });
@@ -296,14 +296,14 @@ describe("BroadcastStudioPage audio library, playlists, and labels", () => {
     await waitFor(() => expect(requests.some((request) => (
       request.url === "/api/openplanner/v1/graph/labels/label-news/apply"
       && request.init?.method === "POST"
-      && JSON.parse(String(request.init.body)).node_id === "devel:file:intro.wav"
+      && JSON.parse(String(request.init.body)).node_id === "workspace:file:intro.wav"
     ))).toBe(true));
     fireEvent.click(await screen.findByRole("button", { name: /News ×/ }));
 
     await waitFor(() => expect(requests.some((request) => (
       request.url === "/api/openplanner/v1/graph/labels/label-news/remove"
       && request.init?.method === "POST"
-      && JSON.parse(String(request.init.body)).node_id === "devel:file:intro.wav"
+      && JSON.parse(String(request.init.body)).node_id === "workspace:file:intro.wav"
     ))).toBe(true));
     expect(await screen.findByText("No graph labels applied yet")).toBeInTheDocument();
   });

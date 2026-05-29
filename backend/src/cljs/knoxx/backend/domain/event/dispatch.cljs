@@ -105,9 +105,15 @@
              results (await (js/Promise.all
                              (clj->js
                               (mapv (fn [trigger]
-                                      (action-registry/run-action!
-                                       (actor-context config trigger event')
-                                       (action-registry/action-map trigger)))
+                                      (-> (action-registry/run-action!
+                                           (actor-context config trigger event')
+                                           (action-registry/action-map trigger))
+                                          (.catch (fn [err]
+                                                    (let [code (or (aget err "code") "action_error")]
+                                                      (js/console.warn "[event-dispatch] trigger" (:trigger/id trigger)
+                                                                       "skipped:" (.-message err))
+                                                      #js {:skipped true :reason code
+                                                           :trigger (:trigger/id trigger)})))))
                                     matching-triggers))))]
          {:matchedTriggers (mapv :trigger/id matching-triggers)
           :event event'

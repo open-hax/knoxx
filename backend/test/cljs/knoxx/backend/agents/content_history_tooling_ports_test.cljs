@@ -23,13 +23,13 @@
                              (is (= "conv-ports" conversation-id))
                              (js/Promise.resolve [{:role "user" :content "hello"}])))
           session-manager #js {:appendMessage (fn [message]
-                                                (swap! appended* conj (js->clj message :keywordize-keys true)))}]
-      (let [result (await (history/rehydrate-session-manager! message-source
-                                                               session-manager
-                                                               "conv-ports"
-                                                               {:system-prompt "system"}))]
-        (is (true? (:restored result)))
-        (is (= ["system" "user"] (mapv :role @appended*)))))))
+                                                (swap! appended* conj (js->clj message :keywordize-keys true)))}
+        result (await (history/rehydrate-session-manager! message-source
+                                                          session-manager
+                                                          "conv-ports"
+                                                          {:system-prompt "system"}))]
+      (is (true? (:restored result)))
+      (is (= ["system" "user"] (mapv :role @appended*))))))
 
 (deftest ^:async history-rehydrate-rejects-when-message-source-is-down
   (testing "history restore is a hard dependency for transcript correctness"
@@ -68,6 +68,59 @@
               :mimeType "audio/mpeg"
               :format "mp3"}
              audio-media)))))
+
+(deftest ^:async content-codec-materializes-remote-media-and-empty-parts
+  (testing "remote fetches are converted to provider media maps and failed fetches reject"
+    (let [original-fetch js/fetch
+          bytes (js/Uint8Array.from #js [102 101 116 99 104 101 100 45 105 109 97 103 101])
+          response-buffer (.-buffer bytes)
+          expected-b64 (.toString (js/Buffer.from response-buffer) "base64")]
+      (try
+        (set! js/fetch
+              (fn [url]
+                (js/Promise.resolve
+                 (if (= "https://example.test/image.png" url)
+                   #js {:ok true
+                        :arrayBuffer (fn [] (js/Promise.resolve response-buffer))}
+                   #js {:ok false
+                        :status 503
+                        :arrayBuffer (fn [] (js/Promise.resolve response-buffer))}))))
+        (is (= {:type "image"
+                :data expected-b64
+                :mimeType "image/png"}
+               (await (content-codec/materialize! {:type "image"
+                                                   :url "https://example.test/image.png"}))))
+        (is (nil? (await (content-codec/materialize! {:type "image"}))))
+        (try
+          (await (content-codec/materialize! {:type "audio"
+                                             :url "https://example.test/down.mp3"
+                                             :mimeType "audio/mpeg"}))
+          (is false "expected remote media fetch to reject")
+          (catch :default err
+            (is (re-find #"audio/mpeg fetch failed: 503" (.-message err)))))
+        (finally
+          (set! js/fetch original-fetch))))))
+
+(deftest content-codec-converts-provider-content-parts
+  (let [codec content-codec/default-content-codec
+        stored [{:type "text" :text "hello"}
+                {:type "audio" :data "raw" :mimeType "audio/wav"}]
+        provider (content-codec/content-parts->provider codec stored)]
+    (is (= 2 (count provider)))
+    (is (= stored (content-codec/provider->content-parts codec stored)))
+    (is (= [] (content-codec/content-parts->provider codec nil)))
+    (is (= [] (content-codec/provider->content-parts codec nil)))))
+
+(deftest tool-auth-context-and-runtime-names-are-deterministic
+  (is (nil? (tool-catalog/effective-tool-auth-context nil #{"read"})))
+  (is (= {:userId "u"
+          :toolPolicies [{:toolId "memory.search" :effect "allow"}
+                         {:toolId "read" :effect "allow"}]}
+         (tool-catalog/effective-tool-auth-context {:userId "u"} #{"read" "memory.search"})))
+  (is (= ["read" "write" "memory.search"]
+         (tool-catalog/tool-runtime-names [" read " #js {:name "write"}]
+                                          #js [#js {:id "memory.search"}
+                                               #js {:label "write"}]))))
 
 (deftest tool-policy-and-catalog-ports-preserve-visibility
   (testing "allowed tool ids and auth context are resolved behind ports"

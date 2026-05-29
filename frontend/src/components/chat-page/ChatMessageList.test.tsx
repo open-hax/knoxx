@@ -75,4 +75,48 @@ describe("deriveAssistantPresentation", () => {
       showAssistantFinalCard: false,
     });
   });
+
+  it("keeps archived tool trace blocks visible when no separate run receipts are available", () => {
+    const traceBlocks = [
+      { id: "reasoning-1", kind: "reasoning", status: "done", content: "Reasoning summary" },
+      { id: "tool-1", kind: "tool_call", status: "done", toolName: "discord.read", outputPreview: "failed" },
+      { id: "assistant-trace-1", kind: "agent_message", status: "done", content: "Final answer" },
+    ] as const;
+
+    const message: ChatMessage = {
+      id: "assistant-3",
+      role: "assistant",
+      content: "Final answer",
+      status: "done",
+      runId: "archived-run",
+      traceBlocks: [...traceBlocks],
+    };
+
+    expect(deriveAssistantPresentation(message)).toEqual({
+      effectiveStatus: "done",
+      visibleTraceBlocks: [...traceBlocks],
+      showAssistantFinalCard: true,
+    });
+  });
+
+  it("hides archived tool trace blocks when separate run receipts will render them", () => {
+    const traceBlocks = [
+      { id: "tool-1", kind: "tool_call", status: "done", toolName: "discord.read", outputPreview: "ok" },
+    ] as const;
+
+    const message: ChatMessage = {
+      id: "assistant-4",
+      role: "assistant",
+      content: "Final answer",
+      status: "done",
+      runId: "live-run",
+      traceBlocks: [...traceBlocks],
+    };
+
+    expect(deriveAssistantPresentation(message, { hasSeparateToolReceipts: true })).toEqual({
+      effectiveStatus: "done",
+      visibleTraceBlocks: [],
+      showAssistantFinalCard: true,
+    });
+  });
 });

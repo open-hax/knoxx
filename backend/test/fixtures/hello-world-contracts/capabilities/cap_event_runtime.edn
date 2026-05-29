@@ -1,0 +1,11 @@
+{:cap/id :cap/event-runtime
+ :cap/tools [:events.status
+             :events.dispatch
+             :triggers.fire
+             :agents.spawn
+             :actors.send-message]
+ :cap/user-surfaces [{:surface/id :workspace/events-dashboard
+                      :surface/label "Events dashboard"
+                      :surface/kind :dashboard
+                      :surface/routes ["/events" "/resources"]
+                      :surface/description "Inspect the event runtime, dispatch events, exercise triggers, spawn agents, and send actor messages through the resource-native event/action surface."}]}

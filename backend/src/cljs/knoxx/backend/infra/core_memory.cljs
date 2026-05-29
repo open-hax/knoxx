@@ -17,8 +17,12 @@
   [row]
   (or (row-extra/parse-core-memory-extra (:extra row)) {}))
 
-(def devel-path-pattern
+(def workspace-path-pattern
   #"((?:orgs|packages|services|docs|spec|specs|tools|ecosystems|src|worktrees|\.ημ)/[A-Za-z0-9._~:/+-]+)")
+
+(def devel-path-pattern
+  "Backward-compatible alias for callers/tests using the old devel-lake name."
+  workspace-path-pattern)
 
 (def url-pattern
   #"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+")
@@ -57,36 +61,54 @@
 (def ^:private known-extensionless-files
   #{"Dockerfile" "Makefile" "Justfile" "Brewfile" "Procfile" "Caddyfile"})
 
-(defn- likely-file-path?
-  "Heuristic: treat devel mentions as file nodes when the token looks like a file.
+(defn- basename
+  [path]
+  (some-> (str path) (str/split #"/") last))
 
-  Everything else is treated as a directory structural node (devel:dir:*)."
+(defn- normalize-workspace-path
+  [path]
+  (normalize-relative-path path))
+
+(defn- workspace-project-name
+  []
+  (or (:project-name (cfg)) "workspace"))
+
+(defn- likely-file-path?
+  "Heuristic: treat workspace mentions as file nodes when the token looks like a file.
+
+  Everything else is treated as a directory structural node (<project>:dir:*)."
   [path]
   (let [b (basename path)]
     (or (contains? known-extensionless-files b)
         (str/starts-with? b ".")
-        (re-find #"\\." b))))
+        (re-find #"\." b))))
 
-(defn- devel-target-node
+(defn- workspace-target-node
   [path]
-  (let [path (normalize-devel-path path)]
+  (let [path (normalize-workspace-path path)
+        project-name (workspace-project-name)]
     (when-not (str/blank? path)
       (if (likely-file-path? path)
         {:path path
          :target_kind "file"
-         :target_node_id (str "devel:file:" path)}
+         :target_node_id (str project-name ":file:" path)}
         {:path path
          :target_kind "dir"
-         :target_node_id (str "devel:dir:" path)}))))
+         :target_node_id (str project-name ":dir:" path)}))))
 
-(defn extract-mentioned-devel-paths
+(defn extract-mentioned-workspace-paths
   [text]
-  (->> (re-seq devel-path-pattern (or text ""))
+  (->> (re-seq workspace-path-pattern (or text ""))
        (map second)
-       (map devel-target-node)
+       (map workspace-target-node)
        (remove nil?)
        distinct
        vec))
+
+(defn extract-mentioned-devel-paths
+  "Backward-compatible alias for the workspace path extractor."
+  [text]
+  (extract-mentioned-workspace-paths text))
 
 (defn session-visible?
   [ctx rows]
@@ -157,6 +179,41 @@
   [rows]
   (session-extra-value-from-rows rows [:spawn_kind :spawn-kind :spawnKind]))
 
+(defn session-trigger-id-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:trigger_id :trigger-id :triggerId]))
+
+(defn session-event-type-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:event_type :event-type :eventType :trigger_event_type :trigger-event-type :triggerEventType]))
+
+(defn session-event-types-from-rows
+  [rows]
+  (some (fn [row]
+          (let [extra (row-extra-map row)
+                values (or (:event_types extra)
+                           (:event-types extra)
+                           (:eventTypes extra))]
+            (when (sequential? values)
+              (->> values
+                   (map str)
+                   (remove str/blank?)
+                   distinct
+                   vec))))
+        (reverse (vec (or rows [])))))
+
+(defn session-event-id-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:event_id :event-id :eventId]))
+
+(defn session-event-scope-id-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:event_scope_id :event-scope-id :eventScopeId]))
+
+(defn session-schedule-id-from-rows
+  [rows]
+  (session-extra-value-from-rows rows [:schedule_id :schedule-id :scheduleId]))
+
 (defn session-summary-scope-from-rows
   [rows]
   (let [contract-id (session-contract-id-from-rows rows)
@@ -167,7 +224,13 @@
         sub-agent-id (session-sub-agent-id-from-rows rows)
         parent-agent-id (session-parent-agent-id-from-rows rows)
         parent-run-id (session-parent-run-id-from-rows rows)
-        spawn-kind (session-spawn-kind-from-rows rows)]
+        spawn-kind (session-spawn-kind-from-rows rows)
+        trigger-id (session-trigger-id-from-rows rows)
+        event-type (session-event-type-from-rows rows)
+        event-types (session-event-types-from-rows rows)
+        event-id (session-event-id-from-rows rows)
+        event-scope-id (session-event-scope-id-from-rows rows)
+        schedule-id (session-schedule-id-from-rows rows)]
     (cond-> {}
       contract-id (assoc :contract_id contract-id)
       actor-id (assoc :actor_id actor-id)
@@ -175,7 +238,13 @@
       sub-agent-id (assoc :sub_agent_id sub-agent-id)
       parent-agent-id (assoc :parent_agent_id parent-agent-id)
       parent-run-id (assoc :parent_run_id parent-run-id)
-      spawn-kind (assoc :spawn_kind spawn-kind))))
+      spawn-kind (assoc :spawn_kind spawn-kind)
+      trigger-id (assoc :trigger_id trigger-id)
+      event-type (assoc :event_type event-type)
+      (seq event-types) (assoc :event_types event-types)
+      event-id (assoc :event_id event-id)
+      event-scope-id (assoc :event_scope_id event-scope-id)
+      schedule-id (assoc :schedule_id schedule-id))))
 
 (defn session-actor-claims-from-rows
   [config rows]
@@ -226,14 +295,23 @@
   [config rows page-actor-id]
   (session-matches-page-actor-filter? config rows page-actor-id []))
 
-(defn fetch-openplanner-session-rows!
-  [config session-id]
+(defn- fetch-openplanner-session-mode-rows!
+  [config session-id mode opts]
   (-> (openplanner-client/session! (openplanner-client/client config)
                                    session-id
-                                   {:project (:session-project-name config)
-                                    :mode "full"})
+                                   (merge {:project (:session-project-name config)
+                                           :mode mode}
+                                          opts))
       (.then (fn [body]
                (vec (or (:rows body) []))))))
+
+(defn fetch-openplanner-session-rows!
+  [config session-id]
+  (fetch-openplanner-session-mode-rows! config session-id "full" {}))
+
+(defn fetch-openplanner-session-visibility-rows!
+  [config session-id]
+  (fetch-openplanner-session-mode-rows! config session-id "visibility" {:limit 1}))
 
 (defn authorized-session-ids!
   [config ctx session-ids]

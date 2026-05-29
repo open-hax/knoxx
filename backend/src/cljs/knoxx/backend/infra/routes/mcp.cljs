@@ -170,21 +170,6 @@
                        (or error "invalid_request")
                        (or detail (validation-detail schema value) "Invalid request")))))
 
-(defn- handle-route-error! [reply err]
-  (when-not (aget reply "sent")
-    (let [data   (ex-data err)
-          status (or (:status data) 500)
-          error  (or (:error data) "internal_error")
-          detail (or (:detail data) (some-> err .-message) (str err) "Unexpected error")]
-      (when (>= status 500) (.error js/console "[knoxx-mcp] route failed" err))
-      (json-send! reply status {:error error :detail detail}))))
-
-(defn- as-promise [value]
-  (cond
-    (instance? js/Promise value) (.then value (fn [r] (if (nil? r) js/undefined r)))
-    (nil? value)                 (js/Promise.resolve js/undefined)
-    :else                        (js/Promise.resolve value)))
-
 (defn- require-redis!
   "Returns a Fastify preHandler hook that attaches redis client to request.redis.
    Derefs the global redis-client atom at request time, not at route-registration time,
@@ -637,11 +622,13 @@
                     (transport-handle-request! transport (aget request "raw") (aget reply "raw"))))))))
 
 (defroute mcp-handle-post! [base config runtime code-ttl token-ttl policy-db McpServer StreamableHTTPServerTransport z] "POST" "/mcp" []
-  (.hijack reply)
-  (let [raw-req (aget request "raw")
-        raw-res (aget reply "raw")
-        redis   (redis/get-client)
-        bearer  (bearer-token request)]
+  (let [^js request request
+        ^js reply reply]
+    (.hijack reply)
+    (let [^js raw-req (aget request "raw")
+          ^js raw-res (aget reply "raw")
+          redis   (redis/get-client)
+          bearer  (bearer-token request)]
     (if (str/blank? bearer)
       (do (.writeHead raw-res 401 (clj->js {"WWW-Authenticate" (www-authenticate-challenge base)
                                              "Content-Type" "text/plain"}))
@@ -688,7 +675,7 @@
                     (when-not (.-headersSent raw-res)
                       (.writeHead raw-res 500 (clj->js {"Content-Type" "application/json"}))
                       (.end raw-res (js/JSON.stringify (clj->js {:error "mcp_post_failed"
-                                                                  :detail (or (.-message err) (str err))}))))))))))
+                                                                  :detail (or (.-message err) (str err))})))))))))))
 
 (defn register-mcp-http-routes!
   [app runtime config]

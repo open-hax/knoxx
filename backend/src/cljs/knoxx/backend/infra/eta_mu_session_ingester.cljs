@@ -3,14 +3,20 @@
             [knoxx.backend.extern.promise :as promise]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             ["node:fs/promises" :as fs]
+            ["node:os" :as os]
             ["node:path" :as path]))
 
 
+(def ^:private HOME-DIR
+  (.homedir os))
+
 (def ^:private ETA-MU-SESSIONS-ROOT
-  (or (aget (.-env js/process) "ETA_MU_SESSIONS_ROOT") "/home/err/.ημ/agent/sessions"))
+  (or (aget (.-env js/process) "ETA_MU_SESSIONS_ROOT")
+      (.join path HOME-DIR ".ημ" "agent" "sessions")))
 
 (def ^:private INGEST-STATE-DIR
-  (or (aget (.-env js/process) "INGEST_STATE_DIR") "/home/err/.knoxx/eta-mu-ingest-state"))
+  (or (aget (.-env js/process) "INGEST_STATE_DIR")
+      (.join path HOME-DIR ".knoxx" "eta-mu-ingest-state")))
 
 (def ^:private INGEST-STATE-FILE
   (.join path INGEST-STATE-DIR "ingested-sessions.json"))
@@ -119,14 +125,32 @@
          (clojure.string/join "\n"))))
 
 
+(defn- env-workspace-roots
+  []
+  (->> ["WORKSPACE_ROOT" "WORKSPACE_PATH" "KNOXX_WORKSPACE_ROOT"]
+       (map #(aget (.-env js/process) %))
+       (remove #(str/blank? (or % "")))
+       distinct))
+
+(defn- strip-path-prefix
+  [prefix value]
+  (let [clean-prefix (some-> prefix str (str/replace #"/+$" ""))]
+    (cond
+      (str/blank? (or clean-prefix "")) nil
+      (= value clean-prefix) ""
+      (str/starts-with? value (str clean-prefix "/")) (subs value (inc (count clean-prefix)))
+      :else nil)))
+
 (defn- cwd-to-project
   [cwd]
   (if (not cwd)
     "eta-mu"
-    (let [normalized (-> cwd
-                         (.replace #"^/home/[^/]+/devel/" "")
-                         (.replace #"^/home/[^/]+/" "")
-                         (.replace #"^/" ""))]
+    (let [normalized-cwd (-> (str cwd)
+                             (str/replace #"\\\\" "/")
+                             (str/replace #"/+" "/"))
+          normalized (or (some #(strip-path-prefix % normalized-cwd) (env-workspace-roots))
+                         (strip-path-prefix HOME-DIR normalized-cwd)
+                         (str/replace normalized-cwd #"^/" ""))]
       (if (str/blank? normalized) "eta-mu" normalized))))
 
 
@@ -314,7 +338,7 @@
 
 
 (defn- ingest-session-file
-  [file-path session-file-meta client]
+  [file-path _session-file-meta client]
   (-> (parse-session-file file-path)
       (.then
        (fn [{:keys [events session-meta]}]
@@ -352,6 +376,35 @@
                                  :batches @batches}))))))))))
 
 
+(defn- aggregate-ingest-results
+  "Aggregate ingest results into a summary JS object."
+  [results-atom files to-ingest state]
+  (-> (save-ingest-state state)
+      (.then (fn [_]
+               (let [results @results-atom
+                     total-events (reduce (fn [sum ^js r] (+ sum (or (.-eventsIngested r) 0))) 0 (js/Array.from results))
+                     errors (reduce (fn [cnt ^js r] (if (.-error r) (inc cnt) cnt)) 0 (js/Array.from results))]
+                 #js {:ok true
+                      :scanned (.-length files)
+                      :newSessions (.-length to-ingest)
+                      :ingested (- (.-length to-ingest) errors)
+                      :totalEvents total-events
+                      :errors errors
+                      :details results})))))
+
+(defn- ingest-single-session!
+  "Ingest a single session file and update state."
+  [file state results-atom client]
+  (-> (ingest-session-file (.-path file) file client)
+      (.then (fn [^js result]
+               (aset (.-sessions state) (.-sessionId file)
+                     #js {:mtime (.-mtime file) :eventCount (.-eventsIngested result)
+                          :ingestedAt (.toISOString (js/Date.)) :dir (.-dir file) :size (.-size file)})
+               (.push @results-atom result)))
+      (.catch (fn [err]
+                (.error js/console (str "[eta-mu-ingester] Failed: " (.-sessionId file) ":") (.-message err))
+                (.push @results-atom #js {:sessionId (.-sessionId file) :error (.-message err) :eventsIngested 0 :batches 0})))))
+
 (defn run-eta-mu-session-ingest
   [{:keys [openplanner-client config force limit session-dirs]
     :or {force false limit 50}}]
@@ -365,19 +418,20 @@
           (load-ingest-state))
         (.then
          (fn [state]
+           (let [^js state state]
            (-> (discover-session-files 0)
                (.then
                 (fn [all-files]
                   (let [files (if session-dirs
                                 (.filter all-files
-                                         (fn [f]
+                                         (fn [^js f]
                                            (some (fn [d] (.includes (.-dir f) d)) session-dirs)))
                                 all-files)
                         new-files (if force
                                     files
                                     (.filter files
-                                             (fn [f]
-                                               (let [existing (aget (.-sessions state) (.-sessionId f))]
+                                             (fn [^js f]
+                                               (let [^js existing (aget (.-sessions state) (.-sessionId f))]
                                                  (or (not existing)
                                                      (< (or (.-mtime existing) 0) (.-mtime f)))))))
                         to-ingest (.slice new-files 0 limit)]
@@ -390,57 +444,15 @@
                            :skipped (- (.-length files) (.-length to-ingest))}
                       (let [results-atom (atom #js [])]
                         (-> (reduce
-                             (fn [promise-chain file]
+                             (fn [promise-chain ^js file]
                                (-> promise-chain
-                                   (.then
-                                    (fn [_]
-                                      (-> (ingest-session-file (.-path file) file client)
-                                          (.then
-                                           (fn [result]
-                                             (aset (.-sessions state) (.-sessionId file)
-                                                   #js {:mtime (.-mtime file)
-                                                        :eventCount (.-eventsIngested result)
-                                                        :ingestedAt (.toISOString (js/Date.))
-                                                        :dir (.-dir file)
-                                                        :size (.-size file)})
-                                             (.push @results-atom result)))
-                                          (.catch
-                                           (fn [err]
-                                             (.error js/console
-                                                     (str "[eta-mu-ingester] Failed: " (.-sessionId file) ":")
-                                                     (.-message err))
-                                             (.push @results-atom
-                                                    #js {:sessionId (.-sessionId file)
-                                                         :error (.-message err)
-                                                         :eventsIngested 0
-                                                         :batches 0}))))))))
-                             (js/Promise.resolve nil)
+                                   (.then (fn [_] (ingest-single-session! file state results-atom client)))))                    (js/Promise.resolve nil)
                              (js/Array.from to-ingest))
-                            (.then
-                             (fn [_]
-                               (-> (save-ingest-state state)
-                                   (.then
-                                    (fn [_]
-                                      (let [results @results-atom
-                                            total-events (reduce
-                                                          (fn [sum r] (+ sum (or (.-eventsIngested r) 0)))
-                                                          0
-                                                          (js/Array.from results))
-                                            errors (reduce
-                                                    (fn [cnt r] (if (.-error r) (inc cnt) cnt))
-                                                    0
-                                                    (js/Array.from results))]
-                                        #js {:ok true
-                                             :scanned (.-length files)
-                                             :newSessions (.-length to-ingest)
-                                             :ingested (- (.-length to-ingest) errors)
-                                             :totalEvents total-events
-                                             :errors errors
-                                             :details results})))))))))))))))))
+                            (.then (fn [_] (aggregate-ingest-results results-atom files to-ingest state)))))))))))))
 
         (.catch
          (fn [err]
-           #js {:ok false :error (.-message err)}))))
+           #js {:ok false :error (.-message err)}))))))
 
 
 
@@ -449,12 +461,13 @@
   (-> (promise/all-vec [(load-ingest-state) (discover-session-files 0)])
       (.then
        (fn [[state all-files]]
-         (let [ingested-ids (js/Set. (js/Object.keys (.-sessions state)))
+         (let [^js state state
+               ingested-ids (js/Set. (js/Object.keys (.-sessions state)))
                pending (.filter all-files
-                                (fn [f] (not (.has ingested-ids (.-sessionId f)))))
+                                (fn [^js f] (not (.has ingested-ids (.-sessionId f)))))
                stale (.filter all-files
-                              (fn [f]
-                                (let [existing (aget (.-sessions state) (.-sessionId f))]
+                              (fn [^js f]
+                                (let [^js existing (aget (.-sessions state) (.-sessionId f))]
                                   (and existing (< (or (.-mtime existing) 0) (.-mtime f))))))
                total-ingested (reduce
                                (fn [sum s] (+ sum (or (aget s "eventCount") 0)))
@@ -492,14 +505,14 @@
       (.then
        (fn [all-files]
          (let [filtered (if workspace
-                          (.filter all-files (fn [f] (.includes (.-dir f) workspace)))
+                          (.filter all-files (fn [^js f] (.includes (.-dir f) workspace)))
                           all-files)
-               sorted (.sort filtered (fn [a b] (- (.-mtime b) (.-mtime a))))
+               sorted (.sort filtered (fn [^js a ^js b] (- (.-mtime b) (.-mtime a))))
                total (.-length sorted)
                page (.slice sorted offset (+ offset limit))]
            (-> (js/Promise.all
                 (map
-                 (fn [f]
+                 (fn [^js f]
                    (-> (.readFile fs (.-path f) "utf-8")
                        (.then
                         (fn [raw]

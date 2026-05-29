@@ -1,0 +1,15 @@
+{:contract/kind :trigger
+ :contract/id "hello_world_inbox"
+ :contract/version 1
+ :enabled true
+
+ ;; A trigger is an actor agreement: when the listener observes a matching event,
+ ;; it may request the referenced action. It does not contain a temporal rule.
+ :trigger/kind :event
+ :trigger/listener "system_admin"
+ :trigger/events [:message/greeting]
+ :trigger/action :actions/hello-world
+ :trigger/domain {:actors ["system_admin"]
+                  :generators ["hello_world_demo"]}
+ :trigger/with {:actor-name "Knoxx"}
+ :data {:context {:reason "hello-world greeting demo"}}}

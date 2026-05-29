@@ -1,0 +1,92 @@
+
+{:action/id :example/hello-wrld
+ :action/responds-to [:message/greeting] ;; the types of events this is a valid action to  respond to
+
+ ;; a  catalog resources made available with  in the scope  of  the action
+ ;; If the receiving actor doesn't  have permission to use them, an error is emitted
+ :action/scope {:actions [[:time/is-morning? :as is-morning?]
+                          [:time/is-night? :as is-night?]]}
+ :action/expression
+ (let [time-of-day (if (is-morning?) "morning" (is-night?) "night" "day")
+       sender (:sender event )
+       name (:name  event  )
+       message-text (+ "Hello" name "!"
+                     "I hope you are  having a good" time-of-day
+                     "My name is" (actor/get-state :name)
+                     )]
+  (actor/send messge-text sender))
+ :action/result :message/send.expectation
+ }
+
+
+;;;
+
+{:trigger/id :example/inbox
+ ;; a catalog describing  valid event sources
+ ;;
+ :trigger/domain
+
+ ;; individual actors
+ {:actors [:actor/some-org.user.bob :actor/some-org.bot.jane]
+  ;; select from users
+  :users [:user/a-different-org.john :user/big-tacos.jim]
+  :bot [:bot/a-different-org.boop :bot/big-tacos.beep]
+  ;; or an org
+  :orgs [:org/bigcompany :org/small-company]}
+ :trigger/events [:message/greeting]
+ :trigger/action :example/hello-world
+ :triigger/conditions []
+ }
+
+{:trigger/id :discord/response-agent
+ :trigger/events [:discord/message :discord.dm.message]
+ :trigger/condition (let [text (:content event   )
+                          user-id (get-in event  :user :id)]
+                     (and user-id
+                      (or (str/includes? text (str "<@" user-id ">"))
+                       (str/includes? text (str "<@!" user-id ">")))))
+ :trigger/domain
+ {:bot [:bot/open-hax.open-hax]}
+
+
+
+ :trigger/action
+ {:target :eta-mu/spawn-agent
+  ;; shape  the input to meet the actions  expectatoins
+  :input/transform
+  {:agent-id  :open-hax/response-agent ;; remove the task  prompt from
+   ;; the responsibility of  the agent spec
+   :prompt (template "you have recieved a message from discord by user"
+
+            (get-in event :user  :username)":"(get-in event :user  :id)
+            "in the channel" (:channel event)
+            (:content event))}}
+ }
+
+(:schedule/id :creative-tick
+ :schedule/rule "*/30 * * * *"
+ :schedule/event :events/creative-tick
+ :schedule/observers
+ {:bot [:bot/open-hax.open-hax]}
+ )
+
+{:trigger/id :discord/creative-loop
+ :trigger/events [:events/creative-tick]
+ :trigger/domain
+ {:bot [:bot/open-hax.open-hax]}
+
+ :trigger/action
+ {:target :eta-mu/spawn-agent
+  ;; shape  the input to meet the actions  expectatoins
+  :input/transform
+  {:agent-id  :open-hax/bob-ross-mode ;; remove the task  prompt from
+   ;; the responsibility of  the agent spec
+   :prompt (template "engage in total creative freedom."
+            "Check the content in your home channels"
+            (actor/get-state :discord/home-channels)
+            "And blow everyone away with your art."
+
+            )}
+  }
+
+ }

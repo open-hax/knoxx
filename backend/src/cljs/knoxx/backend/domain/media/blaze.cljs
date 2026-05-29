@@ -116,43 +116,6 @@
 (def ^:private blaze-queue (atom {:in-flight false :waiting []}))
 
 
-(defn- run-queued!
-  "Enqueue fn; if nothing in flight, run immediately. Otherwise queue."
-  [f]
-  (js/Promise.
-   (fn [resolve reject]
-     (letfn [(try-run! []
-               (let [current @blaze-queue]
-                 (if (:in-flight current)
-                   (swap! blaze-queue update :waiting conj [resolve reject f])
-                   (do
-                     (swap! blaze-queue assoc :in-flight true)
-                     (-> (f)
-                         (.then (fn [result]
-                                  (resolve result)
-                                  (drain!)))
-                         (.catch (fn [err]
-                                   (reject err)
-                                   (drain!))))))))
-             (drain! []
-               (let [current (swap! blaze-queue
-                                    (fn [q]
-                                      (let [rest (vec (rest (:waiting q)))]
-                                        (if (seq rest)
-                                          {:in-flight true :waiting rest}
-                                          {:in-flight false :waiting []}))))
-                     next (first (:waiting current))]
-                 (when next
-                   (let [[rslv rjct fn-] next]
-                     (-> (fn-)
-                         (.then (fn [result]
-                                  (rslv result)
-                                  (drain!)))
-                         (.catch (fn [err]
-                                   (rjct err)
-                                   (drain!))))))))]
-       (try-run!)))))
-
 (defn- candidate-models
   [modality requested-model]
   (if-let [model (blank->nil requested-model)]

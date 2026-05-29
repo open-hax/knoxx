@@ -18,10 +18,6 @@
   []
   (dg/gateway-manager))
 
-(defn- discord-gateway-started?
-  []
-  (xdiscord/gateway-started? (discord-gateway-manager)))
-
 (defn- discord-token!
   [runtime]
   (-> (actor-credentials/get-credential! runtime "discord_bot")
@@ -163,7 +159,7 @@
                       (.warn js/console "[discord-tools] OpenPlanner label lookup failed; failing closed to avoid surfacing crossed/bad messages" error)
                       [])))))))
 (defn- discord-fetch-channel-messages!
-  [runtime config channel-id {:keys [limit before after around]}]
+  [runtime _config channel-id {:keys [limit before after around]}]
   (do
     (when (str/blank? channel-id)
       (throw (js/Error. "channel_id is required")))
@@ -700,7 +696,7 @@
 (def list-servers-params
   [:map])
 
-(defn list-servers-execute [runtime config _tool-call-id _params a b c]
+(defn list-servers-execute [runtime _config _tool-call-id _params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))]
     (maybe-tool-update! on-update "Listing Discord servers…")
     (-> (discord-list-guilds! runtime)
@@ -730,7 +726,7 @@
   [:map
    [:guild_id {:optional true :description "Optional guild/server ID. If omitted, returns channels across all visible guilds."} :string]])
 
-(defn list-channels-execute [runtime config _tool-call-id params a b c]
+(defn list-channels-execute [runtime _config _tool-call-id params a b c]
   (let [params (tool-params params)
         on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         guild-id (pget params :guild_id :guildId)]
@@ -774,7 +770,7 @@
    [:message_id {:description "Discord message ID to react to."} :string]
    [:emoji {:description "Emoji to react with (e.g. 👍, 🎉, 💀)."} :string]])
 
-(defn react-execute [runtime config _tool-call-id params a b c]
+(defn react-execute [runtime _config _tool-call-id params a b c]
   (let [params (tool-params params)
         on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         channel-id (or (pget params :channel_id :channelId) "")
@@ -800,7 +796,7 @@
    [:name {:description "Name of the thread (max 100 chars)."} :string]
    [:auto_archive_duration {:optional true :description "Auto-archive duration in minutes: 60, 1440 (default), 4320, or 10080."} :int]])
 
-(defn thread-create-execute [runtime config _tool-call-id params a b c]
+(defn thread-create-execute [runtime _config _tool-call-id params a b c]
   (let [params (tool-params params)
         on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         channel-id (or (pget params :channel_id :channelId) "")

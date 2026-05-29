@@ -10,7 +10,7 @@
             [knoxx.backend.infra.agent.policy :refer [validate-chat-policy!]]
             [knoxx.backend.infra.agent.turn :refer [ensure-conversation-access! ensure-session-id]]
             [knoxx.backend.shape.app-shapes :refer [normalize-chat-body normalize-control-body route!]]
-            [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-user-id ctx-user-email ctx-org-id run-visible?]]
+            [knoxx.backend.infra.auth.authz :refer [policy-db policy-db-enabled? policy-db-promise with-request-context! ensure-permission! ensure-tool! ensure-any-permission! ensure-org-scope! primary-context-role ctx-permitted? system-admin? ctx-role-slugs ctx-user-id ctx-user-email ctx-org-id run-visible?]]
             [knoxx.backend.infra.core-memory :refer [fetch-openplanner-session-rows! session-visible? session-matches-page-actor-filter? filter-authorized-memory-hits! authorized-session-ids!]]
             [knoxx.backend.infra.routes.resources :as resource-routes]
             [knoxx.backend.domain.contracts.sources :as contract-sources]
@@ -49,8 +49,8 @@
 
 (defn- queue-chat-start!
   [runtime config reply agent-ctx policy-model body accepted-response]
-  (js-await [validated (validate-chat-policy! agent-ctx policy-model)]
-            (js-await [sent (send-agent-turn! runtime config body)]
+  (js-await [_validated (validate-chat-policy! agent-ctx policy-model)]
+            (js-await [_sent (send-agent-turn! runtime config body)]
                       (json-response! reply 202 accepted-response))))
 
 
@@ -92,10 +92,26 @@
   [policy]
   (= "allow" (some-> (:effect policy) str str/lower-case)))
 
+(defn- tool-policy-id
+  [policy]
+  (some-> (or (:toolId policy) (:tool-id policy)) str str/trim not-empty))
+
+(defn- ctx-tool-policies
+  [ctx]
+  (vec (or (:toolPolicies ctx)
+           (:tool-policies ctx)
+           [])))
+
+(defn- parsed-auth-tool-policies
+  [parsed]
+  (vec (or (get-in parsed [:auth-context :toolPolicies])
+           (get-in parsed [:auth-context :tool-policies])
+           [])))
+
 (defn- requested-tool-policies
   [parsed]
   (let [from-spec (vec (or (get-in parsed [:agent-spec :tool-policies]) []))
-        from-auth (vec (or (get-in parsed [:auth-context :toolPolicies]) []))]
+        from-auth (parsed-auth-tool-policies parsed)]
     (cond
       (seq from-spec) from-spec
       (seq from-auth) from-auth
@@ -103,18 +119,19 @@
 
 (defn- effective-tool-policies
   [ctx parsed]
-  (let [requested (requested-tool-policies parsed)]
+  (let [requested (requested-tool-policies parsed)
+        context-policies (ctx-tool-policies ctx)]
     (cond
       (and (nil? ctx) (seq requested)) requested
-      (and (nil? ctx) (:auth-context parsed)) (vec (or (get-in parsed [:auth-context :toolPolicies]) []))
-      (empty? requested) (vec (or (:toolPolicies ctx) []))
+      (and (nil? ctx) (:auth-context parsed)) (parsed-auth-tool-policies parsed)
+      (empty? requested) context-policies
       (system-admin? ctx) requested
-      :else (let [allowed (->> (:toolPolicies ctx)
+      :else (let [allowed (->> context-policies
                                (filter allow-policy?)
-                               (map :toolId)
+                               (keep tool-policy-id)
                                set)]
               (->> requested
-                   (filter #(contains? allowed (:toolId %)))
+                   (filter #(contains? allowed (tool-policy-id %)))
                    vec)))))
 
 (defn- effective-auth-context
@@ -339,21 +356,6 @@
 (defn- pg-query-err [reply err]
   (json-response! reply 400 {:error (.-message err)}))
 
-(defn- zombie-recovered [queue-turn! _]
-  (queue-turn! "Async direct agent chat failed (recovered from zombie)"))
-
-(defn- zombie-recovery-failed [reply err]
-  (.error js/console "Failed to abort zombie session" err)
-  (json-response! reply 409 {:ok false
-                             :error (str "Agent is already processing. Zombie recovery failed: " err)
-                             :code "agent_already_processing"
-                             :has_active_stream false
-                             :can_send false}))
-
-(defn- session-check-failed [queue-turn! err]
-  (.error js/console "Session status check failed" err)
-  (queue-turn! "Async agent chat failed"))
-
 (defn- health-deps-ok [reply proxx-configured openplanner-configured [proxx-res openplanner-res]]
   (let [proxx-ok       (and proxx-configured (:ok proxx-res))
         openplanner-ok (and openplanner-configured (:ok openplanner-res))
@@ -416,13 +418,6 @@
                    :documents (response-body (nth results 0))
                    :graph (response-body (nth results 1))}))
 
-(defn- undo-session-ok [reply session-id conversation-id removed-count rewound-messages]
-  (json-response! reply 200 {:ok true
-                             :session_id session-id
-                             :conversation_id conversation-id
-                             :removed_count removed-count
-                             :remaining_messages (count rewound-messages)}))
-
 (defn- undo-session-err [reply err]
   (json-response! reply 500 {:ok false :error (str err)}))
 
@@ -432,22 +427,13 @@
 (defn- agents-active-err [reply err]
   (error-response! reply err 502))
 
-(defn- abort-admin-ok [reply abort-result conversation-id resolved-session-id resolved-run-id]
-  (json-response! reply 200
-                  (assoc abort-result
-                         :ok true
-                         :conversation_id conversation-id
-                         :session_id resolved-session-id
-                         :run_id resolved-run-id
-                         :marked_aborted true)))
-
 (defn- run-events-ok [reply run-id events]
   (json-response! reply 200 {:run_id run-id :events events :count (count events)}))
 
 (defn- run-events-err [reply err]
   (json-response! reply 500 {:error (str err)}))
 
-(defn- shibboleth-ok [reply request body data]
+(defn- shibboleth-ok [config reply request body data]
   (let [session (or (:session data) {})
         session-id (str (or (:id session) ""))
         ui-url (if (and (not (str/blank? session-id))
@@ -507,7 +493,7 @@
                          (get-in parsed [:agent-spec :model])
                          (:llmModel @settings-state*))
         provided-session-id (:session-id parsed)
-        session-id (ensure-session-id node-crypto provided-session-id)
+        session-id (ensure-session-id provided-session-id)
         conversation-id (or (:conversation-id parsed)
                             (.randomUUID node-crypto))
         run-id (or (:run-id parsed)
@@ -564,7 +550,7 @@
                          (get-in parsed [:agent-spec :model])
                          (:llmModel @settings-state*))
         provided-session-id (:session-id parsed)
-        session-id (ensure-session-id node-crypto provided-session-id)
+        session-id (ensure-session-id provided-session-id)
         conversation-id (or (:conversation-id parsed) (.randomUUID node-crypto))
         run-id (or (:run-id parsed) (.randomUUID node-crypto))
         body (assoc parsed :session-id session-id :conversation-id conversation-id :run-id run-id :mode "direct" :auth-context agent-ctx)
@@ -609,7 +595,7 @@
                (.error js/console "Session status check failed" err)
                (queue-turn! "Async direct agent chat failed"))))))
 
-(defn- handle-admin-abort [reply ctx request]
+(defn- handle-admin-abort [reply _ctx request]
   (let [raw (request-body request)
         requested-conversation-id (str (or (aget raw "conversation_id")
                                            (aget raw "conversationId")
@@ -668,6 +654,23 @@
         (.catch (fn [err]
                   (error-response! reply err 409))))))
 
+(defn- session-status-running-response
+  [session-id session runtime-active? can-send stalled? latest-event]
+  {:session_id session-id
+   :conversation_id (:conversation_id session)
+   :run_id (:run_id session)
+   :status (:status session)
+   :has_active_stream (boolean (or (:has_active_stream session) runtime-active?))
+   :can_send (if stalled? false (:can-send can-send))
+   :reason (cond
+             stalled? "Session looked stalled after restart; recovery requested."
+             runtime-active? "Session is already processing. Use steer, follow-up, abort, or wait."
+             :else (:reason can-send))
+   :model (:model session)
+   :updated_at (:updated_at session)
+   :latest_event_at (:at latest-event)
+   :recovery_requested stalled?})
+
 (defn- handle-session-status [runtime config reply request]
   (let [session-id (or (aget request "query" "session_id")
                        (aget request "query" "sessionId")
@@ -698,21 +701,8 @@
                                             (.catch (fn [err]
                                                       (js/console.error "On-demand session recovery failed" err)))))
                                       (json-response! reply 200
-                                                      {:session_id session-id
-                                                       :conversation_id (:conversation_id session)
-                                                       :run_id (:run_id session)
-                                                       :status (:status session)
-                                                       :has_active_stream (boolean (or (:has_active_stream session)
-                                                                                       runtime-active?))
-                                                       :can_send (if stalled? false (:can-send can-send))
-                                                       :reason (cond
-                                                                 stalled? "Session looked stalled after restart; recovery requested."
-                                                                 runtime-active? "Session is already processing. Use steer, follow-up, abort, or wait."
-                                                                 :else (:reason can-send))
-                                                       :model (:model session)
-                                                       :updated_at (:updated_at session)
-                                                       :latest_event_at (:at latest-event)
-                                                       :recovery_requested stalled?}))))))
+                                                      (session-status-running-response
+                                                       session-id session runtime-active? can-send stalled? latest-event)))))))
                      ;; No session in Redis - trust in-memory runtime if it still has a live turn.
                      (if (runtime-processing-session? conversation-id)
                        (json-response! reply 200
@@ -827,11 +817,11 @@
                                :org (:org ctx)
                                :membership (:membership ctx)
                                :roles (vec (or (:roles ctx) []))
-                               :roleSlugs (vec (or (:roleSlugs ctx) []))
+                               :roleSlugs (vec (ctx-role-slugs ctx))
                                :permissions (vec (or (:permissions ctx) []))
-                               :toolPolicies (vec (or (:toolPolicies ctx) []))
-                               :membershipToolPolicies (vec (or (:membershipToolPolicies ctx) []))
-                               :isSystemAdmin (boolean (:isSystemAdmin ctx))
+                               :toolPolicies (vec (or (:tool-policies ctx) (:toolPolicies ctx) []))
+                               :membershipToolPolicies (vec (or (:membership-tool-policies ctx) (:membershipToolPolicies ctx) []))
+                               :isSystemAdmin (system-admin? ctx)
                                :primaryRole (primary-context-role ctx)})))
 
 (defroute api-knoxx-proxy-get! []
@@ -1397,20 +1387,20 @@
                          :json payload})
             (.then (fn [resp]
                      (if (:ok resp)
-                       (shibboleth-ok reply request body (:body resp))
+                       (shibboleth-ok config reply request body (:body resp))
                        (shibboleth-import-failed reply resp))))
             (.catch (partial shibboleth-unreachable reply)))))))
 
-(defn register-routes!
-  [runtime app config lounge-messages*]
-  (ensure-settings! config)
-
+(defn- register-core-routes!
+  [app runtime config]
   (health! app runtime config deps)
   (dev-hmr! app runtime config deps)
   (config! app runtime config deps)
   (api-knoxx-agents-catalog! app runtime config deps)
-  (api-auth-context! app runtime config deps)
+  (api-auth-context! app runtime config deps))
 
+(defn- register-admin-and-memory-routes!
+  [app runtime config lounge-messages*]
   (admin-routes/register-admin-routes! app runtime
                                        {:route! route!
                                         :json-response! json-response!
@@ -1421,7 +1411,6 @@
                                         :policy-db policy-db
                                         :policy-db-promise policy-db-promise
                                         :http-error http-error})
-
   (memory-routes/register-memory-routes! app runtime config
                                          {:route! route!
                                           :json-response! json-response!
@@ -1452,8 +1441,10 @@
                                           :now-iso now-iso
                                           :broadcast-ws! broadcast-ws!
                                           :lounge-messages* lounge-messages*
-                                          :authorized-session-ids! authorized-session-ids!})
+                                          :authorized-session-ids! authorized-session-ids!}))
 
+(defn- register-tooling-route-groups!
+  [app runtime config]
   (let [session-guard          (guards/make-session-guard runtime)
         optional-session-guard (guards/make-optional-session-guard runtime)]
     (tool-routes/register-tool-routes! app runtime config
@@ -1470,30 +1461,28 @@
                                         :clip-text clip-text
                                         :session-guard session-guard
                                         :optional-session-guard optional-session-guard})
-
     (actor-routes/register-actor-routes! app runtime config
                                          {:route! route!
                                           :json-response! json-response!
                                           :error-response! error-response!
                                           :with-request-context! with-request-context!
                                           :ensure-permission! ensure-permission!
-                                          :session-guard session-guard}))
+                                          :session-guard session-guard})))
 
+(defn- register-resource-and-media-routes!
+  [app runtime config]
   (resource-routes/register-resource-routes! app runtime config
-                                               {:route! route!
-                                                :json-response! json-response!
-                                                :error-response! error-response!
-                                                :with-request-context! with-request-context!
-                                                :ensure-permission! ensure-permission!})
-
+                                             {:route! route!
+                                              :json-response! json-response!
+                                              :error-response! error-response!
+                                              :with-request-context! with-request-context!
+                                              :ensure-permission! ensure-permission!})
   (model-routes/register-model-routes! app runtime config)
-
   (voice-routes/register-voice-routes! app runtime config
                                        {:route! route!
                                         :json-response! json-response!
                                         :with-request-context! with-request-context!
                                         :ensure-tool! ensure-tool!})
-
   (document-routes/register-document-routes! app runtime config
                                              {:route! route!
                                               :json-response! json-response!
@@ -1507,15 +1496,12 @@
                                               :fetch-json fetch-json
                                               :openai-auth-error openai-auth-error
                                               :request-query-string request-query-string})
-
   (workspace-media-routes/register-workspace-media-routes! app runtime config
                                                            {:route! route!
                                                             :json-response! json-response!
                                                             :error-response! error-response!
                                                             :with-request-context! with-request-context!
                                                             :ensure-tool! ensure-tool!})
-
-  ;; Broadcast studio routes (audio library, player state, playlist)
   (studio-routes/register-studio-routes! app runtime config
                                          {:route! route!
                                           :json-response! json-response!
@@ -1524,8 +1510,10 @@
                                           :ensure-tool! ensure-tool!
                                           :ensure-permission! ensure-permission!
                                           :policy-db policy-db
-                                          :policy-db-promise policy-db-promise})
+                                          :policy-db-promise policy-db-promise}))
 
+(defn- register-ingestion-routes!
+  [app runtime config]
   (api-knoxx-proxy-get! app runtime config deps)
   (api-knoxx-proxy-post! app runtime config deps)
   (api-knoxx-proxy-put! app runtime config deps)
@@ -1538,11 +1526,10 @@
   (api-ingestion-jobs-post! app runtime config deps)
   (api-ingestion-proxy-get! app runtime config deps)
   (api-ingestion-proxy-post! app runtime config deps)
-  (api-ingestion-proxy-delete! app runtime config deps)
+  (api-ingestion-proxy-delete! app runtime config deps))
 
-  ;; ── Data explorer routes ─────────────────────────────────────────────
-  ;; Service health aggregation
-  ;; OpenPlanner API proxy for documents, search, etc.
+(defn- register-data-routes!
+  [app runtime config]
   (api-data-op-get! app runtime config deps)
   (api-data-op-post! app runtime config deps)
   (api-data-op-patch! app runtime config deps)
@@ -1558,30 +1545,29 @@
   (api-data-file! app runtime config deps)
   (api-data-graphql! app runtime config deps)
   (api-data-graph-status! app runtime config deps)
-  (api-data-graph-view-url! app runtime config deps)
+  (api-data-graph-view-url! app runtime config deps))
 
+(defn- register-knoxx-run-routes!
+  [app runtime config]
   (api-knoxx-health! app runtime config deps)
   (api-knoxx-chat! app runtime config deps)
   (api-knoxx-chat-start! app runtime config deps)
   (api-knoxx-direct! app runtime config deps)
   (api-knoxx-direct-start! app runtime config deps)
-
-
   (api-knoxx-steer! app runtime config deps)
   (api-knoxx-follow-up! app runtime config deps)
   (api-knoxx-abort! app runtime config deps)
   (api-knoxx-session-undo! app runtime config deps)
-
   (api-knoxx-agents-active! app runtime config deps)
   (api-admin-agents-active! app runtime config deps)
   (api-admin-agents-abort! app runtime config deps)
-
   (api-knoxx-session-status! app runtime config deps)
   (api-knoxx-run-events! app runtime config deps)
   (api-knoxx-run-get! app runtime config deps)
-  (api-shibboleth-handoff! app runtime config deps)
+  (api-shibboleth-handoff! app runtime config deps))
 
-  ;; Translation routes
+(defn- register-translation-route-group!
+  [app runtime config]
   (translation-routes/register-translation-routes! app runtime config
                                                    {:json-response! json-response!
                                                     :error-response! error-response!
@@ -1590,3 +1576,15 @@
                                                     :ctx-user-id ctx-user-id
                                                     :ctx-user-email ctx-user-email
                                                     :ctx-org-id ctx-org-id}))
+
+(defn register-routes!
+  [runtime app config lounge-messages*]
+  (ensure-settings! config)
+  (register-core-routes! app runtime config)
+  (register-admin-and-memory-routes! app runtime config lounge-messages*)
+  (register-tooling-route-groups! app runtime config)
+  (register-resource-and-media-routes! app runtime config)
+  (register-ingestion-routes! app runtime config)
+  (register-data-routes! app runtime config)
+  (register-knoxx-run-routes! app runtime config)
+  (register-translation-route-group! app runtime config))

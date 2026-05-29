@@ -26,11 +26,11 @@
         iv (.randomBytes crypto 12)
         data (js/JSON.stringify (clj->js payload))
         key-buf (.subarray (.from js/Buffer key "hex") 0 32)
-        cipher (.createCipheriv crypto "aes-256-gcm" key-buf iv)]
-    (let [encrypted (str (.update cipher data "utf8" "base64url")
-                         (.final cipher "base64url"))
-          tag (.getAuthTag cipher)]
-      (str (.toString iv "base64url") ":" encrypted ":" (.toString tag "base64url")))))
+        cipher (.createCipheriv crypto "aes-256-gcm" key-buf iv)
+        encrypted (str (.update cipher data "utf8" "base64url")
+                       (.final cipher "base64url"))
+        tag (.getAuthTag cipher)]
+    (str (.toString iv "base64url") ":" encrypted ":" (.toString tag "base64url"))))
 
 
 (defn verify-token
@@ -288,35 +288,6 @@
 
 ;; --- Extracted helpers for handle-github-callback (paren hygiene) ----------
 
-(defn- bootstrap-role-slugs-for-email
-  [email]
-  (let [normalized-email (str/lower-case (str/trim (str (or email ""))))
-        bootstrap-admin-email (some-> (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL")
-                                          "system-admin@open-hax.local")
-                                      str
-                                      str/trim
-                                      str/lower-case)
-        allowlisted-emails (->> (str/split (str (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_ALLOWLIST_EMAILS") "")) #"[\s,]+")
-                                (map str/trim)
-                                (remove str/blank?)
-                                (map str/lower-case)
-                                clojure.core/set)
-        allowlist-role-slugs (->> (str/split (str (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_ALLOWLIST_ROLE_SLUGS") "")) #"[\s,]+")
-                                  (map str/trim)
-                                  (remove str/blank?)
-                                  vec)]
-    (cond
-      (= normalized-email bootstrap-admin-email)
-      ["system_admin"]
-
-      (contains? allowlisted-emails normalized-email)
-      (if (seq allowlist-role-slugs)
-        allowlist-role-slugs
-        ["knowledge_worker"])
-
-      :else
-      ["knowledge_worker"])))
-
 (defn- bootstrap-admin-email?
   [email]
   (let [normalized-email (str/lower-case (str/trim (str (or email ""))))
@@ -330,28 +301,8 @@
 (defn- has-system-admin-role?
   [ctx]
   (boolean
-   (some #(= (str %) "system_admin")
-         (or (:role-slugs ctx) []))))
-
-(defn- ensure-bootstrap-admin-role!
-  "Repair an existing bootstrap admin account that was created before the
-   bootstrap email config was set correctly. If the authenticating GitHub email
-   now matches the configured bootstrap admin email, guarantee the membership
-   carries the global system_admin role before building the session context."
-  [policy-context ctx email]
-  (let [membership-id (get-in ctx [:membership :id])
-        org-id (get-in ctx [:org :id])]
-    (if (and membership-id
-             (bootstrap-admin-email? email)
-             (not (has-system-admin-role? ctx)))
-      (-> (policy-db/set-membership-roles-for-context!
-           policy-context
-           membership-id
-           {:org-id org-id
-            :role-slugs ["system_admin"]})
-          (.then (fn [_]
-                   (policy-db/resolve-context! policy-context {"x-knoxx-membership-id" membership-id}))))
-      (js/Promise.resolve ctx))))
+   (some #{"system_admin" "system-admin"}
+         (map str (or (:role-slugs ctx) [])))))
 
 (defn- ensure-email-membership!
   [policy-context {:keys [email display-name auth-provider external-subject]}]

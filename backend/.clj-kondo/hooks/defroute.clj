@@ -1,5 +1,6 @@
 (ns hooks.defroute
-  (:require [clj-kondo.hooks-api :as api]))
+  (:require [clj-kondo.hooks-api :as api]
+            [clojure.string :as str]))
 
 ;; Teaches clj-kondo the shape of:
 ;;
@@ -56,6 +57,16 @@
     (api/vector-node [(api/token-node '&) (api/token-node '_)])
     (api/token-node nil)]))
 
+(defn- atom-node []
+  (api/list-node
+   [(api/token-node 'atom)
+    (api/vector-node [])]))
+
+(defn- binding-value-node [sym]
+  (if (str/ends-with? (name sym) "*")
+    (atom-node)
+    (any-fn-node)))
+
 (defn- collect-body-syms
   "Walk body nodes recursively, returning a set of all symbol sexprs found."
   [nodes]
@@ -97,7 +108,7 @@
         all-syms          (concat needed-std-syms needed-extra-syms)
         binding-vec       (api/vector-node
                            (mapcat (fn [sym]
-                                     [(api/token-node sym) (any-fn-node)])
+                                     [(api/token-node sym) (binding-value-node sym)])
                                    all-syms))
         ;; All four structural params use _ prefix: they're never referenced in body
         ;; text (app/deps are macro-internal; runtime/config are injected via let

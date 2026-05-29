@@ -40,7 +40,17 @@ function activeRun(overrides: Partial<ActiveAgentSummary> = {}): ActiveAgentSumm
     request_messages: [],
     settings: {},
     resources: {},
-    agent_spec: { contractId: "fork_tales_creative_director", subAgentId: "fork_tales_creative_director" },
+    agent_spec: {
+      contractId: "fork_tales_creative_director",
+      actorId: "discord_automation",
+      subAgentId: "fork_tales_creative_director",
+      triggerId: "fork_tales_creative_director_cron",
+      eventType: "schedule/fork-tales-creative-director",
+      eventTypes: ["schedule/fork-tales-creative-director"],
+      eventId: "evt-fork-tales",
+      eventScopeId: "fork_tales_creative_director",
+      scheduleId: "fork_tales_creative_director",
+    },
     ...overrides,
   } as ActiveAgentSummary;
 }
@@ -54,6 +64,12 @@ function memorySession(overrides: Partial<MemorySessionSummary> = {}): MemorySes
     event_count: 7,
     contract_id: "fork_tales_creative_director",
     actor_id: "fork_tales_creative_director",
+    trigger_id: "fork_tales_creative_director_cron",
+    event_type: "schedule/fork-tales-creative-director",
+    event_types: ["schedule/fork-tales-creative-director"],
+    event_id: "evt-fork-tales",
+    event_scope_id: "fork_tales_creative_director",
+    schedule_id: "fork_tales_creative_director",
     is_active: false,
     active_status: "completed",
     has_active_stream: false,
@@ -71,7 +87,7 @@ beforeEach(() => {
     ],
     total: 2,
     offset: 0,
-    limit: 40,
+    limit: 20,
     has_more: false,
   });
   mockListAdminActiveAgents.mockResolvedValue([
@@ -97,6 +113,9 @@ describe("AgentAuditSessionList utilities", () => {
     expect(session?.auditSource).toBe("active");
     expect(session?.contract_id).toBe("fork_tales_creative_director");
     expect(session?.active_session_id).toBe("sid-1");
+    expect(session?.trigger_id).toBe("fork_tales_creative_director_cron");
+    expect(session?.event_type).toBe("schedule/fork-tales-creative-director");
+    expect(session?.schedule_id).toBe("fork_tales_creative_director");
   });
 
   it("merges active and history into one active-first list", () => {
@@ -133,14 +152,63 @@ describe("AgentAuditSessionList component", () => {
 
     expect(await screen.findByText("Fork history")).toBeInTheDocument();
     expect(screen.getByText("sub-agent fork_tales_creative_director")).toBeInTheDocument();
+    expect(screen.getAllByText("trigger fork_tales_creative_director_cron").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("event schedule/fork-tales-creative-director").length).toBeGreaterThan(0);
     expect(screen.queryByText("Other history")).not.toBeInTheDocument();
-    expect(mockListMemorySessions).toHaveBeenCalledWith({ limit: 40, contractId: "fork_tales_creative_director" });
-    expect(mockListAdminActiveAgents).toHaveBeenCalledWith(250);
+    expect(mockListMemorySessions).toHaveBeenCalledWith({ limit: 20, offset: 0, contractId: "fork_tales_creative_director" });
+    expect(mockListAdminActiveAgents).toHaveBeenCalledWith(25);
 
     fireEvent.change(screen.getByLabelText("Search audit sessions"), { target: { value: "fork history" } });
     await waitFor(() => expect(screen.queryByText("sub-agent fork_tales_creative_director")).not.toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: /Fork history/ }));
     expect(resumeMemorySession).toHaveBeenCalledWith("conv-history");
+  });
+
+  it("loads the sidebar history in 20-row pages with infinite scroll", async () => {
+    mockListMemorySessions
+      .mockResolvedValueOnce({
+        ok: true,
+        rows: [memorySession({ session: "first-page", title: "First page" })],
+        total: 2,
+        offset: 0,
+        limit: 20,
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        rows: [memorySession({ session: "second-page", title: "Second page" })],
+        total: 2,
+        offset: 1,
+        limit: 20,
+        has_more: false,
+      });
+    mockListAdminActiveAgents.mockResolvedValue([]);
+
+    render(
+      <AgentAuditSessionList
+        builtInContractId="fork_tales_creative_director"
+        controller={{
+          conversationId: null,
+          sessionId: "",
+          loadingMemorySessionId: null,
+          resumeMemorySession: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("First page")).toBeInTheDocument();
+    expect(mockListMemorySessions).toHaveBeenNthCalledWith(1, { limit: 20, offset: 0, contractId: "fork_tales_creative_director" });
+
+    const list = screen.getByLabelText("Audit sessions list");
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, value: 100 },
+      clientHeight: { configurable: true, value: 100 },
+    });
+    fireEvent.scroll(list);
+
+    expect(await screen.findByText("Second page")).toBeInTheDocument();
+    expect(mockListMemorySessions).toHaveBeenNthCalledWith(2, { limit: 20, offset: 1, contractId: "fork_tales_creative_director" });
   });
 });

@@ -151,9 +151,11 @@ const OPENPLANNER_BASE = "/api/openplanner/v1";
 const BROADCAST_STUDIO_PAGE_ACTOR_ID = "broadcast_studio";
 const BROADCAST_STUDIO_LABELER_CONTRACT_ID = "broadcast_studio_audio_labeler";
 const QUEUE_RENDER_LIMIT = 250;
+const WORKSPACE_GRAPH_PROJECT = import.meta.env.VITE_WORKSPACE_PROJECT || "workspace";
+const WORKSPACE_FILE_NODE_PREFIX = `${WORKSPACE_GRAPH_PROJECT}:file:`;
 
 function audioFileNodeId(path: string): string {
-  return `devel:file:${path}`;
+  return `${WORKSPACE_FILE_NODE_PREFIX}${path}`;
 }
 
 async function loadGraphLabels(search = ""): Promise<LabelNode[]> {
@@ -223,8 +225,8 @@ async function loadAudioPathsForLabelId(labelId: string): Promise<string[]> {
 
   return (res.nodes ?? [])
     .map((node) => node.node_id)
-    .filter((nodeId) => nodeId.startsWith("devel:file:"))
-    .map((nodeId) => nodeId.slice("devel:file:".length));
+    .filter((nodeId) => nodeId.startsWith(WORKSPACE_FILE_NODE_PREFIX))
+    .map((nodeId) => nodeId.slice(WORKSPACE_FILE_NODE_PREFIX.length));
 }
 
 function cleanSuggestedLabel(raw: string): string | null {

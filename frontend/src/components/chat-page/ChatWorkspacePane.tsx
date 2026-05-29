@@ -25,7 +25,7 @@ export function ChatWorkspacePane({
   onOpenSourceInPreview,
 }: ChatWorkspacePaneProps) {
   return (
-    <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", overflow: "hidden" }}>
+    <div style={{ flex: 1, width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", overflow: "hidden" }}>
       <ChatMainPane
         showFiles={showFiles}
         showSettings={controller.showSettings}

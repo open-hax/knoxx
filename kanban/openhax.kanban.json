@@ -1,0 +1,4 @@
+{
+  "tasksDir": "kanban",
+  "boardFile": ".kanban/board.json"
+}

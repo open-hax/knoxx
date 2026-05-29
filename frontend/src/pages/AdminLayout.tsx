@@ -119,7 +119,7 @@ function useAdminContext(): AdminCtx {
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
 
   const [orgForm, setOrgForm] = useState<OrgFormState>({ name: '', slug: '', kind: 'customer' });
-  const [userForm, setUserForm] = useState<UserFormState>({ actorId: '', email: '', displayName: '', roleSlugs: ['basic_user'] });
+  const [userForm, setUserForm] = useState<UserFormState>({ actorId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
   const [roleForm, setRoleForm] = useState<RoleFormState>({ name: '', slug: '', permissionCodes: [], toolIds: ['read', 'canvas'] });
   const [lakeForm, setLakeForm] = useState<LakeFormState>({ name: '', slug: '', kind: 'workspace_docs', workspaceRoot: '' });
 
@@ -260,8 +260,8 @@ function AdminActorsPage({ ctx }: { ctx: AdminCtx }) {
     try {
       const actorId = ctx.userForm.actorId.trim();
       const email = ctx.userForm.email.trim();
-      await (await import('../lib/nextApi')).createOrgActor(ctx.selectedOrgId, { actorId: actorId || undefined, email: email || undefined, displayName: ctx.userForm.displayName.trim() || actorId || email, roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic_user'] });
-      ctx.setUserForm({ actorId: '', email: '', displayName: '', roleSlugs: ['basic_user'] });
+      await (await import('../lib/nextApi')).createOrgActor(ctx.selectedOrgId, { actorId: actorId || undefined, email: email || undefined, displayName: ctx.userForm.displayName.trim() || actorId || email, roleSlugs: ctx.userForm.roleSlugs.length > 0 ? ctx.userForm.roleSlugs : ['basic-user'] });
+      ctx.setUserForm({ actorId: '', email: '', displayName: '', roleSlugs: ['basic-user'] });
       ctx.setNotice({ tone: 'success', text: 'Actor created.' }); await ctx.refresh();
     } catch (e) { ctx.setNotice({ tone: 'error', text: errorMessage(e) }); } finally { ctx.setCreatingUser(false); }
   };

@@ -89,7 +89,7 @@
    [:channel_id {:description "Discord voice channel ID to join."} :string]
    [:guild_id {:optional true :description "Guild ID with an active voice connection."} :string]])
 
-(defn voice-join-execute [runtime config _tool-call-id params a b c]
+(defn voice-join-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         ch (or (aget params "channel_id") (aget params "channelId") "")
@@ -119,7 +119,7 @@
   [:map
    [:guild_id {:description "Guild ID with an active voice connection."} :string]])
 
-(defn voice-leave-execute [runtime config _tool-call-id params a b c]
+(defn voice-leave-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")]
@@ -149,7 +149,7 @@
    [:voice_id {:optional true :description "Voxx/Kokoro voice ID. Default: af_jessica."} :string]
    [:model_id {:optional true :description "Voxx model ID. Default: kokoro."} :string]])
 
-(defn voice-say-execute [runtime config _tool-call-id params a b c]
+(defn voice-say-execute [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")
@@ -183,7 +183,7 @@
 (def voice-status-params
   [:map])
 
-(defn voice-status-execute [runtime config _tool-call-id _params a b c]
+(defn voice-status-execute [_runtime _config _tool-call-id _params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)]
     (when-not m (throw (js/Error. "Gateway not started")))
@@ -424,7 +424,7 @@
                                  {:guildId g :listening true :mode "asr_steer"})))))
 
 (defn voice-listen-execute
-  [runtime config _tool-call-id params a b c]
+  [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")
@@ -499,7 +499,7 @@
    [:max_windows_per_event {:optional true :description "Maximum queued WAV windows per emitted event. Default 3."} :int]])
 
 (defn voice-agent-event-listen-execute
-  [runtime config _tool-call-id params a b c]
+  [_runtime config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")
@@ -556,7 +556,7 @@
   [:map
    [:guild_id {:description "Guild ID with an active voice connection."} :string]])
 
-(defn voice-stop-listen-execute [runtime config _tool-call-id params a b c]
+(defn voice-stop-listen-execute [_runtime _config _tool-call-id params _a _b _c]
   (let [m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")]
     (when m
@@ -579,7 +579,7 @@
    [:guild_id {:description "Guild ID with an active voice connection."} :string]
    [:channel_id {:description "Voice channel ID to list members of."} :string]])
 
-(defn voice-list-members-execute [runtime config _tool-call-id params a b c]
+(defn voice-list-members-execute [_runtime _config _tool-call-id params a b c]
   (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
         m (gw)
         g (or (aget params "guild_id") (aget params "guildId") "")

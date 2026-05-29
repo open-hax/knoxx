@@ -161,83 +161,45 @@
       (.catch (fn [err]
                 (send-proxx-models-failure! ctx err)))))
 
-(defn register-model-routes!
-  [app runtime config]
+(defn- register-proxx-health-route!
+  [app config]
   (route! app "GET" "/api/proxx/health"
           (fn [request reply]
-            (send-proxx-health! (proxx-health-ctx config request reply))))
+            (send-proxx-health! (proxx-health-ctx config request reply)))))
 
-  ;; ============================================================
-  ;; Proxx observability (analytics + request logs)
-  ;;
-  ;; Knoxx backend proxies Proxx's canonical /api/v1/* observability
-  ;; endpoints so the browser never needs the Proxx auth token.
-  ;; ============================================================
+(defn- register-proxx-observability-routes!
+  [app runtime config]
+  (doseq [[path handler error-label]
+          [["/api/proxx/observability/request-logs" proxx-client/request-logs! "Proxx request logs failed"]
+           ["/api/proxx/observability/dashboard/overview" proxx-client/dashboard-overview! "Proxx dashboard overview failed"]
+           ["/api/proxx/observability/analytics/provider-model" proxx-client/provider-model-analytics! "Proxx provider-model analytics failed"]]]
+    (route! app "GET" path
+            (fn [request reply]
+              (with-request-context! runtime request reply
+                (fn [ctx]
+                  (try
+                    (ensure-permission! ctx "org.proxx.observability.read")
+                    (if-not (proxx-configured? config)
+                      (json-response! reply 503 {:error "Proxx is not configured"})
+                      (-> (handler (proxx-client/client config) (request-query-string request))
+                          (.then (fn [resp]
+                                   (if (:ok resp)
+                                     (json-response! reply 200 (:body resp))
+                                     (json-response! reply 502 {:error error-label
+                                                                :details (:body resp)}))))
+                          (.catch (fn [err]
+                                    (json-response! reply 502 {:error (str err)})))))
+                    (catch :default err
+                      (error-response! reply err)))))))))
 
-  (route! app "GET" "/api/proxx/observability/request-logs"
-          (fn [request reply]
-            (with-request-context! runtime request reply
-              (fn [ctx]
-                (try
-                  (ensure-permission! ctx "org.proxx.observability.read")
-                  (if-not (proxx-configured? config)
-                    (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (proxx-client/request-logs! (proxx-client/client config) (request-query-string request))
-                        (.then (fn [resp]
-                                 (if (:ok resp)
-                                   (json-response! reply 200 (:body resp))
-                                   (json-response! reply 502 {:error "Proxx request logs failed"
-                                                              :details (:body resp)}))))
-                        (.catch (fn [err]
-                                  (json-response! reply 502 {:error (str err)})))))
-                  (catch :default err
-                    (error-response! reply err)))))))
-
-  (route! app "GET" "/api/proxx/observability/dashboard/overview"
-          (fn [request reply]
-            (with-request-context! runtime request reply
-              (fn [ctx]
-                (try
-                  (ensure-permission! ctx "org.proxx.observability.read")
-                  (if-not (proxx-configured? config)
-                    (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (proxx-client/dashboard-overview! (proxx-client/client config) (request-query-string request))
-                        (.then (fn [resp]
-                                 (if (:ok resp)
-                                   (json-response! reply 200 (:body resp))
-                                   (json-response! reply 502 {:error "Proxx dashboard overview failed"
-                                                              :details (:body resp)}))))
-                        (.catch (fn [err]
-                                  (json-response! reply 502 {:error (str err)})))))
-                  (catch :default err
-                    (error-response! reply err)))))))
-
-  (route! app "GET" "/api/proxx/observability/analytics/provider-model"
-          (fn [request reply]
-            (with-request-context! runtime request reply
-              (fn [ctx]
-                (try
-                  (ensure-permission! ctx "org.proxx.observability.read")
-                  (if-not (proxx-configured? config)
-                    (json-response! reply 503 {:error "Proxx is not configured"})
-                    (-> (proxx-client/provider-model-analytics! (proxx-client/client config) (request-query-string request))
-                        (.then (fn [resp]
-                                 (if (:ok resp)
-                                   (json-response! reply 200 (:body resp))
-                                   (json-response! reply 502 {:error "Proxx provider-model analytics failed"
-                                                              :details (:body resp)}))))
-                        (.catch (fn [err]
-                                  (json-response! reply 502 {:error (str err)})))))
-                  (catch :default err
-                    (error-response! reply err)))))))
-
+(defn- register-proxx-model-and-chat-routes!
+  [app runtime config]
   (route! app "GET" "/api/proxx/models"
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
                 (when ctx (ensure-permission! ctx "agent.chat.use"))
                 (send-proxx-models! (proxx-models-ctx config request reply ctx))))))
-
   (route! app "POST" "/api/proxx/chat"
           (fn [request reply]
             (let [body (request-body request)
@@ -254,20 +216,18 @@
                   (.then (fn [resp]
                            (if (:ok resp)
                              (let [data (:body resp)
-                                   choices (or (:choices data) [])
-                                   first-choice (first choices)
-                                   message (or (:message first-choice) {})
-                                   content (or (:content message)
-                                               (:text first-choice)
-                                               "")]
-                               (json-response! reply 200 {:answer content
+                                   first-choice (first (or (:choices data) []))
+                                   message (or (:message first-choice) {})]
+                               (json-response! reply 200 {:answer (or (:content message) (:text first-choice) "")
                                                           :model (or (:model data) (:model payload))
                                                           :rag_context nil}))
                              (json-response! reply 502 {:error "Proxx chat failed"
                                                         :details (:body resp)}))))
                   (.catch (fn [err]
-                            (json-response! reply 502 {:error (str err)})))))))
+                            (json-response! reply 502 {:error (str err)}))))))))
 
+(defn- register-local-models-route!
+  [app runtime config]
   (route! app "GET" "/api/models"
           (fn [request reply]
             (with-request-context! runtime request reply
@@ -276,29 +236,29 @@
                 (-> (proxx-client/models! (proxx-client/client config))
                     (.then (fn [resp]
                              (if (:ok resp)
-                               (let [items (or (get-in resp [:body :data]) [])
-                                     models (mapv (fn [item]
-                                                    {:id (str (or (:id item) ""))
-                                                     :name (str (or (:id item) ""))
-                                                     :path ""
-                                                     :size_bytes 0
-                                                     :modified_at (now-iso)
-                                                     :hash16mb ""
-                                                     :suggested_ctx 128000})
-                                                  (filter-model-items-for-ctx ctx items config))]
-                                 (json-response! reply 200 {:models models}))
+                               (let [items (or (get-in resp [:body :data]) [])]
+                                 (json-response! reply 200
+                                                 {:models (mapv (fn [item]
+                                                                  {:id (str (or (:id item) ""))
+                                                                   :name (str (or (:id item) ""))
+                                                                   :path ""
+                                                                   :size_bytes 0
+                                                                   :modified_at (now-iso)
+                                                                   :hash16mb ""
+                                                                   :suggested_ctx 128000})
+                                                                (filter-model-items-for-ctx ctx items config))}))
                                (json-response! reply 502 {:detail "Model list failed"}))))
                     (.catch (fn [err]
-                              (json-response! reply 502 {:detail (str err)}))))))))
+                              (json-response! reply 502 {:detail (str err)})))))))))
 
+(defn- register-run-routes!
+  [app runtime]
   (route! app "GET" "/api/runs"
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
                 (let [limit-raw (aget request "query" "limit")
-                      limit (if (string? limit-raw)
-                              (js/parseInt limit-raw 10)
-                              100)
+                      limit (if (string? limit-raw) (js/parseInt limit-raw 10) 100)
                       items (->> @run-order*
                                  (map #(get @runs* %))
                                  (filter some?)
@@ -307,7 +267,6 @@
                                  (map summarize-run)
                                  vec)]
                   (json-response! reply 200 {:runs items}))))))
-
   (route! app "GET" "/api/runs/:runId"
           (fn [request reply]
             (with-request-context! runtime request reply
@@ -317,8 +276,10 @@
                   (cond
                     (nil? run) (json-response! reply 404 {:detail "Run not found"})
                     (not (run-visible? ctx run)) (error-response! reply (http-error 403 "run_scope_denied" "Run is outside the current Knoxx scope"))
-                    :else (json-response! reply 200 run)))))))
+                    :else (json-response! reply 200 run))))))))
 
+(defn- register-openai-compatible-routes!
+  [app config]
   (route! app "GET" "/v1/models"
           (fn [request reply]
             (when (require-openai-key! config request reply)
@@ -329,7 +290,6 @@
                              (openai-auth-error reply 502 "Upstream model list failed" "upstream_error"))))
                   (.catch (fn [err]
                             (openai-auth-error reply 502 (str "Upstream model list failed: " err) "upstream_error")))))))
-
   (route! app "POST" "/v1/chat/completions"
           (fn [request reply]
             (when (require-openai-key! config request reply)
@@ -339,7 +299,6 @@
                              (send-fetch-response! reply resp)))
                     (.catch (fn [err]
                               (openai-auth-error reply 502 (str "Upstream chat request failed: " err) "upstream_error"))))))))
-
   (route! app "POST" "/v1/embeddings"
           (fn [request reply]
             (when (require-openai-key! config request reply)
@@ -352,6 +311,15 @@
                     (.then (fn [resp]
                              (send-fetch-response! reply resp)))
                     (.catch (fn [err]
-                              (openai-auth-error reply 502 (str "Embedding generation failed: " err) "upstream_error"))))))))
+                              (openai-auth-error reply 502 (str "Embedding generation failed: " err) "upstream_error")))))))))
 
+(defn register-model-routes!
+  [app runtime config]
+  (register-proxx-health-route! app config)
+  (register-proxx-observability-routes! app runtime config)
+  (register-proxx-model-and-chat-routes! app runtime config)
+  (register-local-models-route! app runtime config)
+  (register-run-routes! app runtime)
+  (register-openai-compatible-routes! app config)
   nil)
+

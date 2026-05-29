@@ -26,9 +26,7 @@
 
 (def ^:private safe-fns
   "Map of whitelisted symbols to their function values for condition evaluation."
-  {'and and
-   'or or
-   'not not
+  {'not not
    '= =
    'not= not=
    '< <
@@ -68,23 +66,6 @@
   "Return true if the symbol is a known safe function for conditions."
   [sym]
   (contains? safe-fns sym))
-
-(defn- resolve-ref
-  "Resolve a function reference (symbol or keyword) to a callable."
-  [ref]
-  (cond
-    (keyword? ref) (condition-fn ref)
-    (symbol? ref) (or (condition-fn (keyword ref))
-                      (get safe-fns ref))
-    :else nil))
-
-(defn- normalize-ref
-  "Normalize a function reference to a keyword for registry lookup."
-  [ref]
-  (cond
-    (keyword? ref) ref
-    (symbol? ref) (keyword ref)
-    :else nil))
 
 (declare safe-eval)
 

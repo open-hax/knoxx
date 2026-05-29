@@ -52,7 +52,7 @@ knoxx/
 │   └── src/                  # React pages, components, API clients, tests
 ├── ingestion/      # JVM Clojure ingestion service and source drivers
 ├── contracts/      # EDN contracts for actors, roles, capabilities, models, etc.
-├── specs/          # Work specs and product/architecture plans
+├── kanban/         # Agent task board (markdown cards) — source of truth for work items
 ├── docs/           # Current design docs, audits, reports, and notes
 ├── cms/            # Folder-backed CMS drafts/content
 ├── discord-bot/    # Optional standalone Discord bot package
@@ -334,7 +334,7 @@ Start here when changing behavior:
 - `docs/auth-and-onboarding.md` — auth and onboarding flow.
 - `docs/admin-multitenancy-rbac.md` — org/user/role admin model.
 - `docs/actor-realtime-socket-io-spec.md` — realtime/actor bus target shape.
-- `specs/` — active work specs and product architecture.
+- `kanban/` — agent task board (markdown cards); the source of truth for work items. (The former `specs/` tree was retired 2026-05-28; its history lives in git and the fork-tax tags.)
 
 ## Testing and verification
 

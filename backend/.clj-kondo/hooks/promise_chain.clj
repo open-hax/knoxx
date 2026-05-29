@@ -26,8 +26,9 @@
                              :message (str "file ~" n " lines (warning >=400)")
                              :type :file-length/long :level :warning)))))))
 
-(defn- promise-method? [node]
+(defn- promise-method?
   "Returns the method symbol if node is a (.then ...) or (.catch ...) call."
+  [node]
   (when (api/list-node? node)
     (when-let [op (first (:children node))]
       (when (api/token-node? op)
@@ -35,9 +36,10 @@
           (when (or (= s ".then") (= s ".catch"))
             (api/sexpr op)))))))
 
-(defn- nested-chain? [node]
+(defn- nested-chain?
   "True when any argument of this .then/.catch call is itself a .then/.catch call,
    i.e., the promise chain is nested/composed rather than flat."
+  [node]
   (when (api/list-node? node)
     (let [args (rest (:children node))]
       (boolean
@@ -54,16 +56,16 @@
       (when-not (and op (api/token-node? op) (= 'quote (api/sexpr op)))
         (when-let [method (promise-method? node)]
           (if (nested-chain? node)
-            ;; Nested chain — stronger advice: use p/let
+            ;; Nested chain — stronger advice: extract a named async workflow.
             (api/reg-finding!
              (assoc (meta node)
-                    :message (str method " — nested Promise chain detected; replace chain with (p/let [x ...] ...) from promesa.core")
-                    :type :promise-chain/prefer-p-let :level :warning))
-            ;; Flat single .then/.catch — gentler warning
+                    :message (str method " — nested Promise chain detected; extract a named ^:async workflow function and sequence effects with await")
+                    :type :promise-chain/prefer-async-workflow :level :warning))
+            ;; Flat single .then/.catch — gentler warning.
             (api/reg-finding!
              (assoc (meta node)
-                    :message (str method " — raw Promise chain; prefer (p/let [x ...] ...) from promesa.core over .then/.catch chains")
-                    :type :promise-chain/prefer-js-await :level :warning))))
+                    :message (str method " — raw Promise chain; prefer a ^:async function with await, or a tiny documented interop boundary, over .then/.catch chains")
+                    :type :promise-chain/prefer-async-workflow :level :warning))))
         (doseq [c ch] (walk! c))))))
 
 (defn check [{:keys [node]}]

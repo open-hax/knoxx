@@ -5,6 +5,7 @@
 ;; All fns are pure and synchronous — they return plain CLJS strings.
 
 (ns knoxx.backend.domain.node.path
+  (:refer-clojure :exclude [resolve])
   (:require ["node:path"    :as node-path]
             ["node:process" :as node-process]))
 

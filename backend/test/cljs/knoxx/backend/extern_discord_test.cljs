@@ -10,15 +10,10 @@
     (is (= "c2" (:channelId params)))
     (is (= [" a " ""] (:attachment_urls params)))))
 
-(deftest promise-all-vector-resolves-cljs-vector
-  (async done
-    (-> (xdiscord/promise-all-vector [(js/Promise.resolve {:id "a"})
-                                      (js/Promise.resolve {:id "b"})])
-        (.then (fn [results]
-                 (is (= [{:id "a"} {:id "b"}] results))))
-        (.catch (fn [err]
-                  (is nil (str "unexpected rejection: " err))))
-        (.finally done))))
+(deftest ^:async promise-all-vector-resolves-cljs-vector
+  (let [results (await (xdiscord/promise-all-vector [(js/Promise.resolve {:id "a"})
+                                                      (js/Promise.resolve {:id "b"})]))]
+    (is (= [{:id "a"} {:id "b"}] results))))
 
 (deftest message-form-data-builds-discord-payload-and-files
   (let [form (xdiscord/message-form-data

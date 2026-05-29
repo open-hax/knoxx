@@ -6,6 +6,7 @@
 ;; js/Array.from conversions happen at the edge — nothing leaks out.
 
 (ns knoxx.backend.domain.node.fs
+  (:refer-clojure :exclude [exists?])
   (:require [clojure.string :as str]
             ["node:fs"           :as node-fs]
             ["node:fs/promises"  :as fs]

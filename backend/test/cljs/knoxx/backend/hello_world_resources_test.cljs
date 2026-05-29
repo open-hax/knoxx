@@ -9,7 +9,8 @@
             ["node:fs" :as node-fs]
             ["node:path" :as path]))
 
-(def resource-config {})
+(def resource-config
+  {:contracts-dir "test/fixtures/hello-world-contracts"})
 
 (def resource-files
   {:action "actions/hello-world.edn"

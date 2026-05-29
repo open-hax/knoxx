@@ -188,95 +188,77 @@
    (register-workspace-media-routes! app runtime config handlers)))
 
 ;; ── Audio library route ─────────────────────────────────────────────
+(defn- handle-audio-library-list
+  [runtime config {:keys [json-response! error-response! with-request-context! ensure-tool!]}]
+  (fn [request reply]
+    (with-request-context! runtime request reply
+      (fn [ctx]
+        (try
+          (when ctx (ensure-tool! ctx "read"))
+          (let [subpath (or (aget request "query" "path") "")
+                max-depth (let [d (js/parseInt (or (aget request "query" "depth") "3") 10)]
+                            (if (js/isNaN d) 3 (min d 8)))
+                scan-root (if (str/blank? subpath)
+                            (:workspace-root config)
+                            (let [normalized (media/normalize-tool-path-arg subpath)
+                                  {:keys [absolute]} (media/resolve-workspace-media-path runtime config normalized)]
+                              absolute))
+                rel-base (str/trim (or subpath ""))]
+            (-> (walk-audio-files! scan-root rel-base 0 max-depth)
+                (.then (fn [files]
+                         (let [sorted (vec (sort-by :modified > files))]
+                           (json-response! reply 200 {:ok true :root rel-base :count (count sorted) :files sorted}))))
+                (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to scan audio library: " err)})))))
+          (catch :default err (error-response! reply err)))))))
+
+(defn- handle-audio-library-ensure-dir
+  [runtime config {:keys [json-response! error-response! with-request-context! ensure-tool!]}]
+  (fn [request reply]
+    (with-request-context! runtime request reply
+      (fn [ctx]
+        (try
+          (when ctx (ensure-tool! ctx "write"))
+          (let [body (or (aget request "body") (js/Object.))
+                dir-path (or (aget body "path") "")]
+            (if (str/blank? dir-path)
+              (json-response! reply 400 {:detail "path is required"})
+              (let [normalized (media/normalize-tool-path-arg dir-path)
+                    {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)]
+                (-> (.mkdir fs absolute (clj->js {:recursive true}))
+                    (.then (fn [] (json-response! reply 200 {:ok true :path relative})))
+                    (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to create directory: " err)})))))))
+          (catch :default err (error-response! reply err)))))))
+
+(defn- handle-audio-library-rename
+  [runtime config {:keys [json-response! error-response! with-request-context! ensure-tool!]}]
+  (fn [request reply]
+    (with-request-context! runtime request reply
+      (fn [ctx]
+        (try
+          (when ctx (ensure-tool! ctx "write"))
+          (let [body (or (aget request "body") (js/Object.))
+                from-path (or (aget body "from") "")
+                to-path (or (aget body "to") "")]
+            (cond
+              (str/blank? from-path) (json-response! reply 400 {:detail "from is required"})
+              (str/blank? to-path) (json-response! reply 400 {:detail "to is required"})
+              :else
+              (let [from-norm (media/normalize-tool-path-arg from-path)
+                    to-norm (media/normalize-tool-path-arg to-path)
+                    {from-abs :absolute} (media/resolve-workspace-media-path runtime config from-norm)
+                    {to-abs :absolute} (media/resolve-workspace-media-path runtime config to-norm)]
+                (-> (.rename fs from-abs to-abs)
+                    (.then (fn [] (json-response! reply 200 {:ok true :from from-norm :to to-norm})))
+                    (.catch (fn [err] (json-response! reply 500 {:detail (str "Rename failed: " err)})))))))
+          (catch :default err (error-response! reply err)))))))
+
 (defn register-audio-library-routes!
   "Routes for the broadcast studio audio library."
-  [app runtime config {:keys [route!
-                              json-response!
-                              error-response!
-                              with-request-context!
-                              ensure-tool!]}]
-  ;; List audio files in workspace
-  (route! app "GET" "/api/workspace-media/audio-library"
-          (fn [request reply]
-            (with-request-context! runtime request reply
-              (fn [ctx]
-                (try
-                  (when ctx
-                    (ensure-tool! ctx "read"))
-                  (let [;; Optional subdirectory filter (e.g. "Music" or "Music/midrolls")
-                        subpath (or (aget request "query" "path") "")
-                        max-depth (let [d (js/parseInt (or (aget request "query" "depth") "3") 10)]
-                                    (if (js/isNaN d) 3 (min d 8)))
-                        ;; Resolve the root to scan
-                        scan-root (if (str/blank? subpath)
-                                    (:workspace-root config)
-                                    (let [normalized (media/normalize-tool-path-arg subpath)
-                                          {:keys [absolute]} (media/resolve-workspace-media-path runtime config normalized)]
-                                      absolute))
-                        rel-base (str/trim (or subpath ""))]
-                    (-> (walk-audio-files! scan-root rel-base 0 max-depth)
-                        (.then (fn [files]
-                                 ;; Sort by modified desc (newest first)
-                                 (let [sorted (vec (sort-by :modified > files))]
-                                   (json-response! reply 200
-                                                   {:ok true
-                                                    :root rel-base
-                                                    :count (count sorted)
-                                                    :files sorted}))))
-                        (.catch (fn [err]
-                                  (json-response! reply 500 {:detail (str "Failed to scan audio library: " err)})))))
-                  (catch :default err
-                    (error-response! reply err)))))))
-
-  ;; Create/ensure a directory exists (for organizing clips)
-  (route! app "POST" "/api/workspace-media/audio-library/ensure-dir"
-          (fn [request reply]
-            (with-request-context! runtime request reply
-              (fn [ctx]
-                (try
-                  (when ctx
-                    (ensure-tool! ctx "write"))
-                  (let [body (or (aget request "body") (js/Object.))
-                        dir-path (or (aget body "path") "")]
-                    (if (str/blank? dir-path)
-                      (json-response! reply 400 {:detail "path is required"})
-                      (let [normalized (media/normalize-tool-path-arg dir-path)
-                            {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)]
-                        (-> (.mkdir fs absolute (clj->js {:recursive true}))
-                            (.then (fn []
-                                     (json-response! reply 200 {:ok true :path relative})))
-                            (.catch (fn [err]
-                                      (json-response! reply 500 {:detail (str "Failed to create directory: " err)})))))))
-                  (catch :default err
-                    (error-response! reply err)))))))
-
-  ;; Rename/move an audio file
-  (route! app "POST" "/api/workspace-media/audio-library/rename"
-          (fn [request reply]
-            (with-request-context! runtime request reply
-              (fn [ctx]
-                (try
-                  (when ctx
-                    (ensure-tool! ctx "write"))
-                  (let [body (or (aget request "body") (js/Object.))
-                        from-path (or (aget body "from") "")
-                        to-path (or (aget body "to") "")]
-                    (cond
-                      (str/blank? from-path)
-                      (json-response! reply 400 {:detail "from is required"})
-
-                      (str/blank? to-path)
-                      (json-response! reply 400 {:detail "to is required"})
-
-                      :else
-                      (let [from-norm (media/normalize-tool-path-arg from-path)
-                            to-norm (media/normalize-tool-path-arg to-path)
-                            {from-abs :absolute} (media/resolve-workspace-media-path runtime config from-norm)
-                            {to-abs :absolute} (media/resolve-workspace-media-path runtime config to-norm)]
-                        (-> (.rename fs from-abs to-abs)
-                            (.then (fn []
-                                     (json-response! reply 200 {:ok true :from from-norm :to to-norm})))
-                            (.catch (fn [err]
-                                      (json-response! reply 500 {:detail (str "Rename failed: " err)})))))))
-                  (catch :default err
-                    (error-response! reply err))))))))
+  [app runtime config helpers]
+  (let [{:keys [route!]} helpers]
+    (route! app "GET" "/api/workspace-media/audio-library"
+            (handle-audio-library-list runtime config helpers))
+    (route! app "POST" "/api/workspace-media/audio-library/ensure-dir"
+            (handle-audio-library-ensure-dir runtime config helpers))
+    (route! app "POST" "/api/workspace-media/audio-library/rename"
+            (handle-audio-library-rename runtime config helpers))))

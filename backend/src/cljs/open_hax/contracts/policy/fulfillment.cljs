@@ -42,7 +42,7 @@
                 (= v (:tool/name tool-result))
 
                 (= k :tool/params)
-                (match-params v (:tool/params tool-result {}))
+                (match-params? v (:tool/params tool-result {}))
 
                 (= k :tool/output)
                 (if (fn? v)

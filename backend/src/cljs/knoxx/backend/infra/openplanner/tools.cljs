@@ -23,7 +23,7 @@
 (def graph-query-params
   [:map
    [:query {:description "Search text for canonical graph nodes across OpenPlanner lakes."} :string]
-   [:lake {:optional true :description "Optional lake/project filter such as devel, web, bluesky, or knoxx-session."} :string]
+   [:lake {:optional true :description "Optional lake/project filter such as workspace, web, bluesky, or knoxx-session."} :string]
    [:nodeType {:optional true :description "Optional node_type filter such as docs, code, visited, assistant_message, tool_result, or reasoning."} :string]
    [:limit {:optional true :description "Maximum number of graph nodes to return."} [:int {:min 1 :max 20}]]
    [:edgeLimit {:optional true :description "Maximum number of incident edges to include."} [:int {:min 0 :max 60}]]])
@@ -257,11 +257,11 @@
 (def graph-query-tool
   (partial create-tool-obj
            "graph_query" "Graph Query"
-           "Query the canonical OpenPlanner knowledge graph across the devel, web, bluesky, and knoxx-session lakes."
+           "Query the canonical OpenPlanner knowledge graph across the workspace, web, bluesky, and knoxx-session lakes."
            "Search the canonical knowledge graph when you need entities or cross-lake links rather than plain transcript memory or semantic document snippets."
            ["Use graph_query when the question is about entities, paths, URLs, provenance across lakes, or graph connectivity."
             "Prefer graph_query over semantic_query when node/edge structure matters."
-            "Use the lake filter to focus on devel, web, bluesky, or knoxx-session when the search space is obvious."]
+            "Use the lake filter to focus on workspace, web, bluesky, or knoxx-session when the search space is obvious."]
            graph-query-params
            graph-query-execute))
 
