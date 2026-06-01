@@ -122,6 +122,21 @@
   [runtime config auth-context agent-spec]
   (tool-catalog/visible-session-signature runtime config auth-context agent-spec))
 
+(defn- session-provider-tools
+  [runtime config tool-auth-context agent-spec allowed-tool-ids model-id session-id conversation-id]
+  (if-not (tool-catalog/provider-tools-enabled-for-model? model-id)
+    (do
+      (.info js/console "[agent-session] provider tools disabled" #js {:modelId model-id})
+      {:custom-tools nil :tool-name-allowlist []})
+    (let [builtin-tools (tool-catalog/builtin-tools runtime config tool-auth-context agent-spec)
+          custom-tools (wrap-custom-tools-with-agent-context!
+                        (tool-catalog/custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
+                        {:session-id session-id
+                         :conversation-id conversation-id
+                         :agent-spec agent-spec})]
+      {:custom-tools custom-tools
+       :tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)})))
+
 (defn ^:async create-session-manager!
   ([runtime config conversation-id model-id] (create-session-manager! runtime config conversation-id model-id nil (:agent-thinking-level config)))
   ([runtime config conversation-id model-id auth-context] (create-session-manager! runtime config conversation-id model-id auth-context (:agent-thinking-level config)))
@@ -138,23 +153,18 @@
          model-provider-id (or (some-> (resolve-model-contract config model-id) :provider)
                                "proxx")
          provider (eta-mu-provider/eta-mu-provider runtime config)
-         model (eta-mu-provider/resolve-model provider
-                                              model-registry
-                                              model-provider-id
-                                              model-id
-                                              (:proxx-default-model config))
-         allowed-tool-ids (tool-catalog/allowed-tool-ids config auth-context agent-spec)
-         tool-auth-context (tool-catalog/effective-tool-auth-context auth-context allowed-tool-ids)
-         builtin-tools (tool-catalog/builtin-tools runtime config tool-auth-context agent-spec)
-         custom-tools (wrap-custom-tools-with-agent-context!
-                       (tool-catalog/custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
-                       {:session-id session-id
-                        :conversation-id conversation-id
-                        :agent-spec agent-spec})
-         tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)
-         preferred-session-id (some-> session-id str str/trim not-empty)
-         message-source (->CompositeMessageSource
-                          (->OpenPlannerMessageSource config)
+          model (eta-mu-provider/resolve-model provider
+                                               model-registry
+                                               model-provider-id
+                                               model-id
+                                               (:proxx-default-model config))
+          allowed-tool-ids (tool-catalog/allowed-tool-ids config auth-context agent-spec)
+          tool-auth-context (tool-catalog/effective-tool-auth-context auth-context allowed-tool-ids)
+          {:keys [custom-tools tool-name-allowlist]} (session-provider-tools runtime config tool-auth-context agent-spec
+                                                                             allowed-tool-ids model-id session-id conversation-id)
+          preferred-session-id (some-> session-id str str/trim not-empty)
+          message-source (->CompositeMessageSource
+                           (->OpenPlannerMessageSource config)
                           (->RedisMessageSource preferred-session-id))]
      (if (no-content? model)
        (js/Promise.reject (js/Error. (str "No eta-mu model configured for " model-id)))

@@ -6,14 +6,18 @@
    workspace_media.attach, but returns streamed content instead of base64.
 
    NOTE: This is a *browser* route, not a model tool. Access control is applied
-   via request context when available (RBAC), but defaults to permissive when
-   no auth context exists (typical for local/dev)."
+  via request context when available (RBAC), but defaults to permissive when
+  no auth context exists (typical for local/dev)."
   (:require [clojure.string :as str]
-            [promesa.core :as p]
             [knoxx.backend.domain.media :as media]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
+
+(declare walk-audio-files!
+         handle-audio-library-list!
+         handle-audio-library-ensure-dir!
+         handle-audio-library-rename!)
 
 (defn- reply-header!
   [^js reply name value]
@@ -72,6 +76,49 @@
            :end end*
            :length (inc (- end* start*))})))))
 
+(defn- send-media-stream!
+  [reply absolute total-size range]
+  (if range
+    (let [{:keys [start end length]} range
+          stream (.createReadStream node-fs absolute (clj->js {:start start :end end}))]
+      (reply-header! reply "Content-Range" (str "bytes " start "-" end "/" total-size))
+      (reply-header! reply "Content-Length" (str length))
+      (.code reply 206)
+      (.send reply stream))
+    (let [stream (.createReadStream node-fs absolute)]
+      (reply-header! reply "Content-Length" (str total-size))
+      (.code reply 200)
+      (.send reply stream))))
+
+(defn ^:async serve-workspace-media!
+  [runtime config request reply ctx {:keys [json-response! error-response! ensure-tool!]}]
+  (try
+    (when ctx
+      (ensure-tool! ctx "read"))
+    (let [raw-path (or (aget request "query" "path") "")
+          normalized (media/normalize-tool-path-arg raw-path)
+          {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)
+          mime-type (mime-type-for-path relative absolute)
+          range-header (or (request-header request "range")
+                           (request-header request "Range"))]
+      (try
+        (let [stat (await (media/fs-stat! fs absolute))]
+          (when-not (.isFile stat)
+            (throw (js/Error. (str relative " is not a file"))))
+          (let [total-size (.-size stat)
+                range (when (and range-header (pos? total-size))
+                        (parse-range-header range-header total-size))
+                filename (media/path-basename path absolute)]
+            (reply-header! reply "Content-Type" mime-type)
+            (reply-header! reply "Accept-Ranges" "bytes")
+            (reply-header! reply "Cache-Control" "private, max-age=0")
+            (reply-header! reply "Content-Disposition" (safe-content-disposition filename))
+            (send-media-stream! reply absolute total-size range)))
+        (catch :default err
+          (json-response! reply 404 {:detail (str err)}))))
+    (catch :default err
+      (error-response! reply err))))
+
 (defn register-workspace-media-routes!
   [app runtime config {:keys [route!
                               json-response!
@@ -82,45 +129,10 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (try
-                  ;; Reuse the existing tool gate when RBAC is enabled.
-                  ;; If ctx is nil (dev/no-auth), we allow access.
-                  (when ctx
-                    (ensure-tool! ctx "read"))
-
-                  (let [raw-path (or (aget request "query" "path") "")
-                        normalized (media/normalize-tool-path-arg raw-path)
-                        {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)
-                        mime-type (mime-type-for-path relative absolute)
-                        range-header (or (request-header request "range")
-                                         (request-header request "Range"))]
-                    (-> (media/fs-stat! fs absolute)
-                        (.then (fn [stat]
-                                 (when-not (.isFile stat)
-                                   (throw (js/Error. (str relative " is not a file"))))
-                                 (let [total-size (.-size stat)
-                                       range (when (and range-header (pos? total-size))
-                                               (parse-range-header range-header total-size))
-                                       filename (media/path-basename path absolute)]
-                                   (reply-header! reply "Content-Type" mime-type)
-                                   (reply-header! reply "Accept-Ranges" "bytes")
-                                   (reply-header! reply "Cache-Control" "private, max-age=0")
-                                   (reply-header! reply "Content-Disposition" (safe-content-disposition filename))
-                                   (if range
-                                     (let [{:keys [start end length]} range
-                                           stream (.createReadStream node-fs absolute (clj->js {:start start :end end}))]
-                                       (reply-header! reply "Content-Range" (str "bytes " start "-" end "/" total-size))
-                                       (reply-header! reply "Content-Length" (str length))
-                                       (.code reply 206)
-                                       (.send reply stream))
-                                     (let [stream (.createReadStream node-fs absolute)]
-                                       (reply-header! reply "Content-Length" (str total-size))
-                                       (.code reply 200)
-                                       (.send reply stream))))))
-                        (.catch (fn [err]
-                                 (json-response! reply 404 {:detail (str err)})))))
-                  (catch :default err
-                    (error-response! reply err))))))))
+                (serve-workspace-media! runtime config request reply ctx
+                                        {:json-response! json-response!
+                                         :error-response! error-response!
+                                         :ensure-tool! ensure-tool!}))))))
 
 (defn- audio-extensions
   "Set of recognized audio file extensions."
@@ -139,49 +151,48 @@
     ".opus" "audio/opus"
     "audio/mpeg"))
 
-(defn- walk-audio-files!
+(defn ^:async audio-file-entry!
+  [entry root-dir base-relative depth max-depth]
+  (let [name (.-name entry)
+        abs-path (.join path root-dir name)
+        rel-path (if (str/blank? base-relative)
+                   name
+                   (str base-relative "/" name))]
+    (cond
+      (str/starts-with? name ".")
+      []
+
+      (.isDirectory entry)
+      (await (walk-audio-files! abs-path rel-path (inc depth) max-depth))
+
+      :else
+      (let [ext (str/lower-case (or (some-> (.extname path name) str/trim) ""))]
+        (if (contains? (audio-extensions) ext)
+          (try
+            (let [stat (await (.stat fs abs-path))]
+              [{:name name
+                :path rel-path
+                :ext ext
+                :size (.-size stat)
+                :modified (-> (.-mtime stat) (.getTime))
+                :mime (audio-mime-type ext)}])
+            (catch :default _
+              []))
+          [])))))
+
+(defn ^:async walk-audio-files!
   "Recursively walk a directory and collect audio file metadata."
   [root-dir base-relative depth max-depth]
   (if (> depth max-depth)
-    (p/resolved [])
-    (-> (.readdir fs root-dir (clj->js {:withFileTypes true}))
-        (.then (fn [entries]
-                 (let [entries-arr (vec (array-seq entries))
-                       promises (mapv
-                                 (fn [entry]
-                                   (let [name (.-name entry)
-                                         abs-path (.join path root-dir name)
-                                         rel-path (if (str/blank? base-relative)
-                                                    name
-                                                    (str base-relative "/" name))]
-                                     (cond
-                                       ;; Skip hidden files/dirs
-                                       (str/starts-with? name ".")
-                                       (p/resolved [])
-
-                                       ;; Recurse into directories
-                                       (.isDirectory entry)
-                                       (walk-audio-files! abs-path rel-path (inc depth) max-depth)
-
-                                       ;; Collect audio files
-                                       :else
-                                       (let [ext (str/lower-case (or (some-> (.extname path name) str/trim) ""))]
-                                         (if (contains? (audio-extensions) ext)
-                                           (-> (.stat fs abs-path)
-                                               (.then (fn [stat]
-                                                        [{:name name
-                                                          :path rel-path
-                                                          :ext ext
-                                                          :size (.-size stat)
-                                                          :modified (-> (.-mtime stat) (.getTime))
-                                                          :mime (audio-mime-type ext)}]))
-                                               (.catch (fn [_] [])))
-                                           (p/resolved []))))))
-                                 entries-arr)]
-                   (-> (p/all (into-array promises))
-                       (.then (fn [results]
-                                (vec (mapcat identity results))))))))
-        (.catch (fn [_] [])))))
+    []
+    (try
+      (let [entries (vec (array-seq (await (.readdir fs root-dir (clj->js {:withFileTypes true})))))]
+        (->> (await (js/Promise.all
+                     (clj->js (mapv #(audio-file-entry! % root-dir base-relative depth max-depth) entries))))
+             (mapcat identity)
+             vec))
+      (catch :default _
+        []))))
 
 (defn register-workspace-media-routes
   ([app runtime config handlers]
@@ -193,64 +204,92 @@
   (fn [request reply]
     (with-request-context! runtime request reply
       (fn [ctx]
-        (try
-          (when ctx (ensure-tool! ctx "read"))
-          (let [subpath (or (aget request "query" "path") "")
-                max-depth (let [d (js/parseInt (or (aget request "query" "depth") "3") 10)]
-                            (if (js/isNaN d) 3 (min d 8)))
-                scan-root (if (str/blank? subpath)
-                            (:workspace-root config)
-                            (let [normalized (media/normalize-tool-path-arg subpath)
-                                  {:keys [absolute]} (media/resolve-workspace-media-path runtime config normalized)]
-                              absolute))
-                rel-base (str/trim (or subpath ""))]
-            (-> (walk-audio-files! scan-root rel-base 0 max-depth)
-                (.then (fn [files]
-                         (let [sorted (vec (sort-by :modified > files))]
-                           (json-response! reply 200 {:ok true :root rel-base :count (count sorted) :files sorted}))))
-                (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to scan audio library: " err)})))))
-          (catch :default err (error-response! reply err)))))))
+        (handle-audio-library-list! runtime config request reply ctx
+                                    {:json-response! json-response!
+                                     :error-response! error-response!
+                                     :ensure-tool! ensure-tool!})))))
+
+(defn ^:async handle-audio-library-list!
+  [runtime config request reply ctx {:keys [json-response! error-response! ensure-tool!]}]
+  (try
+    (when ctx (ensure-tool! ctx "read"))
+    (let [subpath (or (aget request "query" "path") "")
+          max-depth (let [d (js/parseInt (or (aget request "query" "depth") "3") 10)]
+                      (if (js/isNaN d) 3 (min d 8)))
+          scan-root (if (str/blank? subpath)
+                      (:workspace-root config)
+                      (let [normalized (media/normalize-tool-path-arg subpath)
+                            {:keys [absolute]} (media/resolve-workspace-media-path runtime config normalized)]
+                        absolute))
+          rel-base (str/trim (or subpath ""))
+          files (await (walk-audio-files! scan-root rel-base 0 max-depth))
+          sorted (vec (sort-by :modified > files))]
+      (json-response! reply 200 {:ok true :root rel-base :count (count sorted) :files sorted}))
+    (catch :default err
+      (if (= "Error" (.-name err))
+        (json-response! reply 500 {:detail (str "Failed to scan audio library: " err)})
+        (error-response! reply err)))))
 
 (defn- handle-audio-library-ensure-dir
   [runtime config {:keys [json-response! error-response! with-request-context! ensure-tool!]}]
   (fn [request reply]
     (with-request-context! runtime request reply
       (fn [ctx]
-        (try
-          (when ctx (ensure-tool! ctx "write"))
-          (let [body (or (aget request "body") (js/Object.))
-                dir-path (or (aget body "path") "")]
-            (if (str/blank? dir-path)
-              (json-response! reply 400 {:detail "path is required"})
-              (let [normalized (media/normalize-tool-path-arg dir-path)
-                    {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)]
-                (-> (.mkdir fs absolute (clj->js {:recursive true}))
-                    (.then (fn [] (json-response! reply 200 {:ok true :path relative})))
-                    (.catch (fn [err] (json-response! reply 500 {:detail (str "Failed to create directory: " err)})))))))
-          (catch :default err (error-response! reply err)))))))
+        (handle-audio-library-ensure-dir! runtime config request reply ctx
+                                          {:json-response! json-response!
+                                           :error-response! error-response!
+                                           :ensure-tool! ensure-tool!})))))
+
+(defn ^:async handle-audio-library-ensure-dir!
+  [runtime config request reply ctx {:keys [json-response! error-response! ensure-tool!]}]
+  (try
+    (when ctx (ensure-tool! ctx "write"))
+    (let [body (or (aget request "body") (js/Object.))
+          dir-path (or (aget body "path") "")]
+      (if (str/blank? dir-path)
+        (json-response! reply 400 {:detail "path is required"})
+        (let [normalized (media/normalize-tool-path-arg dir-path)
+              {:keys [absolute relative]} (media/resolve-workspace-media-path runtime config normalized)]
+          (try
+            (await (.mkdir fs absolute (clj->js {:recursive true})))
+            (json-response! reply 200 {:ok true :path relative})
+            (catch :default err
+              (json-response! reply 500 {:detail (str "Failed to create directory: " err)}))))))
+    (catch :default err
+      (error-response! reply err))))
 
 (defn- handle-audio-library-rename
   [runtime config {:keys [json-response! error-response! with-request-context! ensure-tool!]}]
   (fn [request reply]
     (with-request-context! runtime request reply
       (fn [ctx]
-        (try
-          (when ctx (ensure-tool! ctx "write"))
-          (let [body (or (aget request "body") (js/Object.))
-                from-path (or (aget body "from") "")
-                to-path (or (aget body "to") "")]
-            (cond
-              (str/blank? from-path) (json-response! reply 400 {:detail "from is required"})
-              (str/blank? to-path) (json-response! reply 400 {:detail "to is required"})
-              :else
-              (let [from-norm (media/normalize-tool-path-arg from-path)
-                    to-norm (media/normalize-tool-path-arg to-path)
-                    {from-abs :absolute} (media/resolve-workspace-media-path runtime config from-norm)
-                    {to-abs :absolute} (media/resolve-workspace-media-path runtime config to-norm)]
-                (-> (.rename fs from-abs to-abs)
-                    (.then (fn [] (json-response! reply 200 {:ok true :from from-norm :to to-norm})))
-                    (.catch (fn [err] (json-response! reply 500 {:detail (str "Rename failed: " err)})))))))
-          (catch :default err (error-response! reply err)))))))
+        (handle-audio-library-rename! runtime config request reply ctx
+                                      {:json-response! json-response!
+                                       :error-response! error-response!
+                                       :ensure-tool! ensure-tool!})))))
+
+(defn ^:async handle-audio-library-rename!
+  [runtime config request reply ctx {:keys [json-response! error-response! ensure-tool!]}]
+  (try
+    (when ctx (ensure-tool! ctx "write"))
+    (let [body (or (aget request "body") (js/Object.))
+          from-path (or (aget body "from") "")
+          to-path (or (aget body "to") "")]
+      (cond
+        (str/blank? from-path) (json-response! reply 400 {:detail "from is required"})
+        (str/blank? to-path) (json-response! reply 400 {:detail "to is required"})
+        :else
+        (let [from-norm (media/normalize-tool-path-arg from-path)
+              to-norm (media/normalize-tool-path-arg to-path)
+              {from-abs :absolute} (media/resolve-workspace-media-path runtime config from-norm)
+              {to-abs :absolute} (media/resolve-workspace-media-path runtime config to-norm)]
+          (try
+            (await (.rename fs from-abs to-abs))
+            (json-response! reply 200 {:ok true :from from-norm :to to-norm})
+            (catch :default err
+              (json-response! reply 500 {:detail (str "Rename failed: " err)}))))))
+    (catch :default err
+      (error-response! reply err))))
 
 (defn register-audio-library-routes!
   "Routes for the broadcast studio audio library."

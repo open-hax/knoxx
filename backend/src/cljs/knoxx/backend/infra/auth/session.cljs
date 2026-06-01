@@ -68,20 +68,19 @@
   ;; Recover or persist the session secret so tokens survive restarts.
   (recover-or-persist-session-secret! policy-context))
 
-(defn- recover-or-persist-session-secret!
-  "If KNOXX_SESSION_SECRET env is set, use it. Otherwise, try to load from DB
-   (table: knoxx_config, key: session_secret). If none exists, generate, store, and use."
+(defn- ^:async recover-or-persist-session-secret!
+  "Recover or persist the session secret for restart-stable tokens."
   [policy-context]
   (let [env-secret (aget (.-env js/process) "KNOXX_SESSION_SECRET")]
     (if (not (str/blank? env-secret))
       (do
         (reset! session-secret-mem env-secret)
         (.log js/console "[knoxx-session] Using session secret from KNOXX_SESSION_SECRET env"))
-      (-> (policy-db/recover-session-secret! (policy-db/context-pool policy-context))
-          (.then (fn [secret]
-                   (reset! session-secret-mem secret)))
-          (.catch (fn [err]
-                    (.log js/console "[knoxx-session] ERROR loading session secret from DB:" (.-message err))))))))
+      (try
+        (reset! session-secret-mem
+                (await (policy-db/recover-session-secret! (policy-db/context-pool policy-context))))
+        (catch js/Error err
+          (.log js/console "[knoxx-session] ERROR loading session secret from DB:" (.-message err)))))))
 
 (defn- session-field
   [session-data & ks]
@@ -109,90 +108,96 @@
      :raw-token        (session-field m :raw-token :_rawToken)
      :created-at       (session-field m :created-at :createdAt)}))
 
-(defn- db-store-session
+(defn- ^:async db-store-session
   [token session-data]
-  (if-not @db-session-store
-    (js/Promise.resolve nil)
+  (when @db-session-store
     (let [payload (assoc (normalize-session-data session-data) :token token)]
-      (.catch (policy-db/create-session! (policy-db/context-pool @db-session-store) payload)
-              (fn [_] nil)))))
+      (try
+        (await (policy-db/create-session! (policy-db/context-pool @db-session-store) payload))
+        (catch js/Error _ nil)))))
 
-(defn- db-load-session
+(defn- ^:async db-load-session
   [token]
-  (if-not @db-session-store
-    (js/Promise.resolve nil)
-    (-> (policy-db/get-session-by-token! (policy-db/context-pool @db-session-store) token)
-        (.then (fn [result]
-                 (when-let [s (:session result)]
-                   (normalize-session-data s))))
-        (.catch (fn [_] nil)))))
+  (when @db-session-store
+    (try
+      (when-let [s (:session (await (policy-db/get-session-by-token!
+                                     (policy-db/context-pool @db-session-store) token)))]
+        (normalize-session-data s))
+      (catch js/Error _ nil))))
+
+(defn- ^:async connect-redis!
+  []
+  (let [url (or (aget (.-env js/process) "REDIS_URL") "redis://127.0.0.1:6379")
+        client (.createClient redis (clj->js {:url url}))]
+    (.on client "error" (fn [err] (.error js/console "[knoxx-session] Redis error:" (.-message err))))
+    (try
+      (await (.connect client))
+      (.log js/console "[knoxx-session] Redis connected for session store")
+      (reset! redis-client client)
+      (reset! redis-connect-promise nil)
+      client
+      (catch js/Error err
+        (reset! redis-connect-promise nil)
+        (throw err)))))
 
 (defn- get-redis
   []
-  (if (and @redis-client (.-isOpen @redis-client))
-    (js/Promise.resolve @redis-client)
-    (if @redis-connect-promise
-      @redis-connect-promise
-      (let [promise
-            (-> (let [url (or (aget (.-env js/process) "REDIS_URL") "redis://127.0.0.1:6379")
-                      client (.createClient redis (clj->js {:url url}))]
-                  (.on client "error"
-                       (fn [err] (.error js/console "[knoxx-session] Redis error:" (.-message err))))
-                  (-> (.connect client)
-                      (.then (fn [_]
-                               (.log js/console "[knoxx-session] Redis connected for session store")
-                               (reset! redis-client client)
-                               (reset! redis-connect-promise nil)
-                               client))))
-                (.catch (fn [err]
-                          (reset! redis-connect-promise nil)
-                          (js/Promise.reject err))))]
-        (reset! redis-connect-promise promise)
-        promise))))
+  (cond
+    (and @redis-client (.-isOpen @redis-client)) (js/Promise.resolve @redis-client)
+    @redis-connect-promise @redis-connect-promise
+    :else (let [promise (connect-redis!)]
+            (reset! redis-connect-promise promise)
+            promise)))
 
 
-(defn- store-session
+(defn- session-ttl-seconds
+  []
+  (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10))
+
+(defn- ^:async store-session
   [session-id data]
   (let [normalized (normalize-session-data data)
         token (or (:raw-token normalized) "")]
-    (-> (db-store-session token normalized)
-        (.catch (fn [err]
-                  (.log js/console "[knoxx-session] WARN: DB store failed:" (.-message err))))
-        (.then (fn [_]
-                 (-> (get-redis)
-                     (.then
-                      (fn [redis]
-                        (let [ttl (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10)]
-                          (.set redis (str "knoxx:session:" session-id)
-                                (js/JSON.stringify (clj->js normalized))
-                                (clj->js {:EX ttl})))))))))))
+    (try
+      (await (db-store-session token normalized))
+      (catch js/Error err
+        (.log js/console "[knoxx-session] WARN: DB store failed:" (.-message err))))
+    (let [redis (await (get-redis))]
+      (await (.set redis
+                   (str "knoxx:session:" session-id)
+                   (js/JSON.stringify (clj->js normalized))
+                   (clj->js {:EX (session-ttl-seconds)}))))))
 
-(defn- load-session
+(defn- parse-stored-session
+  [raw]
+  (try
+    (normalize-session-data (js/JSON.parse raw))
+    (catch :default _err nil)))
+
+(defn- ^:async load-session
   [session-id token]
   ;; Try Redis first (fast cache), fall back to Postgres (persistent).
-  (-> (get-redis)
-      (.then (fn [redis] (.get redis (str "knoxx:session:" session-id))))
-      (.then
-       (fn [raw]
-         (if raw
-           (try
-             (normalize-session-data (js/JSON.parse raw))
-             (catch :default _err1 nil))
-           (db-load-session (or token "")))))
-      (.catch (fn [_err2] (db-load-session (or token ""))))))
+  (try
+    (let [redis (await (get-redis))
+          raw (await (.get redis (str "knoxx:session:" session-id)))]
+      (if raw
+        (parse-stored-session raw)
+        (await (db-load-session (or token "")))))
+    (catch js/Error _err
+      (await (db-load-session (or token ""))))))
 
-(defn delete-session
+(defn ^:async delete-session
   [session-id token]
   ;; Delete from Postgres first (authoritative), then Redis (cache).
-  (-> (if (and @db-session-store (not (str/blank? token)))
-        (.catch (policy-db/delete-session-by-token! (policy-db/context-pool @db-session-store) token)
-                (fn [_] nil))
-        (js/Promise.resolve nil))
-      (.then (fn [_]
-               (-> (get-redis)
-                   (.then (fn [redis] (.del redis (str "knoxx:session:" session-id))))
-                   (.catch (fn [_] nil)))))
-      (.then (fn [_] nil))))
+  (when (and @db-session-store (not (str/blank? token)))
+    (try
+      (await (policy-db/delete-session-by-token! (policy-db/context-pool @db-session-store) token))
+      (catch js/Error _ nil)))
+  (try
+    (let [redis (await (get-redis))]
+      (await (.del redis (str "knoxx:session:" session-id))))
+    (catch js/Error _ nil))
+  nil)
 
 
 (defn- github-auth-client
@@ -208,15 +213,14 @@
   [access-token]
   (github-client/authenticated-user! (github-client/client {}) access-token))
 
-(defn- get-github-user-emails
+(defn- ^:async get-github-user-emails
   [access-token]
-  (-> (github-client/authenticated-emails! (github-client/client {}) access-token)
-      (.then
-       (fn [emails]
-         (let [primary (some (fn [e] (when (:primary e) e)) emails)]
-           (or (:email primary)
-               (:email (first emails))))))
-      (.catch (fn [_] nil))))
+  (try
+    (let [emails (await (github-client/authenticated-emails! (github-client/client {}) access-token))
+          primary (some (fn [e] (when (:primary e) e)) emails)]
+      (or (:email primary)
+          (:email (first emails))))
+    (catch js/Error _ nil)))
 
 
 (def COOKIE-NAME "knoxx_session")
@@ -288,37 +292,19 @@
 
 ;; --- Extracted helpers for handle-github-callback (paren hygiene) ----------
 
-(defn- bootstrap-admin-email?
-  [email]
-  (let [normalized-email (str/lower-case (str/trim (str (or email ""))))
-        bootstrap-admin-email (some-> (or (aget (.-env js/process) "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL")
-                                          "system-admin@open-hax.local")
-                                      str
-                                      str/trim
-                                      str/lower-case)]
-    (= normalized-email bootstrap-admin-email)))
-
-(defn- has-system-admin-role?
-  [ctx]
-  (boolean
-   (some #{"system_admin" "system-admin"}
-         (map str (or (:role-slugs ctx) [])))))
-
-(defn- ensure-email-membership!
+(defn- ^:async ensure-email-membership!
   [policy-context {:keys [email display-name auth-provider external-subject]}]
   (let [normalized-email (some-> email str str/trim not-empty)
-        headers-like (when normalized-email
-                       {"x-knoxx-user-email" normalized-email})]
-    (if-not normalized-email
-      (js/Promise.reject (http-error 401 "Not authenticated" "no_email"))
-      (-> (policy-db/sync-user-from-actor-contract-for-context!
-           policy-context
-           {:email normalized-email
-            :display-name (or display-name normalized-email)
-            :auth-provider (or auth-provider "github")
-            :external-subject external-subject})
-          (.then (fn [_]
-                   (policy-db/resolve-context! policy-context headers-like)))))))
+        headers-like (when normalized-email {"x-knoxx-user-email" normalized-email})]
+    (when-not normalized-email
+      (throw (http-error 401 "Not authenticated" "no_email")))
+    (await (policy-db/sync-user-from-actor-contract-for-context!
+            policy-context
+            {:email normalized-email
+             :display-name (or display-name normalized-email)
+             :auth-provider (or auth-provider "github")
+             :external-subject external-subject}))
+    (await (policy-db/resolve-context! policy-context headers-like))))
 
 (defn- gh-value
   [gh-user k]
@@ -369,222 +355,229 @@
         provided (request-api-key req)]
     (and expected provided (= expected provided))))
 
-(defn- ensure-api-key-membership!
+(defn- ^:async ensure-api-key-membership!
   [policy-context]
   (if-let [email (api-key-auth-email)]
-    (ensure-email-membership! policy-context {:email email
-                                              :display-name "Pi"
-                                              :auth-provider "api-key"
-                                              :external-subject (str "api-key:" email)})
-    (js/Promise.reject (http-error 401 "Knoxx API key user email is not configured" "api_key_identity_missing"))))
+    (await (ensure-email-membership! policy-context {:email email
+                                                     :display-name "Pi"
+                                                     :auth-provider "api-key"
+                                                     :external-subject (str "api-key:" email)}))
+    (throw (http-error 401 "Knoxx API key user email is not configured" "api_key_identity_missing"))))
 
-(defn- resolve-cookie-auth-context
+(defn- session-context-headers
+  [session-data]
+  (cond-> {"x-knoxx-user-email" (:email session-data)
+           "x-knoxx-org-slug" (:org-slug session-data)}
+    (:membership-id session-data)
+    (assoc "x-knoxx-membership-id" (:membership-id session-data))))
+
+(defn- ^:async resolve-cookie-auth-context
   [req policy-context]
   (let [cookie-token (some-> req (aget "cookies") (aget COOKIE-NAME))]
-    (if-not cookie-token
-      (js/Promise.reject (http-error 401 "Not authenticated" "no_session"))
-      (let [payload (verify-token cookie-token)
-            session-id (:sid payload)]
-        (if-not session-id
-          (js/Promise.reject (http-error 401 "Invalid session token" "invalid_token"))
-          (-> (load-session session-id cookie-token)
-              (.then
-               (fn [session-data]
-                 (if-not session-data
-                   (js/Promise.reject (http-error 401 "Session expired" "session_expired"))
-                   (let [headers (cond-> {"x-knoxx-user-email" (:email session-data)
-                                          "x-knoxx-org-slug" (:org-slug session-data)}
-                                   (:membership-id session-data)
-                                   (assoc "x-knoxx-membership-id" (:membership-id session-data)))]
-                     (policy-db/resolve-context! policy-context headers)))))))))))
+    (when-not cookie-token
+      (throw (http-error 401 "Not authenticated" "no_session")))
+    (let [payload (verify-token cookie-token)
+          session-id (:sid payload)]
+      (when-not session-id
+        (throw (http-error 401 "Invalid session token" "invalid_token")))
+      (let [session-data (await (load-session session-id cookie-token))]
+        (when-not session-data
+          (throw (http-error 401 "Session expired" "session_expired")))
+        (await (policy-db/resolve-context! policy-context (session-context-headers session-data)))))))
 
-(defn- create-session-and-redirect!
+(defn- github-session-data
+  [fresh-ctx gh-user email raw-token]
+  {:membership-id (get-in fresh-ctx [:membership :id])
+   :actor-id (or (get-in fresh-ctx [:membership :actor-id])
+                 (get-in fresh-ctx [:actor :id]))
+   :user-id (get-in fresh-ctx [:user :id])
+   :email email
+   :org-slug (get-in fresh-ctx [:org :slug])
+   :org-id (get-in fresh-ctx [:org :id])
+   :display-name (or (gh-value gh-user :name) (gh-value gh-user :login) email)
+   :github-login (gh-value gh-user :login)
+   :github-id (gh-value gh-user :id)
+   :auth-provider "github"
+   :raw-token raw-token
+   :created-at (.toISOString (js/Date.))})
+
+(defn- ^:async create-session-and-redirect!
   "Create session from resolved context, set cookie, and redirect."
   [policy-context reply gh-user email state-entry public-base-url]
-  (-> (ensure-user-membership! policy-context gh-user email)
-      (.then
-       (fn [fresh-ctx]
-         (let [session-id (.randomUUID crypto)
-               raw-token (sign-token {:sid session-id})
-               session-data {:membership-id (get-in fresh-ctx [:membership :id])
-                             :actor-id (or (get-in fresh-ctx [:membership :actor-id])
-                                           (get-in fresh-ctx [:actor :id]))
-                             :user-id (get-in fresh-ctx [:user :id])
-                             :email email
-                             :org-slug (get-in fresh-ctx [:org :slug])
-                             :org-id (get-in fresh-ctx [:org :id])
-                             :display-name (or (gh-value gh-user :name) (gh-value gh-user :login) email)
-                             :github-login (gh-value gh-user :login)
-                             :github-id (gh-value gh-user :id)
-                             :auth-provider "github"
-                             :raw-token raw-token
-                             :created-at (.toISOString (js/Date.))}]
-           (-> (store-session session-id session-data)
-               (.then (fn [_] raw-token))
-               (.then
-                (fn [token]
-                  (set-session-cookie reply token public-base-url)
-                  (.log js/console (str "[knoxx-session] GitHub login: " email))
-                  (.redirect reply
-                             (.toString (js/URL. (:redirect state-entry) public-base-url)))))))))))
+  (let [fresh-ctx (await (ensure-user-membership! policy-context gh-user email))
+        session-id (.randomUUID crypto)
+        raw-token (sign-token {:sid session-id})
+        session-data (github-session-data fresh-ctx gh-user email raw-token)]
+    (await (store-session session-id session-data))
+    (set-session-cookie reply raw-token public-base-url)
+    (.log js/console (str "[knoxx-session] GitHub login: " email))
+    (.redirect reply (.toString (js/URL. (:redirect state-entry) public-base-url)))))
 
-(defn create-session-from-context!
+(defn- local-session-data
+  [ctx session-options raw-token]
+  {:membership-id (get-in ctx [:membership :id])
+   :actor-id (or (get-in ctx [:membership :actor-id])
+                 (get-in ctx [:actor :id]))
+   :user-id (get-in ctx [:user :id])
+   :email (or (:email session-options) (get-in ctx [:user :email]) "")
+   :org-slug (get-in ctx [:org :slug])
+   :org-id (get-in ctx [:org :id])
+   :display-name (or (:display-name session-options)
+                     (get-in ctx [:user :display-name])
+                     (get-in ctx [:user :email])
+                     "")
+   :auth-provider (or (:auth-provider session-options) "local")
+   :raw-token raw-token
+   :created-at (.toISOString (js/Date.))})
+
+(defn ^:async create-session-from-context!
   [reply public-base-url ctx session-options]
   (let [session-id (.randomUUID crypto)
         raw-token (sign-token {:sid session-id})
-        session-data {:membership-id (get-in ctx [:membership :id])
-                      :actor-id (or (get-in ctx [:membership :actor-id])
-                                    (get-in ctx [:actor :id]))
-                      :user-id (get-in ctx [:user :id])
-                      :email (or (:email session-options)
-                                 (get-in ctx [:user :email])
-                                 "")
-                      :org-slug (get-in ctx [:org :slug])
-                      :org-id (get-in ctx [:org :id])
-                      :display-name (or (:display-name session-options)
-                                        (get-in ctx [:user :display-name])
-                                        (get-in ctx [:user :email])
-                                        "")
-                      :auth-provider (or (:auth-provider session-options) "local")
-                      :raw-token raw-token
-                      :created-at (.toISOString (js/Date.))}]
-    (-> (store-session session-id session-data)
-        (.then (fn [_]
-                 (set-session-cookie reply raw-token public-base-url)
-                 {:ok true
-                  :session-id session-id
-                  :user (:user ctx)
-                  :actor (:actor ctx)
-                  :org (:org ctx)
-                  :membership (:membership ctx)})))))
+        session-data (local-session-data ctx session-options raw-token)]
+    (await (store-session session-id session-data))
+    (set-session-cookie reply raw-token public-base-url)
+    {:ok true
+     :session-id session-id
+     :user (:user ctx)
+     :actor (:actor ctx)
+     :org (:org ctx)
+     :membership (:membership ctx)}))
 
-(defn- check-whitelist-and-session!
-  "Check if email is whitelisted; if so, create session and redirect, otherwise redirect to invite page."
+(defn- redirect-unwhitelisted!
+  [reply gh-user email public-base-url]
+  (let [invite-url (js/URL. "/login" public-base-url)]
+    (.set (.-searchParams invite-url) "error" "not_whitelisted")
+    (.set (.-searchParams invite-url) "email" email)
+    (.set (.-searchParams invite-url) "github_login" (or (gh-value gh-user :login) ""))
+    (.redirect reply (.toString invite-url))))
+
+(defn- ^:async check-whitelist-and-session!
+  "Create a session for whitelisted email, otherwise redirect to invite page."
   [policy-context reply gh-user email state-entry public-base-url]
-  (-> (ensure-user-membership! policy-context gh-user email)
-      (.then (fn [_] true))
-      (.catch (fn [_] false))
-      (.then
-       (fn [whitelisted]
-         (if (not whitelisted)
-           ;; Not whitelisted — redirect to invite page
-           (let [invite-url (js/URL. "/login" public-base-url)]
-             (.set (.-searchParams invite-url) "error" "not_whitelisted")
-             (.set (.-searchParams invite-url) "email" email)
-             (.set (.-searchParams invite-url) "github_login" (or (gh-value gh-user :login) ""))
-             (.redirect reply (.toString invite-url)))
-           ;; Whitelisted — upsert and create session
-           (create-session-and-redirect!
-            policy-context reply gh-user email state-entry public-base-url))))))
+  (let [whitelisted (try
+                      (await (ensure-user-membership! policy-context gh-user email))
+                      true
+                      (catch js/Error _ false))]
+    (if-not whitelisted
+      (redirect-unwhitelisted! reply gh-user email public-base-url)
+      (await (create-session-and-redirect!
+              policy-context reply gh-user email state-entry public-base-url)))))
 
 ;; --- Main callback handler -------------------------------------------------
 
-(defn handle-github-callback
+(defn- redirect-oauth-error!
+  [reply public-base-url err]
+  (.error js/console "[knoxx-session] GitHub OAuth callback error:" (.-message err))
+  (let [error-url (js/URL. "/login" public-base-url)]
+    (.set (.-searchParams error-url) "error" "oauth_failed")
+    (.set (.-searchParams error-url) "message" (.-message err))
+    (.redirect reply (.toString error-url))))
+
+(defn ^:async handle-github-callback
   [policy-context reply client-id client-secret state-entry code public-base-url]
-  (-> (exchange-github-code client-id client-secret code)
-      (.then
-        (fn [access-token]
-          (-> (get-github-user access-token)
-              (.then
-                (fn [gh-user]
-                  (if-not (gh-value gh-user :id)
-                    (throw (js/Error. "GitHub user lookup failed"))
-                    (-> (get-github-user-emails access-token)
-                        (.then
-                          (fn [email]
-                            (if-not email
-                              (throw (js/Error. "Could not retrieve GitHub email"))
-                              (check-whitelist-and-session!
-                                policy-context reply gh-user email
-                                state-entry public-base-url)))))))))))
-      (.catch
-        (fn [err]
-          (.error js/console
-            "[knoxx-session] GitHub OAuth callback error:" (.-message err))
-          (let [error-url (js/URL. "/login" public-base-url)]
-            (.set (.-searchParams error-url) "error" "oauth_failed")
-            (.set (.-searchParams error-url) "message" (.-message err))
-            (.redirect reply (.toString error-url)))))))
+  (try
+    (let [access-token (await (exchange-github-code client-id client-secret code))
+          gh-user (await (get-github-user access-token))]
+      (when-not (gh-value gh-user :id)
+        (throw (js/Error. "GitHub user lookup failed")))
+      (let [email (await (get-github-user-emails access-token))]
+        (when-not email
+          (throw (js/Error. "Could not retrieve GitHub email")))
+        (await (check-whitelist-and-session!
+                policy-context reply gh-user email state-entry public-base-url))))
+    (catch js/Error err
+      (redirect-oauth-error! reply public-base-url err))))
 
 
 ;; ---------------------------------------------------------------------------
 ;; Invite email (optional)
 ;; ---------------------------------------------------------------------------
 
-(defn send-invite-email
-  "Best-effort invite email sender.
+(defn- invite-url
+  [invite-code email public-base-url]
+  (try
+    (let [u (js/URL. "/login" public-base-url)]
+      (.set (.-searchParams u) "invite" invite-code)
+      (.set (.-searchParams u) "email" (str email))
+      (.toString u))
+    (catch :default _ "")))
 
-   IMPORTANT: This function MUST always return a Promise, so callers can safely
-   attach .catch even when email sending is disabled/unconfigured."
+(defn- invite-email-config
+  [invite email public-base-url]
+  (let [smtp-user (str (or (aget (.-env js/process) "KNOXX_SMTP_USER") ""))
+        invite-code (str (or (aget invite "code") ""))]
+    {:smtp-host (str (or (aget (.-env js/process) "KNOXX_SMTP_HOST") ""))
+     :smtp-port (js/parseInt (or (aget (.-env js/process) "KNOXX_SMTP_PORT") "587") 10)
+     :smtp-user smtp-user
+     :smtp-pass (str (or (aget (.-env js/process) "KNOXX_SMTP_PASS") ""))
+     :from (str (or (aget (.-env js/process) "KNOXX_EMAIL_FROM") smtp-user ""))
+     :email (str email)
+     :invite-code invite-code
+     :invite-url (invite-url invite-code email public-base-url)}))
+
+(defn- invite-email-ready?
+  [{:keys [smtp-host from smtp-user smtp-pass email invite-code invite-url]}]
+  (not-any? str/blank? [smtp-host from smtp-user smtp-pass email invite-code invite-url]))
+
+(defn- invite-email-message
+  [{:keys [from email invite-url]}]
+  #js {:from from
+       :to email
+       :subject "Knoxx invite"
+       :text (str "You have been invited to Knoxx.\n\nInvite link: " invite-url "\n")})
+
+(defn ^:async send-invite-email
+  "Best-effort invite email sender; always resolves, including when disabled."
   [_runtime invite email public-base-url]
   (try
-    (let [smtp-host (str (or (aget (.-env js/process) "KNOXX_SMTP_HOST") ""))
-          smtp-port (js/parseInt (or (aget (.-env js/process) "KNOXX_SMTP_PORT") "587") 10)
-          smtp-user (str (or (aget (.-env js/process) "KNOXX_SMTP_USER") ""))
-          smtp-pass (str (or (aget (.-env js/process) "KNOXX_SMTP_PASS") ""))
-          from (str (or (aget (.-env js/process) "KNOXX_EMAIL_FROM") smtp-user ""))
-          invite-code (str (or (aget invite "code") ""))
-          invite-url (try
-                       (let [u (js/URL. "/login" public-base-url)]
-                         (.set (.-searchParams u) "invite" invite-code)
-                         (.set (.-searchParams u) "email" (str email))
-                         (.toString u))
-                       (catch :default _ ""))]
-      (if (or (str/blank? smtp-host)
-              (str/blank? from)
-              (str/blank? smtp-user)
-              (str/blank? smtp-pass)
-              (str/blank? (str email))
-              (str/blank? invite-code)
-              (str/blank? invite-url))
-        (js/Promise.resolve nil)
+    (let [{:keys [smtp-host smtp-port smtp-user smtp-pass] :as config}
+          (invite-email-config invite email public-base-url)]
+      (when (invite-email-ready? config)
         (let [transporter (.createTransport nodemailer
                                             #js {:host smtp-host
                                                  :port smtp-port
                                                  :secure false
-                                                 :auth #js {:user smtp-user
-                                                            :pass smtp-pass}})
-              subject "Knoxx invite"
-              text (str "You have been invited to Knoxx.\n\n"
-                        "Invite link: " invite-url "\n")]
-          (.sendMail transporter
-                     #js {:from from
-                          :to (str email)
-                          :subject subject
-                          :text text}))))
-    (catch :default err
-      ;; Never block invite creation on email failure.
+                                                 :auth #js {:user smtp-user :pass smtp-pass}})]
+          (await (.sendMail transporter (invite-email-message config))))))
+    (catch js/Error err
       (.warn js/console "[knoxx-session] send-invite-email error:" (.-message err))
-      (js/Promise.resolve nil))))
+      nil)))
 
+
+(defn- protected-auth-path?
+  [req]
+  (not (and (.startsWith (.-url req) "/api/auth/")
+            (not (.startsWith (.-url req) "/api/auth/context")))))
+
+(defn- set-session-headers!
+  [headers session-data]
+  (aset headers "x-knoxx-user-email" (:email session-data))
+  (when (:org-slug session-data)
+    (aset headers "x-knoxx-org-slug" (:org-slug session-data)))
+  (when (:membership-id session-data)
+    (aset headers "x-knoxx-membership-id" (:membership-id session-data))))
+
+(defn- ^:async hydrate-session-headers!
+  [reply headers session-id cookie-token]
+  (try
+    (let [session-data (await (load-session session-id cookie-token))]
+      (if-not session-data
+        (clear-session-cookie reply (or (aget (.-env js/process) "KNOXX_PUBLIC_BASE_URL") "http://localhost"))
+        (set-session-headers! headers session-data)))
+    (catch js/Error _ nil)))
 
 (defn create-session-hook
   [_policy-context]
   (fn session-hook [req reply]
-    (when (not (and (.startsWith (.-url req) "/api/auth/")
-                    (not (.startsWith (.-url req) "/api/auth/context"))))
+    (when (protected-auth-path? req)
       (let [headers (.-headers req)
             header-email (str/trim (or (aget headers "x-knoxx-user-email") ""))
             header-mid (str/trim (or (aget headers "x-knoxx-membership-id") ""))
             cookie-token (some-> req (aget "cookies") (aget COOKIE-NAME))]
-        (when (and (str/blank? header-email)
-                   (str/blank? header-mid)
-                   cookie-token)
-          (let [payload (verify-token cookie-token)
-                session-id (:sid payload)]
-            (when session-id
-              (-> (load-session session-id cookie-token)
-                  (.then
-                   (fn [session-data]
-                     (if-not session-data
-                       (clear-session-cookie reply (or (aget (.-env js/process) "KNOXX_PUBLIC_BASE_URL") "http://localhost"))
-                       (do
-                         (aset headers "x-knoxx-user-email" (:email session-data))
-                         (when (:org-slug session-data)
-                           (aset headers "x-knoxx-org-slug" (:org-slug session-data)))
-                         (when (:membership-id session-data)
-                           (aset headers "x-knoxx-membership-id" (:membership-id session-data))))))
-                  (.catch (fn [_] nil)))))))))))
+        (when (and (str/blank? header-email) (str/blank? header-mid) cookie-token)
+          (when-let [session-id (:sid (verify-token cookie-token))]
+            (hydrate-session-headers! reply headers session-id cookie-token)))))))
 
 
 (defn resolve-auth-context

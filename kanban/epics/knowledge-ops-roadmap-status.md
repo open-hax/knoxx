@@ -1,13 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-roadmap-status"
 title: "Knoxx knowledge-ops roadmap status"
-status: incoming
-priority: P2
+status: "rejected"
+priority: "P4"
 labels: ["epics"]
 created_at: "2026-04-04T00:00:00Z"
 source: "specs/epics/knowledge-ops-roadmap-status.md"
 points: null
-category: epics
+category: "epics"
 ---
 
 # Knoxx knowledge-ops roadmap status
@@ -29,3 +29,6 @@ This is a roadmap/status document, not a replacement for the individual specs.
 
 For the graph-memory initiative specifically, see:
 
+---
+Triage 2026-05-29: This is an explicit meta/tracking artifact — the task body states it is "a roadmap/status document, not a replacement for the individual specs" and its purpose is to classify other specs as landed/partial/next/exploratory, which is documentation triaging rather than implementable work. The file body is also incomplete (truncated at line 31), leaving no concrete deliverable or DoD. Verdict: rejected (P4). --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
+---

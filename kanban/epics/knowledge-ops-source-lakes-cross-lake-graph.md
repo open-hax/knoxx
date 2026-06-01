@@ -1,13 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-source-lakes-cross-lake-graph"
 title: "Knowledge Ops — Source Lakes + Cross-Lake Graph Spec"
-status: incoming
-priority: P2
+status: "icebox"
+priority: "P2"
 labels: ["epics"]
 created_at: "2026-05-28T22:40:14.393Z"
 source: "specs/epics/knowledge-ops-source-lakes-cross-lake-graph.md"
 points: null
-category: epics
+category: "epics"
 ---
 
 # Knowledge Ops — Source Lakes + Cross-Lake Graph Spec
@@ -28,4 +28,6 @@ Those values remain useful, but only as **node/edge metadata and query filters**
 
 > *One lake per source. Rich labels inside the lake. One graph spanning the lakes.*
 
+---
+Triage 2026-05-29: This is a fully-written architectural epic spanning 5 phases (lake boundary correction, devel graph ingestion, web graph ingestion, Bluesky ingestion, Graph Weaver visualization upgrade) across Knoxx ingestion, Myrmex, Sintel/OpenPlanner, and Graph Weaver — well beyond 5sp and not a bounded implementable slice. Per FSM rules, epics >5sp are iceboxed; concrete Phase 1–5 subtasks should be split out as ≤5sp incoming cards to drain into ready. Verdict: icebox (P2). --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
 ---

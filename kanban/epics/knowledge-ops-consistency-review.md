@@ -1,14 +1,15 @@
 ---
 uuid: "knoxx-knowledge-ops-consistency-review"
 title: "Knowledge-ops spec consistency review"
-status: accepted
-priority: P2
-labels: ["epics"]
+status: "icebox"
+priority: "P2"
+labels: "["epics"]"
 created_at: "2026-04-04T00:00:00Z"
 source: "specs/epics/knowledge-ops-consistency-review.md"
 points: null
-category: epics
+category: "epics"
 ---
+
 # Knowledge-ops spec consistency review
 
 > Source: `specs/epics/knowledge-ops-consistency-review.md`

@@ -52,35 +52,39 @@ Onwards to glory."
         (js/console.error "Failed to create Redis client:" e)
         nil))))
 
-(defn init-redis!
+(defn ^:async connect-redis-client!
+  [client]
+  (try
+    (await (.connect client))
+    (reset! redis-client* client)
+    client
+    (catch :default err
+      (js/console.error "Failed to connect Redis client:" err)
+      (reset! redis-client* nil)
+      nil)
+    (finally
+      (reset! redis-init-promise* nil))))
+
+(defn ^:async init-redis!
   "Initialize and connect the Redis client from environment.
    Returns a promise resolving to the connected client or nil."
   [redis-url]
   (cond
     (str/blank? (str redis-url))
-    (js/Promise.resolve nil)
+    nil
 
     @redis-client*
-    (js/Promise.resolve @redis-client*)
+    @redis-client*
 
     @redis-init-promise*
-    @redis-init-promise*
+    (await @redis-init-promise*)
 
     :else
     (if-let [client (create-client redis-url)]
-      (let [connect-promise (-> (.connect client)
-                                (.then (fn []
-                                         (reset! redis-client* client)
-                                         client))
-                                (.catch (fn [err]
-                                          (js/console.error "Failed to connect Redis client:" err)
-                                          (reset! redis-client* nil)
-                                          nil))
-                                (.finally (fn []
-                                            (reset! redis-init-promise* nil))))]
+      (let [connect-promise (connect-redis-client! client)]
         (reset! redis-init-promise* connect-promise)
-        connect-promise)
-      (js/Promise.resolve nil))))
+        (await connect-promise))
+      nil)))
 
 (defn get-client
   "Get the current connected Redis client, or nil if not initialized."
@@ -89,171 +93,162 @@ Onwards to glory."
 
 ;; Promise wrappers for Redis commands
 
-(defn get-key
+(defn ^:async get-key
   "Get a value from Redis."
   [client key]
-  (-> client
-      (.get (redis-arg key))
-      (.catch (fn [err]
-                (js/console.error "Redis GET error:" err)
-                nil))))
+  (try
+    (await (.get client (redis-arg key)))
+    (catch :default err
+      (js/console.error "Redis GET error:" err)
+      nil)))
 
-(defn set-key
+(defn ^:async set-key
   "Set a value in Redis with optional TTL (seconds)."
   ([client key value]
    (set-key client key value nil))
   ([client key value ttl]
    (let [key' (redis-arg key)
          value' (redis-arg value)]
-     (-> (if ttl
-           (.set client key' value' #js {:EX ttl})
-           (.set client key' value'))
-         (.catch (fn [err]
-                   (js/console.error "Redis SET error:" err)))))))
+     (try
+       (await (if ttl
+                (.set client key' value' #js {:EX ttl})
+                (.set client key' value')))
+       (catch :default err
+         (js/console.error "Redis SET error:" err))))))
 
-(defn set-json
+(defn ^:async set-json
   "Set a JSON value in Redis with optional TTL."
   ([client key value]
    (set-json client key value nil))
   ([client key value ttl]
-   (-> client
-       (.set (redis-arg key) (js/JSON.stringify (clj->js value)))
-       (.then (fn []
-                (when ttl
-                  (.expire client (redis-arg key) ttl))))
-       (.catch (fn [err]
-                 (js/console.error "Redis SET JSON error:" err))))))
+   (try
+     (await (.set client (redis-arg key) (js/JSON.stringify (clj->js value))))
+     (when ttl
+       (await (.expire client (redis-arg key) ttl)))
+     (catch :default err
+       (js/console.error "Redis SET JSON error:" err)))))
 
-(defn get-json
+(defn ^:async get-json
   "Get a JSON value from Redis, parsed to CLJ."
   [client key]
-  (-> client
-      (.get (redis-arg key))
-      (.then (fn [value]
-               (when value
-                 (js->clj (js/JSON.parse value) :keywordize-keys true))))
-      (.catch (fn [err]
-                (js/console.error "Redis GET JSON error:" err)
-                nil))))
+  (try
+    (when-let [value (await (.get client (redis-arg key)))]
+      (js->clj (js/JSON.parse value) :keywordize-keys true))
+    (catch :default err
+      (js/console.error "Redis GET JSON error:" err)
+      nil)))
 
-(defn del
+(defn ^:async del
   "Delete a key from Redis."
   [client key]
-  (-> client
-      (.del (redis-arg key))
-      (.catch (fn [err]
-                (js/console.error "Redis DEL error:" err)))))
+  (try
+    (await (.del client (redis-arg key)))
+    (catch :default err
+      (js/console.error "Redis DEL error:" err))))
 
-(defn sadd
+(defn ^:async sadd
   "Add member to set."
   [client key member]
-  (-> client
-      (.sAdd (redis-arg key) (redis-arg member))
-      (.catch (fn [err]
-                (js/console.error "Redis SADD error:" err)))))
+  (try
+    (await (.sAdd client (redis-arg key) (redis-arg member)))
+    (catch :default err
+      (js/console.error "Redis SADD error:" err))))
 
-(defn srem
+(defn ^:async srem
   "Remove member from set."
   [client key member]
-  (-> client
-      (.sRem (redis-arg key) (redis-arg member))
-      (.catch (fn [err]
-                (js/console.error "Redis SREM error:" err)))))
+  (try
+    (await (.sRem client (redis-arg key) (redis-arg member)))
+    (catch :default err
+      (js/console.error "Redis SREM error:" err))))
 
-(defn smembers
+(defn ^:async smembers
   "Get all members of a set."
   [client key]
-  (-> client
-      (.sMembers (redis-arg key))
-      (.then (fn [members]
-               (js->clj members)))
-      (.catch (fn [err]
-                (js/console.error "Redis SMEMBERS error:" err)
-                []))))
+  (try
+    (js->clj (await (.sMembers client (redis-arg key))))
+    (catch :default err
+      (js/console.error "Redis SMEMBERS error:" err)
+      [])))
 
-(defn expire
+(defn ^:async expire
   "Set TTL on a key."
   [client key ttl-seconds]
-  (-> client
-      (.expire (redis-arg key) ttl-seconds)
-      (.catch (fn [err]
-                (js/console.error "Redis EXPIRE error:" err)))))
+  (try
+    (await (.expire client (redis-arg key) ttl-seconds))
+    (catch :default err
+      (js/console.error "Redis EXPIRE error:" err))))
 
-(defn lpush
+(defn ^:async lpush
   "Push a value to the head of a Redis list."
   [client key value]
-  (-> client
-      (.lPush (redis-arg key) (redis-arg value))
-      (.catch (fn [err]
-                (js/console.error "Redis LPUSH error:" err)))))
+  (try
+    (await (.lPush client (redis-arg key) (redis-arg value)))
+    (catch :default err
+      (js/console.error "Redis LPUSH error:" err))))
 
-(defn lpush-json
+(defn ^:async lpush-json
   "Push a JSON-encoded value to the head of a Redis list."
   [client key value]
-  (-> client
-      (.lPush (redis-arg key) (js/JSON.stringify (clj->js value)))
-      (.catch (fn [err]
-                (js/console.error "Redis LPUSH JSON error:" err)))))
+  (try
+    (await (.lPush client (redis-arg key) (js/JSON.stringify (clj->js value))))
+    (catch :default err
+      (js/console.error "Redis LPUSH JSON error:" err))))
 
-(defn lrange
+(defn ^:async lrange
   "Get a range of elements from a Redis list."
   [client key start stop]
-  (-> client
-      (.lRange (redis-arg key) start stop)
-      (.then (fn [items]
-               (if (array? items)
-                 (vec (array-seq items))
-                 [])))
-      (.catch (fn [err]
-                (js/console.error "Redis LRANGE error:" err)
-                []))))
+  (try
+    (let [items (await (.lRange client (redis-arg key) start stop))]
+      (if (array? items)
+        (vec (array-seq items))
+        []))
+    (catch :default err
+      (js/console.error "Redis LRANGE error:" err)
+      [])))
 
-(defn lrange-json
+(defn ^:async lrange-json
   "Get a range of elements from a Redis list, parsing each as JSON."
   [client key start stop]
-  (-> client
-      (.lRange (redis-arg key) start stop)
-      (.then (fn [items]
-               (if (array? items)
-                 (->> (array-seq items)
-                      (keep (fn [item]
-                              (try
-                                (js->clj (js/JSON.parse item) :keywordize-keys true)
-                                (catch :default _ nil))))
-                      vec)
-                 [])))
-      (.catch (fn [err]
-                (js/console.error "Redis LRANGE JSON error:" err)
-                []))))
+  (try
+    (let [items (await (.lRange client (redis-arg key) start stop))]
+      (if (array? items)
+        (->> (array-seq items)
+             (keep (fn [item]
+                     (try
+                       (js->clj (js/JSON.parse item) :keywordize-keys true)
+                       (catch :default _ nil))))
+             vec)
+        []))
+    (catch :default err
+      (js/console.error "Redis LRANGE JSON error:" err)
+      [])))
 
-(defn llen
+(defn ^:async llen
   "Get the length of a Redis list."
   [client key]
-  (-> client
-      (.lLen (redis-arg key))
-      (.then (fn [n] (or n 0)))
-      (.catch (fn [err]
-                (js/console.error "Redis LLEN error:" err)
-                0))))
+  (try
+    (or (await (.lLen client (redis-arg key))) 0)
+    (catch :default err
+      (js/console.error "Redis LLEN error:" err)
+      0)))
 
-(defn ping
+(defn ^:async ping
   "Ping Redis to check connection."
   [client]
-  (-> client
-      (.ping)
-      (.then (fn [result]
-               (= result "PONG")))
-      (.catch (fn [err]
-                (js/console.error "Redis PING error:" err)
-                false))))
+  (try
+    (= (await (.ping client)) "PONG")
+    (catch :default err
+      (js/console.error "Redis PING error:" err)
+      false)))
 
-(defn quit
+(defn ^:async quit
   "Close Redis connection."
   [client]
   (reset! redis-client* nil)
   (reset! redis-init-promise* nil)
   (when client
-    (-> client
-        (.quit)
-        (.catch (fn [err]
-                  (js/console.error "Redis QUIT error:" err))))))
+    (try
+      (await (.quit client))
+      (catch :default err
+        (js/console.error "Redis QUIT error:" err)))))

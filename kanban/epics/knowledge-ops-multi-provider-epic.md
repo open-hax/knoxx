@@ -1,14 +1,15 @@
 ---
 uuid: "knoxx-knowledge-ops-multi-provider-epic"
 title: "The Lake — Multi-Provider Epic"
-status: accepted
-priority: P2
-labels: ["epics"]
+status: "icebox"
+priority: "P2"
+labels: "["epics"]"
 created_at: "2026-05-28T22:40:14.389Z"
 source: "specs/epics/knowledge-ops-multi-provider-epic.md"
 points: null
-category: epics
+category: "epics"
 ---
+
 # The Lake — Multi-Provider Epic
 
 > Source: `specs/epics/knowledge-ops-multi-provider-epic.md`
@@ -16,11 +17,9 @@ category: epics
 > *One platform. Four deployment targets. The provider is a configuration detail.*
 
 ---
-
 ## Purpose
 
 Define the epic that delivers the multi-provider knowledge platform: abstract interfaces + domain logic + four provider implementations. The product is the integration layer and domain logic. The provider is selected at deploy time, not at build time.
-
 ---
 
 ## Why Multi-Provider

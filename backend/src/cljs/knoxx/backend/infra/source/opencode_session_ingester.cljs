@@ -13,46 +13,41 @@
   []
   (opencode-client/server-url {}))
 
-(defn get-opencode-ingest-status
+(defn ^:async get-opencode-ingest-status
   []
-  (-> (js/Promise.all
-       #js [(opencode-client/health! (opencode-client))
-            (opencode-client/sessions! (opencode-client) {:limit 20 :archived true})])
-      (.then
-       (fn [parts]
-         (let [health (:body (aget parts 0))
-               sessions (:body (aget parts 1))
-               count (count (or sessions []))]
-           #js {:ok true
-                :opencodeServerUrl (opencode-server-url)
-                :health (clj->js health)
-                :recentSessionCount count
-                :recentSessions (clj->js sessions)})))
-      (.catch
-       (fn [err]
-         #js {:ok false
-              :opencodeServerUrl (opencode-server-url)
-              :error (.-message err)}))))
+  (try
+    (let [parts (await (js/Promise.all
+                        #js [(opencode-client/health! (opencode-client))
+                             (opencode-client/sessions! (opencode-client) {:limit 20 :archived true})]))
+          health (:body (aget parts 0))
+          sessions (:body (aget parts 1))]
+      #js {:ok true
+           :opencodeServerUrl (opencode-server-url)
+           :health (clj->js health)
+           :recentSessionCount (count (or sessions []))
+           :recentSessions (clj->js sessions)})
+    (catch :default err
+      #js {:ok false
+           :opencodeServerUrl (opencode-server-url)
+           :error (.-message err)})))
 
-(defn list-opencode-sessions
+(defn ^:async list-opencode-sessions
   [{:keys [limit cursor directory search roots archived]
     :or {limit 50 archived true}}]
-  (let [limit (min (or limit 50) 200)]
-    (-> (opencode-client/sessions!
-         (opencode-client)
-         (cond-> {:limit limit
-                  :archived archived}
-           cursor (assoc :cursor cursor)
-           directory (assoc :directory directory)
-           search (assoc :search search)
-           (some? roots) (assoc :roots roots)))
-        (.then
-         (fn [resp]
-           #js {:ok true
-                :opencodeServerUrl (opencode-server-url)
-                :sessions (clj->js (:body resp))
-                :nextCursor (:nextCursor resp)
-                :has_more (boolean (:nextCursor resp))})))))
+  (let [limit (min (or limit 50) 200)
+        resp (await (opencode-client/sessions!
+                     (opencode-client)
+                     (cond-> {:limit limit
+                              :archived archived}
+                       cursor (assoc :cursor cursor)
+                       directory (assoc :directory directory)
+                       search (assoc :search search)
+                       (some? roots) (assoc :roots roots))))]
+    #js {:ok true
+         :opencodeServerUrl (opencode-server-url)
+         :sessions (clj->js (:body resp))
+         :nextCursor (:nextCursor resp)
+         :has_more (boolean (:nextCursor resp))}))
 
 (defn get-opencode-session-messages
   [session-id]

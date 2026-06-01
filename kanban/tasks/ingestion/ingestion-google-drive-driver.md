@@ -51,3 +51,7 @@ Add a Google Drive driver that can ingest documents, spreadsheets, and presentat
 
 - Google Cloud service account setup
 - Decision on auth method (service account vs OAuth2)
+
+---
+
+**Triage 2026-05-29 (icebox → icebox):** Task has two concrete unresolved blockers: Google Cloud service account has not been set up, and the auth method (service account vs OAuth2) has not been decided. Even though the task is 5sp and has clear acceptance criteria, it cannot be promoted until those external prerequisites are resolved. Per FSM rules, it must also pass through Incoming before reaching Breakdown or Ready. Remains icebox at P3.

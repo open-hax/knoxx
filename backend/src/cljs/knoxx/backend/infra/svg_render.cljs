@@ -61,21 +61,26 @@
   (reset! browser-promise-atom nil)
   (throw err))
 
-(defn- get-browser
+(defn ^:async launch-browser!
+  []
+  (try
+    (remember-browser! (await (.launch (puppeteer-module) (launch-options))))
+    (catch :default err
+      (forget-launch! err))))
+
+(defn ^:async get-browser
   []
   (cond
     @browser-atom
-    (js/Promise.resolve @browser-atom)
+    @browser-atom
 
     @browser-promise-atom
-    @browser-promise-atom
+    (await @browser-promise-atom)
 
     :else
-    (let [launch-promise (-> (.launch (puppeteer-module) (launch-options))
-                             (.then remember-browser!)
-                             (.catch forget-launch!))]
+    (let [launch-promise (launch-browser!)]
       (reset! browser-promise-atom launch-promise)
-      launch-promise)))
+      (await launch-promise))))
 
 (defn- svg-document
   [svg-string]
@@ -107,15 +112,17 @@
     (js-await [page (.newPage browser)]
       (render-page! page svg-string width height))))
 
-(defn shutdown!
+(defn ^:async shutdown!
   "Closes the warm Chromium browser, if present. Returns a js/Promise."
   []
   (if-let [browser @browser-atom]
     (do
       (reset! browser-atom nil)
       (reset! browser-promise-atom nil)
-      (.catch (.close browser)
-              (fn [err]
-                (.warn js/console "[svg-render] failed to close Chromium" err)
-                false)))
-    (js/Promise.resolve true)))
+      (try
+        (await (.close browser))
+        true
+        (catch :default err
+          (.warn js/console "[svg-render] failed to close Chromium" err)
+          false)))
+    true))

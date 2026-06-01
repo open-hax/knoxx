@@ -1,14 +1,15 @@
 ---
 uuid: "knoxx-knowledge-ops-deploy-self-hosted"
 title: "The Lake — Self-Hosted Deployment Spec"
-status: accepted
-priority: P2
-labels: ["epics"]
+status: "icebox"
+priority: "P2"
+labels: "["epics"]"
 created_at: "2026-05-28T22:40:14.384Z"
 source: "specs/epics/knowledge-ops-deploy-self-hosted.md"
 points: null
-category: epics
+category: "epics"
 ---
+
 # The Lake — Self-Hosted Deployment Spec
 
 > Source: `specs/epics/knowledge-ops-deploy-self-hosted.md`
@@ -16,7 +17,6 @@ category: epics
 > *MongoDB + mongot + Ollama. No cloud provider. Your servers, your rules.*
 
 ---
-
 ## Provider Mapping
 
 | Logical Component | Implementation | Config Key |
@@ -28,3 +28,4 @@ category: epics
 | Job queue | **JSONL job queue** | `QUEUE_PROVIDER=jsonl` |
 | Auth | **Bearer token** | `AUTH_PROVIDER=bearer-token` |
 | App hosting | **Docker Compose** | — |
+---

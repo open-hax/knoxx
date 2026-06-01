@@ -1,5 +1,6 @@
 (ns knoxx.backend.session-titles-test
   (:require [cljs.test :refer [deftest is testing]]
+            [knoxx.backend.extern.proxx :as proxx]
             [knoxx.backend.infra.stores.session-titles :as titles]))
 
 (deftest sanitize-session-title
@@ -30,3 +31,19 @@
                 {:extra "{\"kind\":\"knoxx.session_title\",\"title\":\"Extern Boundary\",\"title_model\":\"model-x\"}"})]
     (is (= "Extern Boundary" (:title result)))
     (is (= "model-x" (:title_model result)))))
+
+(deftest ^:async generate-session-title-uses-configured-model
+  (let [request* (atom nil)
+        config {:proxx-base-url "http://proxx"
+                :proxx-auth-token "token"
+                :proxx-default-model "gpt-5.5"
+                :session-title-model "gpt-5-mini"}]
+    (with-redefs [proxx/chat-completion! (fn [_ request]
+                                           (reset! request* request)
+                                           (js/Promise.resolve {:ok? true
+                                                                :model (:model request)
+                                                                :content "Useful Title"}))]
+      (let [result (await (titles/generate-session-title! config "Please inspect federation routing."))]
+        (is (= "gpt-5-mini" (:model @request*)))
+        (is (= "Useful Title" (:title result)))
+        (is (= "gpt-5-mini" (:title_model result)))))))

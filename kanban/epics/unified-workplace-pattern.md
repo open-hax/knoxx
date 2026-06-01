@@ -1,14 +1,15 @@
 ---
 uuid: "knoxx-unified-workplace-pattern"
 title: "Unified Workplace Pattern"
-status: accepted
-priority: P2
-labels: ["epics"]
+status: "icebox"
+priority: "P2"
+labels: "["epics"]"
 created_at: "2026-04-12T00:00:00Z"
 source: "specs/epics/unified-workplace-pattern.md"
 points: null
-category: epics
+category: "epics"
 ---
+
 # Unified Workplace Pattern
 
 > Source: `specs/epics/unified-workplace-pattern.md`
@@ -17,7 +18,6 @@ category: epics
 **Status**: Draft
 
 ---
-
 ## Two Navigation Layers
 
 ### Navbar (Top)
@@ -28,3 +28,4 @@ Decides the **KIND of work**:
 
 ### Context Bar (Left)
 Decides the **TARGET of work**:
+---

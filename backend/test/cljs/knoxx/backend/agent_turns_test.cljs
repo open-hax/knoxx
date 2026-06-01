@@ -1,13 +1,14 @@
 (ns knoxx.backend.agent-turns-test
   (:require [knoxx.backend.infra.auth.authz :as authz]
-            [cljs.test :refer [deftest is testing async]]
-            [knoxx.backend.domain.agent.content :as content]
-            [knoxx.backend.infra.agent.tools :as tools]
-            [knoxx.backend.infra.agent.transcript :as transcript]
-            [knoxx.backend.infra.agent.turn :as agent-turns]
-            [knoxx.backend.extern.agent-turn-node :as xturn-node]
-            [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]
-            [knoxx.backend.domain.models :as models]))
+             [cljs.test :refer [deftest is testing]]
+             [knoxx.backend.domain.agent.content :as content]
+             [knoxx.backend.infra.agent.tools :as tools]
+             [knoxx.backend.infra.agent.transcript :as transcript]
+             [knoxx.backend.infra.agent.turn :as agent-turns]
+             [knoxx.backend.infra.stores.session-store :as session-store]
+             [knoxx.backend.extern.agent-turn-node :as xturn-node]
+             [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]
+             [knoxx.backend.shape.agent :as agent-shape]))
 
 (deftest ensure-session-id-preserves-provided-value
   (testing "existing session ids are kept intact"
@@ -130,6 +131,42 @@
         (is (= [{:type "text" :text "hello"}] parts)))
       (catch :default err
         (is false (str "materialize-content-parts! threw: " (.-message err)))))))
+
+(defn- pending-agent-session
+  []
+  (reify agent-shape/IAgentSession
+    (streaming? [_] true)
+    (current-turn [_] nil)
+    (messages [_] [])
+    (subscribe! [_ _handler] (fn [] nil))
+    (send-user-message! [_ _content] (js/Promise. (fn [_resolve _reject] nil)))
+    (follow-up! [_ _message] (js/Promise.resolve nil))
+    (steer! [_ _message] (js/Promise.resolve nil))
+    (set-thinking-level! [_ _level] nil)))
+
+(deftest ^:async prompt-timeout-finalizes-session-as-failed
+  (testing "provider turns that never settle clear the active stream through failure finalization"
+    (let [completed* (atom nil)]
+      (with-redefs [session-store/complete-session! (fn [_client session-id conversation-id payload]
+                                                      (reset! completed* {:session-id session-id
+                                                                          :conversation-id conversation-id
+                                                                          :payload payload}))]
+        (try
+          (await (agent-turns/prompt-and-await!
+                  {:agent-turn-timeout-ms 1}
+                  "session-timeout" "run-timeout" "conversation-timeout"
+                  (.now js/Date) "gpt-5.5" "direct"
+                  (pending-agent-session)
+                  "hello" [] nil nil [{:role "user" :content "hello"}] {}))
+          (is false "prompt-and-await! should reject on timeout")
+          (catch :default err
+            (is (re-find #"Agent turn timed out after 1ms" (.-message err)))
+            (is (= {:session-id "session-timeout"
+                    :conversation-id "conversation-timeout"
+                    :payload {:status "failed"
+                              :error "Error: Agent turn timed out after 1ms"
+                              :messages [{:role "user" :content "hello"}]}}
+                   @completed*))))))))
 
 (deftest merge-content-parts-dedupes-overlapping-attachments
   (testing "reply media already present in the assistant response is not duplicated"

@@ -59,40 +59,44 @@
 
 ;; ─── public API ──────────────────────────────────────────────────────────────────────────────
 
-(defn mem-set!
+(defn ^:async mem-set!
   "Write `value` under `key` with optional `ttl` (ISO-8601 or seconds).
    Returns a Promise resolving to {:key k :written true}."
   [k v & [{:keys [ttl]}]]
   (let [ttl-ms (parse-ttl-ms (or ttl default-ttl-ms))]
     (if-let [client (redis/get-client)]
       (let [ttl-sec (max 1 (js/Math.ceil (/ ttl-ms 1000)))]
-        (-> (redis/set-json client (str "temp-mem:" k) v ttl-sec)
-            (.then (fn [_] {:key k :written true}))
-            (.catch (fn [_]
-                      (local-set! k v ttl-ms)
-                      {:key k :written true :backend :local}))))
+        (try
+          (await (redis/set-json client (str "temp-mem:" k) v ttl-sec))
+          {:key k :written true}
+          (catch :default _
+            (local-set! k v ttl-ms)
+            {:key k :written true :backend :local})))
       (do (local-set! k v ttl-ms)
-          (js/Promise.resolve {:key k :written true :backend :local})))))
+          {:key k :written true :backend :local}))))
 
-(defn mem-get
+(defn ^:async mem-get
   "Read the value at `key`. Returns Promise<value | nil>."
   [k]
   (if-let [client (redis/get-client)]
-    (-> (redis/get-json client (str "temp-mem:" k))
-        (.catch (fn [_] (local-get k))))
-    (js/Promise.resolve (local-get k))))
+    (try
+      (await (redis/get-json client (str "temp-mem:" k)))
+      (catch :default _
+        (local-get k)))
+    (local-get k)))
 
-(defn mem-del!
+(defn ^:async mem-del!
   "Delete `key`. Returns Promise<{:key k :deleted true}>."
   [k]
   (if-let [client (redis/get-client)]
-    (-> (redis/del client (str "temp-mem:" k))
-        (.then (fn [_] {:key k :deleted true}))
-        (.catch (fn [_]
-                  (local-del! k)
-                  {:key k :deleted true :backend :local})))
+    (try
+      (await (redis/del client (str "temp-mem:" k)))
+      {:key k :deleted true}
+      (catch :default _
+        (local-del! k)
+        {:key k :deleted true :backend :local}))
     (do (local-del! k)
-        (js/Promise.resolve {:key k :deleted true :backend :local}))))
+        {:key k :deleted true :backend :local})))
 
 ;; ─── tool registration ────────────────────────────────────────────────────────────────────────
 

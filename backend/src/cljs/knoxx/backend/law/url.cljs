@@ -1,3 +1,6 @@
+(ns knoxx.backend.law.url
+  (:require [clojure.string :as str]))
+
 (defn looks-like-url?  [value]
   (and (string? value)
        (or (str/starts-with? value "http://")

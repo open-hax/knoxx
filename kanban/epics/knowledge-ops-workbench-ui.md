@@ -1,13 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-workbench-ui"
 title: "Knowledge Ops — Unified Knowledge Workbench UI Spec"
-status: incoming
-priority: P2
+status: "icebox"
+priority: "P2"
 labels: ["epics"]
 created_at: "2026-05-28T22:40:14.393Z"
 source: "specs/epics/knowledge-ops-workbench-ui.md"
 points: null
-category: epics
+category: "epics"
 ---
 
 # Knowledge Ops — Unified Knowledge Workbench UI Spec
@@ -25,3 +25,7 @@ category: epics
 - interpret older `Canvas` language in this doc as the predecessor of the current Knoxx **Scratchpad** surface
 
 > *One interface. File explorer ingestion, collection chat, labeling, and synthesis canvas. Every panel shares the same data sources
+
+---
+Triage 2026-05-29: This is an epic parent spec document (labels: epics) — the breakdown is already marked done and concrete sub-specs have been split into the workbench/ subdirectory; no actionable implementation work remains at this level. Verdict: icebox (P2). --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
+---

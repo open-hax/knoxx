@@ -47,11 +47,30 @@
             ))
 
 
-(defn- queue-chat-start!
+(defn ^:async send-agent-turn-best-effort!
+  [runtime config body log-label]
+  (try
+    (await (send-agent-turn! runtime config body))
+    (catch :default err
+      (.error js/console log-label err))))
+
+(defn ^:async queue-chat-start!
   [runtime config reply agent-ctx policy-model body accepted-response]
-  (js-await [_validated (validate-chat-policy! agent-ctx policy-model)]
-            (js-await [_sent (send-agent-turn! runtime config body)]
-                      (json-response! reply 202 accepted-response))))
+  (try
+    (await (validate-chat-policy! agent-ctx policy-model))
+    (send-agent-turn-best-effort! runtime config body "Async agent chat failed")
+    (json-response! reply 202 accepted-response)
+    (catch :default err
+      (error-response! reply err 429))))
+
+(defn ^:async queue-direct-start!
+  [runtime config reply agent-ctx policy-model body accepted-response log-label]
+  (try
+    (await (validate-chat-policy! agent-ctx policy-model))
+    (send-agent-turn-best-effort! runtime config body log-label)
+    (json-response! reply 202 accepted-response)
+    (catch :default err
+      (error-response! reply err 429))))
 
 
 (defn- compact-agent-spec-overrides
@@ -226,7 +245,25 @@
      :latest_user_message (:content user-msg)
      :latest_event nil}))
 
-(defn- live-active-agent-summaries!
+(defn- live-session-items
+  [run-items include-all? sessions]
+  (let [run-session-ids (set (keep :session_id run-items))]
+    (->> sessions
+         (filter some?)
+         (filter #(or include-all?
+                      (contains? #{"queued" "running" "waiting_input"} (:status %))))
+         (remove #(contains? run-session-ids (:session_id %)))
+         (map active-session-summary)
+         vec)))
+
+(defn- sort-active-items
+  [limit items]
+  (->> items
+       (sort-by #(or (:updated_at %) (:created_at %) "") #(compare %2 %1))
+       (take limit)
+       vec))
+
+(defn ^:async live-active-agent-summaries!
   [limit include-all?]
   (let [limit (max 1 (or limit 25))
         redis-client (redis/get-client)
@@ -242,25 +279,10 @@
                               (active-run-summary run (get sessions-by-id (:session_id run)))))
                        vec)]
     (if-not redis-client
-      (js/Promise.resolve (take limit run-items))
-      (-> (session-store/list-active-sessions redis-client)
-          (.then
-           (fn [ids]
-             (-> (promise/all-vec (mapv #(session-store/get-session redis-client %) (vec ids)))
-                 (.then
-                  (fn [sessions]
-                    (let [run-session-ids (set (keep :session_id run-items))
-                          session-items (->> sessions
-                                             (filter some?)
-                                             (filter #(or include-all?
-                                                          (contains? #{"queued" "running" "waiting_input"} (:status %))))
-                                             (remove #(contains? run-session-ids (:session_id %)))
-                                             (map active-session-summary)
-                                             vec)]
-                      (->> (concat run-items session-items)
-                           (sort-by #(or (:updated_at %) (:created_at %) "") #(compare %2 %1))
-                           (take limit)
-                           vec)))))))))))
+      (vec (take limit run-items))
+      (let [ids (await (session-store/list-active-sessions redis-client))
+            sessions (await (promise/all-vec (mapv #(session-store/get-session redis-client %) (vec ids))))]
+        (sort-active-items limit (concat run-items (live-session-items run-items include-all? sessions)))))))
 
 (def SESSION_RECOVERY_STALE_MS 60000)
 
@@ -295,23 +317,23 @@
     (when-not (js/isNaN parsed)
       parsed)))
 
-(defn- latest-run-event!
+(defn ^:async latest-run-event!
   [run-id]
   (let [run-id (str (or run-id ""))]
     (cond
       (str/blank? run-id)
-      (js/Promise.resolve nil)
+      nil
 
       (seq (get-in @runs* [run-id :events]))
-      (js/Promise.resolve (last (get-in @runs* [run-id :events])))
+      (last (get-in @runs* [run-id :events]))
 
       (nil? (redis/get-client))
-      (js/Promise.resolve nil)
+      nil
 
       :else
-      (-> (redis/lrange-json (redis/get-client) (run-state/run-events-key run-id) 0 0)
-          (.then first)
-          (.catch (constantly nil))))))
+      (try
+        (first (await (redis/lrange-json (redis/get-client) (run-state/run-events-key run-id) 0 0)))
+        (catch :default _ nil)))))
 
 (defn- stale-running-session?
   [session latest-event]
@@ -329,9 +351,6 @@
    :at (now-iso)})
 
 ;; ── Common promise handlers ───────────────────────────────────────────
-
-(defn- proxy-ok [reply resp]
-  (send-fetch-response! reply resp))
 
 (defn- proxy-err [reply prefix err]
   (json-response! reply 502 {:detail (str prefix err)}))
@@ -431,6 +450,157 @@
 (defn- data-health-err [reply err]
   (json-response! reply 500 {:error (.-message err)}))
 
+(declare mongo-collections-ok)
+
+(defn ^:async send-knoxx-proxy!
+  [config request reply method path]
+  (try
+    (send-fetch-response! reply (await (forward-knoxx-request! config request method path nil)))
+    (catch :default err
+      (proxy-err reply "Proxy request failed: " err))))
+
+(defn ^:async send-fetch-json!
+  [reply target-url opts error-handler]
+  (try
+    (fetch-json-ok reply (await (fetch-json target-url opts)))
+    (catch :default err
+      (error-handler reply err))))
+
+(defn ^:async send-fetch-json-detail!
+  [reply target-url opts prefix]
+  (send-fetch-json! reply target-url opts #(fetch-json-err-detail %1 prefix %2)))
+
+(defn ^:async send-openplanner-v1-json!
+  [config reply method path body]
+  (try
+    (json-response! reply 200 (await (openplanner-client/v1-json!
+                                      (openplanner-client/client config) method path body)))
+    (catch :default err
+      (fetch-json-err reply err))))
+
+(defn ^:async send-json-promise!
+  [reply request-promise]
+  (try
+    (json-response! reply 200 (await request-promise))
+    (catch :default err
+      (fetch-json-err reply err))))
+
+(defn ^:async send-mongo-collections!
+  [config reply]
+  (let [client (openplanner-client/client config)]
+    (try
+      (let [[docs graph] (await (promise/all-vec
+                                 [(openplanner-client/documents-stats! client)
+                                  (openplanner-client/graph-monitoring! client)]))]
+        (mongo-collections-ok reply [{:ok true :body docs}
+                                     {:ok true :body graph}]))
+      (catch :default err
+        (fetch-json-err reply err)))))
+
+(defn ^:async send-pg-query!
+  ([reply db sql-str]
+   (try
+     (pg-query-ok reply (await (db-policy/query! db sql-str [])))
+     (catch :default err
+       (pg-query-err reply err))))
+  ([reply table db sql-str]
+   (try
+     (pg-query-table-ok reply table (await (db-policy/query! db sql-str [])))
+     (catch :default err
+       (pg-query-err reply err)))))
+
+(defn ^:async send-data-browse!
+  [reply target-url]
+  (try
+    (let [resp (await (fetch-json target-url nil))]
+      (json-response! reply
+                      (or (:status resp) (aget resp "status") 200)
+                      (or (:body resp) (aget resp "body"))))
+    (catch :default err
+      (fetch-json-err reply err))))
+
+(defn ^:async write-ingestion-file!
+  [reply absolute-path content safe-path]
+  (try
+    (await (.mkdir fs (.dirname path absolute-path) (clj->js {:recursive true})))
+    (await (.writeFile fs absolute-path content "utf8"))
+    (json-response! reply 200 {:ok true :path safe-path})
+    (catch :default err
+      (json-response! reply 500 {:detail (str "Write failed: " err)}))))
+
+(defn- health-result
+  [url resp]
+  {:ok (:ok resp) :status (:status resp) :url url :detail (:body resp)})
+
+(defn- health-error-result
+  [url err]
+  {:ok false :error (.-message err) :url url})
+
+(defn ^:async service-health-check!
+  [url headers]
+  (try
+    (health-result url (await (fetch-json url {:headers (or headers {}) :method "GET"})))
+    (catch :default err
+      (health-error-result url err))))
+
+(defn ^:async openplanner-health-check!
+  [config]
+  (try
+    (health-result "openplanner:/v1/health"
+                   (await (openplanner-client/health! (openplanner-client/client config))))
+    (catch :default err
+      (health-error-result "openplanner:/v1/health" err))))
+
+(defn ^:async proxx-health-check!
+  [config]
+  (let [url (str (:proxx-base-url config) "/health")]
+    (try
+      (health-result url (await (proxx-client/health! (proxx-client/client config))))
+      (catch :default err
+        (health-error-result url err)))))
+
+(defn ^:async send-data-health!
+  [config reply]
+  (let [ingestion-base (:ingestion-base-url config)]
+    (try
+      (data-health-ok reply
+                      (await (promise/all-vec
+                              [(openplanner-health-check! config)
+                               (proxx-health-check! config)
+                               (service-health-check! (str ingestion-base "/health") nil)
+                               (service-health-check! "http://127.0.0.1:8796/api/status" nil)
+                               (service-health-check! "http://127.0.0.1:3777/health" nil)
+                               (service-health-check! "http://127.0.0.1:8787/v1/health" nil)
+                               (service-health-check! "http://127.0.0.1:8786/health" nil)
+                               (service-health-check! "http://127.0.0.1:8801/health" nil)])))
+      (catch :default err
+        (data-health-err reply err)))))
+
+(defn ^:async send-knoxx-health!
+  [config reply]
+  (let [proxx-configured (and (not (str/blank? (:proxx-base-url config)))
+                              (not (str/blank? (:proxx-auth-token config))))
+        openplanner-client (openplanner-client/client config)
+        openplanner-configured (openplanner-client/enabled? openplanner-client)
+        proxx-promise (if proxx-configured
+                        (proxx-client/health! (proxx-client/client config))
+                        (js/Promise.resolve {:ok false
+                                             :status 503
+                                             :body {:detail "Proxx is not configured"}}))
+        openplanner-promise (if openplanner-configured
+                              (openplanner-client/health! openplanner-client)
+                              (js/Promise.resolve {:ok false
+                                                   :status 503
+                                                   :body {:detail "OpenPlanner is not configured"}}))]
+    (try
+      (knoxx-health-ok reply
+                       config
+                       proxx-configured
+                       openplanner-configured
+                       (await (promise/all-vec [proxx-promise openplanner-promise])))
+      (catch :default err
+        (knoxx-health-err reply config err)))))
+
 (def deps
   {:route! route!
    :json-response! json-response!
@@ -494,34 +664,35 @@
 (defn- shibboleth-unreachable [reply err]
   (json-response! reply 502 {:detail (str "Shibboleth is unreachable: " err)}))
 
-(defn- detect-zombies [conversation-id session session-id queue-turn! can-send-result reply latest-event]
+(defn ^:async detect-zombies
+  [conversation-id session session-id queue-turn! can-send-result reply latest-event]
   (clear-ghost-turn! conversation-id)
   (let [stalled? (and (= "running" (:status session))
                       (not (runtime-processing-session? conversation-id))
                       (stale-running-session? session latest-event))]
     (if stalled?
-      (-> (session-store/complete-session! (redis/get-client)
-                                           session-id
-                                           conversation-id
-                                           {:status "failed"
-                                            :error "Session was stale/zombie; auto-aborted before new turn."
-                                            :messages (:messages session)})
-          (.then (fn [_]
-                   (queue-turn! "Async direct agent chat failed (recovered from zombie)")))
-          (.catch (fn [err]
-                    (.error js/console "Failed to abort zombie session" err)
-                    (json-response! reply 409 {:ok false
-                                               :error (str "Agent is already processing. Zombie recovery failed: " err)
-                                               :code "agent_already_processing"
-                                               :has_active_stream false
-                                               :can_send false}))))
+      (try
+        (await (session-store/complete-session! (redis/get-client)
+                                                session-id
+                                                conversation-id
+                                                {:status "failed"
+                                                 :error "Session was stale/zombie; auto-aborted before new turn."
+                                                 :messages (:messages session)}))
+        (await (queue-turn! "Async direct agent chat failed (recovered from zombie)"))
+        (catch :default err
+          (.error js/console "Failed to abort zombie session" err)
+          (json-response! reply 409 {:ok false
+                                     :error (str "Agent is already processing. Zombie recovery failed: " err)
+                                     :code "agent_already_processing"
+                                     :has_active_stream false
+                                     :can_send false})))
       (json-response! reply 409 {:ok false
                                  :error (str "Agent is already processing. " (or (:reason can-send-result) ""))
                                  :code "agent_already_processing"
                                  :has_active_stream (boolean (:has_active_stream session))
                                  :can_send false}))))
 
-(defn- handle-chat-start [runtime config reply ctx request]
+(defn ^:async handle-chat-start [runtime config reply ctx request]
   (let [node-crypto crypto
         parsed0 (normalize-chat-body (request-body request))
         parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
@@ -555,30 +726,30 @@
         queue-turn! (fn [_log-label]
                       (queue-chat-start! runtime config reply agent-ctx policy-model body accepted-response))]
     (if-not provided-session-id
-      (queue-turn! "Async agent chat failed")
-      (-> (session-store/get-session (redis/get-client) session-id)
-          (.then (fn [session]
-                   (let [can-send-result (session-store/session-can-send? session)]
-                     (if (:can-send can-send-result)
-                       (let [agent-session (active-agent-session conversation-id)
-                             actively-streaming? (and agent-session (streaming? agent-session))]
-                         (if actively-streaming?
-                           (json-response! reply 409
-                                           {:ok false
-                                            :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
-                                            :code "agent-already-processing"
-                                            :has-active-stream true
-                                            :can-send false})
-                           (queue-turn! "Async agent chat failed")))
-                       (-> (if (= "running" (:status session))
-                             (latest-run-event! (:run_id session))
-                             (js/Promise.resolve nil))
-                           (.then (partial detect-zombies conversation-id session session-id queue-turn! can-send-result reply)))))))
-          (.catch (fn [err]
-                    (.error js/console "Session status check failed" err)
-                    (queue-turn! "Async agent chat failed")))))))
+      (await (queue-turn! "Async agent chat failed"))
+      (try
+        (let [session (await (session-store/get-session (redis/get-client) session-id))
+              can-send-result (session-store/session-can-send? session)]
+          (if (:can-send can-send-result)
+            (let [agent-session (active-agent-session conversation-id)
+                  actively-streaming? (and agent-session (streaming? agent-session))]
+              (if actively-streaming?
+                (json-response! reply 409
+                                {:ok false
+                                 :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
+                                 :code "agent-already-processing"
+                                 :has-active-stream true
+                                 :can-send false})
+                (await (queue-turn! "Async agent chat failed"))))
+            (let [latest-event (when (= "running" (:status session))
+                                 (await (latest-run-event! (:run_id session))))]
+              (await (detect-zombies conversation-id session session-id queue-turn!
+                                     can-send-result reply latest-event)))))
+        (catch :default err
+          (.error js/console "Session status check failed" err)
+          (await (queue-turn! "Async agent chat failed")))))))
 
-(defn- handle-direct-start [runtime config reply ctx request]
+(defn ^:async handle-direct-start [runtime config reply ctx request]
   (let [node-crypto crypto
         parsed0 (normalize-chat-body (request-body request))
         parsed (assoc parsed0 :agent-spec (merged-agent-spec config parsed0))
@@ -600,37 +771,30 @@
                                       (get-in body [:agent-spec :model])
                                       (:llmModel @settings-state*))}
         queue-turn! (fn [log-label]
-                      (-> (validate-chat-policy! agent-ctx policy-model)
-                          (.then (fn [_]
-                                   (-> (send-agent-turn! runtime config body)
-                                       (.then (fn [_] nil))
-                                       (.catch (fn [err]
-                                                 (.error js/console log-label err))))
-                                   (json-response! reply 202 accepted-response)))
-                          (.catch (fn [err]
-                                    (error-response! reply err 429)))))]
+                      (queue-direct-start! runtime config reply agent-ctx policy-model
+                                           body accepted-response log-label))]
     (if-not provided-session-id
-      (queue-turn! "Async direct agent chat failed")
-      (.then (session-store/get-session (redis/get-client) session-id)
-             (fn [session]
-               (let [can-send-result (session-store/session-can-send? session)]
-                 (if (:can-send can-send-result)
-                   (let [agent-session (active-agent-session conversation-id)
-                         actively-streaming? (and agent-session (streaming? agent-session))]
-                     (if actively-streaming?
-                       (json-response! reply 409 {:ok false
-                                                  :error "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
-                                                  :code "agent_already_processing"
-                                                  :has_active_stream true
-                                                  :can_send false})
-                       (queue-turn! "Async direct agent chat failed")))
-                   (.then (if (= "running" (:status session))
-                            (latest-run-event! (:run_id session))
-                            (js/Promise.resolve nil))
-                          (partial detect-zombies conversation-id session session-id queue-turn! can-send-result reply)))))
-             (fn [err]
-               (.error js/console "Session status check failed" err)
-               (queue-turn! "Async direct agent chat failed"))))))
+      (await (queue-turn! "Async direct agent chat failed"))
+      (try
+        (let [session (await (session-store/get-session (redis/get-client) session-id))
+              can-send-result (session-store/session-can-send? session)]
+          (if (:can-send can-send-result)
+            (let [agent-session (active-agent-session conversation-id)
+                  actively-streaming? (and agent-session (streaming? agent-session))]
+              (if actively-streaming?
+                (json-response! reply 409 {:ok false
+                                           :error "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
+                                           :code "agent_already_processing"
+                                           :has_active_stream true
+                                           :can_send false})
+                (await (queue-turn! "Async direct agent chat failed"))))
+            (let [latest-event (when (= "running" (:status session))
+                                 (await (latest-run-event! (:run_id session))))]
+              (await (detect-zombies conversation-id session session-id queue-turn!
+                                     can-send-result reply latest-event)))))
+        (catch :default err
+          (.error js/console "Session status check failed" err)
+          (await (queue-turn! "Async direct agent chat failed")))))))
 
 (defn- handle-admin-abort [reply _ctx request]
   (let [raw (request-body request)
@@ -863,56 +1027,35 @@
 
 (defroute api-knoxx-proxy-get! []
   "GET" "/api/knoxx/proxy/*"
-  (let [path (aget request "params" "*")]
-    (-> (forward-knoxx-request! config request "GET" path nil)
-        (.then (partial proxy-ok reply))
-        (.catch (partial proxy-err reply "Proxy request failed: ")))))
+  (send-knoxx-proxy! config request reply "GET" (aget request "params" "*")))
 
 (defroute api-knoxx-proxy-post! []
   "POST" "/api/knoxx/proxy/*"
-  (let [path (aget request "params" "*")]
-    (-> (forward-knoxx-request! config request "POST" path nil)
-        (.then (partial proxy-ok reply))
-        (.catch (partial proxy-err reply "Proxy request failed: ")))))
+  (send-knoxx-proxy! config request reply "POST" (aget request "params" "*")))
 
 (defroute api-knoxx-proxy-put! []
   "PUT" "/api/knoxx/proxy/*"
-  (let [path (aget request "params" "*")]
-    (-> (forward-knoxx-request! config request "PUT" path nil)
-        (.then (partial proxy-ok reply))
-        (.catch (partial proxy-err reply "Proxy request failed: ")))))
+  (send-knoxx-proxy! config request reply "PUT" (aget request "params" "*")))
 
 (defroute api-knoxx-proxy-patch! []
   "PATCH" "/api/knoxx/proxy/*"
-  (let [path (aget request "params" "*")]
-    (-> (forward-knoxx-request! config request "PATCH" path nil)
-        (.then (partial proxy-ok reply))
-        (.catch (partial proxy-err reply "Proxy request failed: ")))))
+  (send-knoxx-proxy! config request reply "PATCH" (aget request "params" "*")))
 
 (defroute api-knoxx-proxy-delete! []
   "DELETE" "/api/knoxx/proxy/*"
-  (let [path (aget request "params" "*")]
-    (-> (forward-knoxx-request! config request "DELETE" path nil)
-        (.then (partial proxy-ok reply))
-        (.catch (partial proxy-err reply "Proxy request failed: ")))))
+  (send-knoxx-proxy! config request reply "DELETE" (aget request "params" "*")))
 
 (defroute api-ingestion-browse! []
   "GET" "/api/ingestion/browse"
-  (let [ingestion-base (:ingestion-base-url config)
-        qs (request-query-string request)
-        target-url (str ingestion-base "/api/ingestion/browse" qs)]
-    (-> (fetch-json target-url {:method "GET"})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err reply)))))
+  (let [target-url (str (:ingestion-base-url config) "/api/ingestion/browse"
+                        (request-query-string request))]
+    (send-fetch-json! reply target-url {:method "GET"} fetch-json-err)))
 
 (defroute api-ingestion-file! []
   "GET" "/api/ingestion/file"
-  (let [ingestion-base (:ingestion-base-url config)
-        qs (request-query-string request)
-        target-url (str ingestion-base "/api/ingestion/file" qs)]
-    (-> (fetch-json target-url {:method "GET"})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err reply)))))
+  (let [target-url (str (:ingestion-base-url config) "/api/ingestion/file"
+                        (request-query-string request))]
+    (send-fetch-json! reply target-url {:method "GET"} fetch-json-err)))
 
 (defroute api-ingestion-file-put! []
   "PUT" "/api/ingestion/file"
@@ -926,39 +1069,30 @@
       (let [absolute-path (.resolve path workspace-root safe-path)]
         (if (not (str/starts-with? absolute-path workspace-root))
           (json-response! reply 400 {:detail "Path escapes workspace"})
-          (let [dir (.dirname path absolute-path)]
-            (-> (.mkdir fs dir (clj->js {:recursive true}))
-                (.then (fn [] (.writeFile fs absolute-path content "utf8")))
-                (.then (fn [] (json-response! reply 200 {:ok true :path safe-path})))
-                (.catch (fn [err]
-                          (json-response! reply 500 {:detail (str "Write failed: " err)}))))))))))
+          (write-ingestion-file! reply absolute-path content safe-path))))))
 
 (defroute api-ingestion-sources! []
   "GET" "/api/ingestion/sources"
-  (let [ingestion-base (:ingestion-base-url config)]
-    (-> (fetch-json (str ingestion-base "/api/ingestion/sources") {:method "GET"})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err reply)))))
+  (send-fetch-json! reply
+                    (str (:ingestion-base-url config) "/api/ingestion/sources")
+                    {:method "GET"}
+                    fetch-json-err))
 
 (defroute api-ingestion-jobs-get! []
   "GET" "/api/ingestion/jobs"
-  (let [ingestion-base (:ingestion-base-url config)
-        qs (request-query-string request)
-        target-url (str ingestion-base "/api/ingestion/jobs" qs)]
-    (-> (fetch-json target-url {:method "GET"})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err reply)))))
+  (let [target-url (str (:ingestion-base-url config) "/api/ingestion/jobs"
+                        (request-query-string request))]
+    (send-fetch-json! reply target-url {:method "GET"} fetch-json-err)))
 
 (defroute api-ingestion-jobs-post! []
   "POST" "/api/ingestion/jobs"
-  (let [ingestion-base (:ingestion-base-url config)
-        body (aget request "body")
-        target-url (str ingestion-base "/api/ingestion/jobs")]
-    (-> (fetch-json target-url {:method "POST"
-                                :headers {"Content-Type" "application/json"}
-                                :body (or (some-> body js/JSON.stringify) "{}")})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err reply)))))
+  (let [body (aget request "body")]
+    (send-fetch-json! reply
+                      (str (:ingestion-base-url config) "/api/ingestion/jobs")
+                      {:method "POST"
+                       :headers {"Content-Type" "application/json"}
+                       :body (or (some-> body js/JSON.stringify) "{}")}
+                      fetch-json-err)))
 
 (defroute api-ingestion-proxy-get! []
   "GET" "/api/ingestion-proxy/*"
@@ -966,9 +1100,7 @@
         path (aget request "params" "*")
         qs (request-query-string request)
         target-url (str ingestion-base "/api/ingestion/" path qs)]
-    (-> (fetch-json target-url {:method "GET"})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err-detail reply "Ingestion proxy failed: ")))))
+    (send-fetch-json-detail! reply target-url {:method "GET"} "Ingestion proxy failed: ")))
 
 (defroute api-ingestion-proxy-post! []
   "POST" "/api/ingestion-proxy/*"
@@ -976,20 +1108,19 @@
         path (aget request "params" "*")
         target-url (str ingestion-base "/api/ingestion/" path)
         body (aget request "body")]
-    (-> (fetch-json target-url {:method "POST"
-                                :headers {"Content-Type" "application/json"}
-                                :body (or (some-> body js/JSON.stringify) "{}")})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err-detail reply "Ingestion proxy failed: ")))))
+    (send-fetch-json-detail! reply
+                             target-url
+                             {:method "POST"
+                              :headers {"Content-Type" "application/json"}
+                              :body (or (some-> body js/JSON.stringify) "{}")}
+                             "Ingestion proxy failed: ")))
 
 (defroute api-ingestion-proxy-delete! []
   "DELETE" "/api/ingestion-proxy/*"
   (let [ingestion-base (:ingestion-base-url config)
         path (aget request "params" "*")
         target-url (str ingestion-base "/api/ingestion/" path)]
-    (-> (fetch-json target-url {:method "DELETE"})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err-detail reply "Ingestion proxy failed: ")))))
+    (send-fetch-json-detail! reply target-url {:method "DELETE"} "Ingestion proxy failed: ")))
 
 (defroute api-data-op-get! []
   "GET" "/api/data/op/*"
@@ -997,93 +1128,41 @@
         raw-url (aget request "raw" "url")
         query-idx (.indexOf raw-url "?")
         qs (if (>= query-idx 0) (subs raw-url query-idx) "")]
-    (-> (openplanner-client/v1-json! (openplanner-client/client config) "GET" (str path qs) nil)
-        (.then (fn [body] (json-response! reply 200 body)))
-        (.catch (partial fetch-json-err reply)))))
+    (send-openplanner-v1-json! config reply "GET" (str path qs) nil)))
 
 (defroute api-data-op-post! []
   "POST" "/api/data/op/*"
   (let [path (aget request "params" "*")
         body (aget request "body")]
-    (-> (openplanner-client/v1-json! (openplanner-client/client config) "POST" path body)
-        (.then (fn [resp] (json-response! reply 200 resp)))
-        (.catch (partial fetch-json-err reply)))))
+    (send-openplanner-v1-json! config reply "POST" path body)))
 
 (defroute api-data-op-delete! []
   "DELETE" "/api/data/op/*"
   (let [path (aget request "params" "*")]
-    (-> (openplanner-client/v1-json! (openplanner-client/client config) "DELETE" path nil)
-        (.then (fn [resp] (json-response! reply 200 resp)))
-        (.catch (partial fetch-json-err reply)))))
+    (send-openplanner-v1-json! config reply "DELETE" path nil)))
 
 (defroute api-data-op-patch! []
   "PATCH" "/api/data/op/*"
   (let [path (aget request "params" "*")
         body (aget request "body")]
-    (-> (openplanner-client/v1-json! (openplanner-client/client config) "PATCH" path body)
-        (.then (fn [resp] (json-response! reply 200 resp)))
-        (.catch (partial fetch-json-err reply)))))
+    (send-openplanner-v1-json! config reply "PATCH" path body)))
 
 (defroute api-data-health! []
   "GET" "/api/data/health"
-  (let [ingestion-base (:ingestion-base-url config)
-        proxx-base (:proxx-base-url config)
-        check (fn [url headers]
-                (-> (fetch-json url {:headers (or headers {}) :method "GET"})
-                    (.then (fn [resp] {:ok (:ok resp)
-                                       :status (:status resp)
-                                       :url url
-                                       :detail (:body resp)}))
-                    (.catch (fn [err] {:ok false :error (.-message err) :url url}))))
-        openplanner-check (fn []
-                            (-> (openplanner-client/health! (openplanner-client/client config))
-                                (.then (fn [resp] {:ok (:ok resp)
-                                                   :status (:status resp)
-                                                   :url "openplanner:/v1/health"
-                                                   :detail (:body resp)}))
-                                (.catch (fn [err] {:ok false :error (.-message err) :url "openplanner:/v1/health"}))))
-        proxx-check (fn []
-                      (-> (proxx-client/health! (proxx-client/client config))
-                          (.then (fn [resp] {:ok (:ok resp)
-                                             :status (:status resp)
-                                             :url (str proxx-base "/health")
-                                             :detail (:body resp)}))
-                          (.catch (fn [err] {:ok false :error (.-message err) :url (str proxx-base "/health")}))))]
-    (-> (promise/all-vec
-         [(openplanner-check)
-          (proxx-check)
-          (check (str ingestion-base "/health") nil)
-          (check "http://127.0.0.1:8796/api/status" nil)
-          (check "http://127.0.0.1:3777/health" nil)
-          (check "http://127.0.0.1:8787/v1/health" nil)
-          (check "http://127.0.0.1:8786/health" nil)
-          (check "http://127.0.0.1:8801/health" nil)])
-        (.then (partial data-health-ok reply))
-        (.catch (partial data-health-err reply)))))
+  (send-data-health! config reply))
 
 (defroute api-data-mongo-collections! []
   "GET" "/api/data/mongo/collections"
-  (let [client (openplanner-client/client config)]
-    (-> (promise/all-vec
-         [(openplanner-client/documents-stats! client)
-          (openplanner-client/graph-monitoring! client)])
-        (.then (fn [[docs graph]]
-                 (mongo-collections-ok reply [{:ok true :body docs}
-                                              {:ok true :body graph}])))
-        (.catch (partial fetch-json-err reply)))))
+  (send-mongo-collections! config reply))
 
 (defroute api-data-mongo-list! []
   "GET" "/api/data/mongo/list"
-  (-> (openplanner-client/mongo-collections! (openplanner-client/client config))
-      (.then (fn [body] (json-response! reply 200 body)))
-      (.catch (partial fetch-json-err reply))))
+  (send-json-promise! reply (openplanner-client/mongo-collections! (openplanner-client/client config))))
 
 (defroute api-data-mongo-query! []
   "POST" "/api/data/mongo/query"
   (let [body (request-body request)]
-    (-> (openplanner-client/mongo-query! (openplanner-client/client config) body)
-        (.then (fn [resp] (json-response! reply 200 resp)))
-        (.catch (partial fetch-json-err reply)))))
+    (send-json-promise! reply (openplanner-client/mongo-query! (openplanner-client/client config) body))))
 
 (defroute api-data-pg-tables! []
   "GET" "/api/data/pg/tables"
@@ -1098,10 +1177,10 @@
   (let [body (request-body request)
         k (or (aget body "k") 8)
         min-sim (or (aget body "minSimilarity") 0.3)]
-    (-> (openplanner-client/build-semantic-edges! (openplanner-client/client config)
-                                                  {:k k :minSimilarity min-sim})
-        (.then (fn [resp] (json-response! reply 200 resp)))
-        (.catch (partial fetch-json-err reply)))))
+    (send-json-promise! reply
+                        (openplanner-client/build-semantic-edges!
+                         (openplanner-client/client config)
+                         {:k k :minSimilarity min-sim}))))
 
 (defroute api-data-pg-query! []
   "POST" "/api/data/pg/query"
@@ -1125,9 +1204,7 @@
                 final-sql (if has-limit
                             trimmed
                             (str trimmed " LIMIT " enforced-limit))]
-            (-> (db-policy/query! db final-sql [])
-                (.then (partial pg-query-ok reply))
-                (.catch (partial pg-query-err reply))))))
+            (send-pg-query! reply db final-sql))))
 
       ;; Table browse mode
       (or (str/blank? table)
@@ -1137,9 +1214,7 @@
       :else
       (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
             sql-str (str "SELECT * FROM " table " LIMIT " enforced-limit)]
-        (-> (db-policy/query! db sql-str [])
-            (.then (partial pg-query-table-ok reply table))
-            (.catch (partial pg-query-err reply)))))))
+        (send-pg-query! reply table db sql-str)))))
 
 (defroute api-data-browse! []
   "GET" "/api/data/browse"
@@ -1147,37 +1222,32 @@
         path (or (aget qs "path") "")
         ingestion-base (:ingestion-base-url config)
         target-url (str ingestion-base "/api/ingestion/browse" (if (str/blank? path) "" (str "?path=" (js/encodeURIComponent path))))]
-    (-> (fetch-json target-url nil)
-        (.then (fn [resp]
-                 (json-response! reply (or (aget resp "status") 200) (aget resp "body"))))
-        (.catch (fn [err]
-                  (json-response! reply 502 {:error (.-message err)}))))))
+    (send-data-browse! reply target-url)))
 
 (defroute api-data-file! []
   "GET" "/api/data/file"
   (let [qs (aget request "query")
         path (or (aget qs "path") "")
         ingestion-base (:ingestion-base-url config)]
-    (-> (fetch-json (str ingestion-base "/api/ingestion/file?path=" (js/encodeURIComponent path)) nil)
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err reply)))))
+    (send-fetch-json! reply
+                      (str ingestion-base "/api/ingestion/file?path=" (js/encodeURIComponent path))
+                      nil
+                      fetch-json-err)))
 
 (defroute api-data-graphql! []
   "POST" "/api/data/graphql"
   (let [body (request-body request)
         gw-url "http://127.0.0.1:8796/graphql"]
-    (-> (fetch-json gw-url
-                    {:method "POST"
-                     :headers {"Content-Type" "application/json"}
-                     :body (or (some-> body js/JSON.stringify) "{}")})
-        (.then (partial fetch-json-ok reply))
-        (.catch (partial fetch-json-err reply)))))
+    (send-fetch-json! reply
+                      gw-url
+                      {:method "POST"
+                       :headers {"Content-Type" "application/json"}
+                       :body (or (some-> body js/JSON.stringify) "{}")}
+                      fetch-json-err)))
 
 (defroute api-data-graph-status! []
   "GET" "/api/data/graph/status"
-  (-> (fetch-json "http://127.0.0.1:8796/api/status" {:method "GET"})
-      (.then (partial fetch-json-ok reply))
-      (.catch (partial fetch-json-err reply))))
+  (send-fetch-json! reply "http://127.0.0.1:8796/api/status" {:method "GET"} fetch-json-err))
 
 ;; Embed the graph-weaver WebGL view URL for the frontend
 (defroute api-data-graph-view-url! []
@@ -1186,23 +1256,7 @@
 
 (defroute api-knoxx-health! []
   "GET" "/api/knoxx/health"
-  (let [proxx-configured (and (not (str/blank? (:proxx-base-url config)))
-                              (not (str/blank? (:proxx-auth-token config))))
-        openplanner-client (openplanner-client/client config)
-        openplanner-configured (openplanner-client/enabled? openplanner-client)
-        proxx-promise (if proxx-configured
-                        (proxx-client/health! (proxx-client/client config))
-                        (js/Promise.resolve {:ok false
-                                             :status 503
-                                             :body {:detail "Proxx is not configured"}}))
-        openplanner-promise (if openplanner-configured
-                              (openplanner-client/health! openplanner-client)
-                              (js/Promise.resolve {:ok false
-                                                   :status 503
-                                                   :body {:detail "OpenPlanner is not configured"}}))]
-    (-> (promise/all-vec [proxx-promise openplanner-promise])
-        (.then (partial knoxx-health-ok reply config proxx-configured openplanner-configured))
-        (.catch (partial knoxx-health-err reply config)))))
+  (send-knoxx-health! config reply))
 
 (defn- chat-turn-ok [reply resp]
   (json-response! reply 200 resp))
@@ -1219,9 +1273,10 @@
         body (assoc parsed
                     :mode "rag"
                     :auth-context agent-ctx)]
-    (-> (send-agent-turn! runtime config body)
-        (.then (partial chat-turn-ok reply))
-        (.catch (partial chat-turn-err reply)))))
+    (try
+      (chat-turn-ok reply (await (send-agent-turn! runtime config body)))
+      (catch :default err
+        (chat-turn-err reply err)))))
 
 (defroute api-knoxx-chat-start! []
   "POST" "/api/knoxx/chat/start"
@@ -1238,9 +1293,10 @@
         body (assoc parsed
                     :mode "direct"
                     :auth-context agent-ctx)]
-    (-> (send-agent-turn! runtime config body)
-        (.then (partial chat-turn-ok reply))
-        (.catch (partial chat-turn-err reply)))))
+    (try
+      (chat-turn-ok reply (await (send-agent-turn! runtime config body)))
+      (catch :default err
+        (chat-turn-err reply err)))))
 
 (defroute api-knoxx-direct-start! []
   "POST" "/api/knoxx/direct/start"
@@ -1259,9 +1315,10 @@
   (let [body (assoc (normalize-control-body (request-body request)) :kind "steer")
         actor-ctx (auth-context-with-actor ctx (:actor-id body))]
     (ensure-conversation-access! actor-ctx (:conversation-id body))
-    (-> (queue-agent-control! runtime config body)
-        (.then (partial steer-ok reply))
-        (.catch (partial steer-err reply)))))
+    (try
+      (steer-ok reply (await (queue-agent-control! runtime config body)))
+      (catch :default err
+        (steer-err reply err)))))
 
 (defroute api-knoxx-follow-up! []
   "POST" "/api/knoxx/follow-up"
@@ -1269,9 +1326,10 @@
   (let [body (assoc (normalize-control-body (request-body request)) :kind "follow_up")
         actor-ctx (auth-context-with-actor ctx (:actor-id body))]
     (ensure-conversation-access! actor-ctx (:conversation-id body))
-    (-> (queue-agent-control! runtime config body)
-        (.then (partial steer-ok reply))
-        (.catch (partial steer-err reply)))))
+    (try
+      (steer-ok reply (await (queue-agent-control! runtime config body)))
+      (catch :default err
+        (steer-err reply err)))))
 
 (defn- abort-ok [reply resp]
   (json-response! reply (if (:ok resp) 200 409) resp))
@@ -1290,9 +1348,10 @@
       (json-response! reply 400 {:ok false :error "conversation_id is required"})
       (do
         (ensure-conversation-access! actor-ctx conversation-id)
-        (-> (turn-control/abort-active-turn! conversation-id reason)
-            (.then (partial abort-ok reply))
-            (.catch (partial steer-err reply)))))))
+        (try
+          (abort-ok reply (await (turn-control/abort-active-turn! conversation-id reason)))
+          (catch :default err
+            (steer-err reply err)))))))
 
 (defroute api-knoxx-session-undo! []
   "POST" "/api/knoxx/session/undo"
@@ -1371,9 +1430,10 @@
   (ensure-permission! ctx "org.events.control")
   (let [limit-raw (aget request "query" "limit")
         limit (or (parse-positive-int limit-raw) 200)]
-    (-> (live-active-agent-summaries! limit false)
-        (.then (partial agents-active-ok reply))
-        (.catch (partial agents-active-err reply)))))
+    (try
+      (agents-active-ok reply (await (live-active-agent-summaries! limit false)))
+      (catch :default err
+        (agents-active-err reply err)))))
 
 (defroute api-admin-agents-abort! []
   "POST" "/api/admin/agents/abort"
@@ -1393,9 +1453,10 @@
         since (or (aget request "query" "since") "")]
     (if (str/blank? run-id)
       (json-response! reply 400 {:error "runId is required"})
-      (-> (run-state/get-run-events-since (redis/get-client) run-id since)
-          (.then (partial run-events-ok reply run-id))
-          (.catch (partial run-events-err reply))))))
+      (try
+        (run-events-ok reply run-id (await (run-state/get-run-events-since (redis/get-client) run-id since)))
+        (catch :default err
+          (run-events-err reply err))))))
 
 (defroute api-knoxx-run-get! []
   "GET" "/api/knoxx/runs/:runId"
@@ -1427,14 +1488,15 @@
                      :conversation_id (:conversation_id body)
                      :fake_tools_enabled (boolean (:fake_tools_enabled body))
                      :items (or (:items body) [])}]
-        (-> (fetch-json (str (:shibboleth-base-url config) "/api/chat/import")
-                        {:method "POST"
-                         :json payload})
-            (.then (fn [resp]
-                     (if (:ok resp)
-                       (shibboleth-ok config reply request body (:body resp))
-                       (shibboleth-import-failed reply resp))))
-            (.catch (partial shibboleth-unreachable reply)))))))
+        (try
+          (let [resp (await (fetch-json (str (:shibboleth-base-url config) "/api/chat/import")
+                                        {:method "POST"
+                                         :json payload}))]
+            (if (:ok resp)
+              (shibboleth-ok config reply request body (:body resp))
+              (shibboleth-import-failed reply resp)))
+          (catch :default err
+            (shibboleth-unreachable reply err)))))))
 
 (defn- register-core-routes!
   [app runtime config]

@@ -66,13 +66,6 @@
       :else
       (str base "/v1" suffix))))
 
-(defn- voice-gateway-ws-url
-  [config]
-  (let [url (voice-gateway-url config)]
-    (-> (str url)
-        (str/replace "^https://" "wss://")
-        (str/replace "^http://" "ws://"))))
-
 (defn- voice-gateway-api-key
   [config]
   (trim-or-empty (:voxx-api-key config)))
@@ -107,11 +100,7 @@
   [config]
   (voxx-v1-url config "/audio/speech"))
 
-(declare ws-on! app-route!)
-
-(defn- message-data->string
-  [value]
-  (xws/message-data->string value))
+(declare app-route!)
 
 (defn- ws-send-json!
   [socket payload]
@@ -122,19 +111,6 @@
   ([socket code reason]
    (xws/close! socket code reason)))
 
-(defn- normalize-voice-stream-text
-  [value]
-  (let [text (-> (str (or value ""))
-                 (str/replace #"\s+" " ")
-                 str/trim)]
-    (cond
-      (str/blank? text) ""
-      (str/ends-with? text " ") text
-      :else (str text " "))))
-
-(defn- relay-voice-stream!
-  [client payload]
-  (ws-send-json! client (xws/voice-stream-event payload)))
 
 (defn- register-voice-ws-route!
   [app _config]
@@ -159,13 +135,21 @@
   [^js reply name value]
   (xfastify/reply-header! reply name value))
 
-(defn- ws-on!
-  [^js socket event-name handler]
-  (xws/on! socket event-name handler))
-
 (defn- app-route!
   [^js app opts]
   (xfastify/route! app opts))
+
+(defn ^:async handle-stt-health!
+  [config reply ctx json-response! ensure-tool!]
+  (when ctx (ensure-tool! ctx "multimodal.upload"))
+  (let [base (stt-base-url config)]
+    (if (str/blank? base)
+      (json-response! reply 503 {:detail "KNOXX_STT_BASE_URL is not configured"})
+      (try
+        (let [resp (await (fetch-stt-json base "/health" {:method "GET"}))]
+          (json-response! reply (if (:ok resp) 200 502) (:body resp)))
+        (catch :default err
+          (json-response! reply 502 {:detail (str "STT health failed: " err)}))))))
 
 (defn- register-stt-health-route!
   [app runtime config route! json-response! with-request-context! ensure-tool!]
@@ -173,17 +157,52 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (when ctx (ensure-tool! ctx "multimodal.upload"))
-                (let [base (stt-base-url config)]
-                  (if (str/blank? base)
-                    (json-response! reply 503 {:detail "KNOXX_STT_BASE_URL is not configured"})
-                    (-> (fetch-stt-json base "/health" {:method "GET"})
-                        (.then (fn [resp]
-                                 (json-response! reply
-                                                (if (:ok resp) 200 502)
-                                                (:body resp))))
-                        (.catch (fn [err]
-                                  (json-response! reply 502 {:detail (str "STT health failed: " err)})))))))))))
+                (handle-stt-health! config reply ctx json-response! ensure-tool!))))))
+
+(defn ^:async transcribe-file-part!
+  [base file-part]
+  (let [body (await (xmultipart/part-buffer! file-part))
+        mime (xmultipart/part-mime-type file-part)]
+    (await (fetch-stt-json base
+                           "/transcribe"
+                           {:method "POST"
+                            :headers {"Content-Type" (str mime)}
+                            :body body}))))
+
+(defn ^:async stt-transcription-response!
+  [base request]
+  (let [parts (await (request-parts-promise request))
+        file-part (first (xmultipart/file-parts parts))]
+    (if-not file-part
+      {:error {:status 400
+               :detail "No file uploaded. Send multipart/form-data with a file part."}}
+      (await (transcribe-file-part! base file-part)))))
+
+(defn- send-stt-response!
+  [reply json-response! resp]
+  (cond
+    (and resp (:error resp))
+    (let [err (:error resp)]
+      (json-response! reply (:status err) err))
+
+    (and resp (:ok resp))
+    (json-response! reply 200 (:body resp))
+
+    :else
+    (json-response! reply 502 {:detail "STT service error"
+                               :status (:status resp)
+                               :body (:body resp)})))
+
+(defn ^:async handle-stt-transcribe!
+  [config request reply ctx json-response! ensure-tool!]
+  (when ctx (ensure-tool! ctx "multimodal.upload"))
+  (let [base (stt-base-url config)]
+    (if (str/blank? base)
+      (json-response! reply 503 {:detail "KNOXX_STT_BASE_URL is not configured"})
+      (try
+        (send-stt-response! reply json-response! (await (stt-transcription-response! base request)))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "STT request failed: " err)}))))))
 
 (defn- register-stt-transcribe-route!
   [app runtime config route! json-response! with-request-context! ensure-tool!]
@@ -191,47 +210,34 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (when ctx (ensure-tool! ctx "multimodal.upload"))
-                (let [base (stt-base-url config)]
-                  (if (str/blank? base)
-                    (json-response! reply 503 {:detail "KNOXX_STT_BASE_URL is not configured"})
-                    (let [promise
-                          (-> (request-parts-promise request)
-                              (.then
-                               (fn [parts]
-                                 (let [file-part (first (xmultipart/file-parts parts))]
-                                   (if-not file-part
-                                     {:error {:status 400
-                                             :detail "No file uploaded. Send multipart/form-data with a file part."}}
-                                     (-> (xmultipart/part-buffer! file-part)
-                                         (.then
-                                          (fn [body]
-                                            (let [mime (xmultipart/part-mime-type file-part)
-                                                  headers {"Content-Type" (str mime)}]
-                                              (fetch-stt-json
-                                               base
-                                               "/transcribe"
-                                               {:method "POST"
-                                                :headers headers
-                                                :body body})))))))))
-                              (.then
-                               (fn [resp]
-                                 (cond
-                                   (and resp (:error resp))
-                                   (let [err (:error resp)]
-                                     (json-response! reply (:status err) err))
+                (handle-stt-transcribe! config request reply ctx json-response! ensure-tool!))))))
 
-                                   (and resp (:ok resp))
-                                   (json-response! reply 200 (:body resp))
+(defn- voxx-health-body
+  [config resp]
+  {:provider "voxx"
+   :configured true
+   :reachable (boolean (:ok resp))
+   :status_code (:status resp)
+   :default_voice_id (voxx-default-voice-id config)
+   :default_model_id (voxx-default-model-id config)
+   :default_speed (voxx-default-speed config)
+   :default_postprocess_enabled true
+   :default_postprocess_profile default-voxx-postprocess-profile
+   :default_prompt_aware true})
 
-                                   :else
-                                   (json-response! reply 502 {:detail "STT service error"
-                                                              :status (:status resp)
-                                                              :body (:body resp)}))))
-                              (.catch
-                               (fn [err]
-                                 (json-response! reply 500 {:detail (str "STT request failed: " err)}))))]
-                      promise))))))))
+(defn ^:async handle-tts-health!
+  [config reply ctx json-response! ensure-tool!]
+  (when ctx (ensure-tool! ctx "multimodal.upload"))
+  (let [api-key (voice-gateway-api-key config)]
+    (if (str/blank? api-key)
+      (json-response! reply 503 {:detail "VOICE_GATEWAY_API_KEY is not configured"})
+      (try
+        (let [resp (await (http/fetch-json (voxx-v1-url config "/voices")
+                                           {:method "GET"
+                                            :headers (voxx-health-headers api-key)}))]
+          (json-response! reply (if (:ok resp) 200 502) (voxx-health-body config resp)))
+        (catch :default err
+          (json-response! reply 502 {:detail (str "Voice Gateway health failed: " err)}))))))
 
 (defn- register-tts-health-route!
   [app runtime config route! json-response! with-request-context! ensure-tool!]
@@ -239,64 +245,81 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (when ctx (ensure-tool! ctx "multimodal.upload"))
-                (let [api-key (voice-gateway-api-key config)]
-                  (if (str/blank? api-key)
-                    (json-response! reply 503 {:detail "VOICE_GATEWAY_API_KEY is not configured"})
-                    (-> (http/fetch-json (voxx-v1-url config "/voices")
-                                         {:method "GET"
-                                          :headers (voxx-health-headers api-key)})
-                        (.then (fn [resp]
-                                 (json-response!
-                                  reply
-                                  (if (:ok resp) 200 502)
-                                  {:provider "voxx"
-                                   :configured true
-                                   :reachable (boolean (:ok resp))
-                                   :status_code (:status resp)
-                                   :default_voice_id (voxx-default-voice-id config)
-                                   :default_model_id (voxx-default-model-id config)
-                                   :default_speed (voxx-default-speed config)
-                                   :default_postprocess_enabled true
-                                   :default_postprocess_profile default-voxx-postprocess-profile
-                                   :default_prompt_aware true})))
-                        (.catch (fn [err]
-                                  (json-response! reply 502 {:detail (str "Voice Gateway health failed: " err)})))))))))))
+                (handle-tts-health! config reply ctx json-response! ensure-tool!))))))
+
+(defn- configured-or-default
+  [value default]
+  (let [configured (trim-or-empty value)]
+    (if (str/blank? configured) default configured)))
+
+(defn- tts-base-payload
+  [config body text]
+  {:input text
+   :voice (configured-or-default (or (:voice_id body) (:voiceId body))
+                                 (voxx-default-voice-id config))
+   :model (configured-or-default (or (:model_id body) (:modelId body) (:model body))
+                                 (voxx-default-model-id config))
+   :response_format (configured-or-default (or (:output_format body) (:outputFormat body)
+                                               (:response_format body) (:responseFormat body))
+                                           default-voxx-output-format)
+   :speed (configured-or-default (first-body-value body ["speed"])
+                                 (voxx-default-speed config))
+   :postprocess_enabled (bool-value (first-body-value body ["postprocess_enabled" "postprocessEnabled"])
+                                    true)
+   :prompt_aware (bool-value (first-body-value body ["prompt_aware" "promptAware" "prompt-aware"])
+                             true)})
+
+(defn- tts-extra-payload
+  [body]
+  (let [postprocess-profile (configured-or-default (first-body-value body ["postprocess_profile"
+                                                                            "postprocessProfile"
+                                                                            "postprocess"])
+                                                   default-voxx-postprocess-profile)
+        prompt-aware-style (trim-or-empty (first-body-value body ["prompt_aware_style" "promptAwareStyle"]))]
+    (cond-> {:postprocess_profile postprocess-profile}
+      (not (str/blank? prompt-aware-style)) (assoc :prompt_aware_style prompt-aware-style)
+      (some? (:voice_settings body)) (assoc :voice_settings (:voice_settings body)))))
 
 (defn- tts-request-payload
   "Build the TTS request payload from the request body and config."
   [config body]
-  (let [text (-> (or (:text body) "") str)
-        voice-id-raw (trim-or-empty (or (:voice_id body) (:voiceId body) ""))
-        voice-id (if (str/blank? voice-id-raw) (voxx-default-voice-id config) voice-id-raw)
-        model-id-raw (trim-or-empty (or (:model_id body) (:modelId body) (:model body) ""))
-        model-id (if (str/blank? model-id-raw) (voxx-default-model-id config) model-id-raw)
-        output-format-raw (trim-or-empty (or (:output_format body) (:outputFormat body)
-                                             (:response_format body) (:responseFormat body) ""))
-        output-format (if (str/blank? output-format-raw) default-voxx-output-format output-format-raw)
-        speed-raw (trim-or-empty (first-body-value body ["speed"]))
-        speed (if (str/blank? speed-raw) (voxx-default-speed config) speed-raw)
-        postprocess-profile-raw (trim-or-empty (first-body-value body ["postprocess_profile"
-                                                                       "postprocessProfile"
-                                                                       "postprocess"]))
-        postprocess-profile (if (str/blank? postprocess-profile-raw)
-                              default-voxx-postprocess-profile
-                              postprocess-profile-raw)
-        postprocess-enabled (bool-value (first-body-value body ["postprocess_enabled" "postprocessEnabled"]) true)
-        prompt-aware (bool-value (first-body-value body ["prompt_aware" "promptAware" "prompt-aware"]) true)
-        prompt-aware-style (trim-or-empty (first-body-value body ["prompt_aware_style" "promptAwareStyle"]))
-        voice-settings (:voice_settings body)]
+  (let [text (-> (or (:text body) "") str)]
     {:text text
-     :payload (cond-> {:input text
-                        :voice voice-id
-                        :model model-id
-                        :response_format output-format
-                        :speed speed
-                        :postprocess_enabled postprocess-enabled
-                        :prompt_aware prompt-aware}
-                postprocess-profile (assoc :postprocess_profile postprocess-profile)
-                (not (str/blank? prompt-aware-style)) (assoc :prompt_aware_style prompt-aware-style)
-                (and voice-settings (not (nil? voice-settings))) (assoc :voice_settings voice-settings))}))
+     :payload (merge (tts-base-payload config body text)
+                     (tts-extra-payload body))}))
+
+(defn ^:async send-tts-response!
+  [reply json-response! resp]
+  (if (.-ok resp)
+    (do
+      (reply-header! reply "Cache-Control" "no-store")
+      (http/send-fetch-response! reply resp))
+    (let [detail (await (.text resp))]
+      (json-response! reply
+                      (.-status resp)
+                      {:detail (str "Voice Gateway TTS failed: " detail)
+                       :status_code (.-status resp)}))))
+
+(defn ^:async handle-tts!
+  [config request reply ctx json-response! ensure-tool!]
+  (when ctx (ensure-tool! ctx "multimodal.upload"))
+  (let [api-key (voice-gateway-api-key config)
+        body (http/request-body request)
+        {:keys [text payload]} (tts-request-payload config body)]
+    (cond
+      (str/blank? api-key)
+      (json-response! reply 503 {:detail "VOICE_GATEWAY_API_KEY is not configured"})
+
+      (str/blank? (str/trim text))
+      (json-response! reply 400 {:detail "Missing required field: text"})
+
+      :else
+      (try
+        (let [url (voxx-tts-url config)
+              opts {:method "POST" :headers (voxx-headers api-key) :json payload}]
+          (send-tts-response! reply json-response! (await (http/fetch-with-timeout url opts 30000))))
+        (catch :default err
+          (json-response! reply 502 {:detail (str "Voice Gateway TTS request failed: " err)}))))))
 
 (defn- register-tts-route!
   [app runtime config route! json-response! with-request-context! ensure-tool!]
@@ -304,30 +327,7 @@
           (fn [request reply]
             (with-request-context! runtime request reply
               (fn [ctx]
-                (when ctx (ensure-tool! ctx "multimodal.upload"))
-                (let [api-key (voice-gateway-api-key config)
-                      body (http/request-body request)
-                      {:keys [text payload]} (tts-request-payload config body)]
-                  (cond
-                    (str/blank? api-key)
-                    (json-response! reply 503 {:detail "VOICE_GATEWAY_API_KEY is not configured"})
-                    (str/blank? (str/trim text))
-                    (json-response! reply 400 {:detail "Missing required field: text"})
-                    :else
-                    (let [url (voxx-tts-url config)
-                          opts {:method "POST" :headers (voxx-headers api-key) :json payload}]
-                      (-> (http/fetch-with-timeout url opts 30000)
-                          (.then (fn [resp]
-                                   (if (.-ok resp)
-                                     (do (reply-header! reply "Cache-Control" "no-store")
-                                         (http/send-fetch-response! reply resp))
-                                     (-> (.text resp)
-                                         (.then (fn [detail]
-                                                  (json-response! reply (.-status resp)
-                                                                   {:detail (str "Voice Gateway TTS failed: " detail)
-                                                                    :status_code (.-status resp)}))))))))
-                          (.catch (fn [err]
-                                    (json-response! reply 502 {:detail (str "Voice Gateway TTS request failed: " err)})))))))))))
+                (handle-tts! config request reply ctx json-response! ensure-tool!))))))
 
 (defn register-voice-routes!
   [app runtime config handlers]

@@ -117,10 +117,14 @@
           :toolPolicies [{:toolId "memory.search" :effect "allow"}
                          {:toolId "read" :effect "allow"}]}
          (tool-catalog/effective-tool-auth-context {:userId "u"} #{"read" "memory.search"})))
-  (is (= ["read" "write" "memory.search"]
+  (is (= ["read" "write"]
          (tool-catalog/tool-runtime-names [" read " #js {:name "write"}]
-                                          #js [#js {:id "memory.search"}
-                                               #js {:label "write"}]))))
+                                            #js [#js {:id "memory.search"}
+                                                 #js {:label "write"}]))))
+
+(deftest provider-tools-are-disabled-for-known-incompatible-models
+  (is (false? (tool-catalog/provider-tools-enabled-for-model? "gpt-5.5")))
+  (is (true? (tool-catalog/provider-tools-enabled-for-model? "glm-5"))))
 
 (deftest tool-policy-and-catalog-ports-preserve-visibility
   (testing "allowed tool ids and auth context are resolved behind ports"

@@ -250,7 +250,7 @@
               clean-name (str/replace playlist-name #"\.m3u$" "")]
           (json-response! reply 200 {:ok true :name clean-name :items (vec items)}))
         (catch :default err
-          (json-response! reply 500 {:detail (str "Failed to load M3U: " err)})))))
+          (json-response! reply 500 {:detail (str "Failed to load M3U: " err)}))))))
 
 (defroute studio-list-playlists! []
   "GET" "/api/studio/playlists"
@@ -268,7 +268,7 @@
         (json-response! reply 200 {:ok true :playlists (vec m3u-files)}))
       (catch :default _err
         ;; Directory doesn't exist or other error - return empty list
-        (json-response! reply 200 {:ok true :playlists []}))))))
+        (json-response! reply 200 {:ok true :playlists []})))))
 
 ;; -- Label routes --
 

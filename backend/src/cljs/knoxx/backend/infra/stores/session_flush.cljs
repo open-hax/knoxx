@@ -25,44 +25,46 @@
          (pos? updated-ms)
          (>= (- (.now js/Date) updated-ms) INACTIVE_THRESHOLD_MS))))
 
-(defn- archive-stale-run!
+(defn ^:async archive-stale-run!
   [store run]
   (let [archived (assoc run
                         :status "failed"
                         :error "session-ttl-expired"
                         :has_active_stream false
                         :updated_at (now-iso))]
-    (-> (put-run! store archived)
-        (.catch (fn [err]
-                  (.warn js/console "[session-flush] stale run archive failed"
-                         (clj->js {:run-id (:run_id run)
-                                   :session-id (:session_id run)
-                                   :error (ex-message err)})))))))
+    (try
+      (await (put-run! store archived))
+      (catch :default err
+        (.warn js/console "[session-flush] stale run archive failed"
+               (clj->js {:run-id (:run_id run)
+                         :session-id (:session_id run)
+                         :error (ex-message err)}))))))
 
-(defn flush-stale-runs!
+(defn ^:async archive-stale-session-runs!
+  [store session-id]
+  (try
+    (let [runs (await (list-active-runs store session-id))]
+      (await (js/Promise.all
+              (clj->js
+               (keep (fn [run]
+                       (when (run-inactive? run)
+                         (archive-stale-run! store run)))
+                     runs)))))
+    (catch :default _
+      nil)))
+
+(defn ^:async flush-stale-runs!
   "Scan all active sessions in Redis for runs that have been inactive
    longer than INACTIVE_THRESHOLD_MS and archive them to OpenPlanner."
   [client]
   (when-let [store @store-registry/session-store*]
-    (-> (redis/smembers client session-store/ACTIVE_SESSIONS_SET)
-        (.then (fn [session-ids]
-                 (let [ids (vec (js->clj session-ids))]
-                   (js/Promise.all
-                    (clj->js
-                     (map (fn [session-id]
-                            (-> (list-active-runs store session-id)
-                                (.then (fn [runs]
-                                         (js/Promise.all
-                                          (clj->js
-                                           (keep (fn [run]
-                                                   (when (run-inactive? run)
-                                                     (archive-stale-run! store run)))
-                                                 runs)))))
-                                (.catch (fn [_] nil))))
-                          ids))))))
-        (.catch (fn [err]
-                  (.warn js/console "[session-flush] flush scan failed"
-                         (clj->js {:error (ex-message err)})))))))
+    (try
+      (let [ids (vec (js->clj (await (redis/smembers client session-store/ACTIVE_SESSIONS_SET))))]
+        (await (js/Promise.all
+                (clj->js (map #(archive-stale-session-runs! store %) ids)))))
+      (catch :default err
+        (.warn js/console "[session-flush] flush scan failed"
+               (clj->js {:error (ex-message err)}))))))
 
 (defn start-periodic-flush!
   "Start the background flush job. Safe to call multiple times — guards

@@ -27,37 +27,55 @@
     (seq content_parts)
     (assoc :content_parts (mapv normalize-content-part-for-event content_parts))))
 
+(defn- user-message-event
+  [mk-fn scope request-text run]
+  (when-not (str/blank? request-text)
+    (mk-fn "knoxx.message" "user"
+           request-text (user-event-extra scope (:content_parts run)))))
+
+(defn- assistant-message-event
+  [mk-fn answer status]
+  (when-not (str/blank? answer)
+    (mk-fn "knoxx.message" "assistant"
+           answer (merge {:status status}
+                         (op-mem/output-quality-extra answer)))))
+
+(defn- reasoning-event
+  [mk-fn reasoning status]
+  (when-not (str/blank? reasoning)
+    (mk-fn "knoxx.reasoning" "system" reasoning {:status status})))
+
+(defn- error-event
+  [mk-fn error status]
+  (when-not (str/blank? error)
+    (mk-fn "knoxx.error" "system"
+           error (merge {:status status}
+                        (op-mem/output-quality-extra error)))))
+
+(defn- tool-receipt-events
+  [mk-fn tool-receipts]
+  (mapv (fn [r]
+          (mk-fn "knoxx.tool_receipt" "system"
+                 (op-mem/tool-receipt-summary-text r)
+                 {:receipt r}))
+        tool-receipts))
+
 (defn- run-event-list
   [run scope mk-fn]
   (let [{:keys [run_id answer reasoning error messages
                 tool_receipts trace_blocks]} run
         request-text (or (some-> messages first :content) "")]
-    (cond-> []
-      (not (str/blank? request-text))
-      (conj (mk-fn "knoxx.message" "user"
-                   request-text (user-event-extra scope (:content_parts run))))
-      true
-      (conj (mk-fn "knoxx.run" "system"
-                   (str "Run " run_id " · " (:status run))
-                   {:trace_blocks trace_blocks
-                    :message_count (count messages)}))
-      (not (str/blank? answer))
-      (conj (mk-fn "knoxx.message" "assistant"
-                   answer (merge {:status (:status run)}
-                                 (op-mem/output-quality-extra answer))))
-      (not (str/blank? reasoning))
-      (conj (mk-fn "knoxx.reasoning" "system"
-                   reasoning {:status (:status run)}))
-      (not (str/blank? error))
-      (conj (mk-fn "knoxx.error" "system"
-                   error (merge {:status (:status run)}
-                                (op-mem/output-quality-extra error))))
-      (seq tool_receipts)
-      (into (mapv (fn [r]
-                    (mk-fn "knoxx.tool_receipt" "system"
-                           (op-mem/tool-receipt-summary-text r)
-                           {:receipt r}))
-                  tool_receipts)))))
+    (->> [(user-message-event mk-fn scope request-text run)
+          (mk-fn "knoxx.run" "system"
+                 (str "Run " run_id " · " (:status run))
+                 {:trace_blocks trace_blocks
+                  :message_count (count messages)})
+          (assistant-message-event mk-fn answer (:status run))
+          (reasoning-event mk-fn reasoning (:status run))
+          (error-event mk-fn error (:status run))]
+         (keep identity)
+         vec
+         (#(into % (tool-receipt-events mk-fn tool_receipts))))))
 
 (defn- run->events
   "Translate a KnoxxRun into the openplanner.event.v1 wire format."

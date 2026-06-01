@@ -1,61 +1,53 @@
 # Π Fork Tax Handoff
 
-- Timestamp: `2026-05-29T01:34:27Z`
+- Timestamp: `2026-06-01T00:26:00Z`
 - Repository: `/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx`
-- Branch: `pi/fork-tax/20260526T204054Z-knoxx-host-services`
+- Branch: `pi/fork-tax/20260529T022118Z-main-softreset-all-dirt-knoxx`
 - Remote: `origin` (`git@github.com:open-hax/knoxx.git`)
-- Snapshot base HEAD: `50eda01262c049b05b5e25043e7379db4e9a54f4`
-- Planned tag: `pi/fork-tax/20260529T013427Z/knoxx-specs-retirement`
+- Snapshot base HEAD: `38cd4e32c7cef97f0274b1864492c190210707ef`
+- Planned tag: `pi/fork-tax/20260601T002600Z/knoxx-backend-async-lint-continuation`
 
 ## Scope
 
-This snapshot retires the `specs/` source tree and promotes `kanban/` to the
-source of truth, alongside a full working-tree snapshot (repo fork-tax convention).
+This snapshot captures the continuation of backend lint remediation (async/await conversion) alongside kanban maintenance and ingestion build artifacts.
 
-- **`specs/` retired**: `git rm -rf specs/` removed 131 tracked spec files. One
-  spec had a local modification (`knoxx-backend-lint-function-length-extractions.md`)
-  and was force-removed intentionally. All content survives in git history and the
-  prior fork-tax tags.
-- **Importer removed**: `scripts/import-kanban-specs.mjs` (untracked, obsolete
-  specs→kanban generator) deleted.
-- **`kanban/` committed for the first time**: the board was entirely untracked
-  (`?? kanban/`). It now enters git, including the 2026-05-28 triage.
-- **Docs**: `README.md` and `kanban/README.md` updated to drop `specs/` references
-  and document kanban as the source of truth.
-- **Backend lint remediation (in-flight)**: 70 modified backend CLJS source/test
-  files absorbed, consistent with the prior snapshot. No unrelated path was
-  deleted, reset, restored, cleaned, or unstaged. No PM2 process restarted.
+### Backend lint remediation (continuation)
 
-## Kanban triage (2026-05-28)
+94 modified backend CLJS source/test files, continuing the systematic conversion of raw Promise chains (`.then`/`.catch`) to `^:async`/`await`:
 
-Six stale cards reconciled against the actual code (verified via read-only fan-out):
+- **Bluesky** (`domain/bluesky/bluesky.cljs`): auth, session, search, profile, publish, social, chat helpers and tool execute flows
+- **Discord** (`domain/discord/gateway.cljs`, `domain/discord/tools.cljs`): gateway reaction/client/message/voice/manager/actor flows and tool token/client, label attach, channel/DM fetch/search, upload/SVG render, send/react/thread/list helpers
+- **Auth session** (`infra/auth/session.cljs`): persistent session secret, DB/Redis, GitHub OAuth, cookie/API-key context, session creation, invite email, hook hydration
+- **Policy DB** (`infra/db/policy.cljs`): role/context/bootstrap/org/user/membership/data-lake flows, session/invite/credential/bootstrap/allowlist
+- **App routes** (`infra/routes/app.cljs`): proxy/data/health/session/run/admin/chat/direct helpers
+- **Memory routes** (`infra/routes/memory.cljs`): cache/session/search flows
+- **Translation** (`infra/routes/translation.cljs`) and **Voice** (`infra/routes/voice.cljs`): STT/TTS route helpers
+- **Redis client** (`infra/redis_client.cljs`): promise wrapper conversion
+- **Stores/sources** (`stores/*`, `source/opencode_session_ingester.cljs`): session store, composite store, message sources, session flush
+- **Misc** (`law/guards.cljs`, `law/url.cljs`, `infra/temp_memory.cljs`, `infra/svg_render.cljs`, `infra/agent/session.cljs`, `infra/agent/tool_catalog.cljs`, `infra/agent/turn.cljs`)
 
-| Card | Was → Now | Evidence |
-| --- | --- | --- |
-| lint-hard-error-first-pass | review → **done** | lint now 0 errors (was 52) |
-| lint-function-length-extractions | in_progress → **review** | 0 fn-length errors; ~7 warnings left |
-| workbench 5.3-agent-scratchpad | accepted → **review** | `ChatScratchpadPanel.tsx` implemented |
-| gardens-page-bugfixes | todo → **review** | `GardensPage.tsx` built; create/schema wired |
-| openplanner-gardens-backend-fixes | todo → **review** | gardens/cms/renderer/public all built |
-| kms-openplanner-ingest-arity-fix | accepted → **review** | `ingest-via-openplanner!` arity now 7-def / 7-call |
+Warnings reduced from ~1461 (prior snapshot) to ~823 (last recorded receipt), maintaining **0 errors** throughout. Long functions were split into helpers where function-length warnings applied.
 
-`knoxx-health-route-coherence` deliberately **stays incoming** with an evidence
-note: `/api/knoxx/health` is still a hardcoded `200 ok` stub.
+### Kanban updates
 
-The 9 pre-existing `done`/`[LANDED]`/`[SUPERSEDED]` cards (translation suite, MCP
-×2, workbench-ux-breakdown, garden-cms) were verified accurate. Ingestion and most
-workbench-UX cards were verified genuinely unbuilt and correctly left in todo/
-incoming/accepted.
+- Modified epics/tasks/workbench files: status updates, triage notes, frontmatter normalization
+- 70+ new kanban task files (previously untracked) covering knowledge-lake, knowledge-ops passes, knoxx architecture migration, chat UI, CMS, event runtime, editor, futuresight, gardens, generators, KMS, multi-tenant, PII, studio, tenant, translation, trigger, and uxx workstreams
+
+### Ingestion build
+
+- `ingestion/target/kms-ingestion.jar` rebuilt (binary artifact)
+
+### Receipts
+
+- `receipts.edn` appended with 14 new test-run entries, one per lint slice, documenting the continuous improvement path
 
 ## Verification
 
 - Secret heuristic scan: passed; no literal private keys / tokens / api-keys in staged additions.
-- `pnpm -C backend typecheck` (shadow-cljs compile server): passed; 305 files, 0 warnings, 8.62s.
-- `pnpm -C backend run lint`: passed; **0 errors, 1461 warnings** (improved from the prior snapshot's 11 errors / 1749 warnings).
+- `pnpm -C backend typecheck` (shadow-cljs compile server): passed; 307 files, 0 warnings, 1.00s.
+- `pnpm -C backend exec shadow-cljs compile test`: passed; 452 tests, 1326 assertions, 0 failures, 0 errors.
+- Latest lint receipt: errors 0, warnings ~823 (down from 1461 at prior snapshot).
 
-### Residual lint warnings (1461, all owned by open lint cards)
+## Concurrent dirt
 
-- 1226 raw Promise-chain (`.then`/`.catch`) warnings → `async-workflows-src`.
-- ~24 unused-var / redundant-let / unused-require warnings → `unused-and-final-warnings`.
-- ~7 function-length (`>=30`) warnings → `function-length-extractions`.
-- 23 test-file warnings (unused refers, mock protocol gaps) → `test-boundaries`.
+None identified. All working tree changes are owned by the backend lint remediation and kanban maintenance workstreams. No unrelated path was deleted, reset, restored, cleaned, or unstaged. No PM2 process restarted.

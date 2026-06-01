@@ -46,10 +46,11 @@
   (let [[sql-str & params] (honey->sql honey-map)]
     (pg/query-one! conn sql-str params)))
 
-(defn- promise-each [items f]
-  (reduce (fn [p item] (.then p (fn [_] (f item))))
-          (js/Promise.resolve nil)
-          (or items [])))
+(defn ^:async promise-each
+  [items f]
+  (doseq [item (or items [])]
+    (await (f item)))
+  nil)
 
 ;; ---------------------------------------------------------------------------
 ;; Utility helpers
@@ -112,23 +113,22 @@
     (or (#{"EROFS" "EACCES" "EPERM"} code)
         (and message (boolean (re-find #"read-only file system|permission denied|operation not permitted" message))))))
 
-(defn- upsert-actor-contract-best-effort!
+(defn- handle-read-only-actor-contract-error!
+  [err]
+  (if (read-only-contract-write-error? err)
+    (do
+      (.warn js/console
+             "[knoxx-policy] actor contract write skipped; contracts dir is read-only/unwritable"
+             (.-message err))
+      nil)
+    (throw err)))
+
+(defn ^:async upsert-actor-contract-best-effort!
   [payload]
-  (letfn [(handle-read-only [err]
-            (if (read-only-contract-write-error? err)
-              (do
-                (.warn js/console
-                       "[knoxx-policy] actor contract write skipped; contracts dir is read-only/unwritable"
-                       (.-message err))
-                (js/Promise.resolve nil))
-              (js/Promise.reject err)))]
-    (try
-      (let [result (upsert-actor-contract! payload)]
-        (if (and result (fn? (.-catch result)))
-          (.catch result handle-read-only)
-          (js/Promise.resolve result)))
-      (catch :default err
-        (handle-read-only err)))))
+  (try
+    (await (upsert-actor-contract! payload))
+    (catch :default err
+      (handle-read-only-actor-contract-error! err))))
 
 (defn- find-actor-contract-by-id [actor-id]
   (policy-actors/find-actor-contract-by-id (contracts-dir) actor-id))
@@ -139,8 +139,6 @@
 (defn- list-actor-contracts []
   (policy-actors/list-actor-contracts (contracts-dir)))
 
-(defn- contract-tool-ids []
-  (policy-actors/contract-tool-ids (contracts-dir)))
 
 (defn- user-actor-id-from-email [email]
   (policy-actors/user-actor-id-from-email email))
@@ -165,47 +163,46 @@
 ;; Role management
 ;; ---------------------------------------------------------------------------
 
-(defn- ensure-role! [pool {:keys [org-id name slug scope-kind built-in system-managed]}]
-  (-> (find-role pool {:org-id org-id :slug slug})
-      (.then
-       (fn [existing]
-         (if existing
-           (honey-query-one! pool (q-roles/update-role (:id existing)
-                                                       {:name name :scope-kind scope-kind
-                                                        :built-in built-in :system-managed system-managed}))
-           (honey-query-one! pool (q-roles/insert {:org-id org-id :name name :slug slug
-                                                    :scope-kind scope-kind :built-in built-in
-                                                    :system-managed system-managed})))))))
+(defn ^:async ensure-role!
+  [pool {:keys [org-id name slug scope-kind built-in system-managed]}]
+  (let [existing (await (find-role pool {:org-id org-id :slug slug}))
+        attrs {:name name :scope-kind scope-kind
+               :built-in built-in :system-managed system-managed}]
+    (if existing
+      (await (honey-query-one! pool (q-roles/update-role (:id existing) attrs)))
+      (await (honey-query-one! pool (q-roles/insert (assoc attrs :org-id org-id :slug slug)))))))
 
-(defn- role-permissions-uses-legacy-ids? [pool]
-  (-> (pg/query! pool
-        "SELECT column_name FROM information_schema.columns
-         WHERE table_schema = 'public' AND table_name = 'role_permissions'"
-        nil)
-      (.then (fn [{:keys [rows]}]
-               (contains? (set (map :column_name rows)) "permission_id")))))
+(defn ^:async role-permissions-uses-legacy-ids?
+  [pool]
+  (let [{:keys [rows]} (await (pg/query! pool
+                               "SELECT column_name FROM information_schema.columns
+                                WHERE table_schema = 'public' AND table_name = 'role_permissions'"
+                               nil))]
+    (contains? (set (map :column_name rows)) "permission_id")))
 
-(defn- set-role-permissions! [pool role-id permission-codes]
+(defn- insert-role-permission!
+  [client role-id legacy? code]
+  (if legacy?
+    (pg/query! client
+      "INSERT INTO role_permissions (role_id, permission_id, effect)
+       SELECT $1, id, 'allow' FROM permissions WHERE code = $2
+       ON CONFLICT (role_id, permission_id) DO UPDATE SET effect = EXCLUDED.effect"
+      [role-id code])
+    (honey-query! client (q-roles/insert-permission-modern role-id code))))
+
+(defn ^:async set-role-permissions-tx!
+  [client role-id codes]
+  (await (honey-query! client (q-roles/delete-permissions role-id)))
+  (let [legacy? (await (role-permissions-uses-legacy-ids? client))]
+    (await (promise-each codes #(insert-role-permission! client role-id legacy? %))))
+  nil)
+
+(defn- set-role-permissions!
+  [pool role-id permission-codes]
   (pg/with-transaction!
    pool
    (fn [client]
-     (let [codes (unique permission-codes)]
-       (-> (honey-query! client (q-roles/delete-permissions role-id))
-           (.then (fn [_] (role-permissions-uses-legacy-ids? client)))
-           (.then
-            (fn [legacy?]
-              (if (empty? codes)
-                nil
-                (promise-each
-                 codes
-                 (fn [code]
-                   (if legacy?
-                     (pg/query! client
-                       "INSERT INTO role_permissions (role_id, permission_id, effect)
-                        SELECT $1, id, 'allow' FROM permissions WHERE code = $2
-                        ON CONFLICT (role_id, permission_id) DO UPDATE SET effect = EXCLUDED.effect"
-                       [role-id code])
-                     (honey-query! client (q-roles/insert-permission-modern role-id code)))))))))))))
+     (set-role-permissions-tx! client role-id (unique permission-codes)))))
 
 (defn- normalize-tool-policy [p]
   (if (string? p)
@@ -276,127 +273,133 @@
                   risk_level = EXCLUDED.risk_level"
              [tid (or label tid) (or description "") (or risk-level "low")])))))))
 
-(defn set-role-tool-policies! [pool role-id tool-policies]
-  (pg/with-transaction!
-   pool
-   (fn [client]
-     (let [normalized (mapv normalize-tool-policy tool-policies)
-           tool-ids   (mapv :tool-id normalized)]
-       (-> (honey-query! client (q-roles/delete-tool-policies role-id))
-           (.then (fn [_] (ensure-tool-definitions! client tool-ids)))
-           (.then
-            (fn [_]
-              (promise-each
-               normalized
-               (fn [p]
-                 (honey-query! client
-                   (q-roles/insert-tool-policy
-                    role-id
-                    (assoc p :constraints-json
-                           (js/JSON.stringify (clj->js (:constraints p))))))))))
-           (.then (fn [_] nil)))))))
+(defn- policy-with-constraints-json
+  [p]
+  (assoc p :constraints-json (js/JSON.stringify (clj->js (:constraints p)))))
+
+(defn ^:async set-role-tool-policies-tx!
+  [client role-id normalized]
+  (await (honey-query! client (q-roles/delete-tool-policies role-id)))
+  (await (ensure-tool-definitions! client (mapv :tool-id normalized)))
+  (await (promise-each normalized
+                       #(honey-query! client
+                                      (q-roles/insert-tool-policy
+                                       role-id (policy-with-constraints-json %)))))
+  nil)
+
+(defn set-role-tool-policies!
+  [pool role-id tool-policies]
+  (let [normalized (mapv normalize-tool-policy tool-policies)]
+    (pg/with-transaction!
+     pool
+     (fn [client]
+       (set-role-tool-policies-tx! client role-id normalized)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Membership roles
 ;; ---------------------------------------------------------------------------
 
-(defn- resolve-role-ids [pool {:keys [org-id role-ids role-slugs]}]
+(defn- requested-role-slugs
+  [role-slugs]
+  (->> role-slugs
+       (map #(some-> % str str/trim not-empty))
+       (remove nil?)
+       distinct
+       vec))
+
+(defn- resolve-role-slugs
+  [base-ids requested rows alias-map]
+  (let [found (into {} (map (fn [r] [(:slug r) (str (:id r))]) rows))
+        resolved (keep (fn [slug] (some #(get found %) (get alias-map slug))) requested)
+        missing (filter (fn [slug] (not-any? #(contains? found %) (get alias-map slug))) requested)]
+    (when (seq missing)
+      (throw (js/Error. (str "Role not found for slug(s): " (str/join ", " missing)))))
+    (into (vec base-ids) resolved)))
+
+(defn ^:async resolve-role-ids
+  [pool {:keys [org-id role-ids role-slugs]}]
   (let [base-ids (set (map str (or role-ids [])))]
     (if (empty? role-slugs)
-      (js/Promise.resolve (vec base-ids))
-      (let [requested (->> role-slugs
-                           (map #(some-> % str str/trim not-empty))
-                           (remove nil?)
-                           distinct
-                           vec)
-            alias-map (into {}
-                            (map (fn [slug]
-                                   [slug (role-slug-aliases slug)]))
-                            requested)
-            query-slugs (->> (vals alias-map) (mapcat identity) distinct vec)]
-        (-> (honey-query! pool (q-roles/by-slugs-and-org query-slugs org-id))
-            (.then
-             (fn [{:keys [rows]}]
-               (let [found (into {} (map (fn [r] [(:slug r) (str (:id r))]) rows))
-                     resolved (keep (fn [slug]
-                                      (some #(get found %) (get alias-map slug)))
-                                    requested)
-                     missing (filter (fn [slug]
-                                       (not-any? #(contains? found %) (get alias-map slug)))
-                                     requested)]
-                 (when (seq missing)
-                   (throw (js/Error. (str "Role not found for slug(s): " (str/join ", " missing)))))
-                 (into (vec base-ids) resolved)))))))))
+      (vec base-ids)
+      (let [requested (requested-role-slugs role-slugs)
+            alias-map (into {} (map (fn [slug] [slug (role-slug-aliases slug)])) requested)
+            query-slugs (->> (vals alias-map) (mapcat identity) distinct vec)
+            {:keys [rows]} (await (honey-query! pool (q-roles/by-slugs-and-org query-slugs org-id)))]
+        (resolve-role-slugs base-ids requested rows alias-map)))))
 
-(defn- canonicalize-contract-role-slugs! [role-slugs]
-  (-> (contracts-loader/load-all-contracts! (contracts-config))
-      (.then
-       (fn [records]
-         (let [known (->> records
-                          (filter #(= "roles" (:contractClass %)))
-                          (keep #(some-> (or (:id %) (get-in % [:contract :role/id]))
-                                         str str/trim not-empty))
-                          set)]
-           (->> (or role-slugs [])
-                (keep (fn [raw]
-                        (let [s (some-> raw str str/trim not-empty)]
-                          (cond
-                            (and s (contains? known s)) s
-                            (and s (contains? known (slugify s s))) (slugify s s)
-                            s (do (.warn js/console "[policy-db] unknown role slug, skipping:" s) nil)
-                            :else nil))))
-                distinct vec))))))
+(defn- known-contract-role-slugs
+  [records]
+  (->> records
+       (filter #(= "roles" (:contractClass %)))
+       (keep #(some-> (or (:id %) (get-in % [:contract :role/id])) str str/trim not-empty))
+       set))
 
-(defn set-membership-roles!
+(defn- canonical-contract-role-slug
+  [known raw]
+  (let [s (some-> raw str str/trim not-empty)]
+    (cond
+      (and s (contains? known s)) s
+      (and s (contains? known (slugify s s))) (slugify s s)
+      s (do (.warn js/console "[policy-db] unknown role slug, skipping:" s) nil)
+      :else nil)))
+
+(defn ^:async canonicalize-contract-role-slugs!
+  [role-slugs]
+  (let [records (await (contracts-loader/load-all-contracts! (contracts-config)))
+        known (known-contract-role-slugs records)]
+    (->> (or role-slugs [])
+         (keep #(canonical-contract-role-slug known %))
+         distinct
+         vec)))
+
+(defn ^:async set-membership-roles-tx!
+  [client membership-id replace resolved-ids]
+  (when replace
+    (await (honey-query! client (q-memberships/delete-roles membership-id))))
+  (await (promise-each resolved-ids
+                       #(honey-query! client (q-memberships/insert-role membership-id %))))
+  resolved-ids)
+
+(defn ^:async resolved-membership-role-slugs!
+  [role-slugs contract-projection]
+  (if contract-projection
+    (await (canonicalize-contract-role-slugs! role-slugs))
+    (or role-slugs [])))
+
+(defn ^:async set-membership-roles!
   [pool membership-id {:keys [org-id role-ids role-slugs replace contract-projection]}]
-  (let [slugs-promise (if contract-projection
-                        (canonicalize-contract-role-slugs! role-slugs)
-                        (js/Promise.resolve (or role-slugs [])))]
-    (-> slugs-promise
-        (.then (fn [resolved-slugs]
-                 (resolve-role-ids pool {:org-id org-id
-                                         :role-ids (or role-ids [])
-                                         :role-slugs resolved-slugs})))
-        (.then
-         (fn [resolved-ids]
-           (pg/with-transaction!
+  (let [resolved-slugs (await (resolved-membership-role-slugs! role-slugs contract-projection))
+        resolved-ids (await (resolve-role-ids pool {:org-id org-id
+                                                    :role-ids (or role-ids [])
+                                                    :role-slugs resolved-slugs}))]
+    (await (pg/with-transaction!
             pool
             (fn [client]
-              (-> (if replace
-                    (honey-query! client (q-memberships/delete-roles membership-id))
-                    (js/Promise.resolve nil))
-                  (.then (fn [_]
-                           (promise-each
-                            resolved-ids
-                            (fn [role-id]
-                              (honey-query! client
-                                (q-memberships/insert-role membership-id role-id))))))
-                  (.then (fn [_] resolved-ids))))))))))
+              (set-membership-roles-tx! client membership-id replace resolved-ids))))))
 
-(defn set-membership-tool-policies! [pool membership-id tool-policies]
-  (pg/with-transaction!
-   pool
-   (fn [client]
-     (let [normalized (mapv normalize-tool-policy tool-policies)
-           tool-ids   (mapv :tool-id normalized)]
-       (-> (honey-query! client (q-memberships/delete-tool-policies membership-id))
-           (.then (fn [_] (ensure-tool-definitions! client tool-ids)))
-           (.then
-            (fn [_]
-              (promise-each
-               normalized
-               (fn [p]
-                 (honey-query! client
-                   (q-memberships/insert-tool-policy
-                    membership-id
-                    (assoc p :constraints-json
-                           (js/JSON.stringify (clj->js (:constraints p))))))))))
-           (.then (fn [_] nil)))))))
+(defn ^:async set-membership-tool-policies-tx!
+  [client membership-id normalized]
+  (await (honey-query! client (q-memberships/delete-tool-policies membership-id)))
+  (await (ensure-tool-definitions! client (mapv :tool-id normalized)))
+  (await (promise-each normalized
+                       #(honey-query! client
+                                      (q-memberships/insert-tool-policy
+                                       membership-id (policy-with-constraints-json %)))))
+  nil)
 
-(defn- set-membership-actor-id! [pool membership-id actor-id]
+(defn set-membership-tool-policies!
+  [pool membership-id tool-policies]
+  (let [normalized (mapv normalize-tool-policy tool-policies)]
+    (pg/with-transaction!
+     pool
+     (fn [client]
+       (set-membership-tool-policies-tx! client membership-id normalized)))))
+
+(defn ^:async set-membership-actor-id!
+  [pool membership-id actor-id]
   (let [resolved (or (normalize-actor-id actor-id) "workspace_user")]
-    (-> (honey-query! pool (q-memberships/set-actor-id membership-id resolved))
-        (.then (fn [_] resolved)))))
+    (await (honey-query! pool (q-memberships/set-actor-id membership-id resolved)))
+    resolved))
 
 ;; ---------------------------------------------------------------------------
 ;; Hydration
@@ -405,84 +408,84 @@
 (defn- default-membership-actor-id [role-slugs]
   (actor-scope/default-membership-actor-id role-slugs))
 
-(defn hydrate-role-maps [pool roles]
-  (if (empty? roles)
-    (js/Promise.resolve [])
-    (let [role-ids (mapv :id roles)]
-      (-> (js/Promise.all
-           [(-> (role-permissions-uses-legacy-ids? pool)
-                (.then (fn [legacy?]
-                         (if legacy?
-                           (honey-query! pool (q-roles/permissions-for-roles-legacy role-ids))
-                           (honey-query! pool (q-roles/permissions-for-roles role-ids))))))
-            (honey-query! pool (q-roles/tool-policies-for-roles role-ids))])
-          (.then
-           (fn [[perm-result tool-result]]
-             (let [perm-rows  (:rows perm-result)
-                   tool-rows  (:rows tool-result)
-                   perm-map   (atom {})
-                   tool-map   (atom {})]
-               (doseq [{:keys [role_id code]} perm-rows]
-                 (swap! perm-map update role_id (fnil conj []) code))
-               (doseq [{:keys [role_id tool_id effect constraints_json]} tool-rows]
-                 (swap! tool-map update role_id (fnil conj [])
-                        {:tool-id     tool_id
-                         :effect      effect
-                         :constraints (js->clj (or constraints_json (js-obj)) :keywordize-keys true)}))
-               (vec
-                (for [{:keys [id org_id name slug scope_kind built_in system_managed
-                               created_at updated_at]} roles]
-                  {:id             id
-                   :org-id         org_id
-                   :name           name
-                   :slug           slug
-                   :scope-kind     scope_kind
-                   :built-in       built_in
-                   :system-managed system_managed
-                   :created-at     created_at
-                   :updated-at     updated_at
-                   :permissions    (or (get @perm-map id) [])
-                   :tool-policies  (or (get @tool-map id) [])})))))))))
+(defn- constraints-json->clj
+  [value]
+  (js->clj (or value (js-obj)) :keywordize-keys true))
 
-(defn hydrate-memberships [pool memberships]
+(defn- grouped-role-permissions
+  [rows]
+  (reduce (fn [acc {:keys [role_id code]}]
+            (update acc role_id (fnil conj []) code))
+          {}
+          rows))
+
+(defn- grouped-role-tool-policies
+  [rows]
+  (reduce (fn [acc {:keys [role_id tool_id effect constraints_json]}]
+            (update acc role_id (fnil conj [])
+                    {:tool-id tool_id :effect effect
+                     :constraints (constraints-json->clj constraints_json)}))
+          {}
+          rows))
+
+(defn- hydrate-role-row
+  [perm-map tool-map {:keys [id org_id name slug scope_kind built_in system_managed created_at updated_at]}]
+  {:id id :org-id org_id :name name :slug slug :scope-kind scope_kind
+   :built-in built_in :system-managed system_managed
+   :created-at created_at :updated-at updated_at
+   :permissions (or (get perm-map id) [])
+   :tool-policies (or (get tool-map id) [])})
+
+(defn ^:async hydrate-role-maps
+  [pool roles]
+  (if (empty? roles)
+    []
+    (let [role-ids (mapv :id roles)
+          legacy? (await (role-permissions-uses-legacy-ids? pool))
+          perm-query (if legacy? q-roles/permissions-for-roles-legacy q-roles/permissions-for-roles)
+          perm-result (await (honey-query! pool (perm-query role-ids)))
+          tool-result (await (honey-query! pool (q-roles/tool-policies-for-roles role-ids)))
+          perm-map (grouped-role-permissions (:rows perm-result))
+          tool-map (grouped-role-tool-policies (:rows tool-result))]
+      (mapv #(hydrate-role-row perm-map tool-map %) roles))))
+
+(defn- grouped-membership-roles
+  [rows]
+  (reduce (fn [acc {:keys [membership_id role_id slug name scope_kind org_id]}]
+            (update acc membership_id (fnil conj [])
+                    {:id role_id :slug slug :name name :scope-kind scope_kind :org-id org_id}))
+          {}
+          rows))
+
+(defn- grouped-membership-tool-policies
+  [rows]
+  (reduce (fn [acc {:keys [membership_id tool_id effect constraints_json]}]
+            (update acc membership_id (fnil conj [])
+                    {:tool-id tool_id :effect effect
+                     :constraints (constraints-json->clj constraints_json)}))
+          {}
+          rows))
+
+(defn- hydrate-membership-row
+  [roles-by-m tools-by-m {:keys [id user_id org_id actor_id org_name org_slug status is_default created_at updated_at]}]
+  (let [roles (or (get roles-by-m id) [])]
+    {:id id :user-id user_id :org-id org_id
+     :actor-id (or (normalize-actor-id actor_id)
+                   (default-membership-actor-id (map :slug roles)))
+     :org-name org_name :org-slug org_slug :status status :is-default is_default
+     :created-at created_at :updated-at updated_at
+     :roles roles :tool-policies (or (get tools-by-m id) [])}))
+
+(defn ^:async hydrate-memberships
+  [pool memberships]
   (if (empty? memberships)
-    (js/Promise.resolve [])
-    (let [membership-ids (mapv :id memberships)]
-      (-> (js/Promise.all
-           [(honey-query! pool (q-roles/roles-for-memberships membership-ids))
-            (honey-query! pool (q-memberships/tool-policies-for-ids membership-ids))])
-          (.then
-           (fn [[role-result tool-result]]
-             (let [role-rows  (:rows role-result)
-                   tool-rows  (:rows tool-result)
-                   roles-by-m (atom {})
-                   tools-by-m (atom {})]
-               (doseq [{:keys [membership_id role_id slug name scope_kind org_id]} role-rows]
-                 (swap! roles-by-m update membership_id (fnil conj [])
-                        {:id role_id :slug slug :name name
-                         :scope-kind scope_kind :org-id org_id}))
-               (doseq [{:keys [membership_id tool_id effect constraints_json]} tool-rows]
-                 (swap! tools-by-m update membership_id (fnil conj [])
-                        {:tool-id     tool_id
-                         :effect      effect
-                         :constraints (js->clj (or constraints_json (js-obj)) :keywordize-keys true)}))
-               (vec
-                (for [{:keys [id user_id org_id actor_id org_name org_slug
-                               status is_default created_at updated_at]} memberships]
-                  {:id           id
-                   :user-id      user_id
-                   :org-id       org_id
-                   :actor-id     (or (normalize-actor-id actor_id)
-                                     (default-membership-actor-id
-                                      (map :slug (or (get @roles-by-m id) []))))
-                   :org-name     org_name
-                   :org-slug     org_slug
-                   :status       status
-                   :is-default   is_default
-                   :created-at   created_at
-                   :updated-at   updated_at
-                   :roles        (or (get @roles-by-m id) [])
-                   :tool-policies (or (get @tools-by-m id) [])})))))))))
+    []
+    (let [membership-ids (mapv :id memberships)
+          role-result (await (honey-query! pool (q-roles/roles-for-memberships membership-ids)))
+          tool-result (await (honey-query! pool (q-memberships/tool-policies-for-ids membership-ids)))
+          roles-by-m (grouped-membership-roles (:rows role-result))
+          tools-by-m (grouped-membership-tool-policies (:rows tool-result))]
+      (mapv #(hydrate-membership-row roles-by-m tools-by-m %) memberships))))
 
 ;; ---------------------------------------------------------------------------
 ;; Request context
@@ -533,66 +536,74 @@
         (swap! merged assoc (:tool-id n) n)))
     (->> (vals @merged) (sort-by :tool-id) vec)))
 
-(defn- build-request-context [pool membership-row]
+(defn- validate-membership-row!
+  [membership-row]
   (cond
     (not membership-row)
-    (js/Promise.reject
-     (http-error 401 "Request context did not resolve to a membership"
-                 "request_context_unresolved"))
-
+    (throw (http-error 401 "Request context did not resolve to a membership"
+                       "request_context_unresolved"))
     (not= (:user_status membership-row) "active")
-    (js/Promise.reject (http-error 403 "User is not active" "user_inactive"))
-
+    (throw (http-error 403 "User is not active" "user_inactive"))
     (not= (:status membership-row) "active")
-    (js/Promise.reject (http-error 403 "Membership is not active" "membership_inactive"))
-
+    (throw (http-error 403 "Membership is not active" "membership_inactive"))
     (not= (:org_status membership-row) "active")
-    (js/Promise.reject (http-error 403 "Org is not active" "org_inactive"))
+    (throw (http-error 403 "Org is not active" "org_inactive"))))
 
-    :else
-    (-> (hydrate-memberships pool [membership-row])
-        (.then
-         (fn [memberships]
-           (let [membership (first memberships)
-                 role-ids   (mapv :id (:roles membership))]
-             (-> (if (empty? role-ids)
-                   (js/Promise.resolve [])
-                   (-> (honey-query! pool (q-roles/by-ids role-ids))
-                       (.then (fn [{:keys [rows]}] (hydrate-role-maps pool rows)))))
-                 (.then
-                  (fn [detailed-roles]
-                    (let [permissions     (sort (unique (mapcat :permissions detailed-roles)))
-                          tool-policies   (merge-tool-policies
-                                           (mapcat :tool-policies detailed-roles)
-                                           (:tool-policies membership))
-                          role-slugs      (sort-by #(- (rolePriority %))
-                                                   (map :slug detailed-roles))
-                          actor-id        (or (normalize-actor-id (:actor_id membership-row))
-                                              (default-membership-actor-id role-slugs))]
-                      {:user          {:id           (:user_id membership-row)
-                                       :email        (:email membership-row)
-                                       :username     (:email membership-row)
-                                       :display-name (:display_name membership-row)
-                                       :status       (:user_status membership-row)}
-                       :org           {:id         (:org_id membership-row)
-                                       :slug       (:org_slug membership-row)
-                                       :name       (:org_name membership-row)
-                                       :status     (:org_status membership-row)
-                                       :is-primary (:is_primary membership-row)
-                                       :kind       (:org_kind membership-row)}
-                       :membership    {:id         (:id membership)
-                                       :actor-id   actor-id
-                                       :status     (:status membership)
-                                       :is-default (:is-default membership)
-                                       :created-at (:created-at membership)
-                                       :updated-at (:updated-at membership)}
-                       :actor         {:id actor-id}
-                       :roles         detailed-roles
-                       :role-slugs    role-slugs
-                       :permissions   permissions
-                       :tool-policies tool-policies
-                       :membership-tool-policies (:tool-policies membership)
-                       :is-system-admin (boolean (some #{"system_admin" "system-admin"} role-slugs))}))))))))))
+(defn ^:async detailed-membership-roles
+  [pool membership]
+  (let [role-ids (mapv :id (:roles membership))]
+    (if (empty? role-ids)
+      []
+      (let [{:keys [rows]} (await (honey-query! pool (q-roles/by-ids role-ids)))]
+        (await (hydrate-role-maps pool rows))))))
+
+(defn- request-user-map
+  [membership-row]
+  {:id (:user_id membership-row) :email (:email membership-row)
+   :username (:email membership-row) :display-name (:display_name membership-row)
+   :status (:user_status membership-row)})
+
+(defn- request-org-map
+  [membership-row]
+  {:id (:org_id membership-row) :slug (:org_slug membership-row)
+   :name (:org_name membership-row) :status (:org_status membership-row)
+   :is-primary (:is_primary membership-row) :kind (:org_kind membership-row)})
+
+(defn- request-membership-map
+  [membership actor-id]
+  {:id (:id membership) :actor-id actor-id :status (:status membership)
+   :is-default (:is-default membership) :created-at (:created-at membership)
+   :updated-at (:updated-at membership)})
+
+(defn- request-policy-summary
+  [membership detailed-roles]
+  {:permissions (sort (unique (mapcat :permissions detailed-roles)))
+   :tool-policies (merge-tool-policies (mapcat :tool-policies detailed-roles)
+                                       (:tool-policies membership))
+   :role-slugs (sort-by #(- (rolePriority %)) (map :slug detailed-roles))})
+
+(defn- request-context-map
+  [membership-row membership detailed-roles]
+  (let [{:keys [permissions tool-policies role-slugs]} (request-policy-summary membership detailed-roles)
+        actor-id (or (normalize-actor-id (:actor_id membership-row))
+                     (default-membership-actor-id role-slugs))]
+    {:user (request-user-map membership-row)
+     :org (request-org-map membership-row)
+     :membership (request-membership-map membership actor-id)
+     :actor {:id actor-id}
+     :roles detailed-roles
+     :role-slugs role-slugs
+     :permissions permissions
+     :tool-policies tool-policies
+     :membership-tool-policies (:tool-policies membership)
+     :is-system-admin (boolean (some #{"system_admin" "system-admin"} role-slugs))}))
+
+(defn ^:async build-request-context
+  [pool membership-row]
+  (validate-membership-row! membership-row)
+  (let [membership (first (await (hydrate-memberships pool [membership-row])))
+        detailed-roles (await (detailed-membership-roles pool membership))]
+    (request-context-map membership-row membership detailed-roles)))
 
 ;; ---------------------------------------------------------------------------
 ;; Bootstrap & contract sync
@@ -618,83 +629,77 @@
          [(:actor contract)])
         (js/Promise.resolve nil)))))
 
-(defn sync-contract-role-projections! [pool]
-  (-> (contracts-loader/load-all-contracts! (contracts-config))
-      (.then
-       (fn [records]
-         (let [caps-by-id  (->> records
-                                (filter #(= "capabilities" (:contractClass %)))
-                                (map (fn [r] [(:id r) (:contract r)]))
-                                (into {}))
-               role-records (->> records
-                                 (filter #(= "roles" (:contractClass %)))
-                                 vec)]
-           (promise-each
-            role-records
-            (fn [rec]
-              (let [slug     (some-> (or (:id rec)
-                                         (get-in rec [:contract :role/id]))
-                                     str str/trim not-empty)
-                    contract (:contract rec)]
-                (when slug
-                  (let [name  (or (some-> (:role/label contract) str str/trim not-empty)
-                                  (some-> (:role/name contract) str str/trim not-empty)
-                                  (->> (str/split slug #"[-_]+")
-                                       (remove str/blank?)
-                                       (map str/capitalize)
-                                       (str/join " ")))
-                        perms (->> (or (:role/permissions contract) [])
-                                   (map str) distinct sort vec)
-                        tool-policies (role-tool-policies caps-by-id contract)]
-                    (-> (ensure-role! pool {:org-id nil :name name :slug slug
-                                            :scope-kind "platform" :built-in false
-                                            :system-managed true})
-                        (.then (fn [role]
-                                 (-> (set-role-permissions! pool (:id role) perms)
-                                     (.then (fn [_]
-                                              (set-role-tool-policies! pool (:id role)
-                                                                       tool-policies)))))))))))))))
-       (.then (fn [_] nil))))
+(defn- contract-records-by-class
+  [records contract-class]
+  (->> records (filter #(= contract-class (:contractClass %))) vec))
 
-(defn- ensure-primary-org! [pool opts]
+(defn- role-record-slug
+  [rec]
+  (some-> (or (:id rec) (get-in rec [:contract :role/id])) str str/trim not-empty))
+
+(defn- role-display-name
+  [slug contract]
+  (or (some-> (:role/label contract) str str/trim not-empty)
+      (some-> (:role/name contract) str str/trim not-empty)
+      (->> (str/split slug #"[-_]+")
+           (remove str/blank?)
+           (map str/capitalize)
+           (str/join " "))))
+
+(defn ^:async sync-contract-role-record!
+  [pool caps-by-id rec]
+  (when-let [slug (role-record-slug rec)]
+    (let [contract (:contract rec)
+          perms (->> (or (:role/permissions contract) []) (map str) distinct sort vec)
+          role (await (ensure-role! pool {:org-id nil
+                                          :name (role-display-name slug contract)
+                                          :slug slug :scope-kind "platform"
+                                          :built-in false :system-managed true}))]
+      (await (set-role-permissions! pool (:id role) perms))
+      (await (set-role-tool-policies! pool (:id role) (role-tool-policies caps-by-id contract)))))
+  nil)
+
+(defn ^:async sync-contract-role-projections!
+  [pool]
+  (let [records (await (contracts-loader/load-all-contracts! (contracts-config)))
+        caps-by-id (into {} (map (fn [r] [(:id r) (:contract r)]))
+                         (contract-records-by-class records "capabilities"))]
+    (await (promise-each (contract-records-by-class records "roles")
+                         #(sync-contract-role-record! pool caps-by-id %))))
+  nil)
+
+(defn ^:async ensure-primary-org!
+  [pool opts]
   (let [primary-org-slug (or (:primaryOrgSlug opts) (:primary-org-slug opts) "open-hax")
         primary-org-name (or (:primaryOrgName opts) (:primary-org-name opts) "Open Hax")
-        primary-org-kind (or (:primaryOrgKind opts) (:primary-org-kind opts) "platform_owner")]
-  (let [slug (slugify primary-org-slug "open-hax")
-        name (str primary-org-name)
-        kind (str primary-org-kind)]
-    (-> (honey-query-one! pool (q-orgs/upsert-primary {:slug slug :name name :kind kind}))
-        (.then (fn [org]
-                 (.then (honey-query! pool (q-orgs/clear-primary-except slug))
-                        (fn [_] org))))))))
+        primary-org-kind (or (:primaryOrgKind opts) (:primary-org-kind opts) "platform_owner")
+        slug (slugify primary-org-slug "open-hax")
+        org (await (honey-query-one! pool (q-orgs/upsert-primary {:slug slug
+                                                                  :name (str primary-org-name)
+                                                                  :kind (str primary-org-kind)})))]
+    (await (honey-query! pool (q-orgs/clear-primary-except slug)))
+    org))
 
-(defn- ensure-bootstrap-user! [pool primary-org opts]
-  (let [email (str/lower-case
-               (str (or (:bootstrapSystemAdminEmail opts)
-                        (:bootstrap-system-admin-email opts)
-                        "system-admin@open-hax.local")))
-        dn    (str (or (:bootstrapSystemAdminName opts)
-                       (:bootstrap-system-admin-name opts)
-                       "Knoxx System Admin"))]
-    (-> (honey-query-one! pool (q-users/upsert {:email email :display-name dn
-                                                 :auth-provider "bootstrap"
-                                                 :external-subject nil :status "active"}))
-        (.then
-         (fn [user]
-           (-> (honey-query-one! pool (q-memberships/upsert
-                                       {:user-id (:id user)
-                                        :org-id  (:id primary-org)
-                                        :status  "active" :is-default true}))
-               (.then
-                (fn [membership]
-                  (-> (set-membership-roles! pool (:id membership)
-                                             {:org-id (:id primary-org)
-                                              :role-slugs ["system-admin"]
-                                              :replace true})
-                      (.then (fn [_]
-                               (set-membership-actor-id! pool (:id membership) "system_admin")))
-                      (.then (fn [_]
-                               {:user user :membership membership})))))))))))
+(defn ^:async ensure-bootstrap-user!
+  [pool primary-org opts]
+  (let [email (str/lower-case (str (or (:bootstrapSystemAdminEmail opts)
+                                       (:bootstrap-system-admin-email opts)
+                                       "system-admin@open-hax.local")))
+        dn (str (or (:bootstrapSystemAdminName opts)
+                    (:bootstrap-system-admin-name opts)
+                    "Knoxx System Admin"))
+        user (await (honey-query-one! pool (q-users/upsert {:email email :display-name dn
+                                                            :auth-provider "bootstrap"
+                                                            :external-subject nil :status "active"})))
+        membership (await (honey-query-one! pool (q-memberships/upsert {:user-id (:id user)
+                                                                        :org-id (:id primary-org)
+                                                                        :status "active"
+                                                                        :is-default true})))]
+    (await (set-membership-roles! pool (:id membership) {:org-id (:id primary-org)
+                                                         :role-slugs ["system-admin"]
+                                                         :replace true}))
+    (await (set-membership-actor-id! pool (:id membership) "system_admin"))
+    {:user user :membership membership}))
 
 ;; ---------------------------------------------------------------------------
 ;; Audit
@@ -724,12 +729,18 @@
 (defn- generate-salt []
   (.toString (.randomBytes crypto 16) "hex"))
 
+(defn ^:async touch-session-best-effort!
+  [pool session-id]
+  (try
+    (await (honey-query! pool (q-sessions/touch session-id)))
+    (catch :default _ nil)))
+
 (defn- find-session-in-rows [pool token rows]
   (loop [[row & rest] rows]
     (when row
       (if (= (:token_hash row) (hash-token token (:salt row)))
         (do
-          (.catch (honey-query! pool (q-sessions/touch (:id row))) (fn [_] nil))
+          (touch-session-best-effort! pool (:id row))
           {:session {:id            (:id row)
                      :user-id       (:user_id row)
                      :membership-id (:membership_id row)
@@ -745,28 +756,24 @@
 ;; Public API
 ;; ---------------------------------------------------------------------------
 
-(defn resolve-request-context!
+(defn ^:async resolve-request-context!
   "Resolve a Knoxx auth context from headers-like (Fastify headers or CLJS map).
    Returns Promise<CLJS ctx map>."
   [pool headers-like]
-  (-> (find-request-membership-row pool headers-like)
-      (.then (fn [row] (build-request-context pool row)))))
+  (await (build-request-context pool (await (find-request-membership-row pool headers-like)))))
 
-(defn evaluate-tool-access!
+(defn ^:async evaluate-tool-access!
   [pool headers-like tool-id]
-  (-> (resolve-request-context! pool headers-like)
-      (.then (fn [ctx]
-               (let [policies (:tool-policies ctx)
-                     match    (some #(when (= (:tool-id %) tool-id) %) policies)]
-                 {:context ctx
-                  :tool-id tool-id
-                  :allowed (boolean (and match (= (:effect match) "allow")))})))))
+  (let [ctx (await (resolve-request-context! pool headers-like))
+        match (some #(when (= (:tool-id %) tool-id) %) (:tool-policies ctx))]
+    {:context ctx
+     :tool-id tool-id
+     :allowed (boolean (and match (= (:effect match) "allow")))}))
 
-(defn list-actor-credentials!
+(defn ^:async list-actor-credentials!
   "Return active actor credential rows for provider as {:credentials [...]}."
   [pool provider]
-  (-> (policy/list-actor-credentials (sql-policy-store pool nil) provider)
-      (.then (fn [creds] {:credentials creds}))))
+  {:credentials (await (policy/list-actor-credentials (sql-policy-store pool nil) provider))})
 
 (defn list-permissions!
   [_pool]
@@ -781,19 +788,19 @@
                             :description  ""})
                          codes)})))
 
-(defn list-tools!
+(defn- tool-row->map
+  [{:keys [id label description risk_level]}]
+  {:id id :label label :description description :risk-level risk_level})
+
+(defn ^:async list-tools!
   [pool]
-  (-> (pg/query! pool
-        "SELECT id, label, description, risk_level FROM tool_definitions ORDER BY id ASC"
-        nil)
-      (.then (fn [{:keys [rows]}]
-               {:tools (mapv (fn [{:keys [id label description risk_level]}]
-                               {:id id :label label :description description
-                                :risk-level risk_level})
-                             rows)}))))
+  (let [{:keys [rows]} (await (pg/query! pool
+                               "SELECT id, label, description, risk_level FROM tool_definitions ORDER BY id ASC"
+                               nil))]
+    {:tools (mapv tool-row->map rows)}))
 
 (defn get-bootstrap-context!
-  [pool primary-org bootstrap]
+  [_pool primary-org bootstrap]
   (js/Promise.resolve
    {"primaryOrg"    {"id"        (:id primary-org)
                      "slug"      (:slug primary-org)
@@ -806,373 +813,340 @@
                      "displayName"  (get-in bootstrap [:user :display_name])
                      "membershipId" (get-in bootstrap [:membership :id])}}))
 
-(defn list-orgs!
-  [pool]
-  (-> (honey-query! pool (q-orgs/list-with-counts))
-      (.then (fn [{:keys [rows]}]
-               {:orgs (mapv (fn [{:keys [id slug name kind is_primary status
-                                          member_count role_count data_lake_count
-                                          created_at updated_at]}]
-                              {:id              id :slug slug :name name :kind kind
-                               :is-primary      is_primary :status status
-                               :member-count    (js/Number (or member_count 0))
-                               :role-count      (js/Number (or role_count 0))
-                               :data-lake-count (js/Number (or data_lake_count 0))
-                               :created-at      created_at :updated-at updated_at})
-                            rows)}))))
+(defn- org-row->map
+  [{:keys [id slug name kind is_primary status member_count role_count data_lake_count created_at updated_at]}]
+  {:id id :slug slug :name name :kind kind
+   :is-primary is_primary :status status
+   :member-count (js/Number (or member_count 0))
+   :role-count (js/Number (or role_count 0))
+   :data-lake-count (js/Number (or data_lake_count 0))
+   :created-at created_at :updated-at updated_at})
 
-(defn create-org!
+(defn ^:async list-orgs!
+  [pool]
+  (let [{:keys [rows]} (await (honey-query! pool (q-orgs/list-with-counts)))]
+    {:orgs (mapv org-row->map rows)}))
+
+(defn- org-response
+  [org]
+  {:org {:id (:id org) :slug (:slug org) :name (:name org)
+         :kind (:kind org) :is-primary (:is_primary org) :status (:status org)}})
+
+(defn ^:async create-org!
   [pool uid mid {:keys [name slug kind status]
                   :or {kind "customer" status "active"}}]
   (if (str/blank? name)
-    (js/Promise.reject (js/Error. "name is required"))
-    (let [s (slugify (or slug name) "org")]
-      (-> (honey-query-one! pool (q-orgs/insert {:slug s :name name :kind kind :status status}))
-          (.then (fn [org]
-                   (-> (sync-contract-role-projections! pool)
-                       (.then (fn [_]
-                                (append-audit! pool {:actor-user-id uid
-                                                     :actor-membership-id mid
-                                                     :org-id (:id org)
-                                                     :action "org.create"
-                                                     :resource-kind "org"
-                                                     :resource-id (:id org)})))
-                       (.then (fn [_]
-                                {:org {:id (:id org) :slug (:slug org) :name (:name org)
-                                       :kind (:kind org) :is-primary (:is_primary org)
-                                       :status (:status org)}})))))))))
+    (throw (js/Error. "name is required"))
+    (let [s (slugify (or slug name) "org")
+          org (await (honey-query-one! pool (q-orgs/insert {:slug s :name name
+                                                            :kind kind :status status})))]
+      (await (sync-contract-role-projections! pool))
+      (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                  :org-id (:id org) :action "org.create"
+                                  :resource-kind "org" :resource-id (:id org)}))
+      (org-response org))))
 
 (defn self-org-slug
   [email]
   (let [normalized (or (normalize-email email) "user")]
     (slugify (str "self-" (str/replace normalized #"@" "-at-")) "self-user")))
 
-(defn ensure-self-org!
+(defn ^:async ensure-self-org!
   [pool email display-name]
   (let [slug (self-org-slug email)
         label (or (some-> display-name str str/trim not-empty)
                   (normalize-email email)
                   "User")
-        name (str label " Self")]
-    (-> (find-org-by-slug pool slug)
-        (.then (fn [existing]
-                 (if existing
-                   existing
-                   (honey-query-one! pool (q-orgs/insert {:slug slug
-                                                          :name name
-                                                          :kind "self"
-                                                          :status "active"}))))))))
+        name (str label " Self")
+        existing (await (find-org-by-slug pool slug))]
+    (if existing
+      existing
+      (await (honey-query-one! pool (q-orgs/insert {:slug slug :name name
+                                                   :kind "self" :status "active"}))))))
 
-(defn list-roles!
+(defn ^:async list-roles!
   [pool {:keys [org-id]}]
-  (-> (if org-id
-        (honey-query! pool (q-roles/list-by-org org-id))
-        (honey-query! pool (q-roles/list-all)))
-      (.then (fn [{:keys [rows]}] (hydrate-role-maps pool rows)))
-      (.then (fn [roles] {:roles roles}))))
+  (let [{:keys [rows]} (await (if org-id
+                                (honey-query! pool (q-roles/list-by-org org-id))
+                                (honey-query! pool (q-roles/list-all))))]
+    {:roles (await (hydrate-role-maps pool rows))}))
 
-(defn get-role!
+(defn ^:async get-role!
   [pool role-id]
-  (-> (honey-query-one! pool (q-roles/by-id role-id))
-      (.then (fn [row]
-               (if row
-                 (-> (hydrate-role-maps pool [row])
-                     (.then (fn [h] {:role (first h)})))
-                 {:role nil})))))
+  (if-let [row (await (honey-query-one! pool (q-roles/by-id role-id)))]
+    {:role (first (await (hydrate-role-maps pool [row])))}
+    {:role nil}))
 
-(defn create-role!
+(defn ^:async create-role!
   [pool uid mid {:keys [org-id name slug permission-codes tool-policies]}]
   (cond
-    (str/blank? org-id) (js/Promise.reject (js/Error. "org-id is required"))
-    (str/blank? name)   (js/Promise.reject (js/Error. "name is required"))
+    (str/blank? org-id) (throw (js/Error. "org-id is required"))
+    (str/blank? name)   (throw (js/Error. "name is required"))
     :else
-    (let [s (slugify (or slug name) "role")]
-      (-> (ensure-role! pool {:org-id org-id :name name :slug s
-                               :scope-kind "org" :built-in false :system-managed false})
-          (.then
-           (fn [role]
-             (-> (set-role-permissions! pool (:id role) (or permission-codes []))
-                 (.then (fn [_]
-                          (set-role-tool-policies! pool (:id role) (or tool-policies []))))
-                 (.then (fn [_]
-                          (append-audit! pool {:actor-user-id uid :actor-membership-id mid
-                                               :org-id org-id :action "role.create"
-                                               :resource-kind "role" :resource-id (:id role)})))
-                 (.then (fn [_] (hydrate-role-maps pool [role])))
-                 (.then (fn [h] {:role (first h)})))))))))
+    (let [s (slugify (or slug name) "role")
+          role (await (ensure-role! pool {:org-id org-id :name name :slug s
+                                          :scope-kind "org" :built-in false
+                                          :system-managed false}))]
+      (await (set-role-permissions! pool (:id role) (or permission-codes [])))
+      (await (set-role-tool-policies! pool (:id role) (or tool-policies [])))
+      (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                  :org-id org-id :action "role.create"
+                                  :resource-kind "role" :resource-id (:id role)}))
+      {:role (first (await (hydrate-role-maps pool [role])))})))
 
-(defn list-users!
+(defn- user-row->map
+  [memberships-by-user {:keys [id email display_name auth_provider external_subject status created_at updated_at]}]
+  {:id id :email email :display-name display_name
+   :auth-provider auth_provider :external-subject external_subject
+   :status status :created-at created_at :updated-at updated_at
+   :memberships (or (get memberships-by-user id) [])})
+
+(defn- memberships-by-user
+  [memberships]
+  (reduce (fn [acc m]
+            (update acc (:user-id m) (fnil conj []) m))
+          {}
+          memberships))
+
+(defn ^:async list-users!
   [pool {:keys [org-id]}]
-  (-> (if org-id
-        (honey-query! pool (q-users/list-by-org org-id))
-        (honey-query! pool (q-users/list-all)))
-      (.then
-       (fn [{:keys [rows]}]
-         (let [users    rows
-               user-ids (mapv :id users)]
-           (-> (if org-id
-                 (honey-query! pool (q-users/memberships-for-users user-ids org-id))
-                 (honey-query! pool (q-users/all-memberships-for-users user-ids)))
-               (.then (fn [{mem-rows :rows}]
-                        (hydrate-memberships pool mem-rows)))
-               (.then
-                (fn [memberships]
-                  (let [by-user (atom {})]
-                    (doseq [m memberships]
-                      (swap! by-user update (:user-id m) (fnil conj []) m))
-                    {:users (mapv (fn [{:keys [id email display_name auth_provider
-                                               external_subject status created_at updated_at]}]
-                                    {:id               id
-                                     :email            email
-                                     :display-name     display_name
-                                     :auth-provider    auth_provider
-                                     :external-subject external_subject
-                                     :status           status
-                                     :created-at       created_at
-                                     :updated-at       updated_at
-                                     :memberships      (or (get @by-user id) [])})
-                                  users)})))))))))
+  (let [{:keys [rows]} (await (if org-id
+                                (honey-query! pool (q-users/list-by-org org-id))
+                                (honey-query! pool (q-users/list-all))))
+        users rows
+        user-ids (mapv :id users)
+        {mem-rows :rows} (await (if org-id
+                                  (honey-query! pool (q-users/memberships-for-users user-ids org-id))
+                                  (honey-query! pool (q-users/all-memberships-for-users user-ids))))
+        by-user (memberships-by-user (await (hydrate-memberships pool mem-rows)))]
+    {:users (mapv #(user-row->map by-user %) users)}))
 
-(defn create-user!
+(defn- require-not-blank!
+  [value message]
+  (when (str/blank? value)
+    (throw (js/Error. message))))
+
+(defn ^:async upsert-user-actor-contract-for-membership!
+  [pool org-id resolved-actor email display-name role-slugs]
+  (let [org-row (await (find-org-by-id pool org-id))]
+    (await (upsert-actor-contract-best-effort!
+            {:actor-id resolved-actor
+             :email email
+             :display-name display-name
+             :org-slug (:slug org-row)
+             :role-slugs role-slugs
+             :kind :agent}))))
+
+(defn ^:async create-user!
   [pool uid mid {:keys [email display-name auth-provider external-subject status
                          membership-status org-id role-slugs role-ids is-default actor-id]
                   :or {auth-provider "local" status "active"
                        membership-status "active" is-default true}}]
-  (cond
-    (str/blank? email)  (js/Promise.reject (js/Error. "email is required"))
-    (str/blank? org-id) (js/Promise.reject (js/Error. "org-id is required"))
-    :else
-    (let [dn             (or display-name email)
-          resolved-slugs (or role-slugs ["knowledge-worker"])
-          actor-contract (find-user-actor-contract-by-email email)
-          resolved-actor (or (normalize-actor-id actor-id)
-                             (:id actor-contract)
-                             (user-actor-id-from-email email)
-                             (default-membership-actor-id resolved-slugs))]
-      (-> (honey-query-one! pool
-            (q-users/upsert {:email email :display-name dn
-                              :auth-provider auth-provider
-                              :external-subject external-subject
-                              :status status}))
-          (.then
-           (fn [user]
-             (-> (honey-query-one! pool
-                   (q-memberships/upsert {:user-id  (:id user) :org-id org-id
-                                          :status   membership-status :is-default is-default}))
-                 (.then (fn [ms]
-                          (set-membership-roles! pool (:id ms)
-                                                 {:org-id    org-id
-                                                  :role-ids  (or role-ids [])
-                                                  :role-slugs resolved-slugs
-                                                  :replace    true})))
-                 (.then (fn [_]
-                          (pg/query-one! pool
-                            "SELECT id FROM memberships WHERE user_id = $1::uuid AND org_id = $2::uuid"
-                            [(:id user) org-id])))
-                 (.then (fn [ms-row]
-                          (-> (set-membership-actor-id! pool (:id ms-row) resolved-actor)
-                              (.then (fn [_] (find-org-by-id pool org-id)))
-                              (.then (fn [org-row]
-                                       (upsert-actor-contract-best-effort!
-                                        {:actor-id    resolved-actor
-                                         :email        email
-                                         :display-name dn
-                                         :org-slug     (:slug org-row)
-                                         :role-slugs   resolved-slugs
-                                         :kind         :agent}))))))
-                 (.then (fn [_]
-                          (append-audit! pool {:actor-user-id uid :actor-membership-id mid
-                                               :org-id org-id :action "user.create_or_update"
-                                               :resource-kind "user" :resource-id (:id user)})))
-                 (.then (fn [_] {:user nil})))))))))
+  (require-not-blank! email "email is required")
+  (require-not-blank! org-id "org-id is required")
+  (let [dn (or display-name email)
+        resolved-slugs (or role-slugs ["knowledge-worker"])
+        actor-contract (find-user-actor-contract-by-email email)
+        resolved-actor (or (normalize-actor-id actor-id) (:id actor-contract)
+                           (user-actor-id-from-email email)
+                           (default-membership-actor-id resolved-slugs))
+        user (await (honey-query-one! pool (q-users/upsert {:email email :display-name dn
+                                                            :auth-provider auth-provider
+                                                            :external-subject external-subject
+                                                            :status status})))
+        ms (await (honey-query-one! pool (q-memberships/upsert {:user-id (:id user)
+                                                                :org-id org-id
+                                                                :status membership-status
+                                                                :is-default is-default})))]
+    (await (set-membership-roles! pool (:id ms) {:org-id org-id :role-ids (or role-ids [])
+                                                 :role-slugs resolved-slugs :replace true}))
+    (await (set-membership-actor-id! pool (:id ms) resolved-actor))
+    (await (upsert-user-actor-contract-for-membership! pool org-id resolved-actor email dn resolved-slugs))
+    (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                :org-id org-id :action "user.create_or_update"
+                                :resource-kind "user" :resource-id (:id user)}))
+    {:user nil}))
 
-(defn list-memberships!
+(defn ^:async list-memberships!
   [pool {:keys [org-id]}]
   (if (str/blank? org-id)
-    (js/Promise.reject (js/Error. "org-id is required"))
-    (-> (honey-query! pool (q-memberships/list-by-org org-id))
-        (.then (fn [{:keys [rows]}] (hydrate-memberships pool rows)))
-        (.then (fn [ms] {:memberships ms})))))
+    (throw (js/Error. "org-id is required"))
+    (let [{:keys [rows]} (await (honey-query! pool (q-memberships/list-by-org org-id)))]
+      {:memberships (await (hydrate-memberships pool rows))})))
 
-(defn get-membership!
+(defn ^:async get-membership!
   [pool membership-id]
-  (-> (honey-query-one! pool (q-memberships/by-id membership-id))
-      (.then (fn [row]
-               (if row
-                 (-> (hydrate-memberships pool [row])
-                     (.then (fn [h] {:membership (first h)})))
-                 {:membership nil})))))
+  (if-let [row (await (honey-query-one! pool (q-memberships/by-id membership-id)))]
+    {:membership (first (await (hydrate-memberships pool [row])))}
+    {:membership nil}))
 
-(defn set-membership-roles-public!
+(defn ^:async set-membership-roles-public!
   [pool uid mid membership-id {:keys [org-id role-ids role-slugs actor-id replace]
                                  :or {replace true}}]
-  (-> (honey-query-one! pool (q-memberships/bare-by-id membership-id))
-      (.then
-       (fn [ms]
-         (if-not ms
-           (js/Promise.reject (js/Error. "membership not found"))
-           (let [resolved-actor (or (normalize-actor-id actor-id)
-                                    (normalize-actor-id (:actor_id ms))
-                                    (default-membership-actor-id (or role-slugs [])))]
-             (-> (set-membership-roles! pool membership-id
-                                        {:org-id    (or org-id (:org_id ms))
-                                         :role-ids  (or role-ids [])
-                                         :role-slugs (or role-slugs [])
-                                         :replace    replace})
-                 (.then (fn [_] (set-membership-actor-id! pool membership-id resolved-actor)))
-                 (.then (fn [_] (honey-query-one! pool (q-memberships/with-user-and-org membership-id))))
-                 (.then (fn [row]
-                          (upsert-actor-contract-best-effort!
-                           {:actor-id    resolved-actor
-                            :email        (:email row)
-                            :display-name (:display_name row)
-                            :org-slug     (:org_slug row)
-                            :role-slugs   (or role-slugs [])})))
-                 (.then (fn [_]
-                          (append-audit! pool {:actor-user-id uid :actor-membership-id mid
-                                               :org-id (:org_id ms) :action "membership.roles.update"
-                                               :resource-kind "membership"
-                                               :resource-id membership-id})))
-                 (.then (fn [_] {:membership nil})))))))))
+  (let [ms (await (honey-query-one! pool (q-memberships/bare-by-id membership-id)))]
+    (when-not ms (throw (js/Error. "membership not found")))
+    (let [resolved-actor (or (normalize-actor-id actor-id)
+                             (normalize-actor-id (:actor_id ms))
+                             (default-membership-actor-id (or role-slugs [])))]
+      (await (set-membership-roles! pool membership-id {:org-id (or org-id (:org_id ms))
+                                                        :role-ids (or role-ids [])
+                                                        :role-slugs (or role-slugs [])
+                                                        :replace replace}))
+      (await (set-membership-actor-id! pool membership-id resolved-actor))
+      (let [row (await (honey-query-one! pool (q-memberships/with-user-and-org membership-id)))]
+        (await (upsert-actor-contract-best-effort!
+                {:actor-id resolved-actor :email (:email row)
+                 :display-name (:display_name row) :org-slug (:org_slug row)
+                 :role-slugs (or role-slugs [])})))
+      (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                  :org-id (:org_id ms) :action "membership.roles.update"
+                                  :resource-kind "membership" :resource-id membership-id}))
+      {:membership nil})))
 
-(defn list-data-lakes!
+(defn- data-lake-row->map
+  [{:keys [id org_id name slug kind config_json status created_at updated_at]}]
+  {:id id :org-id org_id :name name :slug slug :kind kind
+   :config (constraints-json->clj config_json)
+   :status status :created-at created_at :updated-at updated_at})
+
+(defn ^:async list-data-lakes!
   [pool {:keys [org-id]}]
   (if (str/blank? org-id)
-    (js/Promise.reject (js/Error. "org-id is required"))
-    (-> (honey-query! pool (q-orgs/data-lake-by-org org-id))
-        (.then (fn [{:keys [rows]}]
-                 {:data-lakes (mapv (fn [{:keys [id org_id name slug kind
-                                                  config_json status created_at updated_at]}]
-                                      {:id         id :org-id org_id :name name :slug slug
-                                       :kind       kind
-                                       :config     (js->clj (or config_json (js-obj)) :keywordize-keys true)
-                                       :status     status :created-at created_at :updated-at updated_at})
-                                    rows)})))))
+    (throw (js/Error. "org-id is required"))
+    (let [{:keys [rows]} (await (honey-query! pool (q-orgs/data-lake-by-org org-id)))]
+      {:data-lakes (mapv data-lake-row->map rows)})))
 
-(defn create-data-lake!
+(defn- data-lake-response
+  [lake]
+  {:data-lake {:id (:id lake) :org-id (:org_id lake) :name (:name lake)
+               :slug (:slug lake) :kind (:kind lake) :status (:status lake)}})
+
+(defn ^:async create-data-lake!
   [pool uid mid {:keys [org-id name slug kind config status]
                   :or {kind "workspace_docs" status "active"}}]
   (cond
-    (str/blank? org-id) (js/Promise.reject (js/Error. "org-id is required"))
-    (str/blank? name)   (js/Promise.reject (js/Error. "name is required"))
+    (str/blank? org-id) (throw (js/Error. "org-id is required"))
+    (str/blank? name)   (throw (js/Error. "name is required"))
     :else
     (let [s          (slugify (or slug name) "lake")
-          config-json (js/JSON.stringify (clj->js (or config {})))]
-      (-> (honey-query-one! pool
-            (q-orgs/insert-data-lake {:org-id org-id :name name :slug s
-                                       :kind kind :config-json config-json :status status}))
-          (.then (fn [lake]
-                   (-> (append-audit! pool {:actor-user-id uid :actor-membership-id mid
-                                             :org-id org-id :action "data_lake.create"
-                                             :resource-kind "data_lake" :resource-id (:id lake)})
-                       (.then (fn [_] {:data-lake
-                                       {:id (:id lake) :org-id (:org_id lake) :name (:name lake)
-                                        :slug (:slug lake) :kind (:kind lake)
-                                        :status (:status lake)}})))))))))
+          config-json (js/JSON.stringify (clj->js (or config {})))
+          lake (await (honey-query-one! pool (q-orgs/insert-data-lake {:org-id org-id
+                                                                       :name name :slug s
+                                                                       :kind kind
+                                                                       :config-json config-json
+                                                                       :status status})))]
+      (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                  :org-id org-id :action "data_lake.create"
+                                  :resource-kind "data_lake" :resource-id (:id lake)}))
+      (data-lake-response lake))))
 
 ;; ---------------------------------------------------------------------------
 ;; Sessions
 ;; ---------------------------------------------------------------------------
 
-(defn create-session!
+(defn- session-row-response
+  [row]
+  {:session {:id            (:id row)
+             :user-id       (:user_id row)
+             :membership-id (:membership_id row)
+             :org-id        (:org_id row)
+             :email         (:email row)
+             :display-name  (:display_name row)
+             :auth-provider (:auth_provider row)
+             :expires-at    (:expires_at row)
+             :created-at    (:created_at row)}})
+
+(defn ^:async create-session!
   [pool {:keys [token user-id membership-id org-id email display-name
                  auth-provider external-subject ip-address user-agent]}]
   (if (str/blank? token)
-    (js/Promise.reject (js/Error. "token is required"))
+    (throw (js/Error. "token is required"))
     (let [ttl        (js/parseInt (or (aget js/process.env "KNOXX_SESSION_TTL_SECONDS") "86400") 10)
           salt       (generate-salt)
           token-hash (hash-token token salt)
           prefix     (token-prefix token)
-          expires-at (js/Date. (+ (js/Date.now) (* ttl 1000)))]
-      (-> (honey-query-one! pool
-            (q-sessions/insert {:user-id       user-id
-                                  :membership-id membership-id
-                                  :org-id        org-id
-                                  :token-hash    token-hash
-                                  :token-prefix  prefix
-                                  :salt          salt
-                                  :email         email
-                                  :display-name  display-name
-                                  :auth-provider (or auth-provider "github")
-                                  :external-subject external-subject
-                                  :ip-address    ip-address
-                                  :user-agent    user-agent
-                                  :expires-at    (.toISOString expires-at)}))
-          (.then
-           (fn [row]
-             {:session {:id            (:id row)
-                         :user-id       (:user_id row)
-                         :membership-id (:membership_id row)
-                         :org-id        (:org_id row)
-                         :email         (:email row)
-                         :display-name  (:display_name row)
-                         :auth-provider (:auth_provider row)
-                         :expires-at    (:expires_at row)
-                         :created-at    (:created_at row)}}))))))
+          expires-at (js/Date. (+ (js/Date.now) (* ttl 1000)))
+          row (await (honey-query-one! pool
+                                        (q-sessions/insert {:user-id       user-id
+                                                            :membership-id membership-id
+                                                            :org-id        org-id
+                                                            :token-hash    token-hash
+                                                            :token-prefix  prefix
+                                                            :salt          salt
+                                                            :email         email
+                                                            :display-name  display-name
+                                                            :auth-provider (or auth-provider "github")
+                                                            :external-subject external-subject
+                                                            :ip-address    ip-address
+                                                            :user-agent    user-agent
+                                                            :expires-at    (.toISOString expires-at)})))]
+      (session-row-response row))))
 
-(defn get-session-by-token!
+(defn ^:async get-session-by-token!
   [pool token]
-  (if (str/blank? token)
-    (js/Promise.resolve nil)
-    (let [prefix (token-prefix token)]
-      (-> (honey-query! pool (q-sessions/by-prefix prefix))
-          (.then
-           (fn [{:keys [rows]}]
-             (or (find-session-in-rows pool token rows)
-                 (-> (honey-query! pool (q-sessions/all-active))
-                     (.then (fn [{:keys [rows]}]
-                              (find-session-in-rows pool token rows)))))))
-          (.catch (fn [_] nil))))))
+  (when-not (str/blank? token)
+    (try
+      (let [prefix (token-prefix token)
+            {:keys [rows]} (await (honey-query! pool (q-sessions/by-prefix prefix)))]
+        (or (find-session-in-rows pool token rows)
+            (let [{:keys [rows]} (await (honey-query! pool (q-sessions/all-active)))]
+              (find-session-in-rows pool token rows))))
+      (catch :default _
+        nil))))
 
-(defn delete-session-by-token!
+(defn ^:async delete-session-by-token!
   [pool token]
-  (-> (get-session-by-token! pool token)
-      (.then (fn [result]
-               (when-let [sid (get-in result [:session :id])]
-                 (.catch (honey-query! pool (q-sessions/delete-by-id sid)) (fn [_] nil)))
-               result))))
+  (let [result (await (get-session-by-token! pool token))]
+    (when-let [sid (get-in result [:session :id])]
+      (try
+        (await (honey-query! pool (q-sessions/delete-by-id sid)))
+        (catch :default _ nil)))
+    result))
 
-(defn cleanup-expired-sessions!
+(defn ^:async cleanup-expired-sessions!
   [pool]
-  (-> (honey-query! pool (q-sessions/delete-expired))
-      (.then (fn [{:keys [row-count]}]
-               (when (> (or row-count 0) 0)
-                 (.log js/console "[policy-db] Cleaned up" row-count "expired sessions"))
-               (or row-count 0)))
-      (.catch (fn [_] 0))))
+  (try
+    (let [{:keys [row-count]} (await (honey-query! pool (q-sessions/delete-expired)))]
+      (when (> (or row-count 0) 0)
+        (.log js/console "[policy-db] Cleaned up" row-count "expired sessions"))
+      (or row-count 0))
+    (catch :default _
+      0)))
 
 ;; ---------------------------------------------------------------------------
 ;; Invites
 ;; ---------------------------------------------------------------------------
 
-(defn create-invite!
+(defn- invite-response
+  [row code]
+  {:invite {:id         (:id row)
+            :org-id     (:org_id row)
+            :code       code
+            :email      (:email row)
+            :status     (:status row)
+            :expires-at (:expires_at row)
+            :created-at (:created_at row)}})
+
+(defn ^:async create-invite!
   [pool uid mid {:keys [org-id email role-slugs inviter-membership-id]}]
   (cond
-    (str/blank? org-id) (js/Promise.reject (js/Error. "org-id is required"))
-    (str/blank? email)  (js/Promise.reject (js/Error. "email is required"))
+    (str/blank? org-id) (throw (js/Error. "org-id is required"))
+    (str/blank? email)  (throw (js/Error. "email is required"))
     :else
     (let [slugs      (or role-slugs ["basic-user"])
           code       (.toString (.randomBytes crypto 8) "hex")
-          expires-at (js/Date. (+ (js/Date.now) (* 7 24 3600 1000)))]
-      (-> (honey-query-one! pool
-            (q-invites/insert {:org-id               org-id
-                                :code                 code
-                                :email                email
-                                :inviter-membership-id (or inviter-membership-id mid)
-                                :role-slugs-json      (js/JSON.stringify (clj->js slugs))
-                                :expires-at           (.toISOString expires-at)}))
-          (.then (fn [row]
-                   (-> (append-audit! pool {:actor-user-id uid :actor-membership-id mid
-                                             :org-id org-id :action "invite.create"
-                                             :resource-kind "invite" :resource-id (:id row)})
-                       (.then (fn [_]
-                                {:invite {:id         (:id row)
-                                          :org-id     (:org_id row)
-                                          :code       code
-                                          :email      email
-                                          :status     (:status row)
-                                          :expires-at (:expires_at row)
-                                          :created-at (:created_at row)}})))))))))
+          expires-at (js/Date. (+ (js/Date.now) (* 7 24 3600 1000)))
+          row (await (honey-query-one! pool
+                                        (q-invites/insert {:org-id               org-id
+                                                           :code                 code
+                                                           :email                email
+                                                           :inviter-membership-id (or inviter-membership-id mid)
+                                                           :role-slugs-json      (js/JSON.stringify (clj->js slugs))
+                                                           :expires-at           (.toISOString expires-at)})))]
+      (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                  :org-id org-id :action "invite.create"
+                                  :resource-kind "invite" :resource-id (:id row)}))
+      (invite-response row code))))
 
 (defn- parse-role-slugs-json
   [value]
@@ -1184,64 +1158,64 @@
       (if (sequential? parsed) (vec parsed) []))
     (catch :default _ [])))
 
-(defn redeem-invite!
+(defn- invite-error [message status]
+  (doto (js/Error. message)
+    (aset "status" status)))
+
+(defn- redeemed-invite-response [updated code]
+  {:invite {:id          (:id updated)
+            :org-id      (:org_id updated)
+            :code        code
+            :email       (:email updated)
+            :status      (:status updated)
+            :redeemed-at (:redeemed_at updated)
+            :created-at  (:created_at updated)}})
+
+(defn ^:async redeem-invite!
   [pool code email]
   (if (or (str/blank? code) (str/blank? email))
-    (js/Promise.reject (js/Error. "code and email are required"))
-    (-> (honey-query-one! pool (q-invites/pending-by-code code))
-        (.then
-         (fn [invite]
-           (if-not invite
-             (js/Promise.reject (doto (js/Error. "Invalid or expired invite code")
-                                  (aset "status" 400)))
-             (let [invite-email (str/lower-case (str (:email invite)))
-                   req-email    (str/lower-case (str email))
-                   role-slugs   (or (seq (parse-role-slugs-json (:role_slugs invite)))
-                                    ["basic-user"])]
-               (when-not (= invite-email req-email)
-                 (throw (doto (js/Error. "Invite email does not match")
-                          (aset "status" 403))))
-               (-> (honey-query-one! pool (q-invites/redeem (:id invite)))
-                   (.then (fn [updated]
-                            (-> (create-user! pool nil nil
-                                              {:email (:email updated)
-                                               :display-name (:email updated)
-                                               :auth-provider "invite"
-                                               :status "active"
-                                               :membership-status "active"
-                                               :org-id (:org_id updated)
-                                               :role-slugs (vec role-slugs)
-                                               :is-default true})
-                                (.then (fn [_]
-                                         {:invite {:id          (:id updated)
-                                                   :org-id      (:org_id updated)
-                                                   :code        code
-                                                   :email       (:email updated)
-                                                   :status      (:status updated)
-                                                   :redeemed-at (:redeemed_at updated)
-                                                   :created-at  (:created_at updated)}})))))))))))))
+    (throw (js/Error. "code and email are required"))
+    (let [invite (await (honey-query-one! pool (q-invites/pending-by-code code)))]
+      (if-not invite
+        (throw (invite-error "Invalid or expired invite code" 400))
+        (let [invite-email (str/lower-case (str (:email invite)))
+              req-email    (str/lower-case (str email))
+              role-slugs   (or (seq (parse-role-slugs-json (:role_slugs invite)))
+                               ["basic-user"])]
+          (when-not (= invite-email req-email)
+            (throw (invite-error "Invite email does not match" 403)))
+          (let [updated (await (honey-query-one! pool (q-invites/redeem (:id invite))))]
+            (await (create-user! pool nil nil
+                                 {:email (:email updated)
+                                  :display-name (:email updated)
+                                  :auth-provider "invite"
+                                  :status "active"
+                                  :membership-status "active"
+                                  :org-id (:org_id updated)
+                                  :role-slugs (vec role-slugs)
+                                  :is-default true}))
+            (redeemed-invite-response updated code)))))))
 
-(defn list-invites!
+(defn- invite-row->map
+  [{:keys [id org_id code email status role_slugs expires_at redeemed_at created_at]}]
+  {:id id
+   :org-id org_id
+   :code code
+   :email email
+   :status status
+   :role-slugs (parse-role-slugs-json role_slugs)
+   :expires-at expires_at
+   :redeemed-at redeemed_at
+   :created-at created_at})
+
+(defn ^:async list-invites!
   [pool {:keys [org-id status]}]
   (if (str/blank? org-id)
-    (js/Promise.reject (js/Error. "org-id is required"))
-    (-> (honey-query! pool (if status
-                              (q-invites/list-by-org-and-status org-id status)
-                              (q-invites/list-by-org org-id)))
-        (.then (fn [{:keys [rows]}]
-                 {:invites (mapv (fn [{:keys [id org_id code email status role_slugs
-                                               expires_at redeemed_at created_at]}]
-                                   {:id          id :org-id org_id :code code :email email
-                                    :status      status
-                                    :role-slugs  (try
-                                                   (cond
-                                                     (nil? role_slugs)   []
-                                                     (string? role_slugs) (js->clj (js/JSON.parse role_slugs))
-                                                     :else                (js->clj role_slugs))
-                                                   (catch :default _ []))
-                                    :expires-at  expires_at :redeemed-at redeemed_at
-                                    :created-at  created_at})
-                                 rows)})))))
+    (throw (js/Error. "org-id is required"))
+    (let [{:keys [rows]} (await (honey-query! pool (if status
+                                                     (q-invites/list-by-org-and-status org-id status)
+                                                     (q-invites/list-by-org org-id))))]
+      {:invites (mapv invite-row->map rows)})))
 
 (defn sync-actor-contracts!
   [pool primary-org]
@@ -1253,55 +1227,60 @@
   [pool primary-org opts]
   (sync-user-from-actor-contract!* pool primary-org opts))
 
-(defn recover-session-secret!
+(defn ^:async recover-session-secret!
   "Load the session secret from knoxx_config, generating and persisting one if absent.
    Returns Promise<string>."
   [pool]
-  (-> (pg/query! pool "SELECT value FROM knoxx_config WHERE key = 'session_secret'" nil)
-      (.then (fn [{:keys [rows]}]
-               (if-let [stored (:value (first rows))]
-                 (do (.log js/console "[knoxx-session] Recovered session secret from database")
-                     stored)
-                 (let [new-secret (.toString (.randomBytes crypto 32) "hex")]
-                   (-> (pg/query! pool
-                         "INSERT INTO knoxx_config (key, value) VALUES ('session_secret', $1)
+  (let [{:keys [rows]} (await (pg/query! pool "SELECT value FROM knoxx_config WHERE key = 'session_secret'" nil))]
+    (if-let [stored (:value (first rows))]
+      (do
+        (.log js/console "[knoxx-session] Recovered session secret from database")
+        stored)
+      (let [new-secret (.toString (.randomBytes crypto 32) "hex")]
+        (await (pg/query! pool
+                          "INSERT INTO knoxx_config (key, value) VALUES ('session_secret', $1)
                           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
-                         [new-secret])
-                       (.then (fn [_]
-                                (.log js/console "[knoxx-session] Generated and persisted session secret")
-                                new-secret)))))))))
+                          [new-secret]))
+        (.log js/console "[knoxx-session] Generated and persisted session secret")
+        new-secret))))
 
-(defn update-user-actor!
+(defn ^:async update-user-actor!
   "Update a membership's actor-id and optionally its roles."
   [pool uid mid user-id {:keys [org-id actor-id role-slugs]}]
-  (-> (honey-query-one! pool (q-memberships/by-user-and-org user-id org-id))
-      (.then (fn [ms]
-               (if-not ms
-                 (js/Promise.reject (js/Error. "membership not found"))
-                 (let [membership-id (:id ms)
-                       resolved-actor (or (normalize-actor-id actor-id)
-                                          (normalize-actor-id (:actor_id ms))
-                                          (default-membership-actor-id (or role-slugs [])))]
-                   (-> (if (seq role-slugs)
-                         (set-membership-roles! pool membership-id
-                                                {:org-id org-id :role-slugs role-slugs :replace true})
-                         (js/Promise.resolve nil))
-                       (.then (fn [_] (set-membership-actor-id! pool membership-id resolved-actor)))
-                       (.then (fn [_]
-                                (append-audit! pool {:actor-user-id uid :actor-membership-id mid
-                                                     :org-id org-id :action "user.update_actor"
-                                                     :resource-kind "user" :resource-id user-id})))
-                       (.then (fn [_] {:ok true})))))))))
+  (let [ms (await (honey-query-one! pool (q-memberships/by-user-and-org user-id org-id)))]
+    (if-not ms
+      (throw (js/Error. "membership not found"))
+      (let [membership-id (:id ms)
+            resolved-actor (or (normalize-actor-id actor-id)
+                               (normalize-actor-id (:actor_id ms))
+                               (default-membership-actor-id (or role-slugs [])))]
+        (when (seq role-slugs)
+          (await (set-membership-roles! pool membership-id
+                                        {:org-id org-id :role-slugs role-slugs :replace true})))
+        (await (set-membership-actor-id! pool membership-id resolved-actor))
+        (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                    :org-id org-id :action "user.update_actor"
+                                    :resource-kind "user" :resource-id user-id}))
+        {:ok true}))))
 
-(defn upsert-actor-credential!
+(defn- actor-credential-response [row]
+  {:credential (when row
+                 {:id                 (:id row)
+                  :user-id            (:user_id row)
+                  :org-id             (:org_id row)
+                  :provider           (:provider row)
+                  :kind               (:kind row)
+                  :account-identifier (:account_identifier row)
+                  :status             (:status row)})})
+
+(defn ^:async upsert-actor-credential!
   "Upsert an actor credential by user-id + org-id + provider."
   [pool _uid _mid user-id {:keys [org-id provider kind account-identifier secret-json status]}]
-  (-> (honey-query-one! pool (q-memberships/by-user-and-org user-id org-id))
-      (.then (fn [ms]
-               (if-not ms
-                 (js/Promise.reject (js/Error. "actor membership not found"))
-                 (pg/query-one! pool
-                   "INSERT INTO actor_credentials
+  (let [ms (await (honey-query-one! pool (q-memberships/by-user-and-org user-id org-id)))]
+    (if-not ms
+      (throw (js/Error. "actor membership not found"))
+      (let [row (await (pg/query-one! pool
+                                      "INSERT INTO actor_credentials
                       (user_id, org_id, provider, kind, account_identifier, secret_json, status)
                     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7)
                     ON CONFLICT (user_id, org_id, provider, kind) DO UPDATE SET
@@ -1311,18 +1290,10 @@
                       status             = EXCLUDED.status,
                       updated_at         = NOW()
                     RETURNING *"
-                   [user-id org-id provider (or kind "credential") account-identifier
-                    (js/JSON.stringify (clj->js (or secret-json {})))
-                    (or status "active")]))))
-      (.then (fn [row]
-               {:credential (when row
-                               {:id                 (:id row)
-                                :user-id            (:user_id row)
-                                :org-id             (:org_id row)
-                                :provider           (:provider row)
-                                :kind               (:kind row)
-                                :account-identifier (:account_identifier row)
-                                :status             (:status row)})}))))
+                                      [user-id org-id provider (or kind "credential") account-identifier
+                                       (js/JSON.stringify (clj->js (or secret-json {})))
+                                       (or status "active")]))]
+        (actor-credential-response row)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Policy context helpers
@@ -1442,13 +1413,13 @@
                             user-id
                             payload))
 
-(defn get-actor-credential!
+(defn ^:async get-actor-credential!
   [policy-context actor-id provider]
-  (-> (policy/get-actor-credential (sql-policy-store (context-pool policy-context)
-                                                     (context-primary-org policy-context))
-                                   actor-id
-                                   provider)
-      (.then (fn [credential] {:credential credential}))))
+  (let [credential (await (policy/get-actor-credential (sql-policy-store (context-pool policy-context)
+                                                                         (context-primary-org policy-context))
+                                                       actor-id
+                                                       provider))]
+    {:credential credential}))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation
@@ -1456,99 +1427,111 @@
 
 (declare ensure-bootstrap-allowlist-users!)
 
-(defn create-policy-db
+(defn- create-policy-db-pool! [conn-str]
+  (let [pool (pg/create-pool! {:connection-string  conn-str
+                               :max                (env-positive-int "KNOXX_POLICY_DB_POOL_MAX" 6)
+                               :idle-timeout-ms    (env-positive-int "KNOXX_POLICY_DB_IDLE_TIMEOUT_MS" 30000)
+                               :connect-timeout-ms (env-positive-int "KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS" 15000)})]
+    (pg/on-pool-error! pool
+      (fn [err _] (.error js/console "[policy-db] PG pool error:" (.-message err))))
+    (pg/on-pool-connect! pool
+      (fn [_] (when (env-truthy? "KNOXX_POLICY_DB_LOG_CONNECTS")
+                (.log js/console "[policy-db] New PG client connected"))))
+    pool))
+
+(defn ^:async allowlist-best-effort! [pool primary-org opts]
+  (when (seq (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts)))
+    (try
+      (await (ensure-bootstrap-allowlist-users! pool primary-org opts))
+      (catch :default err
+        (.warn js/console "[policy-db] allowlist failed:" (.-message err))))))
+
+(defn ^:async sync-actor-contracts-best-effort! [pool primary-org]
+  (try
+    (await (sync-actor-contracts! pool primary-org))
+    (catch :default err
+      (.warn js/console "[policy-db] actor sync failed:" (.-message err)))))
+
+(defn ^:async cleanup-expired-sessions-best-effort! [pool]
+  (try
+    (await (cleanup-expired-sessions! pool))
+    (catch :default _ nil)))
+
+(defn- policy-context-map [pool primary-org bootstrap]
+  {:pool pool
+   :primary-org primary-org
+   :bootstrap bootstrap
+   :bootstrap-user-id (get-in bootstrap [:user :id])
+   :bootstrap-membership-id (get-in bootstrap [:membership :id])})
+
+(defn ^:async initialise-policy-db! [pool opts]
+  (await (db-schema/ensure-schema! pool))
+  (await (db-schema/insert-permission-seeds! pool))
+  (await (db-schema/insert-tool-seeds! pool))
+  (let [primary-org (await (ensure-primary-org! pool opts))]
+    (await (sync-contract-role-projections! pool))
+    (let [bootstrap (await (ensure-bootstrap-user! pool primary-org opts))]
+      (await (allowlist-best-effort! pool primary-org opts))
+      (await (sync-actor-contracts-best-effort! pool primary-org))
+      (await (honey-query! pool q-memberships/backfill-actor-ids))
+      (cleanup-expired-sessions-best-effort! pool)
+      (policy-context-map pool primary-org bootstrap))))
+
+(defn ^:async create-policy-db
   "Initialise the policy DB. Returns Promise<CLJS policy context | nil>."
   [options]
-  (let [opts       (if (map? options)
-                     options
-                     (js->clj options :keywordize-keys true))
-        conn-str   (or (:connection-string opts) (:connectionString opts) "")]
-    (if (str/blank? conn-str)
-      (js/Promise.resolve nil)
-      (js/Promise.
-       (fn [resolve reject]
-         (let [pool (pg/create-pool! {:connection-string      conn-str
-                                      :max                    (env-positive-int "KNOXX_POLICY_DB_POOL_MAX" 6)
-                                      :idle-timeout-ms        (env-positive-int "KNOXX_POLICY_DB_IDLE_TIMEOUT_MS" 30000)
-                                      :connect-timeout-ms     (env-positive-int "KNOXX_POLICY_DB_CONNECT_TIMEOUT_MS" 15000)})]
-           (pg/on-pool-error! pool
-             (fn [err _] (.error js/console "[policy-db] PG pool error:" (.-message err))))
-           (pg/on-pool-connect! pool
-             (fn [_] (when (env-truthy? "KNOXX_POLICY_DB_LOG_CONNECTS")
-                       (.log js/console "[policy-db] New PG client connected"))))
-           (-> (db-schema/ensure-schema! pool)
-               (.then (fn [_] (db-schema/insert-permission-seeds! pool)))
-               (.then (fn [_] (db-schema/insert-tool-seeds! pool)))
-               (.then (fn [_] (ensure-primary-org! pool opts)))
-               (.then
-                (fn [primary-org]
-                  (-> (sync-contract-role-projections! pool)
-                      (.then (fn [_] (ensure-bootstrap-user! pool primary-org opts)))
-                      (.then (fn [bootstrap]
-                               (-> (if (seq (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts)))
-                                     (ensure-bootstrap-allowlist-users! pool primary-org opts)
-                                     (js/Promise.resolve nil))
-                                   (.catch (fn [err]
-                                             (.warn js/console "[policy-db] allowlist failed:"
-                                                    (.-message err))
-                                             nil))
-                                   (.then (fn [_] bootstrap)))))
-                      (.then (fn [bootstrap]
-                               (-> (sync-actor-contracts! pool primary-org)
-                                   (.catch (fn [err]
-                                             (.warn js/console "[policy-db] actor sync failed:"
-                                                    (.-message err))
-                                             nil))
-                                   (.then (fn [_] bootstrap)))))
-                      (.then (fn [bootstrap]
-                               (-> (honey-query! pool q-memberships/backfill-actor-ids)
-                                   (.then (fn [_] bootstrap)))))
-                      (.then (fn [bootstrap]
-                               (.catch (cleanup-expired-sessions! pool) (fn [_] nil))
-                               (resolve {:pool pool
-                                         :primary-org primary-org
-                                         :bootstrap bootstrap
-                                         :bootstrap-user-id (get-in bootstrap [:user :id])
-                                         :bootstrap-membership-id (get-in bootstrap [:membership :id])})
-                               bootstrap)))))
-               (.catch reject))))))))
+  (let [opts (if (map? options)
+               options
+               (js->clj options :keywordize-keys true))
+        conn-str (or (:connection-string opts) (:connectionString opts) "")]
+    (when-not (str/blank? conn-str)
+      (await (initialise-policy-db! (create-policy-db-pool! conn-str) opts)))))
 
-(defn- ensure-bootstrap-allowlist-users! [pool primary-org opts]
-  (let [raw-emails (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts) "")
-        emails     (->> (str/split (str raw-emails) #"[\s,]+")
-                        (map str/trim) (remove str/blank?) (map str/lower-case) distinct vec)
-        raw-roles  (or (:bootstrapAllowlistRoleSlugs opts) (:bootstrap-allowlist-role-slugs opts) "")
-        role-slugs (->> (str/split (str raw-roles) #"[\s,]+")
-                        (map str/trim) (remove str/blank?) distinct vec)
-        role-slugs (if (seq role-slugs) role-slugs ["knowledge-worker"])
-        org-id     (:id primary-org)]
-    (if (empty? emails)
-      (js/Promise.resolve nil)
-      (-> (js/Promise.all
-           (into-array
-            (mapv (fn [email]
-                    (-> (honey-query-one! pool
-                          (q-users/upsert {:email email :display-name email
-                                           :auth-provider "bootstrap"
-                                           :external-subject nil :status "active"}))
-                        (.then (fn [user]
-                                 (honey-query-one! pool
-                                   (q-memberships/upsert {:user-id (:id user) :org-id org-id
-                                                           :status "active" :is-default false}))))
-                        (.then (fn [ms]
-                                 (-> (js/Promise.all
-                                      (into-array
-                                       (mapv (fn [slug]
-                                               (-> (find-role pool {:slug slug :org-id org-id})
-                                                   (.then (fn [r] (or r (find-role pool {:slug slug :org-id nil}))))
-                                                   (.then (fn [r]
-                                                            (when r
-                                                              (honey-query! pool
-                                                                (q-roles/insert-membership-role
-                                                                 (:id ms) (:id r))))))))
-                                             role-slugs)))
-                                     (.then (fn [_]
-                                              (set-membership-actor-id!
-                                               pool (:id ms) (default-membership-actor-id role-slugs)))))))))
-                  emails)))
-          (.then (fn [_] nil))))))
+(defn- split-bootstrap-values [value]
+  (->> (str/split (str value) #"[\s,]+")
+       (map str/trim)
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn- bootstrap-allowlist-emails [opts]
+  (->> (split-bootstrap-values (or (:bootstrapAllowlistEmails opts) (:bootstrap-allowlist-emails opts) ""))
+       (map str/lower-case)
+       vec))
+
+(defn- bootstrap-allowlist-role-slugs [opts]
+  (let [role-slugs (split-bootstrap-values (or (:bootstrapAllowlistRoleSlugs opts)
+                                               (:bootstrap-allowlist-role-slugs opts)
+                                               ""))]
+    (if (seq role-slugs) role-slugs ["knowledge-worker"])))
+
+(defn ^:async ensure-bootstrap-allowlist-role! [pool org-id membership-id slug]
+  (let [role (or (await (find-role pool {:slug slug :org-id org-id}))
+                 (await (find-role pool {:slug slug :org-id nil})))]
+    (when role
+      (await (honey-query! pool (q-roles/insert-membership-role membership-id (:id role)))))))
+
+(defn ^:async ensure-bootstrap-allowlist-user! [pool org-id role-slugs email]
+  (let [user (await (honey-query-one! pool
+                                      (q-users/upsert {:email email :display-name email
+                                                       :auth-provider "bootstrap"
+                                                       :external-subject nil :status "active"})))
+        ms (await (honey-query-one! pool
+                                    (q-memberships/upsert {:user-id (:id user) :org-id org-id
+                                                           :status "active" :is-default false})))]
+    (await (js/Promise.all
+            (into-array
+             (mapv (partial ensure-bootstrap-allowlist-role! pool org-id (:id ms))
+                   role-slugs))))
+    (await (set-membership-actor-id!
+            pool (:id ms) (default-membership-actor-id role-slugs)))))
+
+(defn ^:async ensure-bootstrap-allowlist-users! [pool primary-org opts]
+  (let [emails (bootstrap-allowlist-emails opts)
+        role-slugs (bootstrap-allowlist-role-slugs opts)
+        org-id (:id primary-org)]
+    (when (seq emails)
+      (await (js/Promise.all
+              (into-array
+               (mapv (partial ensure-bootstrap-allowlist-user! pool org-id role-slugs)
+                     emails)))))))

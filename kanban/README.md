@@ -1,3 +1,7 @@
+---
+priority: "P4"
+---
+
 # Knoxx Kanban
 
 Board state for the Knoxx agent. These markdown cards are the **source of truth**
@@ -47,3 +51,7 @@ cd orgs/open-hax/eta-mu/packages/kanban
 pnpm build
 node dist/cli.js serve --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
 ```
+
+---
+Triage 2026-05-29: The "readme" uuid resolves to the kanban board's own README.md, which is a meta/layout document describing board structure, CLI usage, and PM2 setup — not an actionable work item. Verdict: rejected (P4). --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
+---

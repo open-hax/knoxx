@@ -408,6 +408,15 @@
       (str "<file name=\"" name "\">[Document attached: " mime ", " (or bytes "?") " bytes.]</file>\n")
 
       :else "")))
+
+(defn send-user-message-with-timeout!
+  [session content timeout-ms]
+  (let [timeout-ms (max 1 (or timeout-ms 300000))]
+    (xpromise/race
+     [(send-user-message! session content)
+      (xpromise/reject-after timeout-ms
+                             (str "Agent turn timed out after " timeout-ms "ms"))])))
+
 (defn ^:async prompt-and-await!
   "Send the user message to the provider, stream the response, and finalize the turn.
    Returns a promise that resolves with the turn response or rejects on error."
@@ -446,7 +455,7 @@
                              :run-id run-id
                              :agent-spec agent-spec})
     (try
-      (let [_ (await (send-user-message! session content))]
+      (let [_ (await (send-user-message-with-timeout! session content (:agent-turn-timeout-ms config)))]
         (agent-ctx/clear-context!)
         (unsubscribe)
         (finalize-turn-success!

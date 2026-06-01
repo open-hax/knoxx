@@ -1,13 +1,13 @@
 ---
 uuid: "knoxx-knowledge-ops-role-scoped-lakes"
 title: "Knowledge Ops — Role-Scoped Lakes Spec"
-status: incoming
-priority: P2
-labels: ["epics"]
+status: "icebox"
+priority: "P2"
+labels: "["epics"]"
 created_at: "2026-05-28T22:40:14.392Z"
 source: "specs/epics/knowledge-ops-role-scoped-lakes.md"
 points: null
-category: epics
+category: "epics"
 ---
 
 # Knowledge Ops — Role-Scoped Lakes Spec
@@ -27,5 +27,7 @@ category: epics
 > *Not one corpus. A federation of lakes. Each role sees the slices it actually needs.*
 
 ---
-
 ## Purpose
+
+Triage 2026-05-29: Well-specified epic with clear purpose, concrete scope, and live code anchors already in place (worker.clj classifies files into lakes; OpenPlanner search already supports source/kind/project filtering). Next step is UI lake-aware search presets — actionable and unblocked. Relevant to the core knoxx/openplanner knowledge-graph product direction. No hard external dependencies. Verdict: accepted (P2). --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
+---
