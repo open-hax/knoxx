@@ -1,0 +1,12 @@
+{:contract/kind :schedule
+ :contract/id "fork_tales_creative_director"
+ :contract/version 1
+ :enabled true
+
+ ;; Temporal resource split from fork_tales_creative_director_cron. It emits an
+ ;; event; it does not directly start an agent session.
+ :schedule/id "fork_tales_creative_director"
+ :schedule/rule "*/30 * * * *"
+ :schedule/generator "knoxx_schedule"
+ :schedule/event {:event/type :schedule/fork-tales-creative-director
+                  :event/payload {:reason "schedule event: fork tales creative director"}}}

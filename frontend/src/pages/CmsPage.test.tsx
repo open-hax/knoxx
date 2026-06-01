@@ -98,7 +98,7 @@ function installCmsFetchMock(doc = cmsDoc) {
       return jsonResponse({ ok: true, gardens: [{ garden_id: "garden-a", title: "Garden A", status: "active" }] });
     }
     if (url === "/api/ingestion/sources") {
-      return jsonResponse([{ source_id: "workspace", name: "devel workspace", config: { root_path: "/app/workspace/devel" } }]);
+      return jsonResponse([{ source_id: "workspace", name: "workspace", config: { root_path: "/app/workspace", workspace_source: true } }]);
     }
     if (url.startsWith("/api/ingestion/jobs")) {
       return jsonResponse([]);

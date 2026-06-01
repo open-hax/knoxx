@@ -2,8 +2,7 @@
   "MCP bridge tool factory."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.domain.mcp.mcp-bridge :as mcp]
-            [knoxx.backend.domain.tools :refer [sanitize-custom-tools]]))
+            [knoxx.backend.domain.mcp.mcp-bridge :as mcp]))
 
 (defn create-mcp-custom-tools
   "Create agent SDK custom tools for all connected MCP servers.

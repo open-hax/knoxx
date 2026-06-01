@@ -20,12 +20,12 @@ export function contextPath(row: GroundedContextRow): string {
 
 export function isWorkspaceSource(source: IngestionSource): boolean {
   const config = source.config ?? {};
-  const rootPath = config.root_path ?? config["root-path"];
   // New preferred marker (portable across hosts/paths)
   if (config.workspace_source === true || config.workspaceSource === true) return true;
 
-  // Back-compat for old sources
-  return rootPath === "/app/workspace/devel" || (source.name === "devel workspace" && rootPath == null);
+  // Back-compat for old sources without baking in a machine/container path.
+  const normalizedName = (source.name ?? "").trim().toLowerCase();
+  return normalizedName === "workspace" || normalizedName.endsWith(" workspace");
 }
 
 export function parentPath(path: string): string {

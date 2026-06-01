@@ -1,19 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { safeGetItem, safeSetItem } from "../../lib/storage";
 import { CollapsedPanelTab } from "../CollapsedPanelTab";
 
 export type WorkbenchShellProps = {
   children: React.ReactNode;
   className?: string;
+  style?: CSSProperties;
 };
 
-export function WorkbenchShell({ children, className = "" }: WorkbenchShellProps) {
+export function WorkbenchShell({ children, className = "", style }: WorkbenchShellProps) {
   return (
     <div
       className={className}
       style={{
+        ...style,
         display: "flex",
+        flex: "1 1 0%",
+        width: "100%",
         height: "100%",
+        minWidth: 0,
         minHeight: 0,
         overflow: "hidden",
         gap: 0,

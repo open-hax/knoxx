@@ -1,0 +1,12 @@
+{:contract/kind :schedule
+ :contract/id "ussyverse_social_creative"
+ :contract/version 1
+ :enabled true
+
+ ;; Temporal resource split from ussyverse_social_creative_cron. It emits an
+ ;; event; it does not directly start an agent session.
+ :schedule/id "ussyverse_social_creative"
+ :schedule/rule "*/30 * * * *"
+ :schedule/generator "knoxx_schedule"
+ :schedule/event {:event/type :schedule/ussyverse-social-creative
+                  :event/payload {:reason "schedule event: ussyverse social creative"}}}

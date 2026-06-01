@@ -26,7 +26,7 @@
      :role/fork-tales-composer
      ],
   :model "gemma4:31b",
-  :thinking :high},
+  :thinking :xhigh},
  :prompts
  {:system
   "

@@ -157,7 +157,7 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
     setCreating(true);
     setError(null);
     try {
-      const workspaceRoot = browseData?.workspace_root || '/app/workspace/devel';
+      const workspaceRoot = browseData?.workspace_root || '/app/workspace';
       const rootPath = currentPath ? `${workspaceRoot}/${currentPath}` : workspaceRoot;
       const collections = collectionsText
         .split(',')
@@ -186,7 +186,7 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
     setCreatingAndStarting(true);
     setError(null);
     try {
-      const workspaceRoot = browseData?.workspace_root || '/app/workspace/devel';
+      const workspaceRoot = browseData?.workspace_root || '/app/workspace';
       const rootPath = currentPath ? `${workspaceRoot}/${currentPath}` : workspaceRoot;
       const collections = collectionsText
         .split(',')
@@ -219,7 +219,7 @@ export function WorkspaceBrowserCard({ onCreateSource, onStartJob }: WorkspaceBr
         title="Workspace Browser"
         extra={
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span>{currentPath || 'devel/'}</span>
+            <span>{currentPath || 'workspace/'}</span>
           </div>
         }
         footer={

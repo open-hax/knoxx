@@ -1180,7 +1180,7 @@
                                                              "bg-transparent text-slate-300 hover:bg-slate-800"))}
                                          "📜 Audit"))]
         (d/div {:data-page "agents"
-                :class-name "h-full min-h-0 overflow-hidden bg-slate-950 text-slate-100"}
+                :class-name "flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-950 text-slate-100"}
                ($ layout/WorkbenchShell
                   ($ layout/WorkbenchPanel
                      {:edge "left"

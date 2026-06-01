@@ -71,32 +71,29 @@
   [session-guard]
   (try
     (ensure-permission! ctx "org.events.control")
-    (-> (actor-mailbox/list-entries!
-         runtime
-         {:status (query-param request "status")
-          :target-actor-id (query-param request "target_actor_id" "targetActorId" "actor_id" "actorId")
-          :target-session-id (query-param request "target_session_id" "targetSessionId" "session_id" "sessionId")
-          :source-actor-id (query-param request "source_actor_id" "sourceActorId")
-          :source-run-id (query-param request "source_run_id" "sourceRunId" "run_id" "runId")
-          :limit (query-param request "limit")})
-        (.then (fn [result]
-                 (json-response! reply 200 (assoc (api-result result) :ok true))))
-        (.catch (fn [err]
-                  (error-response! reply err))))
+    (let [result (await (actor-mailbox/list-entries!
+                         runtime
+                         {:status (query-param request "status")
+                          :target-actor-id (query-param request "target_actor_id" "targetActorId" "actor_id" "actorId")
+                          :target-session-id (query-param request "target_session_id" "targetSessionId" "session_id" "sessionId")
+                          :source-actor-id (query-param request "source_actor_id" "sourceActorId")
+                          :source-run-id (query-param request "source_run_id" "sourceRunId" "run_id" "runId")
+                          :limit (query-param request "limit")}))]
+      (json-response! reply 200 (assoc (api-result result) :ok true)))
     (catch :default err
       (error-response! reply err))))
 
-(defn- acknowledge-mailbox!
+(defn ^:async acknowledge-mailbox!
   ([runtime reply error-response! json-response! mailbox-id]
    (acknowledge-mailbox! runtime reply error-response! json-response! mailbox-id nil))
   ([runtime reply error-response! json-response! mailbox-id target-actor-id]
-   (-> (actor-mailbox/acknowledge-entry! runtime mailbox-id target-actor-id)
-       (.then (fn [entry]
-                (if entry
-                  (json-response! reply 200 {:ok true :entry (api-entry entry)})
-                  (json-response! reply 404 {:ok false :detail "mailbox entry not found"}))))
-       (.catch (fn [err]
-                 (error-response! reply err))))))
+   (try
+     (let [entry (await (actor-mailbox/acknowledge-entry! runtime mailbox-id target-actor-id))]
+       (if entry
+         (json-response! reply 200 {:ok true :entry (api-entry entry)})
+         (json-response! reply 404 {:ok false :detail "mailbox entry not found"})))
+     (catch :default err
+       (error-response! reply err)))))
 
 (defroute actor-mailbox-ack-route!
   []
@@ -152,14 +149,11 @@
                     (not= box "outbox") (assoc :target-actor-id actor-id))]
       (if (str/blank? (str actor-id))
         (json-response! reply 403 {:ok false :detail "current actor is not available"})
-        (-> (actor-mailbox/list-entries! runtime filters)
-            (.then (fn [result]
-                     (json-response! reply 200 (assoc (api-result result)
-                                                      :ok true
-                                                      :box (if (= box "outbox") "outbox" "inbox")
-                                                      :actorId actor-id))))
-            (.catch (fn [err]
-                      (error-response! reply err))))))
+        (let [result (await (actor-mailbox/list-entries! runtime filters))]
+          (json-response! reply 200 (assoc (api-result result)
+                                           :ok true
+                                           :box (if (= box "outbox") "outbox" "inbox")
+                                           :actorId actor-id)))))
     (catch :default err
       (error-response! reply err))))
 

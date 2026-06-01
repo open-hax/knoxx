@@ -225,7 +225,7 @@
 (defn retrieval-brief
   [projects rows]
   (if-not (seq rows)
-    "No relevant workspace evidence was retrieved from OpenPlanner. Use general knowledge if needed, but say that the devel corpus did not return a match."
+    "No relevant workspace evidence was retrieved from OpenPlanner. Use general knowledge if needed, but say that the active workspace corpus did not return a match."
     (let [project-summary (->> projects (remove str/blank?) distinct (str/join ", "))
           kind-summary (->> rows (map :kind) (remove str/blank?) distinct sort (str/join ", "))]
       (str "Workspace evidence is available"
@@ -238,10 +238,10 @@
 (defn devel-answer-system-prompt
   [{:keys [projects context-found?]}]
   (str
-   "You are Knoxx, the grounded workspace assistant for the devel corpus. "
+   "You are Knoxx, the grounded workspace assistant for the active workspace corpus. "
    (if context-found?
      "Use the supplied OpenPlanner context first. Synthesize across snippets instead of merely reporting that terms appear in files. Give the best grounded answer you can, then support it with the most relevant file paths and evidence. If the context is incomplete, combine it with general knowledge and clearly say where workspace evidence stops and inference begins. "
-     "No relevant workspace context was found. Answer helpfully using general knowledge, clearly say that the devel corpus did not return a match, and avoid pretending you saw workspace evidence that was not retrieved. ")
+     "No relevant workspace context was found. Answer helpfully using general knowledge, clearly say that the active workspace corpus did not return a match, and avoid pretending you saw workspace evidence that was not retrieved. ")
    "Do not default to frequency-counting or phrasing like 'based on the context this appears in X places' unless the user explicitly asks for counts. "
    "Prefer insight, relationships, implications, and concrete next steps over enumeration. "
    "If the question is ambiguous, state your best interpretation before answering. "

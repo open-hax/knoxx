@@ -2,11 +2,13 @@ export const OPS_BASE_PATH = '/ops';
 export const LEGACY_OPS_BASE_PATH = '/next';
 export const AGENTS_ROUTE = '/agents';
 export const EVENTS_ROUTE = '/events';
+export const INGESTION_ROUTE = '/ingestion';
 /** Legacy route kept for redirects. */
 export const LEGACY_EVENT_AGENTS_ROUTE = '/event-agents';
 // Back-compat name: this was previously the event-agent control surface.
 export const EVENT_AGENTS_ROUTE = EVENTS_ROUTE;
-export const BASIC_USER_ROLE = 'basic_user';
+export const BASIC_USER_ROLES = ['basic_user', 'basic-user'] as const;
+export const BASIC_USER_ROLE = BASIC_USER_ROLES[0];
 
 function trimSlashes(value: string): string {
   return value.replace(/^\/+|\/+$/g, '');
@@ -35,7 +37,7 @@ export const opsRoutes = {
 } as const;
 
 export function isBasicUserRole(roleSlugs: string[] = []): boolean {
-  return roleSlugs.includes(BASIC_USER_ROLE);
+  return roleSlugs.some((role) => (BASIC_USER_ROLES as readonly string[]).includes(role));
 }
 
 export function canAccessPath(pathname: string, roleSlugs: string[] = []): boolean {

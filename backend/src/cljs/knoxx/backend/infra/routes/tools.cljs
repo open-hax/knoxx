@@ -40,11 +40,6 @@
                               :subject subject
                               :text    text-body}))))))
 
-(defn- masked-discord-token [token]
-  (if (and (string? token) (> (count token) 8))
-    (str (subs token 0 4) "***" (subs token (- (count token) 4)))
-    ""))
-
 (defn- events-control-response [config]
   (let [live-config (or @runtime-state/config* config)
         control     (control-config/event-control-config live-config)
@@ -65,33 +60,12 @@
             :else nil))
         ks))
 
-(defn- action-result-summary
-  [result]
-  (when result
-    (let [summary (cond-> {}
-                    (some? (result-prop result :queued))
-                    (assoc :queued (boolean (result-prop result :queued)))
-                    (result-prop result :run_id :run-id :runId)
-                    (assoc :run_id (str (result-prop result :run_id :run-id :runId)))
-                    (result-prop result :conversation_id :conversation-id :conversationId)
-                    (assoc :conversation_id (str (result-prop result :conversation_id :conversation-id :conversationId)))
-                    (result-prop result :session_id :session-id :sessionId)
-                    (assoc :session_id (str (result-prop result :session_id :session-id :sessionId)))
-                    (result-prop result :model)
-                    (assoc :model (str (result-prop result :model))))]
-      (when (seq summary) summary))))
-
 (defn- trigger-fire-response!
   [reply trigger-id result]
   (backend-http/json-response! reply 202 {:ok true
                                           :triggerId trigger-id
                                           :matchedTriggers (:matchedTriggers result)
                                           :event (:event result)}))
-
-(defn- restart-discord-gateway! [token]
-  (when (dg/started?)
-    (-> (dg/restart! token)
-        (.catch (fn [_] nil)))))
 
 ;; ── Tool routes ──────────────────────────────────────────────────────────────
 

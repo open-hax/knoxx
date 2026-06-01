@@ -107,8 +107,8 @@
       (if (:ok resp)
         (:body resp)
         (throw (js/Error. (str "Failed to fetch text " url " (" (:status resp) "): " (:body resp)))))))
-  (fetch-data-url! [_ url opts]
-    (p/let [source (fetch-bytes! (->FetchRemoteMediaClient http-client) url opts)]
+  (fetch-data-url! [this url opts]
+    (p/let [source (fetch-bytes! this url opts)]
       (str "data:" (:mime-type source) ";base64," (.toString (:buffer source) "base64")))))
 
 (defn client

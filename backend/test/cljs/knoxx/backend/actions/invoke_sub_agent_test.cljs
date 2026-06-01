@@ -67,49 +67,45 @@
       (doseq [kind action-kinds]
         (is (some? kind) (str "Action kind " kind " should be recognized"))))))
 
-(deftest invoke-sub-agent-loads-contract-and-spawns
-  (async done
-    (let [calls (atom [])
-          ctx {:config {:contracts-dir "test/fixtures/contracts"}
-               :event {:sourceKind "unit"
-                       :eventKind "unit.event"
-                       :payload {:content "Parent event content"}}
-               :job {:id "parent-agent"
-                     :agentSpec {:model "parent-model"
-                                 :role "knowledge_worker"
-                                 :thinkingLevel "off"
-                                 :toolPolicies [{:toolId "read" :effect "allow"}]}
-                     :data {:run-id "parent-run"
-                            :conversation-id "parent-conversation"
-                            :session-id "parent-session"}}
-               :run-agent! (fn [_config job event]
-                             (swap! calls conj {:job job :event event})
-                             (js/Promise.resolve {:queued true}))}
-          action {:action/id "invoke-sub-agent"
-                  :action/kind :invoke/sub-agent
-                  :action/with {:sub-agent-id "test_sub_agent"}}]
-      (.catch
-       (.then (registry/run-action! ctx action)
-              (fn [result]
-                (let [{:keys [job event]} (first @calls)
-                      agent-spec (:agentSpec job)
-                      content (get-in event [:payload :content])]
-                  (is (:ok result))
-                  (is (= :await (:mode result)))
-                  (is (= "test_sub_agent" (:sub-agent-id result)))
-                  (is (= "gpt-4o" (:model agent-spec)))
-                  (is (= "researcher" (:role agent-spec)))
-                  (is (= "medium" (:thinkingLevel agent-spec)))
-                  (is (str/includes? (:systemPrompt agent-spec) "Sub-Agent Context"))
-                  (is (str/includes? (:systemPrompt agent-spec) "You are a test sub-agent."))
-                  (is (= "Do test sub-agent things." (:taskPrompt agent-spec)))
-                  (is (= "test_sub_agent" (get-in job [:data :sub-agent-id])))
-                  (is (= "parent-conversation" (:parentConversationId agent-spec)))
-                  (is (= "parent-session" (:parentSessionId agent-spec)))
-                  (is (= "parent-run" (:parentRunId agent-spec)))
-                  (is (str/includes? content "Do test sub-agent things."))
-                  (is (str/includes? content "Parent event content"))
-                  (done))))
-       (fn [err]
-         (is false (or (.-stack err) (.-message err) (str err)))
-         (done))))))
+(deftest ^:async invoke-sub-agent-loads-contract-and-spawns
+  (let [calls (atom [])
+        ctx {:config {:contracts-dir "test/fixtures/contracts"}
+             :event {:sourceKind "unit"
+                     :eventKind "unit.event"
+                     :payload {:content "Parent event content"}}
+             :job {:id "parent-agent"
+                   :agentSpec {:model "parent-model"
+                               :role "knowledge_worker"
+                               :thinkingLevel "off"
+                               :toolPolicies [{:toolId "read" :effect "allow"}]}
+                   :data {:run-id "parent-run"
+                          :conversation-id "parent-conversation"
+                          :session-id "parent-session"}}
+             :run-agent! (fn [_config job event]
+                           (swap! calls conj {:job job :event event})
+                           (js/Promise.resolve {:queued true}))}
+        action {:action/id "invoke-sub-agent"
+                :action/kind :invoke/sub-agent
+                :action/with {:sub-agent-id "test_sub_agent"}}]
+    (try
+      (let [result (await (registry/run-action! ctx action))
+            {:keys [job event]} (first @calls)
+            agent-spec (:agentSpec job)
+            content (get-in event [:payload :content])]
+        (is (:ok result))
+        (is (= :await (:mode result)))
+        (is (= "test_sub_agent" (:sub-agent-id result)))
+        (is (= "gpt-4o" (:model agent-spec)))
+        (is (= "researcher" (:role agent-spec)))
+        (is (= "medium" (:thinkingLevel agent-spec)))
+        (is (str/includes? (:systemPrompt agent-spec) "Sub-Agent Context"))
+        (is (str/includes? (:systemPrompt agent-spec) "You are a test sub-agent."))
+        (is (= "Do test sub-agent things." (:taskPrompt agent-spec)))
+        (is (= "test_sub_agent" (get-in job [:data :sub-agent-id])))
+        (is (= "parent-conversation" (:parentConversationId agent-spec)))
+        (is (= "parent-session" (:parentSessionId agent-spec)))
+        (is (= "parent-run" (:parentRunId agent-spec)))
+        (is (str/includes? content "Do test sub-agent things."))
+        (is (str/includes? content "Parent event content")))
+      (catch :default err
+        (is false (or (.-stack err) (.-message err) (str err)))))))

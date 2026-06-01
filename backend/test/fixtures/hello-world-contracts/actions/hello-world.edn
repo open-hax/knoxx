@@ -1,0 +1,22 @@
+{:contract/kind :action
+ :contract/id "hello-world"
+ :contract/version 1
+ :enabled true
+
+ ;; This resource describes executable behavior exposed by the action registry.
+ ;; It does not subscribe to events and it does not define schedules.
+ :action/id :actions/hello-world
+ :action/kind :actions/hello-world
+ :action/handler "knoxx.backend.domain.action.registry/run-action!"
+ :action/responds-to [:message/greeting]
+ :action/result :message/send.expectation
+
+ ;; A catalog declares the resources this action expects to be meaningful.
+ ;; Authorization/policy checks decide whether the receiving actor may use them.
+ :action/scope
+ {:catalog/resources
+  {:event [:message/greeting]
+   :actor ["system_admin"]}}
+
+ :data
+ {:template "Hello, {{name}}! I hope you are having a good {{time-of-day}}. My name is {{actor-name}}."}}

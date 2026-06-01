@@ -1,19 +1,29 @@
 {:role/id :role/basic-user
- :role/capabilities [:cap/read
+ :role/capabilities [:cap/sandbox-container
                      :cap/memory
-                     :cap/semantic
-                     :cap/workspace-media
-                     :cap/canvas]
- :role/permissions ["org.datalakes.read"
-                     "datalake.read"
-                     "datalake.query"
-                     "agent.chat.use"
-                     "agent.memory.read"
+                     :cap/websearch
+                     :cap/workspace-media]
+ :role/permissions ["agent.chat.use"
                      "agent.runs.read_own"
                      "agent.controls.steer"
                      "agent.controls.follow_up"
-                     "tool.read.use"
-                     "tool.semantic_query.use"
+                     "tool.sandbox_container.create"
+                     "tool.sandbox_container.status"
+                     "tool.sandbox_container.exec"
+                     "tool.sandbox_container.read"
+                     "tool.sandbox_container.write"
+                     "tool.sandbox_container.destroy"
                      "tool.memory_search.use"
-                     "tool.memory_session.use"]
+                     "tool.memory_session.use"
+                     "tool.websearch.use"
+                     "tool.web.read.use"
+                     "tool.workspace_media.attach.use"]
+ :role/tool-policies [{:tool-id "agent.chat"
+                       :effect "allow"
+                       :constraints {:allowedModels ["gemma4:31b"]
+                                     :maxRequests 60
+                                     :windowSeconds 600}}
+                      {:tool-id "sandbox_container.commit"
+                       :effect "deny"
+                       :constraints {:reason "Basic handoff users get ephemeral container shell access but cannot mark sandbox work as a committed handoff artifact."}}]
 }

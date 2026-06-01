@@ -4,9 +4,8 @@
   (:require [knoxx.backend.extern.pg :as pg]
             [knoxx.backend.infra.registry.tools :as tool-registry]))
 
-(defn ensure-schema!
-  [pool]
-  (pg/query! pool "
+(def ^:private schema-ddl
+  "
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
     CREATE TABLE IF NOT EXISTS orgs (
@@ -298,7 +297,11 @@
 
     CREATE INDEX IF NOT EXISTS studio_audio_assets_path_idx ON studio_audio_assets (audio_path);
     CREATE INDEX IF NOT EXISTS studio_audio_assets_type_idx ON studio_audio_assets (asset_type);
-  " nil))
+  ")
+
+(defn ensure-schema!
+  [pool]
+  (pg/query! pool schema-ddl nil))
 
 (defn- seed-tool-ids
   []

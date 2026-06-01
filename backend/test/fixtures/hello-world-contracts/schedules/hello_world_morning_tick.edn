@@ -1,0 +1,16 @@
+{:contract/kind :schedule
+ :contract/id "hello_world_morning_tick"
+ :contract/version 1
+ :enabled false
+
+ ;; A schedule is a temporal agreement to emit a synthetic event. It never calls
+ ;; a trigger or action directly; event dispatch fans the emitted event out.
+ :schedule/id "hello_world_morning_tick"
+ :schedule/rule "*/30 * * * *"
+ :schedule/generator "hello_world_demo"
+ :schedule/event {:event/type :message/greeting
+                  :event/payload {:name "world"
+                                  :time-of-day "day"
+                                  :sender "schedule/hello_world_morning_tick"
+                                  :recipient "system_admin"
+                                  :text "scheduled hello world"}}}

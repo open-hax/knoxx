@@ -24,7 +24,6 @@ function gardensBody(gardens = [{
   garden_id: "fork-garden",
   title: "Fork Garden",
   description: "Existing garden",
-  domain: "music",
   status: "active",
   theme: "monokai",
   target_languages: ["es"],
@@ -36,7 +35,6 @@ function gardensBody(gardens = [{
 describe("GardensPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.stubGlobal("confirm", vi.fn(() => true));
   });
 
   it("creates a garden by posting the form payload and refreshing the list", async () => {
@@ -67,14 +65,13 @@ describe("GardensPage", () => {
       title: "New Garden",
       description: "A test garden",
       theme: "monokai",
-      domain: "general",
       target_languages: ["es"],
       auto_translate: true,
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("confirms before deleting a garden and refreshes after DELETE", async () => {
+  it("requires inline confirmation before deleting a garden and refreshes after DELETE", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -90,8 +87,10 @@ describe("GardensPage", () => {
     await screen.findByText("Fork Garden");
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
+    // No DELETE request should fire until the inline confirmation is clicked.
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Delete" }));
+
     await screen.findByText('Garden "fork-garden" deleted');
-    expect(confirm).toHaveBeenCalledWith('Are you sure you want to delete garden "fork-garden"?');
     expect(requests.some((request) => request.url === "/api/openplanner/v1/gardens/fork-garden" && request.init?.method === "DELETE")).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

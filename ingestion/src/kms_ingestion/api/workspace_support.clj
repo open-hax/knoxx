@@ -50,17 +50,22 @@
    (let [root-from-contract (workspace-root-path-from-sources (or tenant-id "devel"))]
      (if root-from-contract
        (.getCanonicalFile (io/file root-from-contract))
-       ;; Fallback heuristic (legacy env-based behavior)
+       ;; Fallback heuristic (legacy env-based behavior): prefer the configured
+       ;; root when it already looks like a workspace; otherwise accept a single
+       ;; child directory that looks like a workspace without naming that child.
        (let [base (.getCanonicalFile (io/file (config/workspace-path)))
              base-packages (.getCanonicalFile (io/file base "packages"))
-             devel-root (.getCanonicalFile (io/file base "devel"))
-             devel-packages (.getCanonicalFile (io/file devel-root "packages"))]
+             workspace-child-candidate (->> (or (.listFiles base) (into-array File []))
+                                            (filter #(.isDirectory ^File %))
+                                            (filter #(.exists ^File (io/file % "packages")))
+                                            first)
+             workspace-child (some-> workspace-child-candidate .getCanonicalFile)]
          (cond
            (.exists ^File base-packages)
            base
 
-           (.exists ^File devel-packages)
-           devel-root
+           workspace-child
+           workspace-child
 
            :else
            base)))))

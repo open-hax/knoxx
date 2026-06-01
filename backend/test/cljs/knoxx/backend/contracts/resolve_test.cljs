@@ -120,6 +120,39 @@
                 :mode :always
                 :k 4}
                (:source/hydration source)))))))
+
+(deftest agent-catalog-treats-missing-trigger-kind-as-manual
+  (let [agent-contract {:contract/id "knoxx_default"
+                        :contract/kind :agent
+                        :contract/actors ["chat_primary"]
+                        :agent {:role :role/knowledge_worker}
+                        :prompts {:system "agent prompt"}}]
+    (with-redefs [loader/load-all-contracts-sync (fn [_]
+                                                   [{:id "knoxx_default"
+                                                     :contractClass "agents"
+                                                     :contract agent-contract}])
+                  loader/find-contract-record-sync (fn [_ class id]
+                                                     (case class
+                                                       "agents" {:id id :contract agent-contract}
+                                                       nil))
+                  sut/default-actor-id (fn [_] "chat_primary")
+                  sut/resolve-actor (fn [_ _]
+                                      {:id "chat_primary"
+                                       :default-agent "knoxx_default"
+                                       :role-slugs ["knowledge-worker"]
+                                       :capability-ids []})
+                  roles/role-capability-ids (fn [_ role]
+                                              (when (= "knowledge-worker" role)
+                                                ["read" "sandbox-container"]))
+                  roles/role-system-prompt (fn [_ _] nil)
+                  roles/role-task-prompt (fn [_ _] nil)
+                  roles/role-tool-ids (fn [_ _] [])
+                  roles/capability-tool-ids (fn [_ _] [])]
+      (let [catalog (sut/agent-contract-catalog {} "chat_primary")]
+        (is (= ["knoxx_default"] (mapv :id catalog)))
+        (is (= "knoxx_default" (sut/default-agent-contract-id {} "chat_primary")))
+        (is (= ["read" "sandbox-container"] (:capability-ids (first catalog))))))))
+
 ; ---------------------------------------------------------------------------
 ; Multi-role composition (agent-role-claims)
 ; ---------------------------------------------------------------------------

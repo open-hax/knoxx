@@ -42,25 +42,6 @@
   [s]
   (boolean (re-find #"[\s\W_]$" s)))
 
-(defn- duplicated-prefix?
-  [previous appended]
-  (or (and (str/starts-with? appended previous)
-           (let [remaining (.slice appended (count previous))]
-             (and (pos? (count remaining))
-                  (boolean (re-find #"^[\s\W_]" remaining)))))
-      (and (boundary-ended? previous)
-           (seq (duplicate-normalized-text previous))
-           (= (duplicate-normalized-text appended)
-              (duplicate-normalized-text previous)))))
-
-(defn- max-overlap
-  [left right]
-  (loop [n (min (count left) (count right))]
-    (cond
-      (zero? n) 0
-      (str/ends-with? left (.slice right 0 n)) n
-      :else (recur (dec n)))))
-
 (defn diff-appended-text
   [previous current]
   (text-delta/diff-appended-text previous current))

@@ -16,7 +16,7 @@
   {:id "ses_123"
    :slug "test-session"
    :projectID "proj_1"
-   :directory "/home/err/devel/orgs/open-hax/openplanner"
+   :directory "/workspace/orgs/open-hax/openplanner"
    :title "Test OpenCode session"
    :time {:created 1770000000000
           :updated 1770000005000}})
@@ -44,7 +44,7 @@
            :modelID "gpt-5.1-codex-max"
            :agent "build"
            :mode "build"
-           :path {:cwd "/home/err/devel" :root "/home/err/devel"}
+           :path {:cwd "/workspace" :root "/workspace"}
            :cost 0.01
            :tokens {:input 10 :output 20 :reasoning 0 :cache {:read 0 :write 0}}
            :finish "stop"}

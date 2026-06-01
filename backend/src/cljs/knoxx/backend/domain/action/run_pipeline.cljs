@@ -29,7 +29,7 @@
       (get-in event [:event/payload]) {}))
 
 (defmethod run-action! :actions/run-pipeline
-  [{:keys [config trigger] :as ctx} action]
+  [{:keys [config _trigger] :as ctx} action]
   (let [pipeline-id (or (get-in action [:action/with :pipeline-id])
                         (get-in action [:action/with :pipelineId]))]
     (if-not pipeline-id

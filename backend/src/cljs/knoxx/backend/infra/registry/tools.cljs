@@ -9,6 +9,7 @@
    "websearch" {:id "websearch" :label "Web Search" :description "Search the live web through Proxx websearch" :risk-level "low"}
    "web.read" {:id "web.read" :label "Web Read" :description "Fetch a web link or attachment URL and extract readable content or metadata" :risk-level "low"}
    "canvas" {:id "canvas" :label "Canvas" :description "Open long-form markdown drafting canvas" :risk-level "low"}
+   "agent.chat" {:id "agent.chat" :label "Agent Chat" :description "Start and continue Knoxx chat turns" :risk-level "low"}
 
    "email.send" {:id "email.send" :label "Email" :description "Send drafts through configured email account" :risk-level "low"}
 

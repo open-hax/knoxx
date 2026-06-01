@@ -7,8 +7,7 @@
    and :policy/action to determine the outcome (:block, :warn, :note, :allow).
 
    This is simpler than the tree-shaped policy evaluator — it's designed
-   for fast, flat lookups on every tool call."
-  (:require [clojure.string :as str]))
+   for fast, flat lookups on every tool call.")
 
 ;; ── Match evaluation ──────────────────────────────────────────────────────────
 
@@ -40,7 +39,7 @@
                 (= v (:tool/name tool-call))
 
                 (= k :tool/params)
-                (match-params v (:tool/params tool-call {}))
+                (match-params? v (:tool/params tool-call {}))
 
                 :else
                 false))

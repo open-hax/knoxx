@@ -3,7 +3,7 @@
             [knoxx.backend.domain.models :as models]))
 
 (def test-config
-  (models/enrich-config {:contracts-dir "contracts"
+  (models/enrich-config {:contracts-dir "test/fixtures/model-contracts"
                          :proxx-base-url "http://127.0.0.1:8787"
                          :proxx-default-model "glm-5"}))
 

@@ -4,66 +4,75 @@
             [knoxx.backend.domain.agent.content :refer [nonblank preview-text-nonblank json-preview-nonblank fenced]]
             [knoxx.backend.domain.text :refer [clip-text]]))
 
+(defn- normalize-tool-name
+  [tool-name]
+  (-> (str (or tool-name ""))
+      (str/split #"[./:]")
+      last
+      str/lower-case))
+
+(defn- coerce-tool-args
+  [raw-args]
+  (cond
+    (map? raw-args) raw-args
+    (and raw-args (not= raw-args js/undefined))
+    (try
+      (js->clj raw-args :keywordize-keys true)
+      (catch :default _ nil))
+    :else nil))
+
+(defn- map-arg-value
+  [m k]
+  (cond
+    (and (map? m) (keyword? k)) (get m k)
+    (and (map? m) (string? k)) (or (get m k) (get m (keyword k)))
+    :else nil))
+
+(defn- js-arg-value
+  [raw-args k]
+  (when (and raw-args
+             (not= raw-args js/undefined)
+             (or (object? raw-args) (fn? raw-args)))
+    (aget raw-args (if (keyword? k) (name k) (str k)))))
+
+(defn- arg-value
+  [args raw-args & keys]
+  (or (some #(map-arg-value args %) keys)
+      (some #(map-arg-value raw-args %) keys)
+      (some #(js-arg-value raw-args %) keys)))
+
+(defn- bash-tool-preview
+  [args raw-args]
+  (when (map? args)
+    (let [cmd (arg-value args raw-args :command :cmd)
+          timeout (arg-value args raw-args :timeout :timeoutSeconds :timeoutMs)]
+      (when (and (string? cmd) (not (str/blank? cmd)))
+        (let [[clipped-cmd clipped?] (clip-text cmd 20000)]
+          (str
+           (fenced "bash" (if clipped? (str clipped-cmd "…") clipped-cmd))
+           (when clipped? "\n\n_(truncated)_")
+           (when (some? timeout)
+             (str "\n\n- timeout: " timeout))))))))
+
+(defn- read-tool-preview
+  [args raw-args]
+  (let [path (arg-value args raw-args :path "path")
+        offset (arg-value args raw-args :offset "offset")
+        limit (arg-value args raw-args :limit "limit")]
+    (when (and (string? path) (not (str/blank? path)))
+      (fenced "yaml"
+              (str "path: " path
+                   "\noffset: " (if (some? offset) offset "(default)")
+                   "\nlimit: " (if (some? limit) limit "(default)"))))))
+
 (defn- tool-args->markdown-preview
-  "Tool-specific input previews that are always human readable (no raw JSON).
-
-   This is intentionally conservative: we only special-case tools where we know
-   the user expectation is strict (bash/read). Everything else falls back to
-   value->preview-text rendering (which the frontend formats into bullets)."
+  "Tool-specific input previews that are always human readable (no raw JSON)."
   [tool-name raw-args]
-  (let [tool-name (-> (str (or tool-name ""))
-                      (str/split #"[./:]")
-                      last
-                      str/lower-case)
-        args (cond
-               (map? raw-args) raw-args
-               (and raw-args (not= raw-args js/undefined))
-               (try
-                 (js->clj raw-args :keywordize-keys true)
-                 (catch :default _ nil))
-               :else nil)
-        arg-value (fn [& keys]
-                    (or (some (fn [k]
-                                (cond
-                                  (and (map? args) (keyword? k)) (get args k)
-                                  (and (map? args) (string? k)) (or (get args k) (get args (keyword k)))
-                                  :else nil))
-                              keys)
-                        (some (fn [k]
-                                (cond
-                                  (and (map? raw-args) (keyword? k)) (get raw-args k)
-                                  (and (map? raw-args) (string? k)) (or (get raw-args k) (get raw-args (keyword k)))
-                                  :else nil))
-                              keys)
-                        (some (fn [k]
-                                (when (and raw-args
-                                           (not= raw-args js/undefined)
-                                           (or (object? raw-args) (fn? raw-args)))
-                                  (aget raw-args (if (keyword? k) (name k) (str k)))))
-                              keys)))]
+  (let [tool-name (normalize-tool-name tool-name)
+        args (coerce-tool-args raw-args)]
     (case tool-name
-      "bash"
-      (when (map? args)
-        (let [cmd (arg-value :command :cmd)
-              timeout (arg-value :timeout :timeoutSeconds :timeoutMs)]
-          (when (and (string? cmd) (not (str/blank? cmd)))
-            (let [[clipped-cmd clipped?] (clip-text cmd 20000)]
-              (str
-               (fenced "bash" (if clipped? (str clipped-cmd "…") clipped-cmd))
-               (when clipped? "\n\n_(truncated)_")
-               (when (some? timeout)
-                 (str "\n\n- timeout: " timeout)))))))
-
-      "read"
-      (let [path (arg-value :path "path")
-            offset (arg-value :offset "offset")
-            limit (arg-value :limit "limit")]
-        (when (and (string? path) (not (str/blank? path)))
-          (fenced "yaml"
-                  (str "path: " path
-                       "\noffset: " (if (some? offset) offset "(default)")
-                       "\nlimit: " (if (some? limit) limit "(default)")))))
-
+      "bash" (bash-tool-preview args raw-args)
+      "read" (read-tool-preview args raw-args)
       nil)))
 
 (defn- copy-js-object

@@ -292,8 +292,8 @@
   [project node-type extra]
   (cond
     (:node_kind extra) (:node_kind extra)
-    (= project "devel") "file"
     (= project "web") "url"
+    (contains? #{"code" "config" "data" "docs" "file"} node-type) "file"
     (= node-type "user") "user"
     (= node-type "post") "post"
     :else "node"))

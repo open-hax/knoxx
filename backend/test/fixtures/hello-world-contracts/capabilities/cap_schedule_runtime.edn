@@ -1,0 +1,10 @@
+{:cap/id :cap/schedule-runtime
+ :cap/tools [:events.status
+             :events.dispatch
+             :triggers.fire
+             :agents.spawn]
+ :cap/user-surfaces [{:surface/id :workspace/schedule-runtime
+                      :surface/label "Schedule runtime"
+                      :surface/kind :editor
+                      :surface/routes ["/resources" "/events"]
+                      :surface/description "Compose schedule, trigger, action, and generator resources; schedules emit events and triggers request actions through dispatch."}]}

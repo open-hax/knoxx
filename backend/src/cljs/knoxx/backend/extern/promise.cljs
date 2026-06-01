@@ -17,3 +17,15 @@
                (if (array? values)
                  (vec (array-seq values))
                  [])))))
+
+(defn reject-after
+  "Return a Promise that rejects with an Error after timeout-ms."
+  [timeout-ms message]
+  (js/Promise.
+   (fn [_resolve reject]
+     (js/setTimeout #(reject (js/Error. message)) timeout-ms))))
+
+(defn race
+  "Promise.race for a CLJS collection of promises."
+  [promises]
+  (.race js/Promise (clj->js (vec promises))))

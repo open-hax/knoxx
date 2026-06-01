@@ -2,17 +2,18 @@
 
 ## Status
 
-- State: accepted backend style note.
+- State: partially superseded backend style note.
 - Scope: `backend/src/cljs/knoxx/backend/**/*.cljs`.
 - Audience: agents and humans writing Knoxx Fastify routes, agent turns, tool calls, and OpenPlanner/Proxx adapters.
+- Supersession: keep the context-map workflow model from this note, but prefer native CLJS `^:async` functions with `await` for new or refactored backend async code. The older `js-await` examples below are historical migration context, not the current default.
 
 ## Decision
 
-Use `shadow.cljs.modern/js-await` as the default async syntax for new Knoxx backend request workflows.
+Use named `^:async` workflow functions and `await` as the default async syntax for new Knoxx backend request workflows.
 
-Use explicit `.then(success failure)` only for tiny interop boundaries where it is clearer than a `js-await` form, and avoid hand-threaded `-> ... (.then ...) (.catch ...)` route bodies.
+Use explicit `.then(success failure)` only for tiny documented interop boundaries where it is clearer than an async workflow, and avoid hand-threaded `-> ... (.then ...) (.catch ...)` route bodies.
 
-The route-level unit of composition is a plain immutable context map. Small functions should take a context map and return either a context map or a Promise that resolves to the next context map.
+The route-level unit of composition is still a plain immutable context map. Small functions should take a context map and return either a context map or a Promise that resolves to the next context map.
 
 ## Why this exists
 

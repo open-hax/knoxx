@@ -9,7 +9,7 @@
                       {:path "specs/plan.md"}]
           context (graph/index-context {} file-metas)
           events (graph/collect-devel-graph-events
-                  {:tenant-id "devel"
+                  {:tenant-id "workspace"
                    :source-id "source-1"
                    :context context
                    :ts "2026-04-04T20:00:00Z"
@@ -24,8 +24,8 @@
                           (filter #(= "graph.edge" (:kind %)))
                           (map #(get-in % [:extra :edge_type]))
                           set)]
-      (is (contains? node-ids "devel:file:docs/INDEX.md"))
-      (is (contains? node-ids "devel:file:specs/plan.md"))
+      (is (contains? node-ids "workspace:file:docs/INDEX.md"))
+      (is (contains? node-ids "workspace:file:specs/plan.md"))
       (is (contains? node-ids "web:url:https://example.com/"))
       (is (contains? edge-types "local_markdown_link"))
       (is (contains? edge-types "external_web_link")))))
@@ -37,7 +37,7 @@
                       {:path "src/server/core.cljc"}]
           context (graph/index-context {} file-metas)
           events (graph/collect-devel-graph-events
-                  {:tenant-id "devel"
+                  {:tenant-id "workspace"
                    :source-id "source-2"
                    :context context
                    :ts "2026-04-04T20:10:00Z"
@@ -49,4 +49,4 @@
                                   (filter #(= "code_dependency" (get-in % [:extra :edge_type])))
                                   (map #(get-in % [:extra :target_node_id]))
                                   set)]
-      (is (contains? dependency-targets "devel:file:src/lib/util.ts")))))
+      (is (contains? dependency-targets "workspace:file:src/lib/util.ts")))))

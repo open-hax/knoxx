@@ -1,0 +1,14 @@
+{:contract/kind :trigger
+ :contract/id "daily_synthesis"
+ :contract/version 4
+ :enabled false
+
+ ;; Trigger agreement: system_admin may run the synthesis pipeline after
+ ;; observing the schedule-generated daily synthesis event.
+ :trigger/kind :event
+ :trigger/listener "system_admin"
+ :trigger/events [:schedule/daily-synthesis]
+ :trigger/action :actions/run-pipeline
+ :trigger/with {:pipeline-id "synthesis_pipeline"}
+ :data {:context {:timezone "America/Chicago"
+                  :report-window-hours 24}}}

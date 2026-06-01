@@ -1,0 +1,10 @@
+{:model-family/id "gpt"
+ :model-family/provider :proxx
+ :model-family/prefixes ["gpt-"]
+ :model-family/allowlisted true
+ :model-family/reasoning true
+ :model-family/default-thinking :off
+ :model-family/thinking-levels [:off :minimal :low :medium :high :xhigh]
+ :model-family/context-window 128000
+ :model-family/max-tokens 8192
+ :model-family/input [:text]}

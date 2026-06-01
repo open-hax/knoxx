@@ -1,0 +1,13 @@
+{:contract/kind :trigger
+ :contract/id "fork_tales_creative_director_cron"
+ :contract/version 4
+ :enabled true
+
+ ;; Trigger agreement: discord_automation may start the creative director after
+ ;; observing the schedule-generated fork tales event.
+ :trigger/kind :event
+ :trigger/listener "discord_automation"
+ :trigger/events [:schedule/fork-tales-creative-director]
+ :trigger/action :actions/start-agent-session
+ :trigger/agent "fork_tales_creative_director"
+ :data {:context {:reason "schedule event: fork tales creative director"}}}

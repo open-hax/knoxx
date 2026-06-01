@@ -32,7 +32,6 @@
           :actor/discord-connected]}}
 {:catalog/id :catalog/support-ops
  :catalog/intent :intent/support
- :catalog/charter
 
  :catalog/entries
  {:role [:role/system-admin]

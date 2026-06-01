@@ -261,7 +261,7 @@
 (defn voice-tts-execute [runtime config & args]
   (apply (tts-rest-execute runtime config) args))
 
-(defn voice-tts-stream-execute [runtime config & args]
+(defn voice-tts-stream-execute [_runtime config & args]
   (apply (tts-stream-execute config) args))
 
 (def voice-openutau-project-tool

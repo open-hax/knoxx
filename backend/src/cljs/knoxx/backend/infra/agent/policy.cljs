@@ -59,7 +59,30 @@
     (aset "statusCode" 403)
     (aset "code" "model_not_allowed")))
 
+(defn- check-model-policy!
+  "Throw if model-id is not in the allow-list."
+  [model-id permitted-models]
+  (when (and (seq permitted-models)
+             (not (contains? permitted-models model-id)))
+    (throw (model-policy-error model-id permitted-models))))
+
+(defn ^:async check-rate-limit!
+  "Check and enforce the chat rate limit via Redis INCR + EXPIRE."
+  [principal redis-client max-requests window-seconds]
+  (let [key (str "knoxx:chat-rate:" principal ":" window-seconds)]
+    (try
+      (let [count (await (.incr redis-client key))]
+        (when (= count 1)
+          (await (.expire redis-client key window-seconds)))
+        (when (> count max-requests)
+          (throw (rate-limit-error max-requests window-seconds))))
+      (catch :default err
+        (when (= (aget err "code") "chat_rate_limited")
+          (throw err))))))
+
 (defn enforce-chat-policy!
+  "Enforce model allow-list and rate-limit constraints for a chat turn.
+   Returns a Promise that resolves to nil on success or rejects on policy violation."
   [auth-context model-id]
   (let [constraints (chat-policy-constraints auth-context)
         permitted-models (allowed-models constraints)
@@ -69,29 +92,9 @@
                                          (:window-seconds constraints)))
         principal (some-> (chat-rate-limit-principal auth-context) str not-empty)
         redis-client (redis/get-client)]
-    (cond
-      (and (seq permitted-models)
-           (not (contains? permitted-models model-id)))
-      (js/Promise.reject (model-policy-error model-id permitted-models))
-
-      (and principal redis-client max-requests window-seconds)
-      (let [key (str "knoxx:chat-rate:" principal ":" window-seconds)]
-        (-> (.incr redis-client key)
-            (.then (fn [count]
-                     (if (= count 1)
-                       (-> (.expire redis-client key window-seconds)
-                           (.then (fn [_] count)))
-                       (js/Promise.resolve count))))
-            (.then (fn [count]
-                     (if (> count max-requests)
-                       (js/Promise.reject (rate-limit-error max-requests window-seconds))
-                       (js/Promise.resolve nil))))
-            (.catch (fn [err]
-                      (if (= (aget err "code") "chat_rate_limited")
-                        (js/Promise.reject err)
-                        (js/Promise.resolve nil))))))
-
-      :else
+    (check-model-policy! model-id permitted-models)
+    (if (and principal redis-client max-requests window-seconds)
+      (check-rate-limit! principal redis-client max-requests window-seconds)
       (js/Promise.resolve nil))))
 
 (defprotocol IPolicyEngine
@@ -108,8 +111,8 @@
                               (get-in turn-request [:agent-spec :model]))))
 
   (resolve-model-policy [_ auth-context requested-model]
-    (-> (enforce-chat-policy! auth-context requested-model)
-        (.then (fn [_] {:model requested-model :allowed true}))))
+    (let [p (enforce-chat-policy! auth-context requested-model)]
+      (-> p (.then (fn [_] {:model requested-model :allowed true})))))
 
   (resolve-tool-policy [_ auth-context agent-spec]
     (js/Promise.resolve {:auth-context auth-context

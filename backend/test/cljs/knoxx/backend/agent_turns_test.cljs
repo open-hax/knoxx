@@ -1,12 +1,14 @@
 (ns knoxx.backend.agent-turns-test
   (:require [knoxx.backend.infra.auth.authz :as authz]
-            [cljs.test :refer [deftest is testing async]]
-            [knoxx.backend.domain.agent.content :as content]
-            [knoxx.backend.infra.agent.tools :as tools]
-            [knoxx.backend.infra.agent.transcript :as transcript]
-            [knoxx.backend.infra.agent.turn :as agent-turns]
-            [knoxx.backend.extern.agent-turn-node :as xturn-node]
-            [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]))
+             [cljs.test :refer [deftest is testing]]
+             [knoxx.backend.domain.agent.content :as content]
+             [knoxx.backend.infra.agent.tools :as tools]
+             [knoxx.backend.infra.agent.transcript :as transcript]
+             [knoxx.backend.infra.agent.turn :as agent-turns]
+             [knoxx.backend.infra.stores.session-store :as session-store]
+             [knoxx.backend.extern.agent-turn-node :as xturn-node]
+             [knoxx.backend.extern.eta-mu :refer [wrap-eta-mu-session]]
+             [knoxx.backend.shape.agent :as agent-shape]))
 
 (deftest ensure-session-id-preserves-provided-value
   (testing "existing session ids are kept intact"
@@ -71,6 +73,14 @@
                :input_preview "```yaml\npath: docs/guide.md\noffset: 10\nlimit: 20\n```"}]
              previews)))))
 
+(deftest tool-call-input-preview-renders-bash-commands-as-markdown
+  (testing "bash tool calls render command fences and timeout metadata"
+    (is (= "```bash\nprintf 'hi'\n```\n\n- timeout: 12"
+           (tools/tool-call-input-preview
+            "tools/bash"
+            #js {:command "printf 'hi'"
+                 :timeout 12})))))
+
 (deftest session->stored-messages-preserves-prior-transcript
   (testing "live session snapshots keep existing user and assistant turns for restart recovery"
     (let [session (wrap-eta-mu-session
@@ -121,6 +131,42 @@
         (is (= [{:type "text" :text "hello"}] parts)))
       (catch :default err
         (is false (str "materialize-content-parts! threw: " (.-message err)))))))
+
+(defn- pending-agent-session
+  []
+  (reify agent-shape/IAgentSession
+    (streaming? [_] true)
+    (current-turn [_] nil)
+    (messages [_] [])
+    (subscribe! [_ _handler] (fn [] nil))
+    (send-user-message! [_ _content] (js/Promise. (fn [_resolve _reject] nil)))
+    (follow-up! [_ _message] (js/Promise.resolve nil))
+    (steer! [_ _message] (js/Promise.resolve nil))
+    (set-thinking-level! [_ _level] nil)))
+
+(deftest ^:async prompt-timeout-finalizes-session-as-failed
+  (testing "provider turns that never settle clear the active stream through failure finalization"
+    (let [completed* (atom nil)]
+      (with-redefs [session-store/complete-session! (fn [_client session-id conversation-id payload]
+                                                      (reset! completed* {:session-id session-id
+                                                                          :conversation-id conversation-id
+                                                                          :payload payload}))]
+        (try
+          (await (agent-turns/prompt-and-await!
+                  {:agent-turn-timeout-ms 1}
+                  "session-timeout" "run-timeout" "conversation-timeout"
+                  (.now js/Date) "gpt-5.5" "direct"
+                  (pending-agent-session)
+                  "hello" [] nil nil [{:role "user" :content "hello"}] {}))
+          (is false "prompt-and-await! should reject on timeout")
+          (catch :default err
+            (is (re-find #"Agent turn timed out after 1ms" (.-message err)))
+            (is (= {:session-id "session-timeout"
+                    :conversation-id "conversation-timeout"
+                    :payload {:status "failed"
+                              :error "Error: Agent turn timed out after 1ms"
+                              :messages [{:role "user" :content "hello"}]}}
+                   @completed*))))))))
 
 (deftest merge-content-parts-dedupes-overlapping-attachments
   (testing "reply media already present in the assistant response is not duplicated"
@@ -196,22 +242,18 @@
 ;; in a minimal atom and wrapping the call ourselves the same way
 ;; the source now does, verifying the throw becomes a rejection.
 
-(deftest sync-throw-becomes-rejected-promise
-  (async done
-    (testing "a sync throw wrapped in Promise constructor becomes a rejection"
-      (let [store (atom {})
-            ctx-a {:user-id "alice" :membership-id "m-alice"}
-            ctx-b {:user-id "bob" :membership-id "m-bob"}
-            _     (authz/remember-conversation-access! store ctx-a "conv-p")
-            ;; mirror exactly what the fixed send-agent-turn! does
-            p     (js/Promise.
-                   (fn [resolve reject]
-                     (try
-                       (resolve (authz/ensure-conversation-access! store ctx-b "conv-p"))
-                       (catch :default e (reject e)))))]
-        (is (instance? js/Promise p) "wrapped call is a Promise")
-        (-> p
-            (.then (fn [_] (is false "should have rejected") (done)))
-            (.catch (fn [err]
-                      (is (= 403 (some-> err ex-data :status)) "rejection carries 403")
-                      (done))))))))
+(deftest ^:async sync-throw-becomes-rejected-promise
+  (testing "a sync throw wrapped in Promise constructor becomes a rejection"
+    (let [store (atom {})
+          ctx-a {:user-id "alice" :membership-id "m-alice"}
+          ctx-b {:user-id "bob" :membership-id "m-bob"}
+          _     (authz/remember-conversation-access! store ctx-a "conv-p")]
+      (try
+        (await (js/Promise.
+                (fn [resolve reject]
+                  (try
+                    (resolve (authz/ensure-conversation-access! store ctx-b "conv-p"))
+                    (catch :default e (reject e))))))
+        (is false "should have rejected")
+        (catch :default err
+          (is (= 403 (some-> err ex-data :status)) "rejection carries 403"))))))

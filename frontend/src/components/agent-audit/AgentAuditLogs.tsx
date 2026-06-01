@@ -92,6 +92,12 @@ function sessionSearchText(session: MemorySessionSummary): string {
     session.project ?? "",
     session.actor_id ?? "",
     session.contract_id ?? "",
+    session.trigger_id ?? "",
+    session.event_type ?? "",
+    session.event_id ?? "",
+    session.event_scope_id ?? "",
+    session.schedule_id ?? "",
+    (session.event_types ?? []).join(" "),
     (session.contract_actors ?? []).join(" "),
   ]
     .join(" ")
@@ -438,6 +444,9 @@ function SessionRow({
   const contractId = session.contract_id;
   const actorId = session.actor_id;
   const subAgentId = session.sub_agent_id;
+  const triggerId = session.trigger_id;
+  const eventType = session.event_type;
+  const scheduleId = session.schedule_id;
 
   return (
     <button
@@ -475,6 +484,24 @@ function SessionRow({
           <>
             <span>•</span>
             <span className="font-mono text-[11px] text-slate-400">actor {actorId}</span>
+          </>
+        ) : null}
+        {triggerId ? (
+          <>
+            <span>•</span>
+            <span className="font-mono text-[11px] text-amber-300">trigger {triggerId}</span>
+          </>
+        ) : null}
+        {eventType ? (
+          <>
+            <span>•</span>
+            <span className="font-mono text-[11px] text-cyan-300">event {eventType}</span>
+          </>
+        ) : null}
+        {scheduleId ? (
+          <>
+            <span>•</span>
+            <span className="font-mono text-[11px] text-slate-400">schedule {scheduleId}</span>
           </>
         ) : null}
         {session.last_ts ? (

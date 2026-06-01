@@ -30,6 +30,9 @@
   ;; HTTP client
   clj-http/clj-http                   {:mvn/version "3.13.0"}
 
+  ;; Archive extraction (bulk import)
+  org.apache.commons/commons-compress {:mvn/version "1.26.0"}
+
   ;; Utilities
   babashka/fs                         {:mvn/version "0.5.27"}
   org.babashka/cli                    {:mvn/version "0.8.67"}

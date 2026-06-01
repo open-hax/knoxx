@@ -29,10 +29,6 @@
 
 ;; ─── Small JS helpers local to the eta-mu boundary ───────────────────────────
 
-(defn- blankish?
-  [v]
-  (str/blank? (str (or v ""))))
-
 (defn- js-array-seq
   [value]
   (if (array? value)

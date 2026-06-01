@@ -1,0 +1,12 @@
+{:model/id "gemma4:31b"
+ :model-family/id "gemma4"
+ :model/provider :proxx
+ :model/label "Gemma 4 31B"
+ :model/default true
+ :model/allowlisted true
+ :model/reasoning true
+ :model/default-thinking :off
+ :model/thinking-levels [:off :minimal :low :medium :high :xhigh]
+ :model/context-window 128000
+ :model/max-tokens 8192
+ :model/input [:text :image]}

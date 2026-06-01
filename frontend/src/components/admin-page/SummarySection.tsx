@@ -35,10 +35,10 @@ export function SummarySection({
         </div>
         <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-4">
           <div className="text-xs uppercase tracking-wide text-slate-500">Bootstrap</div>
-          {bootstrap ? (
+          {bootstrap?.primaryOrg ? (
             <>
               <div className="mt-2 text-sm font-semibold text-slate-100">{bootstrap.primaryOrg.name}</div>
-              <div className="text-sm text-slate-400">{bootstrap.bootstrapUser.email}</div>
+              <div className="text-sm text-slate-400">{bootstrap.bootstrapUser?.email}</div>
             </>
           ) : (
             <div className="mt-2 text-sm text-slate-400">Platform bootstrap is only visible to platform-scoped admins.</div>

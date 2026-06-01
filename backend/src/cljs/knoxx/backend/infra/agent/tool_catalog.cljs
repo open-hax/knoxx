@@ -41,13 +41,28 @@
   [runtime config tool-auth-context agent-spec allowed-tool-ids]
   (create-agent-custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids))
 
+(defn provider-safe-tool-name?
+  "True when a runtime tool name is safe to send as an OpenAI-style function name."
+  [tool-name]
+  (boolean (and (string? tool-name)
+                (re-matches #"^[A-Za-z0-9_-]{1,64}$" tool-name))))
+
+(def ^:private provider-tool-disabled-models
+  #{"gpt-5.5"})
+
+(defn provider-tools-enabled-for-model?
+  "True when Knoxx should expose runtime tools to the provider for this model."
+  [model-id]
+  (not (contains? provider-tool-disabled-models (some-> model-id str str/trim))))
+
 (defn tool-runtime-names
   [builtin-tools custom-tools]
   (->> (concat (or builtin-tools [])
                (eta-mu-extern/tool-seq custom-tools))
-       (keep eta-mu-extern/tool-runtime-name)
-       distinct
-       vec))
+        (keep eta-mu-extern/tool-runtime-name)
+        (filter provider-safe-tool-name?)
+        distinct
+        vec))
 
 (defn visible-session-signature
   [runtime config auth-context agent-spec]
@@ -57,11 +72,12 @@
         custom (if-let [tools (custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)]
                  (eta-mu-extern/tool-seq tools)
                  [])]
-    (pr-str {:tools (->> (concat builtin custom)
-                         (keep eta-mu-extern/tool-runtime-name)
-                         sort
-                         distinct
-                         vec)
+     (pr-str {:tools (->> (concat builtin custom)
+                          (keep eta-mu-extern/tool-runtime-name)
+                          (filter provider-safe-tool-name?)
+                          sort
+                          distinct
+                          vec)
              :contract-id (some-> (:contract-id agent-spec) str str/trim not-empty)
              :actor-id (some-> (:actor-id agent-spec) str str/trim not-empty)
              :role (some-> (:role agent-spec) str str/trim not-empty)

@@ -55,7 +55,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- parse-sse-response
-  [text expected-id]
+  [text _expected-id]
   (let [lines (str/split text #"\n")
         data-line (reduce
                    (fn [_ line]

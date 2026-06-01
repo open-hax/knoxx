@@ -22,6 +22,7 @@
             [knoxx.backend.domain.bluesky.bluesky :as bluesky]
             [knoxx.backend.domain.media.multimodal :as multimodal]
             [knoxx.backend.domain.media.workspace :as workspace-media]
+            [knoxx.backend.domain.sandbox-container :as sandbox]
             [knoxx.backend.tools.mcp :as mcp]
             [knoxx.backend.domain.contracts.tools :as contracts]
             [knoxx.backend.domain.nrepl :as nrepl]
@@ -227,6 +228,7 @@
             (.concat (bluesky/create-bluesky-custom-tools runtime config auth-context))
             (.concat (multimodal/create-multimodal-custom-tools runtime config auth-context))
             (.concat (workspace-media/create-workspace-media-custom-tools runtime config auth-context))
+            (.concat (sandbox/create-sandbox-custom-tools runtime config auth-context))
             (.concat (mcp/create-mcp-custom-tools runtime config auth-context))
             (.concat (session-mycology/create-session-mycology-tools runtime config auth-context))
             (.concat (nrepl/create-nrepl-custom-tools runtime config auth-context))))

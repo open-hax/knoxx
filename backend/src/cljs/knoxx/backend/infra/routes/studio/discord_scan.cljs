@@ -4,6 +4,7 @@
             [knoxx.backend.domain.discord.rest-client :as discord-rest]
             [knoxx.backend.domain.media :as media]
             [knoxx.backend.domain.tools :refer [live-config]]
+            [knoxx.backend.infra.http :refer [json-response!]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]))
 

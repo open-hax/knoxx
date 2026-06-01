@@ -2,7 +2,8 @@
 ;; Real Node fs, no mocks. Fixtures in /tmp/knoxx-node-fs-test.
 
 (ns knoxx.backend.node.fs-test
-  (:require [cljs.test :refer [deftest is testing async]]
+  (:require [cljs.test :refer [deftest is testing]]
+            [clojure.string :as str]
             [knoxx.backend.domain.node.fs :as sut]
             [knoxx.backend.domain.node.path :as p]))
 
@@ -21,115 +22,84 @@
 
 ;; -- async round-trip -------------------------------------------------------
 
-(deftest write-then-read
-  (async done
-    (-> (sut/mkdir! root)
-        (.then #(sut/write-file! (p/join root "hello.txt") "world"))
-        (.then #(sut/read-file! (p/join root "hello.txt")))
-        (.then (fn [t] (is (= "world" t)) (done)))
-        (.catch (fn [e] (is false (str e)) (done))))))
+(deftest ^:async write-then-read
+  (await (sut/mkdir! root))
+  (await (sut/write-file! (p/join root "hello.txt") "world"))
+  (let [t (await (sut/read-file! (p/join root "hello.txt")))]
+    (is (= "world" t))))
 
-(deftest write-file-ensure-dir-creates-parents
-  (async done
-    (let [f (p/join root "a" "b" "nested.txt")]
-      (-> (sut/write-file-ensure-dir! f "nested")
-          (.then #(sut/read-file! f))
-          (.then (fn [t] (is (= "nested" t)) (done)))
-          (.catch (fn [e] (is false (str e)) (done)))))))
+(deftest ^:async write-file-ensure-dir-creates-parents
+  (let [f (p/join root "a" "b" "nested.txt")]
+    (await (sut/write-file-ensure-dir! f "nested"))
+    (let [t (await (sut/read-file! f))]
+      (is (= "nested" t)))))
 
-(deftest read-file-rejects-on-missing
-  (async done
-    (-> (sut/read-file! "/no/such/file.txt")
-        (.then (fn [_] (is false "should reject") (done)))
-        (.catch (fn [e] (is (= "ENOENT" (.-code e))) (done))))))
+(deftest ^:async read-file-rejects-on-missing
+  (try
+    (await (sut/read-file! "/no/such/file.txt"))
+    (is false "should reject")
+    (catch :default e
+      (is (= "ENOENT" (.-code e))))))
 
-(deftest mkdir-is-idempotent
-  (async done
-    (-> (sut/mkdir! root)
-        (.then #(sut/mkdir! root))
-        (.then (fn [_] (is true) (done)))
-        (.catch (fn [e] (is false (str e)) (done))))))
+(deftest ^:async mkdir-is-idempotent
+  (await (sut/mkdir! root))
+  (await (sut/mkdir! root))
+  (is true))
 
-(deftest stat-returns-cljs-map
-  (async done
-    (let [f (p/join root "stat.txt")]
-      (-> (sut/mkdir! root)
-          (.then #(sut/write-file! f "stat me"))
-          (.then #(sut/stat! f))
-          (.then (fn [s]
-                   (is (map? s))
-                   (is (true?  (:is-file? s)))
-                   (is (false? (:is-dir?  s)))
-                   (is (number? (:size s)))
-                   (is (string? (:mtime s)))
-                   (done)))
-          (.catch (fn [e] (is false (str e)) (done)))))))
+(deftest ^:async stat-returns-cljs-map
+  (let [f (p/join root "stat.txt")]
+    (await (sut/mkdir! root))
+    (await (sut/write-file! f "stat me"))
+    (let [s (await (sut/stat! f))]
+      (is (map? s))
+      (is (true?  (:is-file? s)))
+      (is (false? (:is-dir?  s)))
+      (is (number? (:size s)))
+      (is (string? (:mtime s))))))
 
-(deftest stat-or-nil-on-missing
-  (async done
-    (-> (sut/stat-or-nil! "/no/such/file.txt")
-        (.then (fn [v] (is (nil? v)) (done)))
-        (.catch (fn [e] (is false (str e)) (done))))))
+(deftest ^:async stat-or-nil-on-missing
+  (let [v (await (sut/stat-or-nil! "/no/such/file.txt"))]
+    (is (nil? v))))
 
-(deftest readdir-returns-cljs-vec
-  (async done
-    (-> (sut/mkdir! root)
-        (.then #(sut/write-file! (p/join root "r.edn") "{}"))
-        (.then #(sut/readdir! root))
-        (.then (fn [ns]
-                 (is (vector? ns))
-                 (is (every? string? ns))
-                 (done)))
-        (.catch (fn [e] (is false (str e)) (done))))))
+(deftest ^:async readdir-returns-cljs-vec
+  (await (sut/mkdir! root))
+  (await (sut/write-file! (p/join root "r.edn") "{}"))
+  (let [ns (await (sut/readdir! root))]
+    (is (vector? ns))
+    (is (every? string? ns))))
 
-(deftest readdir-returns-empty-on-missing
-  (async done
-    (-> (sut/readdir! "/no/such/dir")
-        (.then (fn [v] (is (= [] v)) (done)))
-        (.catch (fn [e] (is false (str e)) (done))))))
+(deftest ^:async readdir-returns-empty-on-missing
+  (let [v (await (sut/readdir! "/no/such/dir"))]
+    (is (= [] v))))
 
-(deftest readdir-deep-finds-files-recursively
-  (async done
-    (let [d (p/join root "deep")]
-      (-> (sut/write-file-ensure-dir! (p/join d "one.edn") "{}")
-          (.then #(sut/write-file-ensure-dir! (p/join d "sub" "two.edn") "{}"))
-          (.then #(sut/readdir-deep! d))
-          (.then (fn [ps]
-                   (is (vector? ps))
-                   (is (= 2 (count ps)))
-                   (is (every? string? ps))
-                   (done)))
-          (.catch (fn [e] (is false (str e)) (done)))))))
+(deftest ^:async readdir-deep-finds-files-recursively
+  (let [d (p/join root "deep")]
+    (await (sut/write-file-ensure-dir! (p/join d "one.edn") "{}"))
+    (await (sut/write-file-ensure-dir! (p/join d "sub" "two.edn") "{}"))
+    (let [ps (await (sut/readdir-deep! d))]
+      (is (vector? ps))
+      (is (= 2 (count ps)))
+      (is (every? string? ps)))))
 
-(deftest readdir-deep-with-pred
-  (async done
-    (let [d (p/join root "filtered")]
-      (-> (sut/write-file-ensure-dir! (p/join d "keep.edn") "{}")
-          (.then #(sut/write-file-ensure-dir! (p/join d "drop.txt") "hi"))
-          (.then (fn [_] (sut/readdir-deep! d (fn [n] (clojure.string/ends-with? n ".edn")))))
-          (.then (fn [ps]
-                   (is (= 1 (count ps)))
-                   (is (clojure.string/ends-with? (first ps) "keep.edn"))
-                   (done)))
-          (.catch (fn [e] (is false (str e)) (done)))))))
+(deftest ^:async readdir-deep-with-pred
+  (let [d (p/join root "filtered")]
+    (await (sut/write-file-ensure-dir! (p/join d "keep.edn") "{}"))
+    (await (sut/write-file-ensure-dir! (p/join d "drop.txt") "hi"))
+    (let [ps (await (sut/readdir-deep! d (fn [n] (str/ends-with? n ".edn"))))]
+      (is (= 1 (count ps)))
+      (is (str/ends-with? (first ps) "keep.edn")))))
 
-(deftest readdir-deep-empty-on-missing
-  (async done
-    (-> (sut/readdir-deep! "/no/such/dir")
-        (.then (fn [v] (is (= [] v)) (done)))
-        (.catch (fn [e] (is false (str e)) (done))))))
+(deftest ^:async readdir-deep-empty-on-missing
+  (let [v (await (sut/readdir-deep! "/no/such/dir"))]
+    (is (= [] v))))
 
-(deftest unlink-removes-file
-  (async done
-    (let [f (p/join root "del.txt")]
-      (-> (sut/mkdir! root)
-          (.then #(sut/write-file! f "bye"))
-          (.then #(sut/unlink! f))
-          (.then (fn [_] (is (false? (sut/exists? f))) (done)))
-          (.catch (fn [e] (is false (str e)) (done)))))))
+(deftest ^:async unlink-removes-file
+  (let [f (p/join root "del.txt")]
+    (await (sut/mkdir! root))
+    (await (sut/write-file! f "bye"))
+    (await (sut/unlink! f))
+    (is (false? (sut/exists? f)))))
 
-(deftest unlink-tolerates-missing
-  (async done
-    (-> (sut/unlink! "/no/such/file.txt")
-        (.then (fn [_] (is true) (done)))
-        (.catch (fn [e] (is false (str e)) (done))))))
+(deftest ^:async unlink-tolerates-missing
+  (await (sut/unlink! "/no/such/file.txt"))
+  (is true))

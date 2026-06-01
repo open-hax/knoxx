@@ -1,3 +1,7 @@
+(ns knoxx.backend.shape.url
+  (:require [clojure.string :as str]
+            [knoxx.backend.domain.agent.content :as content]))
+
 (defn resolve-media-url  [value]
   (cond
     (not (string? value)) value

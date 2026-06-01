@@ -70,6 +70,10 @@
    :qdrant-url (env "QDRANT_URL" "http://localhost:6333")
    :workspace-path (env "WORKSPACE_PATH" "/app/workspace")
 
+   ;; Single-file upload endpoint (POST /api/ingestion/upload)
+   :upload-dir (env "UPLOAD_DIR" "/tmp/kms-uploads")
+   :upload-max-bytes (env-int "UPLOAD_MAX_BYTES" (* 50 1024 1024))
+
    ;; Ingestion contract defaults (used when no contract values are present)
    :ingest-hidden-policy (env-keyword "INGEST_HIDDEN_POLICY" :skip)
    :ingest-follow-symlinks? (env-bool "INGEST_FOLLOW_SYMLINKS" false)
@@ -116,6 +120,8 @@
 (defn translation-poll-ms [] (:translation-poll-ms (config)))
 (defn qdrant-url [] (:qdrant-url (config)))
 (defn workspace-path [] (:workspace-path (config)))
+(defn upload-dir [] (:upload-dir (config)))
+(defn upload-max-bytes [] (:upload-max-bytes (config)))
 
 ;; These ingestion-* accessors exist primarily for the contracts.resolve shim layer.
 (defn ingest-hidden-policy [] (:ingest-hidden-policy (config)))

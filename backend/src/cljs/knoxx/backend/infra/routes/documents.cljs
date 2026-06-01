@@ -48,23 +48,6 @@
   [^js node-fs path encoding]
   (.readFile node-fs path encoding))
 
-(defn- parse-auto-ingest?
-  [part-seq]
-  (boolean
-   (some (fn [part]
-           (and (= (aget part "type") "field")
-                (= (aget part "fieldname") "autoIngest")
-                (= (str/lower-case (str (aget part "value"))) "true")))
-         part-seq)))
-
-(defn- parse-file-parts
-  [part-seq]
-  (filter #(= (aget % "type") "file") part-seq))
-
-(defn- request-parts-promise
-  [^js request]
-  (.fromAsync js/Array (.parts request)))
-
 (defn- process-file-part
   [^string docs-path part]
   (let [safe-name (sanitize-upload-name (or (aget part "filename") "upload.bin"))
@@ -73,12 +56,6 @@
     (js-await [buf (.arrayBuffer (js/Response. (aget part "file")))]
               (fs-write-buffer! fs abs-path (.from js/Buffer buf))
               rel-path)))
-
-(defn- upload-files
-  [^string docs-path file-parts]
-  (let [promises (mapv #(process-file-part docs-path %) file-parts)]
-    (js-await [written (js/Promise.all (clj->js promises))]
-              (vec (js-array-seq written)))))
 
 (defroute api-documents-list! []
   "GET" "/api/documents"
@@ -135,10 +112,11 @@
         project (:project body)]
     (if (empty? paths)
       (json-response! reply 400 {:detail "paths (array of workspace-relative file paths) is required"})
-      (-> (priority-ingest-workspace-files! runtime config {:paths paths :project project})
-          (.then (fn [resp] (json-response! reply 200 resp)))
-          (.catch (fn [err]
-                    (json-response! reply 500 {:detail (str "Priority ingestion failed: " err)})))))))
+      (try
+        (let [resp (await (priority-ingest-workspace-files! runtime config {:paths paths :project project}))]
+          (json-response! reply 200 resp))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Priority ingestion failed: " err)}))))))
 
 (defroute api-documents-ingest-restart! []
   "POST" "/api/documents/ingest/restart"
@@ -149,14 +127,14 @@
                              [:records db-id :lastRequest])]
     (if (nil? last-request)
       (json-response! reply 400 {:detail "No active ingestion to restart" :resumed false})
-      (-> (start-document-ingestion! runtime config profile
-                                     {:full (:full last-request)
-                                      :selected-files (:selectedFiles last-request)})
-          (.then (fn [resp] (json-response! reply 200 (assoc resp :resumed true))))
-          (.catch (fn [err]
-                    (json-response! reply 500 {:detail (str "Restart failed: " err)
-                                               :resumed false})))))))
-
+      (try
+        (let [resp (await (start-document-ingestion! runtime config profile
+                                                     {:full (:full last-request)
+                                                      :selected-files (:selectedFiles last-request)}))]
+          (json-response! reply 200 (assoc resp :resumed true)))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Restart failed: " err)
+                                     :resumed false}))))))
 (defroute api-documents-ingestion-status! []
   "GET" "/api/documents/ingestion-status"
   (when ctx (ensure-permission! ctx "datalake.read"))
@@ -193,34 +171,36 @@
         top-k (or (:topK body) 5)]
     (if (str/blank? query)
       (json-response! reply 400 {:detail "message is required"})
-      (-> (list-documents! runtime config request ctx)
-          (.then (fn [resp]
-                   (let [documents (:documents resp)
-                         lowered (str/lower-case query)
-                         results (->> documents
-                                      (map (fn [doc]
-                                             (let [path (str (:relativePath doc))
-                                                   name (str (:name doc))
-                                                   hay (str/lower-case (str path " " name))
-                                                   score (cond
-                                                           (str/includes? hay lowered) 1
-                                                           (str/includes? lowered (str/lower-case name)) 0.5
-                                                           :else 0)]
-                                               (assoc doc :score score))))
-                                      (filter #(pos? (:score %)))
-                                      (sort-by :score >)
-                                       (take top-k)
-                                       vec)]
-                     (json-response! reply 200 {:query query :topK top-k :results results}))))
-          (.catch (fn [err]
-                    (json-response! reply 500 {:detail (str "Retrieval debug failed: " err)})))))))
+      (try
+        (let [resp (await (list-documents! runtime config request ctx))
+              documents (:documents resp)
+              lowered (str/lower-case query)
+              results (->> documents
+                           (map (fn [doc]
+                                  (let [path (str (:relativePath doc))
+                                        name (str (:name doc))
+                                        hay (str/lower-case (str path " " name))
+                                        score (cond
+                                                (str/includes? hay lowered) 1
+                                                (str/includes? lowered (str/lower-case name)) 0.5
+                                                :else 0)]
+                                    (assoc doc :score score))))
+                           (filter #(pos? (:score %)))
+                           (sort-by :score >)
+                           (take top-k)
+                           vec)]
+          (json-response! reply 200 {:query query :topK top-k :results results}))
+        (catch :default err
+          (json-response! reply 500 {:detail (str "Retrieval debug failed: " err)}))))))
 
 (defroute api-graph-export! [openplanner-graph-export!]
   "GET" "/api/graph/export"
   (when ctx (ensure-permission! ctx "datalake.query"))
-  (-> (openplanner-graph-export! config request)
-      (.then (fn [resp] (json-response! reply 200 resp)))
-      (.catch (fn [err] (error-response! reply err 502)))))
+  (try
+    (let [resp (await (openplanner-graph-export! config request))]
+      (json-response! reply 200 resp))
+    (catch :default err
+      (error-response! reply err 502))))
 
 (defroute api-settings-databases-list! []
   "GET" "/api/settings/databases"
@@ -266,21 +246,21 @@
                      :privateToSession (boolean (:privateToSession body))
                      :ownerSessionId (when (:privateToSession body) session-id)
                      :createdAt (time/now-iso)}]
-        (-> (ensure-dir! runtime docs-path)
-            (.then (fn []
-                     (swap! database-state*
-                            (fn [state]
-                              (let [owner-key (database-owner-key ctx)]
-                                (-> state
-                                    (assoc-in [:profiles db-id] profile)
-                                    (assoc-in [:records db-id] (default-database-record))
-                                    ((fn [s]
-                                       (if (:activate body)
-                                         (assoc-in s [:active-ids owner-key] db-id)
-                                         s)))))))
-                     (json-response! reply 200 profile)))
-            (.catch (fn [err]
-                      (json-response! reply 500 {:detail (str "Failed to create database profile: " err)}))))))))
+        (try
+          (await (ensure-dir! runtime docs-path))
+          (swap! database-state*
+                 (fn [state]
+                   (let [owner-key (database-owner-key ctx)]
+                     (-> state
+                         (assoc-in [:profiles db-id] profile)
+                         (assoc-in [:records db-id] (default-database-record))
+                         ((fn [s]
+                            (if (:activate body)
+                              (assoc-in s [:active-ids owner-key] db-id)
+                              s)))))))
+          (json-response! reply 200 profile)
+          (catch :default err
+            (json-response! reply 500 {:detail (str "Failed to create database profile: " err)})))))))
 
 (defroute api-settings-databases-activate! []
   "POST" "/api/settings/databases/activate"

@@ -1,7 +1,7 @@
 {:contract/kind :trigger
  :contract/id "patrol_trigger"
  :contract/version 4
- :enabled true
+ :enabled false
 
  ;; Trigger agreement: discord_automation may run the patrol pipeline after
  ;; observing the schedule-generated patrol event.

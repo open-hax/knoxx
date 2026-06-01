@@ -138,7 +138,7 @@
       (h/values [{:role_id          [:cast role-id :uuid]
                   :tool_id          tool-id
                   :effect           effect
-                  :constraints_json [:raw constraints-json]}])
+                  :constraints_json [:cast constraints-json :jsonb]}])
       (h/on-conflict :role_id :tool_id)
       (h/do-update-set {:effect           [:raw "EXCLUDED.effect"]
                          :constraints_json [:raw "EXCLUDED.constraints_json"]})))

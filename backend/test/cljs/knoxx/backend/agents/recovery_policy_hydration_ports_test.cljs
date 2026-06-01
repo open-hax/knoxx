@@ -74,6 +74,23 @@
                                                          :auth-context {:userId "u"}
                                                          :agent-spec {:contract-id "agent"}}))))))))
 
+(deftest ^:async composite-hydration-source-preserves-source-order
+  (let [calls* (atom [])
+        source-a (reify hydration-sources/IHydrationSource
+                   (hydrate [_ request]
+                     (swap! calls* conj [:a request])
+                     (js/Promise.resolve {:source "a" :message (:message request)})))
+        source-b (reify hydration-sources/IHydrationSource
+                   (hydrate [_ request]
+                     (swap! calls* conj [:b request])
+                     (js/Promise.resolve {:source "b" :auth (:auth-context request)})))
+        composite (hydration-sources/composite-source [source-a source-b])
+        request {:message "hydrate me" :auth-context {:userId "u"}}]
+    (is (= [{:source "a" :message "hydrate me"}
+            {:source "b" :auth {:userId "u"}}]
+           (await (hydration-sources/hydrate composite request))))
+    (is (= [[:a request] [:b request]] @calls*))))
+
 (deftest ^:async recovery-coordinator-can-be-faked-and-default-delegates
   (testing "fake coordinator supports lifecycle tests"
     (let [calls* (atom [])

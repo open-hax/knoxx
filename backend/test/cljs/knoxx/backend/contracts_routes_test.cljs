@@ -6,7 +6,7 @@
             [knoxx.backend.infra.redis-client :as redis]))
 
 (def fixture-config
-  {:contracts-dir "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/backend/test/fixtures/contracts"})
+  {:contracts-dir "test/fixtures/contracts"})
 
 (defn- capture-json
   []

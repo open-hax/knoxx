@@ -15,6 +15,24 @@
 ;;   session-guard          → request.ctx
 ;;   optional-session-guard → request.ctx (nil if unauthenticated)
 
+(defn ^:async attach-required-session!
+  [runtime req done]
+  (try
+    (let [ctx (await (authz/resolve-request-context! runtime req))]
+      (aset req "ctx" ctx)
+      (done))
+    (catch :default err
+      (done err))))
+
+(defn ^:async attach-optional-session!
+  [runtime req done]
+  (try
+    (let [ctx (await (authz/resolve-request-context! runtime req))]
+      (aset req "ctx" ctx))
+    (catch :default _
+      (aset req "ctx" nil)))
+  (done))
+
 (defn make-session-guard
   "Returns a Fastify preHandler that resolves the Knoxx auth context and
    attaches it to request.ctx.  Calls done(err) on failure so Fastify
@@ -23,11 +41,8 @@
    Use for routes that require an authenticated context."
   [runtime]
   (fn [req _reply done]
-    (-> (authz/resolve-request-context! runtime req)
-        (.then (fn [ctx]
-                 (aset req "ctx" ctx)
-                 (done)))
-        (.catch done))))
+    (attach-required-session! runtime req done)
+    nil))
 
 (defn make-optional-session-guard
   "Returns a Fastify preHandler that opportunistically resolves auth context.
@@ -38,10 +53,5 @@
    a valid session is present)."
   [runtime]
   (fn [req _reply done]
-    (-> (authz/resolve-request-context! runtime req)
-        (.then (fn [ctx]
-                 (aset req "ctx" ctx)
-                 (done)))
-        (.catch (fn [_]
-                  (aset req "ctx" nil)
-                  (done))))))
+    (attach-optional-session! runtime req done)
+    nil))

@@ -80,10 +80,6 @@
        (remove str/blank?)
        set))
 
-(defn- tool-call-contract-call-shape
-  [contract tool-id]
-  (get-in contract [:tools/call-shape tool-id]))
-
 (defn tool-call-contract-denied
   "Return tools from granted-tool-ids that are NOT in the contract's :tools/allowed.
    Empty :tools/allowed means no restriction (passthrough)."
@@ -106,7 +102,7 @@
       (str "Denied by policy contract " (:contract/id contract))))
 
 (defn tool-call-contract-reason
-  [contract tool-id]
+  [contract _tool-id]
   (str "Denied by tool-call contract " (:contract/id contract)
        " — not declared in :tools/allowed"))
 

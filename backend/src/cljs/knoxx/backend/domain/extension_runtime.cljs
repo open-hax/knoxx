@@ -180,7 +180,7 @@
    result          – merged event result map
 
    Returns [new-messages new-system-prompt]."
-  [session-manager messages system-prompt result]
+  [_session-manager messages system-prompt result]
   (let [messages* (vec messages)
         prompt* (or (:systemPrompt result) system-prompt)
         injected-msg (:message result)]

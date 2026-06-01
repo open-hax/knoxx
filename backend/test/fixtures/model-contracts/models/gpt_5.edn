@@ -1,0 +1,11 @@
+{:model/id "gpt-5"
+ :model-family/id "gpt"
+ :model/provider :proxx
+ :model/label "GPT-5"
+ :model/allowlisted true
+ :model/reasoning true
+ :model/default-thinking :minimal
+ :model/thinking-levels [:off :minimal :low :medium :high :xhigh]
+ :model/context-window 128000
+ :model/max-tokens 8192
+ :model/input [:text :image :audio]}

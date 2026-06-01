@@ -25,7 +25,6 @@ type Garden = {
   garden_id: string;
   title: string;
   description: string;
-  domain: string;
   status: string;
   theme?: GardenTheme;
   nav?: {
@@ -63,13 +62,6 @@ const THEMES: Array<{ value: GardenTheme; label: string; colors: { bg: string; t
     colors: { bg: '#0a0a0a', text: '#e0e0e0', accent: '#00d4ff' } 
   },
 ];
-
-const gardenLinks: Record<string, string> = {
-  "devel-deps-garden": "http://127.0.0.1:8798/",
-  "truth-workbench": "http://127.0.0.1:8789/workbench",
-  query: "/query",
-  ingestion: "/ingestion",
-};
 
 function ThemeBadge({ theme }: { theme?: GardenTheme }) {
   const themeInfo = THEMES.find(t => t.value === theme);
@@ -122,13 +114,13 @@ export default function GardensPage() {
   const [editingGarden, setEditingGarden] = useState<Garden | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   
   // Form state
   const [formGardenId, setFormGardenId] = useState('');
   const [formTitle, setFormTitle] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formTheme, setFormTheme] = useState<GardenTheme>('monokai');
-  const [formDomain, setFormDomain] = useState('general');
   const [formStatus, setFormStatus] = useState('active');
   const [formTargetLanguages, setFormTargetLanguages] = useState<string[]>([]);
   const [formAutoTranslate, setFormAutoTranslate] = useState(true);
@@ -157,7 +149,6 @@ export default function GardensPage() {
     setFormTitle('');
     setFormDescription('');
     setFormTheme('monokai');
-    setFormDomain('general');
     setFormStatus('active');
     setFormTargetLanguages([]);
     setFormAutoTranslate(true);
@@ -171,7 +162,6 @@ export default function GardensPage() {
     setFormTitle(garden.title);
     setFormDescription(garden.description);
     setFormTheme(garden.theme || 'monokai');
-    setFormDomain(garden.domain);
     setFormStatus(garden.status);
     setFormTargetLanguages(garden.target_languages || []);
     setFormAutoTranslate(garden.auto_translate ?? true);
@@ -198,7 +188,6 @@ export default function GardensPage() {
             title: formTitle,
             description: formDescription,
             theme: formTheme,
-            domain: formDomain,
             status: formStatus,
             target_languages: formTargetLanguages,
             auto_translate: formAutoTranslate,
@@ -208,7 +197,6 @@ export default function GardensPage() {
             title: formTitle,
             description: formDescription,
             theme: formTheme,
-            domain: formDomain,
             target_languages: formTargetLanguages,
             auto_translate: formAutoTranslate,
           };
@@ -235,10 +223,7 @@ export default function GardensPage() {
   }
 
   async function handleDelete(gardenId: string) {
-    if (!confirm(`Are you sure you want to delete garden "${gardenId}"?`)) {
-      return;
-    }
-
+    setConfirmingDelete(null);
     setSaving(true);
     setError(null);
 
@@ -354,26 +339,20 @@ export default function GardensPage() {
               </select>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Status</label>
-              <select
-                value={formStatus}
-                onChange={(e) => setFormStatus(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 p-2 text-sm dark:border-slate-600 dark:bg-slate-800"
-              >
-                <option value="active">Active</option>
-                <option value="draft">Draft</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium">Domain</label>
-              <Input
-                value={formDomain}
-                onChange={(e) => setFormDomain(e.target.value)}
-                placeholder="general"
-              />
-            </div>
+            {editingGarden ? (
+              <div>
+                <label className="mb-1 block text-sm font-medium">Status</label>
+                <select
+                  value={formStatus}
+                  onChange={(e) => setFormStatus(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 p-2 text-sm dark:border-slate-600 dark:bg-slate-800"
+                >
+                  <option value="active">Active</option>
+                  <option value="draft">Draft</option>
+                  <option value="archived">Archived</option>
+                </select>
+              </div>
+            ) : null}
 
             <div className="md:col-span-2">
               <label className="mb-1 block text-sm font-medium">Target Languages</label>
@@ -472,9 +451,6 @@ export default function GardensPage() {
                 }`}>
                   {garden.status}
                 </span>
-                <span className="text-slate-600 dark:text-slate-400">
-                  Domain: {garden.domain}
-                </span>
                 {garden.target_languages && garden.target_languages.length > 0 && (
                   <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                     <span>🌐</span>
@@ -501,13 +477,33 @@ export default function GardensPage() {
                 >
                   Edit
                 </Button>
-                <Button
-                  onClick={() => handleDelete(garden.garden_id)}
-                  variant="ghost"
-                  size="sm"
-                >
-                  Delete
-                </Button>
+                {confirmingDelete === garden.garden_id ? (
+                  <>
+                    <Button
+                      onClick={() => handleDelete(garden.garden_id)}
+                      variant="primary"
+                      size="sm"
+                      loading={saving}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <Button
+                      onClick={() => setConfirmingDelete(null)}
+                      variant="ghost"
+                      size="sm"
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    onClick={() => setConfirmingDelete(garden.garden_id)}
+                    variant="ghost"
+                    size="sm"
+                  >
+                    Delete
+                  </Button>
+                )}
               </div>
             </Card>
           );

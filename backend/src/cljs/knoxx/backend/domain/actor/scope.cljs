@@ -101,3 +101,11 @@
                 claim)))
        sort
        vec))
+
+(defn default-membership-actor-id
+  "Resolve the default actor id for a membership with the given role slugs."
+  [role-slugs]
+  (let [normalized-slugs (set (map #(str/replace (str %) #"-" "_") role-slugs))]
+    (if (contains? normalized-slugs "system_admin")
+      "system_admin"
+      "workspace_user")))

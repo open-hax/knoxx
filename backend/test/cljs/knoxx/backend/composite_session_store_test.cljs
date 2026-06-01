@@ -49,18 +49,34 @@
 
 ;; ─── put-run! ───────────────────────────────────────────────────────────────
 
-(deftest ^:async put-run-writes-to-both-stores
+(deftest ^:async put-run-live-writes-to-primary-only
+  ;; Live runs (running/queued/waiting_input) go to Redis only — OpenPlanner is
+  ;; not the authority for in-flight state.
   (let [a (memory-store)
         b (memory-store)
         composite (->CompositeSessionStore a b)
-        run (base-run)
+        run (base-run)              ; status "running"
         result (await (put-run! composite run))]
     (testing "returns the run"
       (is (= "run-1" (:run_id result))))
     (testing "written to primary store"
       (is (= run (get @(:runs* a) "run-1"))))
+    (testing "not written to secondary store while live"
+      (is (nil? (get @(:runs* b) "run-1"))))))
+
+(deftest ^:async put-run-terminal-writes-to-both-stores
+  ;; Terminal runs (completed/failed/cancelled) are archived to both stores.
+  (let [a (memory-store)
+        b (memory-store)
+        composite (->CompositeSessionStore a b)
+        run (assoc (base-run) :status "completed" :answer "ok")
+        result (await (put-run! composite run))]
+    (testing "returns the run"
+      (is (= "run-1" (:run_id result))))
+    (testing "written to primary store"
+      (is (= "completed" (:status (get @(:runs* a) "run-1")))))
     (testing "written to secondary store"
-      (is (= run (get @(:runs* b) "run-1"))))))
+      (is (= "completed" (:status (get @(:runs* b) "run-1")))))))
 
 ;; ─── get-run ────────────────────────────────────────────────────────────────
 
@@ -105,17 +121,18 @@
       (is (= "42" (:answer (get @(:runs* a) "run-1"))))
       (is (= "42" (:answer (get @(:runs* b) "run-1")))))))
 
-(deftest ^:async complete-run-does-not-throw-on-store-divergence
-  ;; When Redis and OP have diverged state, the composite still resolves.
-  ;; Divergence is logged as a side effect but we test the contract: no throw.
+(deftest ^:async complete-run-archives-primary-result-to-secondary
+  ;; complete-run! finalises the run in the primary store, then puts the
+  ;; primary result into the secondary — secondary's prior state is irrelevant.
   (let [a (memory-store)
         b (memory-store)
         composite (->CompositeSessionStore a b)
         run (base-run)]
-    (swap! (:runs* a) assoc "run-1" (assoc run :status "completed" :answer "yes"))
-    (swap! (:runs* b) assoc "run-1" (assoc run :status "failed"))
-    (testing "resolves even when stores disagree"
-      (is (some? (await (complete-run! composite "run-1" {:status "completed" :answer "yes"})))))))
+    (swap! (:runs* a) assoc "run-1" run)
+    (await (complete-run! composite "run-1" {:status "completed" :answer "yes"}))
+    (testing "secondary receives the finalised run from primary"
+      (is (= "completed" (:status (get @(:runs* b) "run-1"))))
+      (is (= "yes" (:answer (get @(:runs* b) "run-1")))))))
 
 ;; ─── delete-run! ────────────────────────────────────────────────────────────
 

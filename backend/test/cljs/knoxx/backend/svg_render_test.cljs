@@ -37,20 +37,15 @@
      <text x='20' y='70' font-family='Georgia, Arial' font-size='42' fill='url(#g)' filter='url(#glow)'>Knoxx</text>
    </svg>")
 
-(deftest svg->png-renders-browser-svg-features
+(deftest ^:async svg->png-renders-browser-svg-features
   (testing "Chromium produces a PNG buffer for filter, text font fallback, and text gradient SVGs"
-    (async done
-      (if-not (executable-available?)
-        (do
-          (is true "Skipping Chromium SVG render smoke test; no executable configured/found.")
-          (done))
-        (-> (svg-render/svg->png browser-feature-svg {:width 240 :height 120})
-            (.then (fn [buf]
-                     (is (= "89504e470d0a1a0a" (.toString (.subarray buf 0 8) "hex")))
-                     (is (> (.-length buf) 1000))))
-            (.then svg-render/shutdown!)
-            (.then (fn [_] (done)))
-            (.catch (fn [err]
-                      (is false (str err))
-                      (-> (svg-render/shutdown!)
-                          (.finally done)))))))))
+    (if-not (executable-available?)
+      (is true "Skipping Chromium SVG render smoke test; no executable configured/found.")
+      (try
+        (let [buf (await (svg-render/svg->png browser-feature-svg {:width 240 :height 120}))]
+          (is (= "89504e470d0a1a0a" (.toString (.subarray buf 0 8) "hex")))
+          (is (> (.-length buf) 1000)))
+        (await (svg-render/shutdown!))
+        (catch :default err
+          (is false (str err))
+          (await (svg-render/shutdown!)))))))

@@ -36,11 +36,11 @@
     (try
       (let [result (await (memory/openplanner-semantic-search! {:openplanner-base-url "http://openplanner.test"
                                                                 :openplanner-api-key "test-key"
-                                                                :project-name "devel"}
+                                                                :project-name "workspace-test"}
                                                                {:query "knoxx" :k 1}))]
         (is (= [{:url "http://openplanner.test/v1/search/vector"
                  :method "POST"
-                 :body {:q "knoxx" :k 1 :project "devel"}}]
+                 :body {:q "knoxx" :k 1 :project "workspace-test"}}]
                @requests*))
         (is (= :vector (:mode result)))
         (is (= [{:id "doc-1"
@@ -51,6 +51,21 @@
       (finally
         (aset js/globalThis "fetch" original-fetch)))))
 
+(deftest ^:async openplanner-semantic-search-defaults-to-workspace-project
+  (let [requests* (atom [])
+        original-fetch (install-fake-fetch! requests* vector-search-body)]
+    (try
+      (let [result (await (memory/openplanner-semantic-search! {:openplanner-base-url "http://openplanner.test"
+                                                                :openplanner-api-key "test-key"}
+                                                               {:query "knoxx" :k 1}))]
+        (is (= [{:url "http://openplanner.test/v1/search/vector"
+                 :method "POST"
+                 :body {:q "knoxx" :k 1 :project "workspace"}}]
+               @requests*))
+        (is (= :vector (:mode result))))
+      (finally
+        (aset js/globalThis "fetch" original-fetch)))))
+
 (deftest ^:async semantic-search-documents-returns-passive-hydration-shape
   (let [requests* (atom [])
         original-fetch (install-fake-fetch! requests* vector-search-body)]
@@ -58,7 +73,7 @@
       (let [result (await (semantic/semantic-search-documents! nil
                                                                {:openplanner-base-url "http://openplanner.test"
                                                                 :openplanner-api-key "test-key"
-                                                                :project-name "devel"}
+                                                                :project-name "workspace-test"}
                                                                {:query "knoxx"
                                                                 :top-k 1
                                                                 :max-snippet-chars 240}
@@ -66,7 +81,7 @@
             first-result (first (:results result))]
         (is (= [{:url "http://openplanner.test/v1/search/vector"
                  :method "POST"
-                 :body {:q "knoxx" :k 1 :project "devel"}}]
+                 :body {:q "knoxx" :k 1 :project "workspace-test"}}]
                @requests*))
         (is (= "knoxx" (:query result)))
         (is (= "docs/knoxx.md" (:path first-result)))

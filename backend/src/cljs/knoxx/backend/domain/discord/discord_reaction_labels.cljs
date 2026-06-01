@@ -75,9 +75,9 @@
         emoji (str/trim (str (or (js-get reaction "emoji") "")))
         user-id (str (or (js-get reaction "userId") ""))
         channel-id (str (or (js-get reaction "channelId") ""))
-        message-id (str (or (js-get reaction "messageId") ""))]
-    (let [client (openplanner-client/client config)]
-      (if (or (str/blank? emoji) (str/blank? channel-id) (str/blank? message-id) (not (openplanner-client/enabled? client)))
+        message-id (str (or (js-get reaction "messageId") ""))
+        client (openplanner-client/client config)]
+    (if (or (str/blank? emoji) (str/blank? channel-id) (str/blank? message-id) (not (openplanner-client/enabled? client)))
         (js/Promise.resolve {:ok false :skipped true})
         (let [record-id (discord-record-id channel-id message-id)
               event (message->openplanner-event config message emoji user-id)]
@@ -89,7 +89,7 @@
                                                              :user_id user-id})))
               (.catch (fn [err]
                         (.warn js/console "[discord-reaction-labels] failed to ingest reaction" err)
-                        {:ok false :error (.-message err)}))))))))
+                        {:ok false :error (.-message err)})))))))
 
 (defn bind!
   [config]

@@ -7,6 +7,7 @@ import { ChatWorkspacePane } from "../components/chat-page/ChatWorkspacePane";
 import { createSidebarResizeHandlers } from "../components/chat-page/sidebar-resize";
 import { useChatWorkspaceController } from "../components/chat-page/useChatWorkspaceController";
 import { ContextBar } from "../components/context-bar";
+import { isWorkspaceSource } from "../components/workspace-context/utils";
 import { PublicationBlocksRenderer, extractPublicationBlocks } from "../components/cms/PublicationBlocksRenderer";
 import { CreateVisualDraftModal } from "../components/cms/CreateVisualDraftModal";
 import type { CmsTemplateOption } from "../components/cms/CreateVisualDraftModal";
@@ -21,6 +22,7 @@ import type {
   PreviewResponse,
   SemanticSearchMatch,
   WorkspaceJob,
+  IngestionSource,
 } from "../components/context-bar/types";
 import type { AgentSource, MemorySessionSummary } from "../lib/types";
 import styles from "./CmsPage.module.css";
@@ -212,10 +214,8 @@ function CmsPage() {
       try {
         const sourcesResp = await fetch("/api/ingestion/sources");
         if (!sourcesResp.ok) return;
-        const sources = await sourcesResp.json();
-        const source = sources.find((s: { name: string; config?: { root_path?: string } }) =>
-          s.name === "devel workspace" || s.config?.root_path === "/app/workspace/devel"
-        );
+        const sources = (await sourcesResp.json()) as IngestionSource[];
+        const source = sources.find(isWorkspaceSource);
         setWorkspaceSourceId(source?.source_id ?? null);
         if (!source) return;
 

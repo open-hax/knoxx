@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n CSS,BRIDGE,APP_BRIDGE,SHADOW \"tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css --watch\" \"vite build --config vite.bridge.config.ts --watch\" \"vite build --config vite.app-bridge.config.ts --watch\" \"shadow-cljs watch app\"",
+    "dev": "concurrently -k -n CSS,BRIDGE,APP_BRIDGE,SHADOW_BRIDGE,SHADOW \"tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css --watch\" \"vite build --config vite.bridge.config.ts --watch\" \"vite build --config vite.app-bridge.config.ts --watch\" \"node scripts/watch-shadow-bridge-rebuild.mjs\" \"shadow-cljs watch app\"",
     "build": "vite build --config vite.bridge.config.ts && vite build --config vite.app-bridge.config.ts && shadow-cljs release app && tailwindcss -c tailwind.config.ts -i src/index.css -o dist/app.css",
     "preview": "vite preview",
     "test": "node ./node_modules/vitest/vitest.mjs run --config vitest.config.ts",

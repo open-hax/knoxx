@@ -79,15 +79,8 @@
   [json-response! reply]
   (json-response! reply 503 {:detail "Knoxx policy database is not configured"}))
 
-(defn register-user-admin-routes!
-  [app runtime {:keys [route!
-                       json-response!
-                       with-request-context!
-                       ensure-permission!
-                       ensure-org-scope!
-                       policy-db
-                       policy-db-promise
-                       http-error]}]
+(defn- register-admin-user-index-routes!
+  [app runtime {:keys [route! json-response! with-request-context! ensure-permission! ensure-org-scope! policy-db policy-db-promise http-error]}]
   (route! app "GET" "/api/admin/users"
           (fn [request reply]
             (if-let [db (policy-db runtime)]
@@ -101,7 +94,6 @@
                                        (db-policy/list-users! (db-policy/context-pool db)
                                                               {:org-id org-id})))))
               (unavailable! json-response! reply))))
-
   (route! app "POST" "/api/admin/users"
           (fn [request reply]
             (if-let [db (policy-db runtime)]
@@ -115,8 +107,10 @@
                                        (db-policy/create-user-for-context!
                                         db
                                         (user-payload body org-id))))))
-              (unavailable! json-response! reply))))
+              (unavailable! json-response! reply)))))
 
+(defn- register-org-user-read-routes!
+  [app runtime {:keys [route! json-response! with-request-context! ensure-org-scope! policy-db policy-db-promise]}]
   (route! app "GET" "/api/admin/orgs/:orgId/users"
           (fn [request reply]
             (if-let [db (policy-db runtime)]
@@ -128,7 +122,6 @@
                                        (db-policy/list-users! (db-policy/context-pool db)
                                                               {:org-id org-id})))))
               (unavailable! json-response! reply))))
-
   (route! app "GET" "/api/admin/orgs/:orgId/actors"
           (fn [request reply]
             (if-let [db (policy-db runtime)]
@@ -142,106 +135,71 @@
                                                     (db-policy/list-users!
                                                      (db-policy/context-pool db)
                                                      {:org-id org-id}))))))))
-              (unavailable! json-response! reply))))
+              (unavailable! json-response! reply)))))
 
-  (route! app "POST" "/api/admin/orgs/:orgId/users"
-          (fn [request reply]
-            (if-let [db (policy-db runtime)]
-              (let [org-id (param-value request "orgId")
-                    body (body-map request)]
-                (with-request-context! runtime request reply
-                  (fn [ctx]
-                    (ensure-org-scope! ctx org-id "org.users.create")
-                    (policy-db-promise runtime reply 201
-                                       (db-policy/create-user-for-context!
-                                        db
-                                        (user-payload body org-id))))))
-              (unavailable! json-response! reply))))
+(defn- register-org-user-create-routes!
+  [app runtime {:keys [route! json-response! with-request-context! ensure-org-scope! policy-db policy-db-promise]}]
+  (doseq [[method path] [["POST" "/api/admin/orgs/:orgId/users"]
+                         ["POST" "/api/admin/orgs/:orgId/actors"]]]
+    (route! app method path
+            (fn [request reply]
+              (if-let [db (policy-db runtime)]
+                (let [org-id (param-value request "orgId")
+                      body (body-map request)]
+                  (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (ensure-org-scope! ctx org-id "org.users.create")
+                      (policy-db-promise runtime reply 201
+                                         (db-policy/create-user-for-context!
+                                          db
+                                          (user-payload body org-id))))))
+                (unavailable! json-response! reply))))))
 
-  (route! app "POST" "/api/admin/orgs/:orgId/actors"
-          (fn [request reply]
-            (if-let [db (policy-db runtime)]
-              (let [org-id (param-value request "orgId")
-                    body (body-map request)]
-                (with-request-context! runtime request reply
-                  (fn [ctx]
-                    (ensure-org-scope! ctx org-id "org.users.create")
-                    (policy-db-promise runtime reply 201
-                                       (db-policy/create-user-for-context!
-                                        db
-                                        (user-payload body org-id))))))
-              (unavailable! json-response! reply))))
+(defn- register-user-actor-update-routes!
+  [app runtime {:keys [route! json-response! with-request-context! ensure-org-scope! policy-db policy-db-promise http-error]}]
+  (doseq [[method path] [["PATCH" "/api/admin/users/:userId"]
+                         ["PATCH" "/api/admin/actors/:userId"]]]
+    (route! app method path
+            (fn [request reply]
+              (if-let [db (policy-db runtime)]
+                (let [user-id (param-value request "userId")
+                      body (body-map request)
+                      org-id (body-org-id body)]
+                  (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (require-org-id! http-error org-id)
+                      (ensure-org-scope! ctx org-id "org.members.update")
+                      (policy-db-promise runtime reply 200
+                                         (db-policy/update-user-actor-for-context!
+                                          db
+                                          user-id
+                                          (actor-update-payload body))))))
+                (unavailable! json-response! reply))))))
 
-  (route! app "PATCH" "/api/admin/users/:userId"
-          (fn [request reply]
-            (if-let [db (policy-db runtime)]
-              (let [user-id (param-value request "userId")
-                    body (body-map request)
-                    org-id (body-org-id body)]
-                (with-request-context! runtime request reply
-                  (fn [ctx]
-                    (require-org-id! http-error org-id)
-                    (ensure-org-scope! ctx org-id "org.members.update")
-                    (policy-db-promise runtime reply 200
-                                       (db-policy/update-user-actor-for-context!
-                                        db
-                                        user-id
-                                        (actor-update-payload body))))))
-              (unavailable! json-response! reply))))
+(defn- register-user-credential-routes!
+  [app runtime {:keys [route! json-response! with-request-context! ensure-org-scope! policy-db policy-db-promise http-error]}]
+  (doseq [[method path] [["PUT" "/api/admin/users/:userId/credentials/:provider"]
+                         ["PUT" "/api/admin/actors/:userId/credentials/:provider"]]]
+    (route! app method path
+            (fn [request reply]
+              (if-let [db (policy-db runtime)]
+                (let [user-id (param-value request "userId")
+                      provider (param-value request "provider")
+                      body (body-map request)
+                      org-id (body-org-id body)]
+                  (with-request-context! runtime request reply
+                    (fn [ctx]
+                      (require-org-id! http-error org-id)
+                      (ensure-org-scope! ctx org-id "org.user_policy.update")
+                      (policy-db-promise runtime reply 200
+                                         (db-policy/upsert-actor-credential-for-context!
+                                          db
+                                          user-id
+                                          (credential-payload body provider))))))
+                (unavailable! json-response! reply))))))
 
-  (route! app "PATCH" "/api/admin/actors/:userId"
-          (fn [request reply]
-            (if-let [db (policy-db runtime)]
-              (let [user-id (param-value request "userId")
-                    body (body-map request)
-                    org-id (body-org-id body)]
-                (with-request-context! runtime request reply
-                  (fn [ctx]
-                    (require-org-id! http-error org-id)
-                    (ensure-org-scope! ctx org-id "org.members.update")
-                    (policy-db-promise runtime reply 200
-                                       (db-policy/update-user-actor-for-context!
-                                        db
-                                        user-id
-                                        (actor-update-payload body))))))
-              (unavailable! json-response! reply))))
-
-  (route! app "PUT" "/api/admin/users/:userId/credentials/:provider"
-          (fn [request reply]
-            (if-let [db (policy-db runtime)]
-              (let [user-id (param-value request "userId")
-                    provider (param-value request "provider")
-                    body (body-map request)
-                    org-id (body-org-id body)]
-                (with-request-context! runtime request reply
-                  (fn [ctx]
-                    (require-org-id! http-error org-id)
-                    (ensure-org-scope! ctx org-id "org.user_policy.update")
-                    (policy-db-promise runtime reply 200
-                                       (db-policy/upsert-actor-credential-for-context!
-                                        db
-                                        user-id
-                                        (credential-payload body provider))))))
-              (unavailable! json-response! reply))))
-
-  (route! app "PUT" "/api/admin/actors/:userId/credentials/:provider"
-          (fn [request reply]
-            (if-let [db (policy-db runtime)]
-              (let [user-id (param-value request "userId")
-                    provider (param-value request "provider")
-                    body (body-map request)
-                    org-id (body-org-id body)]
-                (with-request-context! runtime request reply
-                  (fn [ctx]
-                    (require-org-id! http-error org-id)
-                    (ensure-org-scope! ctx org-id "org.user_policy.update")
-                    (policy-db-promise runtime reply 200
-                                       (db-policy/upsert-actor-credential-for-context!
-                                        db
-                                        user-id
-                                        (credential-payload body provider))))))
-              (unavailable! json-response! reply))))
-
+(defn- register-membership-routes!
+  [app runtime {:keys [route! json-response! with-request-context! ensure-org-scope! policy-db policy-db-promise http-error]}]
   (route! app "GET" "/api/admin/orgs/:orgId/memberships"
           (fn [request reply]
             (if-let [db (policy-db runtime)]
@@ -253,7 +211,6 @@
                                        (db-policy/list-memberships! (db-policy/context-pool db)
                                                                     {:org-id org-id})))))
               (unavailable! json-response! reply))))
-
   (route! app "PATCH" "/api/admin/memberships/:membershipId/roles"
           (fn [request reply]
             (if-let [db (policy-db runtime)]
@@ -271,8 +228,10 @@
                                                        db
                                                        membership-id
                                                        (membership-roles-payload (body-map request)))))))))))
-              (unavailable! json-response! reply))))
+              (unavailable! json-response! reply)))))
 
+(defn- register-membership-policy-routes!
+  [app runtime {:keys [route! json-response! with-request-context! ensure-org-scope! policy-db policy-db-promise http-error]}]
   (route! app "PATCH" "/api/admin/memberships/:membershipId/tool-policies"
           (fn [request reply]
             (if-let [db (policy-db runtime)]
@@ -291,6 +250,15 @@
                                                        (db-policy/context-pool db)
                                                        membership-id
                                                        (tool-policies body))))))))))
-              (unavailable! json-response! reply))))
+              (unavailable! json-response! reply)))))
 
+(defn register-user-admin-routes!
+  [app runtime handlers]
+  (register-admin-user-index-routes! app runtime handlers)
+  (register-org-user-read-routes! app runtime handlers)
+  (register-org-user-create-routes! app runtime handlers)
+  (register-user-actor-update-routes! app runtime handlers)
+  (register-user-credential-routes! app runtime handlers)
+  (register-membership-routes! app runtime handlers)
+  (register-membership-policy-routes! app runtime handlers)
   nil)

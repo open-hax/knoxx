@@ -7,7 +7,8 @@
    [kms-ingestion.drivers.promptdb :as promptdb]
    [kms-ingestion.drivers.audio :as audio]
    [kms-ingestion.drivers.image :as image]
-   [kms-ingestion.drivers.scraper :as scraper]))
+   [kms-ingestion.drivers.scraper :as scraper]
+   [kms-ingestion.drivers.github :as github]))
 
 (def driver-constructors
   {"local"      local/create-driver
@@ -21,8 +22,9 @@
    "image"      image/create-image-driver
    ;; Audio scraper — crawls URLs, downloads audio files to local folder
    "scraper"    scraper/create-scraper-driver
+   ;; GitHub repo/issue/PR ingestion
+   "github"     github/create-driver
    ;; Future drivers:
-   ;; "github"       github/create-driver
    ;; "google_drive" google-drive/create-driver
    })
 
