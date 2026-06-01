@@ -1,0 +1,42 @@
+name: Deploy Knoxx Staging
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: knoxx-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Knoxx staging
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.PROMETHEAN_SSH_PRIVATE_KEY }}" > ~/.ssh/promethean
+          chmod 600 ~/.ssh/promethean
+          ssh-keyscan -H "${{ vars.PROMETHEAN_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          DEPLOY_ENV: staging
+          PROMETHEAN_SSH_HOST: ${{ vars.PROMETHEAN_SSH_HOST }}
+          PROMETHEAN_SSH_USER: ${{ vars.PROMETHEAN_SSH_USER }}
+          PROMETHEAN_SSH_KEY_PATH: ~/.ssh/promethean
+          KNOXX_REMOTE_SOURCE_PATH: ${{ vars.KNOXX_REMOTE_SOURCE_PATH }}
+          OPENPLANNER_SERVICE_PATH: ${{ vars.OPENPLANNER_SERVICE_PATH }}
+          KNOXX_COMPOSE_PROJECT: ${{ vars.KNOXX_COMPOSE_PROJECT }}
+          KNOXX_BACKEND_PORT: ${{ vars.KNOXX_BACKEND_PORT }}
+          KNOXX_PUBLIC_BASE_URL: ${{ vars.KNOXX_PUBLIC_BASE_URL }}
+        run: scripts/deploy-promethean-knoxx.sh
