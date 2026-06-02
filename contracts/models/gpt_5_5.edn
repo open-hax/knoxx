@@ -7,5 +7,5 @@
  :model/default-thinking :minimal
  :model/thinking-levels [:off :minimal :low :medium :high :xhigh]
  :model/context-window 256000
- :model/max-tokens 128000
+ :model/max-tokens 8192
  :model/input [:text :image :audio]}
