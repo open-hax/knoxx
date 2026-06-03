@@ -33,7 +33,7 @@
     "@measured/puck": "^0.20.2",
     "@nextjournal/lang-clojure": "^1.0.0",
     "@octave-commons/webgl-graph-view": "0.3.0",
-    "@open-hax/garden-publication-components": "workspace:*",
+    "@open-hax/garden-publication-components": "^0.1.0",
     "@open-hax/uxx": "0.2.0",
     "@remix-run/router": "1.23.2",
     "audiomotion-analyzer": "^4.5.4",
