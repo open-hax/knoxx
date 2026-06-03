@@ -38,8 +38,14 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install dependencies
+      - name: Install root dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install backend dependencies
+        run: pnpm -C backend install --frozen-lockfile
+
+      - name: Install frontend dependencies
+        run: pnpm -C frontend install --frozen-lockfile
 
       - name: Backend typecheck
         run: pnpm -C backend run typecheck
