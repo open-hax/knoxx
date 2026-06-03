@@ -11,4 +11,5 @@
                                                            "beat" "loop" "track" "art" "create" "mix" "drop"]))
  :trigger/action :actions/start-agent-session
  :trigger/agent "ussyverse_social_replies"
+ :trigger/task "A Discord event fired in one of your home channels. Read nearby context, inspect links or attachment URLs if useful, and decide whether to reply in-channel. Replies should feel alive, funny, musical, or socially connective."
  :data {:context {:reason "contract event: ussyverse social replies"}}}
