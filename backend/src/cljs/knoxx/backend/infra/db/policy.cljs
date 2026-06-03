@@ -965,7 +965,51 @@
     (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
                                 :org-id org-id :action "user.create_or_update"
                                 :resource-kind "user" :resource-id (:id user)}))
-    {:user nil}))
+    {:user user :membership ms}))
+
+(defn- secret-json->clj
+  [value]
+  (cond
+    (nil? value) {}
+    (map? value) value
+    (string? value) (js->clj (js/JSON.parse value) :keywordize-keys true)
+    :else (js->clj value :keywordize-keys true)))
+
+(defn ^:async local-password-auth-record!
+  [pool email]
+  (when-let [normalized (normalize-email email)]
+    (when-let [row (await (pg/query-one! pool
+                                         "SELECT u.id AS user_id,
+                                                 u.email,
+                                                 u.display_name,
+                                                 m.id AS membership_id,
+                                                 m.org_id,
+                                                 m.actor_id,
+                                                 o.slug AS org_slug,
+                                                 ac.secret_json
+                                          FROM users u
+                                          JOIN memberships m ON m.user_id = u.id
+                                          JOIN orgs o ON o.id = m.org_id
+                                          LEFT JOIN actor_credentials ac
+                                            ON ac.user_id = u.id
+                                           AND ac.org_id = m.org_id
+                                           AND ac.provider = 'local'
+                                           AND ac.kind = 'password'
+                                           AND ac.status = 'active'
+                                          WHERE lower(u.email) = lower($1)
+                                            AND u.status = 'active'
+                                            AND m.status = 'active'
+                                          ORDER BY m.is_default DESC, m.created_at ASC
+                                          LIMIT 1"
+                                         [normalized]))]
+      {:user-id (:user_id row)
+       :email (:email row)
+       :display-name (:display_name row)
+       :membership-id (:membership_id row)
+       :org-id (:org_id row)
+       :org-slug (:org_slug row)
+       :actor-id (:actor_id row)
+       :secret-json (secret-json->clj (:secret_json row))})))
 
 (defn ^:async list-memberships!
   [pool {:keys [org-id]}]
@@ -1360,6 +1404,10 @@
                 (context-actor-user-id policy-context)
                 (context-actor-membership-id policy-context)
                 payload))
+
+(defn local-password-auth-record-for-context!
+  [policy-context email]
+  (local-password-auth-record! (context-pool policy-context) email))
 
 (defn create-invite-for-context!
   [policy-context payload]
