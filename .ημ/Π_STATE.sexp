@@ -1,29 +1,68 @@
 (fork-tax-state
-  (timestamp "2026-06-01T00:26:00Z")
+  (timestamp "2026-06-03T00:00:00Z")
   (repo "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx")
   (branch "pi/fork-tax/20260529T022118Z-main-softreset-all-dirt-knoxx")
   (remote "origin" "git@github.com:open-hax/knoxx.git")
-  (snapshot-base-head "38cd4e32c7cef97f0274b1864492c190210707ef")
-  (scope "Backend async/await lint remediation continuation + kanban triage/updates + ingestion jar rebuild")
+  (snapshot-base-head "283d28f1290f8a282c1de2200de277d12c76b3cb")
+  (scope "Backend error observability, local password auth, trigger/action task prompt migration, async/await modernization, event normalization, provider tool disable removal, frontend auth, CI/CD workflows")
   (changes
-    (backend-lint-continuation
-      "94 modified backend CLJS source/test files: continued conversion of promise chains (.then/.catch) to ^:async/await across bluesky, discord gateway/tools, auth session, policy DB, app routes, memory routes, translation, voice, redis client, session stores, message sources, session flush, temp memory, SVG render, law guards/url, opencode ingester, agent session/tool-catalog/turn, composite stores"
-      "Warnings reduced from ~1461 (prior snapshot) to ~823 (last receipt) while maintaining 0 errors"
-      "Extracted helper functions for long route handlers and domain flows per function-length warnings")
-    (kanban-updates
-      "Modified kanban epics/tasks/workbench files: status updates, triage notes, frontmatter normalization"
-      "New kanban task files added (untracked): knowledge-lake stubs, knowledge-ops pass files, knoxx arch migration tasks, chat UI tasks, CMS tasks, event runtime tasks, editor tasks, futuresight tasks, gardens tasks, generator tasks, KMS tasks, knowledge workbench, lake local, multi-tenant tasks, playlist tasks, PII tasks, studio tasks, tenant tasks, translation tasks, trigger tasks, uxx tasks")
-    (ingestion-build
-      "ingestion/target/kms-ingestion.jar rebuilt (binary artifact)")
-    (receipts
-      "receipts.edn appended with 14 new test-run entries documenting each lint slice"))
+    (frontend-local-auth
+      "Frontend LoginPage/SignupPage add local password auth UI behind feature flag"
+      "shadow-cljs.edn dev proxy switched from knoxx-backend container DNS to 127.0.0.1")
+    (backend-local-password-auth
+      "Auth routes: local password signup/login handlers with scrypt hashing"
+      "DB policy: local-password-auth-record! query, upsert-actor-credential-for-context! storage")
+    (error-observability-system
+      "New domain/error_observatory.cljs: centralized error logging with safe JSON context"
+      "New check-error-boundaries.mjs script + error-boundary-allowlist.json baseline"
+      "package.json: error-boundaries:check and error-boundaries:inventory scripts")
+    (error-surface-integration
+      "Discord source: observe-boundary! for fetch-channel/list-channels failures"
+      "Event dispatch: trigger-failure-result surfaces failed action results as 500 data"
+      "Source runtime: skip-result logging, dispatch/start-source error capture"
+      "Event runtime: observe-promise! for source start failures"
+      "HTTP infra: 500 error-response! logs to observatory with context"
+      "App routes: log-and-record-async-spawn-error! for chat turn failures"
+      "Tools routes: trigger-fire-response! returns 500 when trigger actions fail")
+    (agent-runtime-empty-turn
+      "Agent turn: empty-turn-output? detection, finalize-empty-turn-output! with run_failed event"
+      "Runner: log-and-record-async-spawn-error! records run failure events"
+      "Service: uses log-and-record-async-spawn-error! for queued turn failures"
+      "Models routes: redis-run-fallback reconstructs run from events + session after restart")
+    (provider-tool-disable-removal
+      "Removed provider-tool-disabled-models set and provider-tools-enabled-for-model?"
+      "Session: always exposes policy-resolved tools, delegates model compatibility to Proxx"
+      "Test: removed provider-tools-are-disabled-for-known-incompatible-models test")
+    (trigger-action-task-prompt-migration
+      "Action registry: extracts :trigger/task into :action/with :task"
+      "Start agent session: action-task-input resolves trigger/action task text with source metadata"
+      "Start agent session: render-start-message labels action vs deprecated agent task prompt"
+      "Trigger normalize: preserves :trigger/task field"
+      "Runner/turn: pass task-source, rendered-task-prompt, deprecated-agent-task-fallback through spec"
+      "Turn: emit-action-task-rendered-event! broadcasts task audit event"
+      "Contracts: moved task text from agent :prompts :task to trigger :trigger/task")
+    (event-normalization
+      "Event normalize: dotted JSON event type preservation (:discord.message)"
+      "New tests: event_normalize_test.cljs, live_contract_policy_test.cljs")
+    (async-await-modernization
+      "Domain: label/audio, sandbox-container, session-mycology converted from Promise chains"
+      "Infra core: initialize-mcp-gateway!, start-background-services!, prewarm-sdk-runtime!, start!"
+      "Routes: MCP, models, resources, discord-scan, tools, proxy all converted"
+      "Active items sort: active-item-time-ms normalizes ISO string vs numeric ms")
+    (ci-cd-workflows
+      "New .github/workflows/deploy-production.yml and deploy-staging.yml")
+    (process-artifacts
+      "Kanban: epic addendum for task prompt migration, lint task progress updates"
+      "New kanban task: knoxx-trigger-action-task-prompt-migration.md"
+      "New docs note: 2026.06.03.09.09.14.md"
+      "Receipts: 14 new entries documenting verification sessions"))
   (concurrent-dirt
-    "none identified; all working tree changes are owned by the backend lint remediation and kanban maintenance workstreams")
+    "none; all working tree changes are owned by this snapshot")
   (blocked-paths ())
   (verification
     (secret-heuristic-scan "passed: no literal private keys / tokens / api-keys in staged additions")
-    (backend-server-compile "passed: pnpm -C backend typecheck (shadow-cljs compile server) => 307 files, 0 warnings, 1.00s")
-    (backend-tests "passed: pnpm -C backend exec shadow-cljs compile test => 452 tests, 1326 assertions, 0 failures, 0 errors")
-    (backend-lint "latest receipt: errors 0 warnings 823; continuous improvement from prior snapshot's 1461 warnings"))
+    (backend-server-compile "passed: pnpm -C backend typecheck => 0 warnings")
+    (backend-tests "passed: pnpm -C backend exec shadow-cljs compile test => 456 tests, 1341 assertions, 0 failures, 0 errors")
+    (error-boundaries-check "passed: pnpm -C backend error-boundaries:check"))
   (destructive-cleanup false)
-  (tag "pi/fork-tax/20260601T002600Z/knoxx-backend-async-lint-continuation"))
+  (tag "pi/fork-tax/20260603T000000Z/knoxx-error-observability-auth-task-prompt-async"))

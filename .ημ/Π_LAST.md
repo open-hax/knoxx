@@ -1,53 +1,28 @@
-# Π Fork Tax Handoff
+# Π Fork Tax 2026-06-03
 
-- Timestamp: `2026-06-01T00:26:00Z`
-- Repository: `/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx`
-- Branch: `pi/fork-tax/20260529T022118Z-main-softreset-all-dirt-knoxx`
-- Remote: `origin` (`git@github.com:open-hax/knoxx.git`)
-- Snapshot base HEAD: `38cd4e32c7cef97f0274b1864492c190210707ef`
-- Planned tag: `pi/fork-tax/20260601T002600Z/knoxx-backend-async-lint-continuation`
+## Snapshot
+- **Base:** `283d28f1` (pi/fork-tax/20260529T022118Z-main-softreset-all-dirt-knoxx)
+- **Scope:** Backend error observability, local password auth, trigger/action task prompt migration, async/await modernization, event normalization, provider tool disable removal, frontend auth, CI/CD workflows
+- **Tests:** 456 tests, 1346 assertions, 0 failures, 0 errors
+- **Typecheck:** 0 warnings
 
-## Scope
+## Commit Groups
 
-This snapshot captures the continuation of backend lint remediation (async/await conversion) alongside kanban maintenance and ingestion build artifacts.
+1. **frontend-local-auth** — LoginPage/SignupPage local password UI, shadow-cljs dev proxy fix
+2. **backend-local-password-auth** — Auth routes + DB policy for local scrypt password signup/login
+3. **error-observability-system** — New error_observatory domain, boundary check script, allowlist baseline
+4. **error-surface-integration** — Discord source, event dispatch, source runtime, HTTP, app/tools route error logging
+5. **agent-runtime-empty-turn** — Empty turn detection, run reconstruction from Redis, async spawn error recording
+6. **provider-tool-disable-removal** — Remove Knoxx-side provider tool model disable; delegate to Proxx
+7. **trigger-action-task-prompt-migration** — Move task prompts from agent contracts to trigger/action inputs with audit events
+8. **event-normalization** — Dotted JSON event type preservation, fixture-based contract policy tests
+9. **async-await-domain** — audio labels, sandbox container, session mycology Promise→async conversion
+10. **async-await-infra-routes** — MCP, models, resources, discord-scan, tools, proxy routes Promise→async conversion
+11. **ci-cd-workflows** — GitHub Actions deploy production/staging workflows
+12. **process-artifacts** — Kanban updates, new task files, docs note, receipts
 
-### Backend lint remediation (continuation)
+## Concurrent Dirt
+None. All working tree changes are owned by this snapshot.
 
-94 modified backend CLJS source/test files, continuing the systematic conversion of raw Promise chains (`.then`/`.catch`) to `^:async`/`await`:
-
-- **Bluesky** (`domain/bluesky/bluesky.cljs`): auth, session, search, profile, publish, social, chat helpers and tool execute flows
-- **Discord** (`domain/discord/gateway.cljs`, `domain/discord/tools.cljs`): gateway reaction/client/message/voice/manager/actor flows and tool token/client, label attach, channel/DM fetch/search, upload/SVG render, send/react/thread/list helpers
-- **Auth session** (`infra/auth/session.cljs`): persistent session secret, DB/Redis, GitHub OAuth, cookie/API-key context, session creation, invite email, hook hydration
-- **Policy DB** (`infra/db/policy.cljs`): role/context/bootstrap/org/user/membership/data-lake flows, session/invite/credential/bootstrap/allowlist
-- **App routes** (`infra/routes/app.cljs`): proxy/data/health/session/run/admin/chat/direct helpers
-- **Memory routes** (`infra/routes/memory.cljs`): cache/session/search flows
-- **Translation** (`infra/routes/translation.cljs`) and **Voice** (`infra/routes/voice.cljs`): STT/TTS route helpers
-- **Redis client** (`infra/redis_client.cljs`): promise wrapper conversion
-- **Stores/sources** (`stores/*`, `source/opencode_session_ingester.cljs`): session store, composite store, message sources, session flush
-- **Misc** (`law/guards.cljs`, `law/url.cljs`, `infra/temp_memory.cljs`, `infra/svg_render.cljs`, `infra/agent/session.cljs`, `infra/agent/tool_catalog.cljs`, `infra/agent/turn.cljs`)
-
-Warnings reduced from ~1461 (prior snapshot) to ~823 (last recorded receipt), maintaining **0 errors** throughout. Long functions were split into helpers where function-length warnings applied.
-
-### Kanban updates
-
-- Modified epics/tasks/workbench files: status updates, triage notes, frontmatter normalization
-- 70+ new kanban task files (previously untracked) covering knowledge-lake, knowledge-ops passes, knoxx architecture migration, chat UI, CMS, event runtime, editor, futuresight, gardens, generators, KMS, multi-tenant, PII, studio, tenant, translation, trigger, and uxx workstreams
-
-### Ingestion build
-
-- `ingestion/target/kms-ingestion.jar` rebuilt (binary artifact)
-
-### Receipts
-
-- `receipts.edn` appended with 14 new test-run entries, one per lint slice, documenting the continuous improvement path
-
-## Verification
-
-- Secret heuristic scan: passed; no literal private keys / tokens / api-keys in staged additions.
-- `pnpm -C backend typecheck` (shadow-cljs compile server): passed; 307 files, 0 warnings, 1.00s.
-- `pnpm -C backend exec shadow-cljs compile test`: passed; 452 tests, 1326 assertions, 0 failures, 0 errors.
-- Latest lint receipt: errors 0, warnings ~823 (down from 1461 at prior snapshot).
-
-## Concurrent dirt
-
-None identified. All working tree changes are owned by the backend lint remediation and kanban maintenance workstreams. No unrelated path was deleted, reset, restored, cleaned, or unstaged. No PM2 process restarted.
+## Blockers
+None.
