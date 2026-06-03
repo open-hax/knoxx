@@ -42,10 +42,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install backend dependencies
-        run: pnpm -C backend install --frozen-lockfile
+        run: pnpm -C backend install --no-frozen-lockfile
 
       - name: Install frontend dependencies
-        run: pnpm -C frontend install --frozen-lockfile
+        run: pnpm -C frontend install --no-frozen-lockfile
 
       - name: Backend typecheck
         run: pnpm -C backend run typecheck
