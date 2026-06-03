@@ -4,7 +4,7 @@
 (defn parse-positive-int
   [value]
   (let [n (cond
-            (string? value) (if (re-find #"\\." value)
+            (string? value) (if (re-find #"\." value)
                               js/NaN
                               (js/parseInt value 10))
             (number? value) value

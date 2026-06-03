@@ -1,0 +1,141 @@
+name: deploy-testing
+
+# Label-gated test deploy: adding the `testing` label to an eligible PR
+# deploys the PR head to the shared staging slot through the
+# open-hax/services Promethean deploy module. The slot is shared — a real
+# staging merge deploy will overwrite it.
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: knoxx-staging
+  cancel-in-progress: false
+
+jobs:
+  testing-eligibility:
+    name: testing-eligibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_deploy: ${{ steps.evaluate.outputs.should_deploy }}
+      pr_head_sha: ${{ steps.evaluate.outputs.pr_head_sha }}
+      pr_number: ${{ steps.evaluate.outputs.pr_number }}
+    steps:
+      - uses: actions/github-script@v8
+        id: evaluate
+        env:
+          TESTING_ALLOWED_OWNER_LOGINS: ${{ vars.TESTING_ALLOWED_OWNER_LOGINS || '' }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const hasTestingLabel = pr.labels.some((label) => label.name === 'testing');
+
+            core.setOutput('pr_head_sha', pr.head.sha);
+            core.setOutput('pr_number', String(pr.number));
+
+            if (!hasTestingLabel) {
+              core.notice('Skipping testing deploy because the PR does not currently carry the `testing` label.');
+              core.setOutput('should_deploy', 'false');
+              return;
+            }
+
+            if (pr.draft) {
+              core.setFailed('Testing deploy requires a ready-for-review PR.');
+              return;
+            }
+
+            if (pr.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              core.setFailed('Testing deploy only runs for same-repository PR heads; fork PRs are not eligible for the shared staging slot.');
+              return;
+            }
+
+            const allowedLogins = (process.env.TESTING_ALLOWED_OWNER_LOGINS || '')
+              .split(/[,\s]+/)
+              .map((item) => item.trim().toLowerCase())
+              .filter(Boolean);
+
+            if (allowedLogins.length === 0) {
+              core.setFailed('Configure repo/org variable TESTING_ALLOWED_OWNER_LOGINS with the allowed org-owner GitHub logins before using the shared staging slot.');
+              return;
+            }
+
+            if (!allowedLogins.includes(pr.user.login.toLowerCase())) {
+              core.setFailed(`Testing deploy is reserved for owner-created PRs. ${pr.user.login} is not in TESTING_ALLOWED_OWNER_LOGINS.`);
+              return;
+            }
+
+            core.setOutput('should_deploy', 'true');
+
+  testing-preflight:
+    name: testing-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs:
+      - testing-eligibility
+    if: ${{ needs.testing-eligibility.outputs.should_deploy == 'true' }}
+    steps:
+      - name: Checkout Knoxx
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.testing-eligibility.outputs.pr_head_sha }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Backend typecheck
+        run: pnpm -C backend run typecheck
+
+      - name: Backend tests with coverage
+        run: pnpm -C backend run test:coverage
+
+      - name: Frontend typecheck
+        run: pnpm -C frontend run typecheck
+
+      - name: Frontend tests with coverage
+        run: pnpm -C frontend run test:coverage
+
+      - name: Frontend build
+        run: pnpm -C frontend run build
+
+  deploy-testing:
+    name: deploy-testing
+    needs:
+      - testing-eligibility
+      - testing-preflight
+    if: ${{ needs.testing-eligibility.outputs.should_deploy == 'true' }}
+    uses: open-hax/services/.github/workflows/deploy-promethean.yml@main
+    with:
+      environment: staging
+      service: knoxx
+      source_repository: ${{ github.repository }}
+      source_ref: ${{ needs.testing-eligibility.outputs.pr_head_sha }}
+    secrets: inherit
