@@ -7,6 +7,7 @@
   (:require [clojure.string :as str]
             [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.domain.discord.rest-client :as discord-rest]
+            [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.domain.label.quality :as quality-labels]
             [knoxx.backend.infra.db.policy :as policy-db]))
@@ -38,6 +39,10 @@
 (defn active?
   []
   (boolean (seq (active-gateway-entries))))
+
+(defn- observe-boundary!
+  [boundary context f]
+  (errors/call-observed! boundary context f))
 
 (defn gateway-user-id
   []
@@ -112,9 +117,13 @@
 
 (defn- fetch-channel-from-gateway-entries!
   [entries channel-id opts]
-  (if-let [[_actor-id manager] (first entries)]
+  (if-let [[actor-id manager] (first entries)]
     (-> (.fetchChannelMessages manager channel-id opts)
-        (.catch (fn [_]
+        (.catch (fn [err]
+                  (errors/log-warning! :discord-source/fetch-channel-fallback
+                                       {:actor/id actor-id
+                                        :channel/id channel-id
+                                        :error (errors/error-message err)})
                   (fetch-channel-from-gateway-entries! (rest entries) channel-id opts))))
     (js/Promise.reject (js/Error. (str "No active Discord actor gateway can read channel " channel-id)))))
 
@@ -146,9 +155,13 @@
     (if (seq entries)
       (-> (js/Promise.all
            (clj->js
-            (mapv (fn [[_ manager]]
+            (mapv (fn [[actor-id manager]]
                     (-> (.listChannels manager nil)
-                        (.catch (fn [_] #js []))))
+                        (.catch (fn [err]
+                                  (errors/log-warning! :discord-source/list-channels-failed
+                                                       {:actor/id actor-id
+                                                        :error (errors/error-message err)})
+                                  #js []))))
                   entries)))
           (.then (fn [results]
                    (->> (js/Array.from results)
@@ -208,13 +221,20 @@
                              (let [fresh (unseen-messages channel-id messages)]
                                (doseq [message fresh]
                                  (when-let [kind (match-kind message)]
-                                   (dispatch-message! message kind)))
+                                   (observe-boundary!
+                                    :discord-source/patrol-dispatch
+                                    {:channel/id channel-id
+                                     :event/type kind
+                                     :message/id (:id message)}
+                                    #(dispatch-message! message kind))))
                                (remember-latest! channel-id messages)
                                {:channelId channel-id
                                 :fetched (count messages)
                                 :fresh (count fresh)})))
                     (.catch (fn [err]
-                              (println "[event runtimes.discord] patrol failed for" channel-id ":" (.-message err))
+                              (errors/log-error! :discord-source/patrol-channel
+                                                 {:channel/id channel-id}
+                                                 err)
                               {:channelId channel-id
                                :error true}))))
               channel-ids)))
@@ -259,7 +279,10 @@
                            (.then (fn [messages]
                                     {:channelId channel-id
                                      :messages messages}))
-                           (.catch (fn [_]
+                           (.catch (fn [err]
+                                     (errors/log-warning! :discord-source/synthesis-channel-empty
+                                                          {:channel/id channel-id
+                                                           :error (errors/error-message err)})
                                      {:channelId channel-id
                                       :messages []}))))]
       (-> (js/Promise.all (clj->js (mapv fetch-row! channel-ids)))
@@ -285,30 +308,45 @@
                                bot-user-id (some-> (aget status "userId") str str/trim not-empty)
                                msg-unsub (.onMessage manager
                                                      (fn [mapped _raw]
-                                                       (on-message!
-                                                        (assoc (js->clj mapped :keywordize-keys true)
-                                                               :gatewayActorId actor-id
-                                                               :gatewayBotUserId bot-user-id))))
+                                                       (let [msg (assoc (js->clj mapped :keywordize-keys true)
+                                                                        :gatewayActorId actor-id
+                                                                        :gatewayBotUserId bot-user-id)]
+                                                         (observe-boundary!
+                                                          :discord-source/gateway-message-dispatch
+                                                          {:actor/id actor-id
+                                                           :bot/user-id bot-user-id
+                                                           :message/id (:id msg)
+                                                           :channel/id (:channelId msg)}
+                                                          #(on-message! msg)))))
                                voice-unsub (.onVoiceStateUpdate manager
                                                                  (fn [mapped _old _new]
-                                                                   (on-voice-state!
-                                                                    (assoc (js->clj mapped :keywordize-keys true)
-                                                                           :gatewayActorId actor-id
-                                                                           :gatewayBotUserId bot-user-id))))]
+                                                                   (let [state (assoc (js->clj mapped :keywordize-keys true)
+                                                                                      :gatewayActorId actor-id
+                                                                                      :gatewayBotUserId bot-user-id)]
+                                                                     (observe-boundary!
+                                                                      :discord-source/gateway-voice-state-dispatch
+                                                                      {:actor/id actor-id
+                                                                       :bot/user-id bot-user-id
+                                                                       :user/id (:userId state)
+                                                                       :channel/id (:channelId state)}
+                                                                      #(on-voice-state! state)))))]
                            [msg-unsub voice-unsub])))
                       vec)]
              (println "[event runtimes] bound" (/ (count unsubscribes) 2) "Discord actor gateway(s)")
              (reset! gateway-unsubscribe*
                      (fn []
                        (doseq [unsubscribe unsubscribes]
-                         (try (unsubscribe) (catch js/Error _))))))))
+                         (observe-boundary!
+                          :discord-source/gateway-unsubscribe
+                          {}
+                          unsubscribe)))))))
         (.catch (fn [err]
-                  (println "[event runtimes] discord actor gateway bind failed:" (.-message err))
+                  (errors/log-error! :discord-source/bind-gateways {} err)
                   nil)))
     (println "[event runtimes] policy DB unavailable; Discord actor gateways not bound")))
 
 (defn stop!
   []
   (when-let [unsubscribe @gateway-unsubscribe*]
-    (unsubscribe)
+    (observe-boundary! :discord-source/stop-unsubscribe {} unsubscribe)
     (reset! gateway-unsubscribe* nil)))

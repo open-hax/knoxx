@@ -361,44 +361,42 @@
 
     edn-text))
 
-(defn sync-resource-index!
+(defn ^:async sync-resource-index!
   "Sync resource EDN files → Redis resources:index set.
 
    Redis is a cache + fast index; disk is canonical. Invalid resource files are
    omitted by the loader and must not block backend startup or the repair UI."
   [config]
   (if-let [client (redis/get-client)]
-    (-> (resources/load-all-resources! config)
-        (.then (fn [records]
-                 (let [ids (->> records
-                                (map (fn [record]
-                                       (resource-id->index-key (:resource/class record)
-                                                               (:resource/id record))))
-                                distinct
-                                sort
-                                vec)]
-                   (-> (redis/smembers client resources-index-key)
-                       (.then (fn [existing]
-                                (let [existing-set (set (map str (js/Array.from (or existing (js/Array.)))))
-                                      desired-set (set ids)
-                                      to-add (vec (sort (set/difference desired-set existing-set)))
-                                      to-remove (vec (sort (set/difference existing-set desired-set)))
-                                      ops (concat
-                                           (for [id to-add]
-                                             (redis/sadd client resources-index-key id))
-                                           (for [id to-remove]
-                                             (redis/srem client resources-index-key id)))]
-                                  (-> (js/Promise.all (clj->js ops))
-                                      (.then (fn [_]
-                                               (println "[resources] synced Redis index; add=" (count to-add) "remove=" (count to-remove))
-                                               {:ok true
-                                                :added to-add
-                                                :removed to-remove
-                                                :count (count ids)}))))))))))
-        (.catch (fn [err]
-                  (println "[resources] sync-resource-index! failed; startup continuing:" (.-message err))
-                  {:ok false :error (.-message err)})))
-    (js/Promise.resolve {:ok false :error "Redis not connected"})))
+    (try
+      (let [records (await (resources/load-all-resources! config))
+            ids (->> records
+                     (map (fn [record]
+                            (resource-id->index-key (:resource/class record)
+                                                    (:resource/id record))))
+                     distinct
+                     sort
+                     vec)
+            existing (await (redis/smembers client resources-index-key))
+            existing-set (set (map str (js/Array.from (or existing (js/Array.)))))
+            desired-set (set ids)
+            to-add (vec (sort (set/difference desired-set existing-set)))
+            to-remove (vec (sort (set/difference existing-set desired-set)))
+            ops (concat
+                 (for [id to-add]
+                   (redis/sadd client resources-index-key id))
+                 (for [id to-remove]
+                   (redis/srem client resources-index-key id)))]
+        (await (js/Promise.all (clj->js ops)))
+        (println "[resources] synced Redis index; add=" (count to-add) "remove=" (count to-remove))
+        {:ok true
+         :added to-add
+         :removed to-remove
+         :count (count ids)})
+      (catch :default err
+        (println "[resources] sync-resource-index! failed; startup continuing:" (.-message err))
+        {:ok false :error (.-message err)}))
+    {:ok false :error "Redis not connected"}))
 
 (defn sync-contract-index!
   "Compatibility alias for old contract route callers."
@@ -433,6 +431,15 @@
   (or (nil? filename)
       (str/ends-with? (str/lower-case (str filename)) ".edn")))
 
+(defn- ^:async resource-refresh!
+  [config]
+  (try
+    (await (sync-resource-index! config))
+    (event-runtime/debounced-reload!)
+    (println "[resources] event runtime reload queued after resource change")
+    (catch :default err
+      (println "[resources] watcher refresh failed:" (.-message err)))))
+
 (defn- schedule-resource-refresh!
   [config reason]
   (clear-resource-watch-timer!)
@@ -441,17 +448,7 @@
            (fn []
              (reset! resource-watch-timer* nil)
              (println "[resources] watcher refresh triggered by" reason)
-             (-> (sync-resource-index! config)
-                 (.catch (fn [err]
-                           (println "[resources] watcher sync failed:" (.-message err))
-                           nil))
-                  (.then (fn [_]
-                            (event-runtime/debounced-reload!)
-                            (println "[resources] event runtime reload queued after resource change")
-                           nil))
-                 (.catch (fn [err]
-                           (println "[resources] watcher reload failed:" (.-message err))
-                           nil))))
+             (resource-refresh! config))
            resource-watch-debounce-ms)))
 
 (defn start-resource-watcher!
@@ -488,68 +485,68 @@
   [config]
   (start-resource-watcher! config))
 
-(defn handle-list-resources
+(defn ^:async handle-list-resources
   "List all resources, optionally filtered by resource kind/class.
    Public so tests can call it directly."
   [do-json config resource-kind]
-  (-> (resources/load-all-resources! config)
-      (.then (fn [all]
-               (let [resource-class (when resource-kind (normalize-resource-class resource-kind))
-                     selected (cond->> all
-                                resource-class (filter #(= (:resource/class %)
-                                                           resource-class))
-                                :always        (sort-by (juxt :resource/class :resource/id))
-                                :always        vec)]
-                 (do-json 200 {:resources (mapv resource-list-summary selected)}))))
-      (.catch (fn [err]
-                (do-json 500 {:detail (str "Failed to list resources: " (.-message err))})))))
+  (try
+    (let [all (await (resources/load-all-resources! config))
+          resource-class (when resource-kind (normalize-resource-class resource-kind))
+          selected (cond->> all
+                     resource-class (filter #(= (:resource/class %)
+                                                resource-class))
+                     :always        (sort-by (juxt :resource/class :resource/id))
+                     :always        vec)]
+      (do-json 200 {:resources (mapv resource-list-summary selected)}))
+    (catch :default err
+      (do-json 500 {:detail (str "Failed to list resources: " (.-message err))}))))
 
-(defn handle-list-contracts
+(defn ^:async handle-list-contracts
   "Compatibility alias for old /contracts clients."
   [do-json config contract-class]
-  (-> (resources/load-all-resources! config)
-      (.then (fn [all]
-               (let [resource-class (when contract-class (normalize-resource-class contract-class))
-                     selected (cond->> all
-                                resource-class (filter #(= (:resource/class %)
-                                                           resource-class))
-                                :always        (sort-by (juxt :resource/class :resource/id))
-                                :always        vec)]
-                 (do-json 200 {:contracts (mapv contract-list-summary selected)}))))
-      (.catch (fn [err]
-                (do-json 500 {:detail (str "Failed to list contracts: " (.-message err))})))))
+  (try
+    (let [all (await (resources/load-all-resources! config))
+          resource-class (when contract-class (normalize-resource-class contract-class))
+          selected (cond->> all
+                     resource-class (filter #(= (:resource/class %)
+                                                resource-class))
+                     :always        (sort-by (juxt :resource/class :resource/id))
+                     :always        vec)]
+      (do-json 200 {:contracts (mapv contract-list-summary selected)}))
+    (catch :default err
+      (do-json 500 {:detail (str "Failed to list contracts: " (.-message err))}))))
 
-(defn- handle-get-resource
+(defn- ^:async handle-get-resource
   [do-json config resource-kind resource-id]
-  (-> (.readFile fs (resources/resource-file-path config resource-kind resource-id) "utf8")
-      (.then (fn [edn-text]
-               (let [resource-class (normalize-resource-class resource-kind)
-                     validation (validate-resource-edn resource-class (or edn-text ""))]
-                 (do-json 200 {:resourceClass resource-class
-                               :resource/id resource-id
-                               :ednText (or edn-text "")
-                               :resource (wire-value (:contract validation))
-                               :validation (dissoc validation :contract)}))))
-      (.catch (fn [err]
-                (if (= "ENOENT" (.-code err))
-                  (do-json 404 {:detail (str "Resource not found: " resource-id)})
-                  (do-json 500 {:detail (str "Failed to read resource: " (.-message err))}))))))
+  (try
+    (let [edn-text (await (.readFile fs (resources/resource-file-path config resource-kind resource-id) "utf8"))
+          resource-class (normalize-resource-class resource-kind)
+          validation (validate-resource-edn resource-class (or edn-text ""))]
+      (do-json 200 {:resourceClass resource-class
+                    :resource/id resource-id
+                    :ednText (or edn-text "")
+                    :resource (wire-value (:contract validation))
+                    :validation (dissoc validation :contract)}))
+    (catch :default err
+      (if (= "ENOENT" (.-code err))
+        (do-json 404 {:detail (str "Resource not found: " resource-id)})
+        (do-json 500 {:detail (str "Failed to read resource: " (.-message err))})))))
 
-(defn- handle-get-contract
+(defn- ^:async handle-get-contract
   [do-json config contract-class contract-id]
-  (-> (.readFile fs (resources/resource-file-path config contract-class contract-id) "utf8")
-      (.then (fn [edn-text]
-               (let [validation (validate-contract-edn contract-class (or edn-text ""))]
-                 (do-json 200 {:contractClass (normalize-contract-class contract-class)
-                               :ednText (or edn-text "")
-                               :contract (wire-value (:contract validation))
-                               :validation (dissoc validation :contract)}))))
-      (.catch (fn [err]
-                (if (= "ENOENT" (.-code err))
-                  (do-json 404 {:detail (str "Contract not found: " contract-id)})
-                  (do-json 500 {:detail (str "Failed to read contract: " (.-message err))}))))))
+  (try
+    (let [edn-text (await (.readFile fs (resources/resource-file-path config contract-class contract-id) "utf8"))
+          validation (validate-contract-edn contract-class (or edn-text ""))]
+      (do-json 200 {:contractClass (normalize-contract-class contract-class)
+                    :ednText (or edn-text "")
+                    :contract (wire-value (:contract validation))
+                    :validation (dissoc validation :contract)}))
+    (catch :default err
+      (if (= "ENOENT" (.-code err))
+        (do-json 404 {:detail (str "Contract not found: " contract-id)})
+        (do-json 500 {:detail (str "Failed to read contract: " (.-message err))})))))
 
-(defn- handle-save-resource
+(defn- ^:async handle-save-resource
   [do-json config resource-kind resource-id edn-text]
   (let [resource-class (normalize-resource-class resource-kind)
         validation (validate-resource-edn resource-class edn-text)
@@ -571,21 +568,20 @@
                     :validation validation-out})
 
       :else
-      (let [file-path (resources/resource-file-path config resource-class route-id)]
-        (-> (resources/write-edn-file! file-path edn-text)
-            (.then (fn [_]
-                     (sync-resource-index! config)))
-            (.then (fn [_]
-                     (do-json 200 {:ok true
-                                   :resourceClass resource-class
-                                   :resource/id route-id
-                                   :ednText edn-text
-                                   :resource (wire-value parsed)
-                                   :validation validation-out})))
-            (.catch (fn [err]
-                      (do-json 500 {:detail (str "Failed to save resource: " (.-message err))}))))))))
+      (try
+        (let [file-path (resources/resource-file-path config resource-class route-id)]
+          (await (resources/write-edn-file! file-path edn-text))
+          (await (sync-resource-index! config))
+          (do-json 200 {:ok true
+                        :resourceClass resource-class
+                        :resource/id route-id
+                        :ednText edn-text
+                        :resource (wire-value parsed)
+                        :validation validation-out}))
+        (catch :default err
+          (do-json 500 {:detail (str "Failed to save resource: " (.-message err))}))))))
 
-(defn- handle-save-contract
+(defn- ^:async handle-save-contract
   [do-json config contract-class contract-id edn-text]
   (let [klass (normalize-contract-class contract-class)
         validation (validate-contract-edn klass edn-text)
@@ -607,38 +603,37 @@
                     :validation validation-out})
 
       :else
-      (let [file-path (resources/resource-file-path config klass route-id)]
-        (-> (resources/write-edn-file! file-path edn-text)
-            (.then (fn [_]
-                     (sync-resource-index! config)))
-            (.then (fn [_]
-                     (do-json 200 {:ok true
-                                   :contractClass klass
-                                   :ednText edn-text
-                                   :contract (wire-value parsed)
-                                   :validation validation-out})))
-            (.catch (fn [err]
-                      (do-json 500 {:detail (str "Failed to save contract: " (.-message err))}))))))))
+      (try
+        (let [file-path (resources/resource-file-path config klass route-id)]
+          (await (resources/write-edn-file! file-path edn-text))
+          (await (sync-resource-index! config))
+          (do-json 200 {:ok true
+                        :contractClass klass
+                        :ednText edn-text
+                        :contract (wire-value parsed)
+                        :validation validation-out}))
+        (catch :default err
+          (do-json 500 {:detail (str "Failed to save contract: " (.-message err))}))))))
 
-(defn- handle-copy-resource
+(defn- ^:async handle-copy-resource
   [do-json config resource-kind source-id new-id]
-  (-> (.readFile fs (resources/resource-file-path config resource-kind source-id) "utf8")
-      (.then (fn [source-edn]
-               (let [text (or source-edn "")
-                     cloned (update-resource-id-in-edn-text resource-kind text new-id)]
-                 (handle-save-resource do-json config resource-kind new-id cloned))))
-      (.catch (fn [err]
-                (do-json 500 {:detail (str "Failed to copy resource: " (.-message err))})))) )
+  (try
+    (let [source-edn (await (.readFile fs (resources/resource-file-path config resource-kind source-id) "utf8"))
+          text (or source-edn "")
+          cloned (update-resource-id-in-edn-text resource-kind text new-id)]
+      (await (handle-save-resource do-json config resource-kind new-id cloned)))
+    (catch :default err
+      (do-json 500 {:detail (str "Failed to copy resource: " (.-message err))}))))
 
-(defn- handle-copy-contract
+(defn- ^:async handle-copy-contract
   [do-json config contract-class source-id new-id]
-  (-> (.readFile fs (resources/resource-file-path config contract-class source-id) "utf8")
-      (.then (fn [source-edn]
-               (let [text (or source-edn "")
-                     cloned (update-resource-id-in-edn-text contract-class text new-id)]
-                 (handle-save-contract do-json config contract-class new-id cloned))))
-      (.catch (fn [err]
-                (do-json 500 {:detail (str "Failed to copy contract: " (.-message err))})))) )
+  (try
+    (let [source-edn (await (.readFile fs (resources/resource-file-path config contract-class source-id) "utf8"))
+          text (or source-edn "")
+          cloned (update-resource-id-in-edn-text contract-class text new-id)]
+      (await (handle-save-contract do-json config contract-class new-id cloned)))
+    (catch :default err
+      (do-json 500 {:detail (str "Failed to copy contract: " (.-message err))}))))
 
 (defn- handle-validate-resource
   [do-json resource-kind edn-text]
@@ -651,30 +646,30 @@
   (do-json 200 (assoc (wire-validation (validate-contract-edn contract-class edn-text))
                       :contractClass (normalize-contract-class contract-class))))
 
-(defn- handle-agent-list-contracts
+(defn- ^:async handle-agent-list-contracts
   [do-text config contract-class]
-  (-> (resources/list-resource-ids! config contract-class)
-      (.then (fn [ids]
-               (do-text 200 (pr-str ids))))
-      (.catch (fn [err]
-                (do-text 500 (str ";; Failed to list contracts: " (.-message err)))))))
+  (try
+    (let [ids (await (resources/list-resource-ids! config contract-class))]
+      (do-text 200 (pr-str ids)))
+    (catch :default err
+      (do-text 500 (str ";; Failed to list contracts: " (.-message err))))))
 
-(defn- handle-agent-get-contract-edn
+(defn- ^:async handle-agent-get-contract-edn
   [do-text config contract-class contract-id]
-  (-> (.readFile fs (resources/resource-file-path config contract-class contract-id) "utf8")
-      (.then (fn [edn-text]
-               (do-text 200 (str edn-text))))
-      (.catch (fn [err]
-                (if (= "ENOENT" (.-code err))
-                  (do-text 404 (str ";; Contract not found: " contract-id))
-                  (do-text 500 (str ";; Failed to read contract: " (.-message err))))))))
+  (try
+    (let [edn-text (await (.readFile fs (resources/resource-file-path config contract-class contract-id) "utf8"))]
+      (do-text 200 (str edn-text)))
+    (catch :default err
+      (if (= "ENOENT" (.-code err))
+        (do-text 404 (str ";; Contract not found: " contract-id))
+        (do-text 500 (str ";; Failed to read contract: " (.-message err)))))))
 
 (defn- handle-agent-validate-contract-edn
   [do-json contract-class edn-text]
   (do-json 200 (assoc (wire-validation (validate-contract-edn contract-class edn-text))
                       :contractClass (normalize-contract-class contract-class))))
 
-(defn- handle-agent-put-contract-edn
+(defn- ^:async handle-agent-put-contract-edn
   [do-text config contract-class contract-id edn-text]
   (let [klass (normalize-contract-class contract-class)
         validation (validate-contract-edn klass edn-text)]
@@ -690,17 +685,16 @@
                                 :error "contract_id_mismatch"
                                 :routeContractId route-id
                                 :ednContractId parsed-id}))
-          (-> (resources/write-edn-file! (resources/resource-file-path config klass route-id) edn-text)
-              (.then (fn [_]
-                       (sync-resource-index! config)))
-              (.then (fn [_]
-                       (do-text 200 (pr-str {:ok true
-                                             :contractClass klass
-                                             :contract/id route-id
-                                             :contract parsed
-                                             :warnings (:warnings validation)}))))
-              (.catch (fn [err]
-                        (do-text 500 (str ";; Failed to save contract: " (.-message err)))))))))))
+          (try
+            (await (resources/write-edn-file! (resources/resource-file-path config klass route-id) edn-text))
+            (await (sync-resource-index! config))
+            (do-text 200 (pr-str {:ok true
+                                  :contractClass klass
+                                  :contract/id route-id
+                                  :contract parsed
+                                  :warnings (:warnings validation)}))
+            (catch :default err
+              (do-text 500 (str ";; Failed to save contract: " (.-message err))))))))))
 
 (defn- handle-ui-actions
   [do-json config actor-id surface]

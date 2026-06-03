@@ -6,6 +6,7 @@
             [knoxx.backend.domain.action.start-agent-session]
             [knoxx.backend.domain.action.run-pipeline]
             [knoxx.backend.domain.condition.registry :as condition-registry]
+            [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.domain.event.normalize :as event-normalize]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]
@@ -87,6 +88,21 @@
    :trigger-ctx (merge (get-in trigger [:data :context]) {}
                        (get-in event [:event/payload]) {})})
 
+(defn- trigger-failure-result
+  [trigger event err]
+  (let [diagnostic (errors/log-error!
+                    :event-dispatch/trigger-action
+                    {:trigger/id (:trigger/id trigger)
+                     :event/id (:event/id event)
+                     :event/types (:event/types event)}
+                    err)]
+    {:ok false
+     :failed true
+     :reason (or (:code diagnostic) "action_error")
+     :error (:message diagnostic)
+     :trigger (:trigger/id trigger)
+     :event/id (:event/id event)}))
+
 (defn ^:async dispatch!
   ([event]
    (dispatch! (cfg) event))
@@ -109,11 +125,7 @@
                                            (actor-context config trigger event')
                                            (action-registry/action-map trigger))
                                           (.catch (fn [err]
-                                                    (let [code (or (aget err "code") "action_error")]
-                                                      (js/console.warn "[event-dispatch] trigger" (:trigger/id trigger)
-                                                                       "skipped:" (.-message err))
-                                                      #js {:skipped true :reason code
-                                                           :trigger (:trigger/id trigger)})))))
+                                                    (clj->js (trigger-failure-result trigger event' err))))))
                                     matching-triggers))))]
          {:matchedTriggers (mapv :trigger/id matching-triggers)
           :event event'

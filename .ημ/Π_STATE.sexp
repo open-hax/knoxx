@@ -1,29 +1,35 @@
 (fork-tax-state
-  (timestamp "2026-06-01T00:26:00Z")
+  (timestamp "2026-06-03T20:21:42Z")
   (repo "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx")
-  (branch "pi/fork-tax/20260529T022118Z-main-softreset-all-dirt-knoxx")
+  (branch "test/coverage-improvement")
   (remote "origin" "git@github.com:open-hax/knoxx.git")
-  (snapshot-base-head "38cd4e32c7cef97f0274b1864492c190210707ef")
-  (scope "Backend async/await lint remediation continuation + kanban triage/updates + ingestion jar rebuild")
+  (base "origin/staging")
+  (scope "Backend domain/law/shape test coverage, parse regex fix, frontend test env, label-gated testing deploy workflow")
   (changes
-    (backend-lint-continuation
-      "94 modified backend CLJS source/test files: continued conversion of promise chains (.then/.catch) to ^:async/await across bluesky, discord gateway/tools, auth session, policy DB, app routes, memory routes, translation, voice, redis client, session stores, message sources, session flush, temp memory, SVG render, law guards/url, opencode ingester, agent session/tool-catalog/turn, composite stores"
-      "Warnings reduced from ~1461 (prior snapshot) to ~823 (last receipt) while maintaining 0 errors"
-      "Extracted helper functions for long route handlers and domain flows per function-length warnings")
-    (kanban-updates
-      "Modified kanban epics/tasks/workbench files: status updates, triage notes, frontmatter normalization"
-      "New kanban task files added (untracked): knowledge-lake stubs, knowledge-ops pass files, knoxx arch migration tasks, chat UI tasks, CMS tasks, event runtime tasks, editor tasks, futuresight tasks, gardens tasks, generator tasks, KMS tasks, knowledge workbench, lake local, multi-tenant tasks, playlist tasks, PII tasks, studio tasks, tenant tasks, translation tasks, trigger tasks, uxx tasks")
-    (ingestion-build
-      "ingestion/target/kms-ingestion.jar rebuilt (binary artifact)")
-    (receipts
-      "receipts.edn appended with 14 new test-run entries documenting each lint slice"))
+    (parse-fix
+      "shape/parse.cljs parse-positive-int: regex #\"\\\\.\" (literal backslash+dot) corrected to #\"\\.\" so decimal strings are rejected as NaN instead of truncated by parseInt")
+    (coverage-tests
+      "New backend/test/cljs/knoxx/backend/domain/condition/builtin_test.cljs"
+      "New backend/test/cljs/knoxx/backend/domain/node/ tests"
+      "New backend/test/cljs/knoxx/backend/domain/time_test.cljs"
+      "New backend/test/cljs/knoxx/backend/law/ tests"
+      "New backend/test/cljs/knoxx/backend/shape/ tests")
+    (frontend-test-env
+      "frontend/package.json: NODE_ENV=test for vitest run/coverage/watch")
+    (deploy-testing-workflow
+      ".github/workflows/deploy-testing.yml: label-gated (testing) PR-head deploy to the shared staging slot via open-hax/services/.github/workflows/deploy-promethean.yml@main service=knoxx"
+      "eligibility: same-repo head, non-draft, owner in TESTING_ALLOWED_OWNER_LOGINS"
+      "concurrency group knoxx-staging shared with deploy-staging; queues, no cancel"))
   (concurrent-dirt
-    "none identified; all working tree changes are owned by the backend lint remediation and kanban maintenance workstreams")
+    "none; all working tree changes are owned by this snapshot")
   (blocked-paths ())
   (verification
-    (secret-heuristic-scan "passed: no literal private keys / tokens / api-keys in staged additions")
-    (backend-server-compile "passed: pnpm -C backend typecheck (shadow-cljs compile server) => 307 files, 0 warnings, 1.00s")
-    (backend-tests "passed: pnpm -C backend exec shadow-cljs compile test => 452 tests, 1326 assertions, 0 failures, 0 errors")
-    (backend-lint "latest receipt: errors 0 warnings 823; continuous improvement from prior snapshot's 1461 warnings"))
+    (backend-tests "passed: pnpm -C backend run test:coverage => exit 0")
+    (frontend-tests "passed: pnpm -C frontend run test:coverage => exit 0")
+    (workflow-lint "passed: actionlint .github/workflows/deploy-testing.yml")
+    (secret-heuristic-scan "passed: additions are tests, package.json scripts, and a workflow using vars/secrets indirection only"))
   (destructive-cleanup false)
-  (tag "pi/fork-tax/20260601T002600Z/knoxx-backend-async-lint-continuation"))
+  (deployment
+    "pending: PR test/coverage-improvement -> staging"
+    "pending: testing label -> deploy-testing.yml -> services module deploy of PR head to staging slot")
+  (tag "Π/20260603T202142Z-knoxx-coverage-tests-testing-deploy"))

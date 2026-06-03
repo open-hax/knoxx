@@ -6,7 +6,6 @@
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.tools :refer [create-tool-obj]]
-            ["node:fs" :as fs]
             ["node:fs/promises" :as fs-promises]
             ["node:os" :as os]
             ["node:path" :as path]))
@@ -68,36 +67,46 @@
         :else "mixed"))))
 
 ;; Async I/O helpers to avoid blocking the event loop during agent turns.
+(defn- ^:async append-jsonl!
+  [node-path file-path value]
+  (await (fs-promises/mkdir (node-path.dirname file-path) #js {:recursive true}))
+  (await (fs-promises/appendFile file-path (str (js/JSON.stringify value) "\n") "utf8")))
+
 (defn- make-append-jsonl-fn [node-path]
-  (fn [file-path value]
-    (-> (fs-promises/mkdir (node-path.dirname file-path) #js {:recursive true})
-        (.then (fn [] (fs-promises/appendFile file-path (str (js/JSON.stringify value) "\n") "utf8"))))))
+  (partial append-jsonl! node-path))
+
+(defn- ^:async read-jsonl!
+  [file-path limit]
+  (try
+    (let [text (await (fs-promises/readFile file-path "utf8"))
+          lines (-> text (str/split #"\r?\n") (->> (filter identity)) (js/Array.prototype.slice.call (- limit)))]
+      (js/Array.from
+       (-> lines
+           (.map (fn [line] (try (js/JSON.parse line) (catch js/Error _ nil))))
+           (.filter (fn [x] x)))))
+    (catch :default _ #js [])))
 
 (defn- make-read-jsonl-fn []
-  (fn [file-path limit]
-    (-> (fs-promises/readFile file-path "utf8")
-        (.then (fn [text]
-                 (let [lines (-> text (str/split #"\r?\n") (->> (filter identity)) (js/Array.prototype.slice.call (- limit)))]
-                   (js/Array.from
-                    (-> lines
-                        (.map (fn [line] (try (js/JSON.parse line) (catch js/Error _ nil))))
-                        (.filter (fn [x] x)))))))
-        (.catch (fn [_] #js [])))))
+  read-jsonl!)
+
+(defn- ^:async load-recent-spores!
+  [read-jsonl-fn spores-file-fn node-path cwd limit]
+  (let [rows (await (read-jsonl-fn (spores-file-fn) 400))
+        filtered (.filter rows (fn [row] (or (not cwd) (same-cwd node-path (aget row "cwd") cwd))))]
+    (-> (.slice filtered (- (.-length filtered) limit)) (.reverse) (js/Array.from))))
 
 (defn- make-load-recent-spores-fn [read-jsonl-fn spores-file-fn node-path]
-  (fn [cwd limit]
-    (-> (read-jsonl-fn (spores-file-fn) 400)
-        (.then (fn [rows]
-                 (let [filtered (.filter rows (fn [row] (or (not cwd) (same-cwd node-path (aget row "cwd") cwd))))]
-                   (-> (.slice filtered (- (.-length filtered) limit)) (.reverse) (js/Array.from))))))))
+  (partial load-recent-spores! read-jsonl-fn spores-file-fn node-path))
+
+(defn- ^:async find-latest-spore!
+  [read-jsonl-fn spores-file-fn node-path slug cwd]
+  (let [rows (await (read-jsonl-fn (spores-file-fn) 400))
+        filtered (.filter rows (fn [row] (and (= (aget row "slug") slug)
+                                              (or (not cwd) (same-cwd node-path (aget row "cwd") cwd)))))]
+    (or (.at filtered -1) nil)))
 
 (defn- make-find-latest-spore-fn [read-jsonl-fn spores-file-fn node-path]
-  (fn [slug cwd]
-    (-> (read-jsonl-fn (spores-file-fn) 400)
-        (.then (fn [rows]
-                 (let [filtered (.filter rows (fn [row] (and (= (aget row "slug") slug)
-                                                             (or (not cwd) (same-cwd node-path (aget row "cwd") cwd)))))]
-                   (or (.at filtered -1) nil)))))))
+  (partial find-latest-spore! read-jsonl-fn spores-file-fn node-path))
 
 (defn- summarize-spores [spores]
   (if (zero? (.-length spores))
@@ -153,68 +162,75 @@
        "    (triggers [" (yaml-quote (.toLowerCase (aget spore "name"))) " " (yaml-quote (str/replace (aget spore "slug") #"-" " ")) "]))\n\n"
        "  (governance\n    (touch-layer :mutable)\n    (non-override [:mission :directives :safety :license :output-shape])\n    (requires-user-approval false))\n)\n"))
 
+(defn- ^:async promote-spore-to-skill!
+  [node-path node-os promotions-file-fn spore]
+  (if-not (promotion-eligible? spore)
+    #js {:promoted false :eligible false}
+    (let [home (.homedir node-os)
+          dir (node-path.join home ".knoxx" "skills" (aget spore "slug"))
+          skill-path (node-path.join dir "SKILL.md")
+          contract-path (node-path.join dir "CONTRACT.edn")
+          append-jsonl-fn (make-append-jsonl-fn node-path)]
+      (await (fs-promises/mkdir dir #js {:recursive true}))
+      (let [created-skill (try
+                            (await (fs-promises/access skill-path))
+                            false
+                            (catch :default _
+                              (await (fs-promises/writeFile skill-path (build-live-skill spore) "utf8"))
+                              true))
+            created-contract (try
+                               (await (fs-promises/access contract-path))
+                               false
+                               (catch :default _
+                                 (await (fs-promises/writeFile contract-path (build-live-contract spore) "utf8"))
+                                 true))]
+        (when (or created-skill created-contract)
+          (await (append-jsonl-fn
+                  (promotions-file-fn)
+                  #js {:ts (now-iso) :slug (aget spore "slug") :name (aget spore "name")
+                       :recurrence (aget spore "recurrence") :skillCandidateP (aget spore "skillCandidateP")
+                       :cwd (aget spore "cwd") :sessionFile (aget spore "sessionFile")
+                       :skillPath skill-path :contractPath contract-path
+                       :createdSkill created-skill :createdContract created-contract})))
+        #js {:promoted (or created-skill created-contract) :eligible true
+             :skillPath skill-path :contractPath contract-path
+             :createdSkill created-skill :createdContract created-contract}))))
+
 (defn- make-promote-spore-to-skill-fn [node-path node-os promotions-file-fn]
-  (fn [spore]
-    (if-not (promotion-eligible? spore)
-      (js/Promise.resolve #js {:promoted false :eligible false})
-      (let [home (.homedir node-os)
-            dir (node-path.join home ".knoxx" "skills" (aget spore "slug"))
-            skill-path (node-path.join dir "SKILL.md")
-            contract-path (node-path.join dir "CONTRACT.edn")
-            append-jsonl-fn (make-append-jsonl-fn node-path)]
-        (-> (fs-promises/mkdir dir #js {:recursive true})
-            (.then (fn [] (fs-promises/access skill-path)))
-            (.then (fn [] false)
-                   (fn [_] (-> (fs-promises/writeFile skill-path (build-live-skill spore) "utf8")
-                               (.then (fn [] true)))))
-            (.then (fn [created-skill]
-                     (-> (fs-promises/access contract-path)
-                         (.then (fn [] false)
-                                (fn [_] (-> (fs-promises/writeFile contract-path (build-live-contract spore) "utf8")
-                                            (.then (fn [] true)))))
-                         (.then (fn [created-contract]
-                                  (when (or created-skill created-contract)
-                                    (append-jsonl-fn
-                                     (promotions-file-fn)
-                                     #js {:ts (now-iso) :slug (aget spore "slug") :name (aget spore "name")
-                                          :recurrence (aget spore "recurrence") :skillCandidateP (aget spore "skillCandidateP")
-                                          :cwd (aget spore "cwd") :sessionFile (aget spore "sessionFile")
-                                          :skillPath skill-path :contractPath contract-path
-                                          :createdSkill created-skill :createdContract created-contract}))
-                                  (js/Promise.resolve
-                                   #js {:promoted (or created-skill created-contract) :eligible true
-                                        :skillPath skill-path :contractPath contract-path
-                                         :createdSkill created-skill :createdContract created-contract})))))))))))
+  (partial promote-spore-to-skill! node-path node-os promotions-file-fn))
+
+(defn- ^:async write-spore-draft!
+  [node-path node-os spore-drafts-dir-fn reflection spore]
+  (let [home (.homedir node-os)
+        file-path (node-path.join (spore-drafts-dir-fn) (str (aget spore "slug") ".md"))
+        skill-draft (build-spore-skill-draft spore)
+        contract-draft (build-spore-contract-draft spore)
+        content (str "# Skill Spore: " (aget spore "name") "\n\n"
+                     "- Generated: " (aget spore "ts") "\n"
+                     "- Recurrence: " (aget spore "recurrence") "\n"
+                     "- CWD: " (aget spore "cwd") "\n"
+                     "- Reuse scope: " (aget spore "reuseScope") "\n"
+                     "- Reflection kind: " (aget spore "reflectionKind") "\n"
+                     "- p-efficiency: " (.toFixed (clamp-01 (aget reflection "efficiencyP") 0) 2) "\n"
+                     "- p-friction: " (.toFixed (clamp-01 (aget reflection "frictionP") 0) 2) "\n"
+                     "- p-skill-candidate: " (.toFixed (clamp-01 (aget reflection "skillCandidateP") 0) 2) "\n\n"
+                     "## Lesson\n" (or (aget reflection "lesson") "_none captured_") "\n\n"
+                     "## Better path next time\n" (or (aget reflection "betterPath") "_none captured_") "\n\n"
+                     "## Candidate description\n" (aget spore "description") "\n\n"
+                     "## Promotion gate\nPromote this spore into a live skill after either:\n"
+                     "- recurrence >= " PROMOTION-MIN-RECURRENCE "\n- explicit user request\n- or strong evidence that the pattern generalizes beyond the current task\n\n"
+                     "## Draft SKILL.md\n\n~~~markdown\n" skill-draft "~~~\n\n"
+                     "## Draft CONTRACT.edn\n\n~~~edn\n" contract-draft "~~~\n\n"
+                     "## Suggested live-skill path\n\n- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "SKILL.md")
+                     "\n- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "CONTRACT.edn") "\n")]
+    (await (fs-promises/mkdir (node-path.dirname file-path) #js {:recursive true}))
+    (await (fs-promises/writeFile file-path content "utf8"))
+    file-path))
 
 (defn- make-write-spore-draft-fn [node-path node-os spore-drafts-dir-fn]
-  (fn [reflection spore]
-    (let [home (.homedir node-os)
-          file-path (node-path.join (spore-drafts-dir-fn) (str (aget spore "slug") ".md"))
-          skill-draft (build-spore-skill-draft spore)
-          contract-draft (build-spore-contract-draft spore)
-          content (str "# Skill Spore: " (aget spore "name") "\n\n"
-                       "- Generated: " (aget spore "ts") "\n"
-                       "- Recurrence: " (aget spore "recurrence") "\n"
-                       "- CWD: " (aget spore "cwd") "\n"
-                       "- Reuse scope: " (aget spore "reuseScope") "\n"
-                       "- Reflection kind: " (aget spore "reflectionKind") "\n"
-                       "- p-efficiency: " (.toFixed (clamp-01 (aget reflection "efficiencyP") 0) 2) "\n"
-                       "- p-friction: " (.toFixed (clamp-01 (aget reflection "frictionP") 0) 2) "\n"
-                       "- p-skill-candidate: " (.toFixed (clamp-01 (aget reflection "skillCandidateP") 0) 2) "\n\n"
-                       "## Lesson\n" (or (aget reflection "lesson") "_none captured_") "\n\n"
-                       "## Better path next time\n" (or (aget reflection "betterPath") "_none captured_") "\n\n"
-                       "## Candidate description\n" (aget spore "description") "\n\n"
-                       "## Promotion gate\nPromote this spore into a live skill after either:\n"
-                       "- recurrence >= " PROMOTION-MIN-RECURRENCE "\n- explicit user request\n- or strong evidence that the pattern generalizes beyond the current task\n\n"
-                       "## Draft SKILL.md\n\n~~~markdown\n" skill-draft "~~~\n\n"
-                       "## Draft CONTRACT.edn\n\n~~~edn\n" contract-draft "~~~\n\n"
-                       "## Suggested live-skill path\n\n- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "SKILL.md")
-                       "\n- " (node-path.join home ".knoxx" "skills" (aget spore "slug") "CONTRACT.edn") "\n")]
-      (-> (fs-promises/mkdir (node-path.dirname file-path) #js {:recursive true})
-          (.then (fn [] (fs-promises/writeFile file-path content "utf8")))
-          (.then (fn [] file-path))))))
+  (partial write-spore-draft! node-path node-os spore-drafts-dir-fn))
 
-(defn- execute-reflect-action
+(defn- ^:async execute-reflect-action
   [params cwd session-file model-label node-path append-jsonl-fn reflections-file-fn
    find-latest-spore-fn spore-drafts-dir-fn write-spore-draft-fn
    spores-file-fn promote-spore-to-skill-fn]
@@ -224,54 +240,68 @@
                         :skillCandidateP (clamp-01 (aget params "skillCandidateP") 0.5)
                         :lesson (.trim (str (or (aget params "lesson") "")))
                         :betterPath (.trim (str (or (aget params "betterPath") "")))}]
-    (-> (append-jsonl-fn (reflections-file-fn) reflection)
-        (.then (fn []
-                 (let [name (.trim (str (or (aget params "candidateName") "")))
-                       description (.trim (str (or (aget params "candidateDescription") "")))
-                       should-incubate (and (pos? (.-length name))
-                                            (pos? (.-length description))
-                                            (or (>= (aget reflection "skillCandidateP") SPORE-THRESHOLD)
-                                                (>= (aget reflection "frictionP") 0.68)))]
-                   (if-not should-incubate
-                     (js/Promise.resolve
-                      (tool-text-result
-                       (str "Recorded reflection (p_eff=" (.toFixed (aget reflection "efficiencyP") 2)
-                            ", p_fric=" (.toFixed (aget reflection "frictionP") 2)
-                            ", p_skill=" (.toFixed (aget reflection "skillCandidateP") 2)
-                            "). No spore incubated.")
-                       #js {:reflection reflection}))
-                     (let [slug (slugify name)]
-                       (-> (find-latest-spore-fn slug cwd)
-                           (.then (fn [prior]
-                                    (let [prior-recurrence (js/Number (or (when prior (aget prior "recurrence")) 0))
-                                          prior-draft-path (when prior (aget prior "draftPath"))
-                                          spore #js {:ts (now-iso) :name name :slug slug :description description
-                                                     :reuseScope (normalize-reuse-scope (aget params "reuseScope"))
-                                                     :cwd cwd :sessionFile session-file :model model-label
-                                                     :reflectionTs (aget reflection "ts")
-                                                     :reflectionKind (reflection-kind reflection)
-                                                     :recurrence (js/Math.max 1 (inc prior-recurrence))
-                                                     :efficiencyP (aget reflection "efficiencyP")
-                                                     :frictionP (aget reflection "frictionP")
-                                                     :skillCandidateP (aget reflection "skillCandidateP")}]
-                                      (aset spore "draftPath" (or prior-draft-path
-                                                                  (node-path.join (spore-drafts-dir-fn)
-                                                                                  (str slug ".md"))))
-                                      (-> (write-spore-draft-fn reflection spore)
-                                          (.then (fn [] (append-jsonl-fn (spores-file-fn) spore)))
-                                          (.then (fn [] (promote-spore-to-skill-fn spore)))
-                                          (.then (fn [promotion]
-                                                   (tool-text-result
-                                                    (str "Recorded reflection (p_eff="
-                                                         (.toFixed (aget reflection "efficiencyP") 2)
-                                                         ", p_fric=" (.toFixed (aget reflection "frictionP") 2)
-                                                         ", p_skill=" (.toFixed (aget reflection "skillCandidateP") 2)
-                                                         "). Incubated spore: " name " -> "
-                                                         (aget spore "draftPath")
-                                                         (when (aget promotion "promoted")
-                                                           (str " | promoted live skill: "
-                                                                (aget promotion "skillPath"))))
-                                                    #js {:reflection reflection :spore spore :promotion promotion}))))))))))))))))
+    (await (append-jsonl-fn (reflections-file-fn) reflection))
+    (let [name (.trim (str (or (aget params "candidateName") "")))
+          description (.trim (str (or (aget params "candidateDescription") "")))
+          should-incubate (and (pos? (.-length name))
+                               (pos? (.-length description))
+                               (or (>= (aget reflection "skillCandidateP") SPORE-THRESHOLD)
+                                   (>= (aget reflection "frictionP") 0.68)))]
+      (if-not should-incubate
+        (tool-text-result
+         (str "Recorded reflection (p_eff=" (.toFixed (aget reflection "efficiencyP") 2)
+              ", p_fric=" (.toFixed (aget reflection "frictionP") 2)
+              ", p_skill=" (.toFixed (aget reflection "skillCandidateP") 2)
+              "). No spore incubated.")
+         #js {:reflection reflection})
+        (let [slug (slugify name)
+              prior (await (find-latest-spore-fn slug cwd))
+              prior-recurrence (js/Number (or (when prior (aget prior "recurrence")) 0))
+              prior-draft-path (when prior (aget prior "draftPath"))
+              spore #js {:ts (now-iso) :name name :slug slug :description description
+                         :reuseScope (normalize-reuse-scope (aget params "reuseScope"))
+                         :cwd cwd :sessionFile session-file :model model-label
+                         :reflectionTs (aget reflection "ts")
+                         :reflectionKind (reflection-kind reflection)
+                         :recurrence (js/Math.max 1 (inc prior-recurrence))
+                         :efficiencyP (aget reflection "efficiencyP")
+                         :frictionP (aget reflection "frictionP")
+                         :skillCandidateP (aget reflection "skillCandidateP")}]
+          (aset spore "draftPath" (or prior-draft-path
+                                      (node-path.join (spore-drafts-dir-fn)
+                                                      (str slug ".md"))))
+          (await (write-spore-draft-fn reflection spore))
+          (await (append-jsonl-fn (spores-file-fn) spore))
+          (let [promotion (await (promote-spore-to-skill-fn spore))]
+            (tool-text-result
+             (str "Recorded reflection (p_eff="
+                  (.toFixed (aget reflection "efficiencyP") 2)
+                  ", p_fric=" (.toFixed (aget reflection "frictionP") 2)
+                  ", p_skill=" (.toFixed (aget reflection "skillCandidateP") 2)
+                  "). Incubated spore: " name " -> "
+                  (aget spore "draftPath")
+                  (when (aget promotion "promoted")
+                    (str " | promoted live skill: "
+                         (aget promotion "skillPath"))))
+             #js {:reflection reflection :spore spore :promotion promotion})))))))
+
+(defn- ^:async session-mycology-execute!
+  [params ctx load-recent-spores-fn execute-reflect-action]
+  (let [action (.toLowerCase (.trim (str (or (aget params "action") "reflect"))))
+        cwd (or (aget ctx "cwd") (.. js/process cwd))
+        session-file (or (aget ctx "sessionFile") "")
+        model-label (or (aget ctx "modelLabel") "unknown")]
+    (cond
+      (= action "list_recent")
+      (let [spores (await (load-recent-spores-fn cwd 5))]
+        (tool-text-result (if (pos? (.-length spores)) (summarize-spores spores) "- none yet")
+                          #js {:spores spores}))
+
+      (not= action "reflect")
+      (js/Promise.reject (js/Error. (str "Unknown session_mycology action: " (aget params "action"))))
+
+      :else
+      (execute-reflect-action params cwd session-file model-label))))
 
 (defn- make-execute-fn [node-path node-os]
   (let [state-dir-fn (make-state-dir-fn node-os node-path)
@@ -284,26 +314,13 @@
         load-recent-spores-fn (make-load-recent-spores-fn read-jsonl-fn spores-file-fn node-path)
         find-latest-spore-fn (make-find-latest-spore-fn read-jsonl-fn spores-file-fn node-path)
         promote-spore-to-skill-fn (make-promote-spore-to-skill-fn node-path node-os promotions-file-fn)
-        write-spore-draft-fn (make-write-spore-draft-fn node-path node-os spore-drafts-dir-fn)]
+        write-spore-draft-fn (make-write-spore-draft-fn node-path node-os spore-drafts-dir-fn)
+        execute-reflect (partial execute-reflect-action
+                                 node-path append-jsonl-fn reflections-file-fn
+                                 find-latest-spore-fn spore-drafts-dir-fn write-spore-draft-fn
+                                 spores-file-fn promote-spore-to-skill-fn)]
     (fn [_tcid params _sig _on-update ctx]
-      (let [action (.toLowerCase (.trim (str (or (aget params "action") "reflect"))))
-            cwd (or (aget ctx "cwd") (.. js/process cwd))
-            session-file (or (aget ctx "sessionFile") "")
-            model-label (or (aget ctx "modelLabel") "unknown")]
-        (cond
-          (= action "list_recent")
-          (-> (load-recent-spores-fn cwd 5)
-              (.then (fn [spores]
-                       (tool-text-result (if (pos? (.-length spores)) (summarize-spores spores) "- none yet")
-                                         #js {:spores spores}))))
-
-          (not= action "reflect")
-          (js/Promise.reject (js/Error. (str "Unknown session_mycology action: " (aget params "action"))))
-
-          :else
-          (execute-reflect-action params cwd session-file model-label node-path append-jsonl-fn reflections-file-fn
-                                  find-latest-spore-fn spore-drafts-dir-fn write-spore-draft-fn
-                                  spores-file-fn promote-spore-to-skill-fn))))))
+      (session-mycology-execute! params ctx load-recent-spores-fn execute-reflect))))
 
 (defn make-session-mycology-tool [execute-fn]
   (partial create-tool-obj

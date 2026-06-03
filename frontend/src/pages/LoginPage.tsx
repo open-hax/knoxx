@@ -12,7 +12,12 @@ interface LoginPageProps {
 
 export default function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
   const [githubEnabled, setGithubEnabled] = useState(false);
+  const [localPasswordEnabled, setLocalPasswordEnabled] = useState(false);
   const [loginUrl, setLoginUrl] = useState<string | null>(null);
+  const [localEmail, setLocalEmail] = useState("");
+  const [localPassword, setLocalPassword] = useState("");
+  const [localStatus, setLocalStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [localError, setLocalError] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [redeemStatus, setRedeemStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
@@ -35,6 +40,7 @@ export default function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
       .then((r) => r.json())
       .then((cfg) => {
         setGithubEnabled(cfg.githubEnabled ?? false);
+        setLocalPasswordEnabled(cfg.localPasswordEnabled ?? false);
         setLoginUrl(cfg.loginUrl ?? null);
       })
       .catch(() => {});
@@ -42,7 +48,30 @@ export default function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
 
   const handleGithubLogin = () => {
     if (loginUrl) {
-      window.location.href = `${loginUrl}?redirect=${encodeURIComponent(window.location.pathname)}`;
+      window.location.href = `${loginUrl}?redirect=${encodeURIComponent(window.location.href)}`;
+    }
+  };
+
+  const handleLocalLogin = async () => {
+    if (!localEmail.trim() || !localPassword) return;
+    setLocalStatus("submitting");
+    setLocalError("");
+    try {
+      const resp = await fetch(`${API_BASE}/api/auth/local/login`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: localEmail.trim(), password: localPassword }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({ error: "Login failed" }));
+        throw new Error(body.error || body.code || `${resp.status}`);
+      }
+      setLocalStatus("success");
+      setTimeout(() => onLoginSuccess(), 300);
+    } catch (err) {
+      setLocalStatus("error");
+      setLocalError(err instanceof Error ? err.message : "Login failed");
     }
   };
 
@@ -80,6 +109,56 @@ export default function LoginPage({ error, onLoginSuccess }: LoginPageProps) {
         {error && error !== "Logged out" && (
           <div className="rounded-lg bg-red-900/30 border border-red-800 p-3 text-sm text-red-300">
             {error}
+          </div>
+        )}
+
+        {localPasswordEnabled && (
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="login-local-email" className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+              <input
+                id="login-local-email"
+                type="email"
+                value={localEmail}
+                onChange={(e) => setLocalEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="login-local-password" className="block text-sm font-medium text-slate-300 mb-1">Password</label>
+              <input
+                id="login-local-password"
+                type="password"
+                value={localPassword}
+                onChange={(e) => setLocalPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleLocalLogin();
+                }}
+                placeholder="Local development password"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+
+            {localError && (
+              <div className="rounded-lg bg-red-900/30 border border-red-800 p-3 text-sm text-red-300">
+                {localError}
+              </div>
+            )}
+
+            {localStatus === "success" && (
+              <div className="rounded-lg bg-green-900/30 border border-green-800 p-3 text-sm text-green-300">
+                Signed in. Redirecting…
+              </div>
+            )}
+
+            <button
+              onClick={handleLocalLogin}
+              disabled={localStatus === "submitting" || !localEmail.trim() || !localPassword}
+              className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {localStatus === "submitting" ? "Signing in…" : "Sign in with password"}
+            </button>
           </div>
         )}
 

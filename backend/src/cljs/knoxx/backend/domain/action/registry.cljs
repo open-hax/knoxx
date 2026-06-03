@@ -22,7 +22,9 @@
   (let [kind (:trigger/action trigger)]
     {:action/id (when (keyword? kind) (name kind))
      :action/kind kind
-     :action/with (merge (:trigger/with trigger)
+     :action/with (merge (when-let [task (:trigger/task trigger)]
+                           {:task task})
+                         (:trigger/with trigger)
                          (when-let [agent-id (:trigger/agent trigger)]
                            {:agent-id agent-id}))}))
 

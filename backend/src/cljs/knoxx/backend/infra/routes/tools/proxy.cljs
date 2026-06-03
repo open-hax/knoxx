@@ -13,25 +13,25 @@
             [knoxx.backend.infra.eta-mu-session-ingester :as eta-mu-sessions]
             [knoxx.backend.infra.source.opencode-session-ingester :as opencode-sessions]))
 
-(defn- enrich-session-summary!
+(defn- ^:async enrich-session-summary!
   [config summary]
   (let [session-id (or (:session summary) (get summary :session))]
     (if-not session-id
-      (js/Promise.resolve summary)
-      (-> (core-memory/fetch-openplanner-session-rows! config session-id)
-          (.then (fn [rows]
-                   (let [contract-id (core-memory/session-contract-id-from-rows rows)
-                         actor-id (core-memory/session-actor-id-from-rows rows)
-                         contract-actors (core-memory/session-contract-actors-from-rows rows)
-                         wire-actors (when (seq contract-actors)
-                                      (actor-scope/actor-claims->wire contract-actors))]
-                     (cond-> summary
-                       contract-id (assoc :contract_id contract-id)
-                       actor-id (assoc :actor_id actor-id)
-                       (seq wire-actors) (assoc :contract_actors wire-actors)))))
-          (.catch (fn [_]
-                    ;; If enrichment fails (e.g. permissions, missing session), return the base summary.
-                    summary))))))
+      summary
+      (try
+        (let [rows (await (core-memory/fetch-openplanner-session-rows! config session-id))
+              contract-id (core-memory/session-contract-id-from-rows rows)
+              actor-id (core-memory/session-actor-id-from-rows rows)
+              contract-actors (core-memory/session-contract-actors-from-rows rows)
+              wire-actors (when (seq contract-actors)
+                            (actor-scope/actor-claims->wire contract-actors))]
+          (cond-> summary
+            contract-id (assoc :contract_id contract-id)
+            actor-id (assoc :actor_id actor-id)
+            (seq wire-actors) (assoc :contract_actors wire-actors)))
+        (catch :default _
+          ;; If enrichment fails (e.g. permissions, missing session), return the base summary.
+          summary)))))
 
 (defn- now-iso [] (.toISOString (js/Date.)))
 
@@ -39,15 +39,17 @@
   [resp]
   (or (some-> resp (aget "headers") (.get "content-type")) "application/json"))
 
-(defn- safe-json
+(defn- ^:async safe-json
   [resp]
-  (-> (.json resp)
-      (.catch (fn [_] nil))))
+  (try
+    (await (.json resp))
+    (catch :default _ nil)))
 
-(defn- safe-text
+(defn- ^:async safe-text
   [resp]
-  (-> (.text resp)
-      (.catch (fn [_] ""))))
+  (try
+    (await (.text resp))
+    (catch :default _ "")))
 
 (defn- reply-sent?
   [reply]
@@ -90,27 +92,22 @@
     js/undefined
     (js/JSON.stringify (aget req "body"))))
 
-(defn- proxy-fetch!
+(defn- ^:async proxy-fetch!
   [target-url req reply headers error-prefix]
-  (let [fetch-promise (backend-http/fetch-with-timeout
+  (try
+    (let [resp (await (backend-http/fetch-with-timeout
                         target-url
                         {:method (aget req "method")
                          :headers headers
                          :body (request-body req)}
-                        60000)]
-    (.then fetch-promise
-           (fn [resp]
-             (let [content-type (json-content-type resp)
-                   body-promise (if (str/includes? content-type "application/json")
-                                  (safe-json resp)
-                                  (safe-text resp))]
-               (.then body-promise
-                      (fn [body]
-                        (reply-send-with-content-type! reply (.-status resp) content-type body))
-                      (fn [err]
-                        (send-proxy-error! reply error-prefix err)))))
-           (fn [err]
-             (send-proxy-error! reply error-prefix err)))))
+                        60000))
+          content-type (json-content-type resp)
+          body (if (str/includes? content-type "application/json")
+                 (await (safe-json resp))
+                 (await (safe-text resp)))]
+      (reply-send-with-content-type! reply (.-status resp) content-type body))
+    (catch :default err
+      (send-proxy-error! reply error-prefix err))))
 
 (defn- kms-base-url
   [config]
@@ -121,84 +118,100 @@
   {"x-knoxx-user-email" "system-admin@open-hax.local"
    "x-knoxx-org-slug" "open-hax"})
 
-(defn- find-kms-source-jobs!
+(defn- ^:async find-kms-source-jobs!
   [kms-base kms-headers driver-type]
-  (-> (backend-http/fetch-with-timeout
-       (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
-       {:headers kms-headers}
-       15000)
-      (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
-      (.catch (fn [_] (js/Array.)))
-      (.then (fn [sources]
-               (let [sources (if (array? sources) sources (js/Array.))
-                     source (.find sources (fn [s] (= (aget s "driver_type") driver-type)))]
-                 (if-not source
-                   {:ok false :error (str driver-type " source not found") :sources sources}
-                   (-> (backend-http/fetch-with-timeout
-                        (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget source "source_id"))
-                        {:headers kms-headers}
-                        15000)
-                       (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
-                       (.catch (fn [_] (js/Array.)))
-                       (.then (fn [jobs] {:ok true :source source :jobs jobs})))))))))
+  (try
+    (let [sources-r (await (backend-http/fetch-with-timeout
+                             (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
+                             {:headers kms-headers}
+                             15000))
+          sources (if (.-ok sources-r)
+                    (try (await (.json sources-r)) (catch :default _ (js/Array.)))
+                    (js/Array.))
+          source (.find (if (array? sources) sources (js/Array.))
+                        (fn [s] (= (aget s "driver_type") driver-type)))]
+      (if-not source
+        {:ok false :error (str driver-type " source not found") :sources sources}
+        (let [jobs-r (await (backend-http/fetch-with-timeout
+                              (str kms-base "/api/ingestion/jobs?tenant_id=knoxx-session&source_id=" (aget source "source_id"))
+                              {:headers kms-headers}
+                              15000))
+              jobs (if (.-ok jobs-r)
+                     (try (await (.json jobs-r)) (catch :default _ (js/Array.)))
+                     (js/Array.))]
+          {:ok true :source source :jobs jobs})))
+    (catch :default _
+      {:ok false :error "Failed to fetch ingestion sources"})))
+
+(defn- ^:async session-status-handler!
+  [config payload-key status! driver-type]
+  (try
+    (let [kms-base (kms-base-url config)
+          kms-headers (system-kms-headers)
+          [local kms] (await (promise/all-vec
+                              [(try
+                                 (await (status!))
+                                 (catch :default err
+                                   {:ok false :error (.-message err)}))
+                               (find-kms-source-jobs! kms-base kms-headers driver-type)]))]
+      {:ok true payload-key local :kms_ingestion kms :time (now-iso)})
+    (catch :default err
+      {:ok false :error (.-message err)})))
 
 (defn- register-session-status-route!
   [^js app config path payload-key status! driver-type]
   (.get app path
         (fn [_req reply]
-          (let [kms-base (kms-base-url config)
-                kms-headers (system-kms-headers)
-                local-p (-> (status!)
-                            (.catch (fn [err] {:ok false :error (.-message err)})))
-                kms-p (find-kms-source-jobs! kms-base kms-headers driver-type)]
-            (-> (promise/all-vec [local-p kms-p])
-                (.then (fn [[local kms]]
-                         (backend-http/json-response! reply 200 {:ok true
-                                                                 payload-key local
-                                                                 :kms_ingestion kms
-                                                                 :time (now-iso)})))
-                (.catch (fn [err]
-                          (backend-http/json-response! reply 500 {:ok false :error (.-message err)}))))))))
+          (js-await [result (session-status-handler! config payload-key status! driver-type)]
+            (backend-http/json-response! reply (if (:ok result) 200 500) result)))))
+
+(defn- ^:async eta-mu-session-list-handler!
+  [req]
+  (let [q (or (aget req "query") (js/Object.))]
+    (await (eta-mu-sessions/list-eta-mu-sessions {:limit (min (js/parseInt (or (aget q "limit") "50") 10) 200)
+                                                  :offset (js/parseInt (or (aget q "offset") "0") 10)
+                                                  :workspace (aget q "workspace")}))))
+
+(defn- ^:async eta-mu-session-list-responder!
+  [req reply]
+  (try
+    (let [result (await (eta-mu-session-list-handler! req))]
+      (.send reply result))
+    (catch :default err
+      (backend-http/json-response! reply 500 {:ok false :error (str err)}))))
 
 (defn- register-eta-mu-session-list-route!
   [^js app]
   (.get app "/api/admin/eta-mu-sessions"
         (fn [req reply]
-          (try
-            (let [q (or (aget req "query") (js/Object.))]
-              (-> (eta-mu-sessions/list-eta-mu-sessions {:limit (min (js/parseInt (or (aget q "limit") "50") 10) 200)
-                                                         :offset (js/parseInt (or (aget q "offset") "0") 10)
-                                                         :workspace (aget q "workspace")})
-                  (.then (fn [result] (.send reply result)))
-                  (.catch (fn [err]
-                            (backend-http/json-response! reply 500 {:ok false :error (.-message err)})))))
-            (catch :default err
-              (backend-http/json-response! reply 500 {:ok false :error (str err)}))))))
+          (eta-mu-session-list-responder! req reply))))
 
-(defn- source-ingest-request!
+(defn- ^:async source-ingest-request!
   [kms-base kms-headers driver-type force? reply]
-  (-> (backend-http/fetch-with-timeout (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
-                                       {:headers kms-headers}
-                                       20000)
-      (.then (fn [r] (if (.-ok r) (.json r) (js/Promise.resolve (js/Array.)))))
-      (.catch (fn [_] (js/Array.)))
-      (.then (fn [sources]
-               (let [sources (if (array? sources) sources (js/Array.))
-                     source (.find sources (fn [s] (= (aget s "driver_type") driver-type)))]
-                 (if-not source
-                   (backend-http/json-response! reply 404 {:ok false :error (str driver-type " source not found in ingestion service")})
-                   (-> (backend-http/fetch-with-timeout
-                        (str kms-base "/api/ingestion/jobs")
-                        {:method "POST"
-                         :headers kms-headers
-                         :body (js/JSON.stringify (clj->js {:source_id (aget source "source_id")
-                                                            :full_scan force?}))}
-                        20000)
-                       (.then (fn [r] (if (.-ok r) (.json r) (safe-json r))))
-                       (.then (fn [job]
-                                (backend-http/json-response! reply 200 {:ok true :job job})))
-                       (.catch (fn [err]
-                                 (backend-http/json-response! reply 500 {:ok false :error (.-message err)}))))))))))
+  (try
+    (let [sources-r (await (backend-http/fetch-with-timeout (str kms-base "/api/ingestion/sources?tenant_id=knoxx-session")
+                                                             {:headers kms-headers}
+                                                             20000))
+          sources (if (.-ok sources-r)
+                    (try (await (.json sources-r)) (catch :default _ (js/Array.)))
+                    (js/Array.))
+          source (.find (if (array? sources) sources (js/Array.))
+                        (fn [s] (= (aget s "driver_type") driver-type)))]
+      (if-not source
+        (backend-http/json-response! reply 404 {:ok false :error (str driver-type " source not found in ingestion service")})
+        (let [job-r (await (backend-http/fetch-with-timeout
+                             (str kms-base "/api/ingestion/jobs")
+                             {:method "POST"
+                              :headers kms-headers
+                              :body (js/JSON.stringify (clj->js {:source_id (aget source "source_id")
+                                                                 :full_scan force?}))}
+                             20000))
+              job (if (.-ok job-r)
+                    (try (await (.json job-r)) (catch :default _ (await (safe-json job-r))))
+                    (await (safe-json job-r)))]
+          (backend-http/json-response! reply 200 {:ok true :job job}))))
+    (catch :default err
+      (backend-http/json-response! reply 500 {:ok false :error (.-message err)}))))
 
 (defn- register-session-ingest-route!
   [^js app config path driver-type]
@@ -212,23 +225,29 @@
                                      (boolean (aget body "force"))
                                      reply)))))
 
+(defn- ^:async opencode-session-list-handler!
+  [req]
+  (let [q (or (aget req "query") (js/Object.))]
+    (await (opencode-sessions/list-opencode-sessions {:limit (min (js/parseInt (or (aget q "limit") "50") 10) 200)
+                                                       :cursor (aget q "cursor")
+                                                       :directory (aget q "directory")
+                                                       :search (aget q "search")
+                                                       :roots (when (some? (aget q "roots")) (= "true" (str (aget q "roots"))))
+                                                       :archived (if (some? (aget q "archived")) (= "true" (str (aget q "archived"))) true)}))))
+
+(defn- ^:async opencode-session-list-responder!
+  [req reply]
+  (try
+    (let [result (await (opencode-session-list-handler! req))]
+      (.send reply result))
+    (catch :default err
+      (backend-http/json-response! reply 500 {:ok false :error (str err)}))))
+
 (defn- register-opencode-session-list-route!
   [^js app]
   (.get app "/api/admin/opencode-sessions"
         (fn [req reply]
-          (try
-            (let [q (or (aget req "query") (js/Object.))]
-              (-> (opencode-sessions/list-opencode-sessions {:limit (min (js/parseInt (or (aget q "limit") "50") 10) 200)
-                                                             :cursor (aget q "cursor")
-                                                             :directory (aget q "directory")
-                                                             :search (aget q "search")
-                                                             :roots (when (some? (aget q "roots")) (= "true" (str (aget q "roots"))))
-                                                             :archived (if (some? (aget q "archived")) (= "true" (str (aget q "archived"))) true)})
-                  (.then (fn [result] (.send reply result)))
-                  (.catch (fn [err]
-                            (backend-http/json-response! reply 500 {:ok false :error (.-message err)})))))
-            (catch :default err
-              (backend-http/json-response! reply 500 {:ok false :error (str err)}))))))
+          (opencode-session-list-responder! req reply))))
 
 (defn- register-ingestion-service-proxy-route!
   [^js app config]
@@ -242,6 +261,27 @@
             (js/Reflect.deleteProperty headers "content-length")
             (proxy-fetch! target-url req reply headers "Ingestion proxy error")))))
 
+(defn- ^:async openplanner-proxy-handler!
+  [config req reply]
+  (try
+    (let [body (request-body req)
+          sub-path (aget (aget req "params") "*")
+          fwd-headers {"x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
+                       "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}
+          request* (cond-> {:method (aget req "method")
+                            :path sub-path
+                            :query-string (request-query-string req)
+                            :headers fwd-headers}
+                     (not= body js/undefined) (assoc :body body))
+          resp (await (openplanner-client/forward-v1! (openplanner-client/client config) request*))
+          content-type (json-content-type resp)
+          resp-body (await (if (str/includes? content-type "application/json")
+                             (safe-json resp)
+                             (safe-text resp)))]
+      (reply-send-with-content-type! reply (.-status resp) content-type resp-body))
+    (catch :default err
+      (send-proxy-error! reply "OpenPlanner proxy error" err))))
+
 (defn- register-openplanner-proxy-routes!
   [^js app config]
   (.get app "/api/openplanner/v1/sessions"
@@ -254,28 +294,7 @@
               (.send reply (clj->js (assoc body :rows (vec (array-seq enriched)))))))))
   (.all app "/api/openplanner/*"
         (fn [req reply]
-          (let [body (request-body req)
-                sub-path (aget (aget req "params") "*")
-                fwd-headers {"x-knoxx-user-email" (or (aget (aget req "headers") "x-knoxx-user-email") "")
-                             "x-knoxx-org-slug" (or (aget (aget req "headers") "x-knoxx-org-slug") "")}
-                request* (cond-> {:method (aget req "method")
-                                  :path sub-path
-                                  :query-string (request-query-string req)
-                                  :headers fwd-headers}
-                           (not= body js/undefined) (assoc :body body))]
-            (-> (openplanner-client/forward-v1! (openplanner-client/client config) request*)
-                (.then (fn [resp]
-                         (let [content-type (json-content-type resp)
-                               body-promise (if (str/includes? content-type "application/json")
-                                              (safe-json resp)
-                                              (safe-text resp))]
-                           (.then body-promise
-                                  (fn [resp-body]
-                                    (reply-send-with-content-type! reply (.-status resp) content-type resp-body))
-                                  (fn [err]
-                                    (send-proxy-error! reply "OpenPlanner proxy error" err)))))
-                (.catch (fn [err]
-                          (send-proxy-error! reply "OpenPlanner proxy error" err)))))))))
+          (openplanner-proxy-handler! config req reply))))
 
 (defn register-proxy-routes!
   "Register all proxy endpoints on the fastify app."

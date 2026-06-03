@@ -44,3 +44,5 @@ GAPS FOUND:
 
 Total scope: 13sp. Four independent streams, each bounded. Original epic → icebox. Split into 4 subtasks. --tasks-dir /home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx/kanban
 ---
+2026-06-02 breakdown addendum: Added task `knoxx-trigger-action-task-prompt-migration` (P1, 5sp, ready) to move triggered-run task prompts out of agent resources and into trigger/action invocation input, with audit visibility for rendered user tasks and deprecated fallback warnings for legacy agent `:prompts :task`. --tasks-dir .
+---

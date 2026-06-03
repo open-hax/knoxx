@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { API_BASE } from "../lib/api/core";
 
 interface SignupPageProps {
@@ -9,14 +9,26 @@ interface SignupPageProps {
 export default function SignupPage({ error, onSignupSuccess }: SignupPageProps) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [localPasswordEnabled, setLocalPasswordEnabled] = useState(false);
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [signupError, setSignupError] = useState("");
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/auth/config`)
+      .then((r) => r.json())
+      .then((cfg) => setLocalPasswordEnabled(cfg.localPasswordEnabled ?? false))
+      .catch(() => {});
+  }, []);
 
   const handleSignup = async () => {
     if (!email.trim()) return;
     setStatus("submitting");
     setSignupError("");
     try {
+      if (localPasswordEnabled && password.length < 8) {
+        throw new Error("Password must be at least 8 characters");
+      }
       const resp = await fetch(`${API_BASE}/api/auth/signup`, {
         method: "POST",
         credentials: "include",
@@ -24,6 +36,7 @@ export default function SignupPage({ error, onSignupSuccess }: SignupPageProps) 
         body: JSON.stringify({
           email: email.trim(),
           displayName: displayName.trim() || email.trim(),
+          password,
         }),
       });
       if (!resp.ok) {
@@ -77,6 +90,21 @@ export default function SignupPage({ error, onSignupSuccess }: SignupPageProps) 
             />
           </div>
 
+          {localPasswordEnabled ? (
+            <div>
+              <label htmlFor="signup-password" className="mb-1 block text-sm font-medium text-slate-300">Password</label>
+              <input
+                id="signup-password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="At least 8 characters"
+                className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+              />
+              <p className="mt-1 text-xs text-slate-500">Local development password auth is enabled.</p>
+            </div>
+          ) : null}
+
           {signupError ? (
             <div className="rounded-lg border border-red-800 bg-red-900/30 p-3 text-sm text-red-300">
               {signupError}
@@ -91,7 +119,7 @@ export default function SignupPage({ error, onSignupSuccess }: SignupPageProps) 
 
           <button
             onClick={handleSignup}
-            disabled={status === "submitting" || !email.trim()}
+            disabled={status === "submitting" || !email.trim() || (localPasswordEnabled && password.length < 8)}
             className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {status === "submitting" ? "Creating account…" : "Create basic account"}

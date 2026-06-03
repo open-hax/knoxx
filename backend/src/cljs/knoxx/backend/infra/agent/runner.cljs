@@ -12,6 +12,7 @@
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.extern.agent-runner :as xrunner]
             [knoxx.backend.extern.agent-turn-node :as xturn-node]))
 
@@ -46,6 +47,11 @@
         role (spec-value spec :role :role_slug :role-slug :roleSlug)
         system-prompt (or (:system_prompt spec) (:system-prompt spec) (:systemPrompt spec))
         task-prompt (or (:task_prompt spec) (:task-prompt spec) (:taskPrompt spec))
+        task-source (spec-value spec :task_source :task-source :taskSource)
+        rendered-task-prompt (or (:rendered_task_prompt spec) (:rendered-task-prompt spec) (:renderedTaskPrompt spec))
+        deprecated-agent-task-fallback (boolean (or (:deprecated_agent_task_fallback spec)
+                                                    (:deprecated-agent-task-fallback spec)
+                                                    (:deprecatedAgentTaskFallback spec)))
         model (spec-value spec :model)
         thinking-level (spec-value spec :thinking_level :thinking-level :thinkingLevel :reasoning_effort :reasoning-effort :reasoningEffort)
         tool-policies (->> (or (:tool_policies spec) (:tool-policies spec) (:toolPolicies spec) [])
@@ -72,6 +78,9 @@
       role (assoc :role role)
       (some? system-prompt) (assoc :system-prompt system-prompt)
       (some? task-prompt) (assoc :task-prompt task-prompt)
+      task-source (assoc :task-source task-source)
+      (some? rendered-task-prompt) (assoc :rendered-task-prompt rendered-task-prompt)
+      deprecated-agent-task-fallback (assoc :deprecated-agent-task-fallback true)
       model (assoc :model model)
       thinking-level (assoc :thinking-level thinking-level)
       (seq tool-policies) (assoc :tool-policies tool-policies)
@@ -132,6 +141,27 @@
    :model (or (:model body)
               (get-in body [:agent-spec :model]))})
 
+(defn log-and-record-async-spawn-error!
+  [body err]
+  (let [diagnostic (xrunner/error-diagnostic body err)
+        run-id (:run-id body)
+        conversation-id (:conversation-id body)
+        session-id (:session-id body)
+        event (run-state/tool-event-payload run-id conversation-id session-id
+                                            "async_spawn_failed"
+                                            {:status "failed"
+                                             :error (:message diagnostic)
+                                             :diagnostic diagnostic})]
+    (xrunner/log-async-spawn-error! body err)
+    (when run-id
+      (run-state/update-run! run-id
+                             (fn [run]
+                               (cond-> run
+                                 run (assoc :status "failed"
+                                            :error (:message diagnostic)))))
+      (run-state/append-run-event! run-id event))
+    diagnostic))
+
 (defn- queue-turn!
   [runtime config body]
   (-> (agent-policy/validate-chat-policy! (:auth-context body) (policy-model config body))
@@ -139,7 +169,7 @@
                (-> (agent-turns/send-agent-turn! runtime config body)
                    (.then (fn [_] nil))
                    (.catch (fn [err]
-                             (xrunner/log-async-spawn-error! body err))))
+                             (log-and-record-async-spawn-error! body err))))
                (accepted-response body)))))
 
 (defn- busy-error

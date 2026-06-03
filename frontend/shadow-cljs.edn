@@ -9,7 +9,7 @@
  :dev-http
  {5173 {:roots ["." "dist"]
         :push-state/index "index.html"
-        :proxy-url "http://knoxx-backend:8000"
+        :proxy-url "http://127.0.0.1:8000"
         :proxy-predicate knoxx.frontend.dev-http/proxy-predicate}}
 
  :builds

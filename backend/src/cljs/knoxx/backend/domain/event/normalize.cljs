@@ -18,12 +18,7 @@
     :else
     (let [raw (nonblank value)]
       (when raw
-        (if (str/includes? raw "/")
-          (keyword raw)
-          (let [parts (str/split raw #"\.")]
-            (if (> (count parts) 1)
-              (keyword (str/join "." (butlast parts)) (last parts))
-              (keyword raw))))))))
+        (keyword raw)))))
 
 (defn event-types
   [event]

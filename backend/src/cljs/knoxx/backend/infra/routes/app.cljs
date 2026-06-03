@@ -5,6 +5,7 @@
             [knoxx.backend.infra.routes.actors :as actor-routes]
             [knoxx.backend.infra.agent.hydration :refer [ensure-settings! settings-state*]]
             [knoxx.backend.infra.agent.runtime :refer [resolve-workspace-path]]
+            [knoxx.backend.infra.agent.runner :as agent-runner]
             [knoxx.backend.infra.agent.service :refer [active-agent-session queue-agent-control! resume-recovered-session! send-agent-turn!]]
             [knoxx.backend.shape.agent :refer [streaming? current-turn]]
             [knoxx.backend.infra.agent.policy :refer [validate-chat-policy!]]
@@ -52,7 +53,8 @@
   (try
     (await (send-agent-turn! runtime config body))
     (catch :default err
-      (.error js/console log-label err))))
+      (.error js/console log-label err)
+      (agent-runner/log-and-record-async-spawn-error! body err))))
 
 (defn ^:async queue-chat-start!
   [runtime config reply agent-ctx policy-model body accepted-response]
@@ -256,10 +258,19 @@
          (map active-session-summary)
          vec)))
 
+(defn- active-item-time-ms
+  [item]
+  (let [value (or (:updated_at item) (:created_at item))]
+    (cond
+      (number? value) value
+      (string? value) (let [parsed (js/Date.parse value)]
+                        (if (js/isNaN parsed) 0 parsed))
+      :else 0)))
+
 (defn- sort-active-items
   [limit items]
   (->> items
-       (sort-by #(or (:updated_at %) (:created_at %) "") #(compare %2 %1))
+       (sort-by active-item-time-ms #(compare %2 %1))
        (take limit)
        vec))
 

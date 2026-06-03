@@ -40,7 +40,7 @@
       (do
         (-> (-start-turn! this turn-request)
             (.catch (fn [err]
-                      (.error js/console "[agent-service] queued turn failed" err))))
+                      (runner/log-and-record-async-spawn-error! turn-request err))))
         (js/Promise.resolve (accepted-response turn-request)))))
 
   (-control-turn! [_ control-request]

@@ -1,16 +1,15 @@
 (ns knoxx.backend.infra.routes.tools
   (:require [clojure.string :as str]
-            [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
             [knoxx.backend.infra.clients.proxx :as proxx-client]
             [knoxx.backend.infra.http :as backend-http]
             [knoxx.backend.macros :refer-macros [defroute]]
             [knoxx.backend.domain.mcp.mcp-bridge :as mcp]
             [knoxx.backend.runtime.state :as runtime-state]
-             [knoxx.backend.domain.text :refer [sanitize-svg-content]]
-             [knoxx.backend.infra.control-config :as control-config]
-             [knoxx.backend.infra.event-runtime :as event-runtime]
-             ["node:child_process" :refer [execFile]]
+            [knoxx.backend.domain.text :refer [sanitize-svg-content]]
+            [knoxx.backend.infra.control-config :as control-config]
+            [knoxx.backend.infra.event-runtime :as event-runtime]
+            ["node:child_process" :refer [execFile]]
             ["node:fs/promises" :as fs]
             ["node:path" :as path]
             ["node:util" :refer [promisify]]
@@ -51,21 +50,24 @@
      :control control
      :runtime runtime}))
 
-(defn- result-prop
-  [result & ks]
-  (some (fn [k]
-          (cond
-            (map? result) (get result k)
-            (object? result) (aget result (name k))
-            :else nil))
-        ks))
+(defn- failed-trigger-results
+  [result]
+  (->> (:results result)
+       (filter :failed)
+       vec))
 
 (defn- trigger-fire-response!
   [reply trigger-id result]
-  (backend-http/json-response! reply 202 {:ok true
+  (let [failures (failed-trigger-results result)
+        failed? (seq failures)]
+    (backend-http/json-response! reply (if failed? 500 202)
+                                 (cond-> {:ok (not failed?)
                                           :triggerId trigger-id
                                           :matchedTriggers (:matchedTriggers result)
-                                          :event (:event result)}))
+                                          :event (:event result)
+                                          :results (:results result)}
+                                   failed? (assoc :detail "One or more trigger actions failed"
+                                                  :failures failures)))))
 
 ;; ── Tool routes ──────────────────────────────────────────────────────────────
 
@@ -97,12 +99,12 @@
           markdown          (str (or (aget body "markdown") ""))]
       (if (empty? to)
         (json-response! reply 400 {:detail "Missing required field: to array"})
-        (-> (send-email! runtime config to subject markdown cc bcc)
-            (.then (fn [result]
-                     (json-response! reply 200 {:ok true :role role
-                                                :message_id (aget result "messageId")})))
-            (.catch (fn [err]
-                      (json-response! reply 502 {:detail (str "Failed to send email: " (or (aget err "message") (str err)))}))))))
+        (try
+          (let [result (await (send-email! runtime config to subject markdown cc bcc))]
+            (json-response! reply 200 {:ok true :role role
+                                       :message_id (aget result "messageId")}))
+          (catch :default err
+            (json-response! reply 502 {:detail (str "Failed to send email: " (or (aget err "message") (str err)))})))))
     (catch :default err
       (error-response! reply err))))
 
@@ -121,20 +123,43 @@
           model             (aget body "model")]
       (if (str/blank? query)
         (json-response! reply 400 {:detail "query is required"})
-        (-> (proxx-client/websearch! (proxx-client/client config)
-                                     {:query query
-                                      :numResults num-results
-                                      :searchContextSize search-context-size
-                                      :allowedDomains allowed-domains
-                                      :model model})
-            (.then (fn [resp]
-                     (if (:ok resp)
-                       (json-response! reply 200 (assoc (:body resp) :role role))
-                       (json-response! reply (or (:status resp) 502)
-                                       {:detail (pr-str (:body resp))}))))
-            (.catch (fn [err] (json-response! reply 502 {:detail (str err)}))))))
+        (try
+          (let [resp (await (proxx-client/websearch! (proxx-client/client config)
+                                                     {:query query
+                                                      :numResults num-results
+                                                      :searchContextSize search-context-size
+                                                      :allowedDomains allowed-domains
+                                                      :model model}))]
+            (if (:ok resp)
+              (json-response! reply 200 (assoc (:body resp) :role role))
+              (json-response! reply (or (:status resp) 502)
+                              {:detail (pr-str (:body resp))})))
+          (catch :default err
+            (json-response! reply 502 {:detail (str err)})))))
     (catch :default err
       (error-response! reply err))))
+
+(defn- ^:async read-directory-response!
+  [json-response! reply role path-str clip-text]
+  (let [entries (await (.readdir fs path-str (clj->js {:withFileTypes true})))
+        content-lines (map (fn [e] (str (aget e "name") (when (.isDirectory e) "/")))
+                           (array-seq entries))
+        [content truncated] (clip-text (str/join "\n" content-lines))]
+    (json-response! reply 200 {:ok true :role role :path path-str
+                               :content content :truncated truncated})))
+
+(defn- ^:async read-file-response!
+  [json-response! reply role path-str offset limit clip-text]
+  (let [text (await (.readFile fs path-str "utf8"))
+        lines (str/split-lines text)
+        start (dec offset)
+        stop (+ start limit)
+        numbered (map-indexed (fn [idx line] (str (+ start idx 1) ": " line))
+                              (take limit (drop start lines)))
+        [content clipped?] (clip-text (str/join "\n" numbered))]
+    (json-response! reply 200 {:ok true :role role :path path-str
+                               :content content
+                               :truncated (or clipped? (< stop (count lines)))})))
 
 (defroute register-read-route!
   [ensure-role-can-use! resolve-workspace-path clip-text]
@@ -147,31 +172,28 @@
           path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
           offset  (max 1 (or (aget body "offset") 1))
           limit   (max 1 (or (aget body "limit") 400))]
-      (-> (.stat fs path-str)
-          (.then (fn [stat]
-                   (if (.isDirectory stat)
-                     (-> (.readdir fs path-str (clj->js {:withFileTypes true}))
-                         (.then (fn [entries]
-                                  (let [content-lines (map (fn [e] (str (aget e "name") (when (.isDirectory e) "/")))
-                                                           (array-seq entries))
-                                        [content truncated] (clip-text (str/join "\n" content-lines))]
-                                    (json-response! reply 200 {:ok true :role role :path path-str
-                                                               :content content :truncated truncated})))))
-                     (-> (.readFile fs path-str "utf8")
-                         (.then (fn [text]
-                                  (let [lines   (str/split-lines text)
-                                        start   (dec offset)
-                                        stop    (+ start limit)
-                                        numbered (map-indexed (fn [idx line] (str (+ start idx 1) ": " line))
-                                                              (take limit (drop start lines)))
-                                        [content clipped?] (clip-text (str/join "\n" numbered))]
-                                    (json-response! reply 200 {:ok true :role role :path path-str
-                                                               :content content
-                                                               :truncated (or clipped? (< stop (count lines)))}))))))
-                   ))
-          (.catch (fn [err] (json-response! reply 404 {:detail (str err)})))))
+      (try
+        (let [stat (await (.stat fs path-str))]
+          (if (.isDirectory stat)
+            (read-directory-response! json-response! reply role path-str clip-text)
+            (read-file-response! json-response! reply role path-str offset limit clip-text)))
+        (catch :default err
+          (json-response! reply 404 {:detail (str err)}))))
     (catch :default err
       (error-response! reply err))))
+
+(defn- write-body-params
+  [body resolve-workspace-path runtime config]
+  (let [path-str (resolve-workspace-path runtime config (or (aget body "path") ""))
+        raw-content (str (or (aget body "content") ""))
+        content (if (re-find #"(?i)\.svg$" path-str)
+                  (sanitize-svg-content raw-content)
+                  raw-content)]
+    {:path-str path-str
+     :content content
+     :overwrite (not= false (aget body "overwrite"))
+     :create-parents (not= false (aget body "create_parents"))
+     :parent (.dirname path path-str)}))
 
 (defroute register-write-route!
   [ensure-role-can-use! resolve-workspace-path]
@@ -181,27 +203,21 @@
     (let [body    (or (aget request "body") (js/Object.))
           agent-contract-id (or (aget body "agentContractId") (aget body "agent_contract_id"))
           role    (ensure-role-can-use! ctx (or (aget body "role") (:knoxx-default-role config)) "write" agent-contract-id)
-          path-str  (resolve-workspace-path runtime config (or (aget body "path") ""))
-          raw-content (str (or (aget body "content") ""))
-          content (if (re-find #"(?i)\.svg$" path-str)
-                    (sanitize-svg-content raw-content)
-                    raw-content)
-          overwrite (not= false (aget body "overwrite"))
-          create-parents (not= false (aget body "create_parents"))
-          parent    (.dirname path path-str)
-          check-promise (if overwrite
-                          (js/Promise.resolve nil)
-                          (-> (.stat fs path-str)
-                              (.then (fn [_] (js/Promise.reject (js/Error. (str "File exists and overwrite is false: " path-str)))))
-                              (.catch (fn [_] (js/Promise.resolve nil)))))]
-      (-> check-promise
-          (.then (fn [] (if create-parents
-                          (.mkdir fs parent (clj->js {:recursive true}))
-                          (js/Promise.resolve nil))))
-          (.then (fn [] (.writeFile fs path-str content "utf8")))
-          (.then (fn [] (json-response! reply 200 {:ok true :role role :path path-str
-                                                   :bytes_written (.-length (.from js/Buffer content "utf8"))})))
-          (.catch (fn [err] (json-response! reply 409 {:detail (str err)})))))
+          {:keys [path-str content overwrite create-parents parent]} (write-body-params body resolve-workspace-path runtime config)]
+      (try
+        (when-not overwrite
+          (try
+            (await (.stat fs path-str))
+            (json-response! reply 409 {:detail (str "File exists and overwrite is false: " path-str)})
+            (catch :default _
+              nil)))
+        (when create-parents
+          (await (.mkdir fs parent (clj->js {:recursive true}))))
+        (await (.writeFile fs path-str content "utf8"))
+        (json-response! reply 200 {:ok true :role role :path path-str
+                                   :bytes_written (.-length (.from js/Buffer content "utf8"))})
+        (catch :default err
+          (json-response! reply 409 {:detail (str err)}))))
     (catch :default err
       (error-response! reply err))))
 
@@ -217,20 +233,41 @@
           old-string (str (or (aget body "old_string") ""))
           new-string (str (or (aget body "new_string") ""))
           replace-all (true? (aget body "replace_all"))]
-      (-> (.readFile fs path-str "utf8")
-          (.then (fn [current]
-                   (if (= (.indexOf current old-string) -1)
-                     (js/Promise.reject (js/Error. "old_string not found in file"))
-                     (let [replacements (if replace-all (count-occurrences current old-string) 1)
-                           updated      (if replace-all
-                                          (str/replace current old-string new-string)
-                                          (replace-first current old-string new-string))]
-                       (-> (.writeFile fs path-str updated "utf8")
-                           (.then (fn [] (json-response! reply 200 {:ok true :role role :path path-str
-                                                                    :replacements replacements}))))))))
-          (.catch (fn [err] (json-response! reply 409 {:detail (str err)})))))
+      (try
+        (let [current (await (.readFile fs path-str "utf8"))]
+          (if (= (.indexOf current old-string) -1)
+            (json-response! reply 409 {:detail "old_string not found in file"})
+            (let [replacements (if replace-all (count-occurrences current old-string) 1)
+                  updated      (if replace-all
+                                 (str/replace current old-string new-string)
+                                 (replace-first current old-string new-string))]
+              (await (.writeFile fs path-str updated "utf8"))
+              (json-response! reply 200 {:ok true :role role :path path-str
+                                         :replacements replacements}))))
+        (catch :default err
+          (json-response! reply 409 {:detail (str err)}))))
     (catch :default err
       (error-response! reply err))))
+
+(defn- bash-success-response!
+  [json-response! reply role body result clip-text]
+  (let [[stdout _]  (clip-text (or (aget result "stdout") "") 24000)
+        [stderr __] (clip-text (or (aget result "stderr") "") 12000)]
+    (json-response! reply 200 {:ok true :role role
+                               :command  (or (aget body "command") "")
+                               :exit_code 0
+                               :stdout stdout :stderr stderr})))
+
+(defn- bash-error-response!
+  [json-response! reply role body timeout-ms err clip-text]
+  (if (and (aget err "killed") (not (number? (aget err "code"))))
+    (json-response! reply 408 {:detail (str "Command timed out after " (/ timeout-ms 1000) "s")})
+    (let [[stdout _]  (clip-text (or (aget err "stdout") "") 24000)
+          [stderr __] (clip-text (or (aget err "stderr") "") 12000)]
+      (json-response! reply 200 {:ok false :role role
+                                 :command   (or (aget body "command") "")
+                                 :exit_code (if (number? (aget err "code")) (aget err "code") 1)
+                                 :stdout stdout :stderr stderr}))))
 
 (defroute register-bash-route!
   [ensure-role-can-use! resolve-workspace-path clip-text]
@@ -247,28 +284,16 @@
           workdir  (if-let [raw-wd (aget body "workdir")]
                      (resolve-workspace-path runtime config raw-wd)
                      (.resolve path (:workspace-root config)))]
-      (-> (exec-file-async "/bin/bash"
-                            (clj->js ["-lc" (or (aget body "command") "")])
-                            (clj->js {:cwd workdir
-                                      :timeout timeout-ms
-                                      :killSignal "SIGKILL"
-                                      :maxBuffer 1048576}))
-          (.then (fn [result]
-                   (let [[stdout _]  (clip-text (or (aget result "stdout") "") 24000)
-                         [stderr __] (clip-text (or (aget result "stderr") "") 12000)]
-                     (json-response! reply 200 {:ok true :role role
-                                                :command  (or (aget body "command") "")
-                                                :exit_code 0
-                                                :stdout stdout :stderr stderr}))))
-          (.catch (fn [err]
-                    (if (and (aget err "killed") (not (number? (aget err "code"))))
-                      (json-response! reply 408 {:detail (str "Command timed out after " (/ timeout-ms 1000) "s")})
-                      (let [[stdout _]  (clip-text (or (aget err "stdout") "") 24000)
-                            [stderr __] (clip-text (or (aget err "stderr") "") 12000)]
-                        (json-response! reply 200 {:ok false :role role
-                                                   :command   (or (aget body "command") "")
-                                                   :exit_code (if (number? (aget err "code")) (aget err "code") 1)
-                                                   :stdout stdout :stderr stderr})))))))
+      (try
+        (let [result (await (exec-file-async "/bin/bash"
+                                              (clj->js ["-lc" (or (aget body "command") "")])
+                                              (clj->js {:cwd workdir
+                                                        :timeout timeout-ms
+                                                        :killSignal "SIGKILL"
+                                                        :maxBuffer 1048576})))]
+          (bash-success-response! json-response! reply role body result clip-text))
+        (catch :default err
+          (bash-error-response! json-response! reply role body timeout-ms err clip-text))))
     (catch :default err
       (error-response! reply err))))
 
@@ -345,9 +370,11 @@
     (let [trigger-id (or (aget request "params" "triggerId") "")]
       (if (str/blank? trigger-id)
         (json-response! reply 400 {:detail "triggerId is required"})
-        (-> (event-runtime/fire-trigger! config trigger-id)
-            (.then (fn [result] (trigger-fire-response! reply trigger-id result)))
-            (.catch (fn [err] (error-response! reply err))))))
+        (try
+          (let [result (await (event-runtime/fire-trigger! config trigger-id))]
+            (trigger-fire-response! reply trigger-id result))
+          (catch :default err
+            (error-response! reply err)))))
     (catch :default err
       (error-response! reply err))))
 
@@ -358,12 +385,19 @@
   (try
     (ensure-permission! ctx "org.events.control")
     (let [body (js->clj (or (aget request "body") (js/Object.)) :keywordize-keys true)]
-      (-> (event-dispatch/dispatch! config body)
-          (.then (fn [result]
-                    (json-response! reply 202 {:ok true
-                                               :matchedTriggers (:matchedTriggers result)
-                                               :event (:event result)})))
-          (.catch (fn [err] (error-response! reply err)))))
+      (try
+        (let [result (await (event-dispatch/dispatch! config body))
+              failures (failed-trigger-results result)
+              failed? (seq failures)]
+          (json-response! reply (if failed? 500 202)
+                          (cond-> {:ok (not failed?)
+                                   :matchedTriggers (:matchedTriggers result)
+                                   :event (:event result)
+                                   :results (:results result)}
+                            failed? (assoc :detail "One or more trigger actions failed"
+                                           :failures failures))))
+        (catch :default err
+          (error-response! reply err))))
     (catch :default err
       (error-response! reply err))))
 
@@ -389,15 +423,15 @@
   [session-guard]
   (try
     (ensure-permission! ctx "org.events.control")
-    (-> (event-runtime/reset-runtime! config)
-        (.then (fn [summary]
-                 (json-response! reply 200
-                                 (merge (events-control-response config)
-                                        {:ok true
-                                         :action "reset"
-                                         :reset summary}))))
-        (.catch (fn [err]
-                  (error-response! reply err))))
+    (try
+      (let [summary (await (event-runtime/reset-runtime! config))]
+        (json-response! reply 200
+                        (merge (events-control-response config)
+                               {:ok true
+                                :action "reset"
+                                :reset summary})))
+      (catch :default err
+        (error-response! reply err)))
     (catch :default err
       (error-response! reply err))))
 
@@ -412,12 +446,11 @@
     (let [trigger-id (or (aget request "params" "triggerId") "")]
       (if (str/blank? trigger-id)
         (json-response! reply 400 {:detail "triggerId is required"})
-        (-> (event-runtime/fire! trigger-id)
-            (.then (fn [result]
-                     (json-response! reply 202 {:ok true
-                                                :triggerId trigger-id
-                                                :result result})))
-            (.catch (fn [err] (error-response! reply err))))))
+        (try
+          (let [result (await (event-runtime/fire! trigger-id))]
+            (trigger-fire-response! reply trigger-id result))
+          (catch :default err
+            (error-response! reply err)))))
     (catch :default err
       (error-response! reply err))))
 
@@ -448,10 +481,11 @@
           args    (js->clj (or (aget body "arguments") (js/Object.)) :keywordize-keys true)]
       (if (str/blank? tool-id)
         (json-response! reply 400 {:detail "toolId is required"})
-        (-> (mcp/call-tool! tool-id args)
-            (.then (fn [result] (json-response! reply 200 result)))
-            (.catch (fn [err]
-                      (json-response! reply 502 {:detail (str "MCP tool call failed: " (or (aget err "message") (str err)))}))))))
+        (try
+          (let [result (await (mcp/call-tool! tool-id args))]
+            (json-response! reply 200 result))
+          (catch :default err
+            (json-response! reply 502 {:detail (str "MCP tool call failed: " (or (aget err "message") (str err)))})))))
     (catch :default err
       (error-response! reply err))))
 
