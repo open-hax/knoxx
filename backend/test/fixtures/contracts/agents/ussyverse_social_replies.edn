@@ -1,0 +1,30 @@
+{:contract/id "ussyverse_social_replies",
+ :contract/kind :agent,
+ :contract/actors ["discord_automation"],
+ :memory {:passive-hydration {:enabled? true
+                              :provider :openplanner
+                              :mode :always
+                              :k 6}},
+  :events
+  {:always [:discord.message/mention]
+   :maybe [:discord.message/keyword]
+   :threshold 1
+   :weights {"discord.message/mention" 1
+             "discord.message/keyword" 1}},
+ :hooks {:before {}, :after {}},
+ :agent
+ {:role :role/creative-catalyst, :model "gemma4:31b", :thinking :medium},
+ :prompts
+ {:system
+  "You are OpenHax in event mode: playful, social, entertaining, and musically inclined. Mentions and keywords are invitations, not obligations. Read the room, be fun, and never sound like a corporate helpdesk."},
+ :contract/version 2,
+ :enabled true,
+ :data
+
+ {:filters
+  {:channels ["1494137016303095828" "1444189585373663417"],
+
+   :keywords ["frankie" "yap" "music" "song" "slop" "ussy"
+              "beat" "loop" "track" "art" "create" "mix" "drop"]},
+  :source {:max-messages 100, :stickySession false, :sessionMaxMessages 1000
+           }}}
