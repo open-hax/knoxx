@@ -123,19 +123,15 @@
   (tool-catalog/visible-session-signature runtime config auth-context agent-spec))
 
 (defn- session-provider-tools
-  [runtime config tool-auth-context agent-spec allowed-tool-ids model-id session-id conversation-id]
-  (if-not (tool-catalog/provider-tools-enabled-for-model? model-id)
-    (do
-      (.info js/console "[agent-session] provider tools disabled" #js {:modelId model-id})
-      {:custom-tools nil :tool-name-allowlist []})
-    (let [builtin-tools (tool-catalog/builtin-tools runtime config tool-auth-context agent-spec)
-          custom-tools (wrap-custom-tools-with-agent-context!
-                        (tool-catalog/custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
-                        {:session-id session-id
-                         :conversation-id conversation-id
-                         :agent-spec agent-spec})]
-      {:custom-tools custom-tools
-       :tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)})))
+  [runtime config tool-auth-context agent-spec allowed-tool-ids _model-id session-id conversation-id]
+  (let [builtin-tools (tool-catalog/builtin-tools runtime config tool-auth-context agent-spec)
+        custom-tools (wrap-custom-tools-with-agent-context!
+                      (tool-catalog/custom-tools runtime config tool-auth-context agent-spec allowed-tool-ids)
+                      {:session-id session-id
+                       :conversation-id conversation-id
+                       :agent-spec agent-spec})]
+    {:custom-tools custom-tools
+     :tool-name-allowlist (tool-catalog/tool-runtime-names builtin-tools custom-tools)}))
 
 (defn ^:async create-session-manager!
   ([runtime config conversation-id model-id] (create-session-manager! runtime config conversation-id model-id nil (:agent-thinking-level config)))
