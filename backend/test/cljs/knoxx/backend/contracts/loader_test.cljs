@@ -161,11 +161,11 @@
     (is (instance? js/Promise p))))
 
 (deftest ^:async load-all-contracts-resolves-non-empty
-  ;; fixtures: 2 valid agents + 1 role + 1 capability + 1 actor + 1 sub-agent = 6 valid records
+  ;; fixtures: 3 valid agents + 1 role + 1 capability + 1 actor + 1 sub-agent = 7 valid records
   ;; broken.edn and no_identity.edn are silently dropped
   (let [contracts (await (sut/load-all-contracts! fixture-config))]
-    (is (= 6 (count contracts))
-        (str "expected 6 valid contracts, got " (count contracts) ": " (pr-str (mapv :id contracts))))))
+    (is (= 7 (count contracts))
+        (str "expected 7 valid contracts, got " (count contracts) ": " (pr-str (mapv :id contracts))))))
 
 (deftest ^:async load-all-contracts-records-have-required-keys
   (let [contracts (await (sut/load-all-contracts! fixture-config))]
