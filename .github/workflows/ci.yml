@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # ubuntu runners ship a snap-wrapper /usr/bin/chromium-browser that hangs
+  # under CI; point puppeteer-core at the real Chrome binary instead.
+  PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+
 jobs:
   knoxx:
     name: knoxx (backend + frontend)
