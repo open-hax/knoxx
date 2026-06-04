@@ -6,7 +6,8 @@
    dispatch-source-event! (or receives :dispatch! in start-source!) with a plain
    event map. This namespace attaches source/driver provenance and forwards the
    normalized event into the generic event dispatcher."
-  (:require [knoxx.backend.domain.driver.builtin :as driver-builtin]
+  (:require [knoxx.backend.domain.contracts.loader :as contract-loader]
+            [knoxx.backend.domain.driver.builtin :as driver-builtin]
             [knoxx.backend.domain.driver.registry :as driver-registry]
             [knoxx.backend.domain.error-observatory :as errors]
             [knoxx.backend.domain.event.dispatch :as event-dispatch]
@@ -111,15 +112,7 @@
                     :event/type (driver-registry/event-type event-type)})
 
       :else
-      (try
-        (await (event-dispatch/dispatch! config (source-event source event)))
-        (catch :default err
-          (errors/log-error! :source-runtime/dispatch
-                             {:driver driver
-                              :source/id (:source/id source)
-                              :source/actor (:source/actor source)
-                              :event/type (driver-registry/event-type event-type)}
-                             err))))))
+      (await (event-dispatch/dispatch! config (source-event source event))))))
 
 (defn ^:async dispatch-driver-event!
   "Dispatch an event emitted by driver-id for actor-id.
@@ -127,12 +120,18 @@
    The event is admitted only if an enabled source resource for that actor uses
    the driver and lists the event type in :source/listens."
   [config driver-id actor-id event]
-  (if-let [source (matching-source config driver-id actor-id (event-entry event))]
-    (await (dispatch-source-event! config source event))
-    (skip-result :no-matching-source
-                 {:driver (driver-registry/normalize-driver-id driver-id)
-                  :actor/id actor-id
-                  :event/type (driver-registry/event-type (event-entry event))})))
+  (let [event-type (event-entry event)
+        source (matching-source config driver-id actor-id event-type)]
+    (js/console.log "[source-runtime] dispatch-driver-event:"
+                    (pr-str driver-id) (pr-str actor-id) (pr-str event-type)
+                    (if source "found-source" "no-matching-source")
+                    "config-roots=" (pr-str (contract-loader/contract-root-paths config)))
+    (if source
+      (await (dispatch-source-event! config source event))
+      (skip-result :no-matching-source
+                   {:driver (driver-registry/normalize-driver-id driver-id)
+                   :actor/id actor-id
+                   :event/type (driver-registry/event-type (event-entry event))}))))
 
 (defn- source-start-context
   [config source]

@@ -135,11 +135,7 @@
   [expr event actor trigger config]
   (if (nil? expr)
     true ;; No condition means always match
-    (try
-      (boolean (safe-eval expr {'event event
-                                'actor actor
-                                'trigger trigger
-                                'config config}))
-      (catch :default e
-        (js/console.warn "[condition] failed to evaluate" expr ":" (.-message e))
-        false))))
+     (boolean (safe-eval expr {'event event
+                               'actor actor
+                               'trigger trigger
+                               'config config}))))

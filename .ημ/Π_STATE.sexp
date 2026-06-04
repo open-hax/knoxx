@@ -1,35 +1,42 @@
 (fork-tax-state
-  (timestamp "2026-06-03T20:21:42Z")
+  (timestamp "2026-06-04T18:33:20Z")
   (repo "/home/err/devel/orgs/open-hax/openplanner/packages/agents/knoxx")
-  (branch "test/coverage-improvement")
+  (branch "fix/frontend-es2022-lib")
   (remote "origin" "git@github.com:open-hax/knoxx.git")
   (base "origin/staging")
-  (scope "Backend domain/law/shape test coverage, parse regex fix, frontend test env, label-gated testing deploy workflow")
+  (scope "Backend trigger test suite, domain condition registry refactor, event dispatch contract loading, source runtime discord integration")
   (changes
-    (parse-fix
-      "shape/parse.cljs parse-positive-int: regex #\"\\\\.\" (literal backslash+dot) corrected to #\"\\.\" so decimal strings are rejected as NaN instead of truncated by parseInt")
-    (coverage-tests
-      "New backend/test/cljs/knoxx/backend/domain/condition/builtin_test.cljs"
-      "New backend/test/cljs/knoxx/backend/domain/node/ tests"
-      "New backend/test/cljs/knoxx/backend/domain/time_test.cljs"
-      "New backend/test/cljs/knoxx/backend/law/ tests"
-      "New backend/test/cljs/knoxx/backend/shape/ tests")
-    (frontend-test-env
-      "frontend/package.json: NODE_ENV=test for vitest run/coverage/watch")
-    (deploy-testing-workflow
-      ".github/workflows/deploy-testing.yml: label-gated (testing) PR-head deploy to the shared staging slot via open-hax/services/.github/workflows/deploy-promethean.yml@main service=knoxx"
-      "eligibility: same-repo head, non-draft, owner in TESTING_ALLOWED_OWNER_LOGINS"
-      "concurrency group knoxx-staging shared with deploy-staging; queues, no cancel"))
+    (domain-condition-registry
+      "Refactored backend/src/cljs/knoxx/backend/domain/condition/registry.cljs"
+      "Refactored backend/test/cljs/knoxx/backend/domain/condition/registry_test.cljs")
+    (contracts-loader
+      "Modified backend/src/cljs/knoxx/backend/domain/contracts/loader.cljs")
+    (discord-source
+      "Modified backend/src/cljs/knoxx/backend/domain/discord/source.cljs")
+    (event-dispatch
+      "Modified backend/src/cljs/knoxx/backend/domain/event/dispatch.cljs")
+    (source-runtime
+      "Modified backend/src/cljs/knoxx/backend/domain/source/runtime.cljs")
+    (trigger-tests
+      "New backend/test/cljs/knoxx/backend/triggers/action_invocation_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/contract_root_mismatch_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/contracts_discovery_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/error_propagation_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/event_deduplication_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/production_scenario_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/real_contracts_dispatch_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/source_dispatch_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/trigger_loading_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/trigger_matching_test.cljs"
+      "New backend/test/cljs/knoxx/backend/triggers/trigger_validation_test.cljs")
+    (session-note
+      "New docs/notes/2026.06.04.09.47.41.md"))
   (concurrent-dirt
     "none; all working tree changes are owned by this snapshot")
   (blocked-paths ())
   (verification
-    (backend-tests "passed: pnpm -C backend run test:coverage => exit 0")
-    (frontend-tests "passed: pnpm -C frontend run test:coverage => exit 0")
-    (workflow-lint "passed: actionlint .github/workflows/deploy-testing.yml")
-    (secret-heuristic-scan "passed: additions are tests, package.json scripts, and a workflow using vars/secrets indirection only"))
+    (backend-tests "passed: pnpm -C backend exec shadow-cljs compile test => 523 tests, 1528 assertions, 0 failures, 0 errors"))
   (destructive-cleanup false)
   (deployment
-    "pending: PR test/coverage-improvement -> staging"
-    "pending: testing label -> deploy-testing.yml -> services module deploy of PR head to staging slot")
-  (tag "Π/20260603T202142Z-knoxx-coverage-tests-testing-deploy"))
+    "pending: PR fix/frontend-es2022-lib -> staging")
+  (tag "Π/20260604T183320Z-knoxx-trigger-tests-domain-refactor"))

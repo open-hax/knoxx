@@ -298,26 +298,29 @@
     (-> (policy-db/list-actor-credentials! (policy-db/context-pool policy-db) "discord_bot")
         (.then (fn [result]
                  (dg/start-actor-gateways! (or (:credentials result) []))))
-        (.then
-         (fn [_started]
-           (let [unsubscribes
-                 (->> (dg/gateway-managers)
-                      (mapcat
-                       (fn [[actor-id manager]]
-                         (let [status (.status manager)
-                               bot-user-id (some-> (aget status "userId") str str/trim not-empty)
-                               msg-unsub (.onMessage manager
-                                                     (fn [mapped _raw]
-                                                       (let [msg (assoc (js->clj mapped :keywordize-keys true)
-                                                                        :gatewayActorId actor-id
-                                                                        :gatewayBotUserId bot-user-id)]
-                                                         (observe-boundary!
-                                                          :discord-source/gateway-message-dispatch
-                                                          {:actor/id actor-id
-                                                           :bot/user-id bot-user-id
-                                                           :message/id (:id msg)
-                                                           :channel/id (:channelId msg)}
-                                                          #(on-message! msg)))))
+         (.then
+          (fn [_started]
+            (let [managers (dg/gateway-managers)
+                  _ (js/console.log "[discord-source] binding gateways for actors:" (pr-str (keys managers)))
+                  unsubscribes
+                  (->> managers
+                       (mapcat
+                        (fn [[actor-id manager]]
+                          (let [status (.status manager)
+                                bot-user-id (some-> (aget status "userId") str str/trim not-empty)
+                                _ (js/console.log "[discord-source] binding actor:" actor-id "bot:" bot-user-id)
+                                msg-unsub (.onMessage manager
+                                                      (fn [mapped _raw]
+                                                        (let [msg (assoc (js->clj mapped :keywordize-keys true)
+                                                                         :gatewayActorId actor-id
+                                                                         :gatewayBotUserId bot-user-id)]
+                                                          (observe-boundary!
+                                                           :discord-source/gateway-message-dispatch
+                                                           {:actor/id actor-id
+                                                            :bot/user-id bot-user-id
+                                                            :message/id (:id msg)
+                                                            :channel/id (:channelId msg)}
+                                                           #(on-message! msg)))))
                                voice-unsub (.onVoiceStateUpdate manager
                                                                  (fn [mapped _old _new]
                                                                    (let [state (assoc (js->clj mapped :keywordize-keys true)

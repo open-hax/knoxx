@@ -234,29 +234,21 @@
    still parse the files through parse-contract-file! so identity comes from the
    contract body, not from the directory or filename."
   [root]
-  (try
-    (->> (.readdirSync node-fs root #js {:withFileTypes true :recursive true})
-         array-seq
-         (keep entry->file-path)
-         vec)
-    (catch :default err
-      (stderr! "[contracts] sync readdir failed: " root " — " (.-message err))
-      [])))
+  (->> (.readdirSync node-fs root #js {:withFileTypes true :recursive true})
+       array-seq
+       (keep entry->file-path)
+       vec))
 
 (defn- load-all-contracts-sync-uncached
   [config]
   (->> (contract-root-paths config)
        (mapcat discover-contract-files-sync)
        distinct
-       (keep (fn [file-path]
-               (try
-                 (parse-contract-file!
-                  file-path
-                  (.readFileSync node-fs file-path "utf8"))
-                 (catch :default err
-                   (stderr! "[contracts] sync read error: " file-path " — " (.-message err))
-                   nil))))
-       dedup-contracts))
+        (map (fn [file-path]
+               (parse-contract-file!
+                file-path
+                (.readFileSync node-fs file-path "utf8"))))
+        dedup-contracts))
 
 (defn load-all-contracts-sync
   "Synchronously load all contract records through the same parser/validator and

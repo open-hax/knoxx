@@ -1,34 +1,30 @@
-# Π Fork Tax 2026-06-03T20:21:42Z — coverage tests + label-gated testing deploy
+# Π Fork Tax 2026-06-04T18:33:20Z — trigger tests + domain refactor
 
 ## Snapshot
-- **Branch:** `test/coverage-improvement`
+- **Branch:** `fix/frontend-es2022-lib`
 - **Base target:** `origin/staging`
-- **Scope:** Backend domain/law/shape test coverage, parse regex fix, frontend test env, label-gated testing deploy workflow
+- **Scope:** Backend trigger test suite, domain condition registry refactor, event dispatch contract loading, source runtime discord integration
 
 ## Changed
 
-1. **parse-fix** — `backend/src/cljs/knoxx/backend/shape/parse.cljs`: `parse-positive-int`
-   used `#"\\."` (matches literal backslash+dot) instead of `#"\."`; decimal strings
-   like "1.5" were parsed as 1 instead of rejected as NaN.
-2. **coverage-tests** — new `backend/test/cljs/knoxx/backend/{domain/condition/builtin,domain/node/*,domain/time,law/*,shape/*}_test.cljs`.
-3. **frontend-test-env** — `frontend/package.json`: `NODE_ENV=test` for vitest
-   run/coverage/watch scripts.
-4. **deploy-testing workflow** — `.github/workflows/deploy-testing.yml`: adding the
-   `testing` label to an eligible PR (same-repo head, non-draft, owner in
-   `TESTING_ALLOWED_OWNER_LOGINS`) runs preflight gates at the PR head and deploys it
-   to the shared **staging** slot via
-   `open-hax/services/.github/workflows/deploy-promethean.yml@main` (service: knoxx).
-   Shares the `knoxx-staging` concurrency group with deploy-staging; queues, never
-   cancels in-flight deploys.
+1. **domain-condition-registry** — `backend/src/cljs/knoxx/backend/domain/condition/registry.cljs`
+   and its test `backend/test/cljs/knoxx/backend/domain/condition/registry_test.cljs`.
+2. **contracts-loader** — `backend/src/cljs/knoxx/backend/domain/contracts/loader.cljs`.
+3. **discord-source** — `backend/src/cljs/knoxx/backend/domain/discord/source.cljs`.
+4. **event-dispatch** — `backend/src/cljs/knoxx/backend/domain/event/dispatch.cljs`.
+5. **source-runtime** — `backend/src/cljs/knoxx/backend/domain/source/runtime.cljs`.
+6. **trigger-tests** — 11 new trigger test namespaces under
+   `backend/test/cljs/knoxx/backend/triggers/` covering action invocation,
+   contract root mismatch, contracts discovery, error propagation,
+   event deduplication, production scenario, real contracts dispatch,
+   source dispatch, trigger loading, trigger matching, and trigger validation.
+7. **session-note** — `docs/notes/2026.06.04.09.47.41.md`.
 
 ## Verification
-- `pnpm -C backend run test:coverage` → pass (exit 0)
-- `pnpm -C frontend run test:coverage` → pass (exit 0)
-- `actionlint .github/workflows/deploy-testing.yml` → clean
+- `pnpm -C backend exec shadow-cljs compile test` → pass (523 tests, 1528 assertions, 0 failures, 0 errors)
 
 ## Concurrent Dirt
 None. All working-tree changes are owned by this snapshot.
 
 ## Follow-up
-- PR `test/coverage-improvement` → `staging`; add `testing` label for the
-  label-gated test deploy; merge after checks.
+- PR `fix/frontend-es2022-lib` → `staging`; merge after checks.
