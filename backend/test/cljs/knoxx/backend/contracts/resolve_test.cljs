@@ -50,6 +50,9 @@
   (is (contains? sut/known-actor-keys :kind))
   (is (contains? sut/known-actor-keys :system-prompt)))
 
+(def empty-fixture-config
+  {:contracts-dir "test/fixtures/empty-contracts"})
+
 (deftest resolve-agent-contract-composes-role-actor-and-agent-task-prompts
   (let [contract {:contract/id "agent-a"
                   :contract/kind :agent
@@ -72,7 +75,7 @@
                                              "role task"))
                   roles/role-system-prompt (fn [_ _] nil)
                   roles/role-tool-ids (fn [_ _] [])]
-      (let [resolved (sut/resolve-agent-contract {} "agent-a")
+      (let [resolved (sut/resolve-agent-contract empty-fixture-config "agent-a")
             task (:task-prompt resolved)]
         (is (sequential? task))
         (is (= ["role task" "actor task" "agent task"] (nth task 2)))))))
@@ -112,7 +115,7 @@
                   roles/role-task-prompt (fn [_ _] nil)
                   roles/role-system-prompt (fn [_ _] nil)
                   roles/role-tool-ids (fn [_ _] [])]
-      (let [resolved (sut/resolve-agent-contract {} "agent-a")
+      (let [resolved (sut/resolve-agent-contract empty-fixture-config "agent-a")
             source (first (:sources resolved))]
         (is (= 1 (count (:sources resolved))))
         (is (= :source/openplanner-memory (:source/id source)))
@@ -120,6 +123,33 @@
                 :mode :always
                 :k 4}
                (:source/hydration source)))))))
+
+(deftest resolve-agent-contract-applies-tool-deny
+  (testing ":tool-deny subtracts a role/capability-granted tool without forking the role"
+    (let [agent-contract {:contract/id "agent-a"
+                          :contract/kind :agent
+                          :contract/actors ["actor-a"]
+                          :trigger-kind :manual
+                          :agent {:roles [:role/creative]}
+                          :tool-deny [:workspace_media.attach]}]
+      (with-redefs [loader/find-contract-record-sync (fn [_ class id]
+                                                       (case class
+                                                         "agents" {:id id :contract agent-contract}
+                                                         nil))
+                    sut/default-actor-id (fn [_] "actor-a")
+                    sut/resolve-actor (fn [_ _] {:id "actor-a" :role-slugs [] :capability-ids []})
+                    roles/role-system-prompt (fn [_ _] nil)
+                    roles/role-task-prompt (fn [_ _] nil)
+                    roles/role-tool-ids (fn [_ role]
+                                          (when (= "creative" role)
+                                            ["discord.send" "voice.tts" "workspace_media.attach"]))]
+        (let [resolved (sut/resolve-agent-contract empty-fixture-config "agent-a")]
+          (is (= ["discord.send" "voice.tts"] (:tool-ids resolved))
+              "denied tool is removed from the granted set")
+          (is (not-any? #(= "workspace_media.attach" (:toolId %)) (:tool-policies resolved))
+              "denied tool produces no allow policy")
+          (is (not (contains? (set (keys (:extras resolved))) :tool-deny))
+              ":tool-deny is a known key, not leaked into extras"))))))
 
 (deftest agent-catalog-treats-missing-trigger-kind-as-manual
   (let [agent-contract {:contract/id "knoxx_default"

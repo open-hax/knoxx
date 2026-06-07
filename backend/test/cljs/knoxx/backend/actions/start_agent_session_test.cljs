@@ -17,6 +17,57 @@
             "ussyverse_social_creative"
             12345)))))
 
+(deftest triggered-session-identifiers-honor-sticky-sessions
+  (testing "sticky sources reuse one conversation/session per trigger+scope while runs stay unique"
+    (let [ids-1 (start-agent-session/triggered-session-identifiers
+                 {:trigger/id "ussyverse_social_replies_event"}
+                 {:event/id "evt_1" :event/payload {:channelId "1494137016303095828"}}
+                 "ussyverse_social_replies"
+                 12345
+                 {:sticky? true})
+          ids-2 (start-agent-session/triggered-session-identifiers
+                 {:trigger/id "ussyverse_social_replies_event"}
+                 {:event/id "evt_2" :event/payload {:channelId "1494137016303095828"}}
+                 "ussyverse_social_replies"
+                 67890
+                 {:sticky? true})]
+      (is (= "trigger-ussyverse_social_replies_event-sticky-1494137016303095828"
+             (:conversation-id ids-1)
+             (:conversation-id ids-2)))
+      (is (= "trigger-session-ussyverse_social_replies_event-1494137016303095828"
+             (:session-id ids-1)
+             (:session-id ids-2)))
+      (is (not= (:run-id ids-1) (:run-id ids-2)))))
+  (testing "different channels still get distinct sticky sessions"
+    (let [ids-a (start-agent-session/triggered-session-identifiers
+                 {:trigger/id "t"} {:event/payload {:channelId "chan-a"}} "agent" 1 {:sticky? true})
+          ids-b (start-agent-session/triggered-session-identifiers
+                 {:trigger/id "t"} {:event/payload {:channelId "chan-b"}} "agent" 1 {:sticky? true})]
+      (is (not= (:session-id ids-a) (:session-id ids-b)))
+      (is (not= (:conversation-id ids-a) (:conversation-id ids-b))))))
+
+(deftest sticky-session-source-config-resolution
+  (testing "stickySession and sessionMaxMessages come from the agent contract :data :source"
+    (let [resolved {:contract {:data {:source {:max-messages 100
+                                               :stickySession true
+                                               :sessionMaxMessages 1000}}}
+                    :context-policy nil}
+          source (start-agent-session/agent-source-config resolved)]
+      (is (start-agent-session/sticky-session-source? source))
+      (is (= {:max-messages 1000}
+             (start-agent-session/sticky-context-policy resolved source)))))
+  (testing "an explicit contract context policy keeps its own message cap"
+    (let [resolved {:contract {:data {:source {:stickySession true
+                                               :sessionMaxMessages 1000}}}
+                    :context-policy {:max-messages 40}}
+          source (start-agent-session/agent-source-config resolved)]
+      (is (= {:max-messages 40}
+             (start-agent-session/sticky-context-policy resolved source)))))
+  (testing "non-sticky contracts are unchanged"
+    (let [source (start-agent-session/agent-source-config {:contract {}})]
+      (is (not (start-agent-session/sticky-session-source? source)))
+      (is (nil? (start-agent-session/sticky-context-policy {:context-policy nil} source))))))
+
 (deftest triggered-session-identifiers-never-collapse-to-trigger-event
   (testing "missing trigger ids fall back to agent/schedule context instead of trigger--event"
     (let [ids (start-agent-session/triggered-session-identifiers
