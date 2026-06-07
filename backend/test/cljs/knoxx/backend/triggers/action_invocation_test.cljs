@@ -8,8 +8,8 @@
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.source.runtime :as source-runtime]))
 
-(def real-config
-  {:contracts-dir "contracts"})
+(def fixture-config
+  {:contracts-dir "test/fixtures/trigger-contracts"})
 
 (deftest ^:async action-is-invoked-when-trigger-matches
   (testing "when a trigger matches, the action registry receives the action map"
@@ -26,9 +26,9 @@
                      resources/load-all-resources-sync
                      (fn [_]
                        ;; Load only the trigger we care about
-                       [(resources/resource-record-sync real-config :trigger "ussyverse_social_replies_event")])]
+                       [(resources/resource-record-sync fixture-config :trigger "ussyverse_social_replies_event")])]
         (let [result (await (event-dispatch/dispatch!
-                             real-config
+                             fixture-config
                              {:event/type :discord.message
                               :event/actor "discord_automation"
                               :event/payload {:content "hey frankie"

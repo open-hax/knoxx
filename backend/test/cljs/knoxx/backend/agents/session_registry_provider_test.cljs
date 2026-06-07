@@ -61,7 +61,8 @@
 
 (deftest ^:async eta-mu-provider-adapter-delegates-to-runtime-boundaries
   (let [calls* (atom [])
-        provider (eta-mu-provider/eta-mu-provider :runtime {:agent-compaction-enabled? true
+        provider (eta-mu-provider/eta-mu-provider :runtime {:contracts-dir "test/fixtures/model-contracts"
+                                                            :agent-compaction-enabled? true
                                                             :agent-compaction-reserve-tokens 10
                                                             :agent-compaction-keep-recent-tokens 20})]
     (with-redefs [agent-provider/fetch-proxx-model-ids! (fn [config]
@@ -81,10 +82,12 @@
              (eta-mu-provider/resolve-model provider :registry "proxx" "glm-5" "fallback")))
       (is (= {:session-id "session-1"}
              (eta-mu-provider/create-session! provider {:session-id "session-1"})))
-      (is (= [[:fetch-models {:agent-compaction-enabled? true
+      (is (= [[:fetch-models {:contracts-dir "test/fixtures/model-contracts"
+                              :agent-compaction-enabled? true
                               :agent-compaction-reserve-tokens 10
                               :agent-compaction-keep-recent-tokens 20}]
-              [:setup {:agent-compaction-enabled? true
+              [:setup {:contracts-dir "test/fixtures/model-contracts"
+                       :agent-compaction-enabled? true
                        :agent-compaction-reserve-tokens 10
                        :agent-compaction-keep-recent-tokens 20}
                #{:proxx}

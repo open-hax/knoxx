@@ -1,6 +1,7 @@
-(ns knoxx.backend.triggers.real-contracts-dispatch-test
-  "End-to-end test: load the actual trigger/source contracts from disk and verify
-   the full dispatch pipeline matches Discord events."
+(ns knoxx.backend.triggers.fixture-contracts-dispatch-test
+  "End-to-end test: load fixture trigger/source contracts from disk and verify
+   the full dispatch pipeline matches Discord events. Uses test/fixtures so the
+   live contracts/ folder stays free for operators to edit."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.condition.builtin :as condition-builtins]
             [knoxx.backend.domain.condition.registry :as condition-registry]
@@ -11,12 +12,12 @@
             [knoxx.backend.domain.source.runtime :as source-runtime]
             [knoxx.backend.domain.trigger.normalize :as trigger-normalize]))
 
-(def real-config
-  {:contracts-dir "contracts"})
+(def fixture-config
+  {:contracts-dir "test/fixtures/trigger-contracts"})
 
-(deftest real-trigger-resource-exists-and-is-valid
-  (testing "the ussyverse trigger is discoverable on disk"
-    (let [trigger (resources/resource-sync real-config :trigger "ussyverse_social_replies_event")]
+(deftest fixture-trigger-resource-exists-and-is-valid
+  (testing "the ussyverse trigger fixture is discoverable on disk"
+    (let [trigger (resources/resource-sync fixture-config :trigger "ussyverse_social_replies_event")]
       (is (some? trigger) "Trigger resource should be found on disk")
       (when trigger
         (is (= :trigger (:contract/kind trigger)))
@@ -29,9 +30,9 @@
         (is (= "ussyverse_social_replies" (:trigger/agent trigger)))
         (is (some? (:trigger/condition trigger)) "Trigger should have a condition")))))
 
-(deftest real-source-resource-exists-and-is-valid
-  (testing "the discord gateway source is discoverable on disk"
-    (let [source (resources/resource-sync real-config :source "discord_gateway")]
+(deftest fixture-source-resource-exists-and-is-valid
+  (testing "the discord gateway source fixture is discoverable on disk"
+    (let [source (resources/resource-sync fixture-config :source "discord_gateway")]
       (is (some? source) "Source resource should be found on disk")
       (when source
         (is (= :source (:contract/kind source)))
@@ -44,8 +45,8 @@
         (is (some #{:discord.message} (:source/listens source)))))))
 
 (deftest normalized-trigger-has-correct-runtime-shape
-  (testing "the real trigger normalizes into the runtime shape expected by dispatch"
-    (let [trigger (resources/resource-sync real-config :trigger "ussyverse_social_replies_event")
+  (testing "the fixture trigger normalizes into the runtime shape expected by dispatch"
+    (let [trigger (resources/resource-sync fixture-config :trigger "ussyverse_social_replies_event")
           normalized (trigger-normalize/normalize-trigger trigger)]
       (is (= "ussyverse_social_replies_event" (:trigger/id normalized)))
       (is (= :event (:trigger/kind normalized)))
@@ -59,9 +60,9 @@
       (is (some? (:trigger/condition normalized)) "Normalized trigger should preserve condition"))))
 
 (deftest trigger-matches-keyword-event-from-disk
-  (testing "a real Discord keyword event matches the trigger loaded from disk"
+  (testing "a Discord keyword event matches the fixture trigger loaded from disk"
     (condition-builtins/register-builtins!)
-    (let [trigger (resources/resource-sync real-config :trigger "ussyverse_social_replies_event")
+    (let [trigger (resources/resource-sync fixture-config :trigger "ussyverse_social_replies_event")
           normalized (trigger-normalize/normalize-trigger trigger)
           event (event-normalize/normalize-event
                  {:event/type :discord.message
@@ -75,9 +76,9 @@
           "Condition should match keyword"))))
 
 (deftest trigger-matches-mention-event-from-disk
-  (testing "a real Discord mention event matches the trigger loaded from disk"
+  (testing "a Discord mention event matches the fixture trigger loaded from disk"
     (condition-builtins/register-builtins!)
-    (let [trigger (resources/resource-sync real-config :trigger "ussyverse_social_replies_event")
+    (let [trigger (resources/resource-sync fixture-config :trigger "ussyverse_social_replies_event")
           normalized (trigger-normalize/normalize-trigger trigger)
           event (event-normalize/normalize-event
                  {:event/type :discord.message
@@ -93,7 +94,7 @@
 (deftest trigger-rejects-unrelated-event-from-disk
   (testing "an unrelated Discord message does not match the trigger"
     (condition-builtins/register-builtins!)
-    (let [trigger (resources/resource-sync real-config :trigger "ussyverse_social_replies_event")
+    (let [trigger (resources/resource-sync fixture-config :trigger "ussyverse_social_replies_event")
           normalized (trigger-normalize/normalize-trigger trigger)
           event (event-normalize/normalize-event
                  {:event/type :discord.message
@@ -106,14 +107,14 @@
       (is (false? (condition-registry/evaluate (:trigger/condition normalized) event nil normalized nil))
           "Condition should not match unrelated message"))))
 
-(deftest ^:async full-dispatch-pipeline-with-real-contracts
+(deftest ^:async full-dispatch-pipeline-with-fixture-contracts
   (testing "the full source dispatch pipeline matches trigger, then action errors visibly"
     (driver-builtin/register-built-in-drivers!)
     (condition-builtins/register-builtins!)
     (event-dispatch/reset-dedup!)
     (try
       (await (source-runtime/dispatch-driver-event!
-              real-config
+              fixture-config
               :driver/discord
               "discord_automation"
               {:event/type :discord.message

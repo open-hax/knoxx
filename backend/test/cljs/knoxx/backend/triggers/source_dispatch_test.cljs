@@ -36,6 +36,9 @@
    :resource/class "triggers"
    :resource/definition trigger-edn})
 
+(def fixture-config
+  {:contracts-dir "test/fixtures/trigger-contracts"})
+
 (deftest ^:async discord-source-dispatches-through-trigger
   (testing "full source -> dispatch pipeline matches trigger, then action errors visibly"
     (driver-builtin/register-built-in-drivers!)
@@ -44,7 +47,7 @@
                   (fn [_] [discord-source-record trigger-record])]
       (try
         (await (source-runtime/dispatch-driver-event!
-                {}
+                fixture-config
                 :driver/discord
                 "discord_automation"
                 {:event/type :discord.message

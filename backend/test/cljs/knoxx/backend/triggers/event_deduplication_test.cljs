@@ -7,8 +7,8 @@
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.domain.source.runtime :as source-runtime]))
 
-(def real-config
-  {:contracts-dir "contracts"})
+(def fixture-config
+  {:contracts-dir "test/fixtures/trigger-contracts"})
 
 (deftest ^:async same-event-id-is-deduplicated
   (testing "dispatching the same event twice should skip the second"
@@ -25,12 +25,12 @@
       ;; First dispatch throws because runtime is unavailable
       (try
         (await (source-runtime/dispatch-driver-event!
-                real-config :driver/discord "discord_automation" event))
+                fixture-config :driver/discord "discord_automation" event))
         (is false "Should have thrown")
         (catch :default _ nil))
       ;; Second dispatch should be deduplicated (same event ID)
       (let [result2 (await (source-runtime/dispatch-driver-event!
-                           real-config :driver/discord "discord_automation" event))]
+                           fixture-config :driver/discord "discord_automation" event))]
         (is (true? (:skipped result2))
             "Second dispatch with same ID should be skipped")))))
 
@@ -56,12 +56,12 @@
       ;; Both should throw because runtime is unavailable
       (try
         (await (source-runtime/dispatch-driver-event!
-                real-config :driver/discord "discord_automation" event1))
+                fixture-config :driver/discord "discord_automation" event1))
         (is false "First should have thrown")
         (catch :default _ nil))
       (try
         (await (source-runtime/dispatch-driver-event!
-                real-config :driver/discord "discord_automation" event2))
+                fixture-config :driver/discord "discord_automation" event2))
         (is false "Second should have thrown")
         (catch :default _ nil)))))
 
@@ -79,11 +79,11 @@
       ;; First dispatch throws because runtime is unavailable
       (try
         (await (source-runtime/dispatch-driver-event!
-                real-config :driver/discord "discord_automation" event))
+                fixture-config :driver/discord "discord_automation" event))
         (is false "Should have thrown")
         (catch :default _ nil))
       ;; Second dispatch may or may not throw depending on generated ID
       (try
         (await (source-runtime/dispatch-driver-event!
-                real-config :driver/discord "discord_automation" event))
+                fixture-config :driver/discord "discord_automation" event))
         (catch :default _ nil)))))

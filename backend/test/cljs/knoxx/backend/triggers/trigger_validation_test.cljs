@@ -1,16 +1,18 @@
 (ns knoxx.backend.triggers.trigger-validation-test
-  "Verify the real trigger contract passes validation."
+  "Verify the fixture trigger/source contracts pass parsing and Malli validation.
+   Uses test/fixtures snapshots — the live contracts/ folder is operator-owned
+   and must not be validated by the test suite."
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.domain.contracts.loader :as contract-loader]
             [knoxx.backend.law.contracts :as law-contracts]))
 
-(def real-config
-  {:contracts-dir "contracts"})
+(def fixture-config
+  {:contracts-dir "test/fixtures/trigger-contracts"})
 
 (deftest ussyverse-trigger-parses-and-validates
   (testing "the ussyverse trigger file parses and validates successfully"
     (let [file-path (.join (js/require "node:path")
-                           (first (contract-loader/contract-root-paths real-config))
+                           (first (contract-loader/contract-root-paths fixture-config))
                            "triggers"
                            "ussyverse_social_replies_event.edn")
           edn-text (.readFileSync (js/require "node:fs") file-path "utf8")
@@ -27,7 +29,7 @@
 (deftest discord-source-parses-and-validates
   (testing "the discord gateway source file parses and validates successfully"
     (let [file-path (.join (js/require "node:path")
-                           (first (contract-loader/contract-root-paths real-config))
+                           (first (contract-loader/contract-root-paths fixture-config))
                            "sources"
                            "discord_gateway.edn")
           edn-text (.readFileSync (js/require "node:fs") file-path "utf8")

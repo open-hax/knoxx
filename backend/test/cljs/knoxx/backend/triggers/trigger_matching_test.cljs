@@ -13,6 +13,9 @@
   (reader/read-string
     "{:contract/kind :trigger\n     :contract/id \"ussyverse_social_replies_event\"\n     :contract/version 2\n     :enabled true\n     :trigger/kind :event\n     :trigger/actor \"discord_automation\"\n     :trigger/events [:discord.message]\n     :trigger/condition (or (conditions/discord.mention event)\n                            (conditions/discord.keyword event [\"frankie\" \"yap\" \"music\" \"song\" \"slop\" \"ussy\"\n                                                               \"beat\" \"loop\" \"track\" \"art\" \"create\" \"mix\" \"drop\"]))\n     :trigger/action :actions/start-agent-session\n     :trigger/agent \"ussyverse_social_replies\"\n     :trigger/task \"A Discord event fired in one of your home channels. Read nearby context, inspect links or attachment URLs if useful, and decide whether to reply in-channel. Replies should feel alive, funny, musical, or socially connective.\"\n     :data {:context {:reason \"contract event: ussyverse social replies\"}}}"))
 
+(def fixture-config
+  {:contracts-dir "test/fixtures/trigger-contracts"})
+
 (deftest trigger-normalizes-correctly
   (testing "the trigger EDN normalizes into the expected runtime shape"
     (let [normalized (trigger-normalize/normalize-trigger trigger-edn)]
@@ -73,7 +76,7 @@
     (with-redefs [resources/load-all-resources-sync (fn [_] [(ussyverse-trigger-record)])]
       (event-dispatch/reset-dedup!)
       (let [result (await (event-dispatch/dispatch!
-                           {}
+                           fixture-config
                            {:event/type :discord.message
                             :event/actor "discord_automation"
                             :event/payload {:content "hey frankie what's up"

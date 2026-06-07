@@ -8,12 +8,12 @@
             [knoxx.backend.domain.source.runtime :as source-runtime]
             [knoxx.backend.domain.trigger.runtime :as trigger-runtime]))
 
-(def real-config
-  {:contracts-dir "contracts"})
+(def fixture-config
+  {:contracts-dir "test/fixtures/trigger-contracts"})
 
 (deftest trigger-runtime-sees-trigger
   (testing "trigger runtime can list the ussyverse trigger"
-    (let [status (trigger-runtime/status real-config)
+    (let [status (trigger-runtime/status fixture-config)
           trigger-ids (->> status :triggers (map :contract/id) set)]
       (is (contains? trigger-ids "ussyverse_social_replies_event")
           (str "Trigger should be visible in status. Got triggers: " (pr-str trigger-ids))))))
@@ -21,7 +21,7 @@
 (deftest source-runtime-sees-discord-source
   (testing "source runtime can find the discord gateway source"
     (driver-builtin/register-built-in-drivers!)
-    (let [source (source-runtime/matching-source real-config :driver/discord "discord_automation" :discord.message)]
+    (let [source (source-runtime/matching-source fixture-config :driver/discord "discord_automation" :discord.message)]
       (is (some? source)
           "Discord source should be found for discord_automation actor"))))
 
@@ -51,7 +51,7 @@
                  :event/payload msg}]
       (try
         (await (source-runtime/dispatch-driver-event!
-                real-config
+                fixture-config
                 :driver/discord
                 "discord_automation"
                 event))
@@ -60,8 +60,8 @@
           (is (re-find #"runtime unavailable" (str (.-message err)))
               "Error should be visible and mention runtime"))))))
 
-(deftest ^:async production-default-config-message-flow
-  (testing "production uses default config (no explicit contracts-dir)"
+(deftest ^:async keyword-only-message-flow
+  (testing "a keyword-only message (no mention) still dispatches through the fixture trigger"
     (driver-builtin/register-built-in-drivers!)
     (condition-builtins/register-builtins!)
     (event-dispatch/reset-dedup!)
@@ -74,7 +74,7 @@
                  :event/payload msg}]
       (try
         (await (source-runtime/dispatch-driver-event!
-                {} ; empty config - uses defaults
+                fixture-config
                 :driver/discord
                 "discord_automation"
                 event))
