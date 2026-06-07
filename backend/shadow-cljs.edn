@@ -2,7 +2,6 @@
  :dependencies
  [[cider/cider-nrepl "0.50.2"]
   [refactor-nrepl "3.9.1"]
-  [com.github.seancorfield/honeysql "2.7.1368"]
   [metosin/malli "0.16.4"]
   [funcool/promesa "11.0.678"]],
  :nrepl {:port 4500},
@@ -37,8 +36,7 @@
    :js-options
    {:js-provider :import,
     :keep-as-import
-    #{"pg"
-      "node:child_process"
+    #{"node:child_process"
       "node:fs/promises"
       "node:crypto"
       "@open-hax/eta-mu-cli"
@@ -67,7 +65,6 @@
     :keep-as-import
     #{"puppeteer-core"
       "@modelcontextprotocol/sdk"
-      "pg"
       "node:child_process"
       "node:fs/promises"
       "node:crypto"
@@ -104,7 +101,6 @@
     :keep-as-import
     #{"puppeteer-core"
       "@modelcontextprotocol/sdk"
-      "pg"
       "node:child_process"
       "node:fs/promises"
       "node:crypto"
@@ -146,19 +142,4 @@
      :optimizations :none,
      :source-map true,
      :infer-externs false,
-     :macros {:knoxx.backend.macros true}}},
-   :migrate
-   {:target :esm,
-    :runtime :node,
-    :output-dir "dist",
-    :modules {:migrate {:init-fn knoxx.backend.infra.migrate-pg-to-mongo/-main}},
-    :js-options
-    {:js-provider :import,
-     :keep-as-import #{"pg" "mongodb"}},
-    :compiler-options
-    {:output-feature-set :es-next,
-     :optimizations :none,
-     :source-map true,
-     :infer-externs false,
-     :macros {:knoxx.backend.macros true},
-     :warnings {:infer-warning false}}}}}
+     :macros {:knoxx.backend.macros true}}}}}

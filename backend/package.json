@@ -24,7 +24,6 @@
     "error-boundaries:check": "node scripts/check-error-boundaries.mjs --check",
     "error-boundaries:inventory": "node scripts/check-error-boundaries.mjs --markdown",
     "typecheck": "shadow-cljs compile server",
-    "migrate": "shadow-cljs compile migrate && node dist/migrate.js",
     "lint:size": "node ../scripts/lint-file-sizes.mjs backend/src/cljs"
   },
   "dependencies": {
@@ -49,7 +48,6 @@
     "node-web-audio-api": "^1.0.9",
     "nodemailer": "^6.9.16",
     "opusscript": "^0.1.1",
-    "pg": "^8.16.3",
     "prism-media": "^1.3.5",
     "punycode": "^2.3.1",
     "puppeteer-core": "^24.43.0",

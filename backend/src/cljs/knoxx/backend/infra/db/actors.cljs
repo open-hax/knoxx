@@ -6,8 +6,7 @@
    facade consumed by runtime JS method names."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.policy.edn-adapter :as edn-adapter]
-            [knoxx.backend.domain.policy.protocol :as policy]
-            [knoxx.backend.domain.policy.sql-adapter :as sql-adapter]))
+            [knoxx.backend.domain.policy.protocol :as policy]))
 
 (defn normalize-actor-id
   [value]
@@ -101,18 +100,6 @@
                                                           distinct
                                                           vec)))]
     (policy/upsert-actor! (edn-store contracts-dir) actor)))
-
-(defn credential-select-query
-  [actor-id provider]
-  (sql-adapter/actor-credential-select-query actor-id provider))
-
-(defn user-memberships-query
-  [user-ids org-id]
-  (sql-adapter/user-memberships-query user-ids org-id))
-
-(defn format-sql
-  [query-map]
-  (sql-adapter/format-sql query-map))
 
 (defn contract-tool-ids
   [contracts-dir]

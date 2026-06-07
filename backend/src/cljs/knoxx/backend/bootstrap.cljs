@@ -74,10 +74,7 @@
 
 (defn- policy-options
   []
-  #js {:connectionString (or (aget js/process.env "KNOXX_POLICY_DATABASE_URL")
-                             (aget js/process.env "DATABASE_URL")
-                             "")
-       :primaryOrgSlug (env "KNOXX_PRIMARY_ORG_SLUG" "open-hax")
+  #js {:primaryOrgSlug (env "KNOXX_PRIMARY_ORG_SLUG" "open-hax")
        :primaryOrgName (env "KNOXX_PRIMARY_ORG_NAME" "Open Hax")
        :primaryOrgKind (env "KNOXX_PRIMARY_ORG_KIND" "platform_owner")
        :bootstrapSystemAdminEmail (env "KNOXX_BOOTSTRAP_SYSTEM_ADMIN_EMAIL" "system-admin@open-hax.local")

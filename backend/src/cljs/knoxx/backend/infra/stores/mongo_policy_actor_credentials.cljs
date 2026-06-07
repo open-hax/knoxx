@@ -151,6 +151,37 @@
                     :actor_id actor-id
                     :org_slug (:slug org)))))))))
 
+(defn ^:async list-credentials-for-users-org!
+  "Raw credential rows for a set of user ids within an org, ordered by
+   provider then kind. Mirrors q-users/credentials-for-users (the user-listing
+   credential join); rows keep :user_id + :secret_json for the policy
+   credentials-by-user grouping. Returns PG-shaped rows (no membership join)."
+  ([user-ids org-id] (list-credentials-for-users-org! (mongo-client/get-db) user-ids org-id))
+  ([db user-ids org-id]
+   (let [uids (set (map str user-ids))]
+     (->> (await (.toArray (.find (credentials-coll db) #js {"org_id" (str org-id)})))
+          keywordize
+          (mapv credential-doc->row)
+          (filterv #(contains? uids (str (:user_id %))))
+          (sort-by (juxt :provider :kind))
+          vec))))
+
+(defn ^:async get-credential-by-user-org-provider-kind!
+  "Single active credential for a (user, org, provider, kind) tuple. Backs the
+   local-password auth path in infra.db.policy/local-password-auth-record!,
+   which reads the active local/password credential for a resolved membership.
+   Returns a PG-shaped row (no membership/org join) or nil."
+  ([user-id org-id provider kind]
+   (get-credential-by-user-org-provider-kind! (mongo-client/get-db) user-id org-id provider kind))
+  ([db user-id org-id provider kind]
+   (credential-doc->row
+    (keywordize (await (.findOne (credentials-coll db)
+                                 #js {"user_id" (str user-id)
+                                      "org_id" (str org-id)
+                                      "provider" (str provider)
+                                      "kind" (str kind)
+                                      "status" "active"}))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Write operations — mirrors sql_adapter upsert-actor-credential!
 ;; ---------------------------------------------------------------------------
