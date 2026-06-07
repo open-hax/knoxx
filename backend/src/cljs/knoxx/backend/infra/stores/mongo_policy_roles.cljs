@@ -313,21 +313,24 @@
    distinct ids. Returns the resolved id vector like the PG fn.
 
    PG TRANSACTION SEMANTICS: the PG path is atomic; this twin is NON-ATOMIC —
-   a window exists after deleteMany and before insertMany. Acceptable under
-   the single-writer-per-system-instance assumption. No converge single
-   statement applies (set replacement, not a computed field). The unique
-   (membership_id, role_id) index reproduces ON CONFLICT DO NOTHING for any
-   duplicate within the same id vector (deduped here defensively)."
+   a window exists after deleteMany and before the inserts. Acceptable under
+   the single-writer-per-system-instance assumption. ON CONFLICT DO NOTHING is
+   reproduced with per-id upserts ($setOnInsert) so re-adding an existing
+   (membership_id, role_id) pair — e.g. the bootstrap allowlist re-running on
+   every startup with replace? false — is a no-op instead of an E11000."
   ([membership-id replace? role-ids]
    (set-membership-roles! (mongo-client/get-db) membership-id replace? role-ids))
   ([db membership-id replace? role-ids]
    (let [mid (str membership-id)
-         ids (->> role-ids (map str) distinct vec)]
+         ids (->> role-ids (map str) distinct vec)
+         coll (membership-roles-coll db)]
      (when replace?
-       (await (.deleteMany (membership-roles-coll db) #js {"membership_id" mid})))
-     (when (seq ids)
-       (let [docs (mapv (fn [r] {:membership_id mid :role_id r
-                                 :system_instance_id (system-instance/current-id)})
-                        ids)]
-         (await (.insertMany (membership-roles-coll db) (clj->js docs)))))
+       (await (.deleteMany coll #js {"membership_id" mid})))
+     (doseq [r ids]
+       (await (.updateOne coll
+                          #js {"membership_id" mid "role_id" r}
+                          #js {"$setOnInsert"
+                               (clj->js {:membership_id mid :role_id r
+                                         :system_instance_id (system-instance/current-id)})}
+                          #js {"upsert" true})))
      ids)))

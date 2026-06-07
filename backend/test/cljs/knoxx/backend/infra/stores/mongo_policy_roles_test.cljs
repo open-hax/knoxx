@@ -37,10 +37,18 @@
                (let [q (js->clj query :keywordize-keys true)
                      hits (filter #(matches-query? % q) @docs)]
                  #js {:toArray (fn [] (js/Promise.resolve (clj->js hits)))}))
-       :updateOne (fn [query update _opts]
+       :updateOne (fn [query update opts]
                     (let [q (js->clj query :keywordize-keys true)
-                          set-doc (js->clj (.-$set update) :keywordize-keys true)]
-                      (swap! docs (fn [ds] (mapv #(if (matches-query? % q) (merge % set-doc) %) ds)))
+                          set-doc (js->clj (.-$set update) :keywordize-keys true)
+                          on-insert-doc (js->clj (aget update "$setOnInsert") :keywordize-keys true)
+                          upsert? (boolean (and opts (aget opts "upsert")))
+                          hit? (some #(matches-query? % q) @docs)]
+                      (cond
+                        hit?
+                        (swap! docs (fn [ds] (mapv #(if (matches-query? % q) (merge % set-doc) %) ds)))
+
+                        upsert?
+                        (swap! docs conj (merge q on-insert-doc set-doc)))
                       (js/Promise.resolve #js {})))
        :deleteMany (fn [query]
                      (let [q (js->clj query :keywordize-keys true)]
