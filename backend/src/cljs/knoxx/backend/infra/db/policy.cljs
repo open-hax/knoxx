@@ -974,7 +974,7 @@
           user (await (mongo-directory/find-user-by-email! db normalized))]
       (when (and user (= "active" (:status user)))
         (when-let [row (await (mongo-directory/find-membership-row-by-email-and-org!
-                               db {:user-email normalized}))]
+                               db {:user-email normalized :active-only true}))]
           (when (and (= "active" (:user_status row)) (= "active" (:status row)))
             (let [cred (await (mongo-actor-creds/get-credential-by-user-org-provider-kind!
                                db (:user_id row) (:org_id row) "local" "password"))]

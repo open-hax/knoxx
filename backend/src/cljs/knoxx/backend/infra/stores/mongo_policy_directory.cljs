@@ -385,7 +385,7 @@
    collects active+matching memberships, picks the default-first / primary-org
    one, and merges into a flat joined row. Returns the row or nil."
   ([opts] (find-membership-row-by-email-and-org! (mongo-client/get-db) opts))
-  ([db {:keys [user-email org-id org-slug]}]
+  ([db {:keys [user-email org-id org-slug active-only]}]
    (when-let [user (await (find-user-by-email! db user-email))]
      (let [scoped-org (cond
                         (not (str/blank? (str org-id))) (await (find-org-by-id! db org-id))
@@ -400,7 +400,11 @@
                            (mapv org-doc->row)
                            (reduce (fn [m o] (assoc m (:id o) o)) {}))
            candidates (cond->> members
-                        scoped-org (filterv #(= (:org_id %) (:id scoped-org))))
+                        scoped-org (filterv #(= (:org_id %) (:id scoped-org)))
+                        ;; PG's local-password query filtered m.status = 'active'
+                        ;; in the SELECT, so an inactive default membership is
+                        ;; skipped in favor of an active one.
+                        active-only (filterv #(= "active" (:status %))))
            pick (->> candidates
                      (sort-by (juxt #(if (:is_default %) 0 1)
                                     #(if (get-in orgs-by-id [(:org_id %) :is_primary]) 0 1)

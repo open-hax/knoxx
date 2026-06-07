@@ -107,8 +107,13 @@
       (runtime-state/current-policy-db)))
 
 (defn database-enabled?
+  "True only when the policy context can execute this namespace's SQL (an
+   injected :query! fn). The Mongo-only policy context (14-05 PG removal)
+   has no :query!, so durable mailbox persistence is disabled until the
+   actor_mailbox_* tables get a Mongo twin — entries still flow live with
+   :mailbox/durable? false."
   [runtime]
-  (db-policy/configured? (policy-db runtime)))
+  (boolean (:query! (policy-db runtime))))
 
 (defn- query!
   [runtime sql params]

@@ -20,7 +20,6 @@
             [knoxx.backend.law.guards :as guards]
             [knoxx.backend.infra.clients.proxx :as proxx-client]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.infra.http :refer [forward-knoxx-request! json-response! rewrite-localhost-url with-query-param bearer-headers fetch-json openai-auth-error send-fetch-response! request-query-string request-body http-error error-response!]]
             [knoxx.backend.infra.routes.memory :as memory-routes]
             [knoxx.backend.infra.routes.models :as model-routes]
@@ -364,17 +363,6 @@
 (defn- fetch-json-err-detail [reply prefix err]
   (json-response! reply 502 {:detail (str prefix err)}))
 
-(defn- pg-query-ok [reply result]
-  (let [rows (:rows result)]
-    (json-response! reply 200 {:ok true :rows rows :count (count rows)})))
-
-(defn- pg-query-table-ok [reply table result]
-  (let [rows (:rows result)]
-    (json-response! reply 200 {:ok true :table table :rows rows :count (count rows)})))
-
-(defn- pg-query-err [reply err]
-  (json-response! reply 400 {:error (.-message err)}))
-
 (defn- health-deps-ok [reply proxx-configured openplanner-configured [proxx-res openplanner-res]]
   (let [proxx-ok       (and proxx-configured (:ok proxx-res))
         openplanner-ok (and openplanner-configured (:ok openplanner-res))
@@ -496,18 +484,6 @@
                                      {:ok true :body graph}]))
       (catch :default err
         (fetch-json-err reply err)))))
-
-(defn ^:async send-pg-query!
-  ([reply db sql-str]
-   (try
-     (pg-query-ok reply (await (db-policy/query! db sql-str [])))
-     (catch :default err
-       (pg-query-err reply err))))
-  ([reply table db sql-str]
-   (try
-     (pg-query-table-ok reply table (await (db-policy/query! db sql-str [])))
-     (catch :default err
-       (pg-query-err reply err)))))
 
 (defn ^:async send-data-browse!
   [reply target-url]
@@ -1164,11 +1140,10 @@
 
 (defroute api-data-pg-tables! []
   "GET" "/api/data/pg/tables"
-  (json-response! reply 200
-                  {:ok true
-                   :tables ["ingestion_sources" "ingestion_jobs" "ingestion_file_state"
-                            "orgs" "users" "roles" "memberships" "data_lakes"
-                            "sessions" "audit_events" "permissions"]}))
+  ;; PostgreSQL was removed in the E14 Mongo migration (kanban 14-05).
+  ;; The Mongo explorer at /api/data/mongo/* is the replacement surface.
+  (json-response! reply 410 {:error "pg_removed"
+                             :detail "PostgreSQL backend removed; use /api/data/mongo/collections"}))
 
 (defroute api-data-jobs-build-semantic-edges! []
   "POST" "/api/data/jobs/build-semantic-edges"
@@ -1182,37 +1157,9 @@
 
 (defroute api-data-pg-query! []
   "POST" "/api/data/pg/query"
-  (let [body (request-body request)
-        raw-sql (or (aget body "sql") "")
-        table (or (aget body "table") "")
-        limit (or (aget body "limit") 50)
-        db (policy-db runtime)]
-    (cond
-      (nil? db)
-      (json-response! reply 503 {:error "Policy database not configured"})
-
-      (not (str/blank? raw-sql))
-      ;; Raw SQL mode — SELECT only
-      (let [trimmed (str/trim raw-sql)]
-        (if-not (str/starts-with? (str/upper-case trimmed) "SELECT")
-          (json-response! reply 400 {:error "Only SELECT queries are allowed"})
-          (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
-                ;; Inject LIMIT if none present
-                has-limit (re-find #"(?i)\bLIMIT\b" trimmed)
-                final-sql (if has-limit
-                            trimmed
-                            (str trimmed " LIMIT " enforced-limit))]
-            (send-pg-query! reply db final-sql))))
-
-      ;; Table browse mode
-      (or (str/blank? table)
-          (re-find #"[^a-zA-Z0-9_]" table))
-      (json-response! reply 400 {:error "Invalid table name"})
-
-      :else
-      (let [enforced-limit (min (max (js/parseInt (str limit) 10) 1) 500)
-            sql-str (str "SELECT * FROM " table " LIMIT " enforced-limit)]
-        (send-pg-query! reply table db sql-str)))))
+  ;; PostgreSQL was removed in the E14 Mongo migration (kanban 14-05).
+  (json-response! reply 410 {:error "pg_removed"
+                             :detail "PostgreSQL backend removed; use /api/data/mongo/collections"}))
 
 (defroute api-data-browse! []
   "GET" "/api/data/browse"
