@@ -2,7 +2,7 @@
   (:require [cljs.test :refer [deftest is testing]]
             [knoxx.backend.infra.stores.message-source :refer [IMessageSource fetch-messages!]]
             [knoxx.backend.infra.stores.composite-message-source :refer [->CompositeMessageSource]]
-            [knoxx.backend.infra.stores.redis-message-source :refer [->RedisMessageSource]]
+            [knoxx.backend.infra.stores.mongo-message-source :refer [->MongoMessageSource]]
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
             [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]))
@@ -48,9 +48,9 @@
     (testing "empty result when both sources have nothing"
       (is (= [] result)))))
 
-;; ─── RedisMessageSource ──────────────────────────────────────────────────────
+;; ─── MongoMessageSource ──────────────────────────────────────────────────────
 
-(deftest ^:async redis-source-uses-preferred-session-id
+(deftest ^:async mongo-source-uses-preferred-session-id
   (with-redefs [session-store/get-session
                 (fn ([session-id]
                      (js/Promise.resolve
@@ -60,12 +60,12 @@
                     (js/Promise.resolve
                      (when (= "session-42" session-id)
                        {:messages [{:role "user" :content "from preferred session"}]}))))]
-    (let [src    (->RedisMessageSource "session-42")
+    (let [src    (->MongoMessageSource "session-42")
           result (await (fetch-messages! src "conversation-ignored"))]
       (testing "preferred session-id bypasses conversation lookup"
         (is (= [{:role "user" :content "from preferred session"}] result))))))
 
-(deftest ^:async redis-source-falls-back-to-conversation-lookup
+(deftest ^:async mongo-source-falls-back-to-conversation-lookup
   (with-redefs [session-store/get-conversation-active-session
                 (fn ([conversation-id]
                      (js/Promise.resolve
@@ -82,14 +82,14 @@
                    (js/Promise.resolve
                     (when (= "sess-from-lookup" session-id)
                       {:messages [{:role "user" :content "from lookup"}]}))))]
-    (let [src    (->RedisMessageSource nil)
+    (let [src    (->MongoMessageSource nil)
           result (await (fetch-messages! src "conv-x"))]
       (testing "falls back to conversation->session index when no preferred id"
         (is (= [{:role "user" :content "from lookup"}] result))))))
 
-(deftest ^:async redis-source-returns-empty-when-no-session
+(deftest ^:async mongo-source-returns-empty-when-no-session
   (with-redefs [session-store/get-session (fn [_] (js/Promise.resolve nil))]
-    (let [src    (->RedisMessageSource nil)
+    (let [src    (->MongoMessageSource nil)
           result (await (fetch-messages! src "conv-x"))]
       (testing "returns empty vec when no session found"
         (is (= [] result))))))

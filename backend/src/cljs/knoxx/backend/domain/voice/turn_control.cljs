@@ -6,7 +6,7 @@
    - internal safety guards (death-spiral detection) to abort the active turn
 
    Scope: best-effort, per-process. After a pm2 restart this registry is empty
-   (but sessions can be recovered from Redis).")
+   (but sessions can be recovered from Mongo).")
 
 (defonce active-turns* (atom {}))
 

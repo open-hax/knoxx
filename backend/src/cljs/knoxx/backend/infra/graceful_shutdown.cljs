@@ -4,13 +4,12 @@
    Goals:
    - stop accepting new work quickly
    - allow inflight HTTP requests and active turns a bounded window to settle
-   - persist any still-running sessions into a resumable Redis state
+   - persist any still-running sessions into a resumable Mongo state
    - release timers/sockets so PM2 can restart cleanly"
   (:require [knoxx.backend.infra.agent.resume :as agent-resume]
             [knoxx.backend.domain.discord.gateway :as discord-gateway]
             [knoxx.backend.infra.event-runtime :as event-runtime]
             [knoxx.backend.domain.realtime :as realtime]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.infra.db.policy :as policy-db]
             [knoxx.backend.runtime.state :as runtime-state]
             [knoxx.backend.infra.svg-render :as svg-render]
@@ -81,8 +80,6 @@
                         (.all js/Promise
                               (clj->js
                                [(svg-render/shutdown!)
-                                (when-let [client (redis/get-client)]
-                                  (redis/quit client))
                                 (when-let [policy-context (runtime-state/current-policy-db)]
                                   (policy-db/close! policy-context))]))))
                (.then (fn [_]

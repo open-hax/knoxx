@@ -196,7 +196,7 @@
                     (str "trigger-session-" trigger-id' "-" scope-id "-" ts))})))
 
 (defn triggered-audit-metadata
-  "Return audit metadata that should follow an event-triggered run into Redis and OpenPlanner."
+  "Return audit metadata that should follow an event-triggered run into the run store and OpenPlanner."
   [_trigger event ids]
   (let [event-types (->> (:event/types event)
                          (keep qualified-name)

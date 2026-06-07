@@ -18,8 +18,6 @@
             [knoxx.backend.infra.lifecycle :as lifecycle]
             [knoxx.backend.infra.db.policy :as policy-db]
              [knoxx.backend.infra.mongo-client :as mongo-client]
-             [knoxx.backend.infra.redis-client :as redis]
-             [knoxx.backend.infra.stores.composite-session-store :refer [->CompositeSessionStore]]
              [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy-store]
              [knoxx.backend.infra.stores.mongo-run-store :as mongo-run-store]
              [knoxx.backend.infra.stores.mongo-session-store :as mongo-session-store]
@@ -28,8 +26,6 @@
              [knoxx.backend.infra.stores.mongo-memory-sessions :as mongo-memory-sessions]
              [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp-oauth]
              [knoxx.backend.infra.stores.mongo-rate-limits :as mongo-rate-limits]
-             [knoxx.backend.infra.stores.openplanner-session-store :refer [->OpenPlannerSessionStore]]
-             [knoxx.backend.infra.stores.redis-session-store :refer [->RedisSessionStore]]
              [knoxx.backend.infra.stores.session-store-registry :as store-registry]
              [knoxx.backend.infra.stores.session-flush :as session-flush]
             [knoxx.backend.infra.routes.auth :as auth-routes]
@@ -131,12 +127,6 @@
   (proxy-routes/register-proxy-routes! app cfg)
   (mcp-http/register-mcp-http-routes! app runtime cfg))
 
-(defn- use-mongo-store?
-  "True by default (post-cutover). Use Mongo for session/run persistence.
-   Set OPENPLANNER_KNOXX_COMPOSITE_STORE=redis to opt back to Redis."
-  []
-  (not= "redis" (str/lower-case (str (or (aget js/process.env "OPENPLANNER_KNOXX_COMPOSITE_STORE") "")))))
-
 (defn- start-mongo-persistence!
   [runtime app cfg log]
   (-> (mongo-client/init-mongo!)
@@ -160,35 +150,17 @@
                  (reset! store-registry/session-store*
                          (mongo-run-store/create-mongo-run-store db))
                  ;; Fire-and-forget: must not block startup.
-                 (agent-resume/resume-on-process-startup! runtime app cfg)
-                 (agent-resume/start-periodic-recovery! runtime app cfg))))
-      (.catch (fn [err]
-                (.warn log "MongoDB initialization failed" err)))))
-
-(defn- start-redis-persistence!
-  [runtime app cfg log]
-  (-> (redis/init-redis! (:redis-url cfg))
-      (.then (fn [client]
-               (when client
-                 (.info log "Redis connected for session persistence")
-                 (reset! store-registry/session-store*
-                         (->CompositeSessionStore
-                          (->RedisSessionStore client)
-                          (->OpenPlannerSessionStore cfg)))
-                 ;; Fire-and-forget: must not block startup.
                  ;; Guarded so shadow-cljs hot reload does not spawn
                  ;; recovery jobs as if the Node process had restarted.
                  (agent-resume/resume-on-process-startup! runtime app cfg)
                  (agent-resume/start-periodic-recovery! runtime app cfg)
-                 (session-flush/start-periodic-flush! client (:run-stale-flush-ms cfg)))))
+                 (session-flush/start-periodic-flush! (:run-stale-flush-ms cfg)))))
       (.catch (fn [err]
-                (.warn log "Redis initialization failed" err)))))
+                (.warn log "MongoDB initialization failed" err)))))
 
 (defn- start-session-persistence!
   [runtime app cfg log]
-  (if (use-mongo-store?)
-    (start-mongo-persistence! runtime app cfg log)
-    (start-redis-persistence! runtime app cfg log)))
+  (start-mongo-persistence! runtime app cfg log))
 
 (defn- handle-app-listening!
   [runtime app cfg]

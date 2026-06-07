@@ -138,7 +138,7 @@
       nil)))
 
 (defn- write-memory-sessions-cache!
-  [_redis-client cache-key value]
+  [cache-key value]
   (let [entry (memory-sessions-cache-entry value)]
     (remember-memory-sessions-cache! cache-key entry)
     (write-memory-sessions-cache-to-mongo! cache-key entry)
@@ -160,10 +160,10 @@
       nil)))
 
 (defn ^:async fetch-and-cache-memory-sessions!
-  [_redis-client cache-key fetch-fn]
+  [cache-key fetch-fn]
   (try
     (let [value (await (fetch-fn))]
-      (write-memory-sessions-cache! nil cache-key value)
+      (write-memory-sessions-cache! cache-key value)
       {:value value
        :cache {:hit false
                :tier "miss"
@@ -173,14 +173,14 @@
       (swap! memory-sessions-cache-promises* dissoc cache-key))))
 
 (defn ^:async cached-memory-sessions-source!
-  [_redis-client cache-key fetch-fn]
+  [cache-key fetch-fn]
   (if-let [hit (memory-sessions-local-hit cache-key)]
     hit
     (if-let [hit (await (mongo-memory-sessions-hit! cache-key))]
       hit
       (if-let [pending (get @memory-sessions-cache-promises* cache-key)]
         (await pending)
-        (let [promise (fetch-and-cache-memory-sessions! nil cache-key fetch-fn)]
+        (let [promise (fetch-and-cache-memory-sessions! cache-key fetch-fn)]
           (swap! memory-sessions-cache-promises* assoc cache-key promise)
           (await promise))))))
 
@@ -548,7 +548,6 @@
 (defn- fetch-memory-sessions-source!
   [config ctx opts authorized-session-ids! fetch-openplanner-session-rows! session-matches-page-actor-filter?]
   (cached-memory-sessions-source!
-   (:redis-client opts)
    (:cache-key opts)
    (fn []
      (if (contract-only-admin-fetch? ctx opts)

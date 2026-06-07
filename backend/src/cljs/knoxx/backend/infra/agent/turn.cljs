@@ -147,20 +147,9 @@
       (append-run-event! run-id task-event)
       (broadcast-ws-session! session-id "events" task-event))))
 
-(defn- create-initial-run!
-  [run-id session-id conversation-id started-at model-id mode thinking-level
-   agent-spec auth-extra request-messages config]
-  (let [base-run (build-initial-run run-id session-id conversation-id started-at model-id mode thinking-level
-                                    agent-spec auth-extra request-messages config)]
-    (store-run! run-id base-run)
-    (when-let [store @store-registry/session-store*]
-      (-> (put-run! store base-run)
-          (.catch (fn [err]
-                    (.warn js/console "[turn] failed to persist initial run"
-                           (clj->js {:run-id run-id
-                                     :error (ex-message err)
-                                     :error-data (clj->js (or (ex-data err) {}))}))))))
-    (set-event-stream-sink!
+(defn- install-openplanner-event-sink!
+  [config]
+  (set-event-stream-sink!
      (fn [event]
        (let [client (openplanner-client/client config)]
          (when (openplanner-client/enabled? client)
@@ -182,7 +171,22 @@
                                    (when (:preview event)
                                      (str "\n" (:preview event))))
                    :extra     event})])
-               (.catch (fn [_] nil)))))))
+               (.catch (fn [_] nil))))))))
+
+(defn- create-initial-run!
+  [run-id session-id conversation-id started-at model-id mode thinking-level
+   agent-spec auth-extra request-messages config]
+  (let [base-run (build-initial-run run-id session-id conversation-id started-at model-id mode thinking-level
+                                    agent-spec auth-extra request-messages config)]
+    (store-run! run-id base-run)
+    (when-let [store @store-registry/session-store*]
+      (-> (put-run! store base-run)
+          (.catch (fn [err]
+                    (.warn js/console "[turn] failed to persist initial run"
+                           (clj->js {:run-id run-id
+                                     :error (ex-message err)
+                                     :error-data (clj->js (or (ex-data err) {}))}))))))
+    (install-openplanner-event-sink! config)
     (-> (session-store/put-session! (merge (cond-> {:session_id session-id
                                                      :conversation_id conversation-id
                                                      :run_id run-id

@@ -1,115 +1,7 @@
 (ns knoxx.backend.mcp-http-test
   (:require [cljs.test :refer [deftest is testing]]
-            [clojure.string :as str]
-            [knoxx.backend.infra.redis-client :as redis]))
+            [clojure.string :as str]))
 
-;; Regression: require-redis! captured nil at route-registration time.
-;; When Redis connects after register-mcp-http-routes! runs, the guard still held nil,
-;; causing TypeError: Cannot read properties of undefined (reading 'get').
-
-(defn- make-guard []
-  (fn [req _reply done]
-    (if-let [client (redis/get-client)]
-      (do (aset req "redis" client) (done))
-      (done (ex-info "Redis unavailable" {:status 503 :error "redis_unavailable"})))))
-(defn- run-guard! [guard-fn]
-  (js/Promise.
-    (fn [resolve _]
-      (let [req #js {} errors (atom [])]
-        (guard-fn req nil
-          (fn [err]
-            (when err (swap! errors conj err))
-            (resolve #js {:req req :errors (clj->js @errors)})))))))
-(defn- fake-client []
-  (let [store (atom {})]
-    #js {:get      (fn [k]   (js/Promise.resolve (get @store k nil)))
-         :set      (fn [k v] (swap! store assoc k v) (js/Promise.resolve "OK"))
-         :del      (fn [k]   (swap! store dissoc k)  (js/Promise.resolve 1))
-         :sAdd     (fn [k v] (swap! store update k (fnil conj #{}) v) (js/Promise.resolve 1))
-         :sMembers (fn [k]   (js/Promise.resolve (clj->js (vec (get @store k #{})))))
-         :sRem     (fn [k v] (swap! store update k disj v) (js/Promise.resolve 1))}))
-;; --- guard: lazy deref regression ---------
-
-(deftest ^:async guard-errors-when-redis-nil
-  (testing "guard returns 503 when redis atom is nil"
-    (reset! redis/redis-client* nil)
-    (try
-      (let [r (await (run-guard! (make-guard)))]
-        (is (= 1 (.-length (.-errors r))))
-        (is (= 503 (-> (aget (.-errors r) 0) ex-data :status)))
-        (is (= "redis_unavailable" (-> (aget (.-errors r) 0) ex-data :error))))
-      (finally
-        (reset! redis/redis-client* nil)))))
-
-(deftest ^:async guard-attaches-client-when-redis-live
-  (testing "guard attaches live client to req.redis"
-    (let [client (fake-client)]
-      (reset! redis/redis-client* client)
-      (try
-        (let [r (await (run-guard! (make-guard)))]
-          (is (= 0 (.-length (.-errors r))))
-          (is (= client (aget (.-req r) "redis"))))
-        (finally
-          (reset! redis/redis-client* nil))))))
-
-(deftest ^:async guard-created-before-redis-succeeds-after-connect
-  (testing "guard created with nil redis works after redis connects"
-    (reset! redis/redis-client* nil)
-    (let [guard (make-guard) client (fake-client)]
-      (try
-        (let [r1 (await (run-guard! guard))]
-          (is (= 1 (.-length (.-errors r1))) "first call fails")
-          (reset! redis/redis-client* client)
-          (let [r2 (await (run-guard! guard))]
-            (is (= 0 (.-length (.-errors r2))) "second call passes")
-            (is (= client (aget (.-req r2) "redis")))))
-        (finally
-          (reset! redis/redis-client* nil))))))
-
-;; --- redis/get-client atom semantics ------
-
-(deftest get-client-nil-when-unset
-  (testing "get-client returns nil before init"
-    (reset! redis/redis-client* nil)
-    (is (nil? (redis/get-client)))))
-
-(deftest get-client-returns-atom-value
-  (testing "get-client reflects atom state"
-    (let [s #js {:ok true}]
-      (reset! redis/redis-client* s)
-      (is (= s (redis/get-client)))
-      (reset! redis/redis-client* nil))))
-
-;; --- fake-client store mechanics ----------
-
-(deftest ^:async fake-client-set-get-roundtrip
-  (testing "set then get returns value"
-    (let [c (fake-client)]
-      (await (.set c "k" "v"))
-      (is (= "v" (await (.get c "k")))))))
-
-(deftest ^:async fake-client-del-removes-key
-  (testing "del removes previously set key"
-    (let [c (fake-client)]
-      (await (.set c "k" "v"))
-      (await (.del c "k"))
-      (is (nil? (await (.get c "k")))))))
-
-(deftest ^:async fake-client-sadd-smembers
-  (testing "sAdd members visible via sMembers"
-    (let [c (fake-client)]
-      (await (.sAdd c "s" "a"))
-      (await (.sAdd c "s" "b"))
-      (let [s (-> (await (.sMembers c "s")) js->clj set)]
-        (is (contains? s "a"))
-        (is (contains? s "b"))))))
-
-(deftest ^:async fake-client-srem-removes-member
-  (testing "sRem removes a set member"
-    (let [c (fake-client)]
-      (await (.sAdd c "s" "a"))
-      (await (.sRem c "s" "a"))
-      (is (= 0 (.-length (await (.sMembers c "s"))))))))
 ;; ─────────────────────────────────────────────────────────
 ;; mcp-handle-post! contract tests
 ;;
@@ -117,7 +9,7 @@
 ;; behaviours of the hijack-first stateless POST handler:
 ;;
 ;;  1. Missing bearer → 401 written directly to raw-res
-;;  2. Unknown token (redis miss) → 401 on raw-res
+;;  2. Unknown token (store miss) → 401 on raw-res
 ;;  3. Valid token → hijack fires, transport.handleRequest called
 ;;     with raw req+res (Fastify reply never written)
 ;;
@@ -189,7 +81,7 @@
     (let [raw-res (fake-raw-res)
           invoke  (make-invoke-mcp-post!
                     {:base "http://localhost:3000"
-                     :redis nil :token-record nil :policy-ctx nil
+                     :token-record nil :policy-ctx nil
                      :make-server fake-mcp-server
                      :make-transport fake-transport})]
       (await (invoke #js {} raw-res ""))
@@ -198,14 +90,14 @@
         (is (= "Unauthorized" (:body s)) "body is Unauthorized")
         (is (:ended s) "response was ended")))))
 
-;; ── test 2: token not in redis → 401 ─────────────────────
+;; ── test 2: token not in store → 401 ─────────────────────
 
 (deftest ^:async mcp-post-unknown-token-returns-401
-  (testing "unknown bearer token (redis nil) writes 401 to raw-res"
+  (testing "unknown bearer token (store miss) writes 401 to raw-res"
     (let [raw-res (fake-raw-res)
           invoke  (make-invoke-mcp-post!
                     {:base "http://localhost:3000"
-                     :redis nil :token-record nil :policy-ctx nil
+                     :token-record nil :policy-ctx nil
                      :make-server fake-mcp-server
                      :make-transport fake-transport})]
       (await (js/Promise.resolve (invoke #js {} raw-res "dead-token")))
@@ -224,7 +116,6 @@
           tok-rec   #js {:accessToken "abc" :tools #js ["search"] :membershipId "m1"}
           invoke    (make-invoke-mcp-post!
                       {:base "http://localhost:3000"
-                       :redis nil
                        :token-record tok-rec
                        :policy-ctx #js {}
                        :make-server (constantly server)

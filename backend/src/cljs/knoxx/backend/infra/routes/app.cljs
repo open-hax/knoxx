@@ -25,7 +25,6 @@
             [knoxx.backend.infra.routes.memory :as memory-routes]
             [knoxx.backend.infra.routes.models :as model-routes]
             [knoxx.backend.infra.openplanner.memory :refer [openplanner-memory-search! openplanner-graph-export!]]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
             [knoxx.backend.domain.action.run-state :as run-state :refer [runs* run-order*]]
             [knoxx.backend.shape.parse :refer [parse-positive-int truthy-param?]]
@@ -903,7 +902,7 @@
                                       (json-response! reply 200
                                                       (session-status-running-response
                                                        session-id session runtime-active? can-send stalled? latest-event)))))))
-                     ;; No session in Redis - trust in-memory runtime if it still has a live turn.
+                     ;; No session in the store - trust in-memory runtime if it still has a live turn.
                      (if (runtime-processing-session? conversation-id)
                        (json-response! reply 200
                                        {:session_id session-id
@@ -1453,7 +1452,7 @@
     (if (str/blank? run-id)
       (json-response! reply 400 {:error "runId is required"})
       (try
-        (run-events-ok reply run-id (await (run-state/get-run-events-since (redis/get-client) run-id since)))
+        (run-events-ok reply run-id (await (run-state/get-run-events-since run-id since)))
         (catch :default err
           (run-events-err reply err))))))
 

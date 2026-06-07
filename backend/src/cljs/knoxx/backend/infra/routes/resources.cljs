@@ -6,14 +6,12 @@
             [cljs.reader :as reader]
             [knoxx.backend.domain.contracts.resolve :as contracts-resolve]
             [knoxx.backend.infra.event-runtime :as event-runtime]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.domain.resources.loader :as resources]
             [knoxx.backend.law.contracts :as validator]
             ["node:fs" :as node-fs]
             ["node:fs/promises" :as fs]))
 
-(def ^:private resources-index-key "resources:index")
 (def ^:private resource-watch-debounce-ms 350)
 
 (defonce ^:private resource-watchers* (atom []))
@@ -237,7 +235,7 @@
         (conj (validation-warning ["data" "filters" "publishChannels"] ":publishChannels are output sinks only. Add explicit :channels or :guildIds for Discord source reads.")))
       (mapcat (fn [k]
                 (when (contains? data k)
-                  [(validation-warning ["data" (name k)] "This looks like mutable runtime state inside a static resource. Prefer Redis/OpenPlanner/durable files, not resource :data mutation.")]))
+                  [(validation-warning ["data" (name k)] "This looks like mutable runtime state inside a static resource. Prefer Mongo/OpenPlanner/durable files, not resource :data mutation.")]))
               mutable-agent-data-keys)
       (role-ref-warnings ["agent" "role"] role)
       (mapcat (fn [[idx value]]
@@ -361,42 +359,37 @@
 
     edn-text))
 
-(defn ^:async sync-resource-index!
-  "Sync resource EDN files → Redis resources:index set.
+(defonce ^:private resource-index* (atom #{}))
 
-   Redis is a cache + fast index; disk is canonical. Invalid resource files are
-   omitted by the loader and must not block backend startup or the repair UI."
+(defn ^:async sync-resource-index!
+  "Sync resource EDN files → in-memory resource index set.
+
+   The index is a fast in-process cache; disk is canonical. Invalid resource
+   files are omitted by the loader and must not block backend startup or the
+   repair UI."
   [config]
-  (if-let [client (redis/get-client)]
-    (try
-      (let [records (await (resources/load-all-resources! config))
-            ids (->> records
-                     (map (fn [record]
-                            (resource-id->index-key (:resource/class record)
-                                                    (:resource/id record))))
-                     distinct
-                     sort
-                     vec)
-            existing (await (redis/smembers client resources-index-key))
-            existing-set (set (map str (js/Array.from (or existing (js/Array.)))))
-            desired-set (set ids)
-            to-add (vec (sort (set/difference desired-set existing-set)))
-            to-remove (vec (sort (set/difference existing-set desired-set)))
-            ops (concat
-                 (for [id to-add]
-                   (redis/sadd client resources-index-key id))
-                 (for [id to-remove]
-                   (redis/srem client resources-index-key id)))]
-        (await (js/Promise.all (clj->js ops)))
-        (println "[resources] synced Redis index; add=" (count to-add) "remove=" (count to-remove))
-        {:ok true
-         :added to-add
-         :removed to-remove
-         :count (count ids)})
-      (catch :default err
-        (println "[resources] sync-resource-index! failed; startup continuing:" (.-message err))
-        {:ok false :error (.-message err)}))
-    {:ok false :error "Redis not connected"}))
+  (try
+    (let [records (await (resources/load-all-resources! config))
+          ids (->> records
+                   (map (fn [record]
+                          (resource-id->index-key (:resource/class record)
+                                                  (:resource/id record))))
+                   distinct
+                   sort
+                   vec)
+          existing-set @resource-index*
+          desired-set (set ids)
+          to-add (vec (sort (set/difference desired-set existing-set)))
+          to-remove (vec (sort (set/difference existing-set desired-set)))]
+      (reset! resource-index* desired-set)
+      (println "[resources] synced resource index; add=" (count to-add) "remove=" (count to-remove))
+      {:ok true
+       :added to-add
+       :removed to-remove
+       :count (count ids)})
+    (catch :default err
+      (println "[resources] sync-resource-index! failed; startup continuing:" (.-message err))
+      {:ok false :error (.-message err)})))
 
 (defn sync-contract-index!
   "Compatibility alias for old contract route callers."

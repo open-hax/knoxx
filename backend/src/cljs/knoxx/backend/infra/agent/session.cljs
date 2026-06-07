@@ -11,7 +11,7 @@
             [knoxx.backend.infra.http :refer [no-content?]]
             [knoxx.backend.infra.stores.composite-message-source :refer [->CompositeMessageSource]]
             [knoxx.backend.infra.stores.openplanner-message-source :refer [->OpenPlannerMessageSource]]
-            [knoxx.backend.infra.stores.redis-message-source :refer [->RedisMessageSource]]
+            [knoxx.backend.infra.stores.mongo-message-source :refer [->MongoMessageSource]]
             [knoxx.backend.domain.extension-runtime :as ext-runtime]
             [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
@@ -161,7 +161,7 @@
           preferred-session-id (some-> session-id str str/trim not-empty)
           message-source (->CompositeMessageSource
                            (->OpenPlannerMessageSource config)
-                          (->RedisMessageSource preferred-session-id))]
+                          (->MongoMessageSource preferred-session-id))]
      (if (no-content? model)
        (js/Promise.reject (js/Error. (str "No eta-mu model configured for " model-id)))
        (let [session-manager (eta-mu-extern/make-session-manager! (:workspace-root config) preferred-session-id)]

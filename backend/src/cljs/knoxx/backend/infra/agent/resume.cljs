@@ -2,14 +2,14 @@
   "Isolated module for session resumption across backend restarts.
 
    Startup:
-   - Scan Redis for sessions that were active when the previous process exited.
+   - Scan Mongo for sessions that were active when the previous process exited.
    - Recent sessions (< 10 min) are resumed in the background (non-blocking).
    - Stale sessions (>= 10 min) are aborted so the UI does not show ghost
      'active' sessions forever.
 
    Shutdown:
    - Wait for in-flight proxx SDK turns to finish.
-   - Give Redis a grace window to persist final state.
+   - Give the session store a grace window to persist final state.
    - If turns time out, mark their sessions resumable for the next startup."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.agent.recovery :as agent-recovery]
@@ -24,7 +24,7 @@
 ;; ─── Config ───────────────────────────────────────────────────────────
 
 (def STALE_THRESHOLD_MS (* 10 60 1000)) ; 10 minutes
-(def POST_DRAIN_GRACE_MS 1000)          ; let Redis writes flush after turns complete
+(def POST_DRAIN_GRACE_MS 1000)          ; let session-store writes flush after turns complete
 (def RECOVERY_INTERVAL_MS 15000)        ; periodic recovery tick
 (def STARTUP_RESUME_CONCURRENCY 2)      ; keep HTTP/event loop responsive after restart
 (def RECOVERY_COOLDOWN_MS 60000)        ; skip sessions touched within last 60s
@@ -364,7 +364,7 @@
     (count active-turns)))
 
 (defn wait-for-turns-and-flush!
-  "Wait for turn-control to drain, then give Redis a grace window to persist.
+  "Wait for turn-control to drain, then give the session store a grace window to persist.
    Returns a promise."
   [app config]
   (let [grace-ms (let [v (:shutdown-grace-ms config)]
@@ -379,7 +379,7 @@
                    (cond
                      (zero? remaining)
                      (do (log-info! app (str "[agent-resume] turns drained; waiting "
-                                             POST_DRAIN_GRACE_MS "ms for Redis flush"))
+                                             POST_DRAIN_GRACE_MS "ms for session-store flush"))
                          (js/setTimeout #(resolve #js {:timed_out false :remaining 0})
                                         POST_DRAIN_GRACE_MS))
 

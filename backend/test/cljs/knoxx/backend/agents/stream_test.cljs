@@ -4,9 +4,8 @@
             [knoxx.backend.infra.agent.stream.sinks :as sinks]
             [knoxx.backend.domain.action.run-state :as run-state]
             [knoxx.backend.domain.realtime :as realtime]
-            [knoxx.backend.infra.stores.session-store :as session-store]
-            [knoxx.backend.shape.agent :as agent-shape]
-            [knoxx.backend.infra.redis-client :as redis]))
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
+            [knoxx.backend.shape.agent :as agent-shape]))
 
 (defn- assistant-message
   [{:keys [content reasoning tool-previews]}]
@@ -152,8 +151,7 @@
                                                        (swap! tokens* conj {:kind kind :delta delta}))
                     run-state/backfill-run-tool-input-preview! (fn [& _] nil)
                     realtime/broadcast-ws-session! (fn [& args] (swap! events* conj args))
-                    session-store/mark-session-streaming! (fn [& _] nil)
-                    redis/get-client (fn [] nil)]
+                    session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
         (stream/emit-streaming-delta! state :reasoning "The")
         (stream/emit-streaming-delta! state :reasoning "TheThe model should reason once.")
         (is (= "The model should reason once." @(:last-reasoning-text* state)))
@@ -172,8 +170,7 @@
                                                        (swap! tokens* conj {:kind kind :delta delta}))
                     run-state/backfill-run-tool-input-preview! (fn [& _] nil)
                     realtime/broadcast-ws-session! (fn [& args] (swap! events* conj args))
-                    session-store/mark-session-streaming! (fn [& _] nil)
-                    redis/get-client (fn [] nil)]
+                    session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
         (doseq [delta ["Ready." " How" "Ready" "." " How" " can" " I" " help" "?"]]
           (stream/emit-streaming-delta! state :agent_message delta))
         (is (= "Ready. How can I help?" @(:last-assistant-text* state)))
@@ -196,8 +193,7 @@
                                                        (swap! tokens* conj {:kind kind :delta delta}))
                     run-state/backfill-run-tool-input-preview! (fn [& _] nil)
                     realtime/broadcast-ws-session! (fn [& args] (swap! events* conj args))
-                    session-store/mark-session-streaming! (fn [& _] nil)
-                    redis/get-client (fn [] nil)]
+                    session-store/mark-session-streaming! (fn ([_ _] nil) ([_ _ _] nil))]
         (stream/emit-streaming-delta! state :reasoning "The")
         (stream/sync-assistant-message! state (assistant-message {:reasoning "The reply has been sent."}))
         (is (= "The reply has been sent." @(:last-reasoning-text* state)))

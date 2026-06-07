@@ -4,8 +4,7 @@
             [knoxx.backend.infra.clients.github :as github-client]
             [knoxx.backend.infra.db.policy :as policy-db]
             ["node:crypto" :as crypto]
-            ["nodemailer" :default nodemailer]
-            ["redis" :as redis]))
+            ["nodemailer" :default nodemailer]))
 
 
 (def ^:private session-secret-mem (atom nil))
@@ -53,10 +52,7 @@
     (catch :default _ nil)))
 
 
-(def ^:private redis-client (atom nil))
-(def ^:private redis-connect-promise (atom nil))
-
-;; --- Persistent session store (Postgres) ---
+;; --- Persistent session store ---
 
 (def ^:private db-session-store (atom nil))
 
@@ -125,31 +121,6 @@
         (normalize-session-data s))
       (catch js/Error _ nil))))
 
-(defn- ^:async connect-redis!
-  []
-  (let [url (or (aget (.-env js/process) "REDIS_URL") "redis://127.0.0.1:6379")
-        client (.createClient redis (clj->js {:url url}))]
-    (.on client "error" (fn [err] (.error js/console "[knoxx-session] Redis error:" (.-message err))))
-    (try
-      (await (.connect client))
-      (.log js/console "[knoxx-session] Redis connected for session store")
-      (reset! redis-client client)
-      (reset! redis-connect-promise nil)
-      client
-      (catch js/Error err
-        (reset! redis-connect-promise nil)
-        (throw err)))))
-
-(defn- get-redis
-  []
-  (cond
-    (and @redis-client (.-isOpen @redis-client)) (js/Promise.resolve @redis-client)
-    @redis-connect-promise @redis-connect-promise
-    :else (let [promise (connect-redis!)]
-            (reset! redis-connect-promise promise)
-            promise)))
-
-
 (defn- session-ttl-seconds
   []
   (js/parseInt (or (aget (.-env js/process) "KNOXX_SESSION_TTL_SECONDS") "86400") 10))
@@ -162,7 +133,7 @@
       (await (db-store-session token normalized))
       (catch js/Error err
         (.log js/console "[knoxx-session] WARN: DB store failed:" (.-message err))))
-    ;; Redis cache removed — Postgres is the sole store
+    ;; The policy DB (Mongo) is the sole session store
     nil))
 
 (defn- parse-stored-session
@@ -173,12 +144,12 @@
 
 (defn- ^:async load-session
   [session-id token]
-  ;; Postgres is the sole store (Redis cache removed)
+  ;; The policy DB (Mongo) is the sole session store
   (await (db-load-session (or token ""))))
 
 (defn ^:async delete-session
   [session-id token]
-  ;; Delete from Postgres (authoritative, Redis cache removed)
+  ;; Delete from the policy DB (authoritative)
   (when (and @db-session-store (not (str/blank? token)))
     (try
       (await (policy-db/delete-session-by-token! (policy-db/context-pool @db-session-store) token))

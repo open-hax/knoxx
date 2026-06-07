@@ -1,6 +1,6 @@
 (ns knoxx.backend.infra.mongo-client
   "MongoDB client for Knoxx session/run persistence.
-   Replaces Redis as the primary state store under OPENPLANNER_KNOXX_COMPOSITE_STORE=mongo."
+   Replaces Redis as the primary state store."
   )
 
 (defonce mongo-client* (atom nil))

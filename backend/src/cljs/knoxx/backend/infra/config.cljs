@@ -60,7 +60,6 @@
    :knoxx-default-actor-id (env "KNOXX_DEFAULT_ACTOR_ID" "chat_primary")
    :knoxx-default-agent-contract (env "KNOXX_DEFAULT_AGENT_CONTRACT" "knoxx_default")
    :contracts-dir (env "CONTRACTS_DIR" "contracts")
-   :redis-url (env "REDIS_URL" "")
    :shutdown-grace-ms (env-int "KNOXX_SHUTDOWN_GRACE_MS" 25000)
    :shutdown-poll-ms (env-int "KNOXX_SHUTDOWN_POLL_MS" 250)})
 

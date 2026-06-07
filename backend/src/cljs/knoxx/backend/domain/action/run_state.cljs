@@ -36,7 +36,7 @@
 
 (defn- ensure-clj
   "Defensive: coerce raw JS arrays/objects back to CLJS data before
-   storing in the in-memory run atom.  Redis round-trips and SDK
+   storing in the in-memory run atom.  Store round-trips and SDK
    interop can leak raw #js [] / #js {} into fields."
   [value]
   (cond
@@ -332,7 +332,7 @@
   "Get run events that occurred after the given timestamp.
    Returns a promise resolving to a vector of events.
    Reads from the in-memory run state."
-  [_redis-client run-id since-timestamp]
+  [run-id since-timestamp]
   (let [run (get @runs* run-id)
         events (or (:events run) [])
         filtered (filter (fn [event]

@@ -1,5 +1,5 @@
 (ns knoxx.backend.infra.agent.stream.reducer
-  "Pure stream reducer used to test stream semantics independently from Redis,
+  "Pure stream reducer used to test stream semantics independently from the session store,
    run-state, WebSocket, and provider subscription side effects."
   (:require [clojure.string :as str]
             [knoxx.backend.domain.agent.reasoning :as reasoning]

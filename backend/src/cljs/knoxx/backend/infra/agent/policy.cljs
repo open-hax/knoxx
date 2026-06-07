@@ -68,7 +68,7 @@
 
 (defn ^:async check-rate-limit!
   "Check and enforce the chat rate limit via Mongo $inc + TTL."
-  [principal _redis-client max-requests window-seconds]
+  [principal max-requests window-seconds]
   (let [key (str "knoxx:chat-rate:" principal ":" window-seconds)]
     (try
       (let [count (await (mongo-rate-limits/increment-rate-limit! key window-seconds))]
@@ -91,7 +91,7 @@
         principal (some-> (chat-rate-limit-principal auth-context) str not-empty)]
     (check-model-policy! model-id permitted-models)
     (if (and principal max-requests window-seconds)
-      (check-rate-limit! principal nil max-requests window-seconds)
+      (check-rate-limit! principal max-requests window-seconds)
       (js/Promise.resolve nil))))
 
 (defprotocol IPolicyEngine

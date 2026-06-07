@@ -3,7 +3,7 @@
 
    Writes runs as structured events. Reads are best-effort via graph query.
    This store is authoritative for COMPLETED runs only.
-   In-flight runs are owned by Redis."
+   In-flight runs are owned by the Mongo session store."
   (:require [shadow.cljs.modern :refer [js-await]]
             [clojure.string :as str]
             [knoxx.backend.shape.session-persistence :refer [ISessionStore assert-run! get-run patch-run! put-run!]]

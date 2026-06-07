@@ -1,15 +1,13 @@
 (ns knoxx.backend.infra.stores.session-flush
-  "Periodic TTL-based flush of stale Redis runs to OpenPlanner.
+  "Periodic flush of stale active runs to OpenPlanner.
 
    Purpose: safety net for runs that were never explicitly completed
    (e.g. process crash mid-stream, network timeout).  These runs stay
-   'running' in Redis until their TTL expires and are then lost.  This
-   job detects them early and archives them as 'failed' before that
-   happens."
+   'running' in Mongo until something archives them.  This job detects
+   them early and archives them as 'failed'."
   (:require [knoxx.backend.infra.stores.session-store-registry :as store-registry]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as mongo-session-store]
             [knoxx.backend.shape.session-persistence :refer [put-run! list-active-runs]]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.time :refer [now-iso]]))
 
 (def ^:private DEFAULT_INACTIVE_THRESHOLD_MS (* 12 60 60 1000)) ; 12h without update
@@ -54,12 +52,12 @@
       nil)))
 
 (defn ^:async flush-stale-runs!
-  "Scan all active sessions in Redis for runs that have been inactive
+  "Scan all active sessions in Mongo for runs that have been inactive
    longer than `threshold-ms` and archive them to OpenPlanner."
-  [client threshold-ms]
+  [threshold-ms]
   (when-let [store @store-registry/session-store*]
     (try
-      (let [ids (vec (js->clj (await (redis/smembers client session-store/ACTIVE_SESSIONS_SET))))]
+      (let [ids (vec (await (mongo-session-store/list-active-session-ids)))]
         (await (js/Promise.all
                 (clj->js (map #(archive-stale-session-runs! store % threshold-ms) ids)))))
       (catch :default err
@@ -74,14 +72,14 @@
    without updates, with no active stream, before it is archived as dead. It
    should be well above any expected real turn duration so genuinely active
    long runs are never wrongly failed."
-  ([client] (start-periodic-flush! client DEFAULT_INACTIVE_THRESHOLD_MS))
-  ([client threshold-ms]
+  ([] (start-periodic-flush! DEFAULT_INACTIVE_THRESHOLD_MS))
+  ([threshold-ms]
    (let [threshold-ms (if (and (number? threshold-ms) (pos? threshold-ms))
                         threshold-ms
                         DEFAULT_INACTIVE_THRESHOLD_MS)]
      (when-not @interval-handle*
        (reset! interval-handle*
-               (js/setInterval #(flush-stale-runs! client threshold-ms) FLUSH_INTERVAL_MS))
+               (js/setInterval #(flush-stale-runs! threshold-ms) FLUSH_INTERVAL_MS))
        (.info js/console "[session-flush] periodic stale-run flush started"
               (clj->js {:interval-ms FLUSH_INTERVAL_MS
                         :threshold-ms threshold-ms}))))))

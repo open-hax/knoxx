@@ -201,7 +201,7 @@
                (select-keys promises known))))))
 
 (defn ^:async persist-cached-session-title!
-  [_redis-client session-id entry]
+  [session-id entry]
   (try
     (await (mongo-titles/upsert-title! session-id entry))
     (catch :default err
@@ -209,7 +209,7 @@
       nil)))
 
 (defn ^:async clear-cached-session-title!
-  [_redis-client session-id]
+  [session-id]
   (try
     (await (mongo-titles/delete-title! session-id))
     (catch :default err
@@ -225,14 +225,14 @@
     (swap! session-titles* assoc session-id resolved)
     (swap! session-title-promises* dissoc session-id)
     (evict-stale-titles!)
-    (persist-cached-session-title! nil session-id resolved)
+    (persist-cached-session-title! session-id resolved)
     resolved))
 
 (defn clear-session-title-entry!
   [session-id]
   (swap! session-titles* dissoc session-id)
   (swap! session-title-promises* dissoc session-id)
-  (clear-cached-session-title! nil session-id)
+  (clear-cached-session-title! session-id)
   nil)
 
 (defn ^:async get-cached-session-title!
