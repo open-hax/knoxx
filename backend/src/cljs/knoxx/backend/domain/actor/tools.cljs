@@ -4,8 +4,7 @@
             [knoxx.backend.domain.actor.mailbox :as actor-mailbox]
             [knoxx.backend.domain.agent.agent-context :as agent-context]
             [knoxx.backend.infra.auth.authz :refer [ctx-tool-allowed?]]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.infra.clients.knoxx-control :as knoxx-client]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.tools :refer [create-tool-obj json-parse live-config maybe-tool-update!]]))
@@ -132,7 +131,7 @@
         conversation-id (:conversation-id target)]
     (if (or conversation-id (str/blank? (str session-id)))
       (js/Promise.resolve target)
-      (-> (session-store/get-session (redis/get-client) session-id)
+      (-> (session-store/get-session session-id)
           (.then (fn [session]
                    (assoc target :conversation-id (or (:conversation_id session)
                                                       (:conversation-id session)))))))))

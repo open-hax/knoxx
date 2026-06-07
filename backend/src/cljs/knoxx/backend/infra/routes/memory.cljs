@@ -13,8 +13,8 @@
             [knoxx.backend.domain.graph.policy-registry :as policy-registry]
             [knoxx.backend.domain.realtime :refer [broadcast-ws!]]
             [knoxx.backend.domain.actor.scope :as actor-scope]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-memory-sessions :as mongo-memory-sessions]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.infra.stores.session-titles :refer [session-titles*
                                                   session-title-promises*
                                                   session-title-backfill*
@@ -91,10 +91,6 @@
      :contract-id (str (or contract-id ""))
      :auth (memory-sessions-auth-scope ctx)})))
 
-(defn- memory-sessions-cache-redis-key
-  [cache-key]
-  (str "knoxx:memory:sessions:v1:" cache-key))
-
 (defn- evict-memory-sessions-cache!
   []
   (let [ts (now-ms)]
@@ -134,46 +130,40 @@
   (evict-memory-sessions-cache!)
   entry)
 
-(defn ^:async write-memory-sessions-cache-to-redis!
-  [redis-client cache-key entry]
+(defn ^:async write-memory-sessions-cache-to-mongo!
+  [cache-key entry]
   (try
-    (await (redis/set-json redis-client
-                           (memory-sessions-cache-redis-key cache-key)
-                           entry
-                           memory-sessions-cache-ttl-seconds))
+    (await (mongo-memory-sessions/set-cache-entry! cache-key entry))
     (catch :default _
       nil)))
 
 (defn- write-memory-sessions-cache!
-  [redis-client cache-key value]
+  [_redis-client cache-key value]
   (let [entry (memory-sessions-cache-entry value)]
     (remember-memory-sessions-cache! cache-key entry)
-    (when redis-client
-      (write-memory-sessions-cache-to-redis! redis-client cache-key entry))
+    (write-memory-sessions-cache-to-mongo! cache-key entry)
     entry))
 
-(defn ^:async redis-memory-sessions-hit!
-  [redis-client cache-key]
-  (when redis-client
-    (try
-      (let [entry (when-let [raw (await (redis/get-json redis-client (memory-sessions-cache-redis-key cache-key)))]
-                    (when (map? raw) raw))
-            ts (now-ms)]
-        (when (and entry (> (:expires-at entry 0) ts))
-          (remember-memory-sessions-cache! cache-key entry)
-          {:value (:value entry)
-           :cache {:hit true
-                   :tier "redis"
-                   :stale false
-                   :age_ms (max 0 (- ts (:cached-at entry ts)))}}))
-      (catch :default _
-        nil))))
+(defn ^:async mongo-memory-sessions-hit!
+  [cache-key]
+  (try
+    (let [entry (await (mongo-memory-sessions/get-cache-entry! cache-key))
+          ts (now-ms)]
+      (when (and entry (> (:expires-at entry 0) ts))
+        (remember-memory-sessions-cache! cache-key entry)
+        {:value (:value entry)
+         :cache {:hit true
+                 :tier "mongo"
+                 :stale false
+                 :age_ms (max 0 (- ts (:cached-at entry ts)))}}))
+    (catch :default _
+      nil)))
 
 (defn ^:async fetch-and-cache-memory-sessions!
-  [redis-client cache-key fetch-fn]
+  [_redis-client cache-key fetch-fn]
   (try
     (let [value (await (fetch-fn))]
-      (write-memory-sessions-cache! redis-client cache-key value)
+      (write-memory-sessions-cache! nil cache-key value)
       {:value value
        :cache {:hit false
                :tier "miss"
@@ -183,14 +173,14 @@
       (swap! memory-sessions-cache-promises* dissoc cache-key))))
 
 (defn ^:async cached-memory-sessions-source!
-  [redis-client cache-key fetch-fn]
+  [_redis-client cache-key fetch-fn]
   (if-let [hit (memory-sessions-local-hit cache-key)]
     hit
-    (if-let [hit (await (redis-memory-sessions-hit! redis-client cache-key))]
+    (if-let [hit (await (mongo-memory-sessions-hit! cache-key))]
       hit
       (if-let [pending (get @memory-sessions-cache-promises* cache-key)]
         (await pending)
-        (let [promise (fetch-and-cache-memory-sessions! redis-client cache-key fetch-fn)]
+        (let [promise (fetch-and-cache-memory-sessions! nil cache-key fetch-fn)]
           (swap! memory-sessions-cache-promises* assoc cache-key promise)
           (await promise))))))
 
@@ -510,39 +500,36 @@
             :last_ts (:updated_at session)}
            (active-session-synthetic-scope session agent-spec))))
 
-(defn ^:async enrich-row [redis-client row]
+(defn ^:async enrich-row [row]
   (let [session-id (str (:session row))
         titled-row (if-let [title-entry (get @session-titles* session-id)]
                      (assoc row
                             :title (:title title-entry)
                             :title_model (:title_model title-entry))
                      row)]
-    (if-not redis-client
-      (inactive-row titled-row)
-      (try
-        (let [active-session-id (await (session-store/get-conversation-active-session redis-client session-id))]
-          (if (str/blank? (str active-session-id))
-            (inactive-row titled-row)
-            (try
-              (let [active-session (await (session-store/get-session redis-client active-session-id))
-                    status (or (:status active-session) "inactive")
-                    is-active (contains? #{"running" "waiting_input"} status)]
-                (assoc titled-row
-                       :active_session_id active-session-id
-                       :is_active is-active
-                       :active_status status
-                       :has_active_stream (boolean (:has_active_stream active-session))))
+    (try
+      (let [active-session-id (await (session-store/get-conversation-active-session session-id))]
+        (if (str/blank? (str active-session-id))
+          (inactive-row titled-row)
+          (try
+            (let [active-session (await (session-store/get-session active-session-id))
+                  status (or (:status active-session) "inactive")
+                  is-active (contains? #{"running" "waiting_input"} status)]
+              (assoc titled-row
+                     :active_session_id active-session-id
+                     :is_active is-active
+                     :active_status status
+                      :has_active_stream (boolean (:has_active_stream active-session))))
               (catch :default _
                 (inactive-row titled-row)))))
         (catch :default _
-          (inactive-row titled-row))))))
+          (inactive-row titled-row)))))
 
 (defn memory-sessions-request-options
   [config ctx request]
   (let [{:keys [limit offset actor-id exclude-actor-ids contract-id] :as opts}
         (memory-shape/query-options (aget request "query"))]
     (assoc opts
-           :redis-client (redis/get-client)
            :cache-key (memory-sessions-cache-key {:config config
                                                   :ctx ctx
                                                   :limit limit
@@ -588,10 +575,10 @@
   nil)
 
 (defn ^:async send-memory-session-rows!
-  [{:keys [redis-client config runtime error-response! reply] :as env} page-state rows]
+  [{:keys [config runtime error-response! reply] :as env} page-state rows]
   (warm-memory-session-title-rows! rows config runtime)
   (try
-    (let [enriched-rows (await (.all js/Promise (clj->js (mapv (partial enrich-row redis-client) rows))))]
+    (let [enriched-rows (await (.all js/Promise (clj->js (mapv enrich-row rows))))]
       (send-enriched-memory-sessions! env page-state enriched-rows))
     (catch :default err
       (error-response! reply err 502)
@@ -610,12 +597,12 @@
          vec)))
 
 (defn ^:async send-memory-sessions-live-ids!
-  [{:keys [redis-client error-response! reply] :as env}
+  [{:keys [error-response! reply] :as env}
    {:keys [page-rows actor-id exclude-actor-ids contract-id] :as page-state}
    live-ids]
   (try
     (let [live-js (await (.all js/Promise
-                               (clj->js (mapv #(session-store/get-session redis-client %)
+                               (clj->js (mapv #(session-store/get-session %)
                                                (vec live-ids)))))
           live (vec (js->clj live-js :keywordize-keys true))
           synthetic (synthetic-active-session-rows live page-rows actor-id exclude-actor-ids contract-id)]
@@ -625,14 +612,14 @@
       nil)))
 
 (defn ^:async send-memory-sessions-result!
-  [{:keys [redis-client] :as env} {:keys [page-rows] :as page-state}]
-  (if-not redis-client
-    (await (send-memory-session-rows! env page-state page-rows))
-    (try
-      (let [live-ids (await (session-store/list-active-sessions redis-client))]
-        (await (send-memory-sessions-live-ids! env page-state live-ids)))
-      (catch :default _
-        (await (send-memory-session-rows! env page-state page-rows))))))
+  [env {:keys [page-rows] :as page-state}]
+  (try
+    (let [live-ids (await (session-store/list-active-session-ids))]
+      (if (seq live-ids)
+        (await (send-memory-sessions-live-ids! env page-state live-ids))
+        (await (send-memory-session-rows! env page-state page-rows))))
+    (catch :default _
+      (await (send-memory-session-rows! env page-state page-rows)))))
 
 (defroute memory-sessions-route! [authorized-session-ids!
                                   fetch-openplanner-session-rows!
@@ -642,8 +629,7 @@
     (json-response! reply 503 {:detail "OpenPlanner is not configured"})
     (try
       (let [opts (memory-sessions-request-options config ctx request)
-            env {:redis-client (:redis-client opts)
-                 :config config
+            env {:config config
                  :runtime runtime
                  :reply reply
                  :json-response! json-response!

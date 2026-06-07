@@ -3,7 +3,7 @@
             [knoxx.backend.extern.row-extra :as row-extra]
             [knoxx.backend.extern.proxx :as proxx]
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
-            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.infra.stores.mongo-session-titles :as mongo-titles]
             [knoxx.backend.domain.time :as time]
             [knoxx.backend.domain.text :as text]))
 
@@ -201,22 +201,19 @@
                (select-keys promises known))))))
 
 (defn ^:async persist-cached-session-title!
-  [redis-client session-id entry]
+  [_redis-client session-id entry]
   (try
-    (await (redis/set-json redis-client
-                           (session-title-key session-id)
-                           entry
-                           SESSION_TITLE_TTL_SECONDS))
+    (await (mongo-titles/upsert-title! session-id entry))
     (catch :default err
-      (.warn js/console "Failed to persist session title cache into Redis" err)
+      (.warn js/console "Failed to persist session title cache into Mongo" err)
       nil)))
 
 (defn ^:async clear-cached-session-title!
-  [redis-client session-id]
+  [_redis-client session-id]
   (try
-    (await (redis/del redis-client (session-title-key session-id)))
+    (await (mongo-titles/delete-title! session-id))
     (catch :default err
-      (.warn js/console "Failed to clear session title cache from Redis" err)
+      (.warn js/console "Failed to clear session title cache from Mongo" err)
       nil)))
 
 (defn cache-session-title-entry!
@@ -228,16 +225,14 @@
     (swap! session-titles* assoc session-id resolved)
     (swap! session-title-promises* dissoc session-id)
     (evict-stale-titles!)
-    (when-let [redis-client (redis/get-client)]
-      (persist-cached-session-title! redis-client session-id resolved))
+    (persist-cached-session-title! nil session-id resolved)
     resolved))
 
 (defn clear-session-title-entry!
   [session-id]
   (swap! session-titles* dissoc session-id)
   (swap! session-title-promises* dissoc session-id)
-  (when-let [redis-client (redis/get-client)]
-    (clear-cached-session-title! redis-client session-id))
+  (clear-cached-session-title! nil session-id)
   nil)
 
 (defn ^:async get-cached-session-title!
@@ -251,12 +246,10 @@
       (get @session-titles* session-id)
 
       :else
-      (if-let [redis-client (redis/get-client)]
-        (let [entry (await (redis/get-json redis-client (session-title-key session-id)))]
-          (when entry
-            (swap! session-titles* assoc session-id entry))
-          entry)
-        nil))))
+      (let [entry (await (mongo-titles/get-title! session-id))]
+        (when entry
+          (swap! session-titles* assoc session-id entry))
+        entry))))
 
 (defn session-title-event
   [config session-id title title-model]

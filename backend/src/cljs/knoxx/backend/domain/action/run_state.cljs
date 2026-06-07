@@ -1,16 +1,7 @@
 (ns knoxx.backend.domain.action.run-state
   (:require [clojure.string :as str]
             [knoxx.backend.domain.time :as time]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.shape.agent :refer [messages]]))
-
-(def RUN_EVENTS_KEY_PREFIX "knoxx:run_events:")
-(def RUN_EVENTS_MAX 1000)
-(def RUN_EVENTS_TTL 7200) ; 2 hours TTL for run event lists
-
-(defn run-events-key
-  [run-id]
-  (str RUN_EVENTS_KEY_PREFIX run-id))
 
 (defonce runs* (atom {}))
 (defonce run-order* (atom []))
@@ -111,14 +102,6 @@
                  (-> run
                      (assoc :updated_at (time/now-iso))
                      (update :events #(append-limited % event 200)))))
-  ;; Persist event to Redis for crash recovery / WS reconnect replay
-  (when-let [redis-client (redis/get-client)]
-    (redis/lpush-json redis-client (run-events-key run-id) event)
-    ;; Trim the list to prevent unbounded growth
-    (try
-      (.lTrim redis-client (run-events-key run-id) 0 (dec RUN_EVENTS_MAX))
-      (.expire redis-client (run-events-key run-id) RUN_EVENTS_TTL)
-      (catch :default _ nil)))
   ;; Stream event to OpenPlanner as it happens — fire-and-forget
   (when-let [sink @event-stream-sink*]
     (try (sink event) (catch :default _ nil))))
@@ -346,20 +329,15 @@
        count))
 
 (defn get-run-events-since
-  "Get run events from Redis that occurred after the given timestamp.
+  "Get run events that occurred after the given timestamp.
    Returns a promise resolving to a vector of events.
-   Events are stored newest-first in Redis (LPUSH), so we reverse for chronological order."
-  [redis-client run-id since-timestamp]
-  (if-not redis-client
-    (js/Promise.resolve [])
-    (let [key (run-events-key run-id)]
-      (-> (redis/lrange-json redis-client key 0 (dec RUN_EVENTS_MAX))
-          (.then (fn [events]
-                   (vec
-                    (filter (fn [event]
-                              (let [at (or (:at event) (aget event "at"))]
-                                (and at
-                                     (> (compare at since-timestamp) 0))))
-                            (reverse events)))))
-          (.catch (fn [_]
-                    []))))))
+   Reads from the in-memory run state."
+  [_redis-client run-id since-timestamp]
+  (let [run (get @runs* run-id)
+        events (or (:events run) [])
+        filtered (filter (fn [event]
+                           (let [at (or (:at event) (aget event "at"))]
+                             (and at
+                                  (> (compare at since-timestamp) 0))))
+                         events)]
+    (js/Promise.resolve (vec filtered))))

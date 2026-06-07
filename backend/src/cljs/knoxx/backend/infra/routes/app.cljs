@@ -30,7 +30,7 @@
             [knoxx.backend.domain.action.run-state :as run-state :refer [runs* run-order*]]
             [knoxx.backend.shape.parse :refer [parse-positive-int truthy-param?]]
             [knoxx.backend.domain.time :refer [now-iso]]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.infra.stores.session-titles :refer [start-session-title-backfill! session-title-backfill* session-titles* get-cached-session-title! session-title-seed-text heuristic-session-title stored-session-title-entry cache-session-title-entry! resolve-session-title! cache-session-title! normalize-session-title]]
             [knoxx.backend.domain.text :refer [count-occurrences replace-first clip-text]]
             [knoxx.backend.infra.routes.tools :as tool-routes]
@@ -277,8 +277,7 @@
 (defn ^:async live-active-agent-summaries!
   [limit include-all?]
   (let [limit (max 1 (or limit 25))
-        redis-client (redis/get-client)
-        sessions-by-id (into {}
+         sessions-by-id (into {}
                              (map (fn [session]
                                     [(:session_id session) session]))
                              (session-store/active-session-snapshots))
@@ -288,12 +287,8 @@
                        (filter #(contains? #{"queued" "running" "waiting_input"} (:status %)))
                        (map (fn [run]
                               (active-run-summary run (get sessions-by-id (:session_id run)))))
-                       vec)]
-    (if-not redis-client
-      (vec (take limit run-items))
-      (let [ids (await (session-store/list-active-sessions redis-client))
-            sessions (await (promise/all-vec (mapv #(session-store/get-session redis-client %) (vec ids))))]
-        (sort-active-items limit (concat run-items (live-session-items run-items include-all? sessions)))))))
+                                               vec)]
+    (sort-active-items limit (concat run-items (live-session-items run-items include-all? (await (session-store/list-active-sessions)))))))
 
 (def SESSION_RECOVERY_STALE_MS 60000)
 
@@ -338,13 +333,8 @@
       (seq (get-in @runs* [run-id :events]))
       (last (get-in @runs* [run-id :events]))
 
-      (nil? (redis/get-client))
-      nil
-
       :else
-      (try
-        (first (await (redis/lrange-json (redis/get-client) (run-state/run-events-key run-id) 0 0)))
-        (catch :default _ nil)))))
+      nil)))
 
 (defn- stale-running-session?
   [session latest-event]
@@ -683,8 +673,7 @@
                       (stale-running-session? session latest-event))]
     (if stalled?
       (try
-        (await (session-store/complete-session! (redis/get-client)
-                                                session-id
+        (await (session-store/complete-session! session-id
                                                 conversation-id
                                                 {:status "failed"
                                                  :error "Session was stale/zombie; auto-aborted before new turn."
@@ -739,19 +728,19 @@
     (if-not provided-session-id
       (await (queue-turn! "Async agent chat failed"))
       (try
-        (let [session (await (session-store/get-session (redis/get-client) session-id))
-              can-send-result (session-store/session-can-send? session)]
-          (if (:can-send can-send-result)
-            (let [agent-session (active-agent-session conversation-id)
-                  actively-streaming? (and agent-session (streaming? agent-session))]
-              (if actively-streaming?
-                (json-response! reply 409
-                                {:ok false
-                                 :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
-                                 :code "agent-already-processing"
+         (let [session (await (session-store/get-session session-id))
+               can-send-result (session-store/session-can-send? session)]
+           (if (:can-send can-send-result)
+             (let [agent-session (active-agent-session conversation-id)
+                   actively-streaming? (and agent-session (streaming? agent-session))]
+               (if actively-streaming?
+                 (json-response! reply 409
+                                 {:ok false
+                                  :error "Agent is already processing. Specify streamingBehavior steer or followUp to queue the message."
+                                  :code "agent-already-processing"
                                  :has-active-stream true
                                  :can-send false})
-                (await (queue-turn! "Async agent chat failed"))))
+                 (await (queue-turn! "Async agent chat failed"))))
             (let [latest-event (when (= "running" (:status session))
                                  (await (latest-run-event! (:run_id session))))]
               (await (detect-zombies conversation-id session session-id queue-turn!
@@ -787,7 +776,7 @@
     (if-not provided-session-id
       (await (queue-turn! "Async direct agent chat failed"))
       (try
-        (let [session (await (session-store/get-session (redis/get-client) session-id))
+        (let [session (await (session-store/get-session session-id))
               can-send-result (session-store/session-can-send? session)]
           (if (:can-send can-send-result)
             (let [agent-session (active-agent-session conversation-id)
@@ -818,15 +807,14 @@
         requested-run-id (str (or (aget raw "run_id")
                                   (aget raw "runId")
                                   ""))
-        reason (str (or (aget raw "reason") "operator_abort"))
-        redis-client (redis/get-client)
-        run (when-not (str/blank? requested-run-id)
-              (get @runs* requested-run-id))
-        session-id (or (some-> requested-session-id not-empty)
-                       (:session_id run))]
-    (-> (if (and redis-client (not (str/blank? (str session-id))))
-          (session-store/get-session redis-client session-id)
-          (js/Promise.resolve nil))
+         reason (str (or (aget raw "reason") "operator_abort"))
+         run (when-not (str/blank? requested-run-id)
+               (get @runs* requested-run-id))
+         session-id (or (some-> requested-session-id not-empty)
+                        (:session_id run))]
+     (-> (if (not (str/blank? (str session-id)))
+           (session-store/get-session session-id)
+           (js/Promise.resolve nil))
         (.then
          (fn [session]
            (let [conversation-id (str (or (some-> requested-conversation-id not-empty)
@@ -848,8 +836,8 @@
                                                      (assoc :status "aborted"
                                                             :error reason
                                                             :updated_at (now-iso))))))
-                      (-> (if (and redis-client (not (str/blank? resolved-session-id)))
-                            (session-store/update-session! redis-client resolved-session-id
+                      (-> (if (not (str/blank? resolved-session-id))
+                            (session-store/update-session! resolved-session-id
                                                            {:status "aborted"
                                                             :error reason
                                                             :has_active_stream false})
@@ -895,7 +883,7 @@
       (json-response! reply 400 {:error "session_id is required"})
 
       :else
-      (-> (session-store/get-session (redis/get-client) session-id)
+      (-> (session-store/get-session session-id)
           (.then (fn [session]
                    (if session
                      (let [conversation-id' (str (or (:conversation_id session) conversation-id ""))
@@ -1381,7 +1369,7 @@
                 (if (js/isNaN parsed) 1 (max 1 parsed)))]
     (if (str/blank? session-id)
       (json-response! reply 400 {:ok false :error "session_id is required"})
-      (-> (session-store/get-session (redis/get-client) session-id)
+      (-> (session-store/get-session session-id)
           (.then
            (fn [session]
              (cond
@@ -1400,14 +1388,14 @@
                    (ensure-conversation-access! actor-ctx conversation-id))
                  (if (zero? removed-count)
                    (json-response! reply 409 {:ok false :error "No user turns available to undo"})
-                   (-> (session-store/undo-session-turns! (redis/get-client) session-id turns)
-                       (.then
-                        (fn [_]
-                          (json-response! reply 200 {:ok true
-                                                     :session_id session-id
-                                                     :conversation_id conversation-id
-                                                     :removed_count removed-count
-                                                     :remaining_messages (count rewound-messages)})))))))))
+                    (-> (session-store/undo-session-turns! session-id turns)
+                        (.then
+                         (fn [_]
+                           (json-response! reply 200 {:ok true
+                                                      :session_id session-id
+                                                      :conversation_id conversation-id
+                                                      :removed_count removed-count
+                                                      :remaining_messages (count rewound-messages)})))))))))
           (.catch (partial undo-session-err reply))))))
 
 

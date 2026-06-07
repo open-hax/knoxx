@@ -23,7 +23,6 @@
             [knoxx.backend.infra.clients.openplanner :as openplanner-client]
             [knoxx.backend.infra.openplanner.memory :as openplanner-memory]
             [knoxx.backend.domain.media :as media]
-            [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.realtime :refer [broadcast-ws-session!]]
             [knoxx.backend.domain.action.run-state :refer [store-run! append-run-event! update-run!
                                                            finalize-run-trace-blocks! tool-event-payload
@@ -31,7 +30,7 @@
                                                            set-event-stream-sink! clear-event-stream-sink!]]
             [knoxx.backend.domain.models :refer [effective-thinking-level normalize-thinking-level model-supports-input?]]
             [knoxx.backend.shape.agent :refer [send-user-message! subscribe!]]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.infra.stores.session-store-registry :as store-registry]
             [knoxx.backend.shape.session-persistence :refer [put-run!]]
             [knoxx.backend.infra.stores.session-titles :refer [maybe-prime-session-title!]]
@@ -184,20 +183,24 @@
                                      (str "\n" (:preview event))))
                    :extra     event})])
                (.catch (fn [_] nil)))))))
-    (session-store/put-session! (redis/get-client)
-                                (merge (cond-> {:session_id session-id
-                                                :conversation_id conversation-id
-                                                :run_id run-id
-                                                :status "running"
-                                                :model model-id
-                                                :mode mode
-                                                :thinking_level thinking-level
-                                                :created_at started-at
-                                                :updated_at started-at
-                                                :has_active_stream false
-                                                :messages request-messages}
-                                         agent-spec (assoc :agent_spec (agent-spec-summary agent-spec)))
-                                       auth-extra))
+    (-> (session-store/put-session! (merge (cond-> {:session_id session-id
+                                                     :conversation_id conversation-id
+                                                     :run_id run-id
+                                                     :status "running"
+                                                     :model model-id
+                                                     :mode mode
+                                                     :thinking_level thinking-level
+                                                     :created_at started-at
+                                                     :updated_at started-at
+                                                     :has_active_stream false
+                                                     :messages request-messages}
+                                              agent-spec (assoc :agent_spec (agent-spec-summary agent-spec)))
+                                            auth-extra))
+        (.catch (fn [err]
+                  (.error js/console "[turn] failed to persist initial session"
+                         (clj->js {:session-id session-id
+                                   :error (ex-message err)
+                                   :error-data (clj->js (or (ex-data err) {}))})))))
     (let [initial-event (tool-event-payload run-id conversation-id session-id "run_started"
                                             {:status "running"
                                              :mode mode
@@ -306,8 +309,7 @@
     (when failed-run
       (openplanner-memory/index-run-memory! config failed-run extract-mentioned-devel-paths extract-mentioned-urls))
     (let [final-messages (prune-session-messages agent-spec (transcript/transcript-after-turn session persisted-request-messages))]
-      (await (session-store/complete-session! (redis/get-client)
-                                             session-id
+      (await (session-store/complete-session! session-id
                                              conversation-id
                                              {:status "failed"
                                               :error err-text
@@ -372,8 +374,7 @@
                                                                         (cond-> {:role "assistant"
                                                                                  :content answer}
                                                                           (seq merged-content-parts) (assoc :content-parts merged-content-parts)))))]
-            (await (session-store/complete-session! (redis/get-client)
-                                                   session-id
+            (await (session-store/complete-session! session-id
                                                    conversation-id
                                                    {:status "completed"
                                                     :answer answer
@@ -407,8 +408,7 @@
       (append-run-event! run-id error-event)
       (broadcast-ws-session! session-id "events" error-event)
       (let [final-messages (prune-session-messages agent-spec (transcript/transcript-after-turn session persisted-request-messages))]
-        (await (session-store/complete-session! (redis/get-client)
-                                               session-id
+        (await (session-store/complete-session! session-id
                                                conversation-id
                                                {:status "failed"
                                                 :error err-text
@@ -490,12 +490,20 @@
       :else "")))
 
 (defn send-user-message-with-timeout!
+  "Send the user message to the provider session.
+
+   When `timeout-ms` is a positive number the send is raced against a rejection
+   timer. When it is nil, zero, or negative the turn runs unbounded — autonomous
+   (event/cron) agents must be allowed to run as long as they need, and chat
+   turns inherit the same policy via config. The default config sets no timeout."
   [session content timeout-ms]
-  (let [timeout-ms (max 1 (or timeout-ms 300000))]
-    (xpromise/race
-     [(send-user-message! session content)
-      (xpromise/reject-after timeout-ms
-                             (str "Agent turn timed out after " timeout-ms "ms"))])))
+  (let [timeout-ms (when (number? timeout-ms) timeout-ms)]
+    (if (and timeout-ms (pos? timeout-ms))
+      (xpromise/race
+       [(send-user-message! session content)
+        (xpromise/reject-after timeout-ms
+                               (str "Agent turn timed out after " timeout-ms "ms"))])
+      (send-user-message! session content))))
 
 (defn ^:async prompt-and-await!
   "Send the user message to the provider, stream the response, and finalize the turn.
@@ -730,13 +738,16 @@
       (let [persisted-request-messages (prune-session-messages
                                         agent-spec
                                         (transcript/transcript-before-prompt session user-message agent-spec))]
-        (session-store/update-session! (redis/get-client)
-                                       session-id
-                                       {:status "running"
-                                        :has_active_stream false
-                                        :messages persisted-request-messages
-                                        :conversation_id conversation-id
-                                        :run_id run-id})
+        (-> (session-store/update-session! session-id
+                                          {:status "running"
+                                           :has_active_stream false
+                                           :messages persisted-request-messages
+                                           :conversation_id conversation-id
+                                           :run_id run-id})
+            (.catch (fn [err]
+                      (.error js/console "[turn] failed to update session"
+                             (clj->js {:session-id session-id
+                                       :error (ex-message err)})))))
         (prompt-and-await! config session-id run-id conversation-id started-ms model-id mode
                            session turn-message prompt-content-parts hydration memory-hydration
                            persisted-request-messages agent-spec)))))

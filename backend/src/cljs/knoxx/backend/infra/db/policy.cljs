@@ -17,7 +17,14 @@
             [knoxx.backend.shape.db.roles :as q-roles]
             [knoxx.backend.shape.db.sessions :as q-sessions]
             [knoxx.backend.shape.db.users :as q-users]
+            [knoxx.backend.infra.auth.token-hash :as token-hash]
             [knoxx.backend.infra.db.policy.schema :as db-schema]
+             [knoxx.backend.infra.mongo-client :as mongo-client]
+             [knoxx.backend.infra.stores.mongo-policy-store :as mongo-policy]
+             [knoxx.backend.infra.stores.mongo-policy-actor-credentials :as mongo-actor-creds]
+             [knoxx.backend.infra.stores.mongo-policy-audit-events :as mongo-audit]
+             [knoxx.backend.infra.stores.mongo-policy-data-lakes :as mongo-data-lakes]
+             [knoxx.backend.infra.stores.mongo-policy-invites :as mongo-invites]
             [knoxx.backend.domain.actor.scope :as actor-scope]
             [knoxx.backend.domain.contracts.loader :as contracts-loader]
             [knoxx.backend.domain.contracts.roles :as contracts-roles]
@@ -469,12 +476,12 @@
 (defn- hydrate-membership-row
   [roles-by-m tools-by-m {:keys [id user_id org_id actor_id org_name org_slug status is_default created_at updated_at]}]
   (let [roles (or (get roles-by-m id) [])]
-    {:id id :user-id user_id :org-id org_id
-     :actor-id (or (normalize-actor-id actor_id)
-                   (default-membership-actor-id (map :slug roles)))
-     :org-name org_name :org-slug org_slug :status status :is-default is_default
-     :created-at created_at :updated-at updated_at
-     :roles roles :tool-policies (or (get tools-by-m id) [])}))
+    {:id id :userId user_id :orgId org_id
+     :actorId (or (normalize-actor-id actor_id)
+                  (default-membership-actor-id (map :slug roles)))
+     :orgName org_name :orgSlug org_slug :status status :isDefault is_default
+     :createdAt created_at :updatedAt updated_at
+     :roles roles :toolPolicies (or (get tools-by-m id) [])}))
 
 (defn ^:async hydrate-memberships
   [pool memberships]
@@ -705,35 +712,54 @@
 ;; Audit
 ;; ---------------------------------------------------------------------------
 
-(defn- append-audit! [pool {:keys [before after] :as opts}]
-  (honey-query! pool
-    (q-audit/insert-event
-     (assoc opts
-            :before-json (when before (js/JSON.stringify (clj->js before)))
-            :after-json  (when after  (js/JSON.stringify (clj->js after)))))))
+(defn- ^:async append-audit! [pool {:keys [before after] :as opts}]
+  (if (not= "pg" (str/lower-case (str (or (aget js/process.env "OPENPLANNER_KNOXX_POLICY_STORE") ""))))
+    (when-let [db (await (mongo-client/init-mongo!))]
+      (await (mongo-audit/insert-event!
+              db (assoc opts
+                        :before-json (when before (js/JSON.stringify (clj->js before)))
+                        :after-json  (when after  (js/JSON.stringify (clj->js after)))))))
+    (honey-query! pool
+      (q-audit/insert-event
+       (assoc opts
+              :before-json (when before (js/JSON.stringify (clj->js before)))
+              :after-json  (when after  (js/JSON.stringify (clj->js after))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Session persistence
 ;; ---------------------------------------------------------------------------
 
-(defn- hash-token [token salt]
-  (let [h (.createHash crypto "sha256")]
-    (.update h (str salt ":" token) "utf8")
-    (.digest h "hex")))
+;; Token hashing now lives in infra.auth.token-hash, shared with the Mongo
+;; policy store (kanban 14-04) so both backends verify identically.
+(def ^:private hash-token token-hash/hash-token)
+(def ^:private token-prefix token-hash/token-prefix)
+(def ^:private generate-salt token-hash/generate-salt)
 
-(defn- token-prefix [token]
-  (let [h (.createHash crypto "sha256")]
-    (.update h (str token) "utf8")
-    (subs (.digest h "hex") 0 12)))
+(defn- mongo-policy-store?
+  "True by default (post-cutover). Routes migrated policy storage slices to
+   infra.stores.mongo-policy-store (kanban 14-04). Set
+   OPENPLANNER_KNOXX_POLICY_STORE=pg to opt back to PG."
+  []
+  (not= "pg" (str/lower-case (str (or (aget js/process.env "OPENPLANNER_KNOXX_POLICY_STORE") "")))))
 
-(defn- generate-salt []
-  (.toString (.randomBytes crypto 16) "hex"))
+(defn- ^:async ensure-mongo-policy-db!
+  "Connect to Mongo (idempotent) and ensure the policy-store indexes exist.
+   Runs on the policy flag path so the TTL + uniqueness indexes are present
+   even when the composite-store flag that gates bootstrap's mongo path is
+   off. Returns the db, or nil when Mongo is unavailable."
+  []
+  (let [db (await (mongo-client/init-mongo!))]
+    (when db
+      (await (mongo-policy/ensure-indexes! db)))
+    db))
 
 (defn ^:async touch-session-best-effort!
   [pool session-id]
-  (try
-    (await (honey-query! pool (q-sessions/touch session-id)))
-    (catch :default _ nil)))
+  (if (mongo-policy-store?)
+    (await (mongo-policy/touch-session-best-effort! session-id))
+    (try
+      (await (honey-query! pool (q-sessions/touch session-id)))
+      (catch :default _ nil))))
 
 (defn- find-session-in-rows [pool token rows]
   (loop [[row & rest] rows]
@@ -773,7 +799,14 @@
 (defn ^:async list-actor-credentials!
   "Return active actor credential rows for provider as {:credentials [...]}."
   [pool provider]
-  {:credentials (await (policy/list-actor-credentials (sql-policy-store pool nil) provider))})
+  (when (str/blank? provider)
+    (throw (js/Error. "provider is required")))
+  (if (mongo-policy-store?)
+    (if-let [db (await (ensure-mongo-policy-db!))]
+      {:credentials (mapv mongo-actor-creds/credential-row->response
+                          (await (mongo-actor-creds/list-actor-credentials-by-provider! db provider)))}
+      {:credentials []})
+    {:credentials (await (policy/list-actor-credentials (sql-policy-store pool nil) provider))}))
 
 (defn list-permissions!
   [_pool]
@@ -894,19 +927,38 @@
                                   :resource-kind "role" :resource-id (:id role)}))
       {:role (first (await (hydrate-role-maps pool [role])))})))
 
+(defn- credential-row->map
+  [{:keys [id provider kind account_identifier status secret_json created_at updated_at]}]
+  {:id                 id
+   :provider           provider
+   :kind               kind
+   :accountIdentifier  account_identifier
+   :status             status
+   :configuredFields   (vec (remove str/blank? (map str (keys (js->clj (or secret_json {}) :keywordize-keys true)))))
+   :createdAt          created_at
+   :updatedAt          updated_at})
+
 (defn- user-row->map
-  [memberships-by-user {:keys [id email display_name auth_provider external_subject status created_at updated_at]}]
-  {:id id :email email :display-name display_name
-   :auth-provider auth_provider :external-subject external_subject
-   :status status :created-at created_at :updated-at updated_at
+  [memberships-by-user credentials-by-user {:keys [id email display_name auth_provider external_subject status created_at updated_at]}]
+  {:id id :email email :displayName display_name
+   :authProvider auth_provider :externalSubject external_subject
+   :status status :createdAt created_at :updatedAt updated_at
+   :credentials (or (get credentials-by-user id) [])
    :memberships (or (get memberships-by-user id) [])})
 
 (defn- memberships-by-user
   [memberships]
   (reduce (fn [acc m]
-            (update acc (:user-id m) (fnil conj []) m))
+            (update acc (:userId m) (fnil conj []) m))
           {}
           memberships))
+
+(defn- credentials-by-user
+  [credentials]
+  (reduce (fn [acc c]
+            (update acc (:user_id c) (fnil conj []) (credential-row->map c)))
+          {}
+          credentials))
 
 (defn ^:async list-users!
   [pool {:keys [org-id]}]
@@ -918,8 +970,12 @@
         {mem-rows :rows} (await (if org-id
                                   (honey-query! pool (q-users/memberships-for-users user-ids org-id))
                                   (honey-query! pool (q-users/all-memberships-for-users user-ids))))
-        by-user (memberships-by-user (await (hydrate-memberships pool mem-rows)))]
-    {:users (mapv #(user-row->map by-user %) users)}))
+        by-user (memberships-by-user (await (hydrate-memberships pool mem-rows)))
+        cred-rows (if org-id
+                    (:rows (await (honey-query! pool (q-users/credentials-for-users user-ids org-id))))
+                    [])
+        by-cred-user (credentials-by-user cred-rows)]
+    {:users (mapv #(user-row->map by-user by-cred-user %) users)}))
 
 (defn- require-not-blank!
   [value message]
@@ -1057,8 +1113,12 @@
   [pool {:keys [org-id]}]
   (if (str/blank? org-id)
     (throw (js/Error. "org-id is required"))
-    (let [{:keys [rows]} (await (honey-query! pool (q-orgs/data-lake-by-org org-id)))]
-      {:data-lakes (mapv data-lake-row->map rows)})))
+    (if (mongo-policy-store?)
+      (when-let [db (await (ensure-mongo-policy-db!))]
+        {:data-lakes (mapv data-lake-row->map
+                           (await (mongo-data-lakes/list-data-lakes-by-org! db org-id)))})
+      (let [{:keys [rows]} (await (honey-query! pool (q-orgs/data-lake-by-org org-id)))]
+        {:data-lakes (mapv data-lake-row->map rows)}))))
 
 (defn- data-lake-response
   [lake]
@@ -1072,17 +1132,28 @@
     (str/blank? org-id) (throw (js/Error. "org-id is required"))
     (str/blank? name)   (throw (js/Error. "name is required"))
     :else
-    (let [s          (slugify (or slug name) "lake")
-          config-json (js/JSON.stringify (clj->js (or config {})))
-          lake (await (honey-query-one! pool (q-orgs/insert-data-lake {:org-id org-id
-                                                                       :name name :slug s
-                                                                       :kind kind
-                                                                       :config-json config-json
-                                                                       :status status})))]
-      (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
-                                  :org-id org-id :action "data_lake.create"
-                                  :resource-kind "data_lake" :resource-id (:id lake)}))
-      (data-lake-response lake))))
+    (if (mongo-policy-store?)
+      (when-let [db (await (ensure-mongo-policy-db!))]
+        (let [s    (slugify (or slug name) "lake")
+              lake (await (mongo-data-lakes/create-data-lake!
+                           db org-id {:name name :slug s :kind kind
+                                      :config-json (clj->js (or config {}))
+                                      :status status}))]
+          (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                      :org-id org-id :action "data_lake.create"
+                                      :resource-kind "data_lake" :resource-id (:id lake)}))
+          (data-lake-response lake)))
+      (let [s          (slugify (or slug name) "lake")
+            config-json (js/JSON.stringify (clj->js (or config {})))
+            lake (await (honey-query-one! pool (q-orgs/insert-data-lake {:org-id org-id
+                                                                         :name name :slug s
+                                                                         :kind kind
+                                                                         :config-json config-json
+                                                                         :status status})))]
+        (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                    :org-id org-id :action "data_lake.create"
+                                    :resource-kind "data_lake" :resource-id (:id lake)}))
+        (data-lake-response lake)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Sessions
@@ -1100,62 +1171,84 @@
              :expires-at    (:expires_at row)
              :created-at    (:created_at row)}})
 
-(defn ^:async create-session!
+(defn- ^:async pg-create-session!
   [pool {:keys [token user-id membership-id org-id email display-name
-                 auth-provider external-subject ip-address user-agent]}]
-  (if (str/blank? token)
+                auth-provider external-subject ip-address user-agent]}]
+  (let [ttl        (js/parseInt (or (aget js/process.env "KNOXX_SESSION_TTL_SECONDS") "86400") 10)
+        salt       (generate-salt)
+        token-hash (hash-token token salt)
+        prefix     (token-prefix token)
+        expires-at (js/Date. (+ (js/Date.now) (* ttl 1000)))
+        row (await (honey-query-one! pool
+                                      (q-sessions/insert {:user-id       user-id
+                                                          :membership-id membership-id
+                                                          :org-id        org-id
+                                                          :token-hash    token-hash
+                                                          :token-prefix  prefix
+                                                          :salt          salt
+                                                          :email         email
+                                                          :display-name  display-name
+                                                          :auth-provider (or auth-provider "github")
+                                                          :external-subject external-subject
+                                                          :ip-address    ip-address
+                                                          :user-agent    user-agent
+                                                          :expires-at    (.toISOString expires-at)})))]
+    (session-row-response row)))
+
+(defn ^:async create-session!
+  [pool {:keys [token] :as opts}]
+  (cond
+    (mongo-policy-store?)
+    (if-let [db (await (ensure-mongo-policy-db!))]
+      (await (mongo-policy/create-session! db opts))
+      (throw (js/Error. "Mongo policy store unavailable")))
+
+    (str/blank? token)
     (throw (js/Error. "token is required"))
-    (let [ttl        (js/parseInt (or (aget js/process.env "KNOXX_SESSION_TTL_SECONDS") "86400") 10)
-          salt       (generate-salt)
-          token-hash (hash-token token salt)
-          prefix     (token-prefix token)
-          expires-at (js/Date. (+ (js/Date.now) (* ttl 1000)))
-          row (await (honey-query-one! pool
-                                        (q-sessions/insert {:user-id       user-id
-                                                            :membership-id membership-id
-                                                            :org-id        org-id
-                                                            :token-hash    token-hash
-                                                            :token-prefix  prefix
-                                                            :salt          salt
-                                                            :email         email
-                                                            :display-name  display-name
-                                                            :auth-provider (or auth-provider "github")
-                                                            :external-subject external-subject
-                                                            :ip-address    ip-address
-                                                            :user-agent    user-agent
-                                                            :expires-at    (.toISOString expires-at)})))]
-      (session-row-response row))))
+
+    :else
+    (await (pg-create-session! pool opts))))
 
 (defn ^:async get-session-by-token!
   [pool token]
-  (when-not (str/blank? token)
-    (try
-      (let [prefix (token-prefix token)
-            {:keys [rows]} (await (honey-query! pool (q-sessions/by-prefix prefix)))]
-        (or (find-session-in-rows pool token rows)
-            (let [{:keys [rows]} (await (honey-query! pool (q-sessions/all-active)))]
-              (find-session-in-rows pool token rows))))
-      (catch :default _
-        nil))))
+  (if (mongo-policy-store?)
+    (when-let [db (await (ensure-mongo-policy-db!))]
+      (await (mongo-policy/get-session-by-token! db token)))
+    (when-not (str/blank? token)
+      (try
+        (let [prefix (token-prefix token)
+              {:keys [rows]} (await (honey-query! pool (q-sessions/by-prefix prefix)))]
+          (or (find-session-in-rows pool token rows)
+              (let [{:keys [rows]} (await (honey-query! pool (q-sessions/all-active)))]
+                (find-session-in-rows pool token rows))))
+        (catch :default _
+          nil)))))
 
 (defn ^:async delete-session-by-token!
   [pool token]
-  (let [result (await (get-session-by-token! pool token))]
-    (when-let [sid (get-in result [:session :id])]
-      (try
-        (await (honey-query! pool (q-sessions/delete-by-id sid)))
-        (catch :default _ nil)))
-    result))
+  (if (mongo-policy-store?)
+    (when-let [db (await (ensure-mongo-policy-db!))]
+      (await (mongo-policy/delete-session-by-token! db token)))
+    (let [result (await (get-session-by-token! pool token))]
+      (when-let [sid (get-in result [:session :id])]
+        (try
+          (await (honey-query! pool (q-sessions/delete-by-id sid)))
+          (catch :default _ nil)))
+      result)))
 
 (defn ^:async cleanup-expired-sessions!
   [pool]
-  (try
-    (let [{:keys [row-count]} (await (honey-query! pool (q-sessions/delete-expired)))]
-      (when (> (or row-count 0) 0)
-        (.log js/console "[policy-db] Cleaned up" row-count "expired sessions"))
-      (or row-count 0))
-    (catch :default _
-      0)))
+  (if (mongo-policy-store?)
+    (if-let [db (await (ensure-mongo-policy-db!))]
+      (await (mongo-policy/cleanup-expired-sessions! db))
+      0)
+    (try
+      (let [{:keys [row-count]} (await (honey-query! pool (q-sessions/delete-expired)))]
+        (when (> (or row-count 0) 0)
+          (.log js/console "[policy-db] Cleaned up" row-count "expired sessions"))
+        (or row-count 0))
+      (catch :default _
+        0))))
 
 ;; ---------------------------------------------------------------------------
 ;; Invites
@@ -1177,7 +1270,23 @@
     (str/blank? org-id) (throw (js/Error. "org-id is required"))
     (str/blank? email)  (throw (js/Error. "email is required"))
     :else
-    (let [slugs      (or role-slugs ["basic-user"])
+    (if (mongo-policy-store?)
+      (when-let [db (await (ensure-mongo-policy-db!))]
+        (let [slugs      (or role-slugs ["basic-user"])
+              code       (.toString (.randomBytes crypto 8) "hex")
+              expires-at (js/Date. (+ (js/Date.now) (* 7 24 3600 1000)))
+              row (await (mongo-invites/insert-invite!
+                          db {:org-id               org-id
+                              :code                 code
+                              :email                email
+                              :inviter-membership-id (or inviter-membership-id mid)
+                              :role-slugs-json      (js/JSON.stringify (clj->js slugs))
+                              :expires-at           (.toISOString expires-at)}))]
+          (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
+                                      :org-id org-id :action "invite.create"
+                                      :resource-kind "invite" :resource-id (:id row)}))
+          (invite-response row code)))
+      (let [slugs      (or role-slugs ["basic-user"])
           code       (.toString (.randomBytes crypto 8) "hex")
           expires-at (js/Date. (+ (js/Date.now) (* 7 24 3600 1000)))
           row (await (honey-query-one! pool
@@ -1188,9 +1297,9 @@
                                                            :role-slugs-json      (js/JSON.stringify (clj->js slugs))
                                                            :expires-at           (.toISOString expires-at)})))]
       (await (append-audit! pool {:actor-user-id uid :actor-membership-id mid
-                                  :org-id org-id :action "invite.create"
-                                  :resource-kind "invite" :resource-id (:id row)}))
-      (invite-response row code))))
+                                   :org-id org-id :action "invite.create"
+                                   :resource-kind "invite" :resource-id (:id row)}))
+      (invite-response row code)))))
 
 (defn- parse-role-slugs-json
   [value]
@@ -1219,26 +1328,49 @@
   [pool code email]
   (if (or (str/blank? code) (str/blank? email))
     (throw (js/Error. "code and email are required"))
-    (let [invite (await (honey-query-one! pool (q-invites/pending-by-code code)))]
-      (if-not invite
-        (throw (invite-error "Invalid or expired invite code" 400))
-        (let [invite-email (str/lower-case (str (:email invite)))
-              req-email    (str/lower-case (str email))
-              role-slugs   (or (seq (parse-role-slugs-json (:role_slugs invite)))
-                               ["basic-user"])]
-          (when-not (= invite-email req-email)
-            (throw (invite-error "Invite email does not match" 403)))
-          (let [updated (await (honey-query-one! pool (q-invites/redeem (:id invite))))]
-            (await (create-user! pool nil nil
-                                 {:email (:email updated)
-                                  :display-name (:email updated)
-                                  :auth-provider "invite"
-                                  :status "active"
-                                  :membership-status "active"
-                                  :org-id (:org_id updated)
-                                  :role-slugs (vec role-slugs)
-                                  :is-default true}))
-            (redeemed-invite-response updated code)))))))
+    (if (mongo-policy-store?)
+      (if-let [db (await (ensure-mongo-policy-db!))]
+        (let [invite (await (mongo-invites/pending-by-code! db code))]
+          (if-not invite
+            (throw (invite-error "Invalid or expired invite code" 400))
+            (let [invite-email (str/lower-case (str (:email invite)))
+                  req-email    (str/lower-case (str email))
+                  role-slugs   (or (seq (parse-role-slugs-json (:role_slugs invite)))
+                                   ["basic-user"])]
+              (when-not (= invite-email req-email)
+                (throw (invite-error "Invite email does not match" 403)))
+              (let [updated (await (mongo-invites/redeem-invite! db (:id invite)))]
+                (await (create-user! pool nil nil
+                                     {:email (:email updated)
+                                      :display-name (:email updated)
+                                      :auth-provider "invite"
+                                      :status "active"
+                                      :membership-status "active"
+                                      :org-id (:org_id updated)
+                                      :role-slugs (vec role-slugs)
+                                      :is-default true}))
+                (redeemed-invite-response updated code)))))
+        (throw (js/Error. "Mongo policy store unavailable")))
+      (let [invite (await (honey-query-one! pool (q-invites/pending-by-code code)))]
+        (if-not invite
+          (throw (invite-error "Invalid or expired invite code" 400))
+          (let [invite-email (str/lower-case (str (:email invite)))
+                req-email    (str/lower-case (str email))
+                role-slugs   (or (seq (parse-role-slugs-json (:role_slugs invite)))
+                                 ["basic-user"])]
+            (when-not (= invite-email req-email)
+              (throw (invite-error "Invite email does not match" 403)))
+            (let [updated (await (honey-query-one! pool (q-invites/redeem (:id invite))))]
+              (await (create-user! pool nil nil
+                                   {:email (:email updated)
+                                    :display-name (:email updated)
+                                    :auth-provider "invite"
+                                    :status "active"
+                                    :membership-status "active"
+                                    :org-id (:org_id updated)
+                                    :role-slugs (vec role-slugs)
+                                    :is-default true}))
+              (redeemed-invite-response updated code))))))))
 
 (defn- invite-row->map
   [{:keys [id org_id code email status role_slugs expires_at redeemed_at created_at]}]
@@ -1256,10 +1388,14 @@
   [pool {:keys [org-id status]}]
   (if (str/blank? org-id)
     (throw (js/Error. "org-id is required"))
-    (let [{:keys [rows]} (await (honey-query! pool (if status
-                                                     (q-invites/list-by-org-and-status org-id status)
-                                                     (q-invites/list-by-org org-id))))]
-      {:invites (mapv invite-row->map rows)})))
+    (if (mongo-policy-store?)
+      (when-let [db (await (ensure-mongo-policy-db!))]
+        {:invites (mapv invite-row->map
+                        (await (mongo-invites/list-invites-by-org! db org-id status)))})
+      (let [{:keys [rows]} (await (honey-query! pool (if status
+                                                       (q-invites/list-by-org-and-status org-id status)
+                                                       (q-invites/list-by-org org-id))))]
+        {:invites (mapv invite-row->map rows)}))))
 
 (defn sync-actor-contracts!
   [pool primary-org]
@@ -1271,22 +1407,38 @@
   [pool primary-org opts]
   (sync-user-from-actor-contract!* pool primary-org opts))
 
+(defn- ^:async pg-session-secret
+  "Best-effort read of the session secret from the PG config table, used as
+   the cutover fallback so existing cookies survive the storage migration."
+  [pool]
+  (when pool
+    (try
+      (let [{:keys [rows]} (await (pg/query! pool "SELECT value FROM knoxx_config WHERE key = 'session_secret'" nil))]
+        (:value (first rows)))
+      (catch :default _ nil))))
+
 (defn ^:async recover-session-secret!
   "Load the session secret from knoxx_config, generating and persisting one if absent.
-   Returns Promise<string>."
+   Returns Promise<string>. Under OPENPLANNER_KNOXX_POLICY_STORE=mongo the
+   secret lives in the Mongo config collection; a still-reachable PG value
+   is adopted on first run so existing cookies keep working."
   [pool]
-  (let [{:keys [rows]} (await (pg/query! pool "SELECT value FROM knoxx_config WHERE key = 'session_secret'" nil))]
-    (if-let [stored (:value (first rows))]
-      (do
-        (.log js/console "[knoxx-session] Recovered session secret from database")
-        stored)
-      (let [new-secret (.toString (.randomBytes crypto 32) "hex")]
-        (await (pg/query! pool
-                          "INSERT INTO knoxx_config (key, value) VALUES ('session_secret', $1)
-                          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
-                          [new-secret]))
-        (.log js/console "[knoxx-session] Generated and persisted session secret")
-        new-secret))))
+  (if (mongo-policy-store?)
+    (if-let [db (await (ensure-mongo-policy-db!))]
+      (await (mongo-policy/recover-session-secret! db (await (pg-session-secret pool))))
+      (throw (js/Error. "Mongo policy store unavailable")))
+    (let [{:keys [rows]} (await (pg/query! pool "SELECT value FROM knoxx_config WHERE key = 'session_secret'" nil))]
+      (if-let [stored (:value (first rows))]
+        (do
+          (.log js/console "[knoxx-session] Recovered session secret from database")
+          stored)
+        (let [new-secret (.toString (.randomBytes crypto 32) "hex")]
+          (await (pg/query! pool
+                            "INSERT INTO knoxx_config (key, value) VALUES ('session_secret', $1)
+                            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+                            [new-secret]))
+          (.log js/console "[knoxx-session] Generated and persisted session secret")
+          new-secret)))))
 
 (defn ^:async update-user-actor!
   "Update a membership's actor-id and optionally its roles."
@@ -1309,22 +1461,35 @@
 
 (defn- actor-credential-response [row]
   {:credential (when row
-                 {:id                 (:id row)
-                  :user-id            (:user_id row)
-                  :org-id             (:org_id row)
-                  :provider           (:provider row)
-                  :kind               (:kind row)
-                  :account-identifier (:account_identifier row)
-                  :status             (:status row)})})
+                 (let [secret (js->clj (or (:secret_json row) {}) :keywordize-keys true)]
+                   {:id                 (:id row)
+                    :userId             (:user_id row)
+                    :orgId              (:org_id row)
+                    :provider           (:provider row)
+                    :kind               (:kind row)
+                    :accountIdentifier  (:account_identifier row)
+                    :status             (:status row)
+                    :secretJson         secret
+                    :configuredFields   (vec (remove str/blank? (map name (keys secret))))}))})
 
 (defn ^:async upsert-actor-credential!
   "Upsert an actor credential by user-id + org-id + provider."
   [pool _uid _mid user-id {:keys [org-id provider kind account-identifier secret-json status]}]
-  (let [ms (await (honey-query-one! pool (q-memberships/by-user-and-org user-id org-id)))]
-    (if-not ms
-      (throw (js/Error. "actor membership not found"))
-      (let [row (await (pg/query-one! pool
-                                      "INSERT INTO actor_credentials
+  (if (mongo-policy-store?)
+    (if-let [db (await (ensure-mongo-policy-db!))]
+      (let [row (await (mongo-actor-creds/upsert-actor-credential!
+                        db user-id org-id provider
+                        {:kind kind
+                         :account-identifier account-identifier
+                         :secret-json (js->clj (or secret-json {}) :keywordize-keys true)
+                         :status status}))]
+        (actor-credential-response row))
+      (throw (js/Error. "Mongo policy store unavailable")))
+    (let [ms (await (honey-query-one! pool (q-memberships/by-user-and-org user-id org-id)))]
+      (if-not ms
+        (throw (js/Error. "actor membership not found"))
+        (let [row (await (pg/query-one! pool
+                                        "INSERT INTO actor_credentials
                       (user_id, org_id, provider, kind, account_identifier, secret_json, status)
                     VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7)
                     ON CONFLICT (user_id, org_id, provider, kind) DO UPDATE SET
@@ -1334,10 +1499,10 @@
                       status             = EXCLUDED.status,
                       updated_at         = NOW()
                     RETURNING *"
-                                      [user-id org-id provider (or kind "credential") account-identifier
-                                       (js/JSON.stringify (clj->js (or secret-json {})))
-                                       (or status "active")]))]
-        (actor-credential-response row)))))
+                                        [user-id org-id provider (or kind "credential") account-identifier
+                                         (js/JSON.stringify (clj->js (or secret-json {})))
+                                         (or status "active")]))]
+          (actor-credential-response row))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Policy context helpers
@@ -1463,11 +1628,15 @@
 
 (defn ^:async get-actor-credential!
   [policy-context actor-id provider]
-  (let [credential (await (policy/get-actor-credential (sql-policy-store (context-pool policy-context)
-                                                                         (context-primary-org policy-context))
-                                                       actor-id
-                                                       provider))]
-    {:credential credential}))
+  (if (mongo-policy-store?)
+    (when-let [db (await (ensure-mongo-policy-db!))]
+      {:credential (mongo-actor-creds/credential-row->response
+                    (await (mongo-actor-creds/get-actor-credential-by-actor-and-provider! db actor-id provider)))})
+    (let [credential (await (policy/get-actor-credential (sql-policy-store (context-pool policy-context)
+                                                                           (context-primary-org policy-context))
+                                                         actor-id
+                                                         provider))]
+      {:credential credential})))
 
 ;; ---------------------------------------------------------------------------
 ;; Initialisation

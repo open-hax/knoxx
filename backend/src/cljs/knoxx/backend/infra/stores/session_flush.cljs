@@ -12,18 +12,18 @@
             [knoxx.backend.infra.redis-client :as redis]
             [knoxx.backend.domain.time :refer [now-iso]]))
 
-(def ^:private INACTIVE_THRESHOLD_MS (* 30 60 1000)) ; 30 minutes without update
-(def ^:private FLUSH_INTERVAL_MS     (* 20 60 1000)) ; scan every 20 minutes
+(def ^:private DEFAULT_INACTIVE_THRESHOLD_MS (* 12 60 60 1000)) ; 12h without update
+(def ^:private FLUSH_INTERVAL_MS             (* 20 60 1000))    ; scan every 20 minutes
 
 (defonce ^:private interval-handle* (atom nil))
 
 (defn- run-inactive?
-  [run]
+  [run threshold-ms]
   (let [updated-ms (try (.getTime (js/Date. (or (:updated_at run) "")))
                         (catch :default _ 0))]
     (and (not (:has_active_stream run))
          (pos? updated-ms)
-         (>= (- (.now js/Date) updated-ms) INACTIVE_THRESHOLD_MS))))
+         (>= (- (.now js/Date) updated-ms) threshold-ms))))
 
 (defn ^:async archive-stale-run!
   [store run]
@@ -41,13 +41,13 @@
                          :error (ex-message err)}))))))
 
 (defn ^:async archive-stale-session-runs!
-  [store session-id]
+  [store session-id threshold-ms]
   (try
     (let [runs (await (list-active-runs store session-id))]
       (await (js/Promise.all
               (clj->js
                (keep (fn [run]
-                       (when (run-inactive? run)
+                       (when (run-inactive? run threshold-ms)
                          (archive-stale-run! store run)))
                      runs)))))
     (catch :default _
@@ -55,27 +55,36 @@
 
 (defn ^:async flush-stale-runs!
   "Scan all active sessions in Redis for runs that have been inactive
-   longer than INACTIVE_THRESHOLD_MS and archive them to OpenPlanner."
-  [client]
+   longer than `threshold-ms` and archive them to OpenPlanner."
+  [client threshold-ms]
   (when-let [store @store-registry/session-store*]
     (try
       (let [ids (vec (js->clj (await (redis/smembers client session-store/ACTIVE_SESSIONS_SET))))]
         (await (js/Promise.all
-                (clj->js (map #(archive-stale-session-runs! store %) ids)))))
+                (clj->js (map #(archive-stale-session-runs! store % threshold-ms) ids)))))
       (catch :default err
         (.warn js/console "[session-flush] flush scan failed"
                (clj->js {:error (ex-message err)}))))))
 
 (defn start-periodic-flush!
   "Start the background flush job. Safe to call multiple times — guards
-   against duplicate intervals created by shadow-cljs hot reload."
-  [client]
-  (when-not @interval-handle*
-    (reset! interval-handle*
-            (js/setInterval #(flush-stale-runs! client) FLUSH_INTERVAL_MS))
-    (.info js/console "[session-flush] periodic stale-run flush started"
-           (clj->js {:interval-ms FLUSH_INTERVAL_MS
-                     :threshold-ms INACTIVE_THRESHOLD_MS}))))
+   against duplicate intervals created by shadow-cljs hot reload.
+
+   `threshold-ms` (from config :run-stale-flush-ms) is how long a run may go
+   without updates, with no active stream, before it is archived as dead. It
+   should be well above any expected real turn duration so genuinely active
+   long runs are never wrongly failed."
+  ([client] (start-periodic-flush! client DEFAULT_INACTIVE_THRESHOLD_MS))
+  ([client threshold-ms]
+   (let [threshold-ms (if (and (number? threshold-ms) (pos? threshold-ms))
+                        threshold-ms
+                        DEFAULT_INACTIVE_THRESHOLD_MS)]
+     (when-not @interval-handle*
+       (reset! interval-handle*
+               (js/setInterval #(flush-stale-runs! client threshold-ms) FLUSH_INTERVAL_MS))
+       (.info js/console "[session-flush] periodic stale-run flush started"
+              (clj->js {:interval-ms FLUSH_INTERVAL_MS
+                        :threshold-ms threshold-ms}))))))
 
 (defn stop-periodic-flush!
   "Stop the background flush job. Called on hot reload before-load."

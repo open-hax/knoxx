@@ -141,9 +141,24 @@
    :autorun false,
    :js-options {:resolve {"@open-hax/eta-mu-cli" {:target :file
                                                      :file "test/js/eta_mu_cli_test_stub.cjs"}}},
-   :compiler-options
-   {:output-feature-set :es-next,
-    :optimizations :none,
-    :source-map true,
-    :infer-externs false,
-    :macros {:knoxx.backend.macros true}}}}}
+    :compiler-options
+    {:output-feature-set :es-next,
+     :optimizations :none,
+     :source-map true,
+     :infer-externs false,
+     :macros {:knoxx.backend.macros true}}},
+   :migrate
+   {:target :esm,
+    :runtime :node,
+    :output-dir "dist",
+    :modules {:migrate {:init-fn knoxx.backend.infra.migrate-pg-to-mongo/-main}},
+    :js-options
+    {:js-provider :import,
+     :keep-as-import #{"pg" "mongodb"}},
+    :compiler-options
+    {:output-feature-set :es-next,
+     :optimizations :none,
+     :source-map true,
+     :infer-externs false,
+     :macros {:knoxx.backend.macros true},
+     :warnings {:infer-warning false}}}}}

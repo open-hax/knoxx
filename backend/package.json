@@ -24,6 +24,7 @@
     "error-boundaries:check": "node scripts/check-error-boundaries.mjs --check",
     "error-boundaries:inventory": "node scripts/check-error-boundaries.mjs --markdown",
     "typecheck": "shadow-cljs compile server",
+    "migrate": "shadow-cljs compile migrate && node dist/migrate.js",
     "lint:size": "node ../scripts/lint-file-sizes.mjs backend/src/cljs"
   },
   "dependencies": {
@@ -43,6 +44,7 @@
     "events": "^3.3.0",
     "fastify": "^5.6.1",
     "libsodium-wrappers": "^0.7.15",
+    "mongodb": "^6.18.0",
     "nbb": "^1.4.207",
     "node-web-audio-api": "^1.0.9",
     "nodemailer": "^6.9.16",

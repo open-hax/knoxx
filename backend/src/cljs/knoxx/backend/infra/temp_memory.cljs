@@ -1,7 +1,7 @@
 (ns knoxx.backend.infra.temp-memory
   "Short-term memory tool. Agents read/write keyed blobs with TTL.
-   Backed by Redis when available; falls back to a process-local atom."
-  (:require [knoxx.backend.infra.redis-client :as redis]))
+   Backed by Mongo when available; falls back to a process-local atom."
+  (:require [knoxx.backend.infra.stores.mongo-temp-memory :as mongo-temp]))
 
 (defonce ^:private local-store* (atom {}))
 
@@ -63,40 +63,36 @@
   "Write `value` under `key` with optional `ttl` (ISO-8601 or seconds).
    Returns a Promise resolving to {:key k :written true}."
   [k v & [{:keys [ttl]}]]
-  (let [ttl-ms (parse-ttl-ms (or ttl default-ttl-ms))]
-    (if-let [client (redis/get-client)]
-      (let [ttl-sec (max 1 (js/Math.ceil (/ ttl-ms 1000)))]
-        (try
-          (await (redis/set-json client (str "temp-mem:" k) v ttl-sec))
-          {:key k :written true}
-          (catch :default _
-            (local-set! k v ttl-ms)
-            {:key k :written true :backend :local})))
-      (do (local-set! k v ttl-ms)
-          {:key k :written true :backend :local}))))
+  (let [ttl-ms (parse-ttl-ms (or ttl default-ttl-ms))
+        ttl-sec (max 1 (js/Math.ceil (/ ttl-ms 1000)))]
+    (try
+      (let [result (await (mongo-temp/set-memory! k v ttl-sec))]
+        (if result
+          result
+          (do (local-set! k v ttl-ms)
+              {:key k :written true :backend :local})))
+      (catch :default _
+        (local-set! k v ttl-ms)
+        {:key k :written true :backend :local}))))
 
 (defn ^:async mem-get
   "Read the value at `key`. Returns Promise<value | nil>."
   [k]
-  (if-let [client (redis/get-client)]
-    (try
-      (await (redis/get-json client (str "temp-mem:" k)))
-      (catch :default _
-        (local-get k)))
-    (local-get k)))
+  (try
+    (let [result (await (mongo-temp/get-memory! k))]
+      (or result (local-get k)))
+    (catch :default _
+      (local-get k))))
 
 (defn ^:async mem-del!
   "Delete `key`. Returns Promise<{:key k :deleted true}>."
   [k]
-  (if-let [client (redis/get-client)]
-    (try
-      (await (redis/del client (str "temp-mem:" k)))
-      {:key k :deleted true}
-      (catch :default _
-        (local-del! k)
-        {:key k :deleted true :backend :local}))
-    (do (local-del! k)
-        {:key k :deleted true :backend :local})))
+  (try
+    (await (mongo-temp/delete-memory! k))
+    {:key k :deleted true}
+    (catch :default _
+      (local-del! k)
+      {:key k :deleted true :backend :local})))
 
 ;; ─── tool registration ────────────────────────────────────────────────────────────────────────
 

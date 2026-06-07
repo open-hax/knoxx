@@ -332,12 +332,9 @@
      :resources {}}))
 
 (defn- ^:async redis-run-fallback
-  [run-id]
-  (when-let [redis-client (redis/get-client)]
-    (let [events (vec (or (await (redis/lrange-json redis-client (run-state/run-events-key run-id) 0 -1)) []))
-          session-id (event-session-id events)]
-      (when-let [session (and session-id (await (session-store/get-session redis-client session-id)))]
-        (run-from-session-and-events run-id session events)))))
+  [_run-id]
+  ;; Redis fallback removed — run events are in-memory only
+  nil)
 
 (defn- ^:async respond-run-detail!
   [reply ctx run-id]

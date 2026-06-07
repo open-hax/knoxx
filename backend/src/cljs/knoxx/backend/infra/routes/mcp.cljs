@@ -8,7 +8,7 @@
             [knoxx.backend.infra.auth.session :as auth-session]
             [knoxx.backend.infra.db.policy :as db-policy]
             [knoxx.backend.domain.mcp.mcp-expose :as mcp-expose]
-            [knoxx.backend.infra.redis-client :as redis]
+            [knoxx.backend.infra.stores.mongo-mcp-oauth :as mongo-mcp]
             [knoxx.backend.runtime.state :as runtime-state]
             ["@modelcontextprotocol/sdk/server/mcp.js" :refer [McpServer]]
             ["@modelcontextprotocol/sdk/server/streamableHttp.js" :refer [StreamableHTTPServerTransport]]
@@ -122,13 +122,6 @@
 (defn- challenge-unauthorized! [^js reply base]
   (-> (reply-header! reply "WWW-Authenticate" (www-authenticate-challenge base))
       (.code 401) (.send "Unauthorized")))
-
-(defn- redis-set!      [^js c k v o]  (.set c k v o))
-(defn- redis-get!      [^js c k]      (.get c k))
-(defn- redis-del!      [^js c k]      (.del c k))
-(defn- redis-sadd!     [^js c k v]    (.sAdd c k v))
-(defn- redis-smembers! [^js c k]      (.sMembers c k))
-(defn- redis-srem!     [^js c k v]    (.sRem c k v))
 
 (defn- transport-handle-request!
   ([^js t req reply]      (.handleRequest t req reply))
@@ -282,11 +275,11 @@
             (str/blank? code-challenge) (not= code-challenge-method "S256"))
     (throw (http-error 400 "invalid_request" "Missing required OAuth parameters"))))
 
-(defn- ^:async get-registered-client [redis-client client-id]
+(defn- ^:async get-registered-client [_redis-client client-id]
   (if (str/blank? (str client-id))
     nil
     (try
-      (let [raw (await (redis-get! redis-client (str "knoxx:mcp:client:" client-id)))]
+      (let [raw (await (mongo-mcp/get-client! client-id))]
         (when raw (try (js/JSON.parse raw) (catch :default _ nil))))
       (catch :default _
         nil))))
@@ -388,11 +381,11 @@
          "<a href=\"/\">Cancel</a>\n"
          "</div></form></div></body></html>")))
 
-(defn- ^:async load-token-record! [redis-client access-token]
+(defn- ^:async load-token-record! [_redis-client access-token]
   (if (str/blank? (str access-token))
     nil
     (try
-      (let [raw (await (redis-get! redis-client (str "knoxx:mcp:token:" access-token)))]
+      (let [raw (await (mongo-mcp/get-token! access-token))]
         (when raw (try (js/JSON.parse raw) (catch :default _ nil))))
       (catch :default _
         nil))))
@@ -469,7 +462,7 @@
 ;; preHandler-mode routes
 
 (defroute mcp-register-client! [crypto redis-guard] "POST" "/api/mcp/oauth/register" [redis-guard]
-  (let [redis  (aget request "redis")
+  (let [_redis  (aget request "redis")
         {:keys [redirect-uris client-name]} (parse-register-client-body request)
         client-id (.randomUUID crypto)
         client    {:client_id                  client-id
@@ -480,7 +473,7 @@
                    :response_types             ["code"]
                    :created_at                 (.toISOString (js/Date.))}]
     (try
-      (await (redis-set! redis (str "knoxx:mcp:client:" client-id) (js/JSON.stringify (clj->js client)) js/undefined))
+      (await (mongo-mcp/set-client! client-id (js/JSON.stringify (clj->js client))))
       (json-send! reply 201 client)
       (catch :default err
         (throw (http-error 500 "registration_failed" (or (.-message err) (str err))))))))
@@ -503,12 +496,12 @@
         (.send (reply-header! reply "content-type" "text/html; charset=utf-8") html)))))
 
 (defroute mcp-authorize-confirm! [base crypto config runtime code-ttl token-ttl redis-guard browser-auth-guard] "GET" "/api/mcp/oauth/authorize/confirm" [redis-guard browser-auth-guard]
-  (let [redis        (aget request "redis")
+  (let [_redis        (aget request "redis")
         auth-context (aget request "authContext")
         {:keys [client-id redirect-uri state code-challenge selected-tools] :as params}
         (parse-authorize-confirm-query request)]
     (ensure-oauth-confirm-request! params)
-    (let [client (await (get-registered-client redis client-id))]
+    (let [client (await (get-registered-client nil client-id))]
       (ensure-redirect-uri-allowed! client redirect-uri "invalid_request")
       (let [requested (requested-tools runtime config auth-context selected-tools)]
         (when (empty? requested)
@@ -522,13 +515,13 @@
                              :tools requested
                              :membershipId membership-id :userEmail user-email :orgSlug org-slug
                              :createdAt (.toISOString (js/Date.))}]
-          (await (redis-set! redis (str "knoxx:mcp:code:" code) (js/JSON.stringify (clj->js payload)) (clj->js {:EX code-ttl})))
+          (await (mongo-mcp/set-code! code (js/JSON.stringify (clj->js payload)) code-ttl))
           (let [redir (js/URL. redirect-uri)]
             (.set (.-searchParams redir) "code" code)
             (when state (.set (.-searchParams redir) "state" state))
             (.redirect reply (.toString redir) 302)))))))
 
-(defn- ^:async persist-access-token! [redis crypto token-ttl client-id record]
+(defn- ^:async persist-access-token! [_redis crypto token-ttl client-id record]
   (let [access-token (.randomUUID crypto)
         token-value  {:accessToken access-token :clientId client-id
                       :membershipId (aget record "membershipId")
@@ -537,23 +530,21 @@
                       :tools        (aget record "tools")
                       :createdAt    (.toISOString (js/Date.))
                       :expiresAt    (.toISOString (js/Date. (+ (.now js/Date) (* token-ttl 1000))))}]
-    (await (redis-set! redis (str "knoxx:mcp:token:" access-token) (js/JSON.stringify (clj->js token-value)) (clj->js {:EX token-ttl})))
-    (when-let [mid (aget record "membershipId")]
-      (await (redis-sadd! redis (str "knoxx:mcp:user:" mid ":tokens") access-token)))
+    (await (mongo-mcp/set-token! access-token (js/JSON.stringify (clj->js token-value)) token-ttl (aget record "membershipId")))
     {:access_token access-token :token_type "Bearer"
      :scope        (->> (array-seq (or (aget record "tools") (js/Array.))) (str/join " "))
      :expires_in   token-ttl}))
 
 (defroute mcp-exchange-token! [crypto token-ttl redis-guard] "POST" "/api/mcp/oauth/token" [redis-guard]
-  (let [redis (aget request "redis")
+  (let [_redis (aget request "redis")
         {:keys [grant-type code code-verifier client-id redirect-uri]} (parse-token-exchange-body request)]
     (when (or (not= grant-type "authorization_code")
               (str/blank? code) (str/blank? code-verifier)
               (str/blank? client-id) (str/blank? redirect-uri))
       (throw (http-error 400 "invalid_request" "Missing required token exchange parameters")))
-    (let [client (await (get-registered-client redis client-id))]
+    (let [client (await (get-registered-client nil client-id))]
       (ensure-redirect-uri-allowed! client redirect-uri "invalid_grant")
-      (let [raw (await (redis-get! redis (str "knoxx:mcp:code:" code)))]
+      (let [raw (await (mongo-mcp/get-code! code))]
         (when-not raw (throw (http-error 400 "invalid_grant" "Unknown or expired code")))
         (let [record   (js/JSON.parse raw)
               expected (str (or (aget record "codeChallenge") ""))
@@ -563,33 +554,27 @@
             (throw (http-error 400 "invalid_grant" "Client/redirect mismatch")))
           (when (or (str/blank? expected) (not= expected actual))
             (throw (http-error 400 "invalid_grant" "PKCE verification failed")))
-          (await (redis-del! redis (str "knoxx:mcp:code:" code)))
-          (let [token-response (await (persist-access-token! redis crypto token-ttl client-id record))]
+          (await (mongo-mcp/delete-code! code))
+          (let [token-response (await (persist-access-token! nil crypto token-ttl client-id record))]
             (json-send! reply 200 token-response)))))))
 
 (defroute mcp-list-user-tokens! [redis-guard browser-auth-guard] "GET" "/api/mcp/tokens" [redis-guard browser-auth-guard]
-  (let [redis         (aget request "redis")
+  (let [_redis         (aget request "redis")
         auth-context  (aget request "authContext")
         membership-id (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))]
     (when (str/blank? membership-id)
       (throw (http-error 400 "missing_membership" "No membership available for this session")))
-    (let [token-ids (await (redis-smembers! redis (str "knoxx:mcp:user:" membership-id ":tokens")))
-          records (await (js/Promise.all
-                          (clj->js (for [tid (array-seq token-ids)]
-                                       (js-await [raw (redis-get! redis (str "knoxx:mcp:token:" tid))]
-                                         (when raw (try (js/JSON.parse raw)
-                                                        (catch :default _ nil))))))))]
-      (json-send! reply 200 {:ok true :tokens (->> (array-seq records) (remove nil?) into-array)}))))
+    (let [records (await (mongo-mcp/list-tokens-for-membership! membership-id))]
+      (json-send! reply 200 {:ok true :tokens (->> records (remove nil?) into-array)}))))
 
 (defroute mcp-revoke-user-token! [redis-guard browser-auth-guard] "DELETE" "/api/mcp/tokens/:tokenId" [redis-guard browser-auth-guard]
-  (let [redis         (aget request "redis")
+  (let [_redis         (aget request "redis")
         auth-context  (aget request "authContext")
         {:keys [token-id]}    (parse-revoke-token-params request)
         membership-id         (str (or (aget auth-context "membership" "id") (aget auth-context "membershipId") ""))]
     (when (or (str/blank? membership-id) (str/blank? token-id))
       (throw (http-error 400 "invalid_request" "membership and tokenId are required")))
-    (await (redis-del! redis (str "knoxx:mcp:token:" token-id)))
-    (await (redis-srem! redis (str "knoxx:mcp:user:" membership-id ":tokens") token-id))
+    (await (mongo-mcp/delete-token! token-id))
     (json-send! reply 200 {:ok true})))
 
 (defroute mcp-handle-session! [base bearer-token-guard] "GET" "/mcp" [bearer-token-guard]

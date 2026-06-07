@@ -72,7 +72,7 @@
                        (let [drain-result (aget parts 1)]
                          (if (aget drain-result "timed_out")
                            (let [active-turns (turn-control/active-turn-entries)]
-                             (-> (agent-resume/mark-sessions-resumable! (redis/get-client) active-turns signal)
+                              (-> (agent-resume/mark-sessions-resumable! active-turns signal)
                                  (.then (fn [count]
                                           (log-warn! app (str "[shutdown] marked " count " active session(s) resumable for restart"))
                                           #js {:count count}))))

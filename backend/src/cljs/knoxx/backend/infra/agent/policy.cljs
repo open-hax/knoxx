@@ -2,7 +2,7 @@
   "Chat policy enforcement: model allow-lists and rate-limiting."
   (:require [clojure.string :as str]
             [knoxx.backend.infra.auth.authz :as authz]
-            [knoxx.backend.infra.redis-client :as redis]))
+            [knoxx.backend.infra.stores.mongo-rate-limits :as mongo-rate-limits]))
 ;; This kind of file isn't suposed to exist at all
 ;; these should all be things we can define in the contract DSL
 
@@ -67,13 +67,11 @@
     (throw (model-policy-error model-id permitted-models))))
 
 (defn ^:async check-rate-limit!
-  "Check and enforce the chat rate limit via Redis INCR + EXPIRE."
-  [principal redis-client max-requests window-seconds]
+  "Check and enforce the chat rate limit via Mongo $inc + TTL."
+  [principal _redis-client max-requests window-seconds]
   (let [key (str "knoxx:chat-rate:" principal ":" window-seconds)]
     (try
-      (let [count (await (.incr redis-client key))]
-        (when (= count 1)
-          (await (.expire redis-client key window-seconds)))
+      (let [count (await (mongo-rate-limits/increment-rate-limit! key window-seconds))]
         (when (> count max-requests)
           (throw (rate-limit-error max-requests window-seconds))))
       (catch :default err
@@ -90,11 +88,10 @@
                                        (:max-requests constraints)))
         window-seconds (positive-int (or (:windowSeconds constraints)
                                          (:window-seconds constraints)))
-        principal (some-> (chat-rate-limit-principal auth-context) str not-empty)
-        redis-client (redis/get-client)]
+        principal (some-> (chat-rate-limit-principal auth-context) str not-empty)]
     (check-model-policy! model-id permitted-models)
-    (if (and principal redis-client max-requests window-seconds)
-      (check-rate-limit! principal redis-client max-requests window-seconds)
+    (if (and principal max-requests window-seconds)
+      (check-rate-limit! principal nil max-requests window-seconds)
       (js/Promise.resolve nil))))
 
 (defprotocol IPolicyEngine

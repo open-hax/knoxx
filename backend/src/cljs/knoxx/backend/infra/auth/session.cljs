@@ -162,11 +162,8 @@
       (await (db-store-session token normalized))
       (catch js/Error err
         (.log js/console "[knoxx-session] WARN: DB store failed:" (.-message err))))
-    (let [redis (await (get-redis))]
-      (await (.set redis
-                   (str "knoxx:session:" session-id)
-                   (js/JSON.stringify (clj->js normalized))
-                   (clj->js {:EX (session-ttl-seconds)}))))))
+    ;; Redis cache removed — Postgres is the sole store
+    nil))
 
 (defn- parse-stored-session
   [raw]
@@ -176,27 +173,16 @@
 
 (defn- ^:async load-session
   [session-id token]
-  ;; Try Redis first (fast cache), fall back to Postgres (persistent).
-  (try
-    (let [redis (await (get-redis))
-          raw (await (.get redis (str "knoxx:session:" session-id)))]
-      (if raw
-        (parse-stored-session raw)
-        (await (db-load-session (or token "")))))
-    (catch js/Error _err
-      (await (db-load-session (or token ""))))))
+  ;; Postgres is the sole store (Redis cache removed)
+  (await (db-load-session (or token ""))))
 
 (defn ^:async delete-session
   [session-id token]
-  ;; Delete from Postgres first (authoritative), then Redis (cache).
+  ;; Delete from Postgres (authoritative, Redis cache removed)
   (when (and @db-session-store (not (str/blank? token)))
     (try
       (await (policy-db/delete-session-by-token! (policy-db/context-pool @db-session-store) token))
       (catch js/Error _ nil)))
-  (try
-    (let [redis (await (get-redis))]
-      (await (.del redis (str "knoxx:session:" session-id))))
-    (catch js/Error _ nil))
   nil)
 
 

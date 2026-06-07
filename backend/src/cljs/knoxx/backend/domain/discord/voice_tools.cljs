@@ -6,8 +6,7 @@
             [knoxx.backend.domain.discord.gateway :as dg]
             [knoxx.backend.domain.voice.client :as voice-client]
             [knoxx.backend.infra.clients.knoxx-control :as knoxx-client]
-            [knoxx.backend.infra.redis-client :as redis]
-            [knoxx.backend.infra.stores.session-store :as session-store]
+            [knoxx.backend.infra.stores.mongo-session-store :as session-store]
             [knoxx.backend.domain.text :refer [tool-text-result]]
             [knoxx.backend.domain.tools :refer [maybe-tool-update! create-tool-obj]]
             [promesa.core :as p]))
@@ -53,7 +52,7 @@
 
 (defn- start-voice-turn! [config session-id conversation-id text]
   (js/console.log "[voice:direct-start] starting idle session:" session-id "conv:" conversation-id)
-  (p/let [session (session-store/get-session (redis/get-client) session-id)
+  (p/let [session (session-store/get-session session-id)
           agent-spec (session-agent-spec session)
           body (cond-> {:message (str "[Voice] " text)
                         :conversation_id conversation-id
