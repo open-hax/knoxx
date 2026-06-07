@@ -112,11 +112,14 @@
 
 (defn- role-scope-query
   "Mongo filter for q-roles/by-slug scope semantics: a nil org-id targets the
-   platform scope (org_id absent), otherwise the org-scoped row. Slug is
+   platform scope (org_id absent or null), otherwise the org-scoped row. Slug is
    lower-cased to match the write path."
   [{:keys [slug org-id]}]
   (if (nil? org-id)
-    #js {"slug" (lower slug) "org_id" #js {"$exists" false}}
+    ;; {org_id: null} matches both an absent field (twin write path) and an
+    ;; explicit null (rows migrated from PG, where org_id was SQL NULL) —
+    ;; exactly PG's org_id IS NULL. {$exists false} misses explicit nulls.
+    #js {"slug" (lower slug) "org_id" nil}
     #js {"slug" (lower slug) "org_id" (str org-id)}))
 
 (defn ^:async find-role
@@ -174,7 +177,9 @@
      (if (empty? wanted)
        []
        (->> (await (.toArray (.find (roles-coll db)
-                                    #js {"$or" #js [#js {"org_id" #js {"$exists" false}}
+                                    ;; org_id null matches absent + explicit-null
+                                    ;; (PG-migrated platform roles); see role-scope-query.
+                                    #js {"$or" #js [#js {"org_id" nil}
                                                     #js {"org_id" (str org-id)}]})))
             keywordize
             (filterv #(contains? wanted (lower (:slug %))))

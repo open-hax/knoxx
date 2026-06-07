@@ -120,9 +120,14 @@
   ([provider] (list-actor-credentials-by-provider! (mongo-client/get-db) provider))
   ([db provider]
    (let [coll (credentials-coll db)
-         cursor (.find coll #js {"provider" (str provider) "status" "active"})]
-     (->> (keywordize (await (.toArray cursor)))
-          (mapv #(resolve-membership-for-credential db %))
+         cursor (.find coll #js {"provider" (str provider) "status" "active"})
+         rows (keywordize (await (.toArray cursor)))
+         ;; resolve-membership-for-credential is async — await the whole batch
+         ;; before filtering, or the filters see pending Promises and drop
+         ;; every credential.
+         resolved (await (js/Promise.all
+                          (clj->js (mapv #(resolve-membership-for-credential db %) rows))))]
+     (->> (vec (array-seq resolved))
           (filter some?)
           (filterv #(not (str/blank? (str (:actor_id %)))))
           vec))))
