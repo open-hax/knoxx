@@ -162,7 +162,7 @@
     (web-read-url! url max-chars)))
 
 (defn make-create-new-file-execute [auth-context]
-  (fn [runtime config _tool-call-id params a b c]
+  (^:async fn [runtime config _tool-call-id params a b c]
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           title (or (aget params "title") "Untitled Canvas")
           requested-path (or (aget params "path") (str "notes/canvas/" (slugify title) ".md"))
@@ -178,14 +178,13 @@
       (when (or (str/starts-with? rel-to-root "..") (media/path-is-absolute? path rel-to-root))
         (throw (js/Error. "Path escapes active docs root")))
       (maybe-tool-update! on-update (str "Creating canvas file " rel-path "…"))
-      (-> (media/fs-mkdir! fs parent #js {:recursive true})
-          (.then (fn [] (media/fs-write-file! fs abs-path content "utf8")))
-          (.then (fn []
-                   (tool-text-result (str "Created canvas file at " rel-path)
-                                     {:path rel-path :title title :content content :canvas true})))))))
+      (await (media/fs-mkdir! fs parent #js {:recursive true}))
+      (await (media/fs-write-file! fs abs-path content "utf8"))
+      (tool-text-result (str "Created canvas file at " rel-path)
+                        {:path rel-path :title title :content content :canvas true}))))
 
 (defn make-push-claim-execute [auth-context]
-  (fn [runtime config _tool-call-id params a b c]
+  (^:async fn [runtime config _tool-call-id params a b c]
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           claim (aget params "claim")
           evidence (or (aget params "evidence") #js [])
@@ -200,12 +199,11 @@
                                            :text claim
                                            :extra {:claim claim :evidence (clj->js evidence) :p p :src source}})]
       (maybe-tool-update! on-update (str "Pushing claim to graph: " claim "…"))
-      (-> (openplanner-client/events! (openplanner-client/client config) [event])
-          (.then (fn [resp]
-                   (tool-text-result (str "Successfully pushed claim to graph: " claim) resp)))))))
+      (let [resp (await (openplanner-client/events! (openplanner-client/client config) [event]))]
+        (tool-text-result (str "Successfully pushed claim to graph: " claim) resp)))))
 
 (defn make-save-translation-execute [auth-context]
-  (fn [_runtime config _tool-call-id params a b c]
+  (^:async fn [_runtime config _tool-call-id params a b c]
     (let [on-update (or (when (fn? a) a) (when (fn? b) b) (when (fn? c) c))
           resource-policies (:resourcePolicies auth-context)
           source-text (aget params "source_text")
@@ -239,10 +237,9 @@
                    :status "pending"
                    :mt_model "translation-agent"}]
       (maybe-tool-update! on-update (str "Saving translation segment " segment-index "…"))
-      (-> (openplanner-client/create-translation-segment! (openplanner-client/client config) segment)
-          (.then (fn [result]
-                   (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
-                                     result)))))))
+      (let [result (await (openplanner-client/create-translation-segment! (openplanner-client/client config) segment))]
+        (tool-text-result (str "Saved segment " segment-index ": " (.substring translated-text 0 (min 50 (count translated-text))) "…")
+                          result)))))
 
 (def graph-query-tool
   (partial create-tool-obj
