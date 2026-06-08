@@ -54,7 +54,7 @@
           (assoc entry :conversation_id conversation-id))
         @active-turns*))
 
-(defn abort-active-turn!
+(defn ^:async abort-active-turn!
   "Abort the currently registered turn for conversation-id.
 
    Returns a Promise resolving to {:ok boolean, ...}."
@@ -69,15 +69,15 @@
       (js/Promise.resolve {:ok false :error "no_abort_handler"})
 
       :else
-      (-> (abort! (or reason "aborted"))
-          (.then (fn [_]
-                   {:ok true
-                    :conversation_id (str conversation-id)
-                    :run_id (:run_id entry)
-                    :session_id (:session_id entry)}))
-          (.catch (fn [err]
-                    {:ok false
-                     :conversation_id (str conversation-id)
-                     :run_id (:run_id entry)
-                     :session_id (:session_id entry)
-                     :error (str err)}))))))
+      (try
+        (await (abort! (or reason "aborted")))
+        {:ok true
+         :conversation_id (str conversation-id)
+         :run_id (:run_id entry)
+         :session_id (:session_id entry)}
+        (catch :default err
+          {:ok false
+           :conversation_id (str conversation-id)
+           :run_id (:run_id entry)
+           :session_id (:session_id entry)
+           :error (str err)})))))
